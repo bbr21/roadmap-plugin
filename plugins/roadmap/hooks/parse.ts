@@ -1412,31 +1412,28 @@ export function checkTitleFor(task: Task, shortTitle: string): string {
 }
 
 /**
- * Une session « Lot » (« Lot #1 », « Lot 2 · … ») coordonne les sessions de plusieurs features :
- * elle ouvre et coche leurs lignes sans travailler sur aucune (règle de Bertrand du 2026-10-25).
- */
-export function isLotSession(title: string): boolean {
-  return /^\s*lot\b/i.test(title)
-}
-
-/**
- * Une session « Maestro » coordonne les sessions qu'elle lance, même une seule (#71, 2026-10-28) :
- * le panneau la reconnaît à ce titre, ou à la marque posée quand Bertrand y dit « Maestro ».
+ * Une session Maestro coordonne les sessions qu'elle lance, même une seule (#71, 2026-10-28) : elle
+ * ouvre et coche leurs lignes sans travailler sur aucune. Le panneau la reconnaît à son titre
+ * « Maestro … », ou à la marque posée quand Bertrand y dit « Maestro ». Un seul nom depuis #112
+ * (2026-10-29, « Je déteste le terme lot ! ») : `LOT_ALIAS` garde reconnus les titres d'avant.
  */
 export function isMaestroSession(title: string): boolean {
-  return /^\s*maestro\b/i.test(title)
+  return /^\s*maestro\b/i.test(title) || LOT_ALIAS.test(title)
 }
 
+/** L'alias des anciens titres « Lot … » (« Lot #1 », « Lot Service »), d'avant #112. */
+const LOT_ALIAS = /^\s*lot\b/i
+
 /**
- * Un Lot se reconnaît aussi à sa famille (choix de Bertrand du 2026-10-26) : une session qui a lancé
+ * Un Maestro se reconnaît aussi à sa famille (choix de Bertrand du 2026-10-26) : une session qui a lancé
  * au moins deux sessions encore ouvertes coordonne, quel que soit son titre (l'orchestrateur de
  * Splitmybill s'appelait « #225 · … » et avait lancé 18 sessions). Une session de tâche qui lance
  * une suite après sa livraison n'en a qu'une d'ouverte à la fois : elle reste sur sa tâche.
  */
-export const LOT_MIN_OPEN_CHILDREN = 2
+export const MAESTRO_MIN_OPEN_CHILDREN = 2
 
-/** Les sessions qui coordonnent un lot, d'après les rangées de `list_sessions` (champ `startedBy`). */
-export function lotSessionIds(rows: readonly unknown[]): Set<string> {
+/** Les sessions qui coordonnent (les Maestros), d'après les rangées de `list_sessions` (champ `startedBy`). */
+export function maestroSessionIds(rows: readonly unknown[]): Set<string> {
   const open = new Map<string, number>()
   for (const raw of rows) {
     if (typeof raw !== 'object' || raw === null) continue
@@ -1444,13 +1441,13 @@ export function lotSessionIds(rows: readonly unknown[]): Set<string> {
     if (typeof startedBy !== 'string' || isArchived !== false) continue
     open.set(startedBy, (open.get(startedBy) ?? 0) + 1)
   }
-  return new Set([...open].filter(([, n]) => n >= LOT_MIN_OPEN_CHILDREN).map(([id]) => id))
+  return new Set([...open].filter(([, n]) => n >= MAESTRO_MIN_OPEN_CHILDREN).map(([id]) => id))
 }
 
 /**
  * La liste de l'app (`list_sessions`) exclut la session qui la demande : sans sa propre fiche
  * (`get_session self`), un panneau voyait toutes les sessions sauf la sienne (#133 et #227, deux
- * sessions du même Lot, ne se voyaient chacune qu'elle l'autre, 2026-10-27). La fiche rejoint donc
+ * sessions du même Maestro, ne se voyaient chacune qu'elle l'autre, 2026-10-27). La fiche rejoint donc
  * les rangées, une seule fois ; illisible (pas de `sessionId` texte), la liste reste seule.
  */
 export function withSelfRow(rows: readonly unknown[], self: unknown): unknown[] {
@@ -1471,11 +1468,11 @@ function openChildren(rows: readonly unknown[], id: string): number {
 }
 
 /** Une remontée de famille plus longue s'arrête : une chaîne de lancements n'a jamais cette taille. */
-const LOT_MAX_DEPTH = 10
+const MAESTRO_MAX_DEPTH = 10
 
 /**
- * Le Lot d'une sous-session (demande de Bertrand du 2026-10-27) : le premier ancêtre ouvert qui
- * coordonne (titre « Lot … » ou « Maestro … », marque Maestro, ou au moins deux filles ouvertes,
+ * Maestro d'une sous-session (demande de Bertrand du 2026-10-27) : le premier ancêtre ouvert qui
+ * coordonne (titre « Maestro … » ou son alias « Lot … », marque Maestro, ou au moins deux filles ouvertes,
  * en comptant celle-ci pour son parent, car la liste de l'app l'exclut). La remontée passe les
  * parents archivés ou qui ne coordonnent pas (#71 : #69 et #70, lancées par les cartes de #68 et
  * de #1, ensuite archivées, étaient les petites-filles de Maestro). Une session sans parent,
@@ -1483,7 +1480,7 @@ const LOT_MAX_DEPTH = 10
  * fiche (`get_session self`), `rows` la liste de sa famille (`list_sessions` `linked: true`,
  * archivées comprises), `maestros` les sessions où Bertrand a dit « Maestro ».
  */
-export function lotParentOf(
+export function maestroParentOf(
   self: unknown,
   rows: readonly unknown[],
   maestros: ReadonlySet<string> = new Set(),
@@ -1493,11 +1490,11 @@ export function lotParentOf(
   const parentId = me.parentSessionId
   if (typeof parentId !== 'string' || parentId === '' || me.detached === true) return undefined
   const myTitle = typeof me.title === 'string' ? me.title : ''
-  if (isLotSession(myTitle) || isMaestroSession(myTitle)) return undefined
-  if (typeof me.sessionId === 'string' && (maestros.has(me.sessionId) || openChildren(rows, me.sessionId) >= LOT_MIN_OPEN_CHILDREN)) return undefined
+  if (isMaestroSession(myTitle)) return undefined
+  if (typeof me.sessionId === 'string' && (maestros.has(me.sessionId) || openChildren(rows, me.sessionId) >= MAESTRO_MIN_OPEN_CHILDREN)) return undefined
   const seen = new Set<string>()
   let id: unknown = parentId
-  while (typeof id === 'string' && id !== '' && !seen.has(id) && seen.size < LOT_MAX_DEPTH) {
+  while (typeof id === 'string' && id !== '' && !seen.has(id) && seen.size < MAESTRO_MAX_DEPTH) {
     const at: string = id
     const row = rows.find(r => typeof r === 'object' && r !== null && (r as { sessionId?: unknown }).sessionId === at) as
       | { title?: unknown; isArchived?: unknown; startedBy?: unknown }
@@ -1505,7 +1502,7 @@ export function lotParentOf(
     if (!row) return undefined
     const title = typeof row.title === 'string' ? row.title : ''
     const children = openChildren(rows, at) + (at === parentId ? 1 : 0)
-    const coordinates = isLotSession(title) || isMaestroSession(title) || maestros.has(at) || children >= LOT_MIN_OPEN_CHILDREN
+    const coordinates = isMaestroSession(title) || maestros.has(at) || children >= MAESTRO_MIN_OPEN_CHILDREN
     if (row.isArchived === false && coordinates) return { id: at, title }
     seen.add(at)
     id = row.startedBy
@@ -1552,20 +1549,20 @@ export function viaClaudeNote(refusals: readonly string[]): string {
   return `${base}.`
 }
 
-/** La note au modèle quand une session Lot ouvre des lignes : elle ne les code pas, elle les lance. */
-export function lotTasksNote(tasks: readonly Task[]): string {
+/** La note au modèle quand une session Maestro ouvre des lignes : elle ne les code pas, elle les lance. */
+export function maestroTasksNote(tasks: readonly Task[]): string {
   const named = tasks.map(t => (t.id ? `#${t.id}` : `« ${clip(t.label, 60)} »`)).join(', ')
   return [
-    `Roadmap — session Lot : tu viens d'ouvrir ${named}.`,
-    'Le Lot ne code aucune tâche : lance une session par tâche (▶ du panneau, ou start_session avec la clause du Lot), puis suis-les, priorise les fusions et donne la main sur les ressources uniques.',
-    'La doctrine est dans la skill `roadmap:lot`.',
+    `Roadmap — session Maestro : tu viens d'ouvrir ${named}.`,
+    'Maestro ne code aucune tâche : lance une session par tâche (▶ du panneau, ou start_session avec la clause de Maestro), puis suis-les, priorise les fusions et donne la main sur les ressources uniques.',
+    'La doctrine est dans la skill `roadmap:maestro`.',
   ].join(' ')
 }
 
 /**
- * Ce que dit le brief d'une session lancée depuis un Lot, à la place de la consigne de fin : elle
- * ne fusionne pas, ne prend une ressource unique qu'avec la main du Lot, dit son état en tête de
- * chaque compte rendu (le Lot le reçoit à chaque fin de tour) et ne coche pas sa ligne.
+ * Ce que dit le brief d'une session lancée depuis un Maestro, à la place de la consigne de fin : elle
+ * ne fusionne pas, ne prend une ressource unique qu'avec la main de Maestro, dit son état en tête de
+ * chaque compte rendu (Maestro le reçoit à chaque fin de tour) et ne coche pas sa ligne.
  */
 /**
  * Proposer l'archivage d'un clic qui marche (#87, Bertrand, 2026-10-28) : l'app ne propose jamais le
@@ -1580,62 +1577,62 @@ const archiveThen = (): string =>
 
 /**
  * La fin d'une sous-session (#84) : Bertrand demandait à chaque fois « je peux archiver ? ». Finie, elle
- * le dit et le propose d'un bouton (#87 : un bouton de réponse) ; refusé, le Lot prend le relais (il
+ * le dit et le propose d'un bouton (#87 : un bouton de réponse) ; refusé, Maestro prend le relais (il
  * voit l'enfant « à archiver »).
  */
-const lotClauseEnd = (): string => `Ta ligne close par le Lot et plus rien en attente (aucune question, aucune session à toi encore ouverte), ton dernier tour finit sur « fini, rien en attente », avec ${ARCHIVE_BOX}. ${archiveThen()} Refusé, le Lot propose l'archivage à ${person()}.`
+const maestroClauseEnd = (): string => `Ta ligne close par Maestro et plus rien en attente (aucune question, aucune session à toi encore ouverte), ton dernier tour finit sur « fini, rien en attente », avec ${ARCHIVE_BOX}. ${archiveThen()} Refusé, Maestro propose l'archivage à ${person()}.`
 
 /**
- * Un choix visuel sous un Lot (#96) : Bertrand ne lit pas le transcript d'une sous-session, le Lot
+ * Un choix visuel sous un Maestro (#96) : Bertrand ne lit pas le transcript d'une sous-session, Maestro
  * lui montre la page et renvoie son choix.
  */
-function lotMockups(where: string): string {
-  return `Un choix visuel : écris tes 2 ou 3 maquettes dans une page HTML statique, ${where}, dis « attend une réponse : choix de maquette, <chemin> » en tête de ton compte rendu et termine ton tour ; ${person()} ne lit pas ton transcript : le Lot lui montre la page et te renvoie son choix.`
+function maestroMockups(where: string): string {
+  return `Un choix visuel : écris tes 2 ou 3 maquettes dans une page HTML statique, ${where}, dis « attend une réponse : choix de maquette, <chemin> » en tête de ton compte rendu et termine ton tour ; ${person()} ne lit pas ton transcript : Maestro lui montre la page et te renvoie son choix.`
 }
 
 /**
- * La main du Lot avec le réglage autonome (#105, Bertrand, 2026-10-29) : une sous-session AAFES attendait
- * la main pour publier le plugin aafes, et son Lot la demandait à Bertrand. Le réglage la donne seul.
+ * La main de Maestro avec le réglage autonome (#105, Bertrand, 2026-10-29) : une sous-session AAFES attendait
+ * la main pour publier le plugin aafes, et son Maestro la demandait à Bertrand. Le réglage la donne seul.
  */
-const lotAutonome = (): string =>
-  `Avec le réglage autonome, le Lot te donne la main seul, sans attendre ${person()} : une fois la main reçue, fais le geste (la publication comprise) et publie sans redemander, puis dis en une ligne ce que tu as publié.`
+const maestroAutonome = (): string =>
+  `Avec le réglage autonome, Maestro te donne la main seul, sans attendre ${person()} : une fois la main reçue, fais le geste (la publication comprise) et publie sans redemander, puis dis en une ligne ce que tu as publié.`
 
-export function lotClause(lot: string, mode: Mode = 'code'): string[] {
+export function maestroClause(maestro: string, mode: Mode = 'code'): string[] {
   // Mode Projet (#76) : ni branche, ni PR, ni fusion ; la session se dit « prête à clore ».
   if (mode === 'projet') {
     return [
-      `Tu fais partie du Lot « ${lot} » : la session qui t'a lancée coordonne ses tâches (skill \`roadmap:lot\`).`,
+      `Tu travailles pour Maestro : la session qui t'a lancée, « ${maestro} », coordonne ses tâches (skill \`roadmap:maestro\`).`,
       '- Travaille dans le dossier du projet.',
-      '- Une ressource unique (compte, document partagé, envoi à un tiers, publication d\'un plugin) ne se prend qu\'avec la main du Lot : dis-le en tête de ton compte rendu et termine ton tour ; il te la donne par message, et tu la rends dès que tu as fini.',
-      `- ${lotAutonome()}`,
-      '- La première phrase de chaque compte rendu de fin de tour dit ton état, avec ton étape : « en cours : étape 3/7 … », « prête à clore », « attend une réponse : … » ou « bloquée : … ». Tiens ta liste d\'étapes (update_plan) : c\'est par elle que le Lot voit où tu en es.',
-      `- ${lotMockups('à côté du document')}`,
-      '- Ne coche pas ta ligne : le Lot la coche, avec son bilan. Ton dernier compte rendu dit ce qui a été fait et le souci rencontré.',
-      `- ${lotClauseEnd()}`,
-      "- Une tâche que tu proposes (suite, idée, défaut hors de ta tâche) remonte au Lot : pose ta carte comme d'habitude, le panneau Roadmap la lui transmet au lieu de la laisser dans ton transcript, que " + person() + " ne regarde pas ; le Lot ouvre sa ligne et la lui propose.",
+      '- Une ressource unique (compte, document partagé, envoi à un tiers, publication d\'un plugin) ne se prend qu\'avec la main de Maestro : dis-le en tête de ton compte rendu et termine ton tour ; il te la donne par message, et tu la rends dès que tu as fini.',
+      `- ${maestroAutonome()}`,
+      '- La première phrase de chaque compte rendu de fin de tour dit ton état, avec ton étape : « en cours : étape 3/7 … », « prête à clore », « attend une réponse : … » ou « bloquée : … ». Tiens ta liste d\'étapes (update_plan) : c\'est par elle que Maestro voit où tu en es.',
+      `- ${maestroMockups('à côté du document')}`,
+      '- Ne coche pas ta ligne : Maestro la coche, avec son bilan. Ton dernier compte rendu dit ce qui a été fait et le souci rencontré.',
+      `- ${maestroClauseEnd()}`,
+      "- Une tâche que tu proposes (suite, idée, défaut hors de ta tâche) remonte à Maestro : pose ta carte comme d'habitude, le panneau Roadmap la lui transmet au lieu de la laisser dans ton transcript, que " + person() + " ne regarde pas ; Maestro ouvre sa ligne et la lui propose.",
     ]
   }
   return [
-    `Tu fais partie du Lot « ${lot} » : la session qui t'a lancée coordonne ses tâches et fusionne pour elles (skill \`roadmap:lot\`).`,
+    `Tu travailles pour Maestro : la session qui t'a lancée, « ${maestro} », coordonne ses tâches et fusionne pour elles (skill \`roadmap:maestro\`).`,
     '- Travaille sur ta branche, dans ton worktree ; rejoue les tests du projet sur ta branche, pousse-la, et ouvre ta PR si le projet en a.',
-    '- Ne fusionne pas sur main : le Lot fusionne, une branche à la fois, dans l\'ordre qu\'il choisit.',
-    '- Une ressource unique (simulateur iOS, appareil, base, déploiement, compte de test) ne se prend qu\'avec la main du Lot : dis-le en tête de ton compte rendu et termine ton tour ; il te la donne par message, et tu la rends dès que tu as fini.',
-    `- ${lotAutonome()}`,
-    '- La première phrase de chaque compte rendu de fin de tour dit ton état, avec ton étape : « en cours : étape 3/7 … », « prête à fusionner (tests : …) », « attend le simulateur », « attend une réponse : … » ou « bloquée : … ». Tiens ta liste d\'étapes (update_plan) : c\'est par elle que le Lot voit où tu en es.',
-    '- Le Lot peut te demander de mettre ta branche à jour après une autre fusion : merge de main dans ta branche, jamais de rebase d\'une branche poussée.',
-    `- ${lotMockups('dans le dossier du chantier, `docs/plans/<type>-<slug>/maquettes.html`')}`,
-    '- Ne coche pas ta ligne : le Lot la coche à la fusion, avec son bilan. Ton dernier compte rendu dit ce qui a été fait et le souci rencontré.',
-    `- ${lotClauseEnd()} Rien de non commité ne doit rester dans ton worktree.`,
-    "- Une tâche que tu proposes (suite, idée, défaut hors de ta tâche) remonte au Lot : pose ta carte comme d'habitude, le panneau Roadmap la lui transmet au lieu de la laisser dans ton transcript, que " + person() + " ne regarde pas ; le Lot ouvre sa ligne et la lui propose.",
+    '- Ne fusionne pas sur main : Maestro fusionne, une branche à la fois, dans l\'ordre qu\'il choisit.',
+    '- Une ressource unique (simulateur iOS, appareil, base, déploiement, compte de test) ne se prend qu\'avec la main de Maestro : dis-le en tête de ton compte rendu et termine ton tour ; il te la donne par message, et tu la rends dès que tu as fini.',
+    `- ${maestroAutonome()}`,
+    '- La première phrase de chaque compte rendu de fin de tour dit ton état, avec ton étape : « en cours : étape 3/7 … », « prête à fusionner (tests : …) », « attend le simulateur », « attend une réponse : … » ou « bloquée : … ». Tiens ta liste d\'étapes (update_plan) : c\'est par elle que Maestro voit où tu en es.',
+    '- Maestro peut te demander de mettre ta branche à jour après une autre fusion : merge de main dans ta branche, jamais de rebase d\'une branche poussée.',
+    `- ${maestroMockups('dans le dossier du chantier, `docs/plans/<type>-<slug>/maquettes.html`')}`,
+    '- Ne coche pas ta ligne : Maestro la coche à la fusion, avec son bilan. Ton dernier compte rendu dit ce qui a été fait et le souci rencontré.',
+    `- ${maestroClauseEnd()} Rien de non commité ne doit rester dans ton worktree.`,
+    "- Une tâche que tu proposes (suite, idée, défaut hors de ta tâche) remonte à Maestro : pose ta carte comme d'habitude, le panneau Roadmap la lui transmet au lieu de la laisser dans ton transcript, que " + person() + " ne regarde pas ; Maestro ouvre sa ligne et la lui propose.",
   ]
 }
 
 /**
- * Une tâche qu'une sous-session propose (carte `own_initiative`), remontée à son Lot : la carte
+ * Une tâche qu'une sous-session propose (carte `own_initiative`), remontée à son Maestro : la carte
  * resterait dans son transcript, que Bertrand ne regarde pas (demande du 2026-10-27).
  */
-export type LotProposal = {
-  /** Le Lot destinataire (`local_…`). */
+export type MaestroProposal = {
+  /** Maestro destinataire (`local_…`) ; le champ garde son nom d'avant #112, format du store. */
   lot: string
   /** La sous-session qui propose, son identifiant et son titre. */
   from: string
@@ -1648,31 +1645,31 @@ export type LotProposal = {
   at: number
 }
 
-/** Un brief remonté au Lot, coupé : le Lot réécrit le sien de toute façon. */
+/** Un brief remonté à Maestro, coupé : Maestro réécrit le sien de toute façon. */
 const PROPOSAL_PROMPT_MAX = 2000
 
-/** Ce que lit le Lot : chaque proposition, d'où elle vient, et ce qu'il en fait (skill `roadmap:lot`, § 3). */
-export function lotProposalText(proposals: readonly LotProposal[]): string {
+/** Ce que lit Maestro : chaque proposition, d'où elle vient, et ce qu'il en fait (skill `roadmap:maestro`, § 3). */
+export function maestroProposalText(proposals: readonly MaestroProposal[]): string {
   const items = proposals.map((p, i) => [
     `${proposals.length > 1 ? `${i + 1}. ` : ''}De la sous-session « ${p.fromTitle || p.from} » : « ${p.title} »`,
     `Brief : ${clip(p.prompt, PROPOSAL_PROMPT_MAX)}`,
     ...(p.background ? [`Contexte : ${clip(p.background, PROPOSAL_PROMPT_MAX)}`] : []),
   ].join('\n'))
   return [
-    `${proposals.length > 1 ? 'Tâches proposées' : 'Tâche proposée'} par une session que tu as lancée : sa carte New task serait restée dans son transcript, que ${person()} ne regarde pas. Le panneau Roadmap te la remonte (skill roadmap:lot, « Les propositions des sous-sessions »).`,
+    `${proposals.length > 1 ? 'Tâches proposées' : 'Tâche proposée'} par une session que tu as lancée : sa carte New task serait restée dans son transcript, que ${person()} ne regarde pas. Le panneau Roadmap te la remonte (skill roadmap:maestro, « Les propositions des sous-sessions »).`,
     '',
     items.join('\n\n'),
     '',
-    "À toi : ouvre sa ligne dans la roadmap (ou rattache-la à une ligne qui la couvre déjà), puis propose-la à " + person() + " depuis le Lot, par une carte (start_session, initiation own_initiative), titrée « #<id> · <libellé court> », avec un brief complet et la clause du Lot. Ne la code pas toi-même. Puis dis-le à " + person() + " en une ligne : quelle session la propose, quoi, et qu'il clique Start sur ta carte pour la lancer.",
+    "À toi : ouvre sa ligne dans la roadmap (ou rattache-la à une ligne qui la couvre déjà), puis propose-la à " + person() + " depuis Maestro, par une carte (start_session, initiation own_initiative), titrée « #<id> · <libellé court> », avec un brief complet et la clause de Maestro. Ne la code pas toi-même. Puis dis-le à " + person() + " en une ligne : quelle session la propose, quoi, et qu'il clique Start sur ta carte pour la lancer.",
   ].join('\n')
 }
 
-/** Ce que lit la sous-session à la place de sa carte : transmise au Lot (`message`) ou gardée pour lui (`store`). */
-export function proposalSentNote(lot: string, title: string, via: 'message' | 'store'): string {
+/** Ce que lit la sous-session à la place de sa carte : transmise à Maestro (`message`) ou gardée pour lui (`store`). */
+export function proposalSentNote(maestro: string, title: string, via: 'message' | 'store'): string {
   const where = via === 'message'
-    ? `Carte non posée ici : la proposition « ${title} » est transmise au Lot « ${lot} » par message, car ${person()} pilote par le Lot et ne regarde pas ce transcript.`
-    : `Carte non posée ici : la proposition « ${title} » est gardée pour le Lot « ${lot} », qui la recevra à son prochain tour (le message direct a été refusé), car ${person()} pilote par le Lot et ne regarde pas ce transcript.`
-  return `${where} Le Lot ouvre sa ligne et la propose à ${person()}. Ne la repose pas, sous aucune forme ; dis seulement, en une ligne de ton compte rendu, que tu l'as remontée au Lot.`
+    ? `Carte non posée ici : la proposition « ${title} » est transmise à Maestro (« ${maestro} ») par message, car ${person()} pilote par Maestro et ne regarde pas ce transcript.`
+    : `Carte non posée ici : la proposition « ${title} » est gardée pour Maestro (« ${maestro} »), qui la recevra à son prochain tour (le message direct a été refusé), car ${person()} pilote par Maestro et ne regarde pas ce transcript.`
+  return `${where} Maestro ouvre sa ligne et la propose à ${person()}. Ne la repose pas, sous aucune forme ; dis seulement, en une ligne de ton compte rendu, que tu l'as remontée à Maestro.`
 }
 
 // --- Nouvelles des enfants (#84) ---------------------------------------------------------------
@@ -1874,11 +1871,11 @@ function childShortList(children: readonly ChildRow[]): string {
 }
 
 /**
- * La liste d'étapes du Lot (#104, à la place de sa carte, #95 et #97) : une étape par tâche lancée,
+ * La liste d'étapes de Maestro (#104, à la place de sa carte, #95 et #97) : une étape par tâche lancée,
  * son état en mots, une seule en cours comme l'outil l'exige.
  */
-export const LOT_STEP_LIST =
-  "- Ta liste d'étapes (update_plan) suit tes sessions : une étape par tâche lancée, « #<id> <libellé court> · <état> » (en cours : étape 3/7, t'attend, prête à fusionner, en relecture, livrée), dans l'ordre de fusion ; la tâche livrée cochée (completed) ; une seule en cours (in_progress) : celle dont tu t'occupes, sinon la prochaine à fusionner. Renvoie la liste entière (items) dès qu'un état change (skill roadmap:lot, § 3). Pas de carte show_widget."
+export const MAESTRO_STEP_LIST =
+  "- Ta liste d'étapes (update_plan) suit tes sessions : une étape par tâche lancée, « #<id> <libellé court> · <état> » (en cours : étape 3/7, t'attend, prête à fusionner, en relecture, livrée), dans l'ordre de fusion ; la tâche livrée cochée (completed) ; une seule en cours (in_progress) : celle dont tu t'occupes, sinon la prochaine à fusionner. Renvoie la liste entière (items) dès qu'un état change (skill roadmap:maestro, § 3). Pas de carte show_widget."
 
 /**
  * Ce que lit le parent à chaque message de Bertrand (#84) : les enfants à archiver sur une ligne,
@@ -1901,7 +1898,7 @@ export function childAlertText(alerts: readonly ChildAlert[]): string | undefine
     }),
     '',
     'Ce que tu fais :',
-    LOT_STEP_LIST,
+    MAESTRO_STEP_LIST,
   ]
   if (archive.length > 0) {
     lines.push(
@@ -1909,7 +1906,7 @@ export function childAlertText(alerts: readonly ChildAlert[]): string | undefine
     )
   }
   if (rest.some(a => a.kind === 'question')) lines.push('- Une question attend ' + person() + ' : rappelle-la-lui en une ligne, avec le lien ; ne relance pas la session.')
-  if (rest.some(a => a.kind === 'ready')) lines.push('- Prête : lis son dernier compte rendu, puis fusionne ou clos (skill roadmap:lot, § 5 et 6).')
+  if (rest.some(a => a.kind === 'ready')) lines.push('- Prête : lis son dernier compte rendu, puis fusionne ou clos (skill roadmap:maestro, § 5 et 6).')
   if (rest.some(a => a.kind === 'silent' && !a.relaunched)) {
     lines.push(
       "- Silencieuse, pas encore relancée. Écris-lui une fois (SendMessage à son identifiant) : « Où en es-tu, qu'est-ce qui te bloque, de quoi as-tu besoin ? », puis dis à " + person() + " en une ligne que tu l'as relancée : sa réponse t'arrivera à la fin de son tour, ne l'attends pas.",
@@ -1924,7 +1921,7 @@ export function childAlertText(alerts: readonly ChildAlert[]): string | undefine
 
 /**
  * Archiver des deux côtés, sans doublon (#110, Bertrand, 2026-10-29) : une session finie propose son
- * archivage dans sa boîte de fin, et le Lot le propose aussi. Les nouvelles du Lot sont lues au début
+ * archivage dans sa boîte de fin, et Maestro le propose aussi. Les nouvelles de Maestro sont lues au début
  * de son tour ; s'il pose sa question à la fin, Bertrand a pu archiver entre-temps depuis la session
  * (#103 et #104 : archivées à 21:20:31 et 21:20:43, reproposées à 21:20:49). Les « #N » et les
  * `local_…` qu'une question d'archivage nomme encore, parmi les sessions lancées par `parentId` et
@@ -1950,7 +1947,7 @@ export function archivedInAsk(ask: string, rows: readonly unknown[], parentId: s
   return out.sort((a, b) => a.at - b.at).map(o => o.name)
 }
 
-/** Le refus de la boîte de fin du Lot qui nomme une session déjà archivée (#110). */
+/** Le refus de la boîte de fin de Maestro qui nomme une session déjà archivée (#110). */
 export function archivedAskRefusal(names: readonly string[]): string {
   const list = names.length > 1 ? `${names.slice(0, -1).join(', ')} et ${names[names.length - 1]}` : (names[0] ?? '')
   const done = names.length > 1 ? 'sont déjà archivées' : 'est déjà archivée'
@@ -2291,7 +2288,7 @@ export function launchBrief(
   task: Task,
   shortTitle: string,
   bilanLog = DEFAULT_BILAN.log,
-  lot?: string,
+  maestro?: string,
   found: BriefFound = {},
 ): { title: string; prompt: string; background: string } {
   const { mode, requis } = projectSettings(source)
@@ -2301,8 +2298,8 @@ export function launchBrief(
     mode === 'code' && requis.length > 0
       ? [`En prenant la ligne, pose ${listFr(requis.map(k => `\`${k}:\``))}${requis.includes('après') ? ' (`après:-` si rien ne la précède)' : ''} : une tâche lancée est tracée.`]
       : []
-  const ending = lot
-    ? lotClause(lot, mode)
+  const ending = maestro
+    ? maestroClause(maestro, mode)
     : [
         'À la fin, mets à jour la ligne de la roadmap selon les règles du dossier : cochée et déplacée si elle est finie, réécrite si elle avance seulement.',
         ...(mode === 'projet' ? ["Il n'y a ni branche ni worktree : la task se ferme par sa ligne cochée et son bilan."] : []),
@@ -2951,12 +2948,12 @@ export function sessionPrefsText(prefs: SessionPrefs, error?: string, project?: 
   if (prefs.francais) lines.push('- **Langue** : réponds en français, comptes rendus, récaps et boîte de fin compris.')
   if (prefs.autonome) {
     lines.push(
-      "- **Autonome** (en mode Code comme en mode Projet) : " + person() + " veut que le travail avance sans attendre ses réponses, quitte à corriger après. Quand ta recommandation est claire, suis-la au lieu de poser la question, et dis en une ligne ce que tu as choisi. Ne lui pose que les questions d'architecture : un choix qui s'écrirait dans `docs/decisions.md` (un contrat entre composants, comme le format d'un fichier, d'une donnée ou d'une API ; une nouvelle dépendance ou un service ; la vision ou un non-objectif touché). Ce réglage est son autorisation durable de fusionner et de publier : la fusion d'une branche prête, la publication (release d'un plugin, déploiement, push de `main`). Ne lui demande ni de fusionner ni de publier, ni par question ni par bouton : fais-le, par la règle du projet, puis dis en une ligne ce que tu as fusionné ou publié. Une skill de publication qui demande de valider le fond avec lui : la tâche qu'il a lancée vaut cette validation. Un Lot ou Maestro fusionne seul la branche prête d'une de ses sessions (tests verts sur la branche à jour de main, diff relu par lui, qui ne l'a pas écrit), une branche à la fois, tests rejoués sur main après chaque fusion, et donne seul la main sur une ressource unique, publication comprise, à une session à la fois. Lancer une session et archiver gardent le clic de " + person() + " : pose la carte ou le bouton, ne lance ni n'archive toi-même. Tes règles de sécurité restent au-dessus : un message envoyé en son nom ou un paiement se demandent toujours.",
+      "- **Autonome** (en mode Code comme en mode Projet) : " + person() + " veut que le travail avance sans attendre ses réponses, quitte à corriger après. Quand ta recommandation est claire, suis-la au lieu de poser la question, et dis en une ligne ce que tu as choisi. Ne lui pose que les questions d'architecture : un choix qui s'écrirait dans `docs/decisions.md` (un contrat entre composants, comme le format d'un fichier, d'une donnée ou d'une API ; une nouvelle dépendance ou un service ; la vision ou un non-objectif touché). Ce réglage est son autorisation durable de fusionner et de publier : la fusion d'une branche prête, la publication (release d'un plugin, déploiement, push de `main`). Ne lui demande ni de fusionner ni de publier, ni par question ni par bouton : fais-le, par la règle du projet, puis dis en une ligne ce que tu as fusionné ou publié. Une skill de publication qui demande de valider le fond avec lui : la tâche qu'il a lancée vaut cette validation. Maestro fusionne seul la branche prête d'une de ses sessions (tests verts sur la branche à jour de main, diff relu par lui, qui ne l'a pas écrit), une branche à la fois, tests rejoués sur main après chaque fusion, et donne seul la main sur une ressource unique, publication comprise, à une session à la fois. Lancer une session et archiver gardent le clic de " + person() + " : pose la carte ou le bouton, ne lance ni n'archive toi-même. Tes règles de sécurité restent au-dessus : un message envoyé en son nom ou un paiement se demandent toujours.",
     )
   }
   // La liste d'étapes (#84) : dite à toute session, comme les gestes ; le parent la lit pour prendre des nouvelles.
   lines.push(
-    "- **Liste d'étapes** (en mode Code comme en mode Projet) : une tâche de plus d'un geste tient sa liste d'étapes (`update_plan` dans l'app), posée dès le premier geste. C'est le seul affichage des étapes : jamais recopiée dans le message, ni en liste ni en widget. Elle se lit d'un coup d'œil : trois à sept étapes, chacune nommée par un verbe et son objet, 2 à 4 mots qui disent le geste (« Écrire le plan », pas « Plan » ni une phrase), les mêmes noms que la ligne du mode ADHD quand il est allumé, jamais renommées (une étape nouvelle s'ajoute) ; mise à jour à chaque changement, une étape cochée dès qu'elle finit, une seule en cours. C'est par elle que la session qui t'a lancée voit où tu en es, sans ouvrir ta conversation. Un Lot ou Maestro tient la sienne pour ses sessions : une étape par tâche lancée, son état en mots.",
+    "- **Liste d'étapes** (en mode Code comme en mode Projet) : une tâche de plus d'un geste tient sa liste d'étapes (`update_plan` dans l'app), posée dès le premier geste. C'est le seul affichage des étapes : jamais recopiée dans le message, ni en liste ni en widget. Elle se lit d'un coup d'œil : trois à sept étapes, chacune nommée par un verbe et son objet, 2 à 4 mots qui disent le geste (« Écrire le plan », pas « Plan » ni une phrase), les mêmes noms que la ligne du mode ADHD quand il est allumé, jamais renommées (une étape nouvelle s'ajoute) ; mise à jour à chaque changement, une étape cochée dès qu'elle finit, une seule en cours. C'est par elle que la session qui t'a lancée voit où tu en es, sans ouvrir ta conversation. Maestro tient la sienne pour ses sessions : une étape par tâche lancée, son état en mots.",
   )
   lines.push(gesturesText(prefs.autonome))
   lines.push(mockupText())
@@ -3040,7 +3037,8 @@ export function maestroCall(prompt: string): { go: boolean } | undefined {
   // Au premier message d'une session en worktree, l'app met un bloc <system-reminder> avant le texte
   // de Bertrand, et le hook reçoit les blocs joints (#69) : la tête du message vient après eux.
   const text = prompt.replace(/^(?:\s*<system-reminder>[\s\S]*?<\/system-reminder>)*/, '')
-  const m = /^\s*maestro\b[\s,.:!?-]*(.*)$/is.exec(text)
+  // « /maestro » (et « /roadmap:maestro ») lance la skill du même nom : il vaut « Maestro » (#112).
+  const m = /^\s*(?:\/(?:roadmap:)?)?maestro\b[\s,.:!?-]*(.*)$/is.exec(text)
   if (!m) return undefined
   return { go: /^(go|lance|lancer|vas-y|vas y|start|démarre|demarre)\b/i.test((m[1] ?? '').trim()) }
 }
@@ -3332,8 +3330,8 @@ export function maestroContext(o: {
     "Ce que tu fais, sans rien coder ni écrire dans la roadmap (sauf la ligne d'une tâche que propose une de tes sessions) :",
     `- Ouvre ta réponse par une phrase de verdict : ce qui avance, ce qui coince${stuck.length > 0 ? ` (${stuck.length} session${stuck.length > 1 ? 's' : ''} coincée${stuck.length > 1 ? 's' : ''} depuis plus de ${durationLabel(MAESTRO_STUCK_MS)} : dis lesquelles et ${o.autonome ? 'réponds d\'abord toi-même à celles qui ne reviennent pas à ' + person() + ' (plus bas) ; les autres, à ' + person() + ' d\'y répondre d\'abord' : 'qu\'il revient à ' + person() + ' d\'y répondre d\'abord'}, avec leur lien)` : ''}.`,
   ]
-  // Le Lot suit ses sessions par sa liste d'étapes (#104), dans les deux modes.
-  lines.push(LOT_STEP_LIST)
+  // Maestro suit ses sessions par sa liste d'étapes (#104), dans les deux modes.
+  lines.push(MAESTRO_STEP_LIST)
   const card = `pose sa carte de session (${cardTool(o.launchEffort, projectSettings(o.source).mode)}) avec le titre et le brief donnés ci-dessous, sans la lancer toi-même`
   if (o.candidates.length === 0) {
     lines.push('- Rien à lancer : dis-le en une phrase, et ce qui le débloquerait.')
@@ -3348,15 +3346,15 @@ export function maestroContext(o: {
     )
   }
   lines.push(
-    "- Tu es le Lot des sessions que tu lances (skill roadmap:lot), même d'une seule : une carte New task qu'elles posent te remonte (« Tâche proposée par une session que tu as lancée… »), maintenant ou à un tour suivant, au lieu de rester dans leur transcript. Ouvre sa ligne, pose ta carte, et dis à " + person() + " en une ligne quelle session la propose et qu'il clique Start sur ta carte.",
+    "- Tu es Maestro pour les sessions que tu lances (skill roadmap:maestro), même une seule : une carte New task qu'elles posent te remonte (« Tâche proposée par une session que tu as lancée… »), maintenant ou à un tour suivant, au lieu de rester dans leur transcript. Ouvre sa ligne, pose ta carte, et dis à " + person() + " en une ligne quelle session la propose et qu'il clique Start sur ta carte.",
     ...(o.autonome
       ? [
-          '- Réglage autonome allumé : fusionne seul, sans attendre le clic de ' + person() + ', la branche prête d\'une de tes sessions (tests verts sur la branche à jour de main, diff relu par toi), une à la fois, par la règle de fusion du projet, tests rejoués sur main après chaque fusion (skill roadmap:lot, § 5). Tu publies seul aussi (release d\'un plugin, déploiement), et tu donnes seul la main sur une ressource unique à une session à la fois (§ 4), sans lui demander. Lancer et archiver restent à son clic.',
+          '- Réglage autonome allumé : fusionne seul, sans attendre le clic de ' + person() + ', la branche prête d\'une de tes sessions (tests verts sur la branche à jour de main, diff relu par toi), une à la fois, par la règle de fusion du projet, tests rejoués sur main après chaque fusion (skill roadmap:maestro, § 5). Tu publies seul aussi (release d\'un plugin, déploiement), et tu donnes seul la main sur une ressource unique à une session à la fois (§ 4), sans lui demander. Lancer et archiver restent à son clic.',
           "- Une session qui attend une réponse : lis son dernier compte rendu. Si ce n'est ni une question d'architecture (un choix qui s'écrirait dans docs/decisions.md) ni un geste qui revient à " + person() + " (lancer, archiver, un secret, un accès), réponds-lui toi-même par message avec ta recommandation, et dis-le en une ligne.",
         ]
       : projectSettings(o.source).mode === 'projet'
         ? []
-        : ['- La fusion de la branche prête d\'une de tes sessions attend le clic de ' + person() + ' : propose-la-lui, une branche à la fois (skill roadmap:lot, § 5).']),
+        : ['- La fusion de la branche prête d\'une de tes sessions attend le clic de ' + person() + ' : propose-la-lui, une branche à la fois (skill roadmap:maestro, § 5).']),
     "- Les nouvelles de tes sessions enfants (celles qui coincent ou sont à archiver) t'arrivent à chaque message de " + person() + ", sous « Roadmap — nouvelles de tes sessions enfants » : suis leurs consignes. Sans ce bloc, toutes avancent.",
     '- Mode ADHD et réponses courtes : pas de tableau, pas de récapitulatif.',
   )

@@ -158,12 +158,11 @@ import {
   sessionTitleKind,
   sessionTitleIn,
   oneTaskStep,
-  isLotSession,
   isMaestroSession,
-  lotSessionIds,
+  maestroSessionIds,
   withSelfRow,
   sessionScanNote,
-  lotTasksNote,
+  maestroTasksNote,
   otherTaskNote,
   problemsText,
   sourceFor,
@@ -194,10 +193,10 @@ import {
   isInsideRelative,
   isAutoModeRefusal,
   viaClaudeNote,
-  lotParentOf,
-  lotProposalText,
+  maestroParentOf,
+  maestroProposalText,
   proposalSentNote,
-  type LotProposal,
+  type MaestroProposal,
   applyPlan,
   childAlerts,
   childAlertText,
@@ -285,11 +284,11 @@ const BATCH = 30
 const STORE_KEY = 'titles-sonnet'
 // L'outil de l'app de bureau qui démarre une session à part.
 const START_SESSION_TOOL = 'mcp__ccd_session__start_session'
-/** Le message d'une session à une autre : la proposition d'une sous-session part à son Lot. */
+/** Le message d'une session à une autre : la proposition d'une sous-session part à son Maestro. */
 const SEND_MESSAGE_TOOL = 'mcp__ccd_session_mgmt__send_message'
-/** Les propositions gardées pour leur Lot quand le message direct est refusé (#67). */
+/** Les propositions gardées pour leur Maestro quand le message direct est refusé (#67). */
 const PROPOSALS_KEY = 'lot-proposals'
-/** Une proposition gardée plus d'une semaine sans que son Lot reprenne la main : retirée. */
+/** Une proposition gardée plus d'une semaine sans que son Maestro reprenne la main : retirée. */
 const PROPOSAL_MAX_MS = 7 * 86_400_000
 /** Les outils d'où un enfant tire son état (#84) : sa liste d'étapes, sa question, son récap. */
 const UPDATE_PLAN_TOOL = 'mcp__ccd_turn__update_plan'
@@ -563,8 +562,8 @@ async function roadmapBlock($: EngineInterface, c: Capture): Promise<string | un
     const own = await readOwnSession($)
     const id = sessionTitleId(own.title)
     if (id === undefined || c.archiveAsked.has(id) || !doneIds(now.done).has(id) || doneIds(atStartDone).has(id)) return undefined
-    // Un Lot coche les lignes de ses tâches : le numéro de son titre n'est pas son chantier.
-    if (await ownIsLot($, own)) return undefined
+    // Un Maestro coche les lignes de ses tâches : le numéro de son titre n'est pas son chantier.
+    if (await ownIsMaestro($, own)) return undefined
     // Un projet qui range sa mémoire en fin de sujet (#101) : pas d'archivage avant la ligne de rangement.
     const r = c.source.rangement
     if (r && !c.rangeSeen) {
@@ -1012,7 +1011,7 @@ async function probeLive($: EngineInterface): Promise<void> {
 
 /**
  * Cette session dans l'app : son identifiant (`local_…`) et son titre, lus sur sa fiche. `fresh` la
- * relit : Bertrand peut la nommer après le chargement du panneau (« Lot #1 »).
+ * relit : Bertrand peut la nommer après le chargement du panneau (« Maestro »).
  */
 let ownSession: { id: string | undefined; title: string } | null = null
 
@@ -1033,13 +1032,13 @@ async function ownAppSession($: EngineInterface): Promise<string | undefined> {
 }
 
 /**
- * Cette session coordonne-t-elle un Lot ? Son titre (« Lot … »), sinon sa famille : au moins deux
- * sessions qu'elle a lancées encore ouvertes (`lotSessionIds`). La liste se relit à la demande —
+ * Cette session est-elle un Maestro ? Son titre (« Maestro … », ou son alias « Lot … »), sinon sa famille : au moins deux
+ * sessions qu'elle a lancées encore ouvertes (`maestroSessionIds`). La liste se relit à la demande —
  * une ligne ouverte, une fin de tour qui cocherait sa tâche, un ▶ — et une liste refusée ou
  * illisible laisse le titre seul juger.
  */
-async function ownIsLot($: EngineInterface, own: { id: string | undefined; title: string }): Promise<boolean> {
-  if (isLotSession(own.title) || isMaestroSession(own.title)) return true
+async function ownIsMaestro($: EngineInterface, own: { id: string | undefined; title: string }): Promise<boolean> {
+  if (isMaestroSession(own.title)) return true
   if (own.id && (await loadMaestros($))[own.id] !== undefined) return true
   if (!own.id || listDenied) return false
   try {
@@ -1047,7 +1046,7 @@ async function ownIsLot($: EngineInterface, own: { id: string | undefined; title
     const ran = await $.tool.call({ tool: LIST_SESSIONS_TOOL, limit: LIST_LIMIT })
     if (ran.deny !== undefined || ran.isError) return false
     const rows: unknown = JSON.parse(ran.text ?? '[]')
-    return Array.isArray(rows) && lotSessionIds(rows).has(own.id)
+    return Array.isArray(rows) && maestroSessionIds(rows).has(own.id)
   } catch {
     return false
   }
@@ -1077,24 +1076,24 @@ async function markMaestro($: EngineInterface): Promise<void> {
   await $.store.set(MAESTROS_KEY, { ...Object.fromEntries(kept), [own.id]: now })
 }
 
-/** Les propositions gardées pour les Lots ; seules les entrées bien formées comptent. */
-async function loadProposals($: EngineInterface): Promise<LotProposal[]> {
+/** Les propositions gardées pour les Maestros ; seules les entrées bien formées comptent. */
+async function loadProposals($: EngineInterface): Promise<MaestroProposal[]> {
   const stored = await $.store.get(PROPOSALS_KEY)
   if (!Array.isArray(stored)) return []
-  return stored.filter((p): p is LotProposal => {
-    const v = p as Partial<LotProposal> | null
+  return stored.filter((p): p is MaestroProposal => {
+    const v = p as Partial<MaestroProposal> | null
     return !!v && typeof v.lot === 'string' && typeof v.from === 'string' && typeof v.title === 'string'
       && typeof v.prompt === 'string' && typeof v.at === 'number'
   })
 }
 
 /**
- * Bertrand ne pilote un lot que par le Lot (demande du 2026-10-27) : la carte New task que le modèle
+ * Bertrand ne pilote ses sessions que par Maestro (demande du 2026-10-27) : la carte New task que le modèle
  * pose dans une sous-session (`own_initiative`) resterait dans un transcript qu'il ne regarde pas.
- * Elle remonte donc au Lot, par message (il se réveille et la lit dans son transcript) ; un message
- * refusé la garde dans le store, et le Lot la reçoit à son prochain tour. Le modèle lit, à la place
- * de sa carte, qu'elle est au Lot. Tout le reste passe : `offer` et `user_asked` (Bertrand parle à
- * la sous-session), le ▶ du panneau, une session sans Lot, et toute panne. Le moteur ne fait pas
+ * Elle remonte donc à Maestro, par message (il se réveille et la lit dans son transcript) ; un message
+ * refusé la garde dans le store, et Maestro la reçoit à son prochain tour. Le modèle lit, à la place
+ * de sa carte, qu'elle est à Maestro. Tout le reste passe : `offer` et `user_asked` (Bertrand parle à
+ * la sous-session), le ▶ du panneau, une session sans Maestro, et toute panne. Le moteur ne fait pas
  * passer les `$.tool.call` du panneau par ses propres hooks (mesuré en test le 2026-10-28) :
  * l'origine vérifiée ici garde le ▶ si cela changeait.
  */
@@ -1107,7 +1106,7 @@ async function forwardProposal(
   const card = e as { initiation?: unknown; title?: unknown; prompt?: unknown; background?: unknown }
   if (origin !== 'engine' || card.initiation !== 'own_initiative') return pass()
   if (typeof card.title !== 'string' || typeof card.prompt !== 'string') return pass()
-  let lot: { id: string; title: string } | undefined
+  let maestro: { id: string; title: string } | undefined
   let self: { sessionId?: unknown; title?: unknown } | undefined
   try {
     const selfRan = await $.tool.call({ tool: GET_SESSION_TOOL, session_id: 'self' })
@@ -1118,13 +1117,13 @@ async function forwardProposal(
     const listRan = await $.tool.call({ tool: LIST_SESSIONS_TOOL, linked: true, include_archived: true, limit: LIST_LIMIT })
     if (listRan.deny !== undefined || listRan.isError) return pass()
     const rows: unknown = JSON.parse(listRan.text ?? '[]')
-    lot = lotParentOf(self, Array.isArray(rows) ? rows : [], new Set(Object.keys(await loadMaestros($))))
+    maestro = maestroParentOf(self, Array.isArray(rows) ? rows : [], new Set(Object.keys(await loadMaestros($))))
   } catch {
     return pass()
   }
-  if (!lot || typeof self?.sessionId !== 'string') return pass()
-  const proposal: LotProposal = {
-    lot: lot.id,
+  if (!maestro || typeof self?.sessionId !== 'string') return pass()
+  const proposal: MaestroProposal = {
+    lot: maestro.id,
     from: self.sessionId,
     fromTitle: typeof self.title === 'string' ? self.title : '',
     title: card.title,
@@ -1132,12 +1131,12 @@ async function forwardProposal(
     ...(typeof card.background === 'string' && card.background !== '' ? { background: card.background } : {}),
     at: await $.clock.now(),
   }
-  const name = lot.title || 'Lot'
+  const name = maestro.title || 'Maestro'
   try {
-    const sent = await $.tool.call({ tool: SEND_MESSAGE_TOOL, session_id: lot.id, message: lotProposalText([proposal]) })
+    const sent = await $.tool.call({ tool: SEND_MESSAGE_TOOL, session_id: maestro.id, message: maestroProposalText([proposal]) })
     if (sent.deny === undefined && !sent.isError) return { deny: proposalSentNote(name, card.title, 'message') }
   } catch {
-    // outil absent : la proposition est gardée pour le Lot
+    // outil absent : la proposition est gardée pour Maestro
   }
   try {
     await $.store.set(PROPOSALS_KEY, [...(await loadProposals($)), proposal])
@@ -1148,7 +1147,7 @@ async function forwardProposal(
 }
 
 /**
- * Option « Lancer en bypass » (#87) : la carte que pose Claude (Maestro, Lot, repli du panneau)
+ * Option « Lancer en bypass » (#87) : la carte que pose Claude (Maestro, repli du panneau)
  * demande le bypass et porte la consigne de relève. L'app n'accorde le bypass que depuis une session
  * déjà en bypass : refusée pour son mode, la carte repart sans lui, et la session lancée se relèvera
  * elle-même. Tout autre refus (Bertrand refuse la carte, le mode auto) revient tel quel : la carte
@@ -1166,7 +1165,7 @@ async function launchWithMode(e: unknown, post: (card: Record<string, unknown>) 
 }
 
 /**
- * Les propositions gardées pour ce Lot, à donner au modèle en tête de son tour ; elles sortent
+ * Les propositions gardées pour ce Maestro, à donner au modèle en tête de son tour ; elles sortent
  * alors du store, avec celles de plus d'une semaine. Store vide : aucune lecture de fiche.
  */
 async function receiveProposals($: EngineInterface): Promise<string | undefined> {
@@ -1177,7 +1176,7 @@ async function receiveProposals($: EngineInterface): Promise<string | undefined>
   const mine = kept.filter(p => p.lot === id && now - p.at <= PROPOSAL_MAX_MS)
   const rest = kept.filter(p => p.lot !== id && now - p.at <= PROPOSAL_MAX_MS)
   if (rest.length !== kept.length) await $.store.set(PROPOSALS_KEY, rest)
-  return mine.length > 0 ? lotProposalText(mine) : undefined
+  return mine.length > 0 ? maestroProposalText(mine) : undefined
 }
 
 // --- Nouvelles des enfants (#84) ------------------------------------------------------------------
@@ -1433,7 +1432,7 @@ async function childAlertContext($: EngineInterface): Promise<string | undefined
 }
 
 /**
- * La question d'archivage d'un Lot relue au moment de la poser (#110) : ses nouvelles datent du début
+ * La question d'archivage d'un Maestro relue au moment de la poser (#110) : ses nouvelles datent du début
  * du tour, et Bertrand a pu archiver une session depuis sa propre boîte de fin entre-temps. Le refus
  * nomme celles déjà archivées ; une question qui n'archive rien, ou une liste illisible, passe.
  */
@@ -1490,7 +1489,7 @@ async function shortTitleOf($: EngineInterface, task: Task): Promise<string> {
  * Une session, une tâche (2026-10-23) : une session « #N · … » qui ouvre une autre tâche n'y
  * travaille pas, et la note rendue rappelle au modèle de proposer une session à part. Le titre se
  * pose au lancement, puis ne change plus (2026-10-25) : le panneau ne renomme aucune session.
- * Une session « Lot » ouvre et coche les lignes de ses features sans travailler sur aucune : elle
+ * Une session Maestro ouvre et coche les lignes de ses features sans travailler sur aucune : elle
  * n'est jamais en cours, et ce qu'elle tenait d'avant tombe.
  */
 /**
@@ -1541,12 +1540,12 @@ async function markWorking($: EngineInterface, source: Source, added: Task[]): P
     const ignored = await loadIgnored($)
     const mine = Object.keys(live).filter(k => live[k]?.via === 'write' && live[k]?.sessionId === sessionId)
     const keys = new Set([...mine, ...added.map(t => liveKeyOf(source, t))])
-    // Un Lot (titre ou famille) n'est sur aucune tâche : il les lance.
-    const lot = await ownIsLot($, { id: sessionId, title })
-    if (lot) note = lotTasksNote(added)
+    // Un Maestro (titre ou famille) n'est sur aucune tâche : il les lance.
+    const maestro = await ownIsMaestro($, { id: sessionId, title })
+    if (maestro) note = maestroTasksNote(added)
     const step = oneTaskStep(title, added)
-    if (!lot && step.kind === 'other') return otherTaskNote(step.own, step.task, await shortTitleOf($, step.task))
-    if (lot || keys.size > 1) {
+    if (!maestro && step.kind === 'other') return otherTaskNote(step.own, step.task, await shortTitleOf($, step.task))
+    if (maestro || keys.size > 1) {
       for (const k of mine) {
         delete live[k]
         liveStatus.delete(k)
@@ -1649,7 +1648,7 @@ async function readListRows($: EngineInterface): Promise<{ rows: unknown[]; note
 
 /**
  * La fiche de cette session, relue à chaque relecture : la liste de l'app ne la rend jamais. Elle
- * tient aussi à jour l'identifiant et le titre gardés (`ownSession`) : une session nommée « Lot · … »
+ * tient aussi à jour l'identifiant et le titre gardés (`ownSession`) : une session nommée « Maestro · … »
  * après coup se reconnaît au pas suivant.
  */
 async function readSelfRow($: EngineInterface): Promise<unknown> {
@@ -1708,7 +1707,7 @@ async function matchSessions($: EngineInterface, source: Source): Promise<void> 
     const titles = await loadTitles($)
     const now = await $.clock.now()
     const next = new Map<string, LiveEntry>()
-    const lots = lotSessionIds(sessions)
+    const maestros = maestroSessionIds(sessions)
     // Une session qui finit son tour (ou le reprend) change sa marque : la main ou la roue.
     let runningChanged = false
     for (const raw of sessions) {
@@ -1728,8 +1727,8 @@ async function matchSessions($: EngineInterface, source: Source): Promise<void> 
       }
       if (sess.isArchived === true || typeof sess.title !== 'string' || typeof sess.sessionId !== 'string') continue
       if (typeof sess.cwd !== 'string' || !source.match.some(prefix => (sess.cwd as string).startsWith(prefix))) continue
-      // Une session « Lot » (titre ou famille) coordonne ses features : aucune n'est la sienne.
-      if (isLotSession(sess.title) || lots.has(sess.sessionId)) continue
+      // Une session Maestro (titre ou famille) coordonne ses features : aucune n'est la sienne.
+      if (isMaestroSession(sess.title) || maestros.has(sess.sessionId)) continue
       const last = typeof sess.lastActivityAt === 'string' ? Date.parse(sess.lastActivityAt) : Number.NaN
       if (Number.isNaN(last) || now - last > LIVE_MAX_MS) continue
       const id = sessionTitleId(sess.title)
@@ -1969,13 +1968,13 @@ async function launchSession($: EngineInterface, source: Source, task: Task, sho
 
 /**
  * Le brief d'une session de travail sur une tâche : le journal des bilans du dossier, et la clause
- * du Lot quand la session qui lance en est un (elle ne fusionne pas).
+ * de Maestro quand la session qui lance en est un (elle ne fusionne pas).
  */
 async function workBrief($: EngineInterface, source: Source, task: Task, shortTitle: string): Promise<{ title: string; prompt: string; background: string }> {
   const bilanLog = bilanConfigFor(await readOr($, `${source.dir}/cowork.json`)).log
   const own = await readOwnSession($, true)
-  const lot = own && (await ownIsLot($, own)) ? own.title || 'Lot' : undefined
-  return launchBrief(source, task, shortTitle, bilanLog, lot, await briefFound($, source, task))
+  const maestro = own && (await ownIsMaestro($, own)) ? own.title || 'Maestro' : undefined
+  return launchBrief(source, task, shortTitle, bilanLog, maestro, await briefFound($, source, task))
 }
 
 /** Les chemins de la ligne (`fiche:`, `spec:`, `src:`) qui existent : le brief ne donne à lire que ceux-là (#93). */
@@ -2658,7 +2657,7 @@ export const register: Register = (on, options) => {
     } catch {
       // réglages illisibles : pas de rappel
     }
-    // Un Lot reçoit les propositions de ses sous-sessions que le message direct n'a pas portées.
+    // Un Maestro reçoit les propositions de ses sous-sessions que le message direct n'a pas portées.
     try {
       const proposals = await receiveProposals($)
       if (proposals !== undefined) texts.push(proposals)
@@ -2698,13 +2697,13 @@ export const register: Register = (on, options) => {
   on('tool.call', { tool: 'Edit' }, ($, e, next) => written($, () => next(e), e.file_path))
   on('tool.call', { tool: 'Write' }, ($, e, next) => written($, () => next(e), e.file_path))
   on('tool.call', { tool: 'NotebookEdit' }, ($, e, next) => written($, () => next(e), e.notebook_path))
-  // La carte New task d'une sous-session remonte à son Lot (#67).
+  // La carte New task d'une sous-session remonte à son Maestro (#67).
   // Option « Lancer en bypass » : la carte qui reste ici demande le bypass (#87).
   on('tool.call', { tool: START_SESSION_TOOL }, async ($, e, next) => {
     const ran = await forwardProposal($, e, next.origin.plugin, () =>
       next.origin.plugin === 'engine' ? launchWithMode(e, card => next(card as typeof e)) : next(e),
     )
-    // Une carte posée (ou remontée au Lot) : l'idée du tour a sa suite (#83).
+    // Une carte posée (ou remontée à Maestro) : l'idée du tour a sa suite (#83).
     if (capture && !ran.isError) capture.cardThisTurn = true
     return ran
   })

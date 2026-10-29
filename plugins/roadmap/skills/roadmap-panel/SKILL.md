@@ -141,9 +141,10 @@ sonnet). Un changement recharge le panneau.
   ligne grise de la conversation, ou dans le journal de débogage (`claude --debug`).
 - Les tâches sont toutes « À classer » : les titres courts sont en cours d'écriture ; ils arrivent
   au fil des réponses du modèle et ne se redemandent que pour une tâche nouvelle ou modifiée.
-- Une tâche ne passe pas « en cours » alors qu'une session écrit sa ligne : la session est un Lot,
-  nommée « Lot … » ou qui a lancé au moins deux sessions encore ouvertes (elle coordonne des
-  features, jamais rattachée à une tâche ; skill `lot`), ou elle porte déjà un autre
+- Une tâche ne passe pas « en cours » alors qu'une session écrit sa ligne : la session est un Maestro,
+  nommée « Maestro … » (ou d'un ancien titre « Lot … », gardé en alias), marquée Maestro, ou qui a
+  lancé au moins deux sessions encore ouvertes (elle coordonne des features, jamais rattachée à une
+  tâche ; skill `maestro`), ou elle porte déjà un autre
   numéro « #N · … ». Le panneau ne renomme aucune session : le titre « #N · titre court » se pose
   au lancement (▶ de la liste, « Lancer » ou « Vérifier » du détail).
 - « Ouvrir la fiche » ouvre l'app par défaut du Mac : le fichier n'est pas dans un dossier de la

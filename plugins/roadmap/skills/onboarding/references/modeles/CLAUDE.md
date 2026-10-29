@@ -43,7 +43,7 @@ node scripts/check.mjs                   # avant un commit : liens des docs, gra
 - **Le dossier principal reste sur `main`.** On n'y touche qu'à `{{RM}}ROADMAP.md`, `{{RM}}ROADMAP-fait.md`, `{{RM}}ROADMAP-bilans.csv` et `docs/plans/inbox/ideas.md`, et on y fusionne. Committer le seul fichier modifié, `git -C {{DOSSIER}} commit <fichier> -m …`{{PUSH_PRISE}}. Jamais `git add -A`, `git commit -a`, `git clean`, `git stash`, `git reset --hard` ni `git checkout <branche>` dans ce dossier : ils emportent ou détruisent le travail d'une autre session.
 - **Dans un worktree**, ne jamais modifier `{{RM}}ROADMAP.md`, `{{RM}}ROADMAP-fait.md`, `{{RM}}ROADMAP-bilans.csv` ni `ideas.md` : ces fichiers ne vivent que sur `main`.
 - **Fusionner** : toujours par les étapes de « Finir un chantier » plus haut.
-- **Un Lot coordonne** : une session nommée « Lot N » lance une session par tâche, lit leurs comptes rendus, choisit l'ordre des fusions et fusionne pour elles, une branche à la fois (skill `roadmap:lot`). Sous un Lot, une session ne fusionne pas, et ne touche une ressource unique qu'avec la main du Lot : c'est lui qui pose et retire son verrou.
+- **Maestro coordonne** : la session mère, nommée « Maestro » (`/maestro`), lance une session par tâche, lit leurs comptes rendus, choisit l'ordre des fusions et fusionne pour elles, une branche à la fois (skill `roadmap:maestro`). Sous Maestro, une session ne fusionne pas, et ne touche une ressource unique qu'avec la main de Maestro : c'est lui qui pose et retire son verrou.
 {{GITHUB_PUCE}}
 ### Verrous
 

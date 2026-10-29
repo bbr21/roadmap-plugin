@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
-"""État d'un Lot : chaque branche face à main (ses commits, ses conflits), les fichiers touchés par
-deux branches à la fois, les tests, l'ordre de fusion proposé. Le Lot le lit pour ranger sa liste
-d'étapes (skill lot, § 3 et 5) ; plus de carte HTML depuis #104. Rendu en texte ou en JSON.
+"""État des sessions de Maestro : chaque branche face à main (ses commits, ses conflits), les fichiers touchés par
+deux branches à la fois, les tests, l'ordre de fusion proposé. Maestro le lit pour ranger sa liste
+d'étapes (skill maestro, § 3 et 5) ; plus de carte HTML depuis #104. Rendu en texte ou en JSON.
 
-  python3 etat_lot.py DEPOT LOT.json [--texte | --json]
+  python3 etat_maestro.py DEPOT MAESTRO.json [--texte | --json]
 
-LOT.json (« - » : l'entrée standard), écrit par le Lot :
-  {"base": "main", "taches": [{"id": 95, "titre": "Carte du Lot", "branche": "feat/x",
+MAESTRO.json (« - » : l'entrée standard), écrit par Maestro :
+  {"base": "main", "taches": [{"id": 95, "titre": "Carte de Maestro", "branche": "feat/x",
    "tests": "verts" | "rouges" (absent : à lancer), "relue": true, "apres": [94]}]}
 
 Lecture seule sur le dépôt : git log, rev-list, diff et merge-tree (conflits réels, git 2.38 et
 plus ; plus ancien, ils sont dits inconnus). Rien n'est fusionné, aucun test n'est lancé. Code de
-retour 2 sur un LOT.json illisible, vide ou en double, ou sur un dépôt ou une base introuvables.
+retour 2 sur un MAESTRO.json illisible, vide ou en double, ou sur un dépôt ou une base introuvables.
 
 Python 3.9 et plus, bibliothèque standard seulement.
 """
@@ -41,7 +41,7 @@ def paire(a, b):
 
 
 def ids_de(apres):
-    """`apres` tel que le Lot l'écrit (liste, nombre seul, texte « 12,15 ») : des ids entiers."""
+    """`apres` tel que Maestro l'écrit (liste, nombre seul, texte « 12,15 ») : des ids entiers."""
     if apres is None or apres == "":
         return []
     brut = apres if isinstance(apres, list) else re.split(r"[,\s]+", str(apres))
@@ -59,16 +59,16 @@ def vide():
             "commits": [], "plus": 0, "moins": 0, "depart": None}
 
 
-def analyser(lot, faits, conflits):
-    """L'état du lot à partir des faits git de chaque branche (`collecter`) et des conflits entre
+def analyser(entree, faits, conflits):
+    """L'état des tâches à partir des faits git de chaque branche (`collecter`) et des conflits entre
     deux branches (clé : la paire triée de leurs noms ; valeur : fichiers en conflit, None si
     inconnu). Rend les tâches enrichies (etat, pret, partages), les fichiers touchés par deux
     branches ou en conflit entre deux, l'ordre de fusion et la boucle de dépendances s'il y en a."""
-    base = lot.get("base") or "main"
-    taches = [dict(t, apres=ids_de(t.get("apres"))) for t in lot["taches"]]
+    base = entree.get("base") or "main"
+    taches = [dict(t, apres=ids_de(t.get("apres"))) for t in entree["taches"]]
     for t in taches:
         t["faits"] = dict(vide(), **(faits.get(t["branche"]) or {}))
-    ids_lot = {t["id"] for t in taches}
+    ids_entree = {t["id"] for t in taches}
     vivantes = [t for t in taches if t["faits"]["existe"] and t["faits"]["avance"] > 0]
     ids_vivants = {t["id"] for t in vivantes}
     # Une prérequise n'est fusionnée que si sa branche n'a plus rien à fusionner ; introuvable, elle attend.
@@ -111,7 +111,7 @@ def analyser(lot, faits, conflits):
 
     for t in taches:
         fa = t["faits"]
-        attend = [i for i in t["apres"] if i in non_fusionnees and i in ids_lot and i != t["id"]]
+        attend = [i for i in t["apres"] if i in non_fusionnees and i in ids_entree and i != t["id"]]
         tests = t.get("tests")
         if not fa["existe"]:
             etat = INTROUVABLE
@@ -145,7 +145,7 @@ def analyser(lot, faits, conflits):
 
 def ordonner(taches):
     """L'ordre de fusion du § 5 de la skill : prête d'abord, ce qui débloque d'autres tâches, ce qui
-    libère des fichiers partagés, la plus petite ; puis chaque tâche après ses prérequises du lot.
+    libère des fichiers partagés, la plus petite ; puis chaque tâche après ses prérequises de l'entrée.
     Rend aussi les ids pris dans une boucle de dépendances (rangés quand même, au plus tôt)."""
     cand = [t for t in taches if t["etat"] not in HORS_ORDRE]
     ids = {t["id"] for t in cand}
@@ -218,10 +218,10 @@ def depart_de(depot, base, b):
     return commit_lu(un.stdout.strip(), "depart") if un and un.returncode == 0 and un.stdout.strip() else None
 
 
-def collecter(depot, lot):
+def collecter(depot, entree):
     """Les faits git de chaque branche face à la base (avance, retard, fichiers, lignes, commits de
     chaque côté depuis le départ commun, conflits avec la base), et les conflits entre deux branches."""
-    base = lot.get("base") or "main"
+    base = entree.get("base") or "main"
     r = lancer_git(depot, "rev-parse", "--git-dir")
     if r is None:
         raise ErreurDepot("git introuvable")
@@ -231,7 +231,7 @@ def collecter(depot, lot):
     if r is None or r.returncode != 0:
         raise ErreurDepot("base %s introuvable dans %s" % (base, depot))
     faits = {}
-    for t in lot["taches"]:
+    for t in entree["taches"]:
         b = t["branche"]
         if b in faits:
             continue
@@ -320,7 +320,7 @@ def texte(analyse):
 # ---------------------------------------------------------------- ligne de commande
 
 
-def lire_lot(chemin):
+def lire_entree(chemin):
     if chemin == "-":
         return json.load(sys.stdin)
     with open(chemin, encoding="utf-8") as f:
@@ -341,32 +341,32 @@ def doublon(taches):
 
 
 def main(argv=None):
-    p = argparse.ArgumentParser(description="État d'un Lot : texte ou JSON.")
+    p = argparse.ArgumentParser(description="État des sessions de Maestro : texte ou JSON.")
     p.add_argument("depot")
-    p.add_argument("lot")
+    p.add_argument("entree")
     g = p.add_mutually_exclusive_group()
     g.add_argument("--texte", action="store_const", const="texte", dest="rendu")
     g.add_argument("--json", action="store_const", const="json", dest="rendu")
     a = p.parse_args(argv)
     try:
-        lot = lire_lot(a.lot)
-        taches = lot.get("taches") if isinstance(lot, dict) else None
+        entree = lire_entree(a.entree)
+        taches = entree.get("taches") if isinstance(entree, dict) else None
     except (OSError, ValueError) as err:
-        print("%s illisible : %s" % (a.lot, err), file=sys.stderr)
+        print("%s illisible : %s" % (a.entree, err), file=sys.stderr)
         return 2
     if not taches or not all(isinstance(t, dict) and "id" in t and t.get("branche") for t in taches):
-        print("%s : aucune tâche dans le lot (chaque tâche porte id et branche)" % a.lot, file=sys.stderr)
+        print("%s : aucune tâche dans l'entrée (chaque tâche porte id et branche)" % a.entree, file=sys.stderr)
         return 2
     double = doublon(taches)
     if double:
-        print("%s : %s" % (a.lot, double), file=sys.stderr)
+        print("%s : %s" % (a.entree, double), file=sys.stderr)
         return 2
     try:
-        faits, conflits = collecter(a.depot, lot)
+        faits, conflits = collecter(a.depot, entree)
     except ErreurDepot as err:
         print(str(err), file=sys.stderr)
         return 2
-    analyse = analyser(lot, faits, conflits)
+    analyse = analyser(entree, faits, conflits)
     if a.rendu == "json":
         print(json.dumps(analyse, ensure_ascii=False, indent=2))
     else:

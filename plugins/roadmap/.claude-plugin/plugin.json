@@ -1,6 +1,6 @@
 {
   "name": "roadmap",
-  "version": "0.63.2",
+  "version": "0.64.0",
   "description": "Panneau Claude Code à côté du chat : la roadmap du projet de la session, filtrable, avec le détail d'une tâche et son lancement dans une nouvelle session",
   "author": {
     "name": "Bertrand Fargheon"
@@ -64,7 +64,7 @@
     "launchBypass": {
       "type": "boolean",
       "title": "Lancer en bypass",
-      "description": "Les sessions lancées depuis le panneau, Maestro ou un Lot demandent le mode bypass : plus aucune demande de permission. L'app ne l'accorde que si la session d'où tu lances y est déjà ; sinon la session lancée te le demande d'un clic à son démarrage. Éteint : elles prennent le mode de la session d'où tu lances.",
+      "description": "Les sessions lancées depuis le panneau ou depuis Maestro demandent le mode bypass : plus aucune demande de permission. L'app ne l'accorde que si la session d'où tu lances y est déjà ; sinon la session lancée te le demande d'un clic à son démarrage. Éteint : elles prennent le mode de la session d'où tu lances.",
       "default": false
     }
   }

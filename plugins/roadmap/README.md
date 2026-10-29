@@ -2,7 +2,7 @@
 
 Panneau Claude Code à côté du chat : la roadmap du projet de la session, filtrable, avec le détail d'une tâche et son lancement dans une nouvelle session
 
-C'est un mod Claude Code (module de hooks, `hooks/register.tsx`), avec cinq skills, `roadmap-panel` pour y brancher un projet, `onboarding` pour poser dans un dépôt de code sa structure et sa roadmap, `doctor` pour vérifier qu'un projet est branché, `reglages-session` pour les réglages de session et `lot` pour tenir une session Lot : il
+C'est un mod Claude Code (module de hooks, `hooks/register.tsx`), avec cinq skills, `roadmap-panel` pour y brancher un projet, `onboarding` pour poser dans un dépôt de code sa structure et sa roadmap, `doctor` pour vérifier qu'un projet est branché, `reglages-session` pour les réglages de session et `maestro` pour tenir une session Maestro : il
 dessine un panneau dans l'onglet Code de l'app de bureau (et dans le terminal). Il ne sert à rien
 dans Cowork ni dans le chat de claude.ai.
 
@@ -17,7 +17,7 @@ dans Cowork ni dans le chat de claude.ai.
 | `doctor` | Checklist en lecture seule d'un projet (en mode Projet : python3, roadmap, réglages, champs exigés, sans GitHub, Superpowers facultatif) ; d'un projet de code : outils, GitHub, roadmap, structure, `check.mjs`, plugin roadmap, Superpowers et chacune de ses skills de méthode, sa mise à jour automatique, `swiftui-pro` sur un projet iOS ; une ligne OK, KO ou À voir avec la commande qui corrige. |
 | `audit` | Audite le contenu de la roadmap : propose de découper les paquets en tâche mère et sous-tâches datées, les dépendances, les fusions de doublons, les regroupements et les valeurs des trous ; la personne valide paquet par paquet, puis `scripts/audit.py` écrit tout ou rien, sauvegardé, avec un bilan qui retrouve chaque fragment du texte d'origine. Lancée en fin d'onboarding. |
 | `reglages-session` | Lit et change les réglages de session (questions par formulaire, mode ADHD, français, mode autonome) de `~/.claude/reglages-session.json`, pour le projet de la session (#102). Lancée, elle ouvre aussi le volet Réglages ; tapée seule, `/roadmap:reglages-session` l'ouvre comme `/reglages`, d'une ligne. |
-| `lot` | Tient une session Lot, l'orchestrateur d'un lot de tâches menées en parallèle : lignes et découpage, une session par tâche, lecture de leurs comptes rendus, main donnée sur le simulateur iOS et les autres ressources uniques, ordre des fusions calculé depuis git (`scripts/etat_lot.py`), chaque tâche suivie dans la liste d'étapes du Lot (une étape par tâche, son état en mots), une fusion à la fois. |
+| `maestro` | Tient une session Maestro (`/maestro`), la session mère qui lance et suit des tâches menées en parallèle, même une seule : lignes et découpage, une session par tâche, lecture de leurs comptes rendus, main donnée sur le simulateur iOS et les autres ressources uniques, ordre des fusions calculé depuis git (`scripts/etat_maestro.py`), chaque tâche suivie dans la liste d'étapes de Maestro (une étape par tâche, son état en mots), une fusion à la fois. |
 
 Le panneau lit `ROADMAP.md` et `ROADMAP-fait.md` (grammaire des dossiers Cowork : une ligne par
 tâche, `[axe | attend:… | ouvert:… | due:… | src:… | fiche:… | après:… | prio:… | feedback:… | tous:… | relance:…]`), relit les fichiers et
@@ -69,18 +69,18 @@ la session du panneau suit ses propres tours sans attendre la relecture ; une li
 illisible se dit sous la recherche, et seule cette session reste alors suivie. Le titre d'une session, « #N · titre court », se pose à son lancement puis ne change
 plus (2026-10-25) : le panneau ne renomme aucune session. Une session, une tâche (2026-10-23) :
 une session « #N · … » qui ouvre une autre tâche n'y travaille pas, et Claude reçoit le rappel de
-la proposer dans une session à part (sauf un correctif du lot #N). Une session « Lot » (titre qui
-commence par « Lot », « Lot #1 », « Lot 2 », ou session qui a lancé au moins deux sessions encore
-ouvertes, depuis le 2026-10-26) coordonne les sessions de ses features : elle ouvre et coche leurs
+la proposer dans une session à part (sauf un correctif du lot #N). Une session Maestro (titre qui
+commence par « Maestro », ou par l'ancien « Lot » gardé en alias, marque Maestro, ou session qui a
+lancé au moins deux sessions encore ouvertes, depuis le 2026-10-26 ; un seul nom depuis #112) coordonne les sessions de ses features : elle ouvre et coche leurs
 lignes sans jamais être en cours sur aucune, une ligne qu'elle ouvre lui rappelle de lancer sa
 session, et le numéro de son titre ne lui fait pas proposer l'archivage ; ses sessions « #N · … »
-restent rattachées à leur tâche, et celles lancées par son ▶ reçoivent la clause du Lot : elles ne
-fusionnent pas, ne prennent une ressource unique (simulateur iOS…) qu'avec la main du Lot et disent
+restent rattachées à leur tâche, et celles lancées par son ▶ reçoivent la clause de Maestro : elles ne
+fusionnent pas, ne prennent une ressource unique (simulateur iOS…) qu'avec la main de Maestro et disent
 leur état en tête de chaque compte rendu. Une carte New task (`own_initiative`) que Claude pose
-dans une sous-session d'un Lot remonte au Lot (2026-10-28) : par message, ou, le message refusé,
-gardée et donnée au Lot à son message suivant ; la sous-session lit qu'elle est transmise, et le
-Lot ouvre sa ligne et la propose à Bertrand. Les cartes `offer` et `user_asked`, le ▶ et une
-session sans Lot posent la leur comme avant. La doctrine entière est dans la skill `lot`. La section « ## En cours » du fichier n'est pas un état : le détail dit en session,
+dans une sous-session d'un Maestro remonte à Maestro (2026-10-28) : par message, ou, le message refusé,
+gardée et donnée à Maestro à son message suivant ; la sous-session lit qu'elle est transmise, et
+Maestro ouvre sa ligne et la propose à Bertrand. Les cartes `offer` et `user_asked`, le ▶ et une
+session sans Maestro posent la leur comme avant. La doctrine entière est dans la skill `maestro`. La section « ## En cours » du fichier n'est pas un état : le détail dit en session,
 bloquée ou à faire. `après:<début du libellé>` désigne la tâche à faire d'abord : la tâche est bloquée
 (cadenas) tant que l'autre n'est pas faite.
 
@@ -130,15 +130,15 @@ multiples (quatre au plus, la première recommandée) et pose la carte de chaque
 lancé sans le clic de Bertrand sur « Start », et rien n'est écrit dans la roadmap, sauf la ligne
 d'une tâche que propose une session lancée.
 
-**Les tâches que proposent les sessions lancées** (#71) : Maestro est le Lot des sessions qu'il
-lance, même d'une seule. La session où Bertrand dit « Maestro » est marquée pour 30 jours (pas une
+**Les tâches que proposent les sessions lancées** (#71) : Maestro coordonne les sessions qu'il
+lance, même une seule. La session où Bertrand dit « Maestro » est marquée pour 30 jours (pas une
 session de tâche « #N · … »), et un titre « Maestro … » suffit. Une carte New task posée par une
 de ses sessions, ou par une session lancée depuis l'une d'elles, ne reste pas dans leur transcript :
-elle remonte à Maestro (skill `lot`, § 3), qui ouvre sa ligne, pose sa propre carte et dit à
+elle remonte à Maestro (skill `maestro`, § 3), qui ouvre sa ligne, pose sa propre carte et dit à
 Bertrand en une ligne quelle session la propose et qu'il clique Start.
 
-**Les nouvelles des enfants** (#84) : Bertrand pilote depuis le parent (un Lot, Maestro, ou toute
-session qui en a lancé d'autres). Chaque enfant note dans le store du plugin sa liste d'étapes
+**Les nouvelles des enfants** (#84) : Bertrand pilote depuis le parent (Maestro, ou toute session qui en
+a lancé d'autres). Chaque enfant note dans le store du plugin sa liste d'étapes
 (`update_plan`), sa question en attente (`AskUserQuestion`) et son dernier récap (`wrap_up`). À
 chaque message de Bertrand, le parent reçoit, sous « Roadmap — nouvelles de tes sessions enfants »,
 une ligne par enfant qui coince depuis 15 min (attend Bertrand, silencieux avec son étape, ou prêt)
@@ -150,7 +150,7 @@ la session (`main` sans elle) ; les notes de plus de 30 jours sortent du store (
 (pas encore s'il a répondu sans changer d'étape), et propose d'archiver les finis d'un seul clic
 (« Archive-les »). Toute session reçoit aussi la consigne de tenir sa liste d'étapes, et un
 rappel en fin de tour quand elle travaille sans (#98, #104) ; le parent tient la sienne, une étape
-par session lancée, son état en mots (#104). Il n'y a plus de carte HTML du Lot. La liste d'étapes
+par session lancée, son état en mots (#104). Il n'y a plus de carte HTML de Maestro. La liste d'étapes
 native est le seul affichage des étapes : la bande que le plugin dessinait au-dessus de la saisie
 (#104, #107) la doublait et est retirée (#109). La consigne la veut lisible : trois à sept étapes,
 un verbe et son objet chacune, jamais recopiée dans le message, à jour à chaque changement.
@@ -211,7 +211,7 @@ Premiers usages : la roadmap de Caro et le dossier AAFES Cowork, depuis l'onglet
   prérequises et clés déclarées. Une tâche est bloquée tant qu'une de ses prérequises est ouverte.
 - **Les sessions** : ▶ pose une carte sans worktree (reposée sans le champ si l'app le refuse) ; le
   brief ne cite ni TDD ni plan de code, dit que la tâche passe par les connecteurs MCP et que rien
-  ne part chez un tiers sans accord ; la clause du Lot n'a ni branche ni fusion ; le rappel
+  ne part chez un tiers sans accord ; la clause de Maestro n'a ni branche ni fusion ; le rappel
   « commit sans test » se tait ; Maestro ne propose que les tâches « à moi », compte celles des
   autres en retard, et garde son menu avec le réglage `autonome` ; la publication sans demander
   y vaut quand même, par le texte injecté (#105).
@@ -333,10 +333,10 @@ les réglages allumés :
   recommandation au lieu de poser la question, sauf pour une question d'architecture, c'est-à-dire
   un choix qui s'écrirait dans `docs/decisions.md`. Le réglage est l'autorisation durable de
   fusionner et de publier (release d'un plugin, déploiement, push de `main`) : aucune session ne
-  demande « je fusionne ? » ni « je publie ? », elle le fait puis le dit en une ligne. Un Lot ou
+  demande « je fusionne ? » ni « je publie ? », elle le fait puis le dit en une ligne. Un Maestro ou
   Maestro fusionne seul la branche prête d'une de ses sessions (tests verts, à jour de `main`,
   diff relu par lui), une à la fois, tests rejoués après chaque fusion, et donne seul la main sur
-  une ressource unique, publication comprise ; la clause du Lot le dit à la sous-session. Lancer
+  une ressource unique, publication comprise ; la clause de Maestro le dit à la sous-session. Lancer
   et archiver gardent le clic de Bertrand ; un message en son nom ou un paiement se demandent
   toujours.
 
@@ -357,8 +357,8 @@ passe par 2 ou 3 maquettes simples, chacune avec son parti et son compromis, la 
 premier ; Bertrand choisit, puis la session code ou décide. Le support est le plus léger qui
 permet de décider : l'aperçu (`preview`) des options d'un formulaire, un widget `mockup`
 (`mcp__visualize__show_widget`), ou une page HTML statique du dossier du projet ouverte dans le
-volet navigateur. `autonome` ne s'y applique pas. Sous un Lot, la sous-session écrit ses
-maquettes dans une page, dit « attend une réponse : choix de maquette » et le Lot les montre à
+volet navigateur. `autonome` ne s'y applique pas. Sous un Maestro, la sous-session écrit ses
+maquettes dans une page, dit « attend une réponse : choix de maquette » et Maestro les montre à
 Bertrand.
 
 Sans fichier, les trois premiers sont allumés et `autonome` est éteint. Depuis #102 (29/10/2026,
@@ -423,7 +423,7 @@ défaut oui), `theme` (thème du panneau : auto suit le thème de Claude Code, s
 `launchEffort` (effort d'une session lancée du panneau, défaut high, borné par l'app à celui de la session
 qui lance ; une carte refusée avec son effort est reposée sans lui ; « hérite » n'en passe aucun),
 `launchBypass` (« Lancer en bypass », défaut non : les sessions lancées du panneau, de Maestro ou
-d'un Lot demandent le mode bypass ; l'app ne l'accorde que depuis une session déjà en bypass, sinon
+d'un Maestro demandent le mode bypass ; l'app ne l'accorde que depuis une session déjà en bypass, sinon
 la carte est reposée sans lui et la session lancée demande elle-même le bypass à son démarrage, par
 la carte d'approbation de l'app ; il faut d'abord activer le bypass dans Réglages → Claude Code).
 Le **garde-fou du dossier principal** vaut dans tous les modes : dans un dépôt qui a au moins deux
@@ -444,6 +444,7 @@ claude plugin test plugins/roadmap
 
 ## Historique
 
+- **0.64.0 (2026-10-29)** : maestro : la session mère s'appelle Maestro partout, la skill lot devient maestro (/maestro), les textes du panneau disent « Maestro » et « la clause de Maestro », « Lot … » reste reconnu en alias des anciens titres (#112)
 - **0.63.2 (2026-10-29)** : lot : archivage sans doublon ni retard : la boîte de fin du Lot qui propose d'archiver une session déjà archivée est refusée, et les nouvelles des enfants demandent de proposer dans le tour même après avoir relu list_sessions (#110)
 - **0.63.1 (2026-10-29)** : panneau : « Voir les N autres » se déplie au clic de l'app de bureau (clés de bouton sans espace), chaque défilement du panneau relevé dans les mesures pour trouver le saut en haut (#106)
 - **0.63.0 (2026-10-29)** : panneau et réglages : la bande des étapes au-dessus de la saisie retirée, elle doublait la liste native ; la consigne fait de la liste native le seul affichage des étapes, lisible (3 à 7 étapes, verbe et objet, jamais recopiée dans le message, à jour à chaque changement) (#109)
