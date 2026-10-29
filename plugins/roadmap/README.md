@@ -410,6 +410,7 @@ claude plugin test plugins/roadmap
 
 ## Historique
 
+- **0.56.0 (2026-10-29)** : onboarding : import d'une roadmap existante (checklist, CSV, Notion, tableau Markdown) par script, avec analyse, sauvegarde, numérotation et bilan sans ligne perdue ; verifier contrôle aussi ROADMAP-fait.md (#100)
 - **0.55.0 (2026-10-29)** : roadmap : prêt pour un nouvel utilisateur : nom et sources dans ~/.claude/roadmap-perso.json, textes neutres, onboarding et doctor posent le nom, dépôt public bbr21/roadmap-plugin (#79)
 - **0.54.0 (2026-10-29)** : roadmap : l'archivage d'une session attend la ligne de rangement réglée par projet (rangement dans .claude/roadmap.json, #101)
 - **0.53.0 (2026-10-29)** : mode Projet : la liste d'étapes native exigée par le brief et rappelée en fin de tour (#98)

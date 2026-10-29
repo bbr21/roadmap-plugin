@@ -10,6 +10,9 @@ reconstitue au besoin la roadmap depuis l'historique du dépôt, et vérifie le 
           [--sans-gh] [--par auto|commit|jour]             commits), en JSON, à compléter
   python3 onboarding.py historique-ecrire DOSSIER --lignes H.json
                                                            écrit dans la roadmap l'historique complété
+  python3 onboarding.py analyser FICHIER [--fait F]        analyse une roadmap existante (checklist, CSV,
+          [--dossier D] [--qui NOM] [--requis a,b]         Notion, tableau Markdown) : correspondance en JSON
+  python3 onboarding.py importer DOSSIER --analyse A.json  l'importe : sauvegarde, numéros, bilan avant/après
 
 La roadmap d'un nouveau projet vit dans `roadmap/` (ROADMAP.md, ROADMAP-fait.md, ROADMAP-bilans.csv),
 que `.claude/roadmap.json` désigne au panneau. Un projet qui la tient déjà à sa racine la garde là.
@@ -30,6 +33,10 @@ import re
 import stat
 import subprocess
 import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import importer  # noqa: E402
+from importer import Erreur  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 MODELES = os.path.join(os.path.dirname(HERE), "references", "modeles")
@@ -99,10 +106,6 @@ EXEMPLE_PROJET = {
     "cles": {"type": ["Réunion", "Email", "Livrable"]},
     "git": False,
 }
-
-
-class Erreur(Exception):
-    pass
 
 
 # ---------------------------------------------------------------- où vit la roadmap
@@ -587,9 +590,7 @@ def verifier_projet(dossier):
             ecarts.append("ROADMAP.md : section « ## %s » absente" % sec)
     if not re.search(r"^(- \*\*axe\*\*|Axes en usage)", roadmap, re.M):
         ecarts.append("ROADMAP.md : puce « - **axe** » qui déclare les axes absente de la grammaire")
-    sans_id = [l for l in lignes_de_taches(roadmap) if not re.search(r"`\[[^\]]*\bid:\d+", l)]
-    if sans_id:
-        ecarts.append("ROADMAP.md : %d ligne(s) sans id: (la première : %s)" % (len(sans_id), sans_id[0][:80]))
+    ecarts += importer.ecarts_ids(roadmap, lire(os.path.join(rdir, "ROADMAP-fait.md")), exiger=True)
     return ecarts
 
 
@@ -646,9 +647,7 @@ def verifier(dossier):
             ecarts.append("ROADMAP.md : section « ## Attend <qui> » absente")
         if not re.search(r"^- \*\*axe\*\*", roadmap, re.M):
             ecarts.append("ROADMAP.md : puce « - **axe** » qui déclare les axes absente de la grammaire")
-        sans_id = [l for l in lignes_de_taches(roadmap) if not re.search(r"`\[[^\]]*\bid:\d+", l)]
-        if sans_id:
-            ecarts.append("ROADMAP.md : %d ligne(s) sans id: (la première : %s)" % (len(sans_id), sans_id[0][:80]))
+        ecarts += importer.ecarts_ids(roadmap, lire(os.path.join(rdir, "ROADMAP-fait.md")), exiger=True)
     reglages = lire(os.path.join(dossier, ".claude", "settings.json"))
     if reglages is not None:
         try:
@@ -959,6 +958,26 @@ def ecrire_historique(dossier, chemin_lignes):
     return len(lignes_faites), len(lignes_ouvertes)
 
 
+# ---------------------------------------------------------------- import d'une roadmap existante
+
+
+def reglages_import(dossier):
+    """(qui, requis) d'un dossier déjà posé, lus dans `.claude/roadmap.json` : la personne (`me`) et
+    les champs exigés ; sans dossier, personne et `id` seul."""
+    if not dossier:
+        return "", ["id"]
+    dossier = os.path.abspath(os.path.expanduser(dossier))
+    try:
+        with open(os.path.join(dossier, ".claude", "roadmap.json"), encoding="utf-8") as f:
+            cfg = json.load(f) or {}
+    except (OSError, ValueError):
+        cfg = {}
+    me = cfg.get("me") or []
+    qui = me[0] if isinstance(me, list) and me else (me if isinstance(me, str) else "")
+    requis = cfg.get("requis") or (REQUIS_PROJET if cfg.get("mode") == "projet" else ["id"])
+    return qui, requis
+
+
 # ---------------------------------------------------------------- ligne de commande
 
 
@@ -981,6 +1000,15 @@ def main(argv=None):
     pe = sub.add_parser("historique-ecrire")
     pe.add_argument("dossier")
     pe.add_argument("--lignes", required=True)
+    pa = sub.add_parser("analyser")
+    pa.add_argument("fichier")
+    pa.add_argument("--fait")
+    pa.add_argument("--dossier")
+    pa.add_argument("--qui")
+    pa.add_argument("--requis")
+    pm = sub.add_parser("importer")
+    pm.add_argument("dossier")
+    pm.add_argument("--analyse", required=True)
     a = p.parse_args(argv)
     try:
         if a.cmd == "exemple":
@@ -991,6 +1019,12 @@ def main(argv=None):
             print(json.dumps(relever(a.dossier, a.mois, not a.sans_gh, par=a.par), ensure_ascii=False, indent=2))
         elif a.cmd == "historique-ecrire":
             ecrire_historique(a.dossier, a.lignes)
+        elif a.cmd == "analyser":
+            qui, requis = reglages_import(a.dossier)
+            requis = [x.strip() for x in a.requis.split(",") if x.strip()] if a.requis else requis
+            print(json.dumps(importer.analyser(a.fichier, a.fait, a.qui or qui, requis), ensure_ascii=False, indent=2))
+        elif a.cmd == "importer":
+            importer.importer(a.dossier, a.analyse)
         else:
             ecarts = verifier(a.dossier)
             if ecarts:

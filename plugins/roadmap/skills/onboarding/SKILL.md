@@ -1,6 +1,6 @@
 ---
 name: onboarding
-description: "Onboarde un projet dans le système roadmap, en mode Code ou Projet. Code, un dépôt de code : CLAUDE.md de règles, roadmap numérotée dans roadmap/ avec ses bilans, docs, check.mjs, hook de démarrage, worktree par session ; reconstitue au choix la roadmap depuis l'historique (PR des 6 derniers mois, fusions ou commits) ; crée le dépôt GitHub privé après accord. Projet, de la gestion de projet sans code : dossier simple, git en option, tâches complètes (échéance, responsable, tâche mère, dépendances), sans worktree, verrou ni fusion. Vérifie, puis passe le doctor ; remet un projet existant au format sans rien écraser. Déclenche sur « onboarding », « onboarde ce projet », « nouveau projet de code », « initialise ce repo », « mets ce projet au format », « reconstitue la roadmap depuis les PR », « mode Projet », « onboarde ce dossier sans code », « Maestro dit qu'il n'y a pas de roadmap ». Pas pour le panneau seul (roadmap-panel), ni pour tenir la roadmap au quotidien, ni pour une roadmap tenue dans Cowork même."
+description: "Onboarde un projet dans le système roadmap, en mode Code ou Projet. Code, un dépôt : CLAUDE.md de règles, roadmap numérotée avec ses bilans, docs, check.mjs, hook de démarrage, worktree par session ; reconstitue au choix la roadmap depuis l'historique (PR, fusions ou commits) ; crée le dépôt GitHub privé après accord. Projet, de la gestion de projet sans code : dossier simple, git en option, tâches complètes, sans worktree, verrou ni fusion. Vérifie, passe le doctor ; remet un projet existant au format sans rien écraser. Importe une roadmap existante (Markdown, CSV, Notion) sans perdre de ligne. Déclenche sur « onboarding », « onboarde ce projet », « importe ma roadmap », « nouveau projet de code », « initialise ce repo », « mets ce projet au format », « reconstitue la roadmap depuis les PR », « onboarde ce dossier sans code », « Maestro dit qu'il n'y a pas de roadmap ». Pas pour le panneau seul (roadmap-panel), ni pour tenir la roadmap au quotidien, ni pour une roadmap tenue dans Cowork même."
 ---
 
 # Onboarder un projet
@@ -80,8 +80,9 @@ tout le cadrage.
    ne se remplacent jamais : une section qui leur manque s'ajoute à la main depuis le modèle rendu
    (pose-le dans un dossier vide du scratchpad avec `init`, puis recopie les sections), en gardant
    tout ce que le projet avait. `CLAUDE.md` reste sous 150 lignes : le détail part dans `docs/`.
-3. Projet existant dont la roadmap avait des lignes sans `id:` : numérote-les, de la plus ancienne
-   à la plus récente, en partant du plus grand `id:` plus un ; montre le compte avant d'écrire.
+3. Une roadmap existante (celle du projet sans `id:`, ou un autre fichier : checklist, CSV, export
+   Notion, tableau Markdown) s'importe par le script, jamais à la main : voir « Importer une roadmap
+   existante » plus bas.
 4. Un `check.mjs` propre au projet se garde : compare-le au modèle et ajoute seulement ce qui lui
    manque (clés du panneau, `id:` uniques, secrets).
 
@@ -150,8 +151,8 @@ dossier même.
    déclarées, git ou non.
 3. **Écrire** : les réponses (modèle : `python3 scripts/onboarding.py exemple --mode projet`), puis
    `init <dossier> --reponses <fichier>`, ou `--manquants` pour un dossier existant (il ne pose que
-   ce qui manque, `.claude/roadmap.json` compris, et garde une roadmap tenue à la racine). Ses
-   lignes sans `id:` se numérotent comme à l'étape 4.3, le compte montré avant d'écrire.
+   ce qui manque, `.claude/roadmap.json` compris, et garde une roadmap tenue à la racine). Une
+   roadmap déjà tenue (dans le dossier ou ailleurs) s'importe : « Importer une roadmap existante ».
 4. **Pas d'historique** : `historique` refuse un dossier en mode Projet.
 5. **Vérifier** : `verifier <dossier>` (« Conforme au format. »). Avec git, un premier commit des
    seuls fichiers posés. Pas de `check.mjs` : le panneau contrôle chaque ligne écrite.
@@ -159,6 +160,30 @@ dossier même.
 7. **Rendre compte** : ce qui a été posé, puis comment s'en servir : ouvrir le dossier dans
    l'onglet Code, le panneau par échéance (le bouton passe au responsable et à l'arbre), ▶ sur une
    tâche, « Maestro » pour ce qu'on peut lancer ; la tâche `id:1` liste les tâches en cours.
+
+## Importer une roadmap existante
+
+Quand la personne a déjà une roadmap : le `ROADMAP.md` du dossier, ou un autre fichier (checklist
+Markdown, CSV, export Notion en CSV ou en Markdown, tableau Markdown). On repart d'elle, sans perdre
+une ligne. L'original n'est jamais modifié sans sa copie de sauvegarde.
+
+1. **Poser la structure** d'abord (`init … --manquants`) : `.claude/roadmap.json` porte le mode, `me`
+   et les champs exigés que l'analyse lit.
+2. **Analyser** : `analyser <fichier> --dossier <dossier> [--fait <ROADMAP-fait.md>] > <scratchpad>/analyse.json`.
+3. **Montrer l'analyse** en un message, puis un formulaire à choix sur ce qui se décide : le format
+   reconnu, les comptes (ouvertes, closes, à numéroter), la correspondance (colonne → champ, statut →
+   section ou close, tags → axe ou clé déclarée, `prio` en mots → 1, 2, 3, sous-titres → `projet` et
+   `dept`), les valeurs non reconnues, les champs exigés qui manquent et les valeurs par défaut
+   proposées pour eux. Une ligne illisible se corrige dans la source avant d'aller plus loin. Un choix
+   qui se voit (la mise en page de la roadmap) passe par des maquettes.
+4. **Corriger** la `correspondance` du JSON selon les réponses (une valeur par défaut refusée s'en
+   retire : la ligne restera signalée par le panneau).
+5. **Importer** : `importer <dossier> --analyse <scratchpad>/analyse.json`. Le script refuse, sans rien
+   écrire, si une ligne se perd, si un libellé change ou si deux tâches partagent un `id:`. Sinon il
+   copie les originaux dans `sauvegarde-import-…/` à côté de la roadmap, écrit, et affiche le bilan
+   avant/après : le montrer tel quel.
+6. **Vérifier** : `verifier <dossier>` (« Conforme au format. »). La sauvegarde ne se committe pas ;
+   la proposer à la suppression une fois la roadmap relue.
 
 ## Ce que la skill ne fait pas
 
