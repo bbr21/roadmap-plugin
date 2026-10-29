@@ -446,6 +446,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.64.2 (2026-10-29)** : panneau : le relevé d'un défilement porte le refus du moteur et la durée de sa réponse (#111)
 - **0.64.1 (2026-10-29)** : panneau : le relevé du défilement et du focus se garde à part des dessins, pour prouver le saut en haut (#111)
 - **0.64.0 (2026-10-29)** : maestro : la session mère s'appelle Maestro partout, la skill lot devient maestro (/maestro), les textes du panneau disent « Maestro » et « la clause de Maestro », « Lot … » reste reconnu en alias des anciens titres (#112)
 - **0.63.2 (2026-10-29)** : lot : archivage sans doublon ni retard : la boîte de fin du Lot qui propose d'archiver une session déjà archivée est refusée, et les nouvelles des enfants demandent de proposer dans le tour même après avoir relu list_sessions (#110)

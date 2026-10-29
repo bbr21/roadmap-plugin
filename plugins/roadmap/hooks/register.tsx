@@ -2405,6 +2405,10 @@ type ScrollRow = PerfBase & {
   contentRows: number
   /** `person` : la molette ou les touches ; `plugin` : un `$.ui.scroll`. */
   origin: string
+  /** Le refus du moteur (#111) : l'app remet alors la fenêtre à sa position d'avant. */
+  deny?: string
+  /** Du crochet à la réponse du moteur (#111). */
+  answerMs?: number
 }
 /**
  * Un mouvement du focus dans le panneau (#111) : l'app de bureau refocalise, sans `preventScroll`,
@@ -2434,8 +2438,23 @@ function notePress(id: string): void {
 }
 
 /** Le relevé d'un déplacement de la fenêtre, parti au store comme celui d'un dessin. */
-function noteScroll(e: { offset: number; by: number; bodyRows: number; contentRows: number; origin: { kind: string } }): void {
-  pushPerf({ mod: PERF_MOD, at: tick(), kind: 'scroll', offset: e.offset, by: e.by, bodyRows: e.bodyRows, contentRows: e.contentRows, origin: e.origin.kind })
+function noteScroll(
+  e: { offset: number; by: number; bodyRows: number; contentRows: number; origin: { kind: string } },
+  result: { deny?: string },
+  answerMs: number,
+): void {
+  pushPerf({
+    mod: PERF_MOD,
+    at: tick(),
+    kind: 'scroll',
+    offset: e.offset,
+    by: e.by,
+    bodyRows: e.bodyRows,
+    contentRows: e.contentRows,
+    origin: e.origin.kind,
+    ...(result.deny !== undefined ? { deny: result.deny } : {}),
+    answerMs,
+  })
   perfFlush?.()
 }
 
@@ -2939,8 +2958,10 @@ export const register: Register = (on, options) => {
 
   // Le défilement du panneau, relevé sans rien changer : le moteur pose la fenêtre (#106).
   on('ui.scroll', { component: 'Pane', requestId: PANE }, async ($, e, next) => {
-    noteScroll(e)
-    return next(e)
+    const t0 = tick()
+    const result = await next(e)
+    noteScroll(e, result, tick() - t0)
+    return result
   })
 
   // Le focus du panneau, relevé sans rien changer, avec la réponse du moteur (#111).

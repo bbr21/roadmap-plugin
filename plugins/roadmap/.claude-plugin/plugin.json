@@ -1,6 +1,6 @@
 {
   "name": "roadmap",
-  "version": "0.64.1",
+  "version": "0.64.2",
   "description": "Panneau Claude Code à côté du chat : la roadmap du projet de la session, filtrable, avec le détail d'une tâche et son lancement dans une nouvelle session",
   "author": {
     "name": "Bertrand Fargheon"
