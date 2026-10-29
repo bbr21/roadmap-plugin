@@ -446,6 +446,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.64.3 (2026-10-29)** : maquettes : une maquette du plugin s'appuie sur son design system roadmap-design, publié dans claude.ai par /design-sync (#113)
 - **0.64.2 (2026-10-29)** : panneau : le relevé d'un défilement porte le refus du moteur et la durée de sa réponse (#111)
 - **0.64.1 (2026-10-29)** : panneau : le relevé du défilement et du focus se garde à part des dessins, pour prouver le saut en haut (#111)
 - **0.64.0 (2026-10-29)** : maestro : la session mère s'appelle Maestro partout, la skill lot devient maestro (/maestro), les textes du panneau disent « Maestro » et « la clause de Maestro », « Lot … » reste reconnu en alias des anciens titres (#112)
