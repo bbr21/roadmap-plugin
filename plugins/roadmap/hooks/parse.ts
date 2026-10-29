@@ -1905,7 +1905,7 @@ export function childAlertText(alerts: readonly ChildAlert[]): string | undefine
   ]
   if (archive.length > 0) {
     lines.push(
-      `- Les finies : propose de les archiver d'un seul clic, par ta boîte de fin (wrap_up) avec la question « Archiver ${childShortList(archive.map(a => a.child))} ? » et un bouton de réponse « Archive-les ». Au clic de ${person()}, archive_session pour chacune (son identifiant entre parenthèses), puis dis en une ligne ce qui est archivé ou refusé. Sans son clic, n'archive rien.`,
+      `- Les finies : propose de les archiver d'un seul clic, dans ce tour même et pas au message suivant, par ta boîte de fin (wrap_up) avec la question « Archiver ${childShortList(archive.map(a => a.child))} ? » et un bouton de réponse « Archive-les ». Cette question passe avant toute autre question de ta boîte de fin : une autre décision va dans un formulaire (AskUserQuestion). Juste avant de la poser, relis list_sessions avec {"linked": true} : ${person()} a pu archiver une session depuis sa propre boîte de fin, et une session archivée n'y figure plus ; ne propose que celles qui y sont encore, et aucune question s'il n'en reste pas. Au clic de ${person()}, archive_session pour chacune (son identifiant entre parenthèses), puis dis en une ligne ce qui est archivé ou refusé. Sans son clic, n'archive rien.`,
     )
   }
   if (rest.some(a => a.kind === 'question')) lines.push('- Une question attend ' + person() + ' : rappelle-la-lui en une ligne, avec le lien ; ne relance pas la session.')
@@ -1920,6 +1920,41 @@ export function childAlertText(alerts: readonly ChildAlert[]): string | undefine
   }
   lines.push('- Une ligne par point dans ta réponse, pas de tableau.')
   return lines.join('\n')
+}
+
+/**
+ * Archiver des deux côtés, sans doublon (#110, Bertrand, 2026-10-29) : une session finie propose son
+ * archivage dans sa boîte de fin, et le Lot le propose aussi. Les nouvelles du Lot sont lues au début
+ * de son tour ; s'il pose sa question à la fin, Bertrand a pu archiver entre-temps depuis la session
+ * (#103 et #104 : archivées à 21:20:31 et 21:20:43, reproposées à 21:20:49). Les « #N » et les
+ * `local_…` qu'une question d'archivage nomme encore, parmi les sessions lancées par `parentId` et
+ * déjà archivées, sans autre session ouverte sur la même tâche.
+ */
+export function archivedInAsk(ask: string, rows: readonly unknown[], parentId: string): string[] {
+  if (!/archiv/i.test(ask)) return []
+  type Row = { sessionId?: unknown; title?: unknown; startedBy?: unknown; isArchived?: unknown }
+  const own = rows.filter((r): r is Row => typeof r === 'object' && r !== null && (r as Row).startedBy === parentId)
+  const idOf = (r: Row) => (typeof r.title === 'string' ? sessionTitleId(r.title) : undefined)
+  const open = new Set(own.filter(r => r.isArchived === false).map(idOf).filter(Boolean))
+  // Où la question nomme `needle`, -1 sinon : « #1030 » ne nomme pas #103.
+  const where = (needle: string) => ask.search(new RegExp(`${needle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\w-])`))
+  const out: { at: number; name: string }[] = []
+  for (const r of own) {
+    const id = idOf(r)
+    if (r.isArchived !== true || (id && open.has(id))) continue
+    const sid = typeof r.sessionId === 'string' ? r.sessionId : ''
+    const at = [id ? `#${id}` : '', sid].filter(Boolean).map(where).filter(i => i >= 0)
+    const name = id ? `#${id}` : sid
+    if (at.length > 0 && !out.some(o => o.name === name)) out.push({ at: Math.min(...at), name })
+  }
+  return out.sort((a, b) => a.at - b.at).map(o => o.name)
+}
+
+/** Le refus de la boîte de fin du Lot qui nomme une session déjà archivée (#110). */
+export function archivedAskRefusal(names: readonly string[]): string {
+  const list = names.length > 1 ? `${names.slice(0, -1).join(', ')} et ${names[names.length - 1]}` : (names[0] ?? '')
+  const done = names.length > 1 ? 'sont déjà archivées' : 'est déjà archivée'
+  return `Plugin roadmap : ${list} ${done} (${person()} l'a fait depuis leur propre boîte de fin) : ne les propose plus. Repose ta boîte de fin sans elles, après avoir relu list_sessions avec {"linked": true} ; s'il ne reste aucune session à archiver, sans la question d'archivage. Dis-le en une ligne.`
 }
 
 /**

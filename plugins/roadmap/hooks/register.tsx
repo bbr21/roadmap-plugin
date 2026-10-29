@@ -76,6 +76,8 @@ import {
   durationLabel,
   sessionIdIn,
   sessionState,
+  archivedInAsk,
+  archivedAskRefusal,
   dueLabel,
   findSelected,
   byDay,
@@ -1430,6 +1432,25 @@ async function childAlertContext($: EngineInterface): Promise<string | undefined
   return childAlertText(alerts)
 }
 
+/**
+ * La question d'archivage d'un Lot relue au moment de la poser (#110) : ses nouvelles datent du début
+ * du tour, et Bertrand a pu archiver une session depuis sa propre boîte de fin entre-temps. Le refus
+ * nomme celles déjà archivées ; une question qui n'archive rien, ou une liste illisible, passe.
+ */
+async function archivedAsk($: EngineInterface, ask: unknown): Promise<string | undefined> {
+  if (typeof ask !== 'string' || !/archiv/i.test(ask) || !/#\d|local_/.test(ask)) return undefined
+  try {
+    const listed = await $.tool.call({ tool: LIST_SESSIONS_TOOL, linked: true, include_archived: true, limit: LIST_LIMIT })
+    if (listed.deny !== undefined || listed.isError) return undefined
+    const rows: unknown = JSON.parse(listed.text ?? '[]')
+    const id = Array.isArray(rows) ? (await readOwnSession($)).id : undefined
+    const names = Array.isArray(rows) && id ? archivedInAsk(ask, rows, id) : []
+    return names.length > 0 ? archivedAskRefusal(names) : undefined
+  } catch {
+    return undefined
+  }
+}
+
 /** La purge des notes d'enfant tourne une fois par chargement du module, au premier message. */
 let childNotesPurged = false
 
@@ -2716,6 +2737,8 @@ export const register: Register = (on, options) => {
     }
   })
   on('tool.call', { tool: WRAP_UP_TOOL }, async ($, e, next) => {
+    const refusal = fromAgent(e) ? undefined : await archivedAsk($, (e as { ask?: unknown }).ask)
+    if (refusal !== undefined) return { deny: refusal }
     noteBox(e)
     if (!fromAgent(e)) closingTurn = { work: true, box: boxText(e) }
     const recap = (e as { recap?: unknown }).recap

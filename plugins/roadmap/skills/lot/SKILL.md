@@ -78,7 +78,8 @@ lui remonte.
     dire à l'utilisateur qu'elle est relancée (sa réponse arrive à la fin de son tour) ; toujours au
     même point ensuite, muette ou non, le dire, sans relancer ;
   - **prête** (toutes ses étapes faites, pas encore fusionnée ou close) : § 5 et 6 ;
-  - **à archiver** (§ 6).
+  - **à archiver** (§ 6), à proposer dans ce tour même : une note de fin d'une sous-session arrive
+    par un tour à elle, et ses nouvelles avec.
   Pas de tableau de tous les enfants à chaque tour : le Lot ne regarde que ce qui coince.
 - **Tenir la liste du Lot** (#104) : la liste d'étapes de l'app (`update_plan`), épinglée sous le
   dernier message, est le seul repère de l'utilisateur sur le lot. Pas de carte `show_widget`, pas
@@ -187,6 +188,16 @@ La fusion elle-même :
   boîte de fin avec « Archiver #A et #B ? » et un bouton de réponse « Archive-les » ; au clic,
   `archive_session` pour chacune, puis une ligne sur ce qui est archivé ou refusé. Seul le clic de
   l'utilisateur archive.
+- **Archiver des deux côtés, sans doublon** (#110) : la sous-session finie propose aussi son propre
+  archivage (« Archiver cette session ? »), et l'utilisateur peut cliquer là. Donc :
+  - **sans retard** : le Lot pose « Archiver #A ? » dans le tour même où la session est dite à
+    archiver, pas au message suivant ; cette question passe avant toute autre de sa boîte de fin
+    (une autre décision va dans un formulaire `AskUserQuestion`) ;
+  - **vérifier avant de demander** : juste avant, relire `list_sessions` avec `{"linked": true}` ;
+    une session archivée n'y figure plus, et le Lot ne propose que celles qui y sont encore, aucune
+    question s'il n'en reste pas ;
+  - **le panneau le garantit** : une boîte de fin du Lot qui nomme encore une session déjà archivée
+    est refusée, avec les numéros à retirer ; le Lot la repose sans elles.
 - **Le lot finit** quand toutes ses lignes sont cochées : boîte de fin (`wrap_up`) avec la question
   « Archiver cette session ? » et le bouton de réponse « Oui, archiver » en premier
   (`actions: [{"label": "Oui, archiver", "message": "Oui, archive cette session."}]` : l'app ne
@@ -206,6 +217,7 @@ La fusion elle-même :
 - Chaque sous-session note sa liste d'étapes, sa question en attente et son dernier récap ; à chaque
   message de l'utilisateur, le Lot reçoit les enfants qui coincent depuis 15 min et ceux à archiver
   (§ 3, « Prendre des nouvelles »).
+- Il refuse la boîte de fin du Lot qui propose d'archiver une session déjà archivée (§ 6, #110).
 - Le brief de Maestro et les nouvelles des enfants rappellent au Lot de tenir sa liste d'étapes
   (§ 3) ; il ne demande plus de carte (#97 retirée par #104).
 - Toute session, Lot compris, qui travaille (au moins deux outils dans le tour) sans avoir posé de
