@@ -565,27 +565,3 @@ export function barCuts(segments: BarSegment[], width = BAR_WIDTH): { cuts: numb
     names: layout.map(({ segment }) => segment.name ?? ''),
   }
 }
-
-/**
- * Les icônes de la liste d'étapes native (#107), pour la bande au-dessus de la saisie : une coche
- * blanche dans un rond plein (faite), un arc qui tourne (en cours, SMIL : à dessiner `isInteractive`),
- * un rond en pointillés (à faire).
- */
-function stepIconRaw(status: 'completed' | 'in_progress' | 'pending', color: string): string {
-  const frame = (body: string) => `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 16 16">${body}</svg>`
-  if (status === 'completed') {
-    return frame(
-      `<circle cx="8" cy="8" r="7" fill="${color}"/><path d="M4.8 8.2l2.1 2.1 4.3-4.4" stroke="#ffffff" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/>`,
-    )
-  }
-  if (status === 'in_progress') {
-    return frame(
-      `<circle cx="8" cy="8" r="6.2" stroke="${color}" stroke-opacity="0.3" stroke-width="1.6" fill="none"/>` +
-        `<path d="M8 1.8a6.2 6.2 0 0 1 6.2 6.2" stroke="${color}" stroke-width="1.6" fill="none" stroke-linecap="round">` +
-        `<animateTransform attributeName="transform" type="rotate" from="0 8 8" to="360 8 8" dur="1s" repeatCount="indefinite"/></path>`,
-    )
-  }
-  return frame(`<circle cx="8" cy="8" r="6.2" stroke="${color}" stroke-width="1.4" stroke-dasharray="2.2 2.2" fill="none"/>`)
-}
-
-export const stepIcon = memo(stepIconRaw)

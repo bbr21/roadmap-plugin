@@ -150,12 +150,10 @@ la session (`main` sans elle) ; les notes de plus de 30 jours sortent du store (
 (pas encore s'il a répondu sans changer d'étape), et propose d'archiver les finis d'un seul clic
 (« Archive-les »). Toute session reçoit aussi la consigne de tenir sa liste d'étapes, et un
 rappel en fin de tour quand elle travaille sans (#98, #104) ; le parent tient la sienne, une étape
-par session lancée, son état en mots (#104). Il n'y a plus de carte HTML du Lot. La liste d'étapes de
-la session se dessine aussi en entier dans une bande fixe juste au-dessus de la saisie (terminal et
-desktop), visible quand on remonte dans le fil, jusqu'à ce que tout soit coché (#104). Depuis #107,
-elle a une fine barre d'avancement sous « Étapes 4/7 » et, sur desktop, les icônes de la liste
-native : une coche blanche dans un rond plein gris (faite, libellé grisé), un spinner (en cours,
-en gras), un rond en pointillés (à faire) ; le terminal garde ✓ ◐ ○ et une barre en traits.
+par session lancée, son état en mots (#104). Il n'y a plus de carte HTML du Lot. La liste d'étapes
+native est le seul affichage des étapes : la bande que le plugin dessinait au-dessus de la saisie
+(#104, #107) la doublait et est retirée (#109). La consigne la veut lisible : trois à sept étapes,
+un verbe et son objet chacune, jamais recopiée dans le message, à jour à chaque changement.
 
 **Le réglage autonome** (#77, #105, réglage de session `autonome`, éteint par défaut) :
 Maestro ne pose plus le menu « Je lance lesquelles ? ». Il pose les cartes des trois premières
@@ -446,6 +444,7 @@ claude plugin test plugins/roadmap
 
 ## Historique
 
+- **0.63.0 (2026-10-29)** : panneau et réglages : la bande des étapes au-dessus de la saisie retirée, elle doublait la liste native ; la consigne fait de la liste native le seul affichage des étapes, lisible (3 à 7 étapes, verbe et objet, jamais recopiée dans le message, à jour à chaque changement) (#109)
 - **0.62.0 (2026-10-29)** : panneau et réglages : repères plus clairs : ligne ADHD à emoji d'état (⏳ en cours, ✅ finie, ⚠️ détour) et noms de la liste native (verbe et objet), bloc de fin à emoji de valeur, bande des étapes aux icônes de la liste native et barre d'avancement (#107)
 - **0.61.0 (2026-10-29)** : audit : nouvelle skill qui audite le contenu de la roadmap (paquets découpés en tâche mère et sous-tâches datées, dépendances, doublons, trous), validée paquet par paquet, écrite tout ou rien avec sauvegarde et bilan par fragment ; proposée en fin d'onboarding (#103)
 - **0.60.0 (2026-10-29)** : panneau et lot : la liste d'étapes native partout (rappel de fin de tour en mode Code aussi, liste entière dans une bande fixe au-dessus de la saisie), le Lot suit ses sessions par sa propre liste, la carte HTML du Lot retirée (#104)

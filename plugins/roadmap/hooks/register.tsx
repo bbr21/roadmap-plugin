@@ -8,7 +8,6 @@ import {
   axisColor,
   barCuts,
   barIcon,
-  stepIcon,
   axisPillIcon,
   axisTint,
   percentIcon,
@@ -197,8 +196,6 @@ import {
   proposalSentNote,
   type LotProposal,
   applyPlan,
-  stepBand,
-  stepBarText,
   childAlerts,
   childAlertText,
   childrenOf,
@@ -372,8 +369,6 @@ const retryAtom = atom({ plugin: 'roadmap', key: 'retry' } as const, 0)
 const zoneGenAtom = atom({ plugin: 'roadmap', key: 'zoneGen' } as const, 0)
 /** Pourquoi les autres sessions manquent (liste refusée ou illisible) ; vide quand elle se lit. */
 const scanNoteAtom = atom({ plugin: 'roadmap', key: 'scanNote' } as const, '')
-/** La liste d'étapes de la session, dessinée dans la bande au-dessus de la saisie (#104). */
-const stepsAtom = atom({ plugin: 'roadmap', key: 'steps' } as const, [] as ChildStep[])
 
 /**
  * Change l'état d'un clic en une écriture : `patch` dit les champs qui changent, d'après l'état
@@ -2676,7 +2671,6 @@ export const register: Register = (on, options) => {
     if (!fromAgent(e)) {
       closingTurn.work = true
       stepList.planned = true
-      await update($, stepsAtom, steps => applyPlan(steps, e as never))
       await noteChild($, s => ({ ...withoutQuestion(s), steps: applyPlan(s.steps, e as never) }))
     }
     return next(e)
@@ -2858,60 +2852,6 @@ export const register: Register = (on, options) => {
   })
 
   on('ui.render', { component: 'Pane', requestId: SETTINGS_PANE }, async ($, e) => drawSettings($, e, await paletteOf($)))
-
-  // La liste d'étapes de la session, fixe au-dessus de la saisie (#104, maquette B) : elle cède à une enquête de l'app.
-  // Sur desktop, les icônes de la liste native et une barre d'avancement (#107, maquette C) ; au terminal, des glyphes.
-  on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
-    const band = e.props.hasSurvey ? undefined : stepBand(await read($, stepsAtom))
-    if (!band) return next(e)
-    const resolved = $.ui.resolve(e)
-    const { Box, Text } = resolved
-    const Svg = e.surface !== 'terminal' && 'Svg' in resolved ? resolved.Svg : undefined
-    const palette = Svg ? await paletteOf($) : undefined
-    const label = (r: (typeof band.rows)[number]) =>
-      r.status === 'completed' ? (
-        <Text dimColor>{Svg ? r.text : `${r.mark} ${r.text}`}</Text>
-      ) : r.status === 'in_progress' ? (
-        <Text bold>{Svg ? r.text : `${r.mark} ${r.text}`}</Text>
-      ) : (
-        <Text>{Svg ? r.text : `${r.mark} ${r.text}`}</Text>
-      )
-    return (
-      <Box flexDirection="column">
-        <Box flexDirection="row" justifyContent="space-between">
-          <Text dimColor>Étapes</Text>
-          <Text dimColor>{band.count}</Text>
-        </Box>
-        {Svg && palette ? (
-          <Box paddingY="xs">
-            <Svg
-              source={barIcon([{ hex: palette.text3, n: band.done }, { hex: palette.text3, n: band.total - band.done, dim: true }], palette.text3)}
-              alt={`${band.done} étape${band.done > 1 ? 's' : ''} faite${band.done > 1 ? 's' : ''} sur ${band.total}`}
-              height={4}
-            />
-          </Box>
-        ) : (
-          <Text dimColor>{stepBarText(band.done, band.total)}</Text>
-        )}
-        {band.rows.map(r =>
-          Svg && palette ? (
-            <Box flexDirection="row" alignItems="center" gap="xs">
-              <Svg
-                source={stepIcon(r.status, palette.text3)}
-                alt={r.status === 'completed' ? 'faite' : r.status === 'in_progress' ? 'en cours' : 'à faire'}
-                width={14}
-                height={14}
-                {...(r.status === 'in_progress' ? { isInteractive: true } : {})}
-              />
-              {label(r)}
-            </Box>
-          ) : (
-            label(r)
-          ),
-        )}
-      </Box>
-    )
-  })
 }
 
 /** Le dessin du panneau : la vue d'ensemble, le détail d'une tâche, ou ce qui manque. */

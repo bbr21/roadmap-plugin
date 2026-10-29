@@ -23,8 +23,6 @@ declare module 'claude-code' {
       scanNote: string
       /** Monte après chaque écriture des réglages de session (par le volet Réglages ou ailleurs) : le volet se redessine. */
       prefsStamp: number
-      /** La liste d'étapes de la session (`update_plan` du modèle, sous-agents exclus), que dessine la bande au-dessus de la saisie (#104). */
-      steps: { content: string; status: 'pending' | 'in_progress' | 'completed' }[]
     }
   }
 }

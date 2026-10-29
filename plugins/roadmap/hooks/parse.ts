@@ -1720,35 +1720,6 @@ export function applyPlan(steps: readonly ChildStep[], input: { items?: unknown;
   return out
 }
 
-/** Une ligne de la bande des étapes (#104) : sa marque, au style de la liste native, et son libellé. */
-export type StepBandRow = { mark: '✓' | '◐' | '○'; text: string; status: ChildStep['status'] }
-
-const STEP_MARKS: Record<ChildStep['status'], StepBandRow['mark']> = { completed: '✓', in_progress: '◐', pending: '○' }
-
-/**
- * La bande au-dessus de la saisie (#104, maquette B choisie par Bertrand) : la liste entière de la
- * session et « 4/7 » (l'étape en cours, sinon les faites), tant qu'une étape reste ; rien sinon.
- * `done` sur `total` règle sa barre d'avancement (#107, maquette C).
- */
-export function stepBand(steps: readonly ChildStep[]): { count: string; done: number; total: number; rows: StepBandRow[] } | undefined {
-  if (steps.length === 0 || steps.every(s => s.status === 'completed')) return undefined
-  const done = steps.filter(s => s.status === 'completed').length
-  const at = steps.findIndex(s => s.status === 'in_progress')
-  const n = at >= 0 ? at + 1 : done
-  return {
-    count: `${n}/${steps.length}`,
-    done,
-    total: steps.length,
-    rows: steps.map(s => ({ mark: STEP_MARKS[s.status], text: s.content, status: s.status })),
-  }
-}
-
-/** La barre d'avancement de la bande au terminal (#107) : `━` pour les faites, `─` pour le reste. */
-export function stepBarText(done: number, total: number, width = 24): string {
-  const full = total > 0 ? Math.round((done / total) * width) : 0
-  return '━'.repeat(full) + '─'.repeat(width - full)
-}
-
 /** L'étape d'une liste, pour le parent : « étape 5/7 Coder », « 7/7 faites », rien sans liste. */
 export function stepLabel(steps: readonly ChildStep[]): string | undefined {
   if (steps.length === 0) return undefined
@@ -2940,7 +2911,7 @@ export function sessionPrefsText(prefs: SessionPrefs, error?: string, project?: 
   }
   // La liste d'étapes (#84) : dite à toute session, comme les gestes ; le parent la lit pour prendre des nouvelles.
   lines.push(
-    "- **Liste d'étapes** (en mode Code comme en mode Projet) : une tâche de plus d'un geste tient sa liste d'étapes (`update_plan` dans l'app), posée dès le premier geste, une étape cochée dès qu'elle finit, chacune nommée d'un verbe et de son objet (« Écrire le plan »), les mêmes noms que la ligne du mode ADHD quand il est allumé. C'est par elle que la session qui t'a lancée voit où tu en es, sans ouvrir ta conversation. Un Lot ou Maestro tient la sienne pour ses sessions : une étape par tâche lancée, son état en mots.",
+    "- **Liste d'étapes** (en mode Code comme en mode Projet) : une tâche de plus d'un geste tient sa liste d'étapes (`update_plan` dans l'app), posée dès le premier geste. C'est le seul affichage des étapes : jamais recopiée dans le message, ni en liste ni en widget. Elle se lit d'un coup d'œil : trois à sept étapes, chacune nommée par un verbe et son objet, 2 à 4 mots qui disent le geste (« Écrire le plan », pas « Plan » ni une phrase), les mêmes noms que la ligne du mode ADHD quand il est allumé, jamais renommées (une étape nouvelle s'ajoute) ; mise à jour à chaque changement, une étape cochée dès qu'elle finit, une seule en cours. C'est par elle que la session qui t'a lancée voit où tu en es, sans ouvrir ta conversation. Un Lot ou Maestro tient la sienne pour ses sessions : une étape par tâche lancée, son état en mots.",
   )
   lines.push(gesturesText(prefs.autonome))
   lines.push(mockupText())
