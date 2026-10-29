@@ -152,7 +152,10 @@ la session (`main` sans elle) ; les notes de plus de 30 jours sortent du store (
 rappel en fin de tour quand elle travaille sans (#98, #104) ; le parent tient la sienne, une étape
 par session lancée, son état en mots (#104). Il n'y a plus de carte HTML du Lot. La liste d'étapes de
 la session se dessine aussi en entier dans une bande fixe juste au-dessus de la saisie (terminal et
-desktop), visible quand on remonte dans le fil, jusqu'à ce que tout soit coché (#104).
+desktop), visible quand on remonte dans le fil, jusqu'à ce que tout soit coché (#104). Depuis #107,
+elle a une fine barre d'avancement sous « Étapes 4/7 » et, sur desktop, les icônes de la liste
+native : une coche blanche dans un rond plein gris (faite, libellé grisé), un spinner (en cours,
+en gras), un rond en pointillés (à faire) ; le terminal garde ✓ ◐ ○ et une barre en traits.
 
 **Le réglage autonome** (#77, #105, réglage de session `autonome`, éteint par défaut) :
 Maestro ne pose plus le menu « Je lance lesquelles ? ». Il pose les cartes des trois premières
@@ -277,8 +280,8 @@ chaque projet qui a une roadmap :
   seule fois par tâche.
 - **bloc de fin de tour** (règle du 28/10/2026, #85, dans tout projet, roadmap ou non) : en mode
   ADHD, un tour de travail (le tour a appelé la boîte de fin ou la liste d'étapes) dont la
-  dernière réponse n'a pas ses trois lignes `État`, `À toi`, `Session` (sans casse, accents, gras
-  ni puces, chacune en début de ligne et suivie de « : »), ou dont la ligne Session dit « à
+  dernière réponse n'a pas ses trois lignes `État`, `À toi`, `Session` (sans casse, accents, gras,
+  puces, citation ni emoji de tête, chacune en début de ligne et suivie de « : »), ou dont la ligne Session dit « à
   archiver » sans le bouton « Oui, archiver » dans la boîte, bloque l'arrêt une fois ; le rappel
   nomme ce qui manque et redonne le format. Les étiquettes comptent, pas leurs valeurs ;
 - **méthode** (2026-10-23) : le brief d'une session lancée du panneau dit quelle skill superpowers
@@ -314,16 +317,19 @@ les réglages allumés :
   jamais pour un geste qu'un outil fait : un volet de l'app fermé ou masqué (navigateur, fichier,
   diff) s'ouvre par la session elle-même (`preview_start`, `mcp__ccd_view__show_pane`), depuis le
   28/10/2026 (#74) ;
-- `adhd` : chaque message commence par une ligne en gras, emoji + étape en cours sur le total + nom
-  (`🔄 **2/3 Clé**` ; détour `⚠️ **2/3 Clé** ↳ nom refusé` ; fin `✅ **3/3 Fait**` ; noms figés ;
-  pas de ligne pour une réponse courte hors tâche), puis une phrase de constat et, s'il en reste une, la seule
+- `adhd` : chaque message commence par une ligne en gras, emoji d'état + étape sur le total + nom
+  (en cours `⏳ **2/4 Écrire le plan**` ; finie `✅ **2/4 Écrire le plan**` ; détour
+  `⚠️ **3/4 Coder et tester** ↳ test rouge` ; fin `✅ **4/4 Publier la version**`, #107) ; les
+  étapes sont celles de la liste d'étapes native, même ordre, même nom (un verbe et son objet,
+  « Écrire le plan », jamais renommé) ; pas de ligne pour une réponse courte hors tâche, puis une phrase de constat et, s'il en reste une, la seule
   action ou décision qui revient à Bertrand, listes et gras, pas de pavé. Donnée seulement au démarrage, la consigne s'effaçait au
   fil d'une longue session : depuis le 24/10/2026, une ligne de rappel l'accompagne à chaque
   message de Bertrand (hook `UserPromptSubmit`). Depuis le 29/10/2026 (#85), un tour de travail
   (boîte de fin ou liste d'étapes) se termine, après la boîte de fin, par le **bloc de fin de
-  tour**, trois lignes telles quelles : `**État** : fini · pas fini · bloqué`, `**À toi** : rien`
-  ou une à trois actions avec où et comment, `**Session** : à archiver` (avec la boîte « Archiver
-  cette session ? » et le bouton de réponse « Oui, archiver ») ou `à garder`, et pourquoi ;
+  tour**, trois lignes, chacune ouverte par l'emoji de sa valeur depuis #107 : `**État**` (`✅` fini,
+  `🟡` pas fini, `⛔` bloqué) et une phrase, `**À toi**` (`🙌` rien, `👉` une à trois actions avec
+  où et comment), `**Session**` (`🗄️` à archiver, avec la boîte « Archiver cette session ? » et le
+  bouton de réponse « Oui, archiver » ; `📌` à garder, et pourquoi) ;
 - `francais` : réponses en français ;
 - `autonome` (#77, #105, en mode Code comme en mode Projet, éteint par défaut) : Claude suit sa
   recommandation au lieu de poser la question, sauf pour une question d'architecture, c'est-à-dire
@@ -440,6 +446,7 @@ claude plugin test plugins/roadmap
 
 ## Historique
 
+- **0.62.0 (2026-10-29)** : panneau et réglages : repères plus clairs : ligne ADHD à emoji d'état (⏳ en cours, ✅ finie, ⚠️ détour) et noms de la liste native (verbe et objet), bloc de fin à emoji de valeur, bande des étapes aux icônes de la liste native et barre d'avancement (#107)
 - **0.61.0 (2026-10-29)** : audit : nouvelle skill qui audite le contenu de la roadmap (paquets découpés en tâche mère et sous-tâches datées, dépendances, doublons, trous), validée paquet par paquet, écrite tout ou rien avec sauvegarde et bilan par fragment ; proposée en fin d'onboarding (#103)
 - **0.60.0 (2026-10-29)** : panneau et lot : la liste d'étapes native partout (rappel de fin de tour en mode Code aussi, liste entière dans une bande fixe au-dessus de la saisie), le Lot suit ses sessions par sa propre liste, la carte HTML du Lot retirée (#104)
 - **0.59.0 (2026-10-29)** : reglages-session : avec autonome, fusion et publication sans demander dans les deux modes ; lot : le Lot donne seul la main, publication comprise (#105)

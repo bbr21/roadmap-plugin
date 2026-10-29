@@ -8,6 +8,7 @@ import {
   axisColor,
   barCuts,
   barIcon,
+  stepIcon,
   axisPillIcon,
   axisTint,
   percentIcon,
@@ -197,6 +198,7 @@ import {
   type LotProposal,
   applyPlan,
   stepBand,
+  stepBarText,
   childAlerts,
   childAlertText,
   childrenOf,
@@ -2858,23 +2860,53 @@ export const register: Register = (on, options) => {
   on('ui.render', { component: 'Pane', requestId: SETTINGS_PANE }, async ($, e) => drawSettings($, e, await paletteOf($)))
 
   // La liste d'étapes de la session, fixe au-dessus de la saisie (#104, maquette B) : elle cède à une enquête de l'app.
+  // Sur desktop, les icônes de la liste native et une barre d'avancement (#107, maquette C) ; au terminal, des glyphes.
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     const band = e.props.hasSurvey ? undefined : stepBand(await read($, stepsAtom))
     if (!band) return next(e)
-    const { Box, Text } = $.ui.resolve(e)
+    const resolved = $.ui.resolve(e)
+    const { Box, Text } = resolved
+    const Svg = e.surface !== 'terminal' && 'Svg' in resolved ? resolved.Svg : undefined
+    const palette = Svg ? await paletteOf($) : undefined
+    const label = (r: (typeof band.rows)[number]) =>
+      r.status === 'completed' ? (
+        <Text dimColor>{Svg ? r.text : `${r.mark} ${r.text}`}</Text>
+      ) : r.status === 'in_progress' ? (
+        <Text bold>{Svg ? r.text : `${r.mark} ${r.text}`}</Text>
+      ) : (
+        <Text>{Svg ? r.text : `${r.mark} ${r.text}`}</Text>
+      )
     return (
       <Box flexDirection="column">
         <Box flexDirection="row" justifyContent="space-between">
           <Text dimColor>Étapes</Text>
           <Text dimColor>{band.count}</Text>
         </Box>
+        {Svg && palette ? (
+          <Box paddingY="xs">
+            <Svg
+              source={barIcon([{ hex: palette.text3, n: band.done }, { hex: palette.text3, n: band.total - band.done, dim: true }], palette.text3)}
+              alt={`${band.done} étape${band.done > 1 ? 's' : ''} faite${band.done > 1 ? 's' : ''} sur ${band.total}`}
+              height={4}
+            />
+          </Box>
+        ) : (
+          <Text dimColor>{stepBarText(band.done, band.total)}</Text>
+        )}
         {band.rows.map(r =>
-          r.status === 'completed' ? (
-            <Text dimColor strikethrough>{`${r.mark} ${r.text}`}</Text>
-          ) : r.status === 'in_progress' ? (
-            <Text bold>{`${r.mark} ${r.text}`}</Text>
+          Svg && palette ? (
+            <Box flexDirection="row" alignItems="center" gap="xs">
+              <Svg
+                source={stepIcon(r.status, palette.text3)}
+                alt={r.status === 'completed' ? 'faite' : r.status === 'in_progress' ? 'en cours' : 'à faire'}
+                width={14}
+                height={14}
+                {...(r.status === 'in_progress' ? { isInteractive: true } : {})}
+              />
+              {label(r)}
+            </Box>
           ) : (
-            <Text dimColor>{`${r.mark} ${r.text}`}</Text>
+            label(r)
           ),
         )}
       </Box>

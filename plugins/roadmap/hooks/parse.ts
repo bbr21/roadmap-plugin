@@ -614,13 +614,17 @@ const CLOSING_LINES: readonly { gap: ClosingGap; label: string; start: RegExp }[
 
 /** Le bloc tel que Claude l'écrit, dit au démarrage (mode ADHD) et redit par le rappel de fin de tour. */
 const CLOSING_FORMAT = [
-  '**État** : fini · pas fini · bloqué, et une phrase sur où on en est',
-  '**À toi** : rien, ou une à trois actions, chacune avec où et comment',
-  '**Session** : à archiver, ou à garder et pourquoi',
+  '🟡 **État** : fini · pas fini · bloqué (✅ · 🟡 · ⛔), et une phrase sur où on en est',
+  '👉 **À toi** : rien (🙌), ou une à trois actions (👉), chacune avec où et comment',
+  '📌 **Session** : à archiver (🗄️), ou à garder (📌) et pourquoi',
 ]
 
-/** Une ligne sans gras, puces ni accents : « - **État :** fini » devient « etat : fini ». */
-const closingLine = (line: string) => normalizeTitle(line.replace(/[*_]/g, '')).replace(/^(?:[-•>]\s*|\d+[.)]\s*)+/, '')
+/**
+ * Une ligne sans gras, puces, emoji de tête ni accents : « - **État :** fini » et « > 🟡 **État** :
+ * pas fini » deviennent « etat : … ». L'emoji de valeur (#107) est accepté, pas exigé.
+ */
+const closingLine = (line: string) =>
+  normalizeTitle(line.replace(/[*_]/g, '')).replace(/^(?:[-•>]\s*|\d+[.)]\s*|[\p{Extended_Pictographic}\uFE0F\u200D]+\s*)+/u, '')
 
 /**
  * Ce qui manque à la fin d'un tour de travail en mode ADHD (#85) : chaque ligne du bloc absente de
@@ -1724,12 +1728,25 @@ const STEP_MARKS: Record<ChildStep['status'], StepBandRow['mark']> = { completed
 /**
  * La bande au-dessus de la saisie (#104, maquette B choisie par Bertrand) : la liste entière de la
  * session et « 4/7 » (l'étape en cours, sinon les faites), tant qu'une étape reste ; rien sinon.
+ * `done` sur `total` règle sa barre d'avancement (#107, maquette C).
  */
-export function stepBand(steps: readonly ChildStep[]): { count: string; rows: StepBandRow[] } | undefined {
+export function stepBand(steps: readonly ChildStep[]): { count: string; done: number; total: number; rows: StepBandRow[] } | undefined {
   if (steps.length === 0 || steps.every(s => s.status === 'completed')) return undefined
+  const done = steps.filter(s => s.status === 'completed').length
   const at = steps.findIndex(s => s.status === 'in_progress')
-  const n = at >= 0 ? at + 1 : steps.filter(s => s.status === 'completed').length
-  return { count: `${n}/${steps.length}`, rows: steps.map(s => ({ mark: STEP_MARKS[s.status], text: s.content, status: s.status })) }
+  const n = at >= 0 ? at + 1 : done
+  return {
+    count: `${n}/${steps.length}`,
+    done,
+    total: steps.length,
+    rows: steps.map(s => ({ mark: STEP_MARKS[s.status], text: s.content, status: s.status })),
+  }
+}
+
+/** La barre d'avancement de la bande au terminal (#107) : `━` pour les faites, `─` pour le reste. */
+export function stepBarText(done: number, total: number, width = 24): string {
+  const full = total > 0 ? Math.round((done / total) * width) : 0
+  return '━'.repeat(full) + '─'.repeat(width - full)
 }
 
 /** L'étape d'une liste, pour le parent : « étape 5/7 Coder », « 7/7 faites », rien sans liste. */
@@ -2912,7 +2929,7 @@ export function sessionPrefsText(prefs: SessionPrefs, error?: string, project?: 
   }
   if (prefs.adhd) {
     lines.push(
-      "- **Mode ADHD** : chaque message commence par une seule ligne, en gras : un emoji, le numéro de l'étape en cours sur le total, le nom de l'étape, rien d'autre. Étape en cours : `🔄 **2/3 Clé**` ; détour (erreur, question, retour en arrière) : `⚠️ **2/3 Clé** ↳ nom refusé` ; tâche finie : `✅ **3/3 Fait**`. Une question ou une réponse courte hors tâche : pas de ligne du tout. Les étapes se nomment en 1 ou 2 mots au premier message d'une tâche et ne changent plus ensuite ; le total ne bouge que si une étape s'ajoute. Après la ligne, une phrase de constat (« Bucket créé. »), puis, s'il en reste une, la seule action ou décision qui revient à " + person() + ", jamais un geste qu'un outil fait à ta place. Réponses très courtes, listes à puces, gras sur l'essentiel, jamais de paragraphe dense. Seule exception : une explication que " + person() + " demande prend la place qu'il faut pour être comprise, en mots simples, avec un exemple concret. Un tour de travail (boîte de fin ou liste d'étapes) se termine, après la boîte de fin, par le bloc de fin de tour, trois lignes telles quelles : `**État** : fini · pas fini · bloqué`, et une phrase sur où on en est ; `**À toi** : rien`, ou une à trois actions, chacune avec où et comment (le volet, le fichier, le bouton) ; `**Session** : à archiver` (la boîte de fin pose alors « Archiver cette session ? » avec le bouton de réponse « Oui, archiver ») ou `à garder`, et pourquoi.",
+      "- **Mode ADHD** : chaque message commence par une seule ligne, en gras : un emoji qui dit l'état de l'étape, son numéro sur le total, son nom, rien d'autre. Étape en cours : `⏳ **2/4 Écrire le plan**` ; étape qui vient de finir : `✅ **2/4 Écrire le plan**` ; détour (erreur, question, retour en arrière) : `⚠️ **3/4 Coder et tester** ↳ test rouge` ; tâche finie : `✅ **4/4 Publier la version**`, le nom de la dernière étape. Les étapes sont celles de la liste d'étapes (`update_plan`), dans le même ordre et sous le même nom : un verbe et son objet, 2 à 4 mots qui disent le geste (« Écrire le plan », pas « Plan »), posés au premier message d'une tâche et jamais renommés ; le total ne bouge que si une étape s'ajoute. Une question ou une réponse courte hors tâche : pas de ligne du tout. Après la ligne, une phrase de constat (« Bucket créé. »), puis, s'il en reste une, la seule action ou décision qui revient à " + person() + ", jamais un geste qu'un outil fait à ta place. Réponses très courtes, listes à puces, gras sur l'essentiel, jamais de paragraphe dense. Seule exception : une explication que " + person() + " demande prend la place qu'il faut pour être comprise, en mots simples, avec un exemple concret. Un tour de travail (boîte de fin ou liste d'étapes) se termine, après la boîte de fin, par le bloc de fin de tour, trois lignes telles quelles, chacune ouverte par l'emoji de sa valeur : `🟡 **État** : pas fini` (`✅` fini, `⛔` bloqué), et une phrase sur où on en est ; `🙌 **À toi** : rien`, ou `👉 **À toi** :` une à trois actions, chacune avec où et comment (le volet, le fichier, le bouton) ; `📌 **Session** : à garder`, et pourquoi, ou `🗄️ **Session** : à archiver` (la boîte de fin pose alors « Archiver cette session ? » avec le bouton de réponse « Oui, archiver »).",
     )
   }
   if (prefs.francais) lines.push('- **Langue** : réponds en français, comptes rendus, récaps et boîte de fin compris.')
@@ -2923,7 +2940,7 @@ export function sessionPrefsText(prefs: SessionPrefs, error?: string, project?: 
   }
   // La liste d'étapes (#84) : dite à toute session, comme les gestes ; le parent la lit pour prendre des nouvelles.
   lines.push(
-    "- **Liste d'étapes** (en mode Code comme en mode Projet) : une tâche de plus d'un geste tient sa liste d'étapes (`update_plan` dans l'app), posée dès le premier geste, une étape cochée dès qu'elle finit, avec les noms d'étapes de la ligne du mode ADHD quand il est allumé. C'est par elle que la session qui t'a lancée voit où tu en es, sans ouvrir ta conversation. Un Lot ou Maestro tient la sienne pour ses sessions : une étape par tâche lancée, son état en mots.",
+    "- **Liste d'étapes** (en mode Code comme en mode Projet) : une tâche de plus d'un geste tient sa liste d'étapes (`update_plan` dans l'app), posée dès le premier geste, une étape cochée dès qu'elle finit, chacune nommée d'un verbe et de son objet (« Écrire le plan »), les mêmes noms que la ligne du mode ADHD quand il est allumé. C'est par elle que la session qui t'a lancée voit où tu en es, sans ouvrir ta conversation. Un Lot ou Maestro tient la sienne pour ses sessions : une étape par tâche lancée, son état en mots.",
   )
   lines.push(gesturesText(prefs.autonome))
   lines.push(mockupText())
@@ -2939,7 +2956,7 @@ export function sessionPrefsText(prefs: SessionPrefs, error?: string, project?: 
 // s'effaçait au fil d'une longue session (fil absent 3 messages sur 4). Une ligne la redit à chaque message.
 export function sessionPrefsReminder(prefs: SessionPrefs): string | undefined {
   if (!prefs.adhd) return undefined
-  return "Mode ADHD : ouvre le message par une ligne en gras, emoji + étape en cours/total + nom (🔄 **2/3 Clé**, détour ⚠️ **2/3 Clé** ↳ raison, fin ✅ **3/3 Fait**, mêmes noms qu'au message d'avant, pas de ligne pour une réponse courte hors tâche), puis une phrase de constat, puis la seule action ou décision qui revient à " + person() + ", s'il y en a une ; un tour de travail finit par le bloc État, À toi, Session."
+  return "Mode ADHD : ouvre le message par une ligne en gras, emoji d'état + étape/total + son nom dans la liste d'étapes (en cours ⏳ **2/4 Écrire le plan**, finie ✅ **2/4 Écrire le plan**, détour ⚠️ **3/4 Coder et tester** ↳ raison ; mêmes noms, verbe et objet, qu'au message d'avant ; pas de ligne pour une réponse courte hors tâche), puis une phrase de constat, puis la seule action ou décision qui revient à " + person() + ", s'il y en a une ; un tour de travail finit par le bloc 🟡 État, 👉 À toi, 📌 Session, chaque ligne ouverte par l'emoji de sa valeur."
 }
 
 // Le volet Réglages (#81, 2026-10-28) : Bertrand voit chaque réglage et le change d'un clic, sans
