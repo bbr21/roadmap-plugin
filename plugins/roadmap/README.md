@@ -149,13 +149,14 @@ la session (`main` sans elle) ; les notes de plus de 30 jours sortent du store (
 (pas encore s'il a répondu sans changer d'étape), et propose d'archiver les finis d'un seul clic
 (« Archive-les »). Toute session reçoit aussi la consigne de tenir sa liste d'étapes.
 
-**Le réglage autonome** (#77, réglage de session `autonome`, mode Code, éteint par défaut) :
+**Le réglage autonome** (#77, #105, réglage de session `autonome`, éteint par défaut) :
 Maestro ne pose plus le menu « Je lance lesquelles ? ». Il pose les cartes des trois premières
 tâches, comme « Maestro go », et Bertrand clique Start sur celles qu'il veut. Il fusionne seul la
 branche prête d'une de ses sessions (tests verts, à jour de `main`, diff relu par lui), une à la
-fois, tests rejoués après chaque fusion. Il répond lui-même à une session qui attend, sauf pour
-une question d'architecture ou un geste qui revient à Bertrand. Sans le réglage, la fusion attend
-le clic de Bertrand.
+fois, tests rejoués après chaque fusion. Il publie seul aussi (release d'un plugin, déploiement)
+et donne seul la main sur une ressource unique (#105). Il répond lui-même à une session qui
+attend, sauf pour une question d'architecture ou un geste qui revient à Bertrand. Sans le réglage,
+la fusion et la publication attendent le clic de Bertrand.
 
 Une session lancée (par le panneau ou par Maestro) reçoit le **cap** dans son brief : finir la
 task dans la session ; décider seule ce que les fichiers, le code ou un défaut raisonnable
@@ -206,7 +207,8 @@ Premiers usages : la roadmap de Caro et le dossier AAFES Cowork, depuis l'onglet
   brief ne cite ni TDD ni plan de code, dit que la tâche passe par les connecteurs MCP et que rien
   ne part chez un tiers sans accord ; la clause du Lot n'a ni branche ni fusion ; le rappel
   « commit sans test » se tait ; Maestro ne propose que les tâches « à moi », compte celles des
-  autres en retard, et ignore le réglage `autonome` (sans fusion, il ne vaut qu'en mode Code).
+  autres en retard, et garde son menu avec le réglage `autonome` ; la publication sans demander
+  y vaut quand même, par le texte injecté (#105).
 - **L'onboarding** pose un dossier simple : `CLAUDE.md` court, la roadmap et ses bilans,
   `.claude/roadmap.json` ; git en option ; ni `check.mjs`, ni hook, ni historique. **Le doctor** y
   vérifie python3, la roadmap, les réglages, les champs exigés, le plugin et les skills du brief
@@ -318,12 +320,16 @@ les réglages allumés :
   ou une à trois actions avec où et comment, `**Session** : à archiver` (avec la boîte « Archiver
   cette session ? » et le bouton de réponse « Oui, archiver ») ou `à garder`, et pourquoi ;
 - `francais` : réponses en français ;
-- `autonome` (#77, mode Code, éteint par défaut) : Claude suit sa recommandation au lieu de poser
-  la question, sauf pour une question d'architecture, c'est-à-dire un choix qui s'écrirait dans
-  `docs/decisions.md`. Un Lot ou Maestro fusionne seul la branche prête d'une de ses sessions
-  (tests verts, à jour de `main`, diff relu par lui), une à la fois, tests rejoués après chaque
-  fusion. Lancer et archiver gardent le clic de Bertrand. En mode Projet, sans fusion, il ne vaut
-  que pour les gestes hors du code.
+- `autonome` (#77, #105, en mode Code comme en mode Projet, éteint par défaut) : Claude suit sa
+  recommandation au lieu de poser la question, sauf pour une question d'architecture, c'est-à-dire
+  un choix qui s'écrirait dans `docs/decisions.md`. Le réglage est l'autorisation durable de
+  fusionner et de publier (release d'un plugin, déploiement, push de `main`) : aucune session ne
+  demande « je fusionne ? » ni « je publie ? », elle le fait puis le dit en une ligne. Un Lot ou
+  Maestro fusionne seul la branche prête d'une de ses sessions (tests verts, à jour de `main`,
+  diff relu par lui), une à la fois, tests rejoués après chaque fusion, et donne seul la main sur
+  une ressource unique, publication comprise ; la clause du Lot le dit à la sous-session. Lancer
+  et archiver gardent le clic de Bertrand ; un message en son nom ou un paiement se demandent
+  toujours.
 
 Toujours dite, réglages éteints compris, en mode Code comme en mode Projet : la règle des gestes
 hors du code (#82, 28/10/2026). Un geste qu'une tâche demande hors du dépôt (tâche planifiée,
@@ -429,6 +435,7 @@ claude plugin test plugins/roadmap
 
 ## Historique
 
+- **0.59.0 (2026-10-29)** : reglages-session : avec autonome, fusion et publication sans demander dans les deux modes ; lot : le Lot donne seul la main, publication comprise (#105)
 - **0.58.0 (2026-10-29)** : panneau : en mode Projet, le panneau s'ouvre sur Ma journée, avec quatre compteurs d'urgence (Ma journée, En retard, Cette semaine, À relancer), dates et attentes en couleur, filtre Qui combinable, récurrence tous: reconduite à la coche, date de relance relance: (#99)
 - **0.57.0 (2026-10-29)** : reglages-session : les réglages de session sont propres à chaque projet ; le volet montre ceux du projet où l'on est (Session · Roadmap), un On/Off par réglage, sans section Par défaut ; le bloc du démarrage et le rappel suivent le projet de la session (#102)
 - **0.56.0 (2026-10-29)** : onboarding : import d'une roadmap existante (checklist, CSV, Notion, tableau Markdown) par script, avec analyse, sauvegarde, numérotation et bilan sans ligne perdue ; verifier contrôle aussi ROADMAP-fait.md (#100)

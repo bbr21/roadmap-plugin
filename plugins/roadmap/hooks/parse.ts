@@ -1589,13 +1589,21 @@ function lotMockups(where: string): string {
   return `Un choix visuel : écris tes 2 ou 3 maquettes dans une page HTML statique, ${where}, dis « attend une réponse : choix de maquette, <chemin> » en tête de ton compte rendu et termine ton tour ; ${person()} ne lit pas ton transcript : le Lot lui montre la page et te renvoie son choix.`
 }
 
+/**
+ * La main du Lot avec le réglage autonome (#105, Bertrand, 2026-10-29) : une sous-session AAFES attendait
+ * la main pour publier le plugin aafes, et son Lot la demandait à Bertrand. Le réglage la donne seul.
+ */
+const lotAutonome = (): string =>
+  `Avec le réglage autonome, le Lot te donne la main seul, sans attendre ${person()} : une fois la main reçue, fais le geste (la publication comprise) et publie sans redemander, puis dis en une ligne ce que tu as publié.`
+
 export function lotClause(lot: string, mode: Mode = 'code'): string[] {
   // Mode Projet (#76) : ni branche, ni PR, ni fusion ; la session se dit « prête à clore ».
   if (mode === 'projet') {
     return [
       `Tu fais partie du Lot « ${lot} » : la session qui t'a lancée coordonne ses tâches (skill \`roadmap:lot\`).`,
       '- Travaille dans le dossier du projet.',
-      '- Une ressource unique (compte, document partagé, envoi à un tiers) ne se prend qu\'avec la main du Lot : dis-le en tête de ton compte rendu et termine ton tour ; il te la donne par message, et tu la rends dès que tu as fini.',
+      '- Une ressource unique (compte, document partagé, envoi à un tiers, publication d\'un plugin) ne se prend qu\'avec la main du Lot : dis-le en tête de ton compte rendu et termine ton tour ; il te la donne par message, et tu la rends dès que tu as fini.',
+      `- ${lotAutonome()}`,
       '- La première phrase de chaque compte rendu de fin de tour dit ton état, avec ton étape : « en cours : étape 3/7 … », « prête à clore », « attend une réponse : … » ou « bloquée : … ». Tiens ta liste d\'étapes (update_plan) : c\'est par elle que le Lot voit où tu en es.',
       `- ${lotMockups('à côté du document')}`,
       '- Ne coche pas ta ligne : le Lot la coche, avec son bilan. Ton dernier compte rendu dit ce qui a été fait et le souci rencontré.',
@@ -1608,6 +1616,7 @@ export function lotClause(lot: string, mode: Mode = 'code'): string[] {
     '- Travaille sur ta branche, dans ton worktree ; rejoue les tests du projet sur ta branche, pousse-la, et ouvre ta PR si le projet en a.',
     '- Ne fusionne pas sur main : le Lot fusionne, une branche à la fois, dans l\'ordre qu\'il choisit.',
     '- Une ressource unique (simulateur iOS, appareil, base, déploiement, compte de test) ne se prend qu\'avec la main du Lot : dis-le en tête de ton compte rendu et termine ton tour ; il te la donne par message, et tu la rends dès que tu as fini.',
+    `- ${lotAutonome()}`,
     '- La première phrase de chaque compte rendu de fin de tour dit ton état, avec ton étape : « en cours : étape 3/7 … », « prête à fusionner (tests : …) », « attend le simulateur », « attend une réponse : … » ou « bloquée : … ». Tiens ta liste d\'étapes (update_plan) : c\'est par elle que le Lot voit où tu en es.',
     '- Le Lot peut te demander de mettre ta branche à jour après une autre fusion : merge de main dans ta branche, jamais de rebase d\'une branche poussée.',
     `- ${lotMockups('dans le dossier du chantier, `docs/plans/<type>-<slug>/maquettes.html`')}`,
@@ -2921,7 +2930,7 @@ export function sessionPrefsText(prefs: SessionPrefs, error?: string, project?: 
   if (prefs.francais) lines.push('- **Langue** : réponds en français, comptes rendus, récaps et boîte de fin compris.')
   if (prefs.autonome) {
     lines.push(
-      "- **Autonome** (mode Code ; en mode Projet, sans fusion, il ne vaut que pour les gestes hors du code ci-dessous) : " + person() + " veut que le travail avance sans attendre ses réponses, quitte à corriger après. Quand ta recommandation est claire, suis-la au lieu de poser la question, et dis en une ligne ce que tu as choisi. Ne lui pose que les questions d'architecture : un choix qui s'écrirait dans `docs/decisions.md` (un contrat entre composants, comme le format d'un fichier, d'une donnée ou d'une API ; une nouvelle dépendance ou un service ; la vision ou un non-objectif touché). Ce réglage est son autorisation durable de fusionner : un Lot ou Maestro fusionne seul, sans attendre son clic, la branche prête d'une de ses sessions (tests verts sur la branche à jour de main, diff relu par lui, qui ne l'a pas écrit), une branche à la fois, par la règle de fusion du projet, tests rejoués sur main après chaque fusion. Lancer une session et archiver gardent le clic de " + person() + " : pose la carte ou le bouton, ne lance ni n'archive toi-même.",
+      "- **Autonome** (en mode Code comme en mode Projet) : " + person() + " veut que le travail avance sans attendre ses réponses, quitte à corriger après. Quand ta recommandation est claire, suis-la au lieu de poser la question, et dis en une ligne ce que tu as choisi. Ne lui pose que les questions d'architecture : un choix qui s'écrirait dans `docs/decisions.md` (un contrat entre composants, comme le format d'un fichier, d'une donnée ou d'une API ; une nouvelle dépendance ou un service ; la vision ou un non-objectif touché). Ce réglage est son autorisation durable de fusionner et de publier : la fusion d'une branche prête, la publication (release d'un plugin, déploiement, push de `main`). Ne lui demande ni de fusionner ni de publier, ni par question ni par bouton : fais-le, par la règle du projet, puis dis en une ligne ce que tu as fusionné ou publié. Une skill de publication qui demande de valider le fond avec lui : la tâche qu'il a lancée vaut cette validation. Un Lot ou Maestro fusionne seul la branche prête d'une de ses sessions (tests verts sur la branche à jour de main, diff relu par lui, qui ne l'a pas écrit), une branche à la fois, tests rejoués sur main après chaque fusion, et donne seul la main sur une ressource unique, publication comprise, à une session à la fois. Lancer une session et archiver gardent le clic de " + person() + " : pose la carte ou le bouton, ne lance ni n'archive toi-même. Tes règles de sécurité restent au-dessus : un message envoyé en son nom ou un paiement se demandent toujours.",
     )
   }
   // La liste d'étapes (#84) : dite à toute session, comme les gestes ; le parent la lit pour prendre des nouvelles.
@@ -2959,7 +2968,7 @@ export const SESSION_PREF_INFO: readonly { key: PrefKey; name: string; help: str
   {
     key: 'autonome',
     name: 'Autonome',
-    help: "Claude suit sa recommandation sauf question d'architecture ; Maestro fusionne seul une branche prête (mode Code).",
+    help: "Claude suit sa recommandation sauf question d'architecture ; il fusionne et publie seul, sans te demander. Lancer et archiver restent à ton clic.",
   },
 ]
 
@@ -3322,7 +3331,7 @@ export function maestroContext(o: {
     "- Tu es le Lot des sessions que tu lances (skill roadmap:lot), même d'une seule : une carte New task qu'elles posent te remonte (« Tâche proposée par une session que tu as lancée… »), maintenant ou à un tour suivant, au lieu de rester dans leur transcript. Ouvre sa ligne, pose ta carte, et dis à " + person() + " en une ligne quelle session la propose et qu'il clique Start sur ta carte.",
     ...(o.autonome
       ? [
-          '- Réglage autonome allumé : fusionne seul, sans attendre le clic de ' + person() + ', la branche prête d\'une de tes sessions (tests verts sur la branche à jour de main, diff relu par toi), une à la fois, par la règle de fusion du projet, tests rejoués sur main après chaque fusion (skill roadmap:lot, § 5). Lancer et archiver restent à son clic.',
+          '- Réglage autonome allumé : fusionne seul, sans attendre le clic de ' + person() + ', la branche prête d\'une de tes sessions (tests verts sur la branche à jour de main, diff relu par toi), une à la fois, par la règle de fusion du projet, tests rejoués sur main après chaque fusion (skill roadmap:lot, § 5). Tu publies seul aussi (release d\'un plugin, déploiement), et tu donnes seul la main sur une ressource unique à une session à la fois (§ 4), sans lui demander. Lancer et archiver restent à son clic.',
           "- Une session qui attend une réponse : lis son dernier compte rendu. Si ce n'est ni une question d'architecture (un choix qui s'écrirait dans docs/decisions.md) ni un geste qui revient à " + person() + " (lancer, archiver, un secret, un accès), réponds-lui toi-même par message avec ta recommandation, et dis-le en une ligne.",
         ]
       : projectSettings(o.source).mode === 'projet'

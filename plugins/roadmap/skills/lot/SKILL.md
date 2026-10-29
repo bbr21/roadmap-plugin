@@ -46,8 +46,9 @@ lui remonte.
   - tu fais partie du Lot « <nom> », qui coordonne et fusionne ;
   - travaille sur ta branche, rejoue les tests du projet, pousse-la, ouvre ta PR si le projet en a ;
   - ne fusionne pas sur `main` : le Lot fusionne, une branche à la fois ;
-  - une ressource unique (simulateur iOS, appareil, base, déploiement, compte de test) ne se prend
-    qu'avec la main du Lot : dis-le en tête de ton compte rendu et termine ton tour ;
+  - une ressource unique (simulateur iOS, appareil, base, déploiement, compte de test, publication
+    d'un plugin) ne se prend qu'avec la main du Lot : dis-le en tête de ton compte rendu et termine
+    ton tour ; avec le réglage autonome, le Lot te donne la main seul, et tu publies sans redemander ;
   - la première phrase de chaque compte rendu dit ton état, avec ton étape : « en cours : étape
     3/7 … », « prête à fusionner (tests : …) », « attend le simulateur », « attend une réponse :
     … » ou « bloquée : … » ; tiens ta liste d'étapes (`update_plan`) ;
@@ -109,10 +110,12 @@ lui remonte.
 - **Débloquer d'abord** : ce qui empêche une sous-session d'avancer passe avant tout le reste. Le
   Lot répond lui-même, par message à la sous-session, à ce que le code, la roadmap ou les règles
   tranchent. Le reste va à l'utilisateur, une question à la fois, et sa réponse part mot pour mot.
-  Avec le réglage de session `autonome` (skill `reglages-session`, mode Code), le Lot répond
-  aussi lui-même, par sa recommandation, à tout ce qui n'est ni une question d'architecture (un
-  choix qui s'écrirait dans `docs/decisions.md`) ni un geste qui revient à l'utilisateur (lancer,
-  archiver, un secret, un accès), et le dit en une ligne.
+  Avec le réglage de session `autonome` (skill `reglages-session`, en mode Code comme en mode
+  Projet), le Lot répond aussi lui-même, par sa recommandation, à tout ce qui n'est ni une question
+  d'architecture (un choix qui s'écrirait dans `docs/decisions.md`) ni un geste qui revient à
+  l'utilisateur (lancer, archiver, un secret, un accès), et le dit en une ligne. Fusionner et
+  publier ne lui reviennent pas : le Lot ne lui pose jamais « je fusionne ? » ni « je publie ? »
+  (#105).
 - **Un choix de maquette** (#96) : une sous-session qui « attend une réponse : choix de maquette,
   <chemin> » a écrit ses maquettes dans une page. Le Lot l'ouvre dans le volet navigateur
   (`preview_start` avec l'url `file://` de la page, dans le worktree de la sous-session), puis
@@ -130,8 +133,10 @@ lui remonte.
 
 ## 4. Les ressources uniques, le simulateur iOS d'abord
 
-Simulateur iOS, appareil, base de données, déploiement, compte de test : une seule sous-session à
-la fois, et c'est le Lot qui donne la main.
+Simulateur iOS, appareil, base de données, déploiement, publication d'un plugin, compte de test :
+une seule sous-session à la fois, et c'est le Lot qui donne la main. Avec le réglage `autonome`, il
+la donne seul, sans demander à l'utilisateur, la publication comprise, et la sous-session publie
+sans redemander (#105) ; sans le réglage, rien ne change.
 
 1. La sous-session qui en a besoin le dit en tête de son compte rendu et termine son tour.
 2. Le Lot donne la main à une seule, par message (« À toi le simulateur ; rends-le quand tu as
@@ -161,8 +166,9 @@ La fusion elle-même :
   branche pas prête : dire ce qui manque au lieu de fusionner. « Résous les conflits de #N avec
   main » est le cas où le Lot code (tableau du haut) : il résout dans la branche en gardant les deux
   intentions, rejoue ses tests, puis remontre la carte. Avec le
-  réglage, en mode Code, le Lot fusionne seul une branche prête, sans attendre : le réglage est
-  l'autorisation durable de l'utilisateur. « Relue » veut dire le diff lu par le Lot, qui ne l'a pas
+  réglage, le Lot fusionne seul une branche prête, et publie seul ce qui doit l'être (release d'un
+  plugin, déploiement, push de `main`), sans attendre ni demander : le réglage est l'autorisation
+  durable de l'utilisateur de fusionner et de publier. Il dit ensuite en une ligne ce qu'il a fait. « Relue » veut dire le diff lu par le Lot, qui ne l'a pas
   écrit. Lancer une session et archiver gardent toujours son clic.
 - **Une branche à la fois**, sur `main` à jour, par la règle de fusion du projet (projets posés par
   l'onboarding : « Finir un chantier »). Jamais deux fusions en même
