@@ -16,7 +16,7 @@ dans Cowork ni dans le chat de claude.ai.
 | `onboarding` | Mode Code : pose dans un dépôt de code la structure de Splitmybill (CLAUDE.md, roadmap numérotée dans `roadmap/` avec ses bilans, docs, `check.mjs`, hook de démarrage, worktree par session), propose de reconstituer la roadmap depuis l'historique du dépôt (PR, fusions ou commits des 6 derniers mois), ou remet un projet existant au format sans rien écraser. Mode Projet : un dossier simple, git en option, des tâches complètes. |
 | `doctor` | Checklist en lecture seule d'un projet (en mode Projet : python3, roadmap, réglages, champs exigés, sans GitHub, Superpowers facultatif) ; d'un projet de code : outils, GitHub, roadmap, structure, `check.mjs`, plugin roadmap, Superpowers et chacune de ses skills de méthode, sa mise à jour automatique, `swiftui-pro` sur un projet iOS ; une ligne OK, KO ou À voir avec la commande qui corrige. |
 | `reglages-session` | Lit et change les réglages de session (questions par formulaire, mode ADHD, français, mode autonome) de `~/.claude/reglages-session.json`, pour le projet de la session (#102). Lancée, elle ouvre aussi le volet Réglages ; tapée seule, `/roadmap:reglages-session` l'ouvre comme `/reglages`, d'une ligne. |
-| `lot` | Tient une session Lot, l'orchestrateur d'un lot de tâches menées en parallèle : lignes et découpage, une session par tâche, lecture de leurs comptes rendus, main donnée sur le simulateur iOS et les autres ressources uniques, ordre des fusions montré en carte cliquable dans le chat (`scripts/etat_lot.py`, un bouton Fusionner par branche, texte en repli), une fusion à la fois. |
+| `lot` | Tient une session Lot, l'orchestrateur d'un lot de tâches menées en parallèle : lignes et découpage, une session par tâche, lecture de leurs comptes rendus, main donnée sur le simulateur iOS et les autres ressources uniques, ordre des fusions calculé depuis git (`scripts/etat_lot.py`), chaque tâche suivie dans la liste d'étapes du Lot (une étape par tâche, son état en mots), une fusion à la fois. |
 
 Le panneau lit `ROADMAP.md` et `ROADMAP-fait.md` (grammaire des dossiers Cowork : une ligne par
 tâche, `[axe | attend:… | ouvert:… | due:… | src:… | fiche:… | après:… | prio:… | feedback:… | tous:… | relance:…]`), relit les fichiers et
@@ -147,7 +147,11 @@ mode Projet, la ligne seule) ; rien quand tout avance. Une session épinglée n'
 l'archivage, une session distante n'est jamais dite finie d'ici, et la branche de base est celle de
 la session (`main` sans elle) ; les notes de plus de 30 jours sortent du store (#90). Il relance une fois un enfant silencieux
 (pas encore s'il a répondu sans changer d'étape), et propose d'archiver les finis d'un seul clic
-(« Archive-les »). Toute session reçoit aussi la consigne de tenir sa liste d'étapes.
+(« Archive-les »). Toute session reçoit aussi la consigne de tenir sa liste d'étapes, et un
+rappel en fin de tour quand elle travaille sans (#98, #104) ; le parent tient la sienne, une étape
+par session lancée, son état en mots (#104). Il n'y a plus de carte HTML du Lot. La liste d'étapes de
+la session se dessine aussi en entier dans une bande fixe juste au-dessus de la saisie (terminal et
+desktop), visible quand on remonte dans le fil, jusqu'à ce que tout soit coché (#104).
 
 **Le réglage autonome** (#77, #105, réglage de session `autonome`, éteint par défaut) :
 Maestro ne pose plus le menu « Je lance lesquelles ? ». Il pose les cartes des trois premières
@@ -435,6 +439,7 @@ claude plugin test plugins/roadmap
 
 ## Historique
 
+- **0.60.0 (2026-10-29)** : panneau et lot : la liste d'étapes native partout (rappel de fin de tour en mode Code aussi, liste entière dans une bande fixe au-dessus de la saisie), le Lot suit ses sessions par sa propre liste, la carte HTML du Lot retirée (#104)
 - **0.59.0 (2026-10-29)** : reglages-session : avec autonome, fusion et publication sans demander dans les deux modes ; lot : le Lot donne seul la main, publication comprise (#105)
 - **0.58.0 (2026-10-29)** : panneau : en mode Projet, le panneau s'ouvre sur Ma journée, avec quatre compteurs d'urgence (Ma journée, En retard, Cette semaine, À relancer), dates et attentes en couleur, filtre Qui combinable, récurrence tous: reconduite à la coche, date de relance relance: (#99)
 - **0.57.0 (2026-10-29)** : reglages-session : les réglages de session sont propres à chaque projet ; le volet montre ceux du projet où l'on est (Session · Roadmap), un On/Off par réglage, sans section Par défaut ; le bloc du démarrage et le rappel suivent le projet de la session (#102)

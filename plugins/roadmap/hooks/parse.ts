@@ -587,17 +587,17 @@ export function ideaReminder(source: Source, phrase: string): string {
   ].join('\n')
 }
 
-/** En mode Projet, un tour « travaille » à partir de deux outils de la session, hors liste d'étapes et boîte de fin (#98). */
+/** Un tour « travaille » à partir de deux outils de la session, hors liste d'étapes et boîte de fin (#98, partout depuis #104). */
 export const STEP_LIST_MIN_TOOLS = 2
 
 /**
- * Le rappel de fin de tour d'une session du mode Projet qui travaille sans liste d'étapes (#98) : la
- * liste native est le seul repère de Bertrand, ou de Caro sans ses réglages de session.
+ * Le rappel de fin de tour d'une session qui travaille sans liste d'étapes (#98, en mode Code aussi
+ * depuis #104) : la liste native est le seul repère de Bertrand, ou de Caro sans ses réglages de session.
  */
 export function stepListReminder(): string {
   return [
-    "Plugin roadmap : cette session du mode Projet travaille sans liste d'étapes. La liste d'étapes de l'app (`update_plan`) est le seul repère qui dit où en est la task.",
-    "Pose-la maintenant : les étapes de la task, celles déjà faites cochées, celle en cours marquée ; ensuite, coche chacune dès qu'elle finit, sans en renommer aucune (une étape nouvelle s'ajoute). Pas de carte `show_widget`.",
+    "Plugin roadmap : cette session travaille sans liste d'étapes. La liste d'étapes de l'app (`update_plan`) est le seul repère qui dit où en est la tâche.",
+    "Pose-la maintenant : les étapes de la tâche, celles déjà faites cochées, celle en cours marquée ; ensuite, coche chacune dès qu'elle finit, sans en renommer aucune (une étape nouvelle s'ajoute). Pas de carte `show_widget`.",
     "Si ce tour n'était qu'une question ou une réponse courte, dis-le en une ligne et termine.",
   ].join('\n')
 }
@@ -1716,6 +1716,22 @@ export function applyPlan(steps: readonly ChildStep[], input: { items?: unknown;
   return out
 }
 
+/** Une ligne de la bande des étapes (#104) : sa marque, au style de la liste native, et son libellé. */
+export type StepBandRow = { mark: '✓' | '◐' | '○'; text: string; status: ChildStep['status'] }
+
+const STEP_MARKS: Record<ChildStep['status'], StepBandRow['mark']> = { completed: '✓', in_progress: '◐', pending: '○' }
+
+/**
+ * La bande au-dessus de la saisie (#104, maquette B choisie par Bertrand) : la liste entière de la
+ * session et « 4/7 » (l'étape en cours, sinon les faites), tant qu'une étape reste ; rien sinon.
+ */
+export function stepBand(steps: readonly ChildStep[]): { count: string; rows: StepBandRow[] } | undefined {
+  if (steps.length === 0 || steps.every(s => s.status === 'completed')) return undefined
+  const at = steps.findIndex(s => s.status === 'in_progress')
+  const n = at >= 0 ? at + 1 : steps.filter(s => s.status === 'completed').length
+  return { count: `${n}/${steps.length}`, rows: steps.map(s => ({ mark: STEP_MARKS[s.status], text: s.content, status: s.status })) }
+}
+
 /** L'étape d'une liste, pour le parent : « étape 5/7 Coder », « 7/7 faites », rien sans liste. */
 export function stepLabel(steps: readonly ChildStep[]): string | undefined {
   if (steps.length === 0) return undefined
@@ -1869,47 +1885,19 @@ function childShortList(children: readonly ChildRow[]): string {
   return names.length > 1 ? `${names.slice(0, -1).join(', ')} et ${names[names.length - 1]}` : (names[0] ?? '')
 }
 
-/** Ce qui fait demander la carte du Lot (#97) : les branches de ses enfants encore ouverts, les prêtes, et la clé de cet état. */
-export type LotCardCue = { branches: string[]; ready: string[]; key: string }
-
-/** Une branche à elle : ni absente ni `main`. */
-function ownBranch(branch: string | undefined): branch is string {
-  return branch !== undefined && branch !== '' && branch !== 'main'
-}
-
 /**
- * La carte de l'état du Lot (skill `lot`, § 3) vaut d'être montrée quand une branche enfant est
- * prête, ou quand au moins deux tournent (#97) ; rien sinon. Une enfant à archiver ne compte plus.
+ * La liste d'étapes du Lot (#104, à la place de sa carte, #95 et #97) : une étape par tâche lancée,
+ * son état en mots, une seule en cours comme l'outil l'exige.
  */
-export function lotCardCue(children: readonly ChildRow[], alerts: readonly ChildAlert[]): LotCardCue | undefined {
-  const finished = new Set(alerts.filter(a => a.kind === 'archive').map(a => a.child.id))
-  const branches = children.filter(c => !finished.has(c.id) && ownBranch(c.branch)).map(c => c.branch as string).sort()
-  const ready = alerts.filter(a => a.kind === 'ready').map(a => (sessionTitleId(a.child.title) ? `#${sessionTitleId(a.child.title)}` : `« ${clip(a.child.title, 30)} »`))
-  if (ready.length === 0 && branches.length < 2) return undefined
-  return { branches, ready, key: JSON.stringify([branches, [...ready].sort()]) }
-}
-
-/** La consigne de montrer la carte du Lot, et pourquoi maintenant. */
-function lotCardLine(why: string): string {
-  return `- Montre d'abord la carte de l'état du lot (skill roadmap:lot, § 3 : lot.json, puis etat_lot.py --html passé à show_widget, --texte sans show_widget) : ${why}. Ton commentaire va dans le message, sous la carte.`
-}
-
-function lotCardWhy(cue: LotCardCue): string {
-  return [
-    ...(cue.ready.length > 0 ? [`${cue.ready.join(', ')} prête${cue.ready.length > 1 ? 's' : ''}`] : []),
-    ...(cue.branches.length >= 2 ? [`${cue.branches.length} branches en cours`] : []),
-  ].join(', ')
-}
+export const LOT_STEP_LIST =
+  "- Ta liste d'étapes (update_plan) suit tes sessions : une étape par tâche lancée, « #<id> <libellé court> · <état> » (en cours : étape 3/7, t'attend, prête à fusionner, en relecture, livrée), dans l'ordre de fusion ; la tâche livrée cochée (completed) ; une seule en cours (in_progress) : celle dont tu t'occupes, sinon la prochaine à fusionner. Renvoie la liste entière (items) dès qu'un état change (skill roadmap:lot, § 3). Pas de carte show_widget."
 
 /**
  * Ce que lit le parent à chaque message de Bertrand (#84) : les enfants à archiver sur une ligne,
  * une ligne par autre enfant qui coince, puis la consigne de chaque genre présent, une seule fois.
  */
-export function childAlertText(alerts: readonly ChildAlert[], card?: LotCardCue): string | undefined {
-  if (alerts.length === 0) {
-    // Rien qui coince, mais plusieurs branches avancent : la carte seule (#97).
-    return card ? [`Roadmap — état de ton lot : ${lotCardWhy(card)}.`, lotCardLine(lotCardWhy(card))].join('\n') : undefined
-  }
+export function childAlertText(alerts: readonly ChildAlert[]): string | undefined {
+  if (alerts.length === 0) return undefined
   const archive = alerts.filter(a => a.kind === 'archive')
   const rest = alerts.filter(a => a.kind !== 'archive')
   const lines = [
@@ -1925,7 +1913,7 @@ export function childAlertText(alerts: readonly ChildAlert[], card?: LotCardCue)
     }),
     '',
     'Ce que tu fais :',
-    ...(card ? [lotCardLine(lotCardWhy(card))] : []),
+    LOT_STEP_LIST,
   ]
   if (archive.length > 0) {
     lines.push(
@@ -2935,7 +2923,7 @@ export function sessionPrefsText(prefs: SessionPrefs, error?: string, project?: 
   }
   // La liste d'étapes (#84) : dite à toute session, comme les gestes ; le parent la lit pour prendre des nouvelles.
   lines.push(
-    "- **Liste d'étapes** (en mode Code comme en mode Projet) : une tâche de plus d'un geste tient sa liste d'étapes (`update_plan` dans l'app), posée dès le premier geste, une étape cochée dès qu'elle finit, avec les noms d'étapes de la ligne du mode ADHD quand il est allumé. C'est par elle que la session qui t'a lancée voit où tu en es, sans ouvrir ta conversation.",
+    "- **Liste d'étapes** (en mode Code comme en mode Projet) : une tâche de plus d'un geste tient sa liste d'étapes (`update_plan` dans l'app), posée dès le premier geste, une étape cochée dès qu'elle finit, avec les noms d'étapes de la ligne du mode ADHD quand il est allumé. C'est par elle que la session qui t'a lancée voit où tu en es, sans ouvrir ta conversation. Un Lot ou Maestro tient la sienne pour ses sessions : une étape par tâche lancée, son état en mots.",
   )
   lines.push(gesturesText(prefs.autonome))
   lines.push(mockupText())
@@ -3311,9 +3299,8 @@ export function maestroContext(o: {
     "Ce que tu fais, sans rien coder ni écrire dans la roadmap (sauf la ligne d'une tâche que propose une de tes sessions) :",
     `- Ouvre ta réponse par une phrase de verdict : ce qui avance, ce qui coince${stuck.length > 0 ? ` (${stuck.length} session${stuck.length > 1 ? 's' : ''} coincée${stuck.length > 1 ? 's' : ''} depuis plus de ${durationLabel(MAESTRO_STUCK_MS)} : dis lesquelles et ${o.autonome ? 'réponds d\'abord toi-même à celles qui ne reviennent pas à ' + person() + ' (plus bas) ; les autres, à ' + person() + ' d\'y répondre d\'abord' : 'qu\'il revient à ' + person() + ' d\'y répondre d\'abord'}, avec leur lien)` : ''}.`,
   ]
-  // Deux branches ou plus en session (#97) : la carte du Lot d'abord ; le mode Projet n'a pas de branche.
-  const branches = [...o.waiting, ...o.running].filter(x => ownBranch(x.task.branche)).length
-  if (branches >= 2 && projectSettings(o.source).mode === 'code') lines.push(lotCardLine(`${branches} branches en cours`))
+  // Le Lot suit ses sessions par sa liste d'étapes (#104), dans les deux modes.
+  lines.push(LOT_STEP_LIST)
   const card = `pose sa carte de session (${cardTool(o.launchEffort, projectSettings(o.source).mode)}) avec le titre et le brief donnés ci-dessous, sans la lancer toi-même`
   if (o.candidates.length === 0) {
     lines.push('- Rien à lancer : dis-le en une phrase, et ce qui le débloquerait.')

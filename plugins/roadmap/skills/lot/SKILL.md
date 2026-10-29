@@ -1,6 +1,6 @@
 ---
 name: lot
-description: "Tient une session Lot : la session principale qui orchestre un lot de tâches de la roadmap menées en parallèle, une sous-session par tâche. Le Lot ne code aucune tâche : il ouvre leurs lignes, découpe pour que deux sessions ne touchent jamais les mêmes fichiers, lance une session par tâche, lit les comptes rendus de toutes, débloque celle qui attend, donne la main sur le simulateur iOS et les autres ressources uniques à une seule à la fois, choisit l'ordre des fusions selon les tests et les prérequis, le montre en carte cliquable dans le chat (un bouton Fusionner par branche), fusionne une branche à la fois et coche les lignes. Déclenche sur « Lot 1 », « ouvre un lot », « lance le lot », « où en est le lot », « montre l'état du lot », « qui fusionne en premier », « priorise les merges », dans une session nommée « Lot … », ou dans une session qui a lancé plusieurs sessions encore ouvertes. Pas pour une sous-session du lot, qui suit la clause du Lot de son brief, ni pour une session qui fait une seule tâche."
+description: "Tient une session Lot : la session principale qui orchestre un lot de tâches de la roadmap menées en parallèle, une sous-session par tâche. Le Lot ne code aucune tâche : il ouvre leurs lignes, découpe pour que deux sessions ne touchent jamais les mêmes fichiers, lance une session par tâche, lit les comptes rendus de toutes, débloque celle qui attend, donne la main sur le simulateur iOS et les autres ressources uniques à une seule à la fois, choisit l'ordre des fusions selon les tests et les prérequis, suit chaque tâche dans sa liste d'étapes, fusionne une branche à la fois et coche les lignes. Déclenche sur « Lot 1 », « ouvre un lot », « lance le lot », « où en est le lot », « montre l'état du lot », « qui fusionne en premier », « priorise les merges », dans une session nommée « Lot … », ou dans une session qui a lancé plusieurs sessions encore ouvertes. Pas pour une sous-session du lot, qui suit la clause du Lot de son brief, ni pour une session qui fait une seule tâche."
 ---
 
 # Session Lot — l'orchestrateur
@@ -80,33 +80,32 @@ lui remonte.
   - **prête** (toutes ses étapes faites, pas encore fusionnée ou close) : § 5 et 6 ;
   - **à archiver** (§ 6).
   Pas de tableau de tous les enfants à chaque tour : le Lot ne regarde que ce qui coince.
-- **Montrer l'état du lot en carte** (#95) à chaque point fait à l'utilisateur sur les branches, et
-  quand il demande où en est le lot ou qui fusionne en premier. Le panneau la demande de lui-même
-  (#97), une fois par état du lot, quand une branche enfant est prête ou que deux branches ou plus
-  tournent : sa consigne arrive avec les nouvelles des enfants (ou sous « Roadmap — état de ton
-  lot ») et dans le brief de Maestro ; la suivre avant le reste du point :
-  1. écrire `lot.json` dans le scratchpad : `{"base": "main", "taches": [{"id", "titre",
-     "branche", "tests": "verts" | "rouges" (absent : à lancer), "relue": true | false, "apres":
-     [ids]}]}`, une tâche par sous-session, la branche lue par `list_sessions`, les tests et la
-     relecture tirés des comptes rendus et de ton propre examen du diff, `apres` de la roadmap ;
-  2. `python3 "<dossier de la skill>/scripts/etat_lot.py" <dépôt> <lot.json> --html --nom "<nom du
-     Lot>"` : le script lit git en lecture seule (avance et retard face à `main`, fichiers touchés,
-     conflits réels avec `main` et entre deux branches par `git merge-tree`) et range l'ordre de
-     fusion du § 5 ;
-  3. passer sa sortie, telle quelle, en `widget_code` à `show_widget` (outil `visualize`, appeler
-     d'abord son `read_me` une fois dans la session), titre `etat_<nom du lot>` ; rien à ajouter
-     dans la carte, le commentaire va dans le message ;
-  4. sans `show_widget` (terminal, outil absent ou refusé), lancer la même commande avec `--texte`
-     et coller sa sortie : le tableau Markdown, les fichiers partagés, l'ordre proposé.
-  La carte donne une fiche par branche, dans l'ordre proposé : son état (prête, attend #N, tests
-  rouges, à relire, à mettre à jour, conflit avec main…), son graphe face à `main` (ses commits et
-  ceux arrivés sur `main` depuis son départ, auteur et âge, ceux de `main` qui causent le conflit
-  surlignés, le départ commun), ses lignes `+/−`, et en pied « N conflits avec main » ou « Fusion
-  propre » avec le bouton **Fusionner #N**, plus **Résoudre les conflits** quand il y en a ; puis
-  les fichiers touchés par deux branches (la paire en conflit nommée) et l'ordre proposé. Le reste
-  du tableau (attend une réponse, attend une ressource) se dit en une ligne sous la carte. Le
-  script rend 2, et rien d'autre, sur un `lot.json` en double (même id ou même branche), un dépôt
-  ou une base introuvables : corriger l'entrée, ne pas montrer de carte.
+- **Tenir la liste du Lot** (#104) : la liste d'étapes de l'app (`update_plan`), épinglée sous le
+  dernier message, est le seul repère de l'utilisateur sur le lot. Pas de carte `show_widget`, pas
+  de tableau à chaque tour.
+  - **Une étape par tâche lancée**, libellée `#<id> <libellé court> · <état>`, l'état en mots
+    simples : « en cours : étape 3/7 », « t'attend : <la question en trois mots> », « attend le
+    simulateur », « en relecture », « prête à fusionner », « livrée ». Exemple :
+    `#99 Priorités et filtres · en relecture`.
+  - **Dans l'ordre de fusion** du § 5 ; une tâche livrée (fusionnée, ou close en mode Projet) est
+    cochée (`completed`) et garde sa place en tête.
+  - **Une seule étape `in_progress`**, comme l'outil l'exige : celle dont le Lot s'occupe
+    maintenant (celle qui attend l'utilisateur, celle qu'il relit ou fusionne), sinon la prochaine à
+    fusionner. Les autres sont `pending`.
+  - **À chaque changement d'état** (une fin de tour d'une sous-session, une nouvelle du panneau,
+    une fusion), renvoyer la liste entière (`items`) : seul le texte après `·` change, le début
+    `#<id> <libellé court>` reste. Une tâche nouvelle ajoute son étape.
+  - Le lot fini, toutes les étapes sont cochées.
+  - **L'ordre de fusion et les conflits** se calculent depuis git, en lecture seule : écrire
+    `lot.json` dans le scratchpad (`{"base": "main", "taches": [{"id", "titre", "branche", "tests":
+    "verts" | "rouges" (absent : à lancer), "relue": true | false, "apres": [ids]}]}`, la branche lue
+    par `list_sessions`, les tests et la relecture tirés des comptes rendus et du diff, `apres` de
+    la roadmap), puis `python3 "<dossier de la skill>/scripts/etat_lot.py" <dépôt> <lot.json>
+    --texte` (`--json` pour le lire en données) : état de chaque branche face à `main`, fichiers
+    touchés par deux branches, conflits réels par `git merge-tree`, ordre proposé. Le Lot range sa
+    liste d'après lui et ne colle pas sa sortie dans le chat ; un conflit ou un fichier partagé se
+    dit en une ligne. Le script rend 2 sur un `lot.json` en double (même id ou même branche), un
+    dépôt ou une base introuvables : corriger l'entrée.
 - **Débloquer d'abord** : ce qui empêche une sous-session d'avancer passe avant tout le reste. Le
   Lot répond lui-même, par message à la sous-session, à ce que le code, la roadmap ou les règles
   tranchent. Le reste va à l'utilisateur, une question à la fois, et sa réponse part mot pour mot.
@@ -128,7 +127,7 @@ lui remonte.
   de l'utilisateur. Le Lot ouvre sa ligne (ou la rattache à une ligne qui la couvre), puis la propose à
   l'utilisateur depuis le Lot : carte `own_initiative`, titre `#<id> · <libellé court>`, brief complet et
   clause du Lot, puis lui dit en une ligne quelle session la propose et qu'il clique Start sur cette
-  carte. Il ne la code pas, et la note dans le tableau du lot. La carte d'une session lancée depuis
+  carte. Il ne la code pas, et ajoute son étape à sa liste quand elle est lancée. La carte d'une session lancée depuis
   une sous-session remonte aussi : au premier ancêtre ouvert qui coordonne.
 
 ## 4. Les ressources uniques, le simulateur iOS d'abord
@@ -140,7 +139,7 @@ sans redemander (#105) ; sans le réglage, rien ne change.
 
 1. La sous-session qui en a besoin le dit en tête de son compte rendu et termine son tour.
 2. Le Lot donne la main à une seule, par message (« À toi le simulateur ; rends-le quand tu as
-   fini »), dans l'ordre des priorités du § 5, et note dans le tableau qui la tient.
+   fini »), dans l'ordre des priorités du § 5, et le dit dans l'étape de la tâche (« · a le simulateur »).
 3. La sous-session teste sa branche, corrige elle-même ce que le test trouve, puis rend la main.
 4. Le Lot la donne à la suivante.
 
@@ -160,12 +159,10 @@ L'ordre des fusions, du premier critère au dernier :
 La fusion elle-même :
 
 - **Qui décide** : sans le réglage `autonome`, la fusion attend le clic de l'utilisateur. Le Lot la lui
-  propose, une branche à la fois, par la boîte de fin (`wrap_up`, bouton « Fusionner #N ») ou par
-  la carte du lot (§ 3) : son bouton envoie « Fusionne #N (branche …) », qui vaut ce clic. Le Lot
-  revérifie la branche avant de fusionner ; un message qui ajoute « la carte la dit … » vient d'une
-  branche pas prête : dire ce qui manque au lieu de fusionner. « Résous les conflits de #N avec
-  main » est le cas où le Lot code (tableau du haut) : il résout dans la branche en gardant les deux
-  intentions, rejoue ses tests, puis remontre la carte. Avec le
+  propose, une branche à la fois, par la boîte de fin (`wrap_up`, bouton « Fusionner #N »), qui
+  vaut ce clic. Le Lot revérifie la branche avant de fusionner. Résoudre un conflit de fusion est le
+  cas où le Lot code (tableau du haut) : il résout dans la branche en gardant les deux intentions,
+  rejoue ses tests, puis met sa liste à jour. Avec le
   réglage, le Lot fusionne seul une branche prête, et publie seul ce qui doit l'être (release d'un
   plugin, déploiement, push de `main`), sans attendre ni demander : le réglage est l'autorisation
   durable de l'utilisateur de fusionner et de publier. Il dit ensuite en une ligne ce qu'il a fait. « Relue » veut dire le diff lu par le Lot, qui ne l'a pas
@@ -209,5 +206,7 @@ La fusion elle-même :
 - Chaque sous-session note sa liste d'étapes, sa question en attente et son dernier récap ; à chaque
   message de l'utilisateur, le Lot reçoit les enfants qui coincent depuis 15 min et ceux à archiver
   (§ 3, « Prendre des nouvelles »).
-- Une branche enfant prête, ou deux branches enfants ou plus en cours : il demande la carte de
-  l'état du lot (§ 3), une fois par état, en mode Code seulement.
+- Le brief de Maestro et les nouvelles des enfants rappellent au Lot de tenir sa liste d'étapes
+  (§ 3) ; il ne demande plus de carte (#97 retirée par #104).
+- Toute session, Lot compris, qui travaille (au moins deux outils dans le tour) sans avoir posé de
+  liste d'étapes reçoit un rappel en fin de tour, en mode Code comme en mode Projet (#98, #104).

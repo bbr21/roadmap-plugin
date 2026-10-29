@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""État d'un Lot : chaque branche face à main (son graphe de commits, ses conflits), les fichiers
-touchés par deux branches à la fois, les tests, l'ordre de fusion proposé. Rendu en carte HTML pour
-l'outil show_widget de l'app, en texte de repli pour le terminal, ou en JSON.
+"""État d'un Lot : chaque branche face à main (ses commits, ses conflits), les fichiers touchés par
+deux branches à la fois, les tests, l'ordre de fusion proposé. Le Lot le lit pour ranger sa liste
+d'étapes (skill lot, § 3 et 5) ; plus de carte HTML depuis #104. Rendu en texte ou en JSON.
 
-  python3 etat_lot.py DEPOT LOT.json [--html | --texte | --json] [--nom "Lot 3"]
+  python3 etat_lot.py DEPOT LOT.json [--texte | --json]
 
 LOT.json (« - » : l'entrée standard), écrit par le Lot :
   {"base": "main", "taches": [{"id": 95, "titre": "Carte du Lot", "branche": "feat/x",
@@ -17,18 +17,14 @@ Python 3.9 et plus, bibliothèque standard seulement.
 """
 
 import argparse
-import html
 import json
 import re
 import subprocess
 import sys
-import time
 
 INTROUVABLE, RIEN, CONFLIT, INCONNU = "introuvable", "rien à fusionner", "conflit avec main", "conflits inconnus"
 ROUGES, A_LANCER, A_RELIRE, RETARD, PRETE = "tests rouges", "tests à lancer", "à relire", "à mettre à jour", "prête"
 HORS_ORDRE = (INTROUVABLE, RIEN)
-# Commits montrés par carte, les plus récents ; les autres se comptent sur une ligne.
-COMMITS_MONTRES = 8
 SEP = "\x1f"
 FORMAT_COMMIT = "%h" + SEP + "%an" + SEP + "%ct" + SEP + "%s"
 
@@ -275,37 +271,8 @@ def collecter(depot, lot):
 # ---------------------------------------------------------------- rendus
 
 
-def e(x):
-    return html.escape(str(x), quote=True)
-
-
-def il_y_a(secondes):
-    s = max(0, int(secondes))
-    if s < 60:
-        return "à l'instant"
-    if s < 3600:
-        return "il y a %d min" % (s // 60)
-    if s < 86400:
-        return "il y a %d h" % (s // 3600)
-    return "il y a %d j" % (s // 86400)
-
-
 def tests_dits(t):
     return {"verts": "verts", "rouges": "rouges"}.get(t.get("tests"), "à lancer")
-
-
-def couleur(etat):
-    if etat == PRETE:
-        return "success"
-    if etat in (CONFLIT, ROUGES, INTROUVABLE):
-        return "danger"
-    if etat == RIEN:
-        return None
-    return "warning"
-
-
-def pluriel(n, mot):
-    return "%d %s%s" % (n, mot, "" if n == 1 else "s")
 
 
 def dans_l_ordre(analyse):
@@ -319,179 +286,6 @@ def verdict(f):
     if f["conflit"]:
         return "conflit entre " + ", ".join("#%s et #%s" % tuple(p) for p in f["en_conflit"])
     return "conflit inconnu" if f["conflit"] is None else "fusion propre"
-
-
-def message_fusion(t):
-    m = "Fusionne #%s (branche %s)" % (t["id"], t["branche"])
-    return m if t["pret"] else "%s : la carte la dit « %s »" % (m, t["etat"])
-
-
-def message_resolution(t, base):
-    return "Résous les conflits de #%s avec %s (branche %s), puis rejoue ses tests" % (t["id"], base, t["branche"])
-
-
-# Les deux voies du graphe, en px depuis le bord gauche de sa colonne : la branche, puis la base.
-BRANCHE_X, BASE_X = 9, 25
-
-
-def voie(premier, dernier, point, couleur_point):
-    """La colonne du graphe d'une rangée : la voie de la branche et celle de la base, coupées au
-    milieu de la première et de la dernière rangée, et le point du commit sur sa voie."""
-    haut, bas = ("50%" if premier else "0"), ("50%" if dernier else "0")
-    traits = "".join(
-        '<span style="position:absolute;left:%dpx;top:%s;bottom:%s;width:2px;background:%s"></span>' % (x, haut, bas, c)
-        for x, c in ((BRANCHE_X, "var(--border-accent)"), (BASE_X, "var(--border-strong)")))
-    rond = ""
-    if point is not None:
-        rond = ('<span style="position:absolute;left:%dpx;top:50%%;width:10px;height:10px;margin-top:-5px;'
-                'border-radius:50%%;background:%s;box-shadow:0 0 0 2px var(--surface-2)"></span>' % (point - 4, couleur_point))
-    return '<span style="position:relative;flex:0 0 36px;align-self:stretch;min-height:26px">%s%s</span>' % (traits, rond)
-
-
-def etiquette(nom, accent):
-    style = "background:var(--bg-accent);color:var(--text-accent)" if accent else "background:var(--surface-1);color:var(--text-secondary)"
-    return ('<span style="font-family:var(--font-mono);font-size:11px;padding:1px 6px;border-radius:4px;margin-left:8px;%s">%s</span>'
-            % (style, e(nom)))
-
-
-def rangee(colonne, gauche, droite, fond=None):
-    bg = "background:%s;" % fond if fond else ""
-    return ('<div style="display:flex;align-items:center;gap:8px;font-size:13px;border-radius:6px;padding:0 6px;%s">%s'
-            '<span style="flex:1;min-width:0;padding:4px 0;overflow-wrap:anywhere">%s</span>'
-            '<span style="font-size:12px;color:var(--text-muted);white-space:nowrap">%s</span></div>' % (bg, colonne, gauche, droite))
-
-
-def graphe(t, base, maintenant):
-    """Les rangées du graphe : la fusion visée en tête, les commits des deux côtés du plus récent au
-    plus ancien (ceux de la base qui touchent un fichier en conflit, surlignés), le départ commun."""
-    fa = t["faits"]
-    conflits = fa["conflits_main"]
-    if conflits:
-        dit, c_fusion = pluriel(len(conflits), "conflit"), "var(--text-danger)"
-    elif conflits is None:
-        dit, c_fusion = "conflits inconnus", "var(--text-warning)"
-    else:
-        dit, c_fusion = "fusion propre", "var(--text-success)"
-    montres = fa["commits"][:COMMITS_MONTRES]
-    caches = len(fa["commits"]) - len(montres)
-    total = 1 + len(montres) + (1 if caches else 0) + (1 if fa["depart"] else 0)
-    rangees = [rangee(voie(True, total == 1, BASE_X, c_fusion), "Fusionner dans %s" % e(base),
-                      '<span style="color:%s">%s</span>' % (c_fusion, e(dit)))]
-    pointe_branche = pointe_base = True
-    for cm in montres:
-        dernier = len(rangees) == total - 1
-        sujet = e(cm["sujet"])
-        if cm["cote"] == "branche":
-            point, cp = BRANCHE_X, "var(--text-accent)"
-            if pointe_branche:
-                sujet += etiquette(t["branche"], True)
-                pointe_branche = False
-        else:
-            point, cp = BASE_X, "var(--text-warning)" if cm["conflit"] else "var(--text-muted)"
-            if pointe_base:
-                sujet += etiquette(base, False)
-                pointe_base = False
-        if cm["conflit"]:
-            sujet = '<span style="color:var(--text-warning)">%s</span>' % sujet
-        droite = '<span style="font-family:var(--font-mono)">%s</span> · %s · %s' % (e(cm["hash"]), e(cm["auteur"]), e(il_y_a(maintenant - cm["date"])))
-        rangees.append(rangee(voie(False, dernier, point, cp), sujet, droite, "var(--bg-warning)" if cm["conflit"] else None))
-    if caches:
-        rangees.append(rangee(voie(False, len(rangees) == total - 1, None, None),
-                              '<span style="color:var(--text-muted)">%s de plus</span>' % pluriel(caches, "commit"), ""))
-    if fa["depart"]:
-        d = fa["depart"]
-        rangees.append(rangee(voie(False, True, BASE_X, "var(--border-stronger)"),
-                              '<span style="color:var(--text-secondary)">%s</span>' % e(d["sujet"]),
-                              '<span style="font-family:var(--font-mono)">%s</span> · départ commun' % e(d["hash"])))
-    return '<div style="display:flex;flex-direction:column">%s</div>' % "".join(rangees)
-
-
-def carte_branche(rang, t, base, maintenant, accent):
-    fa = t["faits"]
-    c = couleur(t["etat"])
-    teinte = "var(--text-%s)" % c if c else "var(--text-muted)"
-    out = ['<div style="background:var(--surface-2);border:0.5px solid var(--border);border-radius:12px;padding:12px 14px">',
-           '<div style="display:flex;align-items:baseline;gap:10px;margin-bottom:8px">'
-           '<p style="margin:0;flex:1;min-width:0;font-size:15px;font-weight:500">%s<span style="color:var(--text-muted);font-weight:400">#%s</span></p>'
-           '<span style="font-size:12px;color:%s;white-space:nowrap"><span style="display:inline-block;width:7px;height:7px;border-radius:50%%;'
-           'background:%s;margin-right:6px"></span>%s</span></div>'
-           % ((e(t.get("titre")) + " ") if t.get("titre") else "", e(t["id"]), teinte, teinte, e(t["etat"]))]
-    if not fa["existe"]:
-        out.append('<p style="margin:0;font-size:13px;color:var(--text-secondary)">Branche <code>%s</code> introuvable.</p></div>' % e(t["branche"]))
-        return "\n".join(out)
-    out.append(graphe(t, base, maintenant))
-    conflits = fa["conflits_main"]
-    if conflits:
-        bilan = ('<i class="ti ti-alert-triangle" aria-hidden="true" style="font-size:16px;color:var(--text-danger)"></i>'
-                 '<span style="color:var(--text-danger)">%s avec %s</span>' % (pluriel(len(conflits), "conflit"), e(base)))
-    elif conflits is None:
-        bilan = '<span style="color:var(--text-warning)">Conflits avec %s inconnus</span>' % e(base)
-    else:
-        bilan = ('<i class="ti ti-check" aria-hidden="true" style="font-size:16px;color:var(--text-success)"></i>'
-                 '<span style="color:var(--text-success)">Fusion propre avec %s</span>' % e(base))
-    meta = ('<span style="font-family:var(--font-mono);color:var(--text-success)">+%d</span> '
-            '<span style="font-family:var(--font-mono);color:var(--text-danger)">−%d</span> · %s · tests %s'
-            % (fa["plus"], fa["moins"], pluriel(len(fa["fichiers"]), "fichier"), e(tests_dits(t))))
-    boutons = ""
-    if conflits:
-        boutons += '<button data-prompt="%s">Résoudre les conflits ↗</button>' % e(message_resolution(t, base))
-    if rang:
-        style = ' style="border-color:var(--border-accent);color:var(--text-accent)"' if accent else ""
-        boutons += '<button data-prompt="%s"%s>Fusionner #%s ↗</button>' % (e(message_fusion(t)), style, e(t["id"]))
-    out.append('<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:10px;padding-top:10px;'
-               'border-top:0.5px solid var(--border);font-size:13px">%s<span style="flex:1;min-width:0;color:var(--text-secondary)">%s</span>'
-               '<span style="display:flex;gap:8px;flex-wrap:wrap">%s</span></div>' % (bilan, meta, boutons))
-    out.append("</div>")
-    return "\n".join(out)
-
-
-def carte_html(analyse, nom="Lot", maintenant=None):
-    """La carte pour show_widget : une carte par branche, dans l'ordre de fusion proposé, avec son
-    graphe face à la base, ses conflits et ses boutons (sendPrompt) ; puis les fichiers touchés par
-    deux branches et l'ordre proposé."""
-    maintenant = time.time() if maintenant is None else maintenant
-    base = analyse["base"]
-    lignes = dans_l_ordre(analyse)
-    pretes = sum(1 for _, t in lignes if t["pret"])
-    resume = "État de %s : %d branches, %d prêtes à fusionner, %d fichiers touchés par deux branches." % (
-        nom, len(lignes), pretes, len(analyse["chevauchements"]))
-    out = ['<h2 class="sr-only">%s</h2>' % e(resume), '<div style="display:flex;flex-direction:column;gap:12px;padding:0.5rem 0">']
-    accent = True
-    for rang, t in lignes:
-        premiere_prete = accent and t["pret"] and rang is not None
-        out.append(carte_branche(rang, t, base, maintenant, premiere_prete))
-        accent = accent and not premiere_prete
-    out.append("</div>")
-    if analyse["chevauchements"]:
-        out.append('<p style="margin:0.75rem 0 6px;font-size:13px;color:var(--text-secondary)">Fichiers touchés par deux branches</p>')
-        out.append('<div style="display:flex;flex-direction:column;gap:4px">')
-        for f in analyse["chevauchements"]:
-            c = {True: "danger", False: "success", None: "warning"}[f["conflit"]]
-            out.append('<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:13px">'
-                       '<code style="font-family:var(--font-mono);overflow-wrap:anywhere">%s</code>'
-                       '<span style="color:var(--text-secondary)">%s</span>'
-                       '<span style="font-size:12px;padding:2px 8px;border-radius:var(--radius);background:var(--bg-%s);color:var(--text-%s)">%s</span></div>'
-                       % (e(f["fichier"]), e(", ".join("#%s" % i for i in f["ids"])), c, c, e(verdict(f))))
-        out.append("</div>")
-    if analyse["ordre"]:
-        par_id = {t["id"]: t for t in analyse["taches"]}
-        pastilles = []
-        for n, i in enumerate(analyse["ordre"]):
-            c = couleur(par_id[i]["etat"])
-            pastilles.append('<span style="display:inline-flex;align-items:center;gap:6px;font-size:12px;padding:3px 10px;'
-                             'border:0.5px solid var(--border);border-radius:999px"><span style="color:var(--text-muted)">%d</span>'
-                             '<span style="width:7px;height:7px;border-radius:50%%;background:var(--text-%s)"></span>#%s · %s</span>'
-                             % (n + 1, c or "muted", e(i), e(par_id[i]["etat"])))
-        out.append('<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:0.75rem">'
-                   '<span style="font-size:13px;color:var(--text-secondary);margin-right:4px">Ordre proposé</span>%s</div>' % "".join(pastilles))
-    if analyse["boucle"]:
-        out.append('<p style="margin:0.75rem 0 0;font-size:13px;color:var(--text-warning)">Dépendances en boucle : %s</p>'
-                   % e(", ".join("#%s" % i for i in analyse["boucle"])))
-    if analyse["conflits_inconnus"]:
-        out.append('<p style="margin:0.75rem 0 0;font-size:12px;color:var(--text-muted)">Certains conflits sont inconnus : git 2.38 ou plus les calcule.</p>')
-    out.append("<script>document.querySelectorAll('[data-prompt]').forEach(function(b){"
-               "b.addEventListener('click',function(){sendPrompt(b.dataset.prompt)})})</script>")
-    return "\n".join(out)
 
 
 def cellule(x):
@@ -547,12 +341,10 @@ def doublon(taches):
 
 
 def main(argv=None):
-    p = argparse.ArgumentParser(description="État d'un Lot : carte show_widget, texte ou JSON.")
+    p = argparse.ArgumentParser(description="État d'un Lot : texte ou JSON.")
     p.add_argument("depot")
     p.add_argument("lot")
-    p.add_argument("--nom", default="Lot")
     g = p.add_mutually_exclusive_group()
-    g.add_argument("--html", action="store_const", const="html", dest="rendu")
     g.add_argument("--texte", action="store_const", const="texte", dest="rendu")
     g.add_argument("--json", action="store_const", const="json", dest="rendu")
     a = p.parse_args(argv)
@@ -575,9 +367,7 @@ def main(argv=None):
         print(str(err), file=sys.stderr)
         return 2
     analyse = analyser(lot, faits, conflits)
-    if a.rendu == "html":
-        print(carte_html(analyse, a.nom))
-    elif a.rendu == "json":
+    if a.rendu == "json":
         print(json.dumps(analyse, ensure_ascii=False, indent=2))
     else:
         print(texte(analyse))

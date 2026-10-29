@@ -196,9 +196,9 @@ import {
   proposalSentNote,
   type LotProposal,
   applyPlan,
+  stepBand,
   childAlerts,
   childAlertText,
-  lotCardCue,
   childrenOf,
   finishedCheck,
   isChildStep,
@@ -206,6 +206,7 @@ import {
   type ChildRelaunch,
   type ChildRow,
   type ChildStatus,
+  type ChildStep,
   type FinishedFacts,
   BYPASS_MODE,
   withBypassClause,
@@ -296,8 +297,6 @@ const ASK_TOOL = 'AskUserQuestion'
 const CHILD_STATUS_PREFIX = 'child-status:'
 /** Les relances faites par un parent : enfant → `lastActivityAt` de l'attente relancée. */
 const CHILD_ALERTED_PREFIX = 'child-alerted:'
-/** La clé du dernier état du lot montré en carte (#97), par parent. */
-const LOT_CARD_PREFIX = 'lot-card:'
 /**
  * Une note d'enfant, ou des relances, sans nouvelle depuis 30 jours sortent du store, comme
  * `maestro-sessions` (#90) : un enfant fini qui attend Bertrand une semaine garde sa note.
@@ -371,6 +370,8 @@ const retryAtom = atom({ plugin: 'roadmap', key: 'retry' } as const, 0)
 const zoneGenAtom = atom({ plugin: 'roadmap', key: 'zoneGen' } as const, 0)
 /** Pourquoi les autres sessions manquent (liste refusée ou illisible) ; vide quand elle se lit. */
 const scanNoteAtom = atom({ plugin: 'roadmap', key: 'scanNote' } as const, '')
+/** La liste d'étapes de la session, dessinée dans la bande au-dessus de la saisie (#104). */
+const stepsAtom = atom({ plugin: 'roadmap', key: 'steps' } as const, [] as ChildStep[])
 
 /**
  * Change l'état d'un clic en une écriture : `patch` dit les champs qui changent, d'après l'état
@@ -641,15 +642,14 @@ function rangementNote(c: Capture | undefined, last: string | undefined, active:
 }
 
 /**
- * La liste d'étapes de la session, pour le rappel du mode Projet (#98) : posée une fois (crochet
+ * La liste d'étapes de la session, pour son rappel (#98, partout depuis #104) : posée une fois (crochet
  * `update_plan` des nouvelles des enfants, #84), et les outils du tour en cours, ceux de la session seule.
  */
 let stepList = { planned: false, tools: 0 }
 
-/** Le rappel de la liste d'étapes : mode Projet, tour de travail, aucune liste posée dans la session. */
-async function stepListNote(c: Capture): Promise<string | undefined> {
-  if (stepList.planned || stepList.tools < STEP_LIST_MIN_TOOLS) return undefined
-  return projectSettings(c.source).mode === 'projet' ? stepListReminder() : undefined
+/** Le rappel de la liste d'étapes : tour de travail, aucune liste posée dans la session, dans tout projet (#104). */
+function stepListNote(): string | undefined {
+  return stepList.planned || stepList.tools < STEP_LIST_MIN_TOOLS ? undefined : stepListReminder()
 }
 
 type BilanData = { config: BilanConfig; bilans: Map<string, Bilan>; viaCowork: boolean }
@@ -1420,18 +1420,6 @@ async function childAlertContext($: EngineInterface): Promise<string | undefined
     }
   }
   const alerts = childAlerts({ children, statuses, finished, alerted, now: await $.clock.now() })
-  // La carte du Lot (#97), une fois par état : mêmes branches et mêmes prêtes, pas de nouvelle carte.
-  const cardKey = `${LOT_CARD_PREFIX}${id}`
-  let card = lotCardCue(children, alerts)
-  if (card && (await lines())?.mode === 'projet') card = undefined
-  const shown = await $.store.get(cardKey)
-  if (!card) {
-    if (shown !== undefined) await $.store.delete(cardKey)
-  } else if (shown === card.key) {
-    card = undefined
-  } else {
-    await $.store.set(cardKey, card.key)
-  }
   // Les relances de cette fois s'ajoutent, avec l'étape de l'enfant ; un enfant qui n'est plus listé sort.
   const next: Record<string, ChildRelaunch> = {}
   for (const child of children) if (alerted[child.id] !== undefined) next[child.id] = alerted[child.id] as ChildRelaunch
@@ -1441,7 +1429,7 @@ async function childAlertContext($: EngineInterface): Promise<string | undefined
   } else if (JSON.stringify(next) !== JSON.stringify(alerted)) {
     await $.store.set(alertedKey, next)
   }
-  return childAlertText(alerts, card)
+  return childAlertText(alerts)
 }
 
 /** La purge des notes d'enfant tourne une fois par chargement du module, au premier message. */
@@ -2686,6 +2674,7 @@ export const register: Register = (on, options) => {
     if (!fromAgent(e)) {
       closingTurn.work = true
       stepList.planned = true
+      await update($, stepsAtom, steps => applyPlan(steps, e as never))
       await noteChild($, s => ({ ...withoutQuestion(s), steps: applyPlan(s.steps, e as never) }))
     }
     return next(e)
@@ -2785,12 +2774,9 @@ export const register: Register = (on, options) => {
       } catch {
         // pas de rappel d'idée
       }
-      try {
-        notes.push(await stepListNote(c))
-      } catch {
-        // mode illisible : pas de rappel de liste d'étapes
-      }
     }
+    // La liste d'étapes (#98, #104) : dans tout projet.
+    notes.push(stepListNote())
     // Le bloc de fin de tour (#85) : dans tout projet.
     try {
       notes.push(await closingNote($, e.last_assistant_message, settings.capture && c !== undefined && rangementWaiting(c) !== undefined))
@@ -2870,6 +2856,30 @@ export const register: Register = (on, options) => {
   })
 
   on('ui.render', { component: 'Pane', requestId: SETTINGS_PANE }, async ($, e) => drawSettings($, e, await paletteOf($)))
+
+  // La liste d'étapes de la session, fixe au-dessus de la saisie (#104, maquette B) : elle cède à une enquête de l'app.
+  on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
+    const band = e.props.hasSurvey ? undefined : stepBand(await read($, stepsAtom))
+    if (!band) return next(e)
+    const { Box, Text } = $.ui.resolve(e)
+    return (
+      <Box flexDirection="column">
+        <Box flexDirection="row" justifyContent="space-between">
+          <Text dimColor>Étapes</Text>
+          <Text dimColor>{band.count}</Text>
+        </Box>
+        {band.rows.map(r =>
+          r.status === 'completed' ? (
+            <Text dimColor strikethrough>{`${r.mark} ${r.text}`}</Text>
+          ) : r.status === 'in_progress' ? (
+            <Text bold>{`${r.mark} ${r.text}`}</Text>
+          ) : (
+            <Text dimColor>{`${r.mark} ${r.text}`}</Text>
+          ),
+        )}
+      </Box>
+    )
+  })
 }
 
 /** Le dessin du panneau : la vue d'ensemble, le détail d'une tâche, ou ce qui manque. */
