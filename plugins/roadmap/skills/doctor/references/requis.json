@@ -1,0 +1,35 @@
+{
+  "outils": {
+    "git": "xcode-select --install",
+    "node": "brew install node",
+    "python3": "brew install python",
+    "gh": "brew install gh"
+  },
+  "superpowers": {
+    "plugin": "superpowers",
+    "catalogue": "superpowers-dev",
+    "depot": "obra/superpowers",
+    "skills": [
+      "brainstorming",
+      "writing-plans",
+      "executing-plans",
+      "subagent-driven-development",
+      "test-driven-development",
+      "systematic-debugging",
+      "verification-before-completion",
+      "requesting-code-review"
+    ]
+  },
+  "ios": {
+    "skill": "swiftui-pro"
+  },
+  "projet": {
+    "outils": {
+      "python3": "brew install python"
+    },
+    "skills": [
+      "brainstorming",
+      "writing-plans"
+    ]
+  }
+}

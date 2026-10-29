@@ -1,0 +1,71 @@
+{
+  "name": "roadmap",
+  "version": "0.55.0",
+  "description": "Panneau Claude Code à côté du chat : la roadmap du projet de la session, filtrable, avec le détail d'une tâche et son lancement dans une nouvelle session",
+  "author": {
+    "name": "Bertrand Fargheon"
+  },
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "me": {
+      "type": "string",
+      "title": "Tes noms dans les roadmaps",
+      "description": "Tes noms, séparés par des virgules : le premier est celui que Claude emploie avec toi, et une tâche qui attend l'un d'eux compte « À moi ». Vide : ceux de ~/.claude/roadmap-perso.json, que pose l'onboarding.",
+      "default": ""
+    },
+    "autoOpen": {
+      "type": "boolean",
+      "title": "Ouvrir le panneau au démarrage",
+      "description": "Ouvre le panneau au début de chaque session dans un projet qui a une roadmap ; sinon /roadmap l'ouvre.",
+      "default": true
+    },
+    "capture": {
+      "type": "boolean",
+      "title": "Capter les tasks",
+      "description": "Contrôle la grammaire de chaque ligne écrite dans la roadmap, et en fin de tour rappelle d'inscrire le travail quand des fichiers du projet ont changé sans que la roadmap bouge.",
+      "default": true
+    },
+    "titleModel": {
+      "type": "string",
+      "title": "Modèle des titres courts",
+      "description": "Le modèle qui écrit le titre court et le sujet de chaque tâche, une fois par tâche.",
+      "default": "sonnet",
+      "options": [
+        "sonnet",
+        "haiku",
+        "opus"
+      ]
+    },
+    "theme": {
+      "type": "string",
+      "title": "Thème du panneau",
+      "description": "« auto » suit le thème de Claude Code (sombre quand il ne dit ni clair ni sombre) ; « sombre » ou « clair » l'imposent, si le panneau ne suit pas l'apparence de l'app.",
+      "default": "auto",
+      "options": [
+        "auto",
+        "sombre",
+        "clair"
+      ]
+    },
+    "launchEffort": {
+      "type": "string",
+      "title": "Effort des sessions lancées",
+      "description": "L'effort de raisonnement d'une session lancée depuis le panneau. L'app le borne à celui de la session d'où tu lances ; refusé, la session est reposée sans effort et hérite. « hérite » n'en passe aucun.",
+      "default": "high",
+      "options": [
+        "high",
+        "xhigh",
+        "max",
+        "medium",
+        "low",
+        "hérite"
+      ]
+    },
+    "launchBypass": {
+      "type": "boolean",
+      "title": "Lancer en bypass",
+      "description": "Les sessions lancées depuis le panneau, Maestro ou un Lot demandent le mode bypass : plus aucune demande de permission. L'app ne l'accorde que si la session d'où tu lances y est déjà ; sinon la session lancée te le demande d'un clic à son démarrage. Éteint : elles prennent le mode de la session d'où tu lances.",
+      "default": false
+    }
+  }
+}

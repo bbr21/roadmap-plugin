@@ -1,0 +1,34 @@
+# Roadmap
+
+Les tâches de {{NOM}}, une ligne par tâche. Une tâche close part en tête de [ROADMAP-fait.md](ROADMAP-fait.md) avec `fait:AAAA-MM-JJ`, et son bilan s'ajoute à `ROADMAP-bilans.csv` (le panneau Roadmap le réclame).
+
+## Grammaire d'une ligne
+
+```
+- [ ] <Verbe à l'infinitif + objet> `[axe | id:N | ouvert:AAAA-MM-JJ | due:AAAA-MM-JJ | resp:Nom | parent:N | après:N,M | attend:… | qui:… | prio:1 | fait:AAAA-MM-JJ | fiche:… | src:…{{CLES_GRAMMAIRE}}]`
+```
+
+- **axe** (premier champ, sans clé) : {{AXES}}.
+- **id** (juste après l'axe) : le numéro de la tâche, unique sur ROADMAP.md et ROADMAP-fait.md, jamais réutilisé, gardé quand la ligne descend dans ROADMAP-fait. Une ligne neuve prend le plus grand des deux fichiers plus un.
+- **ouvert** : le jour où la tâche naît. **due** : son échéance.
+- **resp** : la personne qui porte la tâche, {{QUI}} ou une autre ; un nom pour suivre, pas une assignation, jamais `-`.
+- **parent** : le numéro de la tâche mère (`12` ou `#12`), ou `-` si elle n'en a pas. **après** : les numéros des tâches à faire d'abord, séparés par des virgules, ou `-` si elle n'en a aucune ; le panneau Roadmap la bloque tant qu'une est ouverte.
+- **attend** : ce qui bloque, et qui doit agir. **qui** : la session qui tient la tâche.
+- **prio** : `1` (urgent), `2` (important) ou `3` (quand on a le temps).
+- **fiche** : document de contexte. **src** : d'où vient la tâche (email, réunion, note).{{CLES_PUCES}}
+- **fait** : date de clôture (et son heure, `fait:AAAA-MM-JJ HH:MM`), dans ROADMAP-fait seulement, suivie de ce qui a été fait.
+- Champs exigés sur chaque tâche ouverte : {{REQUIS}}. Le panneau Roadmap signale une ligne écrite sans eux.
+
+## Cap
+
+{{CAP}}
+
+## En cours
+
+## Prochain
+
+- [ ] Lister les tâches en cours de {{NOM}}, chacune avec son échéance, son responsable, sa tâche mère et ses dépendances `[dossier | id:1 | ouvert:{{AUJOURDHUI}} | due:{{DANS_UNE_SEMAINE}} | resp:{{QUI}} | parent:- | après:-]`
+
+## Plus tard
+
+## Attend {{QUI}}

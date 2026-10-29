@@ -1,0 +1,14 @@
+{
+  "name": "roadmap",
+  "description": "Le système roadmap de Claude Code : panneau de la roadmap du projet, Maestro, onboarding et doctor d'un projet de code",
+  "owner": {
+    "name": "Bertrand Fargheon"
+  },
+  "plugins": [
+    {
+      "name": "roadmap",
+      "source": "./plugins/roadmap",
+      "description": "Panneau Claude Code à côté du chat : la roadmap du projet de la session, filtrable, avec le détail d'une tâche et son lancement dans une nouvelle session"
+    }
+  ]
+}

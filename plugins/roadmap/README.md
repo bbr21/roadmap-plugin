@@ -1,0 +1,505 @@
+# Plugin roadmap
+
+Panneau Claude Code à côté du chat : la roadmap du projet de la session, filtrable, avec le détail d'une tâche et son lancement dans une nouvelle session
+
+C'est un mod Claude Code (module de hooks, `hooks/register.tsx`), avec cinq skills, `roadmap-panel` pour y brancher un projet, `onboarding` pour poser dans un dépôt de code sa structure et sa roadmap, `doctor` pour vérifier qu'un projet est branché, `reglages-session` pour les réglages de session et `lot` pour tenir une session Lot : il
+dessine un panneau dans l'onglet Code de l'app de bureau (et dans le terminal). Il ne sert à rien
+dans Cowork ni dans le chat de claude.ai.
+
+## Contenu
+
+**5 skills**
+
+| Skill | Rôle |
+|---|---|
+| `roadmap-panel` | Branche un projet sur le panneau (`.claude/roadmap.json`, `ROADMAP.md` à la racine) et le dépanne. Tapée seule, `/roadmap:roadmap-panel` ouvre le panneau comme `/roadmap`, d'une ligne. |
+| `onboarding` | Mode Code : pose dans un dépôt de code la structure de Splitmybill (CLAUDE.md, roadmap numérotée dans `roadmap/` avec ses bilans, docs, `check.mjs`, hook de démarrage, worktree par session), propose de reconstituer la roadmap depuis l'historique du dépôt (PR, fusions ou commits des 6 derniers mois), ou remet un projet existant au format sans rien écraser. Mode Projet : un dossier simple, git en option, des tâches complètes. |
+| `doctor` | Checklist en lecture seule d'un projet (en mode Projet : python3, roadmap, réglages, champs exigés, sans GitHub, Superpowers facultatif) ; d'un projet de code : outils, GitHub, roadmap, structure, `check.mjs`, plugin roadmap, Superpowers et chacune de ses skills de méthode, sa mise à jour automatique, `swiftui-pro` sur un projet iOS ; une ligne OK, KO ou À voir avec la commande qui corrige. |
+| `reglages-session` | Lit et change les réglages de session (questions par formulaire, mode ADHD, français, mode autonome) de `~/.claude/reglages-session.json`, pour toutes les sessions. Lancée, elle ouvre aussi le volet Réglages ; tapée seule, `/roadmap:reglages-session` l'ouvre comme `/reglages`, d'une ligne. |
+| `lot` | Tient une session Lot, l'orchestrateur d'un lot de tâches menées en parallèle : lignes et découpage, une session par tâche, lecture de leurs comptes rendus, main donnée sur le simulateur iOS et les autres ressources uniques, ordre des fusions montré en carte cliquable dans le chat (`scripts/etat_lot.py`, un bouton Fusionner par branche, texte en repli), une fusion à la fois. |
+
+Le panneau lit `ROADMAP.md` et `ROADMAP-fait.md` (grammaire des dossiers Cowork : une ligne par
+tâche, `[axe | attend:… | ouvert:… | due:… | src:… | fiche:… | après:… | prio:… | feedback:…]`), relit les fichiers et
+les sessions toutes les 3 s (le dossier de la roadmap toutes les 15 s), et montre :
+
+- la part faite, une barre par axe (cliquable), la légende des axes (filtre) ;
+- une recherche par mots ou par numéro (#47), dans les ouvertes et les faites ;
+- les états En cours, Prioritaires (P1 et P2), Retours (`feedback:`), En retard, Récentes (ouvertes
+  aujourd'hui ou hier), À moi, Attend un tiers (filtres, avec la liste des tiers) ;
+- les tâches par sujet en sections repliables, une ligne par tâche (pastilles échéance, tiers,
+  « à revoir », âge), triées : en session, puis par échéance, puis de la plus récente à la plus
+  ancienne ; une tâche se range sous sa prérequise ; devant chaque tâche ouverte (ni en session, ni
+  bloquée, ni déjà demandée), un ▶ lance sa session sans ouvrir le détail : même brief et même
+  carte que « Lancer » (un bouton de l'app, sans zone de clic : il tient sur toutes les lignes) ;
+- toutes les faites, rangées par jour de clôture ou par sujet ;
+- dans toutes les vues, un bouton « Par jour / Par sujet » : un seul choix pour toutes les vues ;
+  par jour, une ouverte se range au jour de son `ouvert:` (« En retard » reste en tête), une faite
+  au jour de son `fait:` ; sans choix, les ouvertes vont par sujet et les faites par jour ;
+- le détail d'une tâche (voir la ligne, ouvrir la fiche ou la source, la lancer dans une nouvelle
+  session ou la faire vérifier, au premier clic, avec un « Message additionnel » facultatif ajouté
+  au brief, la marquer faite ou l'annuler) ; « Marquer faite » (#73) et « Annuler la tâche » (#267)
+  restent visibles même quand une session tient la tâche, et l'encart de confirmation le rappelle ;
+  « Marquer faite », après une confirmation sans champ, la coche et la fait descendre en tête de
+  ROADMAP-fait.md avec le bilan « Marquée faite depuis le panneau Roadmap » ; « Annuler la tâche »
+  ne l'efface pas : après une confirmation et une raison facultative, elle est cochée
+  « (abandonné) » et descend en tête de ROADMAP-fait.md avec son bilan (« Annulée : <raison> ») ;
+  les deux passent par `cowork.py roadmap close` (`--abandon` pour une annulation) dans un dossier
+  Cowork (Python isolé, `-I`) ; ailleurs le panneau écrit les deux fichiers et le journal, et dans
+  git il ne le fait que sur main, sans modification en attente sur ces fichiers, puis les committe
+  seuls (`roadmap: done #N` ou `roadmap: abandon #N`) et les pousse ; le détail la montre « faite »
+  ou « annulée » ; une tâche faite s'ouvre sur sa boîte « Conclusion » (#264) : une
+  ligne sur ce qui a été fait, une ligne sur le souci rencontré ou « Tout a roulé, aucun souci 🎉 »,
+  l'emoji du ressenti ; « Tout voir » (un bouton de l'app, sans zone de clic) ajoute cause,
+  corrections et la note. Toute roadmap tient ce bilan : le log que nomme cowork.json « bilan »,
+  sinon `ROADMAP-bilans.csv` à côté de `ROADMAP.md` (tâches closes depuis le 2026-10-25, colonnes
+  `date,id,fait,souci,ressenti,cause,corrections,note`). Une ligne d'avant `fait` montre le début
+  de sa note. Le brief de lancement dit où écrire le bilan, et la fin de tour le réclame avant de
+  proposer l'archivage (écrit par `cowork.py` dans un dossier Cowork, à la main dans un projet de
+  code comme Splitmybill).
+
+Une tâche passe « en session » (roue) quand une session y travaille : lancée depuis le panneau, ou
+qui a ouvert sa ligne et elle seule (une session qui ajoute plusieurs tâches prend des notes), tant que la session n'est pas
+archivée. Seule compte la ligne que l'outil de la session a lui-même ajoutée : la roadmap se relit
+juste avant chaque écriture, et une ligne qu'une autre session a écrite entre-temps n'est ni « en
+session » ni l'objet du rappel « une session, une tâche » (2026-10-28, #70). Les sessions se lisent toutes les 3 s : la liste de l'app (100 sessions), qui exclut la
+session qui la demande, plus la fiche de la session du panneau (`get_session self`), sans quoi
+chaque panneau voyait toutes les sessions sauf la sienne (2026-10-27, #345). La roue ou la main de
+la session du panneau suit ses propres tours sans attendre la relecture ; une liste refusée ou
+illisible se dit sous la recherche, et seule cette session reste alors suivie. Le titre d'une session, « #N · titre court », se pose à son lancement puis ne change
+plus (2026-10-25) : le panneau ne renomme aucune session. Une session, une tâche (2026-10-23) :
+une session « #N · … » qui ouvre une autre tâche n'y travaille pas, et Claude reçoit le rappel de
+la proposer dans une session à part (sauf un correctif du lot #N). Une session « Lot » (titre qui
+commence par « Lot », « Lot #1 », « Lot 2 », ou session qui a lancé au moins deux sessions encore
+ouvertes, depuis le 2026-10-26) coordonne les sessions de ses features : elle ouvre et coche leurs
+lignes sans jamais être en cours sur aucune, une ligne qu'elle ouvre lui rappelle de lancer sa
+session, et le numéro de son titre ne lui fait pas proposer l'archivage ; ses sessions « #N · … »
+restent rattachées à leur tâche, et celles lancées par son ▶ reçoivent la clause du Lot : elles ne
+fusionnent pas, ne prennent une ressource unique (simulateur iOS…) qu'avec la main du Lot et disent
+leur état en tête de chaque compte rendu. Une carte New task (`own_initiative`) que Claude pose
+dans une sous-session d'un Lot remonte au Lot (2026-10-28) : par message, ou, le message refusé,
+gardée et donnée au Lot à son message suivant ; la sous-session lit qu'elle est transmise, et le
+Lot ouvre sa ligne et la propose à Bertrand. Les cartes `offer` et `user_asked`, le ▶ et une
+session sans Lot posent la leur comme avant. La doctrine entière est dans la skill `lot`. La section « ## En cours » du fichier n'est pas un état : le détail dit en session,
+bloquée ou à faire. `après:<début du libellé>` désigne la tâche à faire d'abord : la tâche est bloquée
+(cadenas) tant que l'autre n'est pas faite.
+
+**Chaînes et priorité** (2026-10-27). Une chaîne de tâches reliées par `après:` reste d'un bloc,
+dans l'ordre d'exécution : elle se range sous le sujet (ou le jour) de sa tête, même quand les
+tâches suivantes ont un autre sujet, et chaque ligne porte le trait qui la relie aux autres et son
+étape (1 pour la tête ; deux suites de la même tâche partagent leur étape, elles se font en
+parallèle). Le trait fait partie de la marque de la ligne : un dessin par ligne, comme avant. Le
+détail dit « étape 2 sur 4 de la chaîne ». `prio:1` (urgent, rouge), `prio:2` (important,
+orange) et `prio:3` (quand on a le temps, gris) se montrent en pastille, même sur une tâche en
+session ou bloquée ; dans un sujet, l'ordre devient en session, P1, P2, sans priorité, P3, puis
+l'échéance et la date d'ouverture, et une chaîne prend la priorité de sa tâche la plus
+prioritaire, sans changer son ordre interne. L'état « Prioritaires » filtre les P1 et P2.
+
+**Retours** (2026-10-27, id:227 de Splitmybill). `feedback:12,15` porte les numéros des retours
+envoyés depuis l'app d'où vient la tâche, ou qu'elle a reçus : une pastille violette « Feedback »
+sur la ligne ouverte et au détail, qui donne les numéros (« Retours #12, #15 ») ; l'état « Retours »
+filtre ces tâches. Le contrôle de grammaire refuse une autre forme que des numéros séparés par des
+virgules.
+
+Un titre court et un sujet par tâche sont écrits par un
+modèle, une fois par tâche, et gardés. Le design (thèmes sombre et clair, pastilles, coins
+arrondis) suit le handoff de design du 2026-10-21 ; les limites de l'app de bureau et leurs
+contournements sont écrits en commentaire dans `hooks/register.tsx` et `hooks/icons.ts`.
+
+## Maestro
+
+Demande de Bertrand du 27/10/2026 : « Maestro » en tête d'un message (« Maestro », « Maestro, on
+en est où ? ») ouvre le panneau et donne à Claude, en contexte additionnel, l'état d'avancement du
+projet, orienté objectif : faire avancer les tâches, qu'aucune ne reste bloquée des heures.
+La tête du message se lit après les blocs `<system-reminder>` que l'app met devant le texte de
+Bertrand (premier message d'une session en worktree, #69) ; « Maestro » au milieu du texte ne
+déclenche rien.
+
+1. **Ce qui attend Bertrand**, la plus ancienne en tête : les sessions qui ont fini leur tour sans
+   réponse (la main orange), avec depuis combien de temps et leur lien ; au-delà de 15 min (#84),
+   elles sont « coincées » et se débloquent avant tout lancement.
+2. **Ce qui tourne**, avec depuis quand.
+3. **Ce qu'on peut lancer** : ni bloqué par sa prérequise, ni en session, ni déjà demandé ; rangé
+   par priorité, puis ce qui ne dort pas chez un tiers, puis ce qui débloque le plus de tâches,
+   puis l'échéance, puis la plus ancienne. Les quatre premières arrivent avec leur carte de session
+   prête (même brief que « Lancer »).
+
+Claude ouvre sur une phrase de verdict, puis demande lesquelles lancer par un formulaire à choix
+multiples (quatre au plus, la première recommandée) et pose la carte de chaque tâche choisie ;
+« Maestro go » ou « Maestro, lance » pose directement les cartes des trois premières. Rien n'est
+lancé sans le clic de Bertrand sur « Start », et rien n'est écrit dans la roadmap, sauf la ligne
+d'une tâche que propose une session lancée.
+
+**Les tâches que proposent les sessions lancées** (#71) : Maestro est le Lot des sessions qu'il
+lance, même d'une seule. La session où Bertrand dit « Maestro » est marquée pour 30 jours (pas une
+session de tâche « #N · … »), et un titre « Maestro … » suffit. Une carte New task posée par une
+de ses sessions, ou par une session lancée depuis l'une d'elles, ne reste pas dans leur transcript :
+elle remonte à Maestro (skill `lot`, § 3), qui ouvre sa ligne, pose sa propre carte et dit à
+Bertrand en une ligne quelle session la propose et qu'il clique Start.
+
+**Les nouvelles des enfants** (#84) : Bertrand pilote depuis le parent (un Lot, Maestro, ou toute
+session qui en a lancé d'autres). Chaque enfant note dans le store du plugin sa liste d'étapes
+(`update_plan`), sa question en attente (`AskUserQuestion`) et son dernier récap (`wrap_up`). À
+chaque message de Bertrand, le parent reçoit, sous « Roadmap — nouvelles de tes sessions enfants »,
+une ligne par enfant qui coince depuis 15 min (attend Bertrand, silencieux avec son étape, ou prêt)
+et la liste des enfants à archiver, vérifiés finis (ligne close et commits arrivés, ou branche
+fusionnée et liste d'étapes faite ; rien de non commité, aucune question ni session ouverte ; en
+mode Projet, la ligne seule) ; rien quand tout avance. Une session épinglée n'est pas proposée à
+l'archivage, une session distante n'est jamais dite finie d'ici, et la branche de base est celle de
+la session (`main` sans elle) ; les notes de plus de 30 jours sortent du store (#90). Il relance une fois un enfant silencieux
+(pas encore s'il a répondu sans changer d'étape), et propose d'archiver les finis d'un seul clic
+(« Archive-les »). Toute session reçoit aussi la consigne de tenir sa liste d'étapes.
+
+**Le réglage autonome** (#77, réglage de session `autonome`, mode Code, éteint par défaut) :
+Maestro ne pose plus le menu « Je lance lesquelles ? ». Il pose les cartes des trois premières
+tâches, comme « Maestro go », et Bertrand clique Start sur celles qu'il veut. Il fusionne seul la
+branche prête d'une de ses sessions (tests verts, à jour de `main`, diff relu par lui), une à la
+fois, tests rejoués après chaque fusion. Il répond lui-même à une session qui attend, sauf pour
+une question d'architecture ou un geste qui revient à Bertrand. Sans le réglage, la fusion attend
+le clic de Bertrand.
+
+Une session lancée (par le panneau ou par Maestro) reçoit le **cap** dans son brief : finir la
+task dans la session ; décider seule ce que les fichiers, le code ou un défaut raisonnable
+tranchent ; ne poser à Bertrand que ce qui est à lui, en une fois ; écrire un blocage sur la ligne
+(`attend:`, `après:`) au lieu de l'attendre.
+
+## Tâche lancée tracée (mode Code)
+
+Demande de Bertrand du 28/10/2026 (#80) : en mode Code, une tâche lancée (sa ligne porte `qui:` ou
+`branche:`) porte `ouvert:`, `due:`, `qui:` et `après:` (`après:-` si rien ne la précède). Comme
+les champs exigés du mode Projet : signalés au modèle à l'écriture, comptés par le doctor, jamais
+refusés ; `requis` de `.claude/roadmap.json` remplace la liste, `[]` l'éteint. Les idées du
+Prochain et du Plus tard n'en ont pas besoin. Le brief d'une session lancée le rappelle.
+
+## Mode Projet
+
+Demande de Bertrand du 28/10/2026 (#76) : un même plugin pilote aussi des projets sans code, en
+mode Projet, choisi par projet dans `.claude/roadmap.json` (`"mode": "projet"` ; Code par défaut).
+Premiers usages : la roadmap de Caro et le dossier AAFES Cowork, depuis l'onglet Code.
+
+- **Des tâches complètes** : `resp:` (la personne qui porte la tâche, collègue compris),
+  `parent:N` ou `parent:#N` (la tâche mère), `après:N,M` (plusieurs prérequises), `-` pour
+  « aucune » (pas pour `resp:`, que le contrôle signale). Les champs de `requis` (défaut : `id`,
+  `ouvert`, `due`, `resp`, `parent`, `après`) sont signalés au modèle à chaque écriture d'une tâche
+  ouverte, jamais refusés ; le doctor compte les lignes incomplètes.
+- **Les tags d'un projet** : des clés déclarées dans `cles`, avec leurs valeurs admises ; le
+  détail les montre, la recherche les lit.
+- **La vue** : le panneau s'ouvre par échéance (en retard, cette semaine, plus tard, sans
+  échéance) ; le bouton de rangement passe au responsable, à l'arbre des tâches (une section par
+  tâche mère et son avancement), au sujet, au jour. Une pastille dit le responsable quand ce n'est
+  pas « moi » ; « À moi » compte `resp:` ; le détail montre responsable, parent, sous-tâches,
+  prérequises et clés déclarées. Une tâche est bloquée tant qu'une de ses prérequises est ouverte.
+- **Les sessions** : ▶ pose une carte sans worktree (reposée sans le champ si l'app le refuse) ; le
+  brief ne cite ni TDD ni plan de code, dit que la tâche passe par les connecteurs MCP et que rien
+  ne part chez un tiers sans accord ; la clause du Lot n'a ni branche ni fusion ; le rappel
+  « commit sans test » se tait ; Maestro ne propose que les tâches « à moi », compte celles des
+  autres en retard, et ignore le réglage `autonome` (sans fusion, il ne vaut qu'en mode Code).
+- **L'onboarding** pose un dossier simple : `CLAUDE.md` court, la roadmap et ses bilans,
+  `.claude/roadmap.json` ; git en option ; ni `check.mjs`, ni hook, ni historique. **Le doctor** y
+  vérifie python3, la roadmap, les réglages, les champs exigés, le plugin et les skills du brief
+  Projet, sans GitHub.
+
+## Onboarding et doctor
+
+Demande de Bertrand du 27/10/2026 : tout projet de code (adBricks mis à part, dont la roadmap reste
+dans son dossier Cowork) entre dans le système par la skill `onboarding`, et la skill `doctor` dit
+s'il est bien branché.
+
+- **La roadmap vit dans le dépôt, donc sur GitHub** : un dossier `roadmap/` à la racine
+  (`ROADMAP.md`, `ROADMAP-fait.md`, `ROADMAP-bilans.csv`), que `.claude/roadmap.json` désigne au
+  panneau (`"dir": "roadmap"`). Un projet qui la tient déjà à sa racine (Splitmybill) la garde là.
+- **L'historique, au choix** : sur un dépôt existant, l'onboarding propose de reconstituer la
+  roadmap des 6 derniers mois. Une tâche faite par PR fusionnée (sinon par fusion, sinon par jour
+  de commits), avec `src:` vers la PR ou le commit et un bilan « reconstituée, sans bilan » ; une
+  tâche ouverte par PR ouverte, avec sa branche. Claude écrit les libellés et les axes, le script
+  numérote et écrit.
+- **Le doctor** lit, sans rien changer : outils, `main` poussé, roadmap trouvée et conforme,
+  `check.mjs`, plugin roadmap, Superpowers et chaque skill de méthode que cite le brief des
+  sessions (une skill renommée par Superpowers se voit là), sa mise à jour (suivie par l'app pour
+  un plugin du compte, à allumer pour un catalogue tiers du terminal), `swiftui-pro` dans un projet
+  Swift. Il juge les plugins que l'app charge, lus dans son magasin, et non la copie `synced` du
+  terminal, qui peut retarder. Un test garde sa liste alignée sur celle de `hooks/parse.ts`.
+- **Superpowers n'est pas déclaré en dépendance du plugin** : le plugin est installé par la
+  synchro du compte et Superpowers vient d'un autre catalogue ; une dépendance non résolue
+  pourrait empêcher le plugin de se charger. Le doctor la vérifie et donne la commande.
+- **Aucune dépendance au plugin cowork** : la façon de poser une question (réglage Questions,
+  questions de l'onboarding) est écrite dans ce plugin.
+
+## Capter les tasks
+
+Règle de Bertrand du 21/10/2026, écrite dans `~/.claude/CLAUDE.md` : un travail demandé sans task
+ouvre sa ligne dans `ROADMAP.md` dès le départ, et la clôt à la livraison. Le plugin la tient dans
+chaque projet qui a une roadmap :
+
+- **à chaque écriture** (Edit, Write, NotebookEdit, commande Bash qui n'est pas en lecture seule),
+  il relit `ROADMAP.md` et `ROADMAP-fait.md` et renvoie au modèle les lignes nouvelles ou changées
+  qui sortent de la grammaire : bloc `[…]` absent, axe manquant ou non déclaré dans l'en-tête (« Axes
+  en usage : … » ou « - **axe** … »), clé inconnue, date qui n'est pas AAAA-MM-JJ, `[x]` sans `fait:`,
+  task cochée restée dans `ROADMAP.md` ou non cochée dans `ROADMAP-fait.md`. Une ligne ancienne
+  hors grammaire ne revient pas à chaque écriture ;
+- **en fin de tour**, si le tour a modifié des fichiers du projet (ou changé l'état git de son
+  dépôt) et que la roadmap n'a pas bougé depuis le début de la session, il bloque l'arrêt une fois
+  et rappelle la règle ; le modèle inscrit la task, ou termine s'il n'y a rien à inscrire ;
+- **idée sans ligne** (règle du 28/10/2026, #83) : une question n'ouvre pas de ligne, mais une
+  question dont la réponse fait naître une chose à coder se termine par la proposition d'ouvrir sa
+  ligne. En fin de tour, si la dernière réponse ou la boîte de fin propose de construire quelque
+  chose (« je peux coder », « je cadre si tu veux », « on pourrait ajouter », « veux-tu que je… »,
+  « une suite possible »), que la roadmap n'a pas bougé pendant le tour et qu'aucune carte de
+  session n'a été posée, le plugin bloque l'arrêt une fois : le modèle termine par la boîte de fin
+  avec « J'ouvre la ligne de … ? » et son bouton, ou dit en une ligne pourquoi non. Des motifs de
+  texte, pas un modèle : une idée tournée autrement passe, une fausse alerte coûte une phrase. Une
+  réponse qui parle déjà d'ouvrir la ligne, le code et les citations « … » ne comptent pas ;
+- **chantier fini** (règle du 23/10/2026) : quand la tâche que porte la session (« #N · … ») vient
+  d'être cochée, bilan écrit, la fin de tour bloque une fois et demande au modèle de terminer par la
+  boîte de fin avec « Archiver cette session ? » et le bouton de réponse « Oui, archiver » (l'app
+  ne propose jamais le bouton d'app `archive`, #87), ou de dire ce qui reste. Sur ce clic, et sur
+  lui seul, le modèle appelle `archive_session` (`self`). Le rappel du bilan passe d'abord ; une
+  seule fois par tâche.
+- **bloc de fin de tour** (règle du 28/10/2026, #85, dans tout projet, roadmap ou non) : en mode
+  ADHD, un tour de travail (le tour a appelé la boîte de fin ou la liste d'étapes) dont la
+  dernière réponse n'a pas ses trois lignes `État`, `À toi`, `Session` (sans casse, accents, gras
+  ni puces, chacune en début de ligne et suivie de « : »), ou dont la ligne Session dit « à
+  archiver » sans le bouton « Oui, archiver » dans la boîte, bloque l'arrêt une fois ; le rappel
+  nomme ce qui manque et redonne le format. Les étiquettes comptent, pas leurs valeurs ;
+- **méthode** (2026-10-23) : le brief d'une session lancée du panneau dit quelle skill superpowers
+  appelle quelle situation (`writing-plans` pour un lot de plusieurs fichiers,
+  `test-driven-development` pour un changement de comportement, `systematic-debugging` pour un
+  bug, `verification-before-completion` avant de cocher, `brainstorming` seulement si Bertrand
+  répond). En fin de tour, si le tour a enregistré un commit qui touche du code (ses commits,
+  sans les merges) sans aucun fichier de test, ou si la session n'a lancé aucune skill de méthode
+  (vue par l'expansion de la skill, `skill.prompt`), le plugin le rappelle, une fois par commit.
+  C'est un rappel : un commit sans comportement (doc, config, renommage) se dit et termine.
+  Depuis 0.23.0, un écran ou une vue SwiftUI créé ou modifié appelle `swiftui-pro` sur les
+  fichiers touchés avant de dire fini : le brief le dit, et un commit qui touche un fichier
+  `*.swift` (hors tests : dossier `…Tests/`, fichier `…Tests.swift`) sans que la session ait lancé
+  `swiftui-pro` (avec ou sans préfixe de plugin) ajoute la ligne au même rappel.
+  Depuis #96 (29/10/2026), un commit du tour qui crée un fichier d'interface (`.tsx`, `.jsx`,
+  `.swift`, `.css`, `.scss`, `.sass`, `.less`, `.html`, `.vue`, `.svelte`, hors tests) ou y ajoute
+  au moins 40 lignes, alors que la session n'a montré aucune maquette (`show_widget`, un
+  formulaire dont une option porte un `preview`, une page `.html` ou `file://` ouverte dans le
+  volet navigateur), ajoute la ligne des maquettes au même rappel ; une feuille de style seule y
+  entre aussi. Le brief dit qu'un choix visuel passe par 2 ou 3 maquettes avant le code.
+
+Pour adBricks, le repo et ses worktrees comptent comme le projet du dossier Adbricks Cowork, qui
+porte la roadmap. Le réglage `capture` coupe les deux.
+
+## Réglages de session
+
+Demande de Bertrand du 23/10/2026 : les mêmes réglages dans chaque session, sans les répéter. Au
+démarrage de chaque session (et après `/clear` ou un compactage), dans tout projet, roadmap ou
+non, le plugin lit `~/.claude/reglages-session.json` et donne au modèle, en contexte additionnel,
+les réglages allumés :
+
+- `questions` : toute question à Bertrand par l'outil AskUserQuestion, jamais en texte libre, et
+  jamais pour un geste qu'un outil fait : un volet de l'app fermé ou masqué (navigateur, fichier,
+  diff) s'ouvre par la session elle-même (`preview_start`, `mcp__ccd_view__show_pane`), depuis le
+  28/10/2026 (#74) ;
+- `adhd` : chaque message commence par une ligne en gras, emoji + étape en cours sur le total + nom
+  (`🔄 **2/3 Clé**` ; détour `⚠️ **2/3 Clé** ↳ nom refusé` ; fin `✅ **3/3 Fait**` ; noms figés ;
+  pas de ligne pour une réponse courte hors tâche), puis une phrase de constat et, s'il en reste une, la seule
+  action ou décision qui revient à Bertrand, listes et gras, pas de pavé. Donnée seulement au démarrage, la consigne s'effaçait au
+  fil d'une longue session : depuis le 24/10/2026, une ligne de rappel l'accompagne à chaque
+  message de Bertrand (hook `UserPromptSubmit`). Depuis le 29/10/2026 (#85), un tour de travail
+  (boîte de fin ou liste d'étapes) se termine, après la boîte de fin, par le **bloc de fin de
+  tour**, trois lignes telles quelles : `**État** : fini · pas fini · bloqué`, `**À toi** : rien`
+  ou une à trois actions avec où et comment, `**Session** : à archiver` (avec la boîte « Archiver
+  cette session ? » et le bouton de réponse « Oui, archiver ») ou `à garder`, et pourquoi ;
+- `francais` : réponses en français ;
+- `autonome` (#77, mode Code, éteint par défaut) : Claude suit sa recommandation au lieu de poser
+  la question, sauf pour une question d'architecture, c'est-à-dire un choix qui s'écrirait dans
+  `docs/decisions.md`. Un Lot ou Maestro fusionne seul la branche prête d'une de ses sessions
+  (tests verts, à jour de `main`, diff relu par lui), une à la fois, tests rejoués après chaque
+  fusion. Lancer et archiver gardent le clic de Bertrand. En mode Projet, sans fusion, il ne vaut
+  que pour les gestes hors du code.
+
+Toujours dite, réglages éteints compris, en mode Code comme en mode Projet : la règle des gestes
+hors du code (#82, 28/10/2026). Un geste qu'une tâche demande hors du dépôt (tâche planifiée,
+réglage d'un service, formulaire) se fait par la session : d'abord par un connecteur MCP ou une
+API (une tâche planifiée : `mcp__scheduled-tasks__create_scheduled_task`), sinon dans le volet
+navigateur, jamais par un texte que Bertrand colle. Ne lui reste que ce qu'aucun outil ne fait (un
+secret, la connexion à son compte), la page ouverte au bon endroit. `autonome` allumé, le geste se
+fait sans confirmation ; éteint, la session demande son oui avant d'écrire. Les règles de sécurité
+du modèle restent au-dessus (envoyer un message en son nom, payer, valider un formulaire dans le
+navigateur sans qu'il l'ait demandé).
+
+Toujours dite aussi, dans les deux modes : la règle des maquettes (#96, 29/10/2026). Tout choix
+dont le résultat se voit (en mode Code : écran, vue, panneau, volet, composant, mise en page,
+graphique ; en mode Projet : la mise en page d'un document, d'un tableau, d'une présentation)
+passe par 2 ou 3 maquettes simples, chacune avec son parti et son compromis, la recommandation en
+premier ; Bertrand choisit, puis la session code ou décide. Le support est le plus léger qui
+permet de décider : l'aperçu (`preview`) des options d'un formulaire, un widget `mockup`
+(`mcp__visualize__show_widget`), ou une page HTML statique du dossier du projet ouverte dans le
+volet navigateur. `autonome` ne s'y applique pas. Sous un Lot, la sous-session écrit ses
+maquettes dans une page, dit « attend une réponse : choix de maquette » et le Lot les montre à
+Bertrand.
+
+Sans fichier, les trois premiers sont allumés et `autonome` est éteint. Chaque réglage vaut pour
+toutes les sessions : plus d'exception par projet depuis #91 (29/10/2026), un ancien `projets` est
+ignoré. Un fichier illisible laisse les réglages par défaut et le dit. La skill `reglages-session` les lit et les change.
+
+### Le volet Réglages
+
+Demande de Bertrand du 28/10/2026 (#81) : voir chaque réglage et le changer d'un clic, sans
+retenir de phrase. Refait le 29/10/2026 sur la maquette qu'il a choisie (#91, « juste On / Off »).
+`/reglages` ouvre le volet « Réglages » dans tout projet, roadmap ou non ; le bouton « Réglages »
+de la barre du panneau et la skill `reglages-session` l'ouvrent aussi.
+
+- **Une ligne par réglage** : le nom à gauche, le contrôle à droite. Un oui/non a deux boutons
+  côte à côte, « On » et « Off », le choix actif en bouton principal ; un clic sur l'autre change
+  la valeur, un clic sur l'actif ne fait rien. L'explication de la ligne s'affiche quand le
+  pointeur la survole (toujours affichée sur l'application mobile, sans pointeur).
+- **Session** : les quatre réglages de session, pour toutes les sessions. Le volet relit le
+  fichier avant chaque écriture et garde tout ce qu'il ne touche pas ; un fichier illisible n'est
+  jamais réécrit. Il suit aussi le fichier écrit ailleurs (la skill, une autre session) : il le
+  relit toutes les 2 s tant qu'il est ouvert. Un changement vaut pour les sessions ouvertes
+  ensuite, ou après `/clear` ; le rappel du mode ADHD et Maestro le suivent dès le message suivant.
+- **Panneau Roadmap** : les options ci-dessous, avec le titre et l'explication du menu de
+  configuration de Claude Code : les oui/non d'abord, puis les listes (un choix), puis les textes
+  (un champ). Le volet les reconnaît à leur clé (`roadmap.<option>`) : dans l'app, leur
+  fournisseur s'écrit `roadmap@inline`. Un changement recharge le plugin, et les panneaux se
+  redessinent. Une option verrouillée par l'organisation se montre sans contrôle.
+
+Sur l'application mobile, qui ne dessine ni choix ni champ, un bouton passe à la valeur suivante.
+
+## Trouver la roadmap d'un projet
+
+Dans cet ordre, pour le projet de la session (un worktree remonte à son dossier principal) :
+
+1. `.claude/roadmap.json` dans le projet, tout facultatif :
+   `{ "name": "Clipping", "dir": "docs", "me": ["Alex"], "subjects": ["Montage", "Diffusion"] }`
+   (`dir` relatif au projet ou absolu ; sans `subjects`, le modèle choisit ses sujets), et les
+   réglages du mode : `mode`, `requis`, `cles`, `vue` (voir « Mode Projet »), et `rangement`
+   (#101) : `{ "skill": "aafes-memory", "ligne": "Rangé dans" }`, la tâche de la session cochée,
+   la fin de tour ne propose l'archivage qu'une fois la ligne de rangement (ou « Rien à ranger »)
+   écrite dans une réponse de la session, et rappelle sinon la règle de rangement de la skill ;
+   sans ce réglage, l'archivage se propose comme avant.
+2. Les `sources` du fichier local de l'utilisateur, `~/.claude/roadmap-perso.json` : une roadmap
+   que montrent plusieurs dossiers, reconnus au début de leur chemin (`match`, `dir`, `name`,
+   `subjects`, `me`). Le plugin publié n'en porte aucune (#79).
+3. Un `ROADMAP.md` à la racine du projet.
+
+Rien de tout ça : pas de panneau, et `/roadmap` dit quoi ajouter (la skill `onboarding` la pose).
+
+## Réglages
+
+Dans le volet `/reglages` (voir plus haut) ou dans les réglages du plugin (menu de configuration de Claude Code) : `me` (tes noms : le premier est celui que Claude emploie avec toi, tous comptent « À moi » ;
+vide par défaut, et alors ceux de `me` dans `~/.claude/roadmap-perso.json`, que pose l'onboarding ;
+sans nom, Claude dit « l'utilisateur »), `autoOpen` (ouvrir le panneau au démarrage, défaut oui),
+`titleModel` (modèle des titres courts, défaut sonnet), `capture` (contrôle de grammaire et rappel de fin de tour,
+défaut oui), `theme` (thème du panneau : auto suit le thème de Claude Code, sombre ou clair l'imposent),
+`launchEffort` (effort d'une session lancée du panneau, défaut high, borné par l'app à celui de la session
+qui lance ; une carte refusée avec son effort est reposée sans lui ; « hérite » n'en passe aucun),
+`launchBypass` (« Lancer en bypass », défaut non : les sessions lancées du panneau, de Maestro ou
+d'un Lot demandent le mode bypass ; l'app ne l'accorde que depuis une session déjà en bypass, sinon
+la carte est reposée sans lui et la session lancée demande elle-même le bypass à son démarrage, par
+la carte d'approbation de l'app ; il faut d'abord activer le bypass dans Réglages → Claude Code).
+Le **garde-fou du dossier principal** vaut dans tous les modes : dans un dépôt qui a au moins deux
+worktrees, le plugin refuse dans le dossier principal `git reset --hard`, `git clean`, `git stash`,
+`git checkout <branche>`, `git add -A`, `git commit -a` et un `push` forcé, et partout un `push`
+forcé vers `main`.
+Un refus du mode auto ne tient pas à l'effort : la carte n'est pas reposée, Claude la pose dans la
+conversation, et les lancements des 30 minutes suivantes passent droit par lui. Le détail le dit en
+une phrase, qui s'efface dès que la session tourne ; le refus brut de l'app va au relevé `perf`
+(rangée `kind: 'launch'`), jamais à l'écran.
+
+## Développer
+
+```bash
+claude plugin validate plugins/roadmap
+claude plugin test plugins/roadmap
+```
+
+## Historique
+
+- **0.55.0 (2026-10-29)** : roadmap : prêt pour un nouvel utilisateur : nom et sources dans ~/.claude/roadmap-perso.json, textes neutres, onboarding et doctor posent le nom, dépôt public bbr21/roadmap-plugin (#79)
+- **0.54.0 (2026-10-29)** : roadmap : l'archivage d'une session attend la ligne de rangement réglée par projet (rangement dans .claude/roadmap.json, #101)
+- **0.53.0 (2026-10-29)** : mode Projet : la liste d'étapes native exigée par le brief et rappelée en fin de tour (#98)
+- **0.52.0 (2026-10-29)** : lot : le panneau demande la carte de l'état du lot quand une branche enfant est prête ou que deux tournent, dans les nouvelles des enfants et le brief de Maestro (#97)
+- **0.51.1 (2026-10-29)** : doctor : le dossier AAFES Cowork n'en est plus exclu, il s'y contrôle en mode Projet (#78)
+- **0.51.0 (2026-10-29)** : reglages-session : un choix visuel passe par 2 ou 3 maquettes que Bertrand choisit avant le code, dit à toute session, dans le brief, le Lot et les modèles de CLAUDE.md ; fin de tour : de l'interface committée sans maquette ajoute une ligne au rappel (#96)
+- **0.50.0 (2026-10-29)** : lot : l'état du Lot en carte cliquable dans le chat (show_widget) : graphe de chaque branche face à main, conflits réels, ordre de fusion, boutons Fusionner et Résoudre les conflits, texte en repli (#95)
+- **0.49.0 (2026-10-29)** : brief et doctor : Superpowers facultatif en mode Projet, plan et brainstorm proposés à la demande, vérification de fin simple, doctor en À voir (#94)
+- **0.48.0 (2026-10-29)** : capture : en mode Code, une tâche lancée porte ouvert:, due:, qui: et après:, signalés à l'écriture, comptés par le doctor, rappelés par le brief (#80)
+- **0.47.0 (2026-10-29)** : fin de tour et panneau : bloc de fin de tour en mode ADHD (État, À toi, Session) contrôlé dans tout projet (#85) ; brief de lancement : fiche: et spec: lus depuis la racine du projet, src: cité en texte sauf fichier existant, aucun chemin absent donné à lire (#93)
+- **0.46.0 (2026-10-29)** : reglages-session : le volet Réglages refait sur maquette, On | Off côte à côte, explication au survol, options du panneau retrouvées (dont Lancer en bypass), plus d'exception par projet (#91)
+- **0.45.0 (2026-10-29)** : roadmap : option « Lancer en bypass » (le ▶, Maestro et le Lot demandent le bypass, sinon la session lancée se relève d'un clic) ; archivage d'un clic par « Oui, archiver » et archive_session ; garde-fou des commandes git interdites dans le dossier principal (#87)
+- **0.44.3 (2026-10-29)** : onboarding : le check.mjs posé tolère un spec: ou une fiche: absent sur une ligne prise (branche:) et l'exige sur une ligne libre ou close (#92)
+- **0.44.2 (2026-10-29)** : roadmap : nouvelles des enfants polies : le parent lit ses enfants en parallèle, git borné à 5 s et sans verrou ; question périmée, enfant épinglé, session distante, dossier absent et base de la session pris en compte ; notes sérialisées, validées et purgées après 30 jours (#90)
+- **0.44.1 (2026-10-29)** : roadmap : la ligne qu'une autre session ajoute pendant une commande longue (les tests du panneau) ne passe plus « en session » ni au rappel « une session, une tâche » ; un Bash ne compte que s'il nomme ROADMAP.md ou lance cowork.py (#89)
+- **0.44.0 (2026-10-29)** : roadmap : une réponse qui propose une chose à coder, sans ligne de roadmap ni carte de session, renvoie Claude une fois en fin de tour pour proposer d'ouvrir la ligne en bouton ; la consigne de fin de tour le dit (#83)
+- **0.43.0 (2026-10-28)** : roadmap : le parent prend des nouvelles de ses enfants (une ligne par enfant coincé depuis 15 min, relance unique, enfants vérifiés finis à archiver d'un clic), 15 min partout, liste d'étapes demandée à toute session ; lot : prendre des nouvelles, archiver d'un clic (#84)
+- **0.42.1 (2026-10-28)** : roadmap : mode Projet poli : une section de l'arbre reste dépliée quand une sous-tâche se clôt, resp: vide ou - sans pastille (resp:- signalé), « faite » une fois au parent, pas de ↳ sous une recherche, check.mjs accepte les clés déclarées à chiffre ou tiret et parent:#N (#86)
+- **0.42.0 (2026-10-28)** : roadmap : mode Projet dans .claude/roadmap.json (mode, requis, cles, vue) ; resp:, parent:, après: multiple ; champs exigés signalés à l'écriture ; vue par échéance, responsable ou arbre ; sessions sans worktree ni fusion ; onboarding et doctor du mode Projet (#76)
+- **0.41.0 (2026-10-28)** : reglages-session : le volet Réglages (/reglages, bouton du panneau, la skill l'ouvre) montre chaque réglage de session et option du panneau, son état et son explication, et le change d'un clic, partout ou pour ce projet (#81)
+- **0.40.0 (2026-10-28)** : reglages-session : un geste hors du code (tâche planifiée, réglage d'un service) se fait par MCP ou API, sinon dans le volet navigateur, jamais par un texte à coller ; autonome allumé sans confirmation, éteint un oui avant d'écrire, en mode Code comme en mode Projet (#82)
+- **0.39.0 (2026-10-28)** : reglages-session : réglage autonome (mode Code, éteint par défaut), Claude suit sa recommandation sauf question d'architecture ; roadmap : avec lui, Maestro pose ses cartes sans menu, fusionne seul une branche prête et répond aux sessions qui attendent (#77)
+- **0.38.0 (2026-10-28)** : roadmap : bouton Marquer faite au détail d'une tâche ouverte, confirmation d'un clic, même écriture que l'annulation ; Marquer faite et Annuler la tâche restent visibles quand une session tient la tâche, avec un avertissement (#73)
+- **0.37.0 (2026-10-28)** : roadmap-panel : /roadmap:roadmap-panel tapée seule ouvre le panneau d'une ligne, sans diagnostic ; réglages de session : une session ouvre elle-même un volet masqué au lieu de demander à Bertrand de l'afficher (#74)
+- **0.36.0 (2026-10-28)** : roadmap : Maestro reçoit et relaie les tâches que proposent ses sessions, même une seule et ses petites-filles (#71)
+- **0.35.2 (2026-10-28)** : roadmap : Maestro reconnu au premier message d'une session en worktree, après les blocs <system-reminder> que l'app met en tête (#69)
+- **0.35.1 (2026-10-28)** : roadmap : une tâche ajoutée n'est qu'à la session dont l'outil l'a écrite, plus celle qu'une autre session a ouverte entre-temps (#70)
+- **0.35.0 (2026-10-28)** : roadmap : la carte New task d'une sous-session remonte à son Lot (message, sinon au message suivant du Lot) ; skill lot : le Lot ouvre la ligne et la propose à Bertrand
+- **0.34.1 (2026-10-28)** : doctor : juge les plugins que l'app charge (son magasin), plus la copie synced du terminal ; mise à jour d'un plugin du compte suivie par l'app
+- **0.34.0 (2026-10-27)** : onboarding : corrections du test 1 sur le plugin lui-meme, une tache par commit quand le depot n a ni PR ni fusion, liens des modeles ignores par check.mjs (cle ignorer), lignes en plus dans .gitignore (cle gitignore), commentaires des commandes alignes
+- **0.33.0 (2026-10-27)** : onboarding : remplace projet-init, roadmap dans roadmap/ du depot avec ses bilans, reconstitution au choix depuis les PR des 6 derniers mois ; doctor : checklist du projet (GitHub, roadmap, Superpowers et ses skills, swiftui-pro) ; plus de dependance au plugin cowork
+- **0.32.1 (2026-10-27)** : roadmap : lancement refuse par le mode auto : note courte en francais effacee des que la session tourne, pas de second essai sans effort, lancements suivants droit par Claude pendant 30 min, refus brut au releve perf (id:354)
+- **0.32.0 (2026-10-27)** : roadmap : cle feedback (numeros des retours de l app) lue et controlee, pastille Feedback sur la ligne et au detail avec les numeros, etat Retours qui filtre ces taches (id:227 de Splitmybill)
+- **0.31.0 (2026-10-27)** : roadmap : chaines apres reliees par un trait et numerotees sous le sujet de leur tete ; prio 1 2 3 en pastille, tri et filtre Prioritaires ; Maestro en tete d un message ouvre le panneau et propose ce qu on peut lancer, sessions coincees d abord ; cap des sessions lancees
+- **0.30.0 (2026-10-27)** : roadmap : le panneau voit la session ou il est ouvert (list_sessions l exclut, sa fiche get_session self rejoint la liste) ; sessions et fichiers relus toutes les 3 s, 100 sessions ; roue ou main de la session selon ses tours ; refus de liste reessaye chaque minute, panne dite au panneau
+- **0.29.0 (2026-10-26)** : lot : nouvelle skill, doctrine de la session Lot qui orchestre ses sous-sessions (lecture, ordre des fusions, main sur le simulateur iOS) ; le panneau reconnait un Lot a son titre ou a ses deux sessions lancees encore ouvertes ; le ▶ lance depuis un Lot donne sa clause ; gabarit projet-init
+- **0.28.1 (2026-10-26)** : roadmap : reglage Questions - quand Bertrand pose une question ou dit qu il ne comprend pas, explication en texte dans le message, tour arrete sans formulaire, question reposee seulement apres sa reponse ; le mode ADHD laisse sa place a une explication demandee (boucle de la session 301)
+- **0.28.0 (2026-10-26)** : roadmap : bouton Annuler la tache au detail d une tache ouverte - confirmation, raison facultative, ligne cochee (abandonne) en tete de ROADMAP-fait.md avec son bilan, par cowork.py dans un dossier Cowork, sinon ecrite puis committee et poussee sur main ; le detail la montre annulee
+- **0.27.0 (2026-10-25)** : roadmap : plus de renommage de session en cours de route ; une session Lot n est jamais en cours sur une tache ; bouton ▶ devant chaque tache ouverte qui lance sa session sans ouvrir le detail ; Lancer et Verifier au premier clic, avec un Message additionnel facultatif
+- **0.26.0 (2026-10-25)** : roadmap : boite Conclusion en tete du detail d une tache faite (ce qui a ete fait, le souci ou Tout a roule, emoji du ressenti ; Tout voir deplie cause, corrections, note) ; journal ROADMAP-bilans.csv par defaut pour toute roadmap, reclame avant l archivage, rappele par le brief
+- **0.25.0 (2026-10-24)** : roadmap : bouton Verifier au detail d une tache ouverte - meme confirmation et meme carte que Lancer, session #id · Verifier · titre qui dit si la tache est encore a jour (deja faite, a moitie, perimee, a faire) sans coder ; le panneau la rattache a sa tache, une session de realisation l emporte
+- **0.24.1 (2026-10-24)** : reglages-session : le mode ADHD ouvre chaque message par une seule ligne en gras, emoji + etape en cours/total + nom (🔄 2/3 Cle, detour ⚠️ ... ↳ raison, fin ✅ 3/3 Fait), rien pour une reponse courte hors tache ; plus de fil complet ni de Ou on en est
+- **0.24.0 (2026-10-24)** : roadmap : panneau - toutes les vues se rangent par jour ou par sujet, au choix d un bouton Par jour / Par sujet garde d une vue a l autre ; par jour, une ouverte va au jour de son ouvert: (En retard en tete), une faite au jour de son fait: ; sans choix, ouvertes par sujet, faites par jour
+- **0.23.0 (2026-10-24)** : roadmap : methode SwiftUI - le brief de lancement envoie un ecran ou une vue SwiftUI vers swiftui-pro avant de dire fini ; fin de tour : un commit qui touche un fichier .swift hors tests sans swiftui-pro dans la session ajoute la ligne au rappel de methode, une fois par commit
+- **0.22.0 (2026-10-24)** : reglages-session : le mode ADHD ouvre chaque message par un fil des etapes (faites cochees, en cours en gras, noms figes, detour en fleche, Tout fait a la fin), et un rappel d une ligne l accompagne a chaque message de Bertrand (hook UserPromptSubmit)
+- **0.21.0 (2026-10-23)** : reglages-session : reglages de session injectes au demarrage de chaque session (questions par AskUserQuestion, mode ADHD, francais), lus dans ~/.claude/reglages-session.json, par projet possible ; nouvelle skill reglages-session pour les lire et les changer
+- **0.20.0 (2026-10-23)** : roadmap : une session lancee du panneau part en effort high par defaut (reglage launchEffort, borne par l app a l effort de la session qui lance) ; carte refusee avec son effort, reposee sans lui
+- **0.19.0 (2026-10-23)** : roadmap : clic #N sans lecture d etat avant l outil ; sessions lues par la liste puis fiches absentes en parallele (11 fiches en serie -> 0 a 4 ensemble) ; relecture toutes les 3 s pendant 30 s apres un clic, 60 s apres un lancement ; releves perf open et refresh
+- **0.18.1 (2026-10-23)** : roadmap : le rappel d archivage exige le bouton archive (actions archive), la question seule ne suffit pas
+- **0.18.0 (2026-10-23)** : roadmap : methode superpowers - le brief de lancement dit quelle skill appelle quelle situation (plan, test rouge, debogage, verification, brainstorming si Bertrand repond) ; fin de tour : rappel d un commit de code sans test ou d une session sans skill de methode, une fois par commit
+- **0.17.0 (2026-10-23)** : roadmap : un clic, un dessin - l'etat d'un clic s'ecrit en une fois (avant 4-5 ecritures et 2 a 4 dessins par clic, le premier a moitie a jour) ; releves perf de chaque session gardes
+- **0.16.0 (2026-10-23)** : roadmap : clics rapides - donnees gardees en memoire (aucune lecture au clic), budget de 40 lignes par dessin (Voir les N autres), moins de Svg (plus de coins de survol, cale fusionnee), dessins memoises, releves perf dans le store
+- **0.15.0 (2026-10-23)** : roadmap : cadenas gris pour une tache qui attend sa prerequise, main orange quand sa session a fini son tour et attend Bertrand ; En cours compte aussi les taches bloquees
+- **0.14.2 (2026-10-23)** : roadmap : le numero d une tache passe avant ses pastilles, les numeros restent alignes
+- **0.14.1 (2026-10-23)** : roadmap : une main levee remplace le cadenas d une tache bloquee ; le numero cliquable garde la taille et la place des autres (texte et zone de clic au lieu d un bouton)
+- **0.14.0 (2026-10-23)** : roadmap : relance automatique des zones de clic quand leur cadre ne charge pas (signal pret par module, cles en -gN, 15 s sans pret, 3 relances au plus)
+- **0.13.3 (2026-10-23)** : roadmap : un axe dont toutes les taches sont faites quitte la legende et la barre (il compte dans Faites) ; un filtre reste sur un tel axe revient a tous
+- **0.13.2 (2026-10-23)** : roadmap : pastilles d attente courtes (nom sans la precision entre parentheses, id:N en #N, 16 caracteres au plus), precision entiere au detail ; A moi reconnait le nom avant la precision
+- **0.13.1 (2026-10-23)** : roadmap : le suivi des sessions est range par roadmap ; la #N d un autre projet ne fait plus tourner la #N d ici, ni n ouvre sa session
+- **0.13.0 (2026-10-23)** : roadmap : tache de la session cochee, la fin de tour propose d archiver la session (boite de fin, bouton archive), apres le bilan, une fois par tache
+- **0.12.2 (2026-10-23)** : roadmap : le point colle au numero, colonne des numeros calee a droite, titres toujours alignes
+- **0.12.1 (2026-10-23)** : roadmap : le numero cliquable d une tache en session n est plus tronque
+- **0.12.0 (2026-10-23)** : roadmap : une session, une tache : une session sans numero qui ouvre sa premiere tache prend son nom #M · titre court ; une session #N · qui ouvre une autre tache ne la met pas en cours et Claude recoit le rappel de la proposer dans une session a part (sauf correctif du lot #N)
+- **0.11.0 (2026-10-23)** : projet-init : nouvelle skill qui pose dans un depot de code la structure de Splitmybill (CLAUDE.md, ROADMAP numerotee, docs, check.mjs, hook de demarrage, worktree par session) ou remet un projet au format ; deja partie avec 0.10.1, annoncee ici ; roadmap-panel y renvoie
+- **0.10.1 (2026-10-23)** : roadmap : une session lancee s appelle #N · titre court (les anciens titres Roadmap #N · restent reconnus)
+- **0.10.0 (2026-10-23)** : roadmap : detail d une tache en session en carte bleue (Session en cours, duree, Ouvrir la session), fiche en icone devant le titre, Ouverte le JJ/MM en bas ; le numero d une tache en session ouvre la session
+- **0.9.4 (2026-10-23)** : roadmap : au detail, En cours et sa duree ne sont plus decales a droite dans leur fond bleu
+- **0.9.3 (2026-10-23)** : roadmap : au detail, Fiche et Source a cote du sujet, Voir dans la roadmap a la hauteur du retour, Ouvrir la session seule sur sa ligne, une croix pour retirer une session deduite (jamais une session lancee du panneau)
+- **0.9.2 (2026-10-23)** : roadmap : au detail, etat reduit a En cours et sa duree, sans retour a la ligne ; Detacher sur la meme ligne
+- **0.9.1 (2026-10-23)** : roadmap : au detail, l etat en session porte le fond bleu et la duree (plus d encart en double), et Detacher de la tache remplace Pas en cours
+- **0.9.0 (2026-10-23)** : roadmap : en cours ne se deduit plus que d une seule tache ajoutee par une session (des notes ou une ligne reecrite ne comptent pas), bouton Pas en cours, le panneau s ouvre sur les taches en cours (toutes s il n y en a aucune)
+- **0.8.0 (2026-10-23)** : roadmap : recherche par mots ou numero ; toutes les faites, par jour ou par sujet ; icones de session des faites cliquables et seulement quand la session est surement ouverte
+- **0.7.0 (2026-10-22)** : roadmap : bilan de cloture : rappel des qu une task se coche sans lui, fin de tour bloquee tant qu il manque, bilan affiche au detail (ressenti, cause, corrections, note)
+- **0.6.0 (2026-10-22)** : roadmap : Lancer pose directement la carte de session (l app ne lance jamais sur un clic de plugin), consigne facultative ajoutee au brief, faites d un jour rangees par heure de cloture, colonne des numeros alignee
+- **0.5.1 (2026-10-22)** : roadmap : Confirmer le lancement en bouton de l app (le second clic se perdait), roue et Lancement... grises pendant les appels, raison des refus de l app quand la demande passe a Claude
+- **0.5.0 (2026-10-22)** : roadmap : une tache faite dont la session reste ouverte se rouvre ou s archive depuis sa ligne et son detail ; numero #N plus petit et discret, suivi d un point
+- **0.4.3 (2026-10-22)** : roadmap : le numero de la tache (#N) devant son titre, dans la liste et les liens Apres et Debloque
+- **0.4.2 (2026-10-22)** : roadmap : plus de roue en tete de section, seules les taches en session en portent une
+- **0.4.1 (2026-10-22)** : roadmap : roues calees sur l horloge, bouton Lancer grise une fois le lancement demande (Relancer pour le rendre), zone de clic sur tout le bouton, proposition de session sans tour de Claude
+- **0.4.0 (2026-10-22)** : roadmap : chaque tache a un numero id: ; le panneau suit taches et sessions par ce numero (titre Roadmap #N), apres:N, #N au detail, controle id manquant ou en double
+- **0.3.9 (2026-10-22)** : roadmap : confirmation du lancement remise ; le premier clic d un bouton n est plus perdu ; une session Roadmap · titre se reconnait dans tous les panneaux
+- **0.3.8 (2026-10-22)** : roadmap : Lancer demarre la session au premier clic, sans etape de confirmation
+- **0.3.7 (2026-10-22)** : roadmap : noms d axes en capitales (MCP, Produit, Revlon, Dossier) et etats sans part, seulement leur nombre
+- **0.3.6 (2026-10-22)** : roadmap : dans la legende, la part vient d abord, puis le nombre de taches en petite pastille comme le compte des sections
+- **0.3.5 (2026-10-22)** : roadmap : nouvel etat En cours dans la legende, roue fixe, qui compte et filtre les taches en session
+- **0.3.4 (2026-10-22)** : roadmap : un lancement refuse par le mode auto est reessaye une fois, puis la demande passe a Claude dans la conversation, qui lance la session
+- **0.3.3 (2026-10-22)** : roadmap : une session ouverte dans le projet dont le titre designe une seule tache la met en session, meme lancee ailleurs ou avec une ancienne version du plugin
+- **0.3.2 (2026-10-22)** : roadmap : quand l app refuse un lancement direct depuis le panneau, la session est proposee par une carte New task au lieu d echouer
+- **0.3.1 (2026-10-22)** : roadmap : une session qui ouvre ou reecrit la ligne d une tache la met en session dans tous les panneaux ; le detail montre l etat (en session, bloquee, a faire) au lieu de la section En cours
+- **0.3.0 (2026-10-22)** : roadmap : refonte du panneau sur le handoff de design (themes sombre et clair, pastilles, barre cliquable, etats Recentes, sessions en cours, taches enchainees par apres:, detail retravaille), plus recentes en haut
+- **0.2.0 (2026-10-21)** : roadmap : capture des tasks, la grammaire est controlee a chaque ecriture de la roadmap et un rappel bloque la fin du tour quand le projet a change sans que la roadmap bouge ; reglage capture
+- **0.1.0 (2026-10-21)** : roadmap : nouveau plugin, le panneau Claude Code de la roadmap du projet de la session, et la skill roadmap-panel qui y branche un projet
+
