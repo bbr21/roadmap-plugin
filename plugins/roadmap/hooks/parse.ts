@@ -2048,6 +2048,16 @@ export function hashLabel(label: string): string {
   return (h >>> 0).toString(36)
 }
 
+/**
+ * La part d'une clé de bouton tirée d'un texte libre (nom de section, personne). L'app de bureau
+ * renvoie la clé d'un bouton réécrite (l'espace devenue « _ », « more:Sans_responsable ») et le
+ * moteur refuse un clic dont la clé n'est pas celle du bouton : « Voir les 82 autres » restait inerte
+ * (#106, 2026-10-29). Un texte de lettres, chiffres, « _ » et « - » reste lisible ; sinon, son empreinte.
+ */
+export function keyPart(text: string): string {
+  return /^[A-Za-z0-9_-]*$/.test(text) ? text : hashLabel(text)
+}
+
 /** En attendant le titre court : les premiers mots du libellé. */
 export function fallbackTitle(label: string): string {
   return clip(label.replace(/`/g, '').split(/\s+/).slice(0, 5).join(' '), 40)

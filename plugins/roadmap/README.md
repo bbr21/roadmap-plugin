@@ -444,6 +444,7 @@ claude plugin test plugins/roadmap
 
 ## Historique
 
+- **0.63.1 (2026-10-29)** : panneau : « Voir les N autres » se déplie au clic de l'app de bureau (clés de bouton sans espace), chaque défilement du panneau relevé dans les mesures pour trouver le saut en haut (#106)
 - **0.63.0 (2026-10-29)** : panneau et réglages : la bande des étapes au-dessus de la saisie retirée, elle doublait la liste native ; la consigne fait de la liste native le seul affichage des étapes, lisible (3 à 7 étapes, verbe et objet, jamais recopiée dans le message, à jour à chaque changement) (#109)
 - **0.62.0 (2026-10-29)** : panneau et réglages : repères plus clairs : ligne ADHD à emoji d'état (⏳ en cours, ✅ finie, ⚠️ détour) et noms de la liste native (verbe et objet), bloc de fin à emoji de valeur, bande des étapes aux icônes de la liste native et barre d'avancement (#107)
 - **0.61.0 (2026-10-29)** : audit : nouvelle skill qui audite le contenu de la roadmap (paquets découpés en tâche mère et sous-tâches datées, dépendances, doublons, trous), validée paquet par paquet, écrite tout ou rien avec sauvegarde et bilan par fragment ; proposée en fin d'onboarding (#103)

@@ -113,6 +113,7 @@ import {
   sortTasks,
   type Pill,
   hashLabel,
+  keyPart,
   integerShares,
   launchBrief,
   checkBrief,
@@ -2362,7 +2363,21 @@ type LaunchRow = PerfBase & {
   /** Le panneau n'a pas essayé : le mode auto venait de refuser sa carte. */
   skipped?: boolean
 }
-type PerfRow = DrawRow | OpenRow | RefreshRow | LaunchRow
+/**
+ * Un déplacement de la fenêtre du panneau (#106 : il remontait seul en haut pendant qu'on faisait
+ * défiler, sans que rien du panneau ne le déplace) : où le moteur la pose, de combien elle bouge, sur
+ * quelle hauteur, et qui le demande. Un saut se voit à `offset` loin de la position d'avant plus `by`.
+ */
+type ScrollRow = PerfBase & {
+  kind: 'scroll'
+  offset: number
+  by: number
+  bodyRows: number
+  contentRows: number
+  /** `person` : la molette ou les touches ; `plugin` : un `$.ui.scroll`. */
+  origin: string
+}
+type PerfRow = DrawRow | OpenRow | RefreshRow | LaunchRow | ScrollRow
 const perfRows: PerfRow[] = []
 let perfPress: { id: string; at: number } | undefined
 /** Le dernier clic, que le dessin ne consomme pas : le trajet jusqu'à la session part de lui. */
@@ -2376,6 +2391,12 @@ const tick = () => Date.now()
 function notePress(id: string): void {
   perfPress = { id, at: tick() }
   lastPress = perfPress
+}
+
+/** Le relevé d'un déplacement de la fenêtre, parti au store comme celui d'un dessin. */
+function noteScroll(e: { offset: number; by: number; bodyRows: number; contentRows: number; origin: { kind: string } }): void {
+  pushPerf({ mod: PERF_MOD, at: tick(), kind: 'scroll', offset: e.offset, by: e.by, bodyRows: e.bodyRows, contentRows: e.contentRows, origin: e.origin.kind })
+  perfFlush?.()
 }
 
 function pushPerf(row: PerfRow): void {
@@ -2849,6 +2870,12 @@ export const register: Register = (on, options) => {
     const tree = await drawPane($, e)
     notePerf(t0, tree)
     return tree
+  })
+
+  // Le défilement du panneau, relevé sans rien changer : le moteur pose la fenêtre (#106).
+  on('ui.scroll', { component: 'Pane', requestId: PANE }, async ($, e, next) => {
+    noteScroll(e)
+    return next(e)
   })
 
   on('ui.render', { component: 'Pane', requestId: SETTINGS_PANE }, async ($, e) => drawSettings($, e, await paletteOf($)))
@@ -3971,12 +3998,12 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
                 <Svg source={rowMark(chevronIcon(palette.text3, isOpen))} alt={isOpen ? 'replier' : 'déplier'} width={16} height={24} />
               </Box>
             ) : (
-              <Button key={`group:${id}:chevron`} plain dimColor onPress={toggleGroup(id)}>
+              <Button key={`group:${keyPart(id)}:chevron`} plain dimColor onPress={toggleGroup(id)}>
                 {isOpen ? '⌄' : '›'}
               </Button>
             )}
             {mark}
-            {headZones ? <Text wrap="truncate-end">{name}</Text> : <Button key={`group:${id}`} plain label={name} onPress={toggleGroup(id)} />}
+            {headZones ? <Text wrap="truncate-end">{name}</Text> : <Button key={`group:${keyPart(id)}`} plain label={name} onPress={toggleGroup(id)} />}
           </Box>
           <Box flexDirection="row" alignItems="center" gap={1} flexShrink={0}>
             {lead}
@@ -3999,7 +4026,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
             {rest > 0 && (
               <Box key={`more-row:${id}`} flexDirection="row" paddingX={1} paddingLeft={4}>
                 <Button
-                  key={`more:${id}`}
+                  key={`more:${keyPart(id)}`}
                   plain
                   dimColor
                   label={shownRows === 0 ? `Voir les ${rest} tâches` : `Voir les ${rest} autres`}
@@ -4335,7 +4362,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
                     <Box flexDirection="row" alignItems="center" flexShrink={0}>
                       {tallIcon(personIcon(ink, 12, STROKE.small), who, 12, '·', 'permission')}
                     </Box>
-                    <Button key={`attend:${who}`} plain dimColor={tierChosen && !chosen} onPress={setAttend(who, 'others')}>
+                    <Button key={`attend:${keyPart(who)}`} plain dimColor={tierChosen && !chosen} onPress={setAttend(who, 'others')}>
                       <Text wrap="truncate-end">{who}</Text>
                     </Button>
                   </Box>
