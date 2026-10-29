@@ -2,6 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { ConfigKind, ConfigRow, ConfigValue, EngineInterface, RenderElement, RenderInput } from 'claude-code'
 
 import type { Palette } from './icons'
+import { SPACE } from './tokens'
 import { SESSION_PREFS_FILE, SESSION_PREF_INFO, baseName, mainCheckout, projectKeyOf, sessionPrefsView, setSessionPref, type PrefKey, type PrefRow } from './parse'
 
 // Le volet Réglages (#81, Bertrand, 2026-10-28) : chaque réglage de session et du panneau, son état
@@ -210,7 +211,7 @@ export async function drawSettings($: EngineInterface, e: RenderInput<'Pane'>, p
 
   /** On | Off côte à côte : le choix actif en bouton principal ; un clic sur lui n'écrit rien. */
   const onOff = (key: string, value: boolean, set: (to: boolean) => void) => (
-    <Box flexDirection="row" gap="xs" flexShrink={0}>
+    <Box flexDirection="row" gap={SPACE.tight} flexShrink={0}>
       {([true, false] as const).map(to =>
         to === value ? (
           <Button key={`${key}:${to ? 'on' : 'off'}`} variant="primary" label={to ? 'On' : 'Off'} onPress={() => undefined} />
@@ -229,8 +230,8 @@ export async function drawSettings($: EngineInterface, e: RenderInput<'Pane'>, p
 
   /** Une ligne : le nom à gauche, le contrôle à droite, puis l'explication, cachée hors survol. */
   const line = (key: string, name: string, help: string | undefined, control: RenderElement | false, below: (RenderElement | false)[] = []) => (
-    <Box key={key} flexDirection="column" paddingX={1}>
-      <Box flexDirection="row" justifyContent="space-between" alignItems="center" gap={1}>
+    <Box key={key} flexDirection="column" paddingX={SPACE.indent}>
+      <Box flexDirection="row" justifyContent="space-between" alignItems="center" gap={SPACE.row}>
         <Text weight="semibold">{name}</Text>
         {control}
       </Box>
@@ -247,8 +248,8 @@ export async function drawSettings($: EngineInterface, e: RenderInput<'Pane'>, p
   )
 
   const group = (title: string, body: RenderElement) => (
-    <Box flexDirection="column" gap="sm">
-      <Box paddingX={1}>
+    <Box flexDirection="column" gap={SPACE.block}>
+      <Box paddingX={SPACE.indent}>
         <Text size="footnote" weight="semibold" color={palette.text2}>
           {title}
         </Text>
@@ -313,32 +314,32 @@ export async function drawSettings($: EngineInterface, e: RenderInput<'Pane'>, p
   const footer = `${hover ? 'Survole une ligne pour lire son explication. ' : ''}Session : ${scope}, pour les sessions ouvertes ensuite, ou après /clear. Panneau : tout de suite.`
 
   return (
-    <Box flexDirection="column" gap="md" paddingX={1} paddingTop="sm">
+    <Box flexDirection="column" gap={SPACE.root} paddingX={SPACE.indent} paddingTop="sm">
       {group(
         project.name === undefined ? 'Session' : `Session · ${project.name}`,
-        <Box flexDirection="column" gap="sm">
+        <Box flexDirection="column" gap={SPACE.block}>
           {error !== undefined ? (
-            <Box flexDirection="column" paddingX={1}>
+            <Box flexDirection="column" paddingX={SPACE.indent}>
               <Text color={palette.lateOn} wrap="wrap">{`Le fichier ${SESSION_PREFS_FILE} est illisible : ${error}`}</Text>
               {caption("Rien ne s'écrit tant qu'il l'est : la skill reglages-session le répare, en gardant ses valeurs.")}
             </Box>
           ) : (
             view.rows.map(prefRow)
           )}
-          {prefsNote !== '' && <Box paddingX={1}>{caption(prefsNote, palette.lateOn)}</Box>}
+          {prefsNote !== '' && <Box paddingX={SPACE.indent}>{caption(prefsNote, palette.lateOn)}</Box>}
         </Box>,
       )}
       {group(
         'Panneau Roadmap',
-        <Box flexDirection="column" gap="sm">
+        <Box flexDirection="column" gap={SPACE.block}>
           {options.length === 0 ? (
-            <Box paddingX={1}>{caption('Options du panneau introuvables : le menu des plugins de Claude Code les change.')}</Box>
+            <Box paddingX={SPACE.indent}>{caption('Options du panneau introuvables : le menu des plugins de Claude Code les change.')}</Box>
           ) : (
             options.map(optionRow)
           )}
         </Box>,
       )}
-      <Box paddingX={1}>{caption(footer, palette.text3)}</Box>
+      <Box paddingX={SPACE.indent}>{caption(footer, palette.text3)}</Box>
     </Box>
   )
 }

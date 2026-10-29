@@ -48,6 +48,7 @@ import {
   STROKE,
   type Palette,
 } from './icons'
+import { MIX, RADIUS, SIZE, SPACE, TEXT } from './tokens'
 import { SETTINGS_PANE, drawSettings, openSettings, prefsFile, redrawSettings, sessionProject, watchSettings } from './reglages'
 import {
   ageLabel,
@@ -385,7 +386,7 @@ async function setView($: EngineInterface, patch: (v: View) => Partial<View>): P
 }
 
 /** Un dessin à l'opacité 0,4 : une ligne estompée sous un filtre. */
-const faint = memo((source: string): string => source.replace('<svg ', '<svg opacity="0.4" '))
+const faint = memo((source: string): string => source.replace('<svg ', `<svg opacity="${MIX.faint}" `))
 
 function axisCount(tasks: Task[], axis: string): number {
   return tasks.filter(t => t.axis === axis).length
@@ -2321,8 +2322,13 @@ function pressDone($: EngineInterface): void {
 // les derniers relevés vont dans le store (clé `perf`), pour les lire pendant qu'on clique.
 const PERF_KEY = 'perf'
 const PERF_ROWS = 40
+/**
+ * Les déplacements de la fenêtre et du focus gardés en plus, à part (#111) : chaque cran redemande un
+ * dessin, et les 40 relevés ne tenaient qu'une vingtaine de crans, le saut chassé par les dessins.
+ */
+const MOVE_ROWS = 80
 /** Les relevés gardés au store, toutes sessions confondues. */
-const PERF_KEPT = 120
+const PERF_KEPT = 200
 /**
  * Ce chargement du module : le store est partagé par toutes les sessions, et chacune écrasait les
  * relevés des autres (2026-10-23). Chaque relevé porte la marque de son chargement ; l'écriture
@@ -2365,6 +2371,9 @@ type DrawRow = PerfBase & {
   loadMs: number
   /** Les données venaient de la mémoire du module (aucune lecture de fichier ni du store). */
   cached: boolean
+  /** Où l'app tenait la fenêtre quand elle a demandé ce dessin (#111) : le premier rang montré. */
+  offset?: number
+  bodyRows?: number
   elements: number
   svg: number
   clients: number
@@ -2397,7 +2406,18 @@ type ScrollRow = PerfBase & {
   /** `person` : la molette ou les touches ; `plugin` : un `$.ui.scroll`. */
   origin: string
 }
-type PerfRow = DrawRow | OpenRow | RefreshRow | LaunchRow | ScrollRow
+/**
+ * Un mouvement du focus dans le panneau (#111) : l'app de bureau refocalise, sans `preventScroll`,
+ * l'élément que le moteur dit tenu quand ce n'est pas celui qu'elle a, et le navigateur fait défiler
+ * jusqu'à lui. L'élément qui prend le focus, qui le déplace, et le refus du moteur s'il y en a un.
+ */
+type FocusRow = PerfBase & {
+  kind: 'focus'
+  element?: string
+  origin: string
+  deny?: string
+}
+type PerfRow = DrawRow | OpenRow | RefreshRow | LaunchRow | ScrollRow | FocusRow
 const perfRows: PerfRow[] = []
 let perfPress: { id: string; at: number } | undefined
 /** Le dernier clic, que le dessin ne consomme pas : le trajet jusqu'à la session part de lui. */
@@ -2419,9 +2439,31 @@ function noteScroll(e: { offset: number; by: number; bodyRows: number; contentRo
   perfFlush?.()
 }
 
+/** Le relevé d'un mouvement du focus, avec la réponse du moteur. */
+function noteFocus(e: { element?: string; origin: { kind: string } }, result: { deny?: string }): void {
+  pushPerf({
+    mod: PERF_MOD,
+    at: tick(),
+    kind: 'focus',
+    ...(e.element !== undefined ? { element: e.element } : {}),
+    origin: e.origin.kind,
+    ...(result.deny !== undefined ? { deny: result.deny } : {}),
+  })
+  perfFlush?.()
+}
+
+const isMove = (r: PerfRow) => r.kind === 'scroll' || r.kind === 'focus'
+
+/** Garde les `max` derniers relevés que `keep` retient, sans toucher aux autres. */
+function trimPerf(keep: (r: PerfRow) => boolean, max: number): void {
+  const kept = perfRows.filter(keep)
+  for (const r of kept.slice(0, Math.max(0, kept.length - max))) perfRows.splice(perfRows.indexOf(r), 1)
+}
+
 function pushPerf(row: PerfRow): void {
   perfRows.push(row)
-  if (perfRows.length > PERF_ROWS) perfRows.splice(0, perfRows.length - PERF_ROWS)
+  trimPerf(r => !isMove(r), PERF_ROWS)
+  trimPerf(isMove, MOVE_ROWS)
 }
 
 /** Les relevés de relecture gardés au plus, pour qu'ils ne chassent pas ceux des dessins. */
@@ -2470,7 +2512,7 @@ export function weighTree(tree: unknown): { elements: number; svg: number; clien
   return { elements, svg, clients, kb: Math.round(size / 102.4) / 10 }
 }
 
-function notePerf(t0: number, tree: unknown): void {
+function notePerf(t0: number, tree: unknown, scroll?: { offset: number; bodyRows: number }): void {
   const end = tick()
   const press = perfPress
   perfPress = undefined
@@ -2481,6 +2523,7 @@ function notePerf(t0: number, tree: unknown): void {
     ms: end - t0,
     loadMs: Math.max(0, perfLoaded - t0),
     cached: perfCached,
+    ...(scroll ? { offset: scroll.offset, bodyRows: scroll.bodyRows } : {}),
     ...weighTree(tree),
   })
   perfFlush?.()
@@ -2890,7 +2933,7 @@ export const register: Register = (on, options) => {
     perfLoaded = t0
     perfCached = false
     const tree = await drawPane($, e)
-    notePerf(t0, tree)
+    notePerf(t0, tree, e.props.scroll)
     return tree
   })
 
@@ -2898,6 +2941,13 @@ export const register: Register = (on, options) => {
   on('ui.scroll', { component: 'Pane', requestId: PANE }, async ($, e, next) => {
     noteScroll(e)
     return next(e)
+  })
+
+  // Le focus du panneau, relevé sans rien changer, avec la réponse du moteur (#111).
+  on('ui.focus', { component: 'Pane', requestId: PANE }, async ($, e, next) => {
+    const result = await next(e)
+    noteFocus(e, result)
+    return result
   })
 
   on('ui.render', { component: 'Pane', requestId: SETTINGS_PANE }, async ($, e) => drawSettings($, e, await paletteOf($)))
@@ -2930,8 +2980,8 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
         ))
       : null
   const pathChip = (path: string, bg: string, around: string) => (
-    <Box alignSelf="flex-start" paddingX={1} backgroundColor={bg}>
-      {corners(6, around)}
+    <Box alignSelf="flex-start" paddingX={SPACE.indent} backgroundColor={bg}>
+      {corners(RADIUS.chip, around)}
       <Text mono size="caption" wrap="wrap">{path}</Text>
     </Box>
   )
@@ -2941,7 +2991,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     // Pas de roadmap pour le dossier de la session : ce qui en déclare une.
     const p = await paletteOf($)
     return (
-      <Box flexDirection="column" gap="sm" paddingX={2} paddingTop="sm">
+      <Box flexDirection="column" gap={SPACE.block} paddingX={SPACE.screen} paddingTop="sm">
         {SvgEl && <SvgEl source={folderIcon(p.text2)} alt="dossier" width={24} height={24} />}
         <Text weight="semibold">Pas de roadmap pour ce dossier</Text>
         <Text color={p.text2}>
@@ -2979,17 +3029,17 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   if (typeof open === 'string') {
     // Fichier introuvable ou illisible : le chemin, l'erreur, un nouvel essai.
     return (
-      <Box flexDirection="column" gap="sm" paddingX={2} paddingTop="sm">
-        <Box flexDirection="row" alignItems="center" gap={1}>
-          {SvgEl ? <SvgEl source={alertIcon(palette.late)} alt="erreur" width={16} height={16} /> : <Text color="error">!</Text>}
+      <Box flexDirection="column" gap={SPACE.block} paddingX={SPACE.screen} paddingTop="sm">
+        <Box flexDirection="row" alignItems="center" gap={SPACE.row}>
+          {SvgEl ? <SvgEl source={alertIcon(palette.late)} alt="erreur" width={SIZE.icon.md} height={SIZE.icon.md} /> : <Text color="error">!</Text>}
           <Text weight="semibold">Lecture impossible</Text>
         </Box>
         <Text color={palette.text2}>Le fichier de la roadmap est introuvable ou illisible.</Text>
         {pathChip(paths.open, palette.btn, palette.bg)}
         <Text mono size="caption" color={palette.late}>{open}</Text>
-        <Box flexDirection="row" alignItems="center" gap={2} marginTop="sm">
-          <Box key="retry-row" paddingX={1} paddingY="xs" alignItems="center" backgroundColor={palette.btn} hover={{ backgroundColor: palette.btnHover }}>
-            {corners(8, palette.bg)}
+        <Box flexDirection="row" alignItems="center" gap={SPACE.textButtons} marginTop="sm">
+          <Box key="retry-row" paddingX={SPACE.indent} paddingY="xs" alignItems="center" backgroundColor={palette.btn} hover={{ backgroundColor: palette.btnHover }}>
+            {corners(RADIUS.control, palette.bg)}
             <Button key="retry" plain label="Réessayer" onPress={() => void update($, retryAtom, v => v + 1)} />
           </Box>
           <Text size="caption" color={palette.text2}>Nouvel essai seul toutes les 15 s</Text>
@@ -3062,7 +3112,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   // estompée avec sa ligne. Au terminal, le nombre seul.
   const countPill = (n: number, dim: boolean, ink: string) => {
     if (!Svg) return <Text tabular color={ink}>{String(n)}</Text>
-    const pill = pillIcon({ text: String(n), bg: mixOver(palette.sel, palette.bg, 0.6), fg: palette.text2, weight: 500, size: 10, height: 16 })
+    const pill = pillIcon({ text: String(n), bg: mixOver(palette.sel, palette.bg, MIX.countBg), fg: palette.text2, weight: TEXT.weight.soft, size: TEXT.count, height: SIZE.pill.count })
     return <Svg source={fade(pill.source, dim)} alt={String(n)} width={pill.width} height={pill.height} />
   }
   // Le numéro d'une tâche devant son titre : petit, discret, suivi d'un point de séparation. Hors du
@@ -3108,7 +3158,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     Svg ? <Svg source={rowMark(source, size, 24)} alt={alt} width={size} height={24} /> : <Text color={color}>{glyph}</Text>
   // Sélection sans fond : sous un filtre, les autres lignes du groupe passent à l'opacité 0,4. Une
   // Box n'a pas d'opacité : le texte prend la couleur mélangée au fond, le dessin une opacité.
-  const faded = (hex: string, dim: boolean) => (dim ? mixOver(hex, palette.bg, 0.4) : hex)
+  const faded = (hex: string, dim: boolean) => (dim ? mixOver(hex, palette.bg, MIX.faded) : hex)
   const fade = (source: string, dim: boolean) => (dim ? faint(source) : source)
 
   // Couleur d'axe : les axes les plus chargés d'abord, comme les captures du design.
@@ -3128,7 +3178,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
       return <Svg source={pill.source} alt={o.text} width={pill.width} height={pill.height} />
     }
     return (
-      <Box flexDirection="row" paddingX={1} flexShrink={0} backgroundColor={o.bg}>
+      <Box flexDirection="row" paddingX={SPACE.indent} flexShrink={0} backgroundColor={o.bg}>
         <Text color={o.fg} wrap="end">{o.text}</Text>
       </Box>
     )
@@ -3140,7 +3190,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
       return <Svg source={pill.source} alt={axisLabel(t.axis)} width={pill.width} height={pill.height} />
     }
     return (
-      <Box flexDirection="row" alignItems="center" gap="xs" paddingX={1} backgroundColor={bg}>
+      <Box flexDirection="row" alignItems="center" gap={SPACE.tight} paddingX={SPACE.indent} backgroundColor={bg}>
         {icon(squareIcon(axisHex(t.axis)), t.axis, 16, '■', axisTheme(t.axis))}
         <Text weight="semibold" color={palette.text}>{axisLabel(t.axis)}</Text>
       </Box>
@@ -3149,23 +3199,23 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   // Une pastille du détail : grise (date relative), rouge (retard, horloge) ou violette (tiers, personne).
   const tag = (text: string, kind: 'soft' | 'late' | 'soon' | 'wait') =>
     kind === 'late'
-      ? drawnPill({ text, bg: palette.lateTint, fg: palette.lateOn, mark: 'clock', height: 20 })
+      ? drawnPill({ text, bg: palette.lateTint, fg: palette.lateOn, mark: 'clock', height: SIZE.pill.detail })
       : kind === 'soon'
-        ? drawnPill({ text, bg: palette.blockTint, fg: palette.blockOn, height: 20 })
+        ? drawnPill({ text, bg: palette.blockTint, fg: palette.blockOn, height: SIZE.pill.detail })
       : kind === 'wait'
-        ? drawnPill({ text, bg: palette.waitTint, fg: palette.waitOn, mark: 'person', height: 20 })
-        : drawnPill({ text, bg: palette.sel, fg: palette.text2, height: 20, weight: 500 })
+        ? drawnPill({ text, bg: palette.waitTint, fg: palette.waitOn, mark: 'person', height: SIZE.pill.detail })
+        : drawnPill({ text, bg: palette.sel, fg: palette.text2, height: SIZE.pill.detail, weight: TEXT.weight.soft })
   // La priorité (`prio:`) : P1 rouge, P2 orange, P3 grise. Elle reste sur la ligne d'une tâche en
   // session ou bloquée : un P1 bloqué est justement ce qu'il faut voir.
   const prioColors: Record<Prio, { bg: string; fg: string; weight: 500 | 600 }> = {
-    '1': { bg: palette.lateTint, fg: palette.lateOn, weight: 600 },
-    '2': { bg: palette.blockTint, fg: palette.blockOn, weight: 600 },
-    '3': { bg: palette.sel, fg: palette.text2, weight: 500 },
+    '1': { bg: palette.lateTint, fg: palette.lateOn, weight: TEXT.weight.strong },
+    '2': { bg: palette.blockTint, fg: palette.blockOn, weight: TEXT.weight.strong },
+    '3': { bg: palette.sel, fg: palette.text2, weight: TEXT.weight.soft },
   }
   const prioPill = (p: Prio, height?: number) => drawnPill({ text: `P${p}`, ...prioColors[p], ...(height ? { height } : {}) })
   // Une tâche née d'un retour de l'app, ou qui en a reçu (`feedback:`) : violette, la voix d'un testeur.
   const feedbackPill = (height?: number) =>
-    drawnPill({ text: 'Feedback', bg: palette.waitTint, fg: palette.waitOn, weight: 500, ...(height ? { height } : {}) })
+    drawnPill({ text: 'Feedback', bg: palette.waitTint, fg: palette.waitOn, weight: TEXT.weight.soft, ...(height ? { height } : {}) })
 
   // --- Détail d'une task ---------------------------------------------------
   const current = findSelected([...openTasks, ...doneTasks], selected)
@@ -3193,21 +3243,21 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     const lastStep = Math.max(0, ...[...steps.values()].map(x => x.step))
     // Un lien vers une tâche enchaînée : carré d'axe, titre (cliquable), et son état.
     const link = (x: Task) => (
-      <Box flexDirection="row" alignItems="center" gap={1}>
+      <Box flexDirection="row" alignItems="center" gap={SPACE.row}>
         {icon(squareIcon(axisHex(x.axis)), x.axis, 16, '■', axisTheme(x.axis))}
         {x.id && taskNumber(x.id)}
         <Button key={`link:${x.key}`} plain hover={{ underline: true }} onPress={select(selectionOf(x))}>
           <Text wrap="truncate-end">{short(x).titre}</Text>
         </Button>
         {x.done ? (
-          <Box flexDirection="row" alignItems="center" gap={1}>
+          <Box flexDirection="row" alignItems="center" gap={SPACE.row}>
             {icon(checkIcon(palette.ok, 12, STROKE.pill), 'faite', 12, '✓', 'success')}
             <Text size="caption" weight="medium" color={palette.ok}>faite</Text>
           </Box>
         ) : isLive(x) ? (
-          drawnPill({ text: 'en session', bg: palette.liveTint, fg: palette.liveOn, mark: 'spinner', height: 20 })
+          drawnPill({ text: 'en session', bg: palette.liveTint, fg: palette.liveOn, mark: 'spinner', height: SIZE.pill.detail })
         ) : (
-          drawnPill({ text: 'à faire', bg: palette.sel, fg: palette.text2, height: 20, weight: 500 })
+          drawnPill({ text: 'à faire', bg: palette.sel, fg: palette.text2, height: SIZE.pill.detail, weight: TEXT.weight.soft })
         )}
       </Box>
     )
@@ -3216,10 +3266,10 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
       value ? (
         <Box key={`field:${key}`} flexDirection="row" alignItems="center">
           <Box width={10} flexShrink={0} flexDirection="row" alignItems="center">
-            {strut(28)}
+            {strut(SIZE.strut.field)}
             <Text color={palette.text2}>{name}</Text>
           </Box>
-          <Box flexDirection="row" alignItems="center" gap={1} flexShrink={1} minWidth={0}>
+          <Box flexDirection="row" alignItems="center" gap={SPACE.row} flexShrink={1} minWidth={0}>
             {value}
           </Box>
         </Box>
@@ -3232,14 +3282,14 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
       if (bilan) {
         const tone =
           bilan.ressenti === 'fluide'
-            ? { bg: mixOver(palette.ok, palette.bg, 0.2), fg: palette.ok }
+            ? { bg: mixOver(palette.ok, palette.bg, MIX.smooth), fg: palette.ok }
             : bilan.ressenti === 'bloqué'
               ? { bg: palette.lateTint, fg: palette.lateOn }
               : { bg: palette.sel, fg: palette.text }
         const n = Number(bilan.corrections)
         return (
-          <Box flexDirection="row" alignItems="center" gap={1}>
-            {drawnPill({ text: bilan.ressenti, ...tone, height: 20, weight: 500 })}
+          <Box flexDirection="row" alignItems="center" gap={SPACE.row}>
+            {drawnPill({ text: bilan.ressenti, ...tone, height: SIZE.pill.detail, weight: TEXT.weight.soft })}
             {bilan.cause !== '' && bilan.cause !== 'aucune' && <Text>{bilan.cause}</Text>}
             {bilan.corrections !== '' && (
               <Text color={palette.text2}>{`· ${n} correction${n > 1 ? 's' : ''}`}</Text>
@@ -3257,10 +3307,10 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
       if (!current.done || (!bilan && !conclusionDue)) return null
       if (!bilan) {
         return (
-          <Box key="conclusion-box" paddingX={1}>
-            <Box flexDirection="row" alignItems="center" gap={1} paddingX={1} flexGrow={1} backgroundColor={palette.lateTint}>
-              {corners(8, palette.bg)}
-              {strut(32)}
+          <Box key="conclusion-box" paddingX={SPACE.indent}>
+            <Box flexDirection="row" alignItems="center" gap={SPACE.row} paddingX={SPACE.indent} flexGrow={1} backgroundColor={palette.lateTint}>
+              {corners(RADIUS.control, palette.bg)}
+              {strut(SIZE.strut.control)}
               <Text weight="semibold" color={palette.lateOn}>Conclusion manquante</Text>
             </Box>
           </Box>
@@ -3269,11 +3319,11 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
       const c = conclusionOf(bilan, isAbandoned(current))
       const opened = conclusionOpen === current.key
       return (
-        <Box key="conclusion-box" paddingX={1}>
-          <Box flexDirection="column" gap="xs" paddingX={1} paddingY="sm" flexGrow={1} backgroundColor={palette.note}>
-            {corners(8, palette.bg)}
+        <Box key="conclusion-box" paddingX={SPACE.indent}>
+          <Box flexDirection="column" gap={SPACE.tight} paddingX={SPACE.indent} paddingY="sm" flexGrow={1} backgroundColor={palette.note}>
+            {corners(RADIUS.control, palette.bg)}
             <Box flexDirection="row" justifyContent="space-between" alignItems="center">
-              <Box flexDirection="row" alignItems="center" gap={1}>
+              <Box flexDirection="row" alignItems="center" gap={SPACE.row}>
                 <Text>{c.emoji}</Text>
                 <Text weight="semibold">Conclusion</Text>
               </Box>
@@ -3324,14 +3374,14 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
       const pending = launchNote === LAUNCHING
       const label = pending ? 'Lancement…' : 'Lancement demandé'
       return Svg ? (
-        <Box key="launch-requested" flexDirection="row" justifyContent="center" alignItems="center" gap={1} flexGrow={1} backgroundColor={palette.btn}>
-          {corners(8, palette.bg)}
+        <Box key="launch-requested" flexDirection="row" justifyContent="center" alignItems="center" gap={SPACE.row} flexGrow={1} backgroundColor={palette.btn}>
+          {corners(RADIUS.control, palette.bg)}
           <Box flexDirection="row" alignItems="center">
-            {strut(32)}
+            {strut(SIZE.strut.control)}
             {pending ? (
-              <Svg source={spinnerIcon(palette.text2, 14, undefined, false, now)} alt="lancement" width={14} height={14} isInteractive />
+              <Svg source={spinnerIcon(palette.text2, 14, undefined, false, now)} alt="lancement" width={SIZE.icon.sm} height={SIZE.icon.sm} isInteractive />
             ) : (
-              <Svg source={checkIcon(palette.text2, 14)} alt="demandé" width={14} height={14} />
+              <Svg source={checkIcon(palette.text2, 14)} alt="demandé" width={SIZE.icon.sm} height={SIZE.icon.sm} />
             )}
           </Box>
           <Text weight="semibold" color={palette.text2}>{label}</Text>
@@ -3356,15 +3406,15 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
           flexDirection="row"
           justifyContent="center"
           alignItems="center"
-          gap={1}
+          gap={SPACE.row}
           flexGrow={1}
           backgroundColor={tone.bg}
-          hover={{ backgroundColor: mixOver(tone.bg, tone.around, 0.88) }}
+          hover={{ backgroundColor: mixOver(tone.bg, tone.around, MIX.primaryHover) }}
         >
-          {corners(8, tone.around)}
+          {corners(RADIUS.control, tone.around)}
           <Box flexDirection="row" alignItems="center">
-            {strut(32)}
-            {Svg && <Svg source={mark} alt="icône" width={14} height={14} />}
+            {strut(SIZE.strut.control)}
+            {Svg && <Svg source={mark} alt="icône" width={SIZE.icon.sm} height={SIZE.icon.sm} />}
           </Box>
           <Text weight="semibold" color={tone.fg}>{label}</Text>
         </Box>,
@@ -3380,21 +3430,21 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
           flexDirection="row"
           justifyContent="center"
           alignItems="center"
-          paddingX={1}
+          paddingX={SPACE.indent}
           backgroundColor={palette.btn}
           hover={{ backgroundColor: palette.btnHover, ...(scope ? { scope } : {}) }}
         >
-          {corners(8, palette.bg)}
-          {strut(32)}
-          {Svg && <Svg source={mark} alt={label} width={16} height={16} />}
+          {corners(RADIUS.control, palette.bg)}
+          {strut(SIZE.strut.control)}
+          {Svg && <Svg source={mark} alt={label} width={SIZE.icon.md} height={SIZE.icon.md} />}
         </Box>,
         <Button key={key} plain label={label} onPress={onPress} />,
       )
     return (
-      <Box flexDirection="column" gap="md" paddingX={1}>
-        <Box key="back-row" flexDirection="row" justifyContent="space-between" paddingX={1} alignItems="center">
+      <Box flexDirection="column" gap={SPACE.root} paddingX={SPACE.indent}>
+        <Box key="back-row" flexDirection="row" justifyContent="space-between" paddingX={SPACE.indent} alignItems="center">
           <Box flexDirection="row" alignItems="center">
-            {strut(24)}
+            {strut(SIZE.strut.row)}
             <Button key="back" plain dimColor label="‹ Retour à la liste" onPress={select('')} />
           </Box>
           <Button
@@ -3406,8 +3456,8 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
           />
         </Box>
 
-        <Box flexDirection="column" gap="xs" paddingX={1}>
-          <Box flexDirection="row" alignItems="center" gap={1}>
+        <Box flexDirection="column" gap={SPACE.tight} paddingX={SPACE.indent}>
+          <Box flexDirection="row" alignItems="center" gap={SPACE.row}>
             {axisPill(current)}
             {current.prio && !current.done && prioPill(current.prio, 20)}
             {current.feedback && feedbackPill(20)}
@@ -3419,7 +3469,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
             {abandoned && <Text color={palette.text2}>annulée</Text>}
           </Box>
           {/* La fiche (et la source) devant le titre : ce qu'on lit avant de lancer. */}
-          <Box flexDirection="row" alignItems="center" gap={1}>
+          <Box flexDirection="row" alignItems="center" gap={SPACE.row}>
             {fichePath && action('open-fiche', documentIcon(palette.text), 'Fiche', () => void openFile($, fichePath))}
             {srcPath && action('open-src', externalIcon(palette.text), 'Source', () => void openFile($, srcPath))}
             <Text size="heading" weight="semibold">{s.titre}</Text>
@@ -3429,23 +3479,23 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
         {conclusionBox()}
 
         {/* La note, au retrait du texte : 2 colonnes de marge intérieure, fond `note`. */}
-        <Box paddingX={1}>
-          <Box flexDirection="column" gap="xs" paddingX={1} paddingY="sm" flexGrow={1} backgroundColor={palette.note}>
-            {corners(8, palette.bg)}
+        <Box paddingX={SPACE.indent}>
+          <Box flexDirection="column" gap={SPACE.tight} paddingX={SPACE.indent} paddingY="sm" flexGrow={1} backgroundColor={palette.note}>
+            {corners(RADIUS.control, palette.bg)}
             <Text>{current.label}</Text>
             {current.note && <Text color={palette.text2}>{current.note}</Text>}
           </Box>
         </Box>
 
-        <Box flexDirection="column" paddingX={1}>
+        <Box flexDirection="column" paddingX={SPACE.indent}>
           {/* « En cours » veut dire : une session y travaille. La section « ## En cours » du fichier
               est la liste à faire, elle ne s'affiche pas comme un état (choix de Bertrand, 2026-10-22). */}
           {!current.done &&
             !live &&
             field(
               'État',
-              <Box flexDirection="row" alignItems="center" gap={1}>
-                {pre && isBlocked(current, pre) && Svg && <Svg source={lockIcon(palette.block, 14)} alt="bloquée" width={14} height={14} />}
+              <Box flexDirection="row" alignItems="center" gap={SPACE.row}>
+                {pre && isBlocked(current, pre) && Svg && <Svg source={lockIcon(palette.block, 14)} alt="bloquée" width={SIZE.icon.sm} height={SIZE.icon.sm} />}
                 <Text color={pre && isBlocked(current, pre) ? palette.block : palette.text}>
                   {pre && isBlocked(current, pre) ? 'Bloquée' : 'À faire'}
                 </Text>
@@ -3465,7 +3515,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
               (me.includes(attendWho(current.attend)) && current.attend === attendWho(current.attend) ? (
                 plain(current.attend)
               ) : (
-                <Box flexDirection="column" gap="xs" flexShrink={1}>
+                <Box flexDirection="column" gap={SPACE.tight} flexShrink={1}>
                   {me.includes(attendWho(current.attend)) ? plain(attendWho(current.attend)) : tag(shortAttend(current.attend), 'wait')}
                   {current.attend.trim() !== attendWho(current.attend) && (
                     <Text size="caption" color={palette.text2} wrap="wrap">{current.attend}</Text>
@@ -3499,7 +3549,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
           {field(
             'Échéance',
             current.due !== undefined && (
-              <Box flexDirection="row" alignItems="center" gap={1}>
+              <Box flexDirection="row" alignItems="center" gap={SPACE.row}>
                 {strong(frDate(current.due))}
                 {due && current.due && tag(due.text, due.late ? 'late' : isDueSoon(current, today) ? 'soon' : 'soft')}
               </Box>
@@ -3510,14 +3560,14 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
           {field('Spec', mono(current.spec))}
         </Box>
 
-        <Box flexDirection="column" gap="sm">
+        <Box flexDirection="column" gap={SPACE.block}>
           {/* Bloquée : l'avertissement au-dessus des actions ; « Lancer » reste possible. */}
           {pre && isBlocked(current, pre) && (
-            <Box flexDirection="row" alignItems="center" gap={1} paddingX={1} backgroundColor={palette.blockTint}>
-              {corners(8, palette.bg)}
-              {strut(32)}
+            <Box flexDirection="row" alignItems="center" gap={SPACE.row} paddingX={SPACE.indent} backgroundColor={palette.blockTint}>
+              {corners(RADIUS.control, palette.bg)}
+              {strut(SIZE.strut.control)}
               {Svg ? (
-                <Svg source={lockIcon(palette.blockOn, 14, STROKE.small)} alt="bloquée" width={14} height={14} />
+                <Svg source={lockIcon(palette.blockOn, 14, STROKE.small)} alt="bloquée" width={SIZE.icon.sm} height={SIZE.icon.sm} />
               ) : (
                 <Text color="warning">⊘</Text>
               )}
@@ -3528,13 +3578,13 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
           )}
           {/* En session : une carte bleue, l'état et depuis quand, puis « Ouvrir la session ». */}
           {live && (
-            <Box key="live-card" flexDirection="column" gap="sm" padding="sm" borderStyle="round" borderColor={mixOver(palette.liveOn, palette.bg, 0.3)} backgroundColor={palette.liveTint}>
+            <Box key="live-card" flexDirection="column" gap={SPACE.block} padding="sm" borderStyle="round" borderColor={mixOver(palette.liveOn, palette.bg, MIX.sessionBorder)} backgroundColor={palette.liveTint}>
               <Box flexDirection="row" justifyContent="space-between" alignItems="center">
-                <Box flexDirection="row" alignItems="center" gap={1}>
+                <Box flexDirection="row" alignItems="center" gap={SPACE.row}>
                   {live.state === 'open' && Svg && (live.entry.sessionId && runningBySession.get(live.entry.sessionId) === false ? (
-                    <Svg source={handIcon(palette.liveOn, 16)} alt="attend ta réponse" width={16} height={16} />
+                    <Svg source={handIcon(palette.liveOn, 16)} alt="attend ta réponse" width={SIZE.icon.md} height={SIZE.icon.md} />
                   ) : (
-                    <Svg source={spinnerIcon(palette.liveOn, 16, undefined, false, now)} alt="en cours" width={16} height={16} isInteractive />
+                    <Svg source={spinnerIcon(palette.liveOn, 16, undefined, false, now)} alt="en cours" width={SIZE.icon.md} height={SIZE.icon.md} isInteractive />
                   ))}
                   <Text color={palette.liveOn}>
                     {live.state !== 'open'
@@ -3555,7 +3605,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
               </Box>
             </Box>
           )}
-          <Box flexDirection="row" alignItems="stretch" gap={1}>
+          <Box flexDirection="row" alignItems="stretch" gap={SPACE.row}>
             {kept && primary('open-session', externalIcon(palette.priText, 14), 'Ouvrir la session', () => void openSession($, kept.entry))}
             {kept && action('archive-session', archiveIcon(palette.text), 'Archiver la session', () => void archiveSession($, kept.key, kept.entry))}
             {!current.done && !live && launched.includes(taskKey(current)) && requested()}
@@ -3578,7 +3628,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
               livrer sans cocher ; l'encart le rappelle. Une rangée à eux : avec « Lancer » et
               « Vérifier », quatre boutons débordent du panneau étroit. */}
           {!current.done && !(asking && cancelNote === CANCEL_BUSY) && (
-            <Box key="close-row" flexDirection="row" alignItems="center" gap={1}>
+            <Box key="close-row" flexDirection="row" alignItems="center" gap={SPACE.row}>
               {(['done', 'abandon'] as const)
                 .filter(kind => !(asking && closeKind === kind))
                 .map(kind => (
@@ -3596,7 +3646,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
             </Box>
           )}
           {asking && !current.done && (
-            <Box key="cancel-box" flexDirection="column" gap="sm" padding="sm" borderStyle="round" borderColor={palette.border}>
+            <Box key="cancel-box" flexDirection="column" gap={SPACE.block} padding="sm" borderStyle="round" borderColor={palette.border}>
               <Text weight="semibold" wrap="wrap">
                 {closeKind === 'done'
                   ? `Marquer${current.id ? ` #${current.id}` : ''} « ${s.titre} » faite ?`
@@ -3627,7 +3677,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
                   }}
                 />
               )}
-              <Box flexDirection="row" alignItems="center" gap={1}>
+              <Box flexDirection="row" alignItems="center" gap={SPACE.row}>
                 {closeKind === 'done' ? (
                   <Button
                     key="done-confirm"
@@ -3649,14 +3699,14 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
             </Box>
           )}
           {!asking && cancelNote !== '' && cancelNote !== CANCEL_BUSY && (
-            <Box paddingX={1}>
+            <Box paddingX={SPACE.indent}>
               <Text size="caption" color={palette.lateOn} wrap="wrap">{cancelNote}</Text>
             </Box>
           )}
           {/* Un message en plus du brief, facultatif ; Entrée lance comme « Lancer ». Sa clé suit la
               tâche : un message tapé pour l'une ne reste pas affiché sur une autre. */}
           {!current.done && !live && !launched.includes(taskKey(current)) && Input && (
-            <Box paddingX={1}>
+            <Box paddingX={SPACE.indent}>
               <Input
                 key={`launch-extra:${current.key}`}
                 rows={2}
@@ -3673,7 +3723,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
             </Box>
           )}
           {!current.done && !live && launched.includes(taskKey(current)) && (
-            <Box flexDirection="row" alignItems="center" gap={1} paddingX={1}>
+            <Box flexDirection="row" alignItems="center" gap={SPACE.row} paddingX={SPACE.indent}>
               <Text size="caption" color={palette.text2}>La session est demandée : sa carte attend dans la conversation.</Text>
               <Button
                 key="launch-again"
@@ -3686,7 +3736,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
           )}
           {/* La session tourne : le bloc « Session en cours » dit tout, la note de lancement se tait. */}
           {live ? null : launchNote === LAUNCHED ? (
-            <Box flexDirection="row" alignItems="center" gap={1} padding="sm" borderStyle="round" borderColor={palette.border}>
+            <Box flexDirection="row" alignItems="center" gap={SPACE.row} padding="sm" borderStyle="round" borderColor={palette.border}>
               {icon(checkIcon(palette.ok), 'lancée', 16, '✓', 'success')}
               <Text>{LAUNCHED}</Text>
             </Box>
@@ -3696,7 +3746,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
           {openNote !== '' && <Text size="caption" color={palette.text2}>{openNote}</Text>}
           {/* L'ouverture, en bas, en une phrase : « Ouverte le 23/10 · aujourd'hui ». */}
           {current.ouvert !== undefined && (
-            <Box key="opened" flexDirection="row" alignItems="center" gap={1} paddingX={1}>
+            <Box key="opened" flexDirection="row" alignItems="center" gap={SPACE.row} paddingX={SPACE.indent}>
               <Text color={palette.text2}>Ouverte le</Text>
               <Text weight="semibold" tabular>{frDate(current.ouvert)}</Text>
               {days !== undefined && <Text color={palette.text2}>{`· ${openedLabel(days)}`}</Text>}
@@ -3817,13 +3867,13 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
         flexDirection="row"
         justifyContent="space-between"
         alignItems="center"
-        paddingX={1}
+        paddingX={SPACE.indent}
         hover={o.onPress ? { backgroundColor: palette.hover } : undefined}
       >
         {/* Pas de coins arrondis au survol, comme les lignes de tâches : quatre Svg de moins par
             ligne (2026-10-23, un tiers des Svg d'un dessin). La marque de 16 × 24 tient la hauteur. */}
         {/* Dans un panneau étroit, c'est le nom qui se tronque : l'icône et les chiffres gardent leur place. */}
-        <Box flexDirection="row" alignItems="center" gap={1} flexShrink={1} minWidth={0}>
+        <Box flexDirection="row" alignItems="center" gap={SPACE.row} flexShrink={1} minWidth={0}>
           <Box flexDirection="row" alignItems="center" flexShrink={0}>
             {o.mark(o.dim)}
           </Box>
@@ -3874,13 +3924,13 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   }
   const hand = () =>
     Svg ? (
-      <Svg source={handIcon(palette.block, 14, STROKE.pill, 'Attend ta réponse')} alt="Attend ta réponse" width={14} height={14} isInteractive />
+      <Svg source={handIcon(palette.block, 14, STROKE.pill, 'Attend ta réponse')} alt="Attend ta réponse" width={SIZE.icon.sm} height={SIZE.icon.sm} isInteractive />
     ) : (
       <Text color="permission">✋</Text>
     )
   const spinner = () =>
     Svg ? (
-      <Svg source={spinnerIcon(palette.live, 14, 'En cours dans une session', false, now)} alt="En cours dans une session" width={14} height={14} isInteractive />
+      <Svg source={spinnerIcon(palette.live, 14, 'En cours dans une session', false, now)} alt="En cours dans une session" width={SIZE.icon.sm} height={SIZE.icon.sm} isInteractive />
     ) : (
       <Text color="suggestion">◌</Text>
     )
@@ -3888,7 +3938,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   // Le cadenas d'une tâche bloquée, avec son infobulle (Svg interactif).
   const lock = (title: string) =>
     // Gris : la tâche attend une autre tâche, pas toi (la main orange, elle, t'attend).
-    Svg ? <Svg source={lockIcon(palette.text2, 14, STROKE.pill, title)} alt={title} width={14} height={14} isInteractive /> : <Text dimColor>⊘</Text>
+    Svg ? <Svg source={lockIcon(palette.text2, 14, STROKE.pill, title)} alt={title} width={SIZE.icon.sm} height={SIZE.icon.sm} isInteractive /> : <Text dimColor>⊘</Text>
 
   const rowPill = (p: Pill) => {
     const c = pillColors[p.kind]
@@ -3936,8 +3986,8 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
         key={`hit:${t.key}`}
         flexDirection="row"
         alignItems="center"
-        gap={1}
-        paddingX={1}
+        gap={SPACE.row}
+        paddingX={SPACE.indent}
         hover={{ backgroundColor: palette.hover }}
       >
         {!t.done && (
@@ -3970,15 +4020,15 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
         {inSession && (waitingOn(t) ? hand() : spinner())}
         {locked && pre && lock(`Bloquée : ${short(pre).titre} n'est pas encore faite`)}
         {kept && (
-          <Box flexDirection="row" alignItems="center" gap={1} flexShrink={0}>
+          <Box flexDirection="row" alignItems="center" gap={SPACE.row} flexShrink={0}>
             <Box key={`so:${t.key}`} flexDirection="row" alignItems="center" flexShrink={0}>
-              {strut(24)}
-              {Svg && <Svg source={externalIcon(palette.text2, 16)} alt="Ouvrir la session" width={16} height={16} />}
+              {strut(SIZE.strut.row)}
+              {Svg && <Svg source={externalIcon(palette.text2, 16)} alt="Ouvrir la session" width={SIZE.icon.md} height={SIZE.icon.md} />}
               {hit(`row-open:${taskKey(t)}`, () => void openSession($, kept.entry), 1)}
             </Box>
             <Box key={`sa:${t.key}`} flexDirection="row" alignItems="center" flexShrink={0}>
-              {strut(24)}
-              {Svg && <Svg source={archiveIcon(palette.text2, 16)} alt="Archiver la session" width={16} height={16} />}
+              {strut(SIZE.strut.row)}
+              {Svg && <Svg source={archiveIcon(palette.text2, 16)} alt="Archiver la session" width={SIZE.icon.md} height={SIZE.icon.md} />}
               {hit(`row-archive:${taskKey(t)}`, () => void archiveSession($, kept.key, kept.entry), 1)}
             </Box>
           </Box>
@@ -4010,10 +4060,10 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
           flexDirection="row"
           justifyContent="space-between"
           alignItems="center"
-          paddingX={1}
+          paddingX={SPACE.indent}
           hover={{ backgroundColor: palette.hover }}
         >
-          <Box flexDirection="row" alignItems="center" gap={1} flexShrink={1} minWidth={0}>
+          <Box flexDirection="row" alignItems="center" gap={SPACE.row} flexShrink={1} minWidth={0}>
             {/* Le chevron dessiné sur 16 × 24, aligné sur le carré des lignes : il tient seul la hauteur. */}
             {Svg ? (
               <Box flexDirection="row" alignItems="center" flexShrink={0}>
@@ -4027,11 +4077,11 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
             {mark}
             {headZones ? <Text wrap="truncate-end">{name}</Text> : <Button key={`group:${keyPart(id)}`} plain label={name} onPress={toggleGroup(id)} />}
           </Box>
-          <Box flexDirection="row" alignItems="center" gap={1} flexShrink={0}>
+          <Box flexDirection="row" alignItems="center" gap={SPACE.row} flexShrink={0}>
             {lead}
             {/* Le compte en petite pastille arrondie, d'un gris discret (choix de Bertrand, 2026-10-22). */}
             {Svg ? (
-              drawnPill({ text: String(tasks.length), bg: mixOver(palette.sel, palette.bg, 0.6), fg: palette.text2, weight: 500, size: 10, height: 16 })
+              drawnPill({ text: String(tasks.length), bg: mixOver(palette.sel, palette.bg, MIX.countBg), fg: palette.text2, weight: TEXT.weight.soft, size: TEXT.count, height: SIZE.pill.count })
             ) : (
               <Text tabular color={palette.text2}>{String(tasks.length)}</Text>
             )}
@@ -4046,7 +4096,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
               return tasks.slice(0, shownRows).map(t => row(t, chains.get(t)))
             })()}
             {rest > 0 && (
-              <Box key={`more-row:${id}`} flexDirection="row" paddingX={1} paddingLeft={4}>
+              <Box key={`more-row:${id}`} flexDirection="row" paddingX={SPACE.indent} paddingLeft={SPACE.nest}>
                 <Button
                   key={`more:${keyPart(id)}`}
                   plain
@@ -4193,8 +4243,8 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   const setWho = (v: string) => void setView($, () => ({ who: v === WHO_ALL ? 'all' : v, closedGroups: [], moreGroups: [] }))
   const whoOptions = [WHO_ALL, ...people]
   const urgency = (
-    <Box flexDirection="column" gap="sm">
-      <Box flexDirection="row" gap={1}>
+    <Box flexDirection="column" gap={SPACE.block}>
+      <Box flexDirection="row" gap={SPACE.row}>
         {counters.map(c => {
           const zero = c.n === 0
           const on = !showDone && attend === c.key
@@ -4211,7 +4261,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
               flexDirection="column"
               flexGrow={1}
               minWidth={0}
-              paddingX={1}
+              paddingX={SPACE.indent}
               paddingY="xs"
               backgroundColor={zero ? palette.sel : c.bg}
               borderStyle={on ? 'round' : undefined}
@@ -4228,8 +4278,8 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
           )
         })}
       </Box>
-      <Box flexDirection="row" alignItems="center" gap={2} paddingX={1}>
-        <Box flexDirection="row" alignItems="center" gap={2} flexShrink={1} minWidth={0} flexWrap="wrap">
+      <Box flexDirection="row" alignItems="center" gap={SPACE.textButtons} paddingX={SPACE.indent}>
+        <Box flexDirection="row" alignItems="center" gap={SPACE.textButtons} flexShrink={1} minWidth={0} flexWrap="wrap">
           {smallStates.map(st => (
             <Button key={`attend:${st.key}`} plain dimColor={anyState && !stateOn(st.key)} label={`${st.name} ${st.n}`} onPress={setAttend(st.key)} />
           ))}
@@ -4260,10 +4310,10 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   headZones = graphic && fixedZones + numberZones.size + groups.length <= ZONE_LIMIT
 
   return (
-    <Box flexDirection="column" gap="md" paddingX={1}>
+    <Box flexDirection="column" gap={SPACE.root} paddingX={SPACE.indent}>
       {/* L'avancement et sa barre font un seul bloc : la barre colle aux chiffres. */}
       <Box flexDirection="column">
-      <Box flexDirection="row" justifyContent="space-between" alignItems="flex-end" paddingX={1}>
+      <Box flexDirection="row" justifyContent="space-between" alignItems="flex-end" paddingX={SPACE.indent}>
         {Svg ? (
           (() => {
             const big = percentIcon(`${pct(doneTasks.length, total)} %`, palette.text)
@@ -4282,7 +4332,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
         </Box>
       </Box>
 
-      <Box paddingX={1} paddingY="xs" justifyContent="center">
+      <Box paddingX={SPACE.indent} paddingY="xs" justifyContent="center">
         {Svg ? (
           <Svg source={barIcon(segments, palette.done, wide)} alt={`${pct(doneTasks.length, total)} % fait`} height={6} />
         ) : (
@@ -4304,8 +4354,8 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
       </Box>
 
       {pending && (
-        <Box flexDirection="row" alignItems="center" gap={1} paddingX={1}>
-          {Svg && <Svg source={pendingIcon(palette.text2)} alt="en cours" width={16} height={16} isInteractive />}
+        <Box flexDirection="row" alignItems="center" gap={SPACE.row} paddingX={SPACE.indent}>
+          {Svg && <Svg source={pendingIcon(palette.text2)} alt="en cours" width={SIZE.icon.md} height={SIZE.icon.md} isInteractive />}
           <Text size="caption" color={palette.text2}>Titres en cours de calcul : rangées par axe en attendant</Text>
         </Box>
       )}
@@ -4375,12 +4425,12 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
                   flexDirection="row"
                   justifyContent="space-between"
                   alignItems="center"
-                  paddingLeft={4}
+                  paddingLeft={SPACE.nest}
                   paddingRight={1}
                   backgroundColor={chosen ? palette.waitTint : undefined}
                   hover={{ backgroundColor: chosen ? palette.waitTint : palette.hover }}
                 >
-                  <Box flexDirection="row" alignItems="center" gap={1} flexShrink={1} minWidth={0}>
+                  <Box flexDirection="row" alignItems="center" gap={SPACE.row} flexShrink={1} minWidth={0}>
                     <Box flexDirection="row" alignItems="center" flexShrink={0}>
                       {tallIcon(personIcon(ink, 12, STROKE.small), who, 12, '·', 'permission')}
                     </Box>
@@ -4402,15 +4452,15 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
       </Box>
       )}
 
-      <Box flexDirection="column" gap="sm">
+      <Box flexDirection="column" gap={SPACE.block}>
         {Svg && <Svg source={ruleIcon(palette.border, wide)} alt="séparateur" height={1} />}
-        <Box flexDirection="row" justifyContent="space-between" alignItems="center" paddingX={1}>
+        <Box flexDirection="row" justifyContent="space-between" alignItems="center" paddingX={SPACE.indent}>
           <Text color={palette.text2} wrap="truncate-end">
             {searching
               ? `${foundCount} résultat${foundCount > 1 ? 's' : ''}${foundCount > SEARCH_MAX ? ` (${SEARCH_MAX} affichés)` : ''}`
               : filterSummary({ axis, attend, showDone, shown: shown.length, doneShown: doneShown.length, groupBy: by, who })}
           </Text>
-          <Box flexDirection="row" alignItems="center" gap={2} flexShrink={0}>
+          <Box flexDirection="row" alignItems="center" gap={SPACE.textButtons} flexShrink={0}>
             {/* Un bouton de l'app, pas une zone de clic : il ne compte pas dans ZONE_LIMIT. */}
             {!searching && (
               <Button
@@ -4426,7 +4476,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
         </Box>
         {/* La recherche : un numéro (« 47 », « #47 ») ou des mots du libellé, ouvertes et faites. */}
         {Input && (
-          <Box paddingX={1}>
+          <Box paddingX={SPACE.indent}>
             <Input
               key="search"
               placeholder="Rechercher une tâche : mots ou #numéro"

@@ -1,125 +1,12 @@
 // Les couleurs et les dessins du panneau, en SVG pour l'app de bureau (le terminal garde des glyphes).
 // Un bouton impose sa couleur de texte : tout ce qui porte une couleur se dessine hors des boutons.
-// Valeurs du handoff de design (README « Tokens » et « Icônes ») ; un SVG dessiné en image ne
-// connaît pas `currentColor`, d'où la couleur passée à chaque dessin.
+// Couleurs et mesures : tokens.ts (#108) ; dessins du handoff de design (README « Icônes »). Un SVG
+// dessiné en image ne connaît pas `currentColor`, d'où la couleur passée à chaque dessin.
 
-export type ThemeName = 'dark' | 'light'
+import { FONT, MIX, PALETTES, RADIUS, SIZE, STROKE, TEXT, type Palette, type ThemeName } from './tokens'
 
-export type Palette = {
-  /** Fond du panneau. */
-  bg: string
-  /** Survol des lignes. */
-  hover: string
-  /** Pastilles grises. */
-  sel: string
-  /** Filets. */
-  border: string
-  text: string
-  /** Texte secondaire. */
-  text2: string
-  /** Texte tertiaire, chevrons. */
-  text3: string
-  late: string
-  lateTint: string
-  lateOn: string
-  /** À moi, point « En cours ». */
-  mine: string
-  /** Attend un tiers. */
-  wait: string
-  waitTint: string
-  waitOn: string
-  /** Coche, session lancée. */
-  ok: string
-  /** Segment et carré « Faites ». */
-  done: string
-  /** Bouton Lancer. */
-  pri: string
-  priText: string
-  /** Boutons icône. */
-  btn: string
-  btnHover: string
-  /** Fond de la note du détail. */
-  note: string
-  /** Tâche en cours dans une session. */
-  live: string
-  liveTint: string
-  liveOn: string
-  /** Tâche bloquée par sa prérequise. */
-  block: string
-  blockTint: string
-  blockOn: string
-  /** Couleurs d'axe, dans l'ordre de déclaration des axes, modulo 8. */
-  axes: readonly string[]
-  /** Part de la couleur d'axe dans le fond de la pastille d'axe (`color-mix` du design). */
-  axisTintRatio: number
-}
-
-export const PALETTES: Record<ThemeName, Palette> = {
-  dark: {
-    // Le fond réel du panneau dans l'app (relevé sur capture, 2026-10-22) ; le design disait #1F1E1D.
-    // Les masques des coins arrondis prennent cette couleur : elle doit être exacte, sinon ils se voient.
-    bg: '#191919',
-    hover: '#2A2927',
-    sel: '#353330',
-    border: '#3A3835',
-    text: '#ECEBE7',
-    text2: '#A6A39C',
-    text3: '#6F6C66',
-    late: '#E5534B',
-    lateTint: '#47231F',
-    lateOn: '#FF928A',
-    mine: '#6E9CF0',
-    wait: '#A781F0',
-    waitTint: '#2F2742',
-    waitOn: '#C7AEFA',
-    ok: '#5BAE6A',
-    done: '#7D8590',
-    pri: '#ECEBE7',
-    priText: '#1F1E1D',
-    btn: '#2D2C29',
-    btnHover: '#383633',
-    note: '#27292C',
-    live: '#6E9CF0',
-    liveTint: '#1F2C45',
-    liveOn: '#9DBCF5',
-    block: '#F0A24B',
-    blockTint: '#45301A',
-    blockOn: '#F4B36A',
-    axes: ['#6E9CF0', '#D97757', '#5BAE6A', '#E2B04A', '#A781F0', '#3DB6B0', '#E07AA8', '#8C9BB0'],
-    axisTintRatio: 0.24,
-  },
-  light: {
-    bg: '#FFFFFF',
-    hover: '#F5F3EE',
-    sel: '#ECE9E1',
-    border: '#E3DFD5',
-    text: '#1F1E1D',
-    text2: '#6B6862',
-    text3: '#A9A59D',
-    late: '#C4372F',
-    lateTint: '#FCE7E5',
-    lateOn: '#B0261E',
-    mine: '#2F6BD8',
-    wait: '#7C4FD6',
-    waitTint: '#EFE9FC',
-    waitOn: '#5F35BF',
-    ok: '#2E8540',
-    done: '#848B95',
-    pri: '#1F1E1D',
-    priText: '#FFFFFF',
-    btn: '#F1EFE9',
-    btnHover: '#E7E4DB',
-    note: '#F2F2F1',
-    live: '#2F6BD8',
-    liveTint: '#E6EEFC',
-    liveOn: '#1F55B8',
-    block: '#C46A12',
-    blockTint: '#FDEBD8',
-    blockOn: '#A34A00',
-    axes: ['#3F74D9', '#C8603F', '#3C9150', '#C9961F', '#8A5FE0', '#20958E', '#CC5590', '#6E7C91'],
-    axisTintRatio: 0.16,
-  },
-}
+// Les palettes et les traits sont des tokens du design system (#108) ; on les sert aussi d'ici.
+export { PALETTES, STROKE, type Palette, type ThemeName }
 
 /** Les couleurs d'axe en couleurs du thème, pour le terminal, dans le même ordre. */
 export const AXIS_THEME = ['suggestion', 'claude', 'success', 'warning', 'permission', 'ide', 'merged', 'planMode']
@@ -208,8 +95,6 @@ function line(hex: string, size: number, width: number, body: string, title?: st
   )
 }
 
-/** Épaisseurs du design : 1,8 pour les icônes de 16, 2,4 dans les pastilles, 2,2 en 12-14 px, 2 pour les coches. */
-export const STROKE = { base: 1.8, pill: 2.4, small: 2.2, check: 2 } as const
 
 export function clockIcon(hex: string, size = 12, width: number = STROKE.pill): string {
   return line(hex, size, width, '<circle cx="12" cy="12" r="8.5"/><path d="M12 7.5v5l3 2"/>')
@@ -295,7 +180,7 @@ export function spinnerIcon(hex: string, size = 14, title?: string, still = fals
   return svg(
     size,
     24,
-    `<circle cx="12" cy="12" r="9" fill="none" stroke="${hex}" stroke-opacity="0.25" stroke-width="3"/>` +
+    `<circle cx="12" cy="12" r="9" fill="none" stroke="${hex}" stroke-opacity="${MIX.spinnerTrack}" stroke-width="3"/>` +
       `<path d="M12 3a9 9 0 0 1 9 9" fill="none" stroke="${hex}" stroke-width="3" stroke-linecap="round">` +
       (still ? '' : `<animateTransform attributeName="transform" type="rotate" from="0 12 12" to="360 12 12" dur="${SPIN_MS / 1000}s"${begin} repeatCount="indefinite"/>`) +
       '</path>',
@@ -335,7 +220,6 @@ export function cornerIcon(corner: Corner, radius: number, hex: string): string 
 // Une Box n'a pas d'arrondi : les pastilles se dessinent en SVG, texte compris, à la police
 // système. Leur largeur s'estime d'après les caractères (le SVG ne mesure pas son texte).
 
-const FONT = "-apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui, sans-serif"
 
 /** Largeur estimée d'un texte, en px, à la police système, `size` px, gras ou non. */
 export function textWidth(text: string, size: number, bold = false): number {
@@ -367,8 +251,8 @@ function pillIconRaw(o: {
   /** Taille du texte, 12 px par défaut. */
   size?: number
 }): { source: string; width: number; height: number } {
-  const height = o.height ?? 18
-  const size = o.size ?? 12
+  const height = o.height ?? SIZE.pill.row
+  const size = o.size ?? TEXT.pill
   const padX = height <= 18 ? (size < 12 ? 6 : 7) : 8
   const icon = o.mark ? 12 + 4 - 2 : 0
   const width = padX * 2 + icon + textWidth(o.text, size, (o.weight ?? 600) === 600)
@@ -392,20 +276,20 @@ export const pillIcon = memo(pillIconRaw)
 const MARK_PATHS: Record<PillMark, string> = {
   clock: '<circle cx="12" cy="12" r="8.5"/><path d="M12 7.5v5l3 2"/>',
   person: '<circle cx="12" cy="8" r="3.75"/><path d="M4.75 20c1.2-3.6 4-5.5 7.25-5.5s6.05 1.9 7.25 5.5"/>',
-  spinner: '<circle cx="12" cy="12" r="9" stroke-opacity="0.25"/><path d="M12 3a9 9 0 0 1 9 9"/>',
+  spinner: `<circle cx="12" cy="12" r="9" stroke-opacity="${MIX.spinnerTrack}"/><path d="M12 3a9 9 0 0 1 9 9"/>`,
   check: '<path d="M5 12.5l4.5 4.5L19 7.5"/>',
 }
 
 /** Le grand pourcentage d'avancement : 28 px, gras 600, sur une ligne de 32 (la taille « title » de l'app est plus petite). */
 function percentIconRaw(text: string, hex: string): { source: string; width: number; height: number } {
   // Une marge de quelques pixels : le texte est estimé, jamais mesuré, et un caractère coupé se voit.
-  const width = textWidth(text, 28, true) + 8
+  const width = textWidth(text, TEXT.percent, true) + 8
   return {
     source:
-      `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="32" viewBox="0 0 ${width} 32">` +
-      `<text x="0" y="16" dominant-baseline="central" font-family="${FONT}" font-size="28" font-weight="600" fill="${hex}" style="font-variant-numeric:tabular-nums">${escapeXml(text)}</text></svg>`,
+      `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${SIZE.percent}" viewBox="0 0 ${width} ${SIZE.percent}">` +
+      `<text x="0" y="16" dominant-baseline="central" font-family="${FONT}" font-size="${TEXT.percent}" font-weight="${TEXT.weight.strong}" fill="${hex}" style="font-variant-numeric:tabular-nums">${escapeXml(text)}</text></svg>`,
     width,
-    height: 32,
+    height: SIZE.percent,
   }
 }
 
@@ -413,14 +297,14 @@ export const percentIcon = memo(percentIconRaw)
 
 /** La pastille d'axe du détail : 22 px, rayon 6, carré de 10, nom de l'axe en gras de 13 px. */
 function axisPillIconRaw(o: { name: string; hex: string; bg: string; fg: string }): { source: string; width: number; height: number } {
-  const height = 22
-  const width = 6 + 10 + 6 + textWidth(o.name, 13, true) + 8
+  const height = SIZE.pill.axis
+  const width = 6 + 10 + 6 + textWidth(o.name, TEXT.axis, true) + 8
   return {
     source:
       `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">` +
-      `<rect width="${width}" height="${height}" rx="6" fill="${o.bg}"/>` +
-      `<rect x="6" y="6" width="10" height="10" rx="2.5" fill="${o.hex}"/>` +
-      `<text x="22" y="11" dominant-baseline="central" font-family="${FONT}" font-size="13" font-weight="600" fill="${o.fg}">${escapeXml(o.name)}</text></svg>`,
+      `<rect width="${width}" height="${height}" rx="${RADIUS.axisPill}" fill="${o.bg}"/>` +
+      `<rect x="6" y="6" width="10" height="10" rx="${RADIUS.square}" fill="${o.hex}"/>` +
+      `<text x="22" y="11" dominant-baseline="central" font-family="${FONT}" font-size="${TEXT.axis}" font-weight="${TEXT.weight.strong}" fill="${o.fg}">${escapeXml(o.name)}</text></svg>`,
     width,
     height,
   }
@@ -456,7 +340,7 @@ export function halfDiscIcon(hex: string, size = 16): string {
 
 /** Le carré d'un axe : 10 × 10, rx 2,5, centré dans une case de 16. */
 export function squareIcon(hex: string, size = 16): string {
-  return svg(size, 16, `<rect x="3" y="3" width="10" height="10" rx="2.5" fill="${hex}"/>`)
+  return svg(size, 16, `<rect x="3" y="3" width="10" height="10" rx="${RADIUS.square}" fill="${hex}"/>`)
 }
 
 // Les marques d'une ligne de tâche, dessinées sur 16 × 24 : elles fixent seules la hauteur de la
@@ -465,7 +349,7 @@ export function squareIcon(hex: string, size = 16): string {
 
 /** Le carré d'axe d'une ligne de tâche, centré sur 24 px de haut. */
 export function squareRowIcon(hex: string): string {
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="24" viewBox="0 0 16 24"><rect x="3" y="7" width="10" height="10" rx="2.5" fill="${hex}"/></svg>`
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="24" viewBox="0 0 16 24"><rect x="3" y="7" width="10" height="10" rx="${RADIUS.square}" fill="${hex}"/></svg>`
 }
 
 /**
@@ -479,7 +363,7 @@ export function chainRowIcon(mark: string, pos: 'first' | 'mid' | 'last', step: 
   const top = pos === 'first' ? 12 : 0
   const bottom = pos === 'last' ? 12 : 24
   const inner = mark.replace(/^<svg /, '<svg x="16" y="0" ')
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="32" height="24" viewBox="0 0 32 24"><path d="M4 ${top}V${bottom}M4 12H7" fill="none" stroke="${lineHex}" stroke-width="1.6"/><text x="12.5" y="15.5" text-anchor="middle" font-family="${FONT}" font-size="10" font-weight="500" fill="${textHex}">${step}</text>${inner}</svg>`
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="32" height="24" viewBox="0 0 32 24"><path d="M4 ${top}V${bottom}M4 12H7" fill="none" stroke="${lineHex}" stroke-width="1.6"/><text x="12.5" y="15.5" text-anchor="middle" font-family="${FONT}" font-size="${TEXT.chainStep}" font-weight="${TEXT.weight.soft}" fill="${textHex}">${step}</text>${inner}</svg>`
 }
 
 /** Le drapeau des tâches prioritaires (P1, P2), plein, sur 16 px. */
@@ -544,12 +428,12 @@ function barIconRaw(segments: BarSegment[], empty: string, width = BAR_WIDTH): s
   const frame = (body: string) =>
     `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" preserveAspectRatio="none">${body}</svg>`
   const layout = barLayout(segments, width)
-  if (layout.length === 0) return frame(`<rect width="${width}" height="${height}" rx="3" fill="${empty}" opacity="0.3"/>`)
+  if (layout.length === 0) return frame(`<rect width="${width}" height="${height}" rx="${RADIUS.bar}" fill="${empty}" opacity="${MIX.track}"/>`)
   return frame(
     layout
       .map(({ segment, x, w }) => {
-        const opacity = segment.dim ? ' opacity="0.3"' : ''
-        return `<rect x="${x.toFixed(1)}" y="0" width="${w.toFixed(1)}" height="${height}" rx="3" fill="${segment.hex}"${opacity}/>`
+        const opacity = segment.dim ? ` opacity="${MIX.track}"` : ''
+        return `<rect x="${x.toFixed(1)}" y="0" width="${w.toFixed(1)}" height="${height}" rx="${RADIUS.bar}" fill="${segment.hex}"${opacity}/>`
       })
       .join(''),
   )

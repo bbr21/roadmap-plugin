@@ -442,8 +442,11 @@ claude plugin validate plugins/roadmap
 claude plugin test plugins/roadmap
 ```
 
+Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une couleur ou une part de mélange écrite en dur ailleurs est refusée par `node design/scripts/check.mjs`. Le même fichier nourrit le design system de `design/` (composants React, `styles.css`), que `/design-sync` publie dans claude.ai : un changement de `tokens.ts` se reporte par `npm run tokens` dans `design/`. `tests/rendu.test.tsx` garde l'empreinte du dessin : un rendu changé exprès les relève à nouveau.
+
 ## Historique
 
+- **0.64.1 (2026-10-29)** : panneau : le relevé du défilement et du focus se garde à part des dessins, pour prouver le saut en haut (#111)
 - **0.64.0 (2026-10-29)** : maestro : la session mère s'appelle Maestro partout, la skill lot devient maestro (/maestro), les textes du panneau disent « Maestro » et « la clause de Maestro », « Lot … » reste reconnu en alias des anciens titres (#112)
 - **0.63.2 (2026-10-29)** : lot : archivage sans doublon ni retard : la boîte de fin du Lot qui propose d'archiver une session déjà archivée est refusée, et les nouvelles des enfants demandent de proposer dans le tour même après avoir relu list_sessions (#110)
 - **0.63.1 (2026-10-29)** : panneau : « Voir les N autres » se déplie au clic de l'app de bureau (clés de bouton sans espace), chaque défilement du panneau relevé dans les mesures pour trouver le saut en haut (#106)
