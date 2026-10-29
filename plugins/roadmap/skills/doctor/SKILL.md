@@ -1,6 +1,6 @@
 ---
 name: doctor
-description: "Checklist d'un projet branché sur le système roadmap, en lecture seule. Mode Code : outils (git, node, python3, gh connecté), dépôt sur main et poussé sur GitHub, roadmap trouvée et conforme, node scripts/check.mjs, plugin roadmap actif, Superpowers et chaque skill de méthode que citent les sessions lancées, sa mise à jour, swiftui-pro sur un projet iOS. Mode Projet (sans code) : python3, roadmap, réglages de .claude/roadmap.json, champs exigés des tâches ouvertes, plugin roadmap, et Superpowers en À voir s'il manque : il y est facultatif. Une ligne OK, KO ou À voir par point, avec la commande qui corrige. Lancé en fin d'onboarding. Déclenche sur « doctor », « lance le doctor sur ce projet », « tout est branché ? », « checklist du projet », « le projet est prêt pour Maestro ? », « Superpowers est bien installé ? », « pourquoi Maestro ne voit rien ». Pas pour un dossier Cowork (son propre doctor), ni pour corriger : le doctor dit quoi faire."
+description: "Checklist d'un projet branché sur le système roadmap, en lecture seule. Mode Code : outils (git, node, python3, gh connecté), dépôt sur main et poussé sur GitHub, roadmap trouvée et conforme, node scripts/check.mjs, plugin roadmap actif, Superpowers et chaque skill de méthode que citent les sessions lancées, sa mise à jour, swiftui-pro sur un projet iOS. Mode Projet (sans code) : python3, roadmap, réglages de .claude/roadmap.json, champs exigés des tâches ouvertes, plugin roadmap, et Superpowers en À voir s'il manque : il y est facultatif. Une ligne OK, KO ou À voir par point, avec la commande qui corrige. Lancé en fin d'onboarding. Déclenche sur « doctor », « lance le doctor sur ce projet », « tout est branché ? », « checklist du projet », « le projet est prêt pour Maestro ? », « Superpowers est bien installé ? », « pourquoi Maestro ne voit rien ». Pas pour un dossier Cowork (son propre doctor), ni pour corriger : le doctor dit quoi faire, ni pour le contenu des tâches (skill audit)."
 ---
 
 # Doctor d'un projet
@@ -80,3 +80,5 @@ commande qui corrige, telle que le script la donne. Puis le verdict en une phras
   jour, dans `hooks/parse.ts` et dans `references/requis.json`, par la mise à jour du dépôt du
   plugin.
 - Tout est vert : dis-le en une phrase, et que « Maestro » marche dans ce projet.
+- Le doctor ne lit pas le contenu des tâches. Des tâches en paquets, en double ou sans échéance :
+  propose la skill `audit`, qui découpe, fusionne et complète après validation.

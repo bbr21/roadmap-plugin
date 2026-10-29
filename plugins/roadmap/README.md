@@ -8,13 +8,14 @@ dans Cowork ni dans le chat de claude.ai.
 
 ## Contenu
 
-**5 skills**
+**6 skills**
 
 | Skill | Rôle |
 |---|---|
 | `roadmap-panel` | Branche un projet sur le panneau (`.claude/roadmap.json`, `ROADMAP.md` à la racine) et le dépanne. Tapée seule, `/roadmap:roadmap-panel` ouvre le panneau comme `/roadmap`, d'une ligne. |
 | `onboarding` | Mode Code : pose dans un dépôt de code la structure de Splitmybill (CLAUDE.md, roadmap numérotée dans `roadmap/` avec ses bilans, docs, `check.mjs`, hook de démarrage, worktree par session), propose de reconstituer la roadmap depuis l'historique du dépôt (PR, fusions ou commits des 6 derniers mois), ou remet un projet existant au format sans rien écraser. Mode Projet : un dossier simple, git en option, des tâches complètes. |
 | `doctor` | Checklist en lecture seule d'un projet (en mode Projet : python3, roadmap, réglages, champs exigés, sans GitHub, Superpowers facultatif) ; d'un projet de code : outils, GitHub, roadmap, structure, `check.mjs`, plugin roadmap, Superpowers et chacune de ses skills de méthode, sa mise à jour automatique, `swiftui-pro` sur un projet iOS ; une ligne OK, KO ou À voir avec la commande qui corrige. |
+| `audit` | Audite le contenu de la roadmap : propose de découper les paquets en tâche mère et sous-tâches datées, les dépendances, les fusions de doublons, les regroupements et les valeurs des trous ; la personne valide paquet par paquet, puis `scripts/audit.py` écrit tout ou rien, sauvegardé, avec un bilan qui retrouve chaque fragment du texte d'origine. Lancée en fin d'onboarding. |
 | `reglages-session` | Lit et change les réglages de session (questions par formulaire, mode ADHD, français, mode autonome) de `~/.claude/reglages-session.json`, pour le projet de la session (#102). Lancée, elle ouvre aussi le volet Réglages ; tapée seule, `/roadmap:reglages-session` l'ouvre comme `/reglages`, d'une ligne. |
 | `lot` | Tient une session Lot, l'orchestrateur d'un lot de tâches menées en parallèle : lignes et découpage, une session par tâche, lecture de leurs comptes rendus, main donnée sur le simulateur iOS et les autres ressources uniques, ordre des fusions calculé depuis git (`scripts/etat_lot.py`), chaque tâche suivie dans la liste d'étapes du Lot (une étape par tâche, son état en mots), une fusion à la fois. |
 
@@ -439,6 +440,7 @@ claude plugin test plugins/roadmap
 
 ## Historique
 
+- **0.61.0 (2026-10-29)** : audit : nouvelle skill qui audite le contenu de la roadmap (paquets découpés en tâche mère et sous-tâches datées, dépendances, doublons, trous), validée paquet par paquet, écrite tout ou rien avec sauvegarde et bilan par fragment ; proposée en fin d'onboarding (#103)
 - **0.60.0 (2026-10-29)** : panneau et lot : la liste d'étapes native partout (rappel de fin de tour en mode Code aussi, liste entière dans une bande fixe au-dessus de la saisie), le Lot suit ses sessions par sa propre liste, la carte HTML du Lot retirée (#104)
 - **0.59.0 (2026-10-29)** : reglages-session : avec autonome, fusion et publication sans demander dans les deux modes ; lot : le Lot donne seul la main, publication comprise (#105)
 - **0.58.0 (2026-10-29)** : panneau : en mode Projet, le panneau s'ouvre sur Ma journée, avec quatre compteurs d'urgence (Ma journée, En retard, Cette semaine, À relancer), dates et attentes en couleur, filtre Qui combinable, récurrence tous: reconduite à la coche, date de relance relance: (#99)

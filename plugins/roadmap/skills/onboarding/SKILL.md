@@ -121,7 +121,9 @@ tout le cadrage.
    `gh repo create <compte>/<nom> --private --source <dossier> --push`. Sans `gh` connecté, donne la
    commande. Un dépôt déjà existant sous ce nom : ne pousse rien, demande. Projet existant déjà sur
    GitHub : pousse le commit de l'onboarding sur `main`, comme ses règles le disent.
-2. Lance le doctor (skill `doctor` de ce plugin) sur le dossier. Un KO qui tient à la machine
+2. Une roadmap importée ou déjà remplie : l'audit (étape 7 de « Importer une roadmap existante »)
+   passe avant le doctor.
+3. Lance le doctor (skill `doctor` de ce plugin) sur le dossier. Un KO qui tient à la machine
    (Superpowers absent, `gh` non connecté) se dit avec sa commande ; un KO qui tient au projet se
    corrige ici. En mode Projet, Superpowers absent n'est qu'À voir : il y est facultatif.
 
@@ -184,10 +186,15 @@ une ligne. L'original n'est jamais modifié sans sa copie de sauvegarde.
    avant/après : le montrer tel quel.
 6. **Vérifier** : `verifier <dossier>` (« Conforme au format. »). La sauvegarde ne se committe pas ;
    la proposer à la suppression une fois la roadmap relue.
+7. **Auditer** : l'import ne touche pas aux libellés. Une question à choix, « Je lance l'audit de la
+   roadmap ? » (Oui (recommandé) / Plus tard) ; oui → skill `audit` de ce plugin, qui propose de
+   découper les paquets en sous-tâches, les dépendances, les doublons et les trous, et n'écrit
+   qu'après validation.
 
 ## Ce que la skill ne fait pas
 
 - Elle ne remplace pas les règles du projet : une fois posé, le projet vit par son `CLAUDE.md`.
 - Elle ne touche pas à une roadmap déclarée dans `~/.claude/roadmap-perso.json` (`roadmap-panel`).
+- Elle ne découpe aucun libellé : c'est l'audit (skill `audit`), proposé en fin d'import.
 - Elle n'écrit aucun secret : `.env.example` ne porte que des noms de variables.
 - Elle n'installe aucun plugin : le doctor dit ce qui manque et la commande pour l'ajouter.
