@@ -69,8 +69,12 @@ Le mode et ses réglages (#76), facultatifs aussi :
   eux, sans la refuser. Défaut : aucun en mode Code, les six ci-dessus en mode Projet.
 - `cles` : des clés en plus de la grammaire (les tags d'un Notion), chacune avec ses valeurs
   admises (liste vide : libre) ; le détail d'une tâche les montre, la recherche les lit.
-- `vue` : le rangement à l'ouverture : `echeance`, `responsable`, `arbre`, `sujet` ou `jour`.
+- `vue` : le rangement des tâches : `echeance`, `responsable`, `arbre`, `sujet` ou `jour`.
   Défaut : `echeance` en mode Projet, par sujet en mode Code. Le bouton du panneau passe aux autres.
+  En mode Projet, le panneau s'ouvre sur « Ma journée » ; `vue` vaut dès « Tout afficher ».
+- `relance` : en mode Projet, le nombre de jours sans nouvelle d'un tiers attendu au-delà duquel
+  sa tâche est « À relancer » (entier ; défaut 14). Le compte part de `relance:` sur la ligne,
+  sinon de `ouvert:`.
 
 Le rangement avant l'archivage (#101), facultatif : un projet qui range sa mémoire en fin de
 sujet (AAFES, skill `aafes-memory`) le dit, et la fin de tour ne propose l'archivage de la session,

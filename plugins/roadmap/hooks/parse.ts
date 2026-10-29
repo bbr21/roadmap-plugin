@@ -33,11 +33,22 @@ export type Task = {
   resp?: string
   /** `parent:` : le numéro de la tâche mère (`parent:12` ou `parent:#12`) ; `parent:-` (racine) le laisse absent. */
   parent?: string
+  /** `tous:` : la tâche revient au calendrier ; `due:` dit sa prochaine occurrence (#99). */
+  tous?: Recurrence
+  /** `relance:` : la date de la dernière relance du tiers attendu (#99). */
+  relance?: string
   /** Les clés hors grammaire (les clés déclarées dans `cles`), valeurs coupées aux virgules. */
   extra?: Record<string, string[]>
 }
 
 export type Prio = '1' | '2' | '3'
+
+/** Les périodes d'une tâche récurrente (`tous:`, #99). */
+export type Recurrence = 'semaine' | '2semaines' | 'mois' | 'trimestre' | 'an'
+export const RECURRENCES: readonly Recurrence[] = ['semaine', '2semaines', 'mois', 'trimestre', 'an']
+
+/** Au-delà de ce nombre de jours sans nouvelle, une attente de tiers est à relancer (#99) ; `relance` de roadmap.json le change. */
+export const RELAUNCH_DAYS = 14
 
 /**
  * Une roadmap et les dossiers de travail qui la montrent : déclarée dans `~/.claude/roadmap-perso.json`,
@@ -62,6 +73,8 @@ export type Source = {
   vue?: Vue
   /** Le rangement de la mémoire exigé avant de proposer l'archivage (#101) ; sans lui, rien n'est exigé. */
   rangement?: Rangement
+  /** Le seuil « À relancer », en jours (#99). */
+  relance?: number
 }
 
 /**
@@ -83,7 +96,7 @@ const VUES: readonly Vue[] = ['echeance', 'responsable', 'arbre', 'sujet', 'jour
 export type RequiredOn = 'open' | 'launched'
 
 /** Les réglages d'une roadmap, défauts compris : le mode est un préréglage, chaque réglage se change. */
-export type ProjectSettings = { mode: Mode; requis: string[]; requiredOn: RequiredOn; cles: Record<string, string[]>; vue?: Vue }
+export type ProjectSettings = { mode: Mode; requis: string[]; requiredOn: RequiredOn; cles: Record<string, string[]>; vue?: Vue; relanceDays: number }
 
 /** Les champs exigés par défaut en mode Projet : `parent:` et `après:` renvoient à des numéros. */
 export const PROJECT_REQUIRED: readonly string[] = ['id', 'ouvert', 'due', 'resp', 'parent', 'après']
@@ -101,6 +114,7 @@ export function projectSettings(source: Source): ProjectSettings {
     requiredOn: mode === 'projet' ? 'open' : 'launched',
     cles: source.cles ?? {},
     ...(vue ? { vue } : {}),
+    relanceDays: source.relance ?? RELAUNCH_DAYS,
   }
 }
 
@@ -159,6 +173,8 @@ export function parseRoadmap(text: string, file: string): Task[] {
       else if (k === 'parent' && PARENT_RE.test(v)) task.parent = v.replace(/^#/, '')
       else if (k === 'id' && ID_RE.test(v)) task.id = v
       else if (k === 'prio' && PRIO_RE.test(v)) task.prio = v as Prio
+      else if (k === 'tous' && (RECURRENCES as readonly string[]).includes(v)) task.tous = v as Recurrence
+      else if (k === 'relance' && DATE_RE.test(v)) task.relance = v
       else if (k === 'feedback' && FEEDBACK_RE.test(v)) task.feedback = v.split(',')
       else if (k !== '' && !KEYS.includes(k)) {
         const values = v.split(',').map(x => x.trim()).filter(x => x !== '')
@@ -173,11 +189,11 @@ export function parseRoadmap(text: string, file: string): Task[] {
 // Le contrôle de la grammaire, plus strict que la lecture : la lecture ignore une ligne qu'elle ne
 // comprend pas, le contrôle la signale. Clés admises : celles que la lecture garde, plus `verrou`
 // (Splitmybill).
-const KEYS: readonly string[] = [...FIELDS, 'après', 'parent', 'id', 'prio', 'feedback', 'verrou']
+const KEYS: readonly string[] = [...FIELDS, 'après', 'parent', 'id', 'prio', 'feedback', 'verrou', 'tous', 'relance']
 /** Les clés de la grammaire : une clé déclarée dans `cles` ne peut en reprendre aucune. */
 export const GRAMMAR_KEYS: readonly string[] = KEYS
 const DECLARED_KEY_RE = /^[a-zà-ÿ][a-zà-ÿ0-9-]*$/
-const DATE_KEYS = ['ouvert', 'due']
+const DATE_KEYS = ['ouvert', 'due', 'relance']
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
 /** `fait:` : la date de la clôture, et son heure quand elle est connue. */
 const DONE_RE = /^\d{4}-\d{2}-\d{2}( ([01]\d|2[0-3]):[0-5]\d)?$/
@@ -265,6 +281,7 @@ export function lintRoadmap(text: string, done: boolean, rules: Partial<LintRule
       else if (k === 'fait' && !DONE_RE.test(v)) say(`fait: n'est pas une date AAAA-MM-JJ, ou AAAA-MM-JJ HH:MM (« ${v} »)`)
       else if (k === 'id' && !ID_RE.test(v)) say(`id: n'est pas un numéro (« ${v} ») : un entier, sans #`)
       else if (k === 'prio' && !PRIO_RE.test(v)) say(`prio: vaut 1, 2 ou 3 (« ${v} »)`)
+      else if (k === 'tous' && !(RECURRENCES as readonly string[]).includes(v)) say(`tous: vaut semaine, 2semaines, mois, trimestre ou an (« ${v} »)`)
       else if (k === 'feedback' && !FEEDBACK_RE.test(v)) say(`feedback: des numéros de retours séparés par des virgules (« ${v} »)`)
       keys.set(k, v)
     }
@@ -273,6 +290,7 @@ export function lintRoadmap(text: string, done: boolean, rules: Partial<LintRule
     if (!done && !checked && (requiredOn === 'open' || launched)) {
       for (const k of requis) if ((keys.get(k) ?? '') === '') say(`champ exigé absent : ${k}:${requiredExample(k)}`)
     }
+    if (!checked && keys.has('tous') && (keys.get('due') ?? '') === '') say('tous: demande une due:AAAA-MM-JJ, la prochaine occurrence')
     if (checked && !keys.has('fait')) say('task cochée sans fait:AAAA-MM-JJ HH:MM')
     if (!checked && keys.has('fait')) say('fait: sur une task non cochée')
     if (done && !checked) say('task non cochée dans ROADMAP-fait.md : elle reste dans ROADMAP.md')
@@ -740,6 +758,68 @@ export function isMine(task: Task, me: readonly string[]): boolean {
   return mine(task.resp) && mine(task.attend)
 }
 
+/** Cette semaine (#99) : ouverte, pas en retard, l'échéance dans les 7 jours. */
+export function isDueSoon(task: Task, today: string): boolean {
+  return !task.done && task.due !== undefined && !isOverdue(task, today) && daysBetween(today, task.due) <= 7
+}
+
+/** Les quatre raisons d'entrer dans « Ma journée » (#99), la première qui vaut ; `undefined` sinon. Le libellé est celui de la section. */
+function todayReason(task: Task, today: string, me: readonly string[]): string | undefined {
+  if (task.done || !isMine(task, me)) return undefined
+  if (isOverdue(task, today)) return 'En retard'
+  const days = task.due === undefined ? undefined : daysBetween(today, task.due)
+  if (days !== undefined && days <= 1) return "Aujourd'hui et demain"
+  if (task.prio === '1') return 'P1'
+  // Une récurrente entre un jour plus tôt : le temps de la préparer.
+  if (task.tous !== undefined && days !== undefined && days <= 2) return 'Récurrentes qui tombent'
+  return undefined
+}
+
+const TODAY_SECTIONS = ['En retard', "Aujourd'hui et demain", 'P1', 'Récurrentes qui tombent'] as const
+
+/** « Ma journée » (#99) : à moi, et en retard, due aujourd'hui ou demain, en P1, ou récurrente qui tombe dans les 2 jours. */
+export function isToday(task: Task, today: string, me: readonly string[]): boolean {
+  return todayReason(task, today, me) !== undefined
+}
+
+/** « Ma journée » en sections, chaque tâche dans la première qui la prend ; une section vide n'apparaît pas. */
+export function todaySections(tasks: readonly Task[], today: string, me: readonly string[]): { label: string; tasks: Task[] }[] {
+  return TODAY_SECTIONS.map(label => ({ label, tasks: tasks.filter(t => todayReason(t, today, me) === label) })).filter(g => g.tasks.length > 0)
+}
+
+/** Les jours sans nouvelle d'un tiers attendu (#99) : depuis `relance:`, sinon `ouvert:` ; au moins 0. Sans tiers ni date : `undefined`. */
+export function waitDays(task: Task, today: string, me: readonly string[] = []): number | undefined {
+  if (task.attend === undefined || me.includes(attendWho(task.attend))) return undefined
+  const since = task.relance ?? task.ouvert
+  return since === undefined ? undefined : Math.max(0, daysBetween(since, today))
+}
+
+/** À relancer (#99) : une attente d'un tiers sans nouvelle depuis `days` jours ou plus. */
+export function isToRelaunch(task: Task, today: string, me: readonly string[], days: number): boolean {
+  const waited = task.done ? undefined : waitDays(task, today, me)
+  return waited !== undefined && waited >= days
+}
+
+/** Le filtre « Qui » (#99) : `all` prend tout, un de mes noms suit « À moi », un autre nom prend les tâches dont `resp:` ou `attend:` le nomme. */
+export function matchesWho(task: Task, who: string, me: readonly string[]): boolean {
+  if (who === 'all') return true
+  if (me.includes(who)) return isMine(task, me)
+  return [task.resp, task.attend].some(x => x !== undefined && attendWho(x) === who)
+}
+
+/** Les personnes du filtre « Qui » (#99) : moi d'abord quand une tâche est à moi, puis les autres, les plus citées d'abord. */
+export function peopleOf(tasks: readonly Task[], me: readonly string[]): string[] {
+  const counts = new Map<string, number>()
+  for (const t of tasks) {
+    // Une personne compte une fois par tâche, qu'elle la porte, l'attende, ou les deux.
+    const names = new Set([t.resp, t.attend].filter((x): x is string => x !== undefined).map(attendWho))
+    for (const n of names) if (!me.includes(n)) counts.set(n, (counts.get(n) ?? 0) + 1)
+  }
+  const others = [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).map(([n]) => n)
+  const first = me[0]
+  return first !== undefined && tasks.some(t => isMine(t, me)) ? [first, ...others] : others
+}
+
 export function matches(task: Task, axis: string, attend: string, me: readonly string[]): boolean {
   if (axis !== 'all' && task.axis !== axis) return false
   if (attend === 'all') return true
@@ -1004,15 +1084,19 @@ export function byTree(
 }
 
 /** Le résumé de la ligne de filtre : « Mcp · attend Martial · 4 tâches », ou le total sans filtre. */
-export function filterSummary(view: { axis: string; attend: string; showDone: boolean; shown: number; doneShown: number; groupBy?: string }): string {
+export function filterSummary(view: { axis: string; attend: string; showDone: boolean; shown: number; doneShown: number; groupBy?: string; who?: string }): string {
   const by = groupingOf(view.groupBy, view.showDone)
   if (view.showDone) return `${view.doneShown} faite${view.doneShown > 1 ? 's' : ''}, par ${by === 'subject' ? 'sujet' : 'jour'}`
   // Les ouvertes se rangent par sujet d'ordinaire : seuls les autres rangements se disent.
-  const byDayNote = by === 'subject' ? '' : by === 'tree' ? ', en arbre' : `, ${GROUPING_LABELS[by].toLowerCase()}`
-  if (view.axis === 'all' && view.attend === 'all') return `${view.shown} tâche${view.shown > 1 ? 's' : ''} ouverte${view.shown > 1 ? 's' : ''}${byDayNote}`
+  const byDayNote = by === 'subject' || view.attend === 'today' ? '' : by === 'tree' ? ', en arbre' : `, ${GROUPING_LABELS[by].toLowerCase()}`
+  const who = view.who ?? 'all'
+  if (view.axis === 'all' && view.attend === 'all' && who === 'all') return `${view.shown} tâche${view.shown > 1 ? 's' : ''} ouverte${view.shown > 1 ? 's' : ''}${byDayNote}`
   const parts: string[] = []
   if (view.axis !== 'all') parts.push(axisLabel(view.axis))
   if (view.attend === 'late') parts.push('en retard')
+  else if (view.attend === 'today') parts.push('ma journée')
+  else if (view.attend === 'soon') parts.push('cette semaine')
+  else if (view.attend === 'relaunch') parts.push('à relancer')
   else if (view.attend === 'mine') parts.push('à moi')
   else if (view.attend === 'recent') parts.push('récentes')
   else if (view.attend === 'live') parts.push('en cours')
@@ -1020,6 +1104,7 @@ export function filterSummary(view: { axis: string; attend: string; showDone: bo
   else if (view.attend === 'feedback') parts.push('retours')
   else if (view.attend === 'others') parts.push('attend un tiers')
   else if (view.attend !== 'all') parts.push(`attend ${view.attend}`)
+  if (who !== 'all') parts.push(who)
   parts.push(`${view.shown} tâche${view.shown > 1 ? 's' : ''}`)
   const text = parts.join(' · ') + byDayNote
   return text.charAt(0).toUpperCase() + text.slice(1)
@@ -1929,7 +2014,7 @@ export function axisLabel(axis: string): string {
 /** Au-delà, une tâche sans échéance est « à revoir ». */
 export const STALE_DAYS = 21
 
-export type PillKind = 'late' | 'due' | 'wait' | 'stale' | 'owner'
+export type PillKind = 'late' | 'due' | 'soon' | 'recur' | 'wait' | 'waitAging' | 'waitOld' | 'stale' | 'owner'
 export type Pill = { kind: PillKind; text: string }
 
 /**
@@ -1939,11 +2024,32 @@ export type Pill = { kind: PillKind; text: string }
 export function rowPills(task: Task, today: string, me: readonly string[]): Pill[] {
   if (task.done) return []
   const pills: Pill[] = []
-  if (task.due !== undefined) pills.push({ kind: isOverdue(task, today) ? 'late' : 'due', text: frDate(task.due) })
+  if (task.tous !== undefined) pills.push({ kind: 'recur', text: recurLabel(task.tous) })
+  if (task.due !== undefined) pills.push(duePill(task.due, today))
   else if (task.ouvert !== undefined && daysBetween(task.ouvert, today) > STALE_DAYS) pills.push({ kind: 'stale', text: 'à revoir' })
   if (task.resp !== undefined && !me.includes(attendWho(task.resp))) pills.push({ kind: 'owner', text: shortAttend(task.resp) })
-  if (task.attend !== undefined && !me.includes(attendWho(task.attend))) pills.push({ kind: 'wait', text: shortAttend(task.attend) })
+  if (task.attend !== undefined && !me.includes(attendWho(task.attend))) {
+    // L'âge de l'attente se lit à partir de 7 jours : orange, puis rouge à 14 (#99).
+    const waited = waitDays(task, today, me) ?? 0
+    const kind: PillKind = waited >= 14 ? 'waitOld' : waited >= 7 ? 'waitAging' : 'wait'
+    pills.push({ kind, text: waited >= 7 ? `${shortAttend(task.attend)} · ${waited} j` : shortAttend(task.attend) })
+  }
   return pills
+}
+
+/** La pastille d'échéance (#99) : rouge en retard avec le retard, orange dans les 7 jours, grise au-delà. */
+export function duePill(due: string, today: string): Pill {
+  const days = daysBetween(today, due)
+  if (days < 0) return { kind: 'late', text: `${frDate(due)} · ${-days} j` }
+  if (days <= 7) return { kind: 'soon', text: days === 0 ? 'auj.' : days === 1 ? 'demain' : frDate(due) }
+  return { kind: 'due', text: frDate(due) }
+}
+
+const RECUR_LABELS: Record<Recurrence, string> = { semaine: 'hebdo', '2semaines': '2 sem.', mois: 'mensuel', trimestre: 'trimestriel', an: 'annuel' }
+
+/** La pastille d'une tâche récurrente : « ↻ mensuel ». */
+export function recurLabel(tous: Recurrence): string {
+  return `↻ ${RECUR_LABELS[tous]}`
 }
 
 export function clip(text: string, max: number): string {
@@ -2082,6 +2188,13 @@ function briefTask(task: Task): string[] {
     '',
     `Axe : ${task.axis}${task.attend ? ` · attend : ${task.attend}` : ''}${task.due ? ` · échéance : ${task.due}` : ''}${task.ouvert ? ` · ouverte le ${task.ouvert}` : ''}`,
     ...(task.note ? [`Note : ${task.note}`] : []),
+    ...(task.tous
+      ? [
+          '',
+          "Cette tâche est récurrente (`tous:`) : cochée, elle se reconduit — l'occurrence part dans ROADMAP-fait sous un numéro neuf avec `src:#N`, et la ligne garde sa récurrence avec la `due:` suivante ; le bouton « Marquer faite » du panneau le fait.",
+        ]
+      : []),
+    ...(task.attend ? ['', 'Quand une relance part vers le tiers attendu, pose ou mets à jour `relance:AAAA-MM-JJ` sur la ligne.'] : []),
   ]
 }
 
@@ -2240,7 +2353,7 @@ export function checkBrief(
 export function parseProjectConfig(text: string, base: string, defaults: { name: string; me: string[] }): Source | undefined {
   const data: unknown = JSON.parse(text)
   if (typeof data !== 'object' || data === null) return undefined
-  const c = data as { name?: unknown; dir?: unknown; me?: unknown; subjects?: unknown; mode?: unknown; requis?: unknown; cles?: unknown; vue?: unknown; rangement?: unknown }
+  const c = data as { name?: unknown; dir?: unknown; me?: unknown; subjects?: unknown; mode?: unknown; requis?: unknown; cles?: unknown; vue?: unknown; rangement?: unknown; relance?: unknown }
   const dir = typeof c.dir === 'string' && c.dir !== '' ? (c.dir.startsWith('/') ? c.dir : `${base}/${c.dir}`) : base
   const strings = (v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : undefined)
   // Une valeur inconnue ou d'un mauvais type prend le défaut : le panneau s'ouvre quand même.
@@ -2269,6 +2382,7 @@ export function parseProjectConfig(text: string, base: string, defaults: { name:
     ...(Object.keys(cles).length > 0 ? { cles } : {}),
     ...(vue ? { vue } : {}),
     ...(rangement ? { rangement } : {}),
+    ...(Number.isInteger(c.relance) && (c.relance as number) > 0 ? { relance: c.relance as number } : {}),
   }
 }
 
@@ -2389,6 +2503,29 @@ export function abandonInTexts(
  * bout de sa note (`--abandon`) ; faite : « marquée faite depuis le panneau Roadmap » au bout de sa note.
  * La ligne doit être encore celle affichée (`task.key`) : sinon rien ne change.
  */
+const PERIOD_MONTHS: Record<Recurrence, number> = { semaine: 0, '2semaines': 0, mois: 1, trimestre: 3, an: 12 }
+const PERIOD_DAYS: Record<Recurrence, number> = { semaine: 7, '2semaines': 14, mois: 0, trimestre: 0, an: 0 }
+
+/** `due` plus `k` périodes ; un mois trop court ramène à son dernier jour (31/01 + 1 mois = 28/02). */
+function addPeriods(due: string, tous: Recurrence, k: number): string {
+  const [y, m, d] = due.split('-').map(Number) as [number, number, number]
+  if (PERIOD_DAYS[tous] > 0) return new Date(Date.UTC(y, m - 1, d + k * PERIOD_DAYS[tous])).toISOString().slice(0, 10)
+  const months = m - 1 + k * PERIOD_MONTHS[tous]
+  const last = new Date(Date.UTC(y, months + 1, 0)).getUTCDate()
+  return new Date(Date.UTC(y, months, Math.min(d, last))).toISOString().slice(0, 10)
+}
+
+/**
+ * La prochaine occurrence d'une récurrente cochée (#99) : une période après `due`, puis encore tant
+ * qu'elle reste avant aujourd'hui. Comptée depuis `due`, pas depuis aujourd'hui : une occurrence
+ * cochée en avance ne décale pas le calendrier.
+ */
+export function nextDue(due: string, tous: Recurrence, today: string): string {
+  let k = 1
+  while (addPeriods(due, tous, k) < today) k++
+  return addPeriods(due, tous, k)
+}
+
 export function closeInTexts(
   open: string,
   done: string,
@@ -2404,8 +2541,22 @@ export function closeInTexts(
   if (!m || m[1] !== ' ' || (m[2] ?? '') !== task.label) {
     return { error: `« ${clip(task.label, 60)} » a bougé dans ROADMAP.md depuis l'affichage : rien n'a été écrit, réessaie.` }
   }
-  const fields = (m[3] ?? '').split('|').map(f => f.trim()).filter(f => f !== '' && !f.startsWith('attend:'))
+  const all = (m[3] ?? '').split('|').map(f => f.trim()).filter(f => f !== '')
+  // Une récurrente marquée faite se reconduit (#99) : l'occurrence part sous un numéro neuf, la ligne reste.
+  const recurring = kind === 'done' && task.tous !== undefined && task.due !== undefined
+  const fields = all.filter(f => !f.startsWith('attend:') && !(recurring && /^(tous|relance|src|id):/.test(f)))
   let id = task.id
+  let kept: string | undefined
+  if (recurring) {
+    // Une récurrente sans numéro en reçoit un : son occurrence doit pouvoir la citer.
+    const own = task.id ?? String(nextFreeId(open, done))
+    id = String(Number(own) >= nextFreeId(open, done) ? Number(own) + 1 : nextFreeId(open, done))
+    fields.splice(1, 0, `id:${id}`, `src:#${own}`)
+    const due = nextDue(task.due as string, task.tous as Recurrence, moment.slice(0, 10))
+    const keptFields = all.filter(f => !f.startsWith('relance:')).map(f => (f.startsWith('due:') ? `due:${due}` : f))
+    if (task.id === undefined) keptFields.splice(1, 0, `id:${own}`)
+    kept = `- [ ] ${task.label} \`[${keptFields.join(' | ')}]\`${(m[4] ?? '').trim() !== '' ? ` ${(m[4] ?? '').trim()}` : ''}`
+  }
   if (id === undefined) {
     id = String(nextFreeId(open, done))
     fields.splice(1, 0, `id:${id}`)
@@ -2428,7 +2579,8 @@ export function closeInTexts(
   if (heads.length !== 1) return { error: `ROADMAP-fait.md : section « ## Fait » trouvée ${heads.length} fois, attendue 1 : rien n'a été écrit.` }
   const cut = (heads[0]?.index ?? 0) + '## Fait'.length
   const rest = done.slice(cut).replace(/^\n+/, '')
-  lines.splice(at, 1)
+  if (kept !== undefined) lines.splice(at, 1, kept)
+  else lines.splice(at, 1)
   return { open: lines.join('\n'), done: `${done.slice(0, cut)}\n\n${line}\n${rest}`, line, id }
 }
 

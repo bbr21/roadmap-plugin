@@ -214,6 +214,13 @@ import {
   forbiddenGit,
   guardText,
   type GitHit,
+  isToday,
+  todaySections,
+  isDueSoon,
+  isToRelaunch,
+  waitDays,
+  matchesWho,
+  peopleOf,
 } from './parse'
 
 const PANE = 'roadmap'
@@ -333,8 +340,9 @@ const UNKNOWN_MAX_MS = 12 * 3_600_000
  */
 const VIEW: View = {
   axis: 'all',
-  // `auto` : les tâches en cours s'il y en a, sinon toutes ; un clic sur un filtre le remplace.
+  // `auto` : en mode Projet, Ma journée (#99) ; sinon les tâches en cours s'il y en a, sinon toutes ; un clic sur un filtre le remplace.
   attend: 'auto',
+  who: 'all',
   showDone: false,
   // `auto` : les ouvertes par sujet, les faites par jour ; un clic sur « Par jour / Par sujet » vaut pour toutes les vues.
   groupBy: 'auto',
@@ -2195,7 +2203,9 @@ async function closeTask(
     )
     if (out.exitCode !== 0) return { error: `cowork.py a refusé, rien n'a été écrit : ${lastLine(out.stderr || out.stdout)}` }
     // Le numéro sur la ligne close qu'imprime cowork.py, pas dans les avertissements qui la précèdent.
-    return { id: /- \[x\][^\n]*\bid:(\d+)/.exec(out.stdout)?.[1] ?? task.id }
+    const id = /- \[x\][^\n]*\bid:(\d+)/.exec(out.stdout)?.[1] ?? task.id
+    // cowork.py ne connaît pas `tous:` (#99) : il ferme la récurrente, et le panneau le dit.
+    return task.tous !== undefined && !abandon ? { id, note: 'récurrence non reconduite par cowork.py' } : { id }
   }
   const config = bilanConfigFor(await readOr($, `${source.dir}/cowork.json`))
   if (!isInsideRelative(config.log)) return { error: `Le journal des bilans « ${config.log} » sort du dossier de la roadmap : rien n'a été écrit.` }
@@ -2261,7 +2271,7 @@ async function confirmClose($: EngineInterface, source: Source, task: Task, kind
     await setView($, () => ({ cancelAsk: '', cancelNote: out.note ?? '', selected: out.id ? `id:${out.id}` : '' }))
     await update($, retryAtom, v => v + 1)
     try {
-      $.ui.toast(`${out.id ? `#${out.id} ` : 'Tâche '}${kind === 'abandon' ? 'annulée' : 'faite'}`)
+      $.ui.toast(`${out.id ? `#${out.id} ` : 'Tâche '}${kind === 'abandon' ? 'annulée' : 'faite'}${out.note ? ` : ${out.note}` : ''}`)
     } catch {
       // pas de toast sur cette surface : le détail le montre
     }
@@ -2289,8 +2299,11 @@ async function openFile($: EngineInterface, path: string, line?: number): Promis
 }
 
 // Les filtres d'axe, partagés par la légende et la barre. Un filtre change : les sections se rouvrent.
+/** Mode Projet (#99) : un clic sur un axe garde le compteur ou l'état choisi, pour les combiner ; posé à chaque dessin. */
+let axisKeepsState = false
+
 function pressAxis($: EngineInterface, a: string): void {
-  void setView($, v => ({ axis: v.axis === a ? 'all' : a, attend: 'all', showDone: false, closedGroups: [], moreGroups: [] }))
+  void setView($, v => ({ axis: v.axis === a ? 'all' : a, attend: axisKeepsState ? v.attend : 'all', showDone: false, closedGroups: [], moreGroups: [] }))
 }
 
 function pressDone($: EngineInterface): void {
@@ -2867,6 +2880,8 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   const resolved = $.ui.resolve(e)
   // Le champ de saisie n'existe pas sur toutes les surfaces : sans lui, pas de consigne.
   const Input = 'Input' in resolved ? resolved.Input : undefined
+  // Le choix de « Qui » (#99) ; sans lui (l'application mobile), un bouton qui passe au nom suivant.
+  const Select = e.surface !== 'mobile' && 'Select' in resolved ? resolved.Select : undefined
   const SvgEl = e.surface === 'terminal' ? undefined : $.ui.resolve(e).Svg
   // Les coins arrondis d'une Box à fond : quatre masques de la couleur qui l'entoure, posés dans
   // ses coins (une Box n'a pas d'arrondi). Rien au terminal.
@@ -2914,7 +2929,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     read($, viewAtom), read($, searchAtom), read($, titleNoteAtom), read($, zoneGenAtom), $.clock.now(), read($, scanNoteAtom),
   ])
   const {
-    axis: axisRaw, attend: attendRaw, showDone, groupBy, selected, openGroups, closedGroups, moreGroups,
+    axis: axisRaw, attend: attendRaw, who: whoRaw = 'all', showDone, groupBy, selected, openGroups, closedGroups, moreGroups,
     launchNote, launched, openNote, conclusionOpen, cancelAsk = '', closeKind = 'abandon', cancelNote = '',
   } = view
   const data = await paneData($, source, [stamp, titlesVersion, themeStamp, retry, liveVersion].join('|'))
@@ -3101,9 +3116,11 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     )
   }
   // Une pastille du détail : grise (date relative), rouge (retard, horloge) ou violette (tiers, personne).
-  const tag = (text: string, kind: 'soft' | 'late' | 'wait') =>
+  const tag = (text: string, kind: 'soft' | 'late' | 'soon' | 'wait') =>
     kind === 'late'
       ? drawnPill({ text, bg: palette.lateTint, fg: palette.lateOn, mark: 'clock', height: 20 })
+      : kind === 'soon'
+        ? drawnPill({ text, bg: palette.blockTint, fg: palette.blockOn, height: 20 })
       : kind === 'wait'
         ? drawnPill({ text, bg: palette.waitTint, fg: palette.waitOn, mark: 'person', height: 20 })
         : drawnPill({ text, bg: palette.sel, fg: palette.text2, height: 20, weight: 500 })
@@ -3453,7 +3470,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
             current.due !== undefined && (
               <Box flexDirection="row" alignItems="center" gap={1}>
                 {strong(frDate(current.due))}
-                {due && tag(due.text, due.late ? 'late' : 'soft')}
+                {due && current.due && tag(due.text, due.late ? 'late' : isDueSoon(current, today) ? 'soon' : 'soft')}
               </Box>
             ),
           )}
@@ -3663,7 +3680,18 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   const total = openTasks.length + doneTasks.length
   const pct = (n: number, of: number) => (of === 0 ? 0 : Math.round((n * 100) / of))
 
-  const inAxis = openTasks.filter(t => matches(t, axis, 'all', me))
+  // Mode Projet (#99) : Ma journée à l'ouverture, quatre compteurs d'urgence, et le filtre « Qui ».
+  const { mode, vue, relanceDays } = projectSettings(source)
+  const projet = mode === 'projet'
+  axisKeepsState = projet
+  const people = projet ? peopleOf(openTasks.filter(t => matches(t, axis, 'all', me)), me) : []
+  // Une personne qui n'est plus dans la vue (un autre axe choisi) : tout le monde.
+  const who = projet && people.includes(whoRaw) ? whoRaw : 'all'
+  // Les compteurs et les états comptent la vue : l'axe et la personne choisis.
+  const inAxis = openTasks.filter(t => matches(t, axis, 'all', me) && matchesWho(t, who, me))
+  const todayAll = inAxis.filter(t => isToday(t, today, me))
+  const soonAll = inAxis.filter(t => isDueSoon(t, today))
+  const relaunchAll = inAxis.filter(t => isToRelaunch(t, today, me, relanceDays))
   const lateAll = inAxis.filter(t => isOverdue(t, today))
   const recentAll = inAxis.filter(t => isRecent(t, today))
   // « En cours » : les tâches qu'une session travaille (roue, ou main quand elle t'attend) et
@@ -3674,15 +3702,22 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   // « Retours » : les tâches nées d'un retour de l'app, ou qui en ont reçu.
   const feedbackAll = inAxis.filter(t => t.feedback !== undefined)
   // Par défaut, les tâches en cours ; aucune en cours, toutes.
-  const attend = attendRaw === 'auto' ? (liveAll.length > 0 ? 'live' : 'all') : attendRaw
+  const attend = attendRaw === 'auto' ? (projet ? 'today' : liveAll.length > 0 ? 'live' : 'all') : attendRaw
   const mineCount = inAxis.filter(t => isMine(t, me)).length
   const thirdParties = countBy(inAxis.filter(t => !isMine(t, me)), t => (t.attend === undefined ? undefined : attendWho(t.attend)))
   const tierChosen = thirdParties.some(([who]) => who === attend)
-  const showThirdParties = !showDone && (attend === 'others' || tierChosen)
+  // En mode Projet, « Qui » remplace la liste des tiers.
+  const showThirdParties = !projet && !showDone && (attend === 'others' || tierChosen)
 
   const shown =
     attend === 'late'
       ? lateAll
+      : attend === 'today'
+        ? todayAll
+        : attend === 'soon'
+          ? soonAll
+          : attend === 'relaunch'
+            ? relaunchAll
       : attend === 'recent'
         ? recentAll
         : attend === 'live'
@@ -3691,8 +3726,8 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
             ? prioAll
             : attend === 'feedback'
               ? feedbackAll
-              : openTasks.filter(t => matches(t, axis, attend, me))
-  const filtered = axis !== 'all' || attend !== 'all' || showDone || searching
+              : openTasks.filter(t => matches(t, axis, attend, me) && matchesWho(t, who, me))
+  const filtered = axis !== 'all' || attend !== 'all' || who !== 'all' || showDone || searching
   const unsorted = shown.filter(t => attend === 'late' || !isOverdue(t, today))
   const late = sortTasks(shown.filter(t => isOverdue(t, today)), sortOrder)
   // Titres en cours : tant qu'aucune tâche ouverte n'a son titre court (premier calcul), les
@@ -3707,7 +3742,6 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   const groupOf = (t: Task) => subjectOf(headOf(t))
   // Par jour ou par sujet, le même choix dans toutes les vues ; en mode Projet, aussi par échéance,
   // par responsable ou en arbre, et la vue du projet à l'ouverture (#76).
-  const { mode, vue } = projectSettings(source)
   const by = groupingOf(groupBy, showDone, vue, mode)
   // Seules les ouvertes rangées par sujet ont des sections de sujet.
   const subjects: [string, number][] = by === 'subject' ? countBy(unsorted, groupOf) : []
@@ -3725,7 +3759,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     void setView($, () => ({ attend: attend === v ? back : v, showDone: false, closedGroups: [], moreGroups: [] }))
   }
   const showAll = () => {
-    void setView($, () => ({ axis: 'all', attend: 'all', showDone: false, closedGroups: [], moreGroups: [] }))
+    void setView($, () => ({ axis: 'all', attend: 'all', who: 'all', showDone: false, closedGroups: [], moreGroups: [] }))
   }
   // Sous un filtre tout est déplié et l'on replie ; sans filtre tout est replié et l'on déplie.
   const isOpenGroup = (name: string) => (filtered ? !closedGroups.includes(name) : openGroups.includes(name))
@@ -3790,7 +3824,13 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   const pillColors: Record<Pill['kind'], { bg: string; fg: string; strong: boolean }> = {
     late: { bg: palette.lateTint, fg: palette.lateOn, strong: true },
     due: { bg: palette.sel, fg: palette.text2, strong: false },
+    // Dans les 7 jours (#99) : orange.
+    soon: { bg: palette.blockTint, fg: palette.blockOn, strong: true },
+    recur: { bg: palette.sel, fg: palette.text2, strong: false },
     wait: { bg: palette.waitTint, fg: palette.waitOn, strong: true },
+    // Une attente qui dort (#99) : orange à 7 jours, rouge à 14.
+    waitAging: { bg: palette.blockTint, fg: palette.blockOn, strong: true },
+    waitOld: { bg: palette.lateTint, fg: palette.lateOn, strong: true },
     stale: { bg: palette.sel, fg: palette.text2, strong: false },
     // Le responsable quand ce n'est pas moi (#76) : la teinte d'une attente, sans gras.
     owner: { bg: palette.waitTint, fg: palette.waitOn, strong: false },
@@ -3821,7 +3861,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
 
   const rowPill = (p: Pill) => {
     const c = pillColors[p.kind]
-    const mark: PillMark | undefined = p.kind === 'late' ? 'clock' : p.kind === 'wait' || p.kind === 'owner' ? 'person' : undefined
+    const mark: PillMark | undefined = p.kind === 'late' ? 'clock' : p.kind === 'wait' || p.kind === 'waitAging' || p.kind === 'waitOld' || p.kind === 'owner' ? 'person' : undefined
     return drawnPill({ text: p.text, bg: c.bg, fg: c.fg, ...(mark ? { mark } : {}), weight: c.strong ? 600 : 500 })
   }
 
@@ -4021,6 +4061,16 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     ? by === 'subject'
       ? doneBySubject()
       : doneByDay(doneShown, today).map(day => ({ name: day.label, tasks: day.tasks }))
+    : attend === 'relaunch'
+    ? // À relancer (#99) : les attentes les plus vieilles en haut.
+      [{ name: 'À relancer', tasks: [...shown].sort((x, y) => (waitDays(y, today, me) ?? 0) - (waitDays(x, today, me) ?? 0)) }]
+    : attend === 'today'
+    ? // Ma journée (#99) : ses quatre sections, dans l'ordre, chaque tâche une fois.
+      todaySections(sortTasks(shown, sortOrder), today, me).map(g => ({
+        name: g.label,
+        tasks: g.tasks,
+        ...(g.label === 'En retard' ? { lead: icon(discIcon(palette.late), 'en retard', 16, '●', 'error') } : {}),
+      }))
     : [
         ...(attend !== 'late' && by !== 'tree' && late.length > 0
           ? [{ name: 'En retard', tasks: late, lead: icon(discIcon(palette.late), 'en retard', 16, '●', 'error') }]
@@ -4097,9 +4147,81 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
       mark: (d: boolean) => tallIcon(fade(halfDiscIcon(palette.wait), d), 'attend un tiers', 16, '◐', 'permission'),
     },
   ]
+  // Mode Projet (#99) : les quatre compteurs d'urgence, en couleur pleine même non choisis.
+  const counters = [
+    { key: 'today', name: 'Ma journée', n: todayAll.length, bg: palette.liveTint, fg: palette.liveOn },
+    { key: 'late', name: 'En retard', n: lateAll.length, bg: palette.lateTint, fg: palette.lateOn },
+    { key: 'soon', name: 'Cette semaine', n: soonAll.length, bg: palette.blockTint, fg: palette.blockOn },
+    { key: 'relaunch', name: 'À relancer', n: relaunchAll.length, bg: palette.waitTint, fg: palette.waitOn },
+  ]
+  // Les autres états, en petite ligne, dans l'ordre de la maquette A.
+  const smallOrder = ['prio', 'mine', 'others', 'recent', 'live', 'feedback']
+  const smallStates = smallOrder.flatMap(k => states.filter(st => st.key === k && st.n > 0))
+  const WHO_ALL = 'Tout le monde'
+  const whoLabel = who === 'all' ? WHO_ALL : who
+  const setWho = (v: string) => void setView($, () => ({ who: v === WHO_ALL ? 'all' : v, closedGroups: [], moreGroups: [] }))
+  const whoOptions = [WHO_ALL, ...people]
+  const urgency = (
+    <Box flexDirection="column" gap="sm">
+      <Box flexDirection="row" gap={1}>
+        {counters.map(c => {
+          const zero = c.n === 0
+          const on = !showDone && attend === c.key
+          if (!graphic) {
+            return zero ? (
+              <Text key={`count:${c.key}`} color={palette.text3}>{`${c.name} 0`}</Text>
+            ) : (
+              <Button key={`attend:${c.key}`} plain dimColor={anyState && !on} label={`${c.name} ${c.n}`} onPress={setAttend(c.key)} />
+            )
+          }
+          return (
+            <Box
+              key={`hit:attend:${c.key}`}
+              flexDirection="column"
+              flexGrow={1}
+              minWidth={0}
+              paddingX={1}
+              paddingY="xs"
+              backgroundColor={zero ? palette.sel : c.bg}
+              borderStyle={on ? 'round' : undefined}
+              borderColor={on ? c.fg : undefined}
+            >
+              <Text key={`count:${c.key}`} size="title" weight="semibold" tabular color={zero ? palette.text3 : c.fg}>
+                {String(c.n)}
+              </Text>
+              <Text size="caption" color={zero ? palette.text3 : c.fg} wrap="truncate-end">
+                {c.name}
+              </Text>
+              {!zero && hit(`attend:${c.key}`, setAttend(c.key))}
+            </Box>
+          )
+        })}
+      </Box>
+      <Box flexDirection="row" alignItems="center" gap={2} paddingX={1}>
+        <Box flexDirection="row" alignItems="center" gap={2} flexShrink={1} minWidth={0} flexWrap="wrap">
+          {smallStates.map(st => (
+            <Button key={`attend:${st.key}`} plain dimColor={anyState && !stateOn(st.key)} label={`${st.name} ${st.n}`} onPress={setAttend(st.key)} />
+          ))}
+        </Box>
+        <Box flexGrow={1} />
+        {people.length > 0 &&
+          (Select ? (
+            <Select key="who" options={whoOptions.map(value => ({ value }))} value={whoLabel} onSelect={(v: string) => setWho(v)} />
+          ) : (
+            <Button
+              key="who"
+              plain
+              label={`Qui : ${whoLabel} ▸`}
+              onPress={() => setWho(whoOptions[(whoOptions.indexOf(whoLabel) + 1) % whoOptions.length] ?? WHO_ALL)}
+            />
+          ))}
+      </Box>
+    </Box>
+  )
   // Les zones de clic de ce dessin : légende et états, puis les en-têtes de section s'il reste de la place.
   if (graphic) sessionRows = new Set(doneTasks.filter(t => doneSessionOf(t) !== undefined).slice(0, SESSION_ROWS).map(taskKey))
-  const fixedZones = axes.length + 1 + states.filter(st => st.n > 0).length + 2 * sessionRows.size
+  // En mode Projet, seuls les compteurs non nuls ont une zone ; la petite ligne d'états, ce sont des boutons de l'app.
+  const fixedZones = axes.length + 1 + (projet && !showDone ? counters.filter(c => c.n > 0).length : states.filter(st => st.n > 0).length) + 2 * sessionRows.size
   if (graphic) {
     const shownWithSession = drawnTasks.filter(t => t.id && (liveOf(t) ?? doneSessionOf(t)))
     numberZones = new Set(shownWithSession.slice(0, Math.max(0, ZONE_LIMIT - fixedZones)).map(t => t.id as string))
@@ -4182,6 +4304,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
         })}
       </Box>
 
+      {projet && !showDone ? urgency : (
       <Box flexDirection="column">
         {states
           .filter(st => st.n > 0)
@@ -4246,6 +4369,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
           </Box>
         )}
       </Box>
+      )}
 
       <Box flexDirection="column" gap="sm">
         {Svg && <Svg source={ruleIcon(palette.border, wide)} alt="séparateur" height={1} />}
@@ -4253,7 +4377,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
           <Text color={palette.text2} wrap="truncate-end">
             {searching
               ? `${foundCount} résultat${foundCount > 1 ? 's' : ''}${foundCount > SEARCH_MAX ? ` (${SEARCH_MAX} affichés)` : ''}`
-              : filterSummary({ axis, attend, showDone, shown: shown.length, doneShown: doneShown.length, groupBy: by })}
+              : filterSummary({ axis, attend, showDone, shown: shown.length, doneShown: doneShown.length, groupBy: by, who })}
           </Text>
           <Box flexDirection="row" alignItems="center" gap={2} flexShrink={0}>
             {/* Un bouton de l'app, pas une zone de clic : il ne compte pas dans ZONE_LIMIT. */}
@@ -4287,7 +4411,9 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
       {titleNote !== '' && <Text color={palette.text2}>{titleNote}</Text>}
       {scanNote !== '' && <Text color={palette.text2}>{scanNote}</Text>}
       {searching && foundCount === 0 && <Text color={palette.text2}>Aucune tâche ne correspond.</Text>}
-      {!searching && !showDone && shown.length === 0 && <Text color={palette.text2}>Aucune tâche ouverte pour ce filtre.</Text>}
+      {!searching && !showDone && shown.length === 0 && (
+        <Text color={palette.text2}>{attend === 'today' ? "Rien d'urgent aujourd'hui." : 'Aucune tâche ouverte pour ce filtre.'}</Text>
+      )}
 
       <Box flexDirection="column">{groups.map(g => section(idOf(g), g.name, g.tasks, rowsOf.get(idOf(g)) ?? 0, g.lead, g.mark))}</Box>
     </Box>

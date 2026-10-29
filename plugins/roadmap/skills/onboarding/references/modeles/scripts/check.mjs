@@ -144,7 +144,7 @@ check('Grammaire de ROADMAP.md et ROADMAP-fait.md', (err) => {
   const axes = knownAxes();
   if (!axes.size) err(OPEN, 'liste des axes introuvable (puce « - **axe** »)');
   // Les clés que lit et contrôle le panneau Roadmap (plugin roadmap).
-  const keys = new Set(['id', 'qui', 'attend', 'resp', 'branche', 'verrou', 'ouvert', 'due', 'parent', 'après', 'prio', 'feedback', 'fait', 'spec', 'fiche', 'src']);
+  const keys = new Set(['id', 'qui', 'attend', 'resp', 'branche', 'verrou', 'ouvert', 'due', 'parent', 'après', 'prio', 'feedback', 'fait', 'spec', 'fiche', 'src', 'tous', 'relance']);
   const declared = declaredKeys();
   // id: unique sur les deux fichiers, gardé quand la ligne descend dans ROADMAP-fait.
   const ids = new Map();
@@ -192,9 +192,10 @@ check('Grammaire de ROADMAP.md et ROADMAP-fait.md', (err) => {
         if (!keys.has(key)) { err(at, `clé inconnue « ${key} » (${[...keys, ...declared.keys()].join(', ')})`); continue; }
         if (found.has(key)) err(at, `clé « ${key} » en double`);
         found.set(key, value.trim());
-        if ((key === 'ouvert' || key === 'due') && !isDate(value)) err(at, `${key}:${value} : date AAAA-MM-JJ attendue`);
+        if ((key === 'ouvert' || key === 'due' || key === 'relance') && !isDate(value)) err(at, `${key}:${value} : date AAAA-MM-JJ attendue`);
         if (key === 'fait' && !isDone(value)) err(at, `fait:${value} : date AAAA-MM-JJ (et heure HH:MM) attendue`);
         if (key === 'prio' && !/^[123]$/.test(value.trim())) err(at, `prio:${value} : 1, 2 ou 3 attendu`);
+        if (key === 'tous' && !['semaine', '2semaines', 'mois', 'trimestre', 'an'].includes(value.trim())) err(at, `tous:${value} : semaine, 2semaines, mois, trimestre ou an attendu`);
         // parent: le numéro de la tâche mère (#12 compris), ou - ; après: un libellé, ou des numéros séparés par des virgules, ou -.
         if (key === 'parent' && !/^(#?[1-9]\d*|-)$/.test(value.trim())) err(at, `parent:${value} : numéro de tâche, ou -, attendu`);
         // - ne dit « aucun » que pour parent: et après: ; un responsable est un nom.

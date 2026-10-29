@@ -33,6 +33,8 @@ export type View = {
   axis: string
   /** Filtre « attend » : `all`, `mine` (moi ou personne), `others`, `late`, ou un tiers (`Martial`…). */
   attend: string
+  /** Filtre « Qui » du mode Projet (#99) : `all`, ou une personne ; absent dans une vue d'avant, vaut `all`. */
+  who?: string
   /** Montrer les tasks faites (ROADMAP-fait.md). */
   showDone: boolean
   /**

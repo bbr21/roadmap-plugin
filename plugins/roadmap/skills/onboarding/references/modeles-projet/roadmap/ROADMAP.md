@@ -5,7 +5,7 @@ Les tâches de {{NOM}}, une ligne par tâche. Une tâche close part en tête de 
 ## Grammaire d'une ligne
 
 ```
-- [ ] <Verbe à l'infinitif + objet> `[axe | id:N | ouvert:AAAA-MM-JJ | due:AAAA-MM-JJ | resp:Nom | parent:N | après:N,M | attend:… | qui:… | prio:1 | fait:AAAA-MM-JJ | fiche:… | src:…{{CLES_GRAMMAIRE}}]`
+- [ ] <Verbe à l'infinitif + objet> `[axe | id:N | ouvert:AAAA-MM-JJ | due:AAAA-MM-JJ | resp:Nom | parent:N | après:N,M | attend:… | qui:… | prio:1 | tous:mois | relance:AAAA-MM-JJ | fait:AAAA-MM-JJ | fiche:… | src:…{{CLES_GRAMMAIRE}}]`
 ```
 
 - **axe** (premier champ, sans clé) : {{AXES}}.
@@ -15,6 +15,8 @@ Les tâches de {{NOM}}, une ligne par tâche. Une tâche close part en tête de 
 - **parent** : le numéro de la tâche mère (`12` ou `#12`), ou `-` si elle n'en a pas. **après** : les numéros des tâches à faire d'abord, séparés par des virgules, ou `-` si elle n'en a aucune ; le panneau Roadmap la bloque tant qu'une est ouverte.
 - **attend** : ce qui bloque, et qui doit agir. **qui** : la session qui tient la tâche.
 - **prio** : `1` (urgent), `2` (important) ou `3` (quand on a le temps).
+- **tous** : la tâche revient au calendrier, `semaine`, `2semaines`, `mois`, `trimestre` ou `an` ; `due:` dit sa prochaine occurrence. Cochée, elle se reconduit : l'occurrence part dans ROADMAP-fait sous un numéro neuf (`src:#N`), la ligne reste avec la `due:` suivante.
+- **relance** : la date de la dernière relance du tiers attendu (`attend:`) ; le panneau compte l'attente depuis elle, sinon depuis `ouvert:`.
 - **fiche** : document de contexte. **src** : d'où vient la tâche (email, réunion, note).{{CLES_PUCES}}
 - **fait** : date de clôture (et son heure, `fait:AAAA-MM-JJ HH:MM`), dans ROADMAP-fait seulement, suivie de ce qui a été fait.
 - Champs exigés sur chaque tâche ouverte : {{REQUIS}}. Le panneau Roadmap signale une ligne écrite sans eux.

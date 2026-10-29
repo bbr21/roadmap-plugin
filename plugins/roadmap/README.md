@@ -19,7 +19,7 @@ dans Cowork ni dans le chat de claude.ai.
 | `lot` | Tient une session Lot, l'orchestrateur d'un lot de tâches menées en parallèle : lignes et découpage, une session par tâche, lecture de leurs comptes rendus, main donnée sur le simulateur iOS et les autres ressources uniques, ordre des fusions montré en carte cliquable dans le chat (`scripts/etat_lot.py`, un bouton Fusionner par branche, texte en repli), une fusion à la fois. |
 
 Le panneau lit `ROADMAP.md` et `ROADMAP-fait.md` (grammaire des dossiers Cowork : une ligne par
-tâche, `[axe | attend:… | ouvert:… | due:… | src:… | fiche:… | après:… | prio:… | feedback:…]`), relit les fichiers et
+tâche, `[axe | attend:… | ouvert:… | due:… | src:… | fiche:… | après:… | prio:… | feedback:… | tous:… | relance:…]`), relit les fichiers et
 les sessions toutes les 3 s (le dossier de la roadmap toutes les 15 s), et montre :
 
 - la part faite, une barre par axe (cliquable), la légende des axes (filtre) ;
@@ -183,7 +183,21 @@ Premiers usages : la roadmap de Caro et le dossier AAFES Cowork, depuis l'onglet
   ouverte, jamais refusés ; le doctor compte les lignes incomplètes.
 - **Les tags d'un projet** : des clés déclarées dans `cles`, avec leurs valeurs admises ; le
   détail les montre, la recherche les lit.
-- **La vue** : le panneau s'ouvre par échéance (en retard, cette semaine, plus tard, sans
+- **Ma journée** (#99) : le panneau s'ouvre sur « Ma journée », les tâches à moi en retard, dues
+  aujourd'hui ou demain, en P1, ou récurrentes qui tombent dans les 2 jours, rangées dans cet ordre.
+  En tête, quatre compteurs en couleur pleine, cliquables : Ma journée (bleu), En retard (rouge),
+  Cette semaine (orange, échéance dans les 7 jours) et À relancer (violet, une attente de tiers sans
+  nouvelle depuis 14 jours, `"relance": N` dans `.claude/roadmap.json` pour un autre seuil). Les
+  autres états passent en une petite ligne ; le choix « Qui » se combine avec l'axe et le compteur,
+  et les compteurs suivent. La date d'une ligne est rouge en retard (« 23/10 · 6 j »), orange dans
+  les 7 jours, grise au-delà ; la pastille d'un tiers attendu dit son attente à partir de 7 jours
+  (« Rong · 16 j », orange, rouge à 14). « Tout afficher » revient à toutes les tâches.
+- **Récurrence et relance** (#99) : `tous:semaine|2semaines|mois|trimestre|an`, avec `due:` à la
+  prochaine occurrence (pastille « ↻ mensuel ») ; « Marquer faite » envoie l'occurrence dans
+  ROADMAP-fait sous un numéro neuf (`src:#N`) et avance `due:` d'une période, « Annuler la tâche »
+  arrête la récurrence ; `cowork.py` ne la reconduit pas encore, et le panneau le dit.
+  `relance:AAAA-MM-JJ` date la dernière relance du tiers attendu ; le brief demande de la poser.
+- **La vue** : hors de Ma journée, les tâches se rangent par échéance (en retard, cette semaine, plus tard, sans
   échéance) ; le bouton de rangement passe au responsable, à l'arbre des tâches (une section par
   tâche mère et son avancement), au sujet, au jour. Une pastille dit le responsable quand ce n'est
   pas « moi » ; « À moi » compte `resp:` ; le détail montre responsable, parent, sous-tâches,
@@ -415,6 +429,7 @@ claude plugin test plugins/roadmap
 
 ## Historique
 
+- **0.58.0 (2026-10-29)** : panneau : en mode Projet, le panneau s'ouvre sur Ma journée, avec quatre compteurs d'urgence (Ma journée, En retard, Cette semaine, À relancer), dates et attentes en couleur, filtre Qui combinable, récurrence tous: reconduite à la coche, date de relance relance: (#99)
 - **0.57.0 (2026-10-29)** : reglages-session : les réglages de session sont propres à chaque projet ; le volet montre ceux du projet où l'on est (Session · Roadmap), un On/Off par réglage, sans section Par défaut ; le bloc du démarrage et le rappel suivent le projet de la session (#102)
 - **0.56.0 (2026-10-29)** : onboarding : import d'une roadmap existante (checklist, CSV, Notion, tableau Markdown) par script, avec analyse, sauvegarde, numérotation et bilan sans ligne perdue ; verifier contrôle aussi ROADMAP-fait.md (#100)
 - **0.55.0 (2026-10-29)** : roadmap : prêt pour un nouvel utilisateur : nom et sources dans ~/.claude/roadmap-perso.json, textes neutres, onboarding et doctor posent le nom, dépôt public bbr21/roadmap-plugin (#79)
