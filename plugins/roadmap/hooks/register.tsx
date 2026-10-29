@@ -48,7 +48,7 @@ import {
   STROKE,
   type Palette,
 } from './icons'
-import { SETTINGS_PANE, drawSettings, openSettings, prefsFile, redrawSettings, watchSettings } from './reglages'
+import { SETTINGS_PANE, drawSettings, openSettings, prefsFile, redrawSettings, sessionProject, watchSettings } from './reglages'
 import {
   ageLabel,
   axisLabel,
@@ -2483,11 +2483,14 @@ async function readPerso($: EngineInterface): Promise<{ me: string[]; sources: S
   return perso
 }
 
-async function readSessionPrefs($: EngineInterface): Promise<{ prefs: SessionPrefs; error?: string }> {
+/** Les réglages de session du projet de la session (#102), et son nom pour le bloc du démarrage. */
+async function readSessionPrefs($: EngineInterface): Promise<{ prefs: SessionPrefs; error?: string; project?: string }> {
   await readPerso($)
   const file = await prefsFile($)
   const text = file && (await $.fs.exists(file.path)) ? await $.fs.read(file.path) : undefined
-  return sessionPrefs(text)
+  const project = await sessionProject($)
+  const read = sessionPrefs(text, project.key, project.home)
+  return project.name === undefined ? read : { ...read, project: project.name }
 }
 
 function openPane($: EngineInterface, source: Source) {
@@ -2590,14 +2593,14 @@ export const register: Register = (on, options) => {
     return next(e)
   })
 
-  // Réglages de session : injectés comme contexte additionnel au démarrage (startup, resume, clear,
-  // compact), quel que soit le projet, roadmap ou non. Une panne de lecture ne bloque jamais le démarrage.
+  // Réglages de session : ceux du projet de la session (#102), injectés comme contexte additionnel au
+  // démarrage (startup, resume, clear, compact), dans tout projet, roadmap ou non. Une panne de lecture ne bloque jamais le démarrage.
   on('classic.SessionStart', async ($, e, next) => {
     const result = await next(e)
     let text: string | undefined
     try {
-      const { prefs, error } = await readSessionPrefs($)
-      text = sessionPrefsText(prefs, error)
+      const { prefs, error, project } = await readSessionPrefs($)
+      text = sessionPrefsText(prefs, error, project)
     } catch {
       text = undefined
     }

@@ -15,7 +15,7 @@ dans Cowork ni dans le chat de claude.ai.
 | `roadmap-panel` | Branche un projet sur le panneau (`.claude/roadmap.json`, `ROADMAP.md` à la racine) et le dépanne. Tapée seule, `/roadmap:roadmap-panel` ouvre le panneau comme `/roadmap`, d'une ligne. |
 | `onboarding` | Mode Code : pose dans un dépôt de code la structure de Splitmybill (CLAUDE.md, roadmap numérotée dans `roadmap/` avec ses bilans, docs, `check.mjs`, hook de démarrage, worktree par session), propose de reconstituer la roadmap depuis l'historique du dépôt (PR, fusions ou commits des 6 derniers mois), ou remet un projet existant au format sans rien écraser. Mode Projet : un dossier simple, git en option, des tâches complètes. |
 | `doctor` | Checklist en lecture seule d'un projet (en mode Projet : python3, roadmap, réglages, champs exigés, sans GitHub, Superpowers facultatif) ; d'un projet de code : outils, GitHub, roadmap, structure, `check.mjs`, plugin roadmap, Superpowers et chacune de ses skills de méthode, sa mise à jour automatique, `swiftui-pro` sur un projet iOS ; une ligne OK, KO ou À voir avec la commande qui corrige. |
-| `reglages-session` | Lit et change les réglages de session (questions par formulaire, mode ADHD, français, mode autonome) de `~/.claude/reglages-session.json`, pour toutes les sessions. Lancée, elle ouvre aussi le volet Réglages ; tapée seule, `/roadmap:reglages-session` l'ouvre comme `/reglages`, d'une ligne. |
+| `reglages-session` | Lit et change les réglages de session (questions par formulaire, mode ADHD, français, mode autonome) de `~/.claude/reglages-session.json`, pour le projet de la session (#102). Lancée, elle ouvre aussi le volet Réglages ; tapée seule, `/roadmap:reglages-session` l'ouvre comme `/reglages`, d'une ligne. |
 | `lot` | Tient une session Lot, l'orchestrateur d'un lot de tâches menées en parallèle : lignes et découpage, une session par tâche, lecture de leurs comptes rendus, main donnée sur le simulateur iOS et les autres ressources uniques, ordre des fusions montré en carte cliquable dans le chat (`scripts/etat_lot.py`, un bouton Fusionner par branche, texte en repli), une fusion à la fois. |
 
 Le panneau lit `ROADMAP.md` et `ROADMAP-fait.md` (grammaire des dossiers Cowork : une ligne par
@@ -332,9 +332,12 @@ volet navigateur. `autonome` ne s'y applique pas. Sous un Lot, la sous-session �
 maquettes dans une page, dit « attend une réponse : choix de maquette » et le Lot les montre à
 Bertrand.
 
-Sans fichier, les trois premiers sont allumés et `autonome` est éteint. Chaque réglage vaut pour
-toutes les sessions : plus d'exception par projet depuis #91 (29/10/2026), un ancien `projets` est
-ignoré. Un fichier illisible laisse les réglages par défaut et le dit. La skill `reglages-session` les lit et les change.
+Sans fichier, les trois premiers sont allumés et `autonome` est éteint. Depuis #102 (29/10/2026,
+« quand je suis dans Roadmap, je veux des réglages potentiellement différents de Splitmybill »),
+chaque projet a les siens : un bloc par projet sous `projets`, sa clé le dossier principal du
+dépôt (un worktree compte pour son projet), en `~/`. Un projet sans bloc prend les clés du haut du
+fichier, sinon les valeurs par défaut ; le dossier personnel n'est pas un projet. Un fichier
+illisible laisse les réglages par défaut et le dit. La skill `reglages-session` les lit et les change.
 
 ### Le volet Réglages
 
@@ -347,7 +350,9 @@ de la barre du panneau et la skill `reglages-session` l'ouvrent aussi.
   côte à côte, « On » et « Off », le choix actif en bouton principal ; un clic sur l'autre change
   la valeur, un clic sur l'actif ne fait rien. L'explication de la ligne s'affiche quand le
   pointeur la survole (toujours affichée sur l'application mobile, sans pointeur).
-- **Session** : les quatre réglages de session, pour toutes les sessions. Le volet relit le
+- **Session · <projet>** : les quatre réglages de session du projet où l'on est, son nom dans le
+  titre (« Session » seul hors projet) ; un clic change ce projet seulement (#102), sans section
+  « Par défaut », écartée par Bertrand (« le projet c'est le projet »). Le volet relit le
   fichier avant chaque écriture et garde tout ce qu'il ne touche pas ; un fichier illisible n'est
   jamais réécrit. Il suit aussi le fichier écrit ailleurs (la skill, une autre session) : il le
   relit toutes les 2 s tant qu'il est ouvert. Un changement vaut pour les sessions ouvertes
@@ -410,6 +415,7 @@ claude plugin test plugins/roadmap
 
 ## Historique
 
+- **0.57.0 (2026-10-29)** : reglages-session : les réglages de session sont propres à chaque projet ; le volet montre ceux du projet où l'on est (Session · Roadmap), un On/Off par réglage, sans section Par défaut ; le bloc du démarrage et le rappel suivent le projet de la session (#102)
 - **0.56.0 (2026-10-29)** : onboarding : import d'une roadmap existante (checklist, CSV, Notion, tableau Markdown) par script, avec analyse, sauvegarde, numérotation et bilan sans ligne perdue ; verifier contrôle aussi ROADMAP-fait.md (#100)
 - **0.55.0 (2026-10-29)** : roadmap : prêt pour un nouvel utilisateur : nom et sources dans ~/.claude/roadmap-perso.json, textes neutres, onboarding et doctor posent le nom, dépôt public bbr21/roadmap-plugin (#79)
 - **0.54.0 (2026-10-29)** : roadmap : l'archivage d'une session attend la ligne de rangement réglée par projet (rangement dans .claude/roadmap.json, #101)

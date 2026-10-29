@@ -1,6 +1,6 @@
 ---
 name: reglages-session
-description: "Lit et change les réglages de session que le plugin roadmap injecte au démarrage de chaque session : questions par le formulaire AskUserQuestion, mode ADHD (une ligne d'étape en tête de chaque message, réponses courtes), réponses en français, et mode autonome (mode Code, éteint par défaut : Claude suit sa recommandation sauf question d'architecture, Maestro fusionne seul une branche prête). Les allume ou les éteint, pour toutes les sessions, dans ~/.claude/reglages-session.json, et répare ce fichier s'il est illisible. Ouvre aussi le volet Réglages (/reglages). Déclenche sur « mes réglages de session », « coupe le mode ADHD », « arrête les questions en formulaire », « réponds en anglais », « mets Maestro en autonome », « coupe l'autonomie », « quels réglages sont allumés », « mes réglages sont illisibles ». Pas pour les options du panneau (me, autoOpen, theme, launchBypass…), changées dans ce volet ou le menu du plugin, ni pour les règles d'un projet, qui vivent dans son CLAUDE.md."
+description: "Lit et change les réglages de session que le plugin roadmap injecte au démarrage de chaque session : questions par le formulaire AskUserQuestion, mode ADHD (une ligne d'étape en tête de chaque message, réponses courtes), réponses en français, et mode autonome (mode Code, éteint par défaut : Claude suit sa recommandation sauf question d'architecture, Maestro fusionne seul une branche prête). Les allume ou les éteint pour le projet de la session, chacun les siens, dans ~/.claude/reglages-session.json, et répare ce fichier s'il est illisible. Ouvre aussi le volet Réglages (/reglages). Déclenche sur « mes réglages de session », « coupe le mode ADHD », « arrête les questions en formulaire », « réponds en anglais », « mets Maestro en autonome », « coupe l'autonomie », « quels réglages sont allumés », « mes réglages sont illisibles ». Pas pour les options du panneau (me, autoOpen, theme, launchBypass…), changées dans ce volet ou le menu du plugin, ni pour les règles d'un projet, qui vivent dans son CLAUDE.md."
 ---
 
 # Réglages de session
@@ -25,7 +25,8 @@ texte à coller. Ce n'est pas un réglage : elle ne s'éteint pas. Seule sa conf
 ## Le volet Réglages
 
 `/reglages`, le bouton « Réglages » du panneau Roadmap, et cette skill quand elle est lancée
-ouvrent le volet du plugin : chaque réglage de session avec On et Off côte à côte, puis les
+ouvrent le volet du plugin : chaque réglage de session du projet où l'on est (son nom dans le
+titre du groupe, « Session · Roadmap ») avec On et Off côte à côte, puis les
 options du panneau ; l'explication d'une ligne s'affiche au survol. L'utilisateur y change un réglage d'un clic ; le volet suit aussi le fichier quand
 cette skill l'écrit. Après un changement fait ici, dis-lui que le volet le montre. Tapée seule,
 `/roadmap:reglages-session` ouvre le volet, d'une ligne, sans dérouler la skill.
@@ -34,33 +35,37 @@ cette skill l'écrit. Après un changement fait ici, dis-lui que le volet le mon
 
 ```json
 {
-  "questions": true,
-  "adhd": true,
-  "francais": true,
-  "autonome": true
+  "autonome": true,
+  "projets": {
+    "~/Projects/Roadmap": { "adhd": false },
+    "~/Projects/Splitmybill": { "autonome": false }
+  }
 }
 ```
 
-- Une clé absente vaut `true`, sauf `autonome`, qui vaut `false` ; une valeur qui n'est pas `true`
-  ou `false` est ignorée.
-- Une seule valeur par réglage, pour toutes les sessions : plus d'exception par projet (#91,
-  2026-10-29). Un ancien `projets` est ignoré ; ne le recrée pas.
+- Chaque projet a ses réglages (#102, 2026-10-29) : son bloc sous `projets`, de clé le dossier
+  principal du dépôt en `~/` (un worktree compte pour son projet : prends le premier `worktree` de
+  `git worktree list --porcelain`). Un bloc ne porte que les réglages changés dans ce projet.
+- Un réglage absent du bloc prend la clé du haut du fichier, sinon son défaut : `true`, sauf
+  `autonome`, qui vaut `false`. Une valeur qui n'est pas `true` ou `false` est ignorée.
+- Hors dépôt git, le projet est le dossier de la session. Le dossier personnel ou `/` n'est pas
+  un projet : seules les clés du haut comptent, et elles valent aussi pour les projets sans bloc.
+- Deux blocs du même dossier (`~/…` et absolu) : le dernier l'emporte ; n'en crée pas un second.
 - Fichier illisible (JSON cassé) : les valeurs par défaut s'appliquent (`autonome` éteint) et la
   session le dit.
 
 ## Lire
 
 Lis le fichier (`cat ~/.claude/reglages-session.json`) ; absent, tout est allumé sauf `autonome`.
-Montre l'état en quatre lignes, une par réglage.
+Montre l'état du projet de la session en quatre lignes, une par réglage, son nom en tête.
 
 ## Changer
 
 1. Ce qu'il faut changer est clair (« coupe le mode ADHD ») : fais-le sans demander. Sinon,
    pose la question par AskUserQuestion, selon le réglage `questions` ci-dessus : une question à
-   choix multiples « Quels réglages garder allumés ? ». Une demande « pour ce projet » : dis
-   que les réglages valent pour toutes les sessions, et qu'une règle propre à un projet va dans
-   son `CLAUDE.md`.
-2. Écris le fichier en JSON valide, en gardant ce qui n'est pas touché.
+   choix multiples « Quels réglages garder allumés ? ». Le changement vaut pour le projet de
+   la session ; une demande pour un autre projet : son bloc ; « partout » : la clé du haut et la même clé dans chaque bloc qui la porte.
+2. Écris le fichier en JSON valide, dans le bloc du projet, en gardant ce qui n'est pas touché.
 3. Relis-le : `python3 -c "import json,os;print(json.load(open(os.path.expanduser('~/.claude/reglages-session.json'))))"`.
 4. Dis que le changement vaut pour les sessions ouvertes après (ou après `/clear`), et applique-le
    tout de suite dans la conversation en cours.

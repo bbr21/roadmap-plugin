@@ -2672,11 +2672,13 @@ export function zoneReload(w: ZoneWatch, now: number): boolean {
   return true
 }
 
-// Réglages de session (2026-10-23) : ce que Bertrand veut dans chaque session, quel que soit le
-// projet, lu dans ~/.claude/reglages-session.json et injecté au démarrage. Sans fichier, tout est
-// allumé, sauf `autonome` (#77) : un nouvel utilisateur ne fusionne pas seul sans l'avoir choisi.
-// Une valeur qui n'est pas un booléen est ignorée ; un projet (chemin absolu ou en ~/) change un
-// réglage pour lui et ses sous-dossiers, le plus précis l'emportant.
+// Réglages de session (2026-10-23) : ce que Bertrand veut dans ses sessions, lu dans
+// ~/.claude/reglages-session.json et injecté au démarrage. Sans fichier, tout est allumé, sauf
+// `autonome` (#77) : un nouvel utilisateur ne fusionne pas seul sans l'avoir choisi. Une valeur qui
+// n'est pas un booléen est ignorée.
+// #102 (Bertrand, 2026-10-29) : les réglages sont propres à chaque projet. Un bloc de `projets`
+// (clé : le dossier principal du projet, en ~/ ou absolu) l'emporte, pour ce dossier exactement ;
+// sans bloc, les clés du haut, sinon les défauts. Le volet ne montre que le projet où l'on est.
 
 export type SessionPrefs = { questions: boolean; adhd: boolean; francais: boolean; autonome: boolean }
 
@@ -2696,9 +2698,32 @@ function prefsOf(value: unknown): Partial<SessionPrefs> {
   return out
 }
 
-// #91 (Bertrand, 2026-10-29) : plus d'exception par projet, une seule valeur par réglage ; un ancien
-// `projets` dans le fichier n'est plus lu.
-export function sessionPrefs(text: string | undefined): { prefs: SessionPrefs; error?: string } {
+/** Un dossier de `projets` en chemin absolu, sans `/` final. */
+function projectDir(dir: string, home: string): string {
+  const abs = dir.startsWith('~/') ? `${home.replace(/\/+$/, '')}/${dir.slice(2)}` : dir
+  return abs.replace(/\/+$/, '')
+}
+
+/**
+ * La clé d'un projet sous `projets` : son dossier, en `~/` sous le dossier personnel. Rien pour le
+ * dossier personnel lui-même ou `/` : un bloc y vaudrait pour des sessions sans projet.
+ */
+export function projectKeyOf(dir: string, home: string): string | undefined {
+  const d = dir.replace(/\/+$/, '')
+  const h = home.replace(/\/+$/, '')
+  if (d === '' || d === h) return undefined
+  return h !== '' && d.startsWith(`${h}/`) ? `~/${d.slice(h.length + 1)}` : d
+}
+
+/** Les clés de `projets` qui désignent le dossier de `project`, dans l'ordre du fichier. */
+function projectEntries(raw: unknown, project: string | undefined, home: string): string[] {
+  const projets = objectOf(objectOf(raw)?.projets)
+  if (!projets || project === undefined) return []
+  const dir = projectDir(project, home)
+  return Object.keys(projets).filter(k => projectDir(k, home) === dir)
+}
+
+export function sessionPrefs(text: string | undefined, project?: string, home = ''): { prefs: SessionPrefs; error?: string } {
   const prefs: SessionPrefs = { ...DEFAULT_SESSION_PREFS }
   if (text === undefined) return { prefs }
   let raw: unknown
@@ -2708,6 +2733,7 @@ export function sessionPrefs(text: string | undefined): { prefs: SessionPrefs; e
     return { prefs, error: err instanceof Error ? err.message : String(err) }
   }
   Object.assign(prefs, prefsOf(raw))
+  for (const k of projectEntries(raw, project, home)) Object.assign(prefs, prefsOf(objectOf(objectOf(raw)?.projets)?.[k]))
   return { prefs }
 }
 
@@ -2728,7 +2754,7 @@ function mockupText(): string {
   return "- **Maquettes avant un choix visuel** (en mode Code comme en mode Projet) : tout choix dont le résultat se voit (en mode Code : un écran, une vue, un panneau, un volet, un composant, une mise en page, un graphique ; en mode Projet : la mise en page d'un document, d'un tableau ou d'une présentation) passe par 2 ou 3 maquettes simples, jamais par une description seule. Chacune a un parti net et son compromis, ta recommandation en premier ; " + person() + " choisit, et alors seulement tu codes ou tu décides. Prends le support le plus léger qui permet de décider : l'aperçu de chaque option du formulaire à choix (champ `preview`) pour un petit choix (une disposition, un ordre, un libellé) ; un widget de maquette (`mcp__visualize__show_widget`, module `mockup`, après `read_me`) pour un écran ou un panneau ; une page HTML statique ouverte dans le volet navigateur (`preview_start` avec son url `file://`) pour une interface riche ou qui se clique, posée dans le dossier du projet (hors de lui, le volet n'en montre qu'un instantané). Le réglage autonome ne s'y applique pas : un choix visuel revient à " + person() + ". Sans personne pour répondre, garde les maquettes dans le dossier du chantier, suis ta recommandation et dis-le. Pas pour un choix sans rendu (une règle, un format, un correctif de logique), ni pour un rendu déjà choisi sur maquette."
 }
 
-export function sessionPrefsText(prefs: SessionPrefs, error?: string): string {
+export function sessionPrefsText(prefs: SessionPrefs, error?: string, project?: string): string {
   const lines: string[] = []
   if (prefs.questions) {
     lines.push(
@@ -2754,7 +2780,7 @@ export function sessionPrefsText(prefs: SessionPrefs, error?: string): string {
   lines.push(mockupText())
   const broken = error === undefined ? [] : [`- Le fichier ${SESSION_PREFS_FILE} est illisible (${error}) : réglages par défaut. La skill reglages-session le répare.`]
   return [
-    `Réglages de session de ${person()} (plugin roadmap, ${SESSION_PREFS_FILE} ; la skill reglages-session les lit et les change). Ils valent pour toute la session, en plus des règles du projet ; une consigne de ${person()} dans la conversation l'emporte.`,
+    `Réglages de session de ${person()}${project === undefined ? '' : ` pour le projet ${project}`} (plugin roadmap, ${SESSION_PREFS_FILE} ; la skill reglages-session les lit et les change). Ils valent pour toute la session, en plus des règles du projet ; une consigne de ${person()} dans la conversation l'emporte.`,
     ...lines,
     ...broken,
   ].join('\n')
@@ -2791,22 +2817,34 @@ function objectOf(value: unknown): Record<string, unknown> | undefined {
 
 export type PrefRow = { key: PrefKey; value: boolean }
 
-/** Ce que montre le volet : la valeur de chaque réglage, dans son ordre ; les défauts si le fichier est illisible. */
-export function sessionPrefsView(text: string | undefined): { rows: PrefRow[]; error?: string } {
-  const { prefs, error } = sessionPrefs(text)
+/**
+ * Ce que montre le volet : la valeur de chaque réglage dans le projet (ou sans projet), dans son
+ * ordre ; les défauts si le fichier est illisible.
+ */
+export function sessionPrefsView(text: string | undefined, project?: string, home = ''): { rows: PrefRow[]; error?: string } {
+  const { prefs, error } = sessionPrefs(text, project, home)
   const rows = SESSION_PREF_INFO.map(({ key }): PrefRow => ({ key, value: prefs[key] }))
   return error === undefined ? { rows } : { rows, error }
 }
 
 /**
- * Le nouveau texte du fichier après un clic : la clé du réglage prend `value`, tout le reste reste tel
- * quel, dans son ordre (un ancien `projets` compris). Lève si `text` n'est pas du JSON lisible : le
- * volet n'écrase jamais un fichier qu'il ne comprend pas.
+ * Le nouveau texte du fichier après un clic : la clé du réglage prend `value` dans le bloc du projet
+ * (le dernier bloc du même dossier, celui qui l'emporte à la lecture, sinon un nouveau), ou en haut
+ * sans projet ; tout le reste reste tel quel, dans son ordre. Lève si `text` n'est pas du JSON
+ * lisible, ou si son `projets` n'est pas un objet : le volet n'écrase jamais ce qu'il ne comprend pas.
  */
-export function setSessionPref(text: string | undefined, key: PrefKey, value: boolean): string {
+export function setSessionPref(text: string | undefined, key: PrefKey, value: boolean, project?: string, home = ''): string {
   const parsed: unknown = text === undefined || text.trim() === '' ? {} : JSON.parse(text)
   const raw: Record<string, unknown> = { ...(objectOf(parsed) ?? {}) }
-  raw[key] = value
+  if (project === undefined) {
+    raw[key] = value
+  } else {
+    if (raw.projets !== undefined && objectOf(raw.projets) === undefined) throw new Error('« projets » n\'est pas un objet')
+    const projets = { ...(objectOf(raw.projets) ?? {}) }
+    const at = projectEntries(raw, project, home).at(-1) ?? project
+    projets[at] = { ...(objectOf(projets[at]) ?? {}), [key]: value }
+    raw.projets = projets
+  }
   return `${JSON.stringify(raw, null, 2)}\n`
 }
 
