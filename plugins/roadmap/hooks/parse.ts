@@ -984,11 +984,46 @@ export function groupingOf(groupBy: string | undefined, showDone: boolean, vue?:
   return vue ? VUE_GROUPING[vue] : 'subject'
 }
 
-/** Le rangement suivant, au bouton : en mode Projet, échéance, responsable, arbre, sujet, jour ; sinon sujet et jour. */
+/** Les rangements du menu « Ranger » (#115) : en mode Projet, échéance, responsable, arbre, sujet, jour ; sinon, et pour les faites, sujet et jour. */
+export function groupings(mode: Mode, showDone: boolean): Grouping[] {
+  return mode === 'projet' && !showDone ? ['deadline', 'owner', 'tree', 'subject', 'day'] : ['subject', 'day']
+}
+
+/** Le rangement suivant, au bouton du mobile (sans menu) : le suivant de `groupings`, le premier après le dernier. */
 export function nextGrouping(by: Grouping, mode: Mode, showDone: boolean): Grouping {
-  if (mode !== 'projet' || showDone) return by === 'subject' ? 'day' : 'subject'
-  const cycle: readonly Grouping[] = ['deadline', 'owner', 'tree', 'subject', 'day']
-  return cycle[(cycle.indexOf(by) + 1) % cycle.length] ?? 'deadline'
+  const list = groupings(mode, showDone)
+  return list[(list.indexOf(by) + 1) % list.length] ?? 'subject'
+}
+
+/** L'icône d'une ligne de « À traiter » (#115), dessinée au trait dans icons.ts. */
+export type TodoIcon = 'sun' | 'clock' | 'calendar' | 'bell' | 'spin' | 'flag' | 'bubble'
+/** La couleur d'une ligne de « À traiter » : un ton de la palette, avec sa teinte (`<ton>Tint`) et son encre (`<ton>On`). */
+export type TodoTone = 'live' | 'late' | 'block' | 'wait'
+export type TodoCounter = { key: string; name: string; icon: TodoIcon; tone: TodoTone }
+
+/**
+ * Les quatre lignes de « À traiter » sous les axes (#115, maquette C) : en mode Projet les urgences
+ * d'échéance (#99), en mode Code ce qu'une session travaille, ce qui dépasse, le P1/P2 et les retours.
+ */
+export function todoCounters(mode: Mode): TodoCounter[] {
+  return mode === 'projet'
+    ? [
+        { key: 'today', name: 'Ma journée', icon: 'sun', tone: 'live' },
+        { key: 'late', name: 'En retard', icon: 'clock', tone: 'late' },
+        { key: 'soon', name: 'Cette semaine', icon: 'calendar', tone: 'block' },
+        { key: 'relaunch', name: 'À relancer', icon: 'bell', tone: 'wait' },
+      ]
+    : [
+        { key: 'live', name: 'En cours', icon: 'spin', tone: 'live' },
+        { key: 'late', name: 'En retard', icon: 'clock', tone: 'late' },
+        { key: 'prio', name: 'Prioritaires', icon: 'flag', tone: 'block' },
+        { key: 'feedback', name: 'Retours', icon: 'bubble', tone: 'wait' },
+      ]
+}
+
+/** Les filtres repliés sous « Plus de filtres » (#115), dans l'ordre : ceux qui ne sont pas des lignes de « À traiter ». */
+export function secondaryFilters(mode: Mode): string[] {
+  return mode === 'projet' ? ['prio', 'mine', 'others', 'recent', 'live', 'feedback'] : ['recent', 'mine', 'others']
 }
 
 /** Le nom d'un rangement sur le bouton : « Par échéance », « En arbre »… */

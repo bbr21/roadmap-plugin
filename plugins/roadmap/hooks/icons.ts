@@ -3,6 +3,7 @@
 // Couleurs et mesures : tokens.ts (#108) ; dessins du handoff de design (README « Icônes »). Un SVG
 // dessiné en image ne connaît pas `currentColor`, d'où la couleur passée à chaque dessin.
 
+import type { TodoIcon } from './parse'
 import { FONT, MIX, PALETTES, RADIUS, SIZE, STROKE, TEXT, type Palette, type ThemeName } from './tokens'
 
 // Les palettes et les traits sont des tokens du design system (#108) ; on les sert aussi d'ici.
@@ -100,8 +101,66 @@ export function clockIcon(hex: string, size = 12, width: number = STROKE.pill): 
   return line(hex, size, width, '<circle cx="12" cy="12" r="8.5"/><path d="M12 7.5v5l3 2"/>')
 }
 
+// Les lignes de « À traiter » (#115, maquette C, version « colorée au trait ») et la roue des
+// réglages : des icônes de trait, comme l'horloge, dans la couleur de leur ligne.
+
+/** Ma journée : un soleil. */
+export function sunIcon(hex: string, size = 16, width: number = STROKE.base): string {
+  return line(hex, size, width, '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/>')
+}
+
+/** Cette semaine : un calendrier. */
+export function calendarIcon(hex: string, size = 16, width: number = STROKE.base): string {
+  return line(hex, size, width, '<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M16 3v4M8 3v4M3 10h18"/>')
+}
+
+/** À relancer : une cloche. */
+export function bellIcon(hex: string, size = 16, width: number = STROKE.base): string {
+  return line(hex, size, width, '<path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/>')
+}
+
+/** Prioritaires, au trait (le drapeau plein reste dans « Plus de filtres »). */
+export function flagLineIcon(hex: string, size = 16, width: number = STROKE.base): string {
+  return line(hex, size, width, '<path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><path d="M4 22v-7"/>')
+}
+
+/** Retours, au trait : une bulle de parole. */
+export function bubbleLineIcon(hex: string, size = 16, width: number = STROKE.base): string {
+  return line(hex, size, width, '<path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/>')
+}
+
+/** La roue des réglages, en haut à droite du panneau. */
+export function gearIcon(hex: string, size = 16, width: number = STROKE.base): string {
+  return line(
+    hex,
+    size,
+    width,
+    '<path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/>',
+  )
+}
+
 export function personIcon(hex: string, size = 12, width: number = STROKE.pill): string {
   return line(hex, size, width, '<circle cx="12" cy="8" r="3.75"/><path d="M4.75 20c1.2-3.6 4-5.5 7.25-5.5s6.05 1.9 7.25 5.5"/>')
+}
+
+/** L'icône d'une ligne de « À traiter » (#115), 16 px au trait, dans la couleur de la ligne : le panneau et le design system. */
+export function todoIcon(icon: TodoIcon, hex: string): string {
+  switch (icon) {
+    case 'sun':
+      return sunIcon(hex)
+    case 'clock':
+      return clockIcon(hex, 16, STROKE.base)
+    case 'calendar':
+      return calendarIcon(hex)
+    case 'bell':
+      return bellIcon(hex)
+    case 'spin':
+      return spinnerIcon(hex, 16, undefined, true)
+    case 'flag':
+      return flagLineIcon(hex)
+    case 'bubble':
+      return bubbleLineIcon(hex)
+  }
 }
 
 /** Lecture, plein. */

@@ -34,6 +34,8 @@ import {
   documentIcon,
   archiveIcon,
   clockIcon,
+  gearIcon,
+  todoIcon,
   discIcon,
   halfDiscIcon,
   mixOver,
@@ -224,6 +226,10 @@ import {
   waitDays,
   matchesWho,
   peopleOf,
+  todoCounters,
+  secondaryFilters,
+  groupings,
+  type TodoCounter,
 } from './parse'
 
 const PANE = 'roadmap'
@@ -344,6 +350,7 @@ const VIEW: View = {
   // `auto` : en mode Projet, Ma journée (#99) ; sinon les tâches en cours s'il y en a, sinon toutes ; un clic sur un filtre le remplace.
   attend: 'auto',
   who: 'all',
+  moreFilters: false,
   showDone: false,
   // `auto` : les ouvertes par sujet, les faites par jour ; un clic sur « Par jour / Par sujet » vaut pour toutes les vues.
   groupBy: 'auto',
@@ -3031,7 +3038,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     read($, viewAtom), read($, searchAtom), read($, titleNoteAtom), read($, zoneGenAtom), $.clock.now(), read($, scanNoteAtom),
   ])
   const {
-    axis: axisRaw, attend: attendRaw, who: whoRaw = 'all', showDone, groupBy, selected, openGroups, closedGroups, moreGroups,
+    axis: axisRaw, attend: attendRaw, who: whoRaw = 'all', moreFilters = false, showDone, groupBy, selected, openGroups, closedGroups, moreGroups,
     launchNote, launched, openNote, conclusionOpen, cancelAsk = '', closeKind = 'abandon', cancelNote = '',
   } = view
   const data = await paneData($, source, [stamp, titlesVersion, themeStamp, retry, liveVersion].join('|'))
@@ -4249,66 +4256,161 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
       mark: (d: boolean) => tallIcon(fade(halfDiscIcon(palette.wait), d), 'attend un tiers', 16, '◐', 'permission'),
     },
   ]
-  // Mode Projet (#99) : les quatre compteurs d'urgence, en couleur pleine même non choisis.
-  const counters = [
-    { key: 'today', name: 'Ma journée', n: todayAll.length, bg: palette.liveTint, fg: palette.liveOn },
-    { key: 'late', name: 'En retard', n: lateAll.length, bg: palette.lateTint, fg: palette.lateOn },
-    { key: 'soon', name: 'Cette semaine', n: soonAll.length, bg: palette.blockTint, fg: palette.blockOn },
-    { key: 'relaunch', name: 'À relancer', n: relaunchAll.length, bg: palette.waitTint, fg: palette.waitOn },
-  ]
-  // Les autres états, en petite ligne, dans l'ordre de la maquette A.
-  const smallOrder = ['prio', 'mine', 'others', 'recent', 'live', 'feedback']
-  const smallStates = smallOrder.flatMap(k => states.filter(st => st.key === k && st.n > 0))
+  // Les tiers attendus, sous « Attend un tiers » (mode Code) : dans « Plus de filtres » (#115).
+  const thirdPartyList = (
+    <Box flexDirection="column">
+      {thirdParties.map(([who, n]) => {
+        const chosen = attend === who
+        const ink = chosen ? palette.waitOn : tierChosen ? palette.text3 : palette.text2
+        return (
+          <Box
+            key={`hit:attend:${who}`}
+            flexDirection="row"
+            justifyContent="space-between"
+            alignItems="center"
+            paddingLeft={SPACE.nest}
+            paddingRight={1}
+            backgroundColor={chosen ? palette.waitTint : undefined}
+            hover={{ backgroundColor: chosen ? palette.waitTint : palette.hover }}
+          >
+            <Box flexDirection="row" alignItems="center" gap={SPACE.row} flexShrink={1} minWidth={0}>
+              <Box flexDirection="row" alignItems="center" flexShrink={0}>
+                {tallIcon(personIcon(ink, 12, STROKE.small), who, 12, '·', 'permission')}
+              </Box>
+              <Button key={`attend:${keyPart(who)}`} plain dimColor={tierChosen && !chosen} onPress={setAttend(who, 'others')}>
+                <Text wrap="truncate-end">{who}</Text>
+              </Button>
+            </Box>
+            <Box flexDirection="row" flexShrink={0}>
+              <Box width={shareCol} />
+              <Box width={numCol} justifyContent="flex-end">
+                {countPill(n, tierChosen && !chosen, ink)}
+              </Box>
+            </Box>
+          </Box>
+        )
+      })}
+    </Box>
+  )
+  // « À traiter » (#115, maquette C) : quatre lignes du gabarit des axes, une icône de trait dans la
+  // couleur de la ligne ; la choisie prend sa teinte, son encre et une pastille pleine. Au terminal, des boutons.
+  const countOf: Record<string, number> = {
+    today: todayAll.length,
+    late: lateAll.length,
+    soon: soonAll.length,
+    relaunch: relaunchAll.length,
+    live: liveAll.length,
+    prio: prioAll.length,
+    feedback: feedbackAll.length,
+    recent: recentAll.length,
+    mine: mineCount,
+    others: inAxis.length - mineCount,
+  }
+  const tones = {
+    live: { hex: palette.live, tint: palette.liveTint, on: palette.liveOn },
+    late: { hex: palette.late, tint: palette.lateTint, on: palette.lateOn },
+    block: { hex: palette.block, tint: palette.blockTint, on: palette.blockOn },
+    wait: { hex: palette.wait, tint: palette.waitTint, on: palette.waitOn },
+  }
+  const todo = showDone ? [] : todoCounters(mode)
+  // Une ligne à 0 ne se clique plus, sauf choisie : un second clic la retire.
+  const todoClickable = (c: TodoCounter) => (countOf[c.key] ?? 0) > 0 || attend === c.key
+  const todoRow = (c: TodoCounter) => {
+    const n = countOf[c.key] ?? 0
+    const on = attend === c.key
+    const zero = n === 0 && !on
+    const tone = tones[c.tone]
+    if (!graphic) {
+      return zero ? (
+        <Text key={`count:${c.key}`} color={palette.text3}>{`${c.name} 0`}</Text>
+      ) : (
+        <Button key={`attend:${c.key}`} plain dimColor={anyState && !on} label={`${c.name} ${n}`} onPress={setAttend(c.key)} />
+      )
+    }
+    const pill = pillIcon({
+      text: String(n),
+      bg: on ? tone.hex : mixOver(palette.sel, palette.bg, MIX.countBg),
+      fg: on ? palette.bg : palette.text2,
+      weight: on ? TEXT.weight.strong : TEXT.weight.soft,
+      size: TEXT.count,
+      height: SIZE.pill.count,
+    })
+    return (
+      <Box
+        key={`hit:attend:${c.key}`}
+        flexDirection="row"
+        justifyContent="space-between"
+        alignItems="center"
+        paddingX={SPACE.indent}
+        backgroundColor={on ? tone.tint : undefined}
+        hover={todoClickable(c) ? { backgroundColor: on ? tone.tint : palette.hover } : undefined}
+      >
+        {on && corners(RADIUS.chip, palette.bg)}
+        <Box flexDirection="row" alignItems="center" gap={SPACE.row} flexShrink={1} minWidth={0}>
+          <Box flexDirection="row" alignItems="center" flexShrink={0}>
+            {tallIcon(todoIcon(c.icon, zero ? palette.text3 : tone.hex), c.name, 16, '●', 'inactive')}
+          </Box>
+          <Text color={zero ? palette.text3 : on ? tone.on : palette.text} {...(on ? { weight: 'semibold' as const } : {})} wrap="truncate-end">
+            {c.name}
+          </Text>
+        </Box>
+        <Box width={numCol} justifyContent="flex-end" flexShrink={0}>
+          <Svg source={pill.source} alt={`${c.name} : ${n}`} width={pill.width} height={pill.height} />
+        </Box>
+        {todoClickable(c) && hit(`attend:${c.key}`, setAttend(c.key))}
+      </Box>
+    )
+  }
+  // « Plus de filtres » (#115) : les autres filtres non vides, et en mode Projet le menu « Qui ». Il
+  // reste ouvert tant qu'un de ses filtres, un tiers ou une personne est choisi.
+  // Un filtre choisi garde sa ligne à 0, comme une ligne de « À traiter » : un clic le retire.
+  const secondary = showDone ? [] : secondaryFilters(mode).flatMap(k => states.filter(st => st.key === k && (st.n > 0 || attend === k)))
+  const moreForced = secondaryFilters(mode).includes(attend) || tierChosen || who !== 'all'
+  const moreOpen = moreFilters || moreForced
+  // Ouvert de force, le clic ne change rien : ni l'affichage, ni l'état caché.
+  const toggleMore = () => {
+    if (!moreForced) void setView($, v => ({ moreFilters: !(v.moreFilters ?? false) }))
+  }
   const WHO_ALL = 'Tout le monde'
   const whoLabel = who === 'all' ? WHO_ALL : who
   const setWho = (v: string) => void setView($, () => ({ who: v === WHO_ALL ? 'all' : v, closedGroups: [], moreGroups: [] }))
   const whoOptions = [WHO_ALL, ...people]
-  const urgency = (
-    <Box flexDirection="column" gap={SPACE.block}>
-      <Box flexDirection="row" gap={SPACE.row}>
-        {counters.map(c => {
-          const zero = c.n === 0
-          const on = !showDone && attend === c.key
-          if (!graphic) {
-            return zero ? (
-              <Text key={`count:${c.key}`} color={palette.text3}>{`${c.name} 0`}</Text>
-            ) : (
-              <Button key={`attend:${c.key}`} plain dimColor={anyState && !on} label={`${c.name} ${c.n}`} onPress={setAttend(c.key)} />
-            )
-          }
-          return (
-            <Box
-              key={`hit:attend:${c.key}`}
-              flexDirection="column"
-              flexGrow={1}
-              minWidth={0}
-              paddingX={SPACE.indent}
-              paddingY="xs"
-              backgroundColor={zero ? palette.sel : c.bg}
-              borderStyle={on ? 'round' : undefined}
-              borderColor={on ? c.fg : undefined}
-            >
-              <Text key={`count:${c.key}`} size="title" weight="semibold" tabular color={zero ? palette.text3 : c.fg}>
-                {String(c.n)}
-              </Text>
-              <Text size="caption" color={zero ? palette.text3 : c.fg} wrap="truncate-end">
-                {c.name}
-              </Text>
-              {!zero && hit(`attend:${c.key}`, setAttend(c.key))}
-            </Box>
-          )
-        })}
+  const moreRow = graphic ? (
+    <Box key="hit:more-filters" flexDirection="row" alignItems="center" gap={SPACE.row} paddingX={SPACE.indent} hover={{ backgroundColor: palette.hover }}>
+      <Box flexDirection="row" alignItems="center" flexShrink={0}>
+        {Svg && <Svg source={rowMark(chevronIcon(palette.text3, moreOpen))} alt={moreOpen ? 'replier' : 'déplier'} width={16} height={24} />}
       </Box>
-      <Box flexDirection="row" alignItems="center" gap={SPACE.textButtons} paddingX={SPACE.indent}>
-        <Box flexDirection="row" alignItems="center" gap={SPACE.textButtons} flexShrink={1} minWidth={0} flexWrap="wrap">
-          {smallStates.map(st => (
-            <Button key={`attend:${st.key}`} plain dimColor={anyState && !stateOn(st.key)} label={`${st.name} ${st.n}`} onPress={setAttend(st.key)} />
-          ))}
+      <Text color={palette.text2}>Plus de filtres</Text>
+      {!moreOpen && (
+        <Box flexShrink={1} minWidth={0}>
+          <Text size="caption" color={palette.text3} wrap="truncate-end">{secondary.map(st => st.name).join(', ')}</Text>
         </Box>
-        <Box flexGrow={1} />
-        {people.length > 0 &&
-          (Select ? (
-            <Select key="who" options={whoOptions.map(value => ({ value }))} value={whoLabel} onSelect={(v: string) => setWho(v)} />
+      )}
+      {hit('more-filters', toggleMore)}
+    </Box>
+  ) : (
+    <Button key="more-filters" plain dimColor label={`Plus de filtres ${moreOpen ? '▾' : '▸'}`} onPress={toggleMore} />
+  )
+  const moreBody = (
+    <Box flexDirection="column">
+      {secondary.map(st => (
+        <Box key={`more:${st.key}`} flexDirection="row" justifyContent="space-between" alignItems="center" paddingLeft={SPACE.nest} paddingRight={SPACE.indent}>
+          <Box flexDirection="row" alignItems="center" gap={SPACE.row} flexShrink={1} minWidth={0}>
+            <Box flexDirection="row" alignItems="center" flexShrink={0}>
+              {st.mark(anyState && !stateOn(st.key))}
+            </Box>
+            <Button key={`attend:${st.key}`} plain dimColor={anyState && !stateOn(st.key)} label={st.name} onPress={setAttend(st.key)} />
+          </Box>
+          <Box width={numCol} justifyContent="flex-end" flexShrink={0}>
+            {countPill(st.n, anyState && !stateOn(st.key), palette.text2)}
+          </Box>
+        </Box>
+      ))}
+      {showThirdParties && thirdPartyList}
+      {people.length > 0 && (
+        <Box flexDirection="row" alignItems="center" paddingLeft={SPACE.nest} paddingTop="xs">
+          {Select ? (
+            <Select key="who" label="Qui" options={whoOptions.map(value => ({ value }))} value={whoLabel} onSelect={(v: string) => setWho(v)} />
           ) : (
             <Button
               key="who"
@@ -4316,14 +4418,30 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
               label={`Qui : ${whoLabel} ▸`}
               onPress={() => setWho(whoOptions[(whoOptions.indexOf(whoLabel) + 1) % whoOptions.length] ?? WHO_ALL)}
             />
-          ))}
-      </Box>
+          )}
+        </Box>
+      )}
     </Box>
   )
-  // Les zones de clic de ce dessin : légende et états, puis les en-têtes de section s'il reste de la place.
+  const todoBlock = showDone ? null : (
+    <Box flexDirection="column">
+      <Box paddingX={SPACE.indent}>
+        <Text size="caption" color={palette.text3}>À traiter</Text>
+      </Box>
+      {graphic ? todo.map(todoRow) : (
+        <Box flexDirection="row" gap={SPACE.textButtons} paddingX={SPACE.indent} flexWrap="wrap">
+          {todo.map(todoRow)}
+        </Box>
+      )}
+      {secondary.length > 0 || people.length > 0 || showThirdParties ? moreRow : null}
+      {moreOpen && moreBody}
+    </Box>
+  )
+  // Les zones de clic de ce dessin : légende, roue et « À traiter », puis les en-têtes de section s'il reste de la place.
   if (graphic) sessionRows = new Set(doneTasks.filter(t => doneSessionOf(t) !== undefined).slice(0, SESSION_ROWS).map(taskKey))
-  // En mode Projet, seuls les compteurs non nuls ont une zone ; la petite ligne d'états, ce sont des boutons de l'app.
-  const fixedZones = axes.length + 1 + (projet && !showDone ? counters.filter(c => c.n > 0).length : states.filter(st => st.n > 0).length) + 2 * sessionRows.size
+  // Seules les lignes cliquables de « À traiter » ont une zone ; les filtres repliés sont des boutons de l'app (#115).
+  // Les zones fixes : axes et Faites, la roue, les lignes cliquables de « À traiter » et « Plus de filtres » (#115).
+  const fixedZones = axes.length + 1 + 1 + todo.filter(todoClickable).length + (todoBlock && (secondary.length > 0 || people.length > 0 || showThirdParties) ? 1 : 0) + 2 * sessionRows.size
   if (graphic) {
     const shownWithSession = drawnTasks.filter(t => t.id && (liveOf(t) ?? doneSessionOf(t)))
     numberZones = new Set(shownWithSession.slice(0, Math.max(0, ZONE_LIMIT - fixedZones)).map(t => t.id as string))
@@ -4351,6 +4469,18 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
               : `${doneTasks.length} faites sur ${total}`}
           </Text>
         </Box>
+        {/* La roue des réglages, en haut à droite (#115) ; au terminal, le bouton « Réglages ». */}
+        {graphic && Svg ? (
+          <Box key="hit:open-settings" flexDirection="row" alignItems="center" flexShrink={0} marginLeft={1} hover={{ backgroundColor: palette.hover }}>
+            {strut(SIZE.strut.row)}
+            <Svg source={gearIcon(palette.text2)} alt="Réglages" width={SIZE.icon.md} height={SIZE.icon.md} />
+            {hit('open-settings', () => void openSettings($), 1)}
+          </Box>
+        ) : (
+          <Box flexShrink={0} marginLeft={1}>
+            <Button key="open-settings" plain label="Réglages" onPress={() => void openSettings($)} />
+          </Box>
+        )}
       </Box>
 
       <Box paddingX={SPACE.indent} paddingY="xs" justifyContent="center">
@@ -4406,108 +4536,61 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
         })}
       </Box>
 
-      {projet && !showDone ? urgency : (
-      <Box flexDirection="column">
-        {states
-          .filter(st => st.n > 0)
-          .map(st =>
-            legend({
-              key: `attend:${st.key}`,
-              mark: st.mark,
-              name: st.name,
-              n: st.n,
-              // Les états n'ont pas de part, seulement leur nombre (choix de Bertrand, 2026-10-22).
-              share: '',
-              dim: anyState && !stateOn(st.key),
-              onPress: setAttend(st.key),
-            }),
-          )}
-        {states
-          .filter(st => st.n === 0)
-          .map(st =>
-            legend({
-              key: `attend:${st.key}`,
-              mark: () => tallIcon(ringIcon(palette.text3), st.name, 16, '○', 'inactive'),
-              name: st.name,
-              n: 0,
-              share: '',
-              dim: false,
-              muted: true,
-            }),
-          )}
-        {showThirdParties && (
-          <Box flexDirection="column">
-            {thirdParties.map(([who, n]) => {
-              const chosen = attend === who
-              const ink = chosen ? palette.waitOn : tierChosen ? palette.text3 : palette.text2
-              return (
-                <Box
-                  key={`hit:attend:${who}`}
-                  flexDirection="row"
-                  justifyContent="space-between"
-                  alignItems="center"
-                  paddingLeft={SPACE.nest}
-                  paddingRight={1}
-                  backgroundColor={chosen ? palette.waitTint : undefined}
-                  hover={{ backgroundColor: chosen ? palette.waitTint : palette.hover }}
-                >
-                  <Box flexDirection="row" alignItems="center" gap={SPACE.row} flexShrink={1} minWidth={0}>
-                    <Box flexDirection="row" alignItems="center" flexShrink={0}>
-                      {tallIcon(personIcon(ink, 12, STROKE.small), who, 12, '·', 'permission')}
-                    </Box>
-                    <Button key={`attend:${keyPart(who)}`} plain dimColor={tierChosen && !chosen} onPress={setAttend(who, 'others')}>
-                      <Text wrap="truncate-end">{who}</Text>
-                    </Button>
-                  </Box>
-                  <Box flexDirection="row" flexShrink={0}>
-                    <Box width={shareCol} />
-                    <Box width={numCol} justifyContent="flex-end">
-                      {countPill(n, tierChosen && !chosen, ink)}
-                    </Box>
-                  </Box>
-                </Box>
-              )
-            })}
-          </Box>
-        )}
-      </Box>
-      )}
+      {todoBlock}
 
       <Box flexDirection="column" gap={SPACE.block}>
         {Svg && <Svg source={ruleIcon(palette.border, wide)} alt="séparateur" height={1} />}
+        {/* La recherche, qui filtre à la frappe, et le menu « Ranger » qui montre le rangement en cours (#115). */}
+        <Box flexDirection="row" alignItems="center" gap={SPACE.textButtons} paddingX={SPACE.indent}>
+          {/* Un numéro (« 47 », « #47 ») ou des mots du libellé, ouvertes et faites. */}
+          {Input && (
+            <Box flexGrow={1} flexShrink={1} minWidth={0}>
+              <Input
+                key="search"
+                placeholder="Rechercher : mots ou #numéro"
+                value={search}
+                submitLabel="↵"
+                onInput={(value: string) => void update($, searchAtom, () => value)}
+                onSubmit={(value: string) => void update($, searchAtom, () => value)}
+              />
+            </Box>
+          )}
+          {!Input && <Box flexGrow={1} />}
+          {/* Un menu ou un bouton de l'app, pas une zone de clic : il ne compte pas dans ZONE_LIMIT. Sur
+              mobile, sans menu, le bouton montre le rangement en cours et passe au suivant. */}
+          <Box flexShrink={0}>
+            {Select ? (
+              <Select
+                key="group-by"
+                label="Ranger"
+                options={(groupings(mode, showDone).includes(by) ? groupings(mode, showDone) : [by, ...groupings(mode, showDone)]).map(g => ({ value: groupingLabel(g) }))}
+                value={groupingLabel(by)}
+                onSelect={(v: string) => {
+                  const g = [by, ...groupings(mode, showDone)].find(x => groupingLabel(x) === v)
+                  if (g) void setView($, () => ({ groupBy: g }))
+                }}
+              />
+            ) : (
+              <Button
+                key="group-by"
+                plain
+                label={groupingLabel(by)}
+                onPress={() => void setView($, () => ({ groupBy: nextGrouping(by, mode, showDone) }))}
+              />
+            )}
+          </Box>
+        </Box>
+        {/* La ligne de la liste, discrète : ce qui est montré, et une seule action selon le cas. */}
         <Box flexDirection="row" justifyContent="space-between" alignItems="center" paddingX={SPACE.indent}>
-          <Text color={palette.text2} wrap="truncate-end">
+          <Text size="caption" color={palette.text2} wrap="truncate-end">
             {searching
               ? `${foundCount} résultat${foundCount > 1 ? 's' : ''}${foundCount > SEARCH_MAX ? ` (${SEARCH_MAX} affichés)` : ''}`
               : filterSummary({ axis, attend, showDone, shown: shown.length, doneShown: doneShown.length, groupBy: by, who })}
           </Text>
-          <Box flexDirection="row" alignItems="center" gap={SPACE.textButtons} flexShrink={0}>
-            {/* Un bouton de l'app, pas une zone de clic : il ne compte pas dans ZONE_LIMIT. */}
-            {!searching && (
-              <Button
-                key="group-by"
-                plain
-                label={groupingLabel(nextGrouping(by, mode, showDone))}
-                onPress={() => void setView($, () => ({ groupBy: nextGrouping(by, mode, showDone) }))}
-              />
-            )}
-            <Button key="list-action" plain label={action.label} onPress={action.run} />
-            <Button key="open-settings" plain label="Réglages" onPress={() => void openSettings($)} />
+          <Box flexShrink={0}>
+            <Button key="list-action" plain dimColor label={action.label} onPress={action.run} />
           </Box>
         </Box>
-        {/* La recherche : un numéro (« 47 », « #47 ») ou des mots du libellé, ouvertes et faites. */}
-        {Input && (
-          <Box paddingX={SPACE.indent}>
-            <Input
-              key="search"
-              placeholder="Rechercher une tâche : mots ou #numéro"
-              value={search}
-              submitLabel="chercher"
-              onInput={(value: string) => void update($, searchAtom, () => value)}
-              onSubmit={(value: string) => void update($, searchAtom, () => value)}
-            />
-          </Box>
-        )}
       </Box>
 
       {titleNote !== '' && <Text color={palette.text2}>{titleNote}</Text>}

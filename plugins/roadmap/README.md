@@ -23,17 +23,24 @@ Le panneau lit `ROADMAP.md` et `ROADMAP-fait.md` (grammaire des dossiers Cowork 
 tâche, `[axe | attend:… | ouvert:… | due:… | src:… | fiche:… | après:… | prio:… | feedback:… | tous:… | relance:…]`), relit les fichiers et
 les sessions toutes les 3 s (le dossier de la roadmap toutes les 15 s), et montre :
 
-- la part faite, une barre par axe (cliquable), la légende des axes (filtre) ;
-- une recherche par mots ou par numéro (#47), dans les ouvertes et les faites ;
-- les états En cours, Prioritaires (P1 et P2), Retours (`feedback:`), En retard, Récentes (ouvertes
-  aujourd'hui ou hier), À moi, Attend un tiers (filtres, avec la liste des tiers) ;
+- la part faite, une barre par axe (cliquable), la légende des axes (filtre), et en haut à droite la
+  roue qui ouvre les Réglages ;
+- sous les axes, « À traiter » (#115) : quatre lignes du même gabarit que les axes, une icône de
+  trait dans leur couleur, le nombre en pastille ; toute la ligne se clique, la choisie prend sa
+  teinte et un second clic la retire. En mode Code : En cours, En retard, Prioritaires (P1 et P2),
+  Retours (`feedback:`) ; en mode Projet : Ma journée, En retard, Cette semaine, À relancer ;
+- « Plus de filtres », replié : les autres états non vides (Récentes, ouvertes aujourd'hui ou hier ;
+  À moi ; Attend un tiers, avec la liste des tiers ; en mode Projet aussi Prioritaires, En cours,
+  Retours et le menu « Qui ») ; il reste ouvert tant qu'un de ses filtres est choisi ;
+- une recherche par mots ou par numéro (#47), dans les ouvertes et les faites, qui filtre à la frappe,
+  et à côté le menu « Ranger » qui montre le rangement en cours ;
 - les tâches par sujet en sections repliables, une ligne par tâche (pastilles échéance, tiers,
   « à revoir », âge), triées : en session, puis par échéance, puis de la plus récente à la plus
   ancienne ; une tâche se range sous sa prérequise ; devant chaque tâche ouverte (ni en session, ni
   bloquée, ni déjà demandée), un ▶ lance sa session sans ouvrir le détail : même brief et même
   carte que « Lancer » (un bouton de l'app, sans zone de clic : il tient sur toutes les lignes) ;
 - toutes les faites, rangées par jour de clôture ou par sujet ;
-- dans toutes les vues, un bouton « Par jour / Par sujet » : un seul choix pour toutes les vues ;
+- dans toutes les vues, le menu « Ranger » (Par sujet, Par jour ; un bouton sur mobile) : un seul choix pour toutes les vues ;
   par jour, une ouverte se range au jour de son `ouvert:` (« En retard » reste en tête), une faite
   au jour de son `fait:` ; sans choix, les ouvertes vont par sujet et les faites par jour ;
 - le détail d'une tâche (voir la ligne, ouvrir la fiche ou la source, la lancer dans une nouvelle
@@ -192,11 +199,11 @@ Premiers usages : la roadmap de Caro et le dossier AAFES Cowork, depuis l'onglet
   détail les montre, la recherche les lit.
 - **Ma journée** (#99) : le panneau s'ouvre sur « Ma journée », les tâches à moi en retard, dues
   aujourd'hui ou demain, en P1, ou récurrentes qui tombent dans les 2 jours, rangées dans cet ordre.
-  En tête, quatre compteurs en couleur pleine, cliquables : Ma journée (bleu), En retard (rouge),
-  Cette semaine (orange, échéance dans les 7 jours) et À relancer (violet, une attente de tiers sans
-  nouvelle depuis 14 jours, `"relance": N` dans `.claude/roadmap.json` pour un autre seuil). Les
-  autres états passent en une petite ligne ; le choix « Qui » se combine avec l'axe et le compteur,
-  et les compteurs suivent. La date d'une ligne est rouge en retard (« 23/10 · 6 j »), orange dans
+  Sous les axes, « À traiter » en quatre lignes cliquables (#115) : Ma journée (soleil, bleu), En
+  retard (horloge, rouge), Cette semaine (calendrier, orange, échéance dans les 7 jours) et À
+  relancer (cloche, violet, une attente de tiers sans nouvelle depuis 14 jours, `"relance": N` dans
+  `.claude/roadmap.json` pour un autre seuil). Les autres états et le menu « Qui » passent sous
+  « Plus de filtres » ; « Qui » se combine avec l'axe et la ligne choisie, et les nombres suivent. La date d'une ligne est rouge en retard (« 23/10 · 6 j »), orange dans
   les 7 jours, grise au-delà ; la pastille d'un tiers attendu dit son attente à partir de 7 jours
   (« Rong · 16 j », orange, rouge à 14). « Tout afficher » revient à toutes les tâches.
 - **Récurrence et relance** (#99) : `tous:semaine|2semaines|mois|trimestre|an`, avec `due:` à la
@@ -205,8 +212,8 @@ Premiers usages : la roadmap de Caro et le dossier AAFES Cowork, depuis l'onglet
   arrête la récurrence ; `cowork.py` ne la reconduit pas encore, et le panneau le dit.
   `relance:AAAA-MM-JJ` date la dernière relance du tiers attendu ; le brief demande de la poser.
 - **La vue** : hors de Ma journée, les tâches se rangent par échéance (en retard, cette semaine, plus tard, sans
-  échéance) ; le bouton de rangement passe au responsable, à l'arbre des tâches (une section par
-  tâche mère et son avancement), au sujet, au jour. Une pastille dit le responsable quand ce n'est
+  échéance) ; le menu « Ranger » propose aussi le responsable, l'arbre des tâches (une section par
+  tâche mère et son avancement), le sujet, le jour. Une pastille dit le responsable quand ce n'est
   pas « moi » ; « À moi » compte `resp:` ; le détail montre responsable, parent, sous-tâches,
   prérequises et clés déclarées. Une tâche est bloquée tant qu'une de ses prérequises est ouverte.
 - **Les sessions** : ▶ pose une carte sans worktree (reposée sans le champ si l'app le refuse) ; le
@@ -372,8 +379,8 @@ illisible laisse les réglages par défaut et le dit. La skill `reglages-session
 
 Demande de Bertrand du 28/10/2026 (#81) : voir chaque réglage et le changer d'un clic, sans
 retenir de phrase. Refait le 29/10/2026 sur la maquette qu'il a choisie (#91, « juste On / Off »).
-`/reglages` ouvre le volet « Réglages » dans tout projet, roadmap ou non ; le bouton « Réglages »
-de la barre du panneau et la skill `reglages-session` l'ouvrent aussi.
+`/reglages` ouvre le volet « Réglages » dans tout projet, roadmap ou non ; la roue en haut à droite
+du panneau (le bouton « Réglages » au terminal) et la skill `reglages-session` l'ouvrent aussi.
 
 - **Une ligne par réglage** : le nom à gauche, le contrôle à droite. Un oui/non a deux boutons
   côte à côte, « On » et « Off », le choix actif en bouton principal ; un clic sur l'autre change
@@ -446,6 +453,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.65.0 (2026-10-29)** : panneau : le bas refait en maquette C (#115) — « À traiter » en quatre lignes à icône cliquables, la choisie surlignée ; « Plus de filtres » replié avec Qui ; roue des réglages en haut à droite ; menu « Ranger » qui montre le rangement en cours ; recherche sans bouton « chercher »
 - **0.64.3 (2026-10-29)** : maquettes : une maquette du plugin s'appuie sur son design system roadmap-design, publié dans claude.ai par /design-sync (#113)
 - **0.64.2 (2026-10-29)** : panneau : le relevé d'un défilement porte le refus du moteur et la durée de sa réponse (#111)
 - **0.64.1 (2026-10-29)** : panneau : le relevé du défilement et du focus se garde à part des dessins, pour prouver le saut en haut (#111)

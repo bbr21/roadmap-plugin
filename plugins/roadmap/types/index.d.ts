@@ -35,6 +35,8 @@ export type View = {
   attend: string
   /** Filtre « Qui » du mode Projet (#99) : `all`, ou une personne ; absent dans une vue d'avant, vaut `all`. */
   who?: string
+  /** « Plus de filtres » déplié (#115) ; absent dans une vue d'avant, vaut replié. */
+  moreFilters?: boolean
   /** Montrer les tasks faites (ROADMAP-fait.md). */
   showDone: boolean
   /**
