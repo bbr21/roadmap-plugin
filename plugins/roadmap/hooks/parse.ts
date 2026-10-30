@@ -2030,6 +2030,60 @@ export function archivedAskRefusal(names: readonly string[]): string {
   return `Plugin roadmap : ${list} ${done} (${person()} l'a fait depuis leur propre boîte de fin) : ne les propose plus. Repose ta boîte de fin sans elles, après avoir relu list_sessions avec {"linked": true} ; s'il ne reste aucune session à archiver, sans la question d'archivage. Dis-le en une ligne.`
 }
 
+/** Le verbe d'une question de lancement : lancer, démarrer, start ; « relance » n'en est pas une (#122). */
+const LAUNCH_VERB = /(?<!\p{L})(?:lan[cç](?:e|er|es|ez|é|ée|és|ées)|démarr(?:e|er|es|ez)|start)(?!\p{L})/iu
+
+/** Ce que disent la question et les boutons d'une boîte de fin, sans son récap. */
+function askAndButtons(box: { ask?: unknown; actions?: unknown }): string {
+  const actions = Array.isArray(box.actions) ? (box.actions as { label?: unknown; message?: unknown }[]) : []
+  return [box.ask, ...actions.flatMap(a => [a?.label, a?.message])].filter((t): t is string => typeof t === 'string').join('\n')
+}
+
+/** Une boîte de fin qui demande de lancer une session : le verbe, et un « #N » ou le mot « session » (#122). */
+export function isLaunchAsk(box: { ask?: unknown; actions?: unknown }): boolean {
+  const text = askAndButtons(box)
+  return LAUNCH_VERB.test(text) && (/#[1-9]\d*/.test(text) || /session/i.test(text))
+}
+
+/**
+ * La carte est la question (#122, Bertrand, 2026-10-29) : Maestro avait posé ses cartes #120 et #121,
+ * puis demandé dans sa boîte de fin « Quelle session je lance maintenant ? », alors que Bertrand avait
+ * déjà cliqué Start. Les « #N » qu'une boîte de fin demande de lancer alors que leur carte est posée
+ * dans le tour (`card`) ou que leur session liée est encore ouverte (`live`, la session `selfId`
+ * exceptée). Seuls la question et les boutons se lisent, jamais le récap ; une question de lancement
+ * qui ne nomme aucun « #N » vise toutes les cartes du tour.
+ */
+export function launchInBox(
+  box: { ask?: unknown; actions?: unknown },
+  cards: readonly string[],
+  rows: readonly unknown[],
+  selfId: string,
+): { card: string[]; live: string[] } {
+  if (!isLaunchAsk(box)) return { card: [], live: [] }
+  const named = [...new Set([...askAndButtons(box).matchAll(/#([1-9]\d*)(?!\d)/g)].map(m => `#${m[1]}`))]
+  type Row = { sessionId?: unknown; title?: unknown; isArchived?: unknown }
+  const open = new Set(
+    rows
+      .filter((r): r is Row => typeof r === 'object' && r !== null && (r as Row).isArchived === false && (r as Row).sessionId !== selfId)
+      .map(r => (typeof r.title === 'string' ? sessionTitleId(r.title) : undefined))
+      .filter((id): id is string => id !== undefined)
+      .map(id => `#${id}`),
+  )
+  const card = named.length > 0 ? named.filter(n => cards.includes(n)) : [...cards]
+  const live = named.filter(n => !card.includes(n) && open.has(n))
+  return { card, live }
+}
+
+/** Le refus de la boîte de fin qui redemande de lancer une carte posée ou une session qui tourne (#122). */
+export function launchBoxRefusal(found: { card: readonly string[]; live: readonly string[] }): string {
+  const list = (names: readonly string[]) => (names.length > 1 ? `${names.slice(0, -1).join(', ')} et ${names[names.length - 1]}` : (names[0] ?? ''))
+  const why = [
+    ...(found.card.length > 0 ? [`ta carte de ${list(found.card)} est déjà posée dans ce tour`] : []),
+    ...(found.live.length > 0 ? [`la session de ${list(found.live)} tourne déjà`] : []),
+  ]
+  return `Plugin roadmap : ta boîte de fin demande de lancer une session, mais ${why.join(', et ')}. La carte est la question : ${person()} clique Start sur la carte, ne la lui redemande pas. Repose ta boîte de fin avec le récap seul, sans question de lancement ni bouton « Lance … », et ne pose pas de nouvelle carte pour une tâche qui a déjà sa session.`
+}
+
 /**
  * Une session, une tâche (règle de Bertrand du 2026-10-23) : ce que devient une écriture qui ajoute
  * UNE tâche, selon le titre de la session.
@@ -3448,6 +3502,10 @@ function maestroTaskLine(t: Task, title: string, today: string, extra: string[] 
   return `- ${t.id ? `#${t.id} · ` : ''}${title}${bits.length > 0 ? ` (${bits.join(', ')})` : ''}`
 }
 
+/** La carte de session est la question de lancement (#122) : la boîte de fin ne la double pas. */
+const MAESTRO_CARD_IS_QUESTION =
+  "la carte est la question, ta boîte de fin ne demande pas laquelle lancer et n'a pas de bouton « Lance … » : le récap seul ; une tâche qui a déjà sa session ouverte (list_sessions avec {\"linked\": true}) ne reçoit pas de nouvelle carte."
+
 /** Le contexte que reçoit Claude quand Bertrand dit « Maestro ». */
 export function maestroContext(o: {
   source: Source
@@ -3507,14 +3565,14 @@ export function maestroContext(o: {
   } else if (o.go || o.autonome) {
     const n = Math.min(3, o.candidates.length)
     const lead = o.go ? Person() + ' a demandé de lancer' : 'Réglage autonome, sans menu : ta recommandation est l\'ordre ci-dessus'
-    lines.push(`- ${lead} : pour chacune des ${n} première${n > 1 ? 's' : ''} tâche${n > 1 ? 's' : ''} à lancer, ${card}. ${Person()} clique Start sur celles à lancer. Puis une phrase au plus.`)
+    lines.push(`- ${lead} : pour chacune des ${n} première${n > 1 ? 's' : ''} tâche${n > 1 ? 's' : ''} à lancer, ${card}. ${Person()} clique Start sur celles à lancer : ${MAESTRO_CARD_IS_QUESTION} Puis une phrase au plus.`)
   } else {
     const menu = Math.min(MAESTRO_MENU, o.candidates.length)
     lines.push(
       o.questions === false
         ? `- Puis demande dans ton message lesquelles lancer : une liste numérotée de ${menu} tâche${menu > 1 ? 's' : ''} au plus, dans l'ordre ci-dessus, la première marquée (recommandé), chacune « #N · titre court » avec sa priorité et ce qu'elle débloque.`
         : `- Puis demande lesquelles lancer par AskUserQuestion (multiSelect, question « Je lance lesquelles ? », en-tête « Lancer ») : une option par tâche à lancer, ${menu} au plus, dans l'ordre ci-dessus, la première marquée (Recommandé) ; libellé « #N · titre court », description : sa priorité et ce qu'elle débloque.`,
-      `- Pour chaque tâche choisie, ${card}. ${Person()} peut aussi lancer depuis le panneau (▶ devant chaque tâche).`,
+      `- Pour chaque tâche choisie, ${card} ; ${MAESTRO_CARD_IS_QUESTION} ${Person()} peut aussi lancer depuis le panneau (▶ devant chaque tâche).`,
     )
   }
   lines.push(

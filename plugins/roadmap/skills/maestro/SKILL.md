@@ -67,6 +67,14 @@ lui remonte.
   - une tâche que tu proposes remonte à Maestro : pose ta carte comme d'habitude, le panneau la lui
     transmet au lieu de la laisser dans ton transcript.
 
+- **La carte est la question** (#122) : une carte posée demande déjà « je lance ? » ; l'utilisateur
+  y répond en cliquant Start. La boîte de fin de Maestro ne la double pas : pas de « Quelle session
+  je lance ? », pas de bouton « Lance … », le récap seul. Une tâche qui a déjà une session ouverte
+  (`list_sessions` avec `{"linked": true}`, ou en session dans le panneau) ne reçoit pas de nouvelle
+  carte. **Le panneau le garantit** : une boîte de fin qui demande de lancer une tâche dont la carte
+  est posée dans le tour, ou dont la session liée tourne déjà, est refusée une fois, avec la raison ;
+  Maestro la repose avec le récap seul.
+
 ## 3. Suivre : Maestro est le seul à tout voir
 
 - **Lire** : chaque fin de tour d'une sous-session arrive à Maestro (le début de son compte rendu) ;
@@ -234,6 +242,8 @@ La fusion elle-même :
   message de l'utilisateur, Maestro reçoit les enfants qui coincent depuis 15 min et ceux à archiver
   (§ 3, « Prendre des nouvelles »).
 - Il refuse la boîte de fin de Maestro qui propose d'archiver une session déjà archivée (§ 6, #110).
+- Il refuse une fois la boîte de fin qui redemande de lancer une carte posée dans le tour ou une
+  session liée qui tourne déjà (§ 2, #122).
 - Le brief de Maestro et les nouvelles des enfants lui rappellent de tenir sa liste d'étapes
   (§ 3) ; il ne demande plus de carte (#97 retirée par #104).
 - Toute session, Maestro compris, qui travaille (au moins deux outils dans le tour) sans avoir posé de

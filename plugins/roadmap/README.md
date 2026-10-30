@@ -487,6 +487,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.70.0 (2026-10-30)** : maestro : la carte est la question, la boîte de fin de Maestro qui redemande de lancer une carte posée dans le tour ou une session liée qui tourne est refusée une fois (#122)
 - **0.69.0 (2026-10-30)** : maestro : « en attente » veut dire une question ouverte (boîte de fin, formulaire), au repos sans question n'attend pas, seules ses sessions comptent, et Maestro relit l'état d'une session avant de relayer sa question (#121)
 - **0.68.0 (2026-10-29)** : réglages : audit des 11 réglages (#119), un réglage changé revient au message suivant de chaque session du projet, réglages redonnés après une compaction sous sec-default, Maestro suit questions et adhd, descriptions de capture et launchBypass justes
 - **0.67.0 (2026-10-29)** : panneau : toujours ouvert, il se rouvre au message s'il n'est pas dessiné et sa croix est refusée tant que le réglage est allumé, son ouverture non dessinée part au journal (#117)

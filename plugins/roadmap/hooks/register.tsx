@@ -84,6 +84,9 @@ import {
   sessionState,
   archivedInAsk,
   archivedAskRefusal,
+  isLaunchAsk,
+  launchInBox,
+  launchBoxRefusal,
   dueLabel,
   findSelected,
   byDay,
@@ -670,6 +673,11 @@ function rangementNote(c: Capture | undefined, last: string | undefined, active:
  * `update_plan` des nouvelles des enfants, #84), et les outils du tour en cours, ceux de la session seule.
  */
 let stepList = { planned: false, tools: 0 }
+/**
+ * Les cartes de session posées pendant le tour (leur « #N ») et le refus déjà donné (#122) : une boîte de
+ * fin qui redemande de les lancer est refusée une fois par tour, jamais deux, pour ne pas enfermer le modèle.
+ */
+let launchTurn: { cards: string[]; refused: boolean } = { cards: [], refused: false }
 
 /** Le rappel de la liste d'étapes : tour de travail, aucune liste posée dans la session, dans tout projet (#104). */
 function stepListNote(): string | undefined {
@@ -1523,6 +1531,31 @@ async function archivedAsk($: EngineInterface, ask: unknown): Promise<string | u
   } catch {
     return undefined
   }
+}
+
+/**
+ * La boîte de fin qui redemande de lancer une session (#122) : sa carte est posée dans ce tour, ou sa
+ * session liée tourne déjà. La famille ne se relit que pour une question de lancement ; illisible,
+ * seules les cartes du tour comptent. Refusée une fois par tour.
+ */
+async function launchAsk($: EngineInterface, box: { ask?: unknown; actions?: unknown }): Promise<string | undefined> {
+  if (launchTurn.refused || !isLaunchAsk(box)) return undefined
+  let rows: unknown[] = []
+  let selfId = ''
+  try {
+    const listed = await $.tool.call({ tool: LIST_SESSIONS_TOOL, linked: true, include_archived: true, limit: LIST_LIMIT })
+    const parsed: unknown = listed.deny === undefined && !listed.isError ? JSON.parse(listed.text ?? '[]') : []
+    if (Array.isArray(parsed) && parsed.length > 0) {
+      rows = parsed
+      selfId = (await readOwnSession($)).id ?? ''
+    }
+  } catch {
+    rows = []
+  }
+  const found = launchInBox(box, launchTurn.cards, rows, selfId)
+  if (found.card.length === 0 && found.live.length === 0) return undefined
+  launchTurn.refused = true
+  return launchBoxRefusal(found)
 }
 
 /** La purge des notes d'enfant tourne une fois par chargement du module, au premier message. */
@@ -2969,6 +3002,10 @@ export const register: Register = (on, options) => {
     )
     // Une carte posée (ou remontée à Maestro) : l'idée du tour a sa suite (#83).
     if (capture && !ran.isError) capture.cardThisTurn = true
+    // Sa carte est la question de lancement : la boîte de fin du tour ne la redemande pas (#122).
+    const title = (e as { title?: unknown }).title
+    const id = !ran.isError && !fromAgent(e) && typeof title === 'string' ? sessionTitleId(title) : undefined
+    if (id !== undefined) launchTurn.cards.push(`#${id}`)
     return ran
   })
   // Un enfant note son état pour son parent (#84) : sa liste d'étapes, sa question, son récap.
@@ -3000,7 +3037,7 @@ export const register: Register = (on, options) => {
     }
   })
   on('tool.call', { tool: WRAP_UP_TOOL }, async ($, e, next) => {
-    const refusal = fromAgent(e) ? undefined : await archivedAsk($, (e as { ask?: unknown }).ask)
+    const refusal = fromAgent(e) ? undefined : ((await archivedAsk($, (e as { ask?: unknown }).ask)) ?? (await launchAsk($, e as never)))
     if (refusal !== undefined) return { deny: refusal }
     noteBox(e)
     if (!fromAgent(e)) closingTurn = { work: true, box: boxText(e) }
@@ -3033,6 +3070,7 @@ export const register: Register = (on, options) => {
     if (e.agentId === undefined) stopTurn = { id: e.turnId, stopRan: false, fromReminder: isStopFallback(e.text) }
     if (e.agentId === undefined) closingTurn = { work: false, box: '' }
     if (e.agentId === undefined) stepList.tools = 0
+    if (e.agentId === undefined) launchTurn = { cards: [], refused: false }
     if (e.agentId === undefined && settings.capture && capture) {
       capture.wroteThisTurn = false
       capture.gitAtTurn = await gitState($)
