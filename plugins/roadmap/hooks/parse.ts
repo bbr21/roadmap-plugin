@@ -1740,8 +1740,11 @@ export function proposalSentNote(maestro: string, title: string, via: 'message' 
 
 /** Une étape de la liste d'une session (`update_plan`). */
 export type ChildStep = { content: string; status: 'pending' | 'in_progress' | 'completed' }
-/** Ce qu'un enfant note de lui : sa liste d'étapes, sa question en attente, son dernier récap. */
-export type ChildStatus = { steps: ChildStep[]; question?: { text: string; since: number }; recap?: string; at: number }
+/**
+ * Ce qu'un enfant note de lui : sa liste d'étapes, sa question en attente, son dernier récap. Une
+ * question `from: 'box'` vient de sa boîte de fin (#121) : elle tombe au tour suivant de l'enfant.
+ */
+export type ChildStatus = { steps: ChildStep[]; question?: { text: string; since: number; from?: 'box' }; recap?: string; at: number }
 
 const STEP_STATUSES: readonly string[] = ['pending', 'in_progress', 'completed']
 
@@ -1802,7 +1805,8 @@ export const QUESTION_STALE_MS = 60_000
  */
 export function liveQuestion(status: ChildStatus | undefined, child: ChildRow): ChildStatus['question'] {
   const question = status?.question
-  if (!question || child.running) return question
+  // Une question de boîte de fin attend jusqu'au tour suivant de l'enfant, qui l'efface (#121).
+  if (!question || child.running || question.from === 'box') return question
   return child.lastActivityAt - question.since > QUESTION_STALE_MS ? undefined : question
 }
 
@@ -1833,6 +1837,17 @@ export function finishedCheck(f: FinishedFacts): { ok: boolean; why?: string } {
     return { ok: false, why: f.line && f.ahead === undefined ? `ligne ${f.line} encore ouverte` : 'branche pas encore fusionnée' }
   }
   return { ok: true }
+}
+
+/**
+ * La question que pose la boîte de fin d'un enfant (#121) : sa question (`ask`), sauf l'archivage,
+ * qui n'attend rien d'autre que le clic ; sinon son récap quand il commence par « attend une
+ * réponse », la forme que donne la clause de Maestro. Rien sinon : au repos n'est pas en attente.
+ */
+export function boxQuestion(ask: unknown, recap: unknown): string | undefined {
+  if (typeof ask === 'string' && ask.trim() !== '' && !/archiver cette session/i.test(ask)) return clip(ask.trim(), 160)
+  if (typeof recap === 'string' && /^\s*attend une réponse/i.test(recap)) return clip(recap.trim(), 160)
+  return undefined
 }
 
 /** Un enfant vu par son parent, d'après sa rangée de `list_sessions` ; `pinned`, épinglé dans la barre latérale. */
@@ -3176,7 +3191,42 @@ export function launchable(
 }
 
 /** Une session suivie par le panneau : sa tâche, son titre court, depuis combien de temps (ms), son lien. */
-export type MaestroSession = { task: Task; title: string; since: number; link?: string }
+/**
+ * Une tâche en session, dans le brief de Maestro : `since`, depuis sa question si elle attend, sinon
+ * depuis son lancement ; `question`, ce qu'elle demande ; `idle`, au repos sans question (#121).
+ */
+export type MaestroSession = { task: Task; title: string; since: number; link?: string; question?: string; idle?: boolean }
+
+/** Une tâche en session, vue par `maestroText` : sa session, son état, son parent (`startedBy`). */
+export type MaestroTracked = { task: Task; title: string; id?: string; running: boolean; startedAt: number; lastActivityAt: number; startedBy?: string; link?: string }
+
+/**
+ * Les sessions suivies, triées pour le brief de Maestro (#121). Celles d'une autre session ouverte
+ * (un autre Maestro, `startedBy`) sont à part : ni à relayer ni à suivre. Les siennes, et celles
+ * sans parent ouvert, attendent si leur note porte une question vivante (au repos ne suffit pas),
+ * sinon sont en cours, `idle` au repos. Sans identifiant connu de ce Maestro, rien n'est à part.
+ */
+export function maestroSplit(o: {
+  tracked: readonly MaestroTracked[]
+  me?: string
+  openSessions: ReadonlySet<string>
+  statuses: Readonly<Record<string, ChildStatus | undefined>>
+  now: number
+}): { waiting: MaestroSession[]; running: MaestroSession[]; others: MaestroSession[] } {
+  const out = { waiting: [] as MaestroSession[], running: [] as MaestroSession[], others: [] as MaestroSession[] }
+  for (const t of o.tracked) {
+    const base = { task: t.task, title: t.title, ...(t.link ? { link: t.link } : {}) }
+    if (o.me && t.startedBy && t.startedBy !== o.me && o.openSessions.has(t.startedBy)) {
+      out.others.push({ ...base, since: o.now - t.startedAt })
+      continue
+    }
+    const row: ChildRow = { id: t.id ?? '', title: t.title, running: t.running, lastActivityAt: t.lastActivityAt }
+    const question = t.id ? liveQuestion(o.statuses[t.id], row) : undefined
+    if (question) out.waiting.push({ ...base, since: o.now - question.since, question: question.text })
+    else out.running.push({ ...base, since: o.now - t.startedAt, ...(t.running ? {} : { idle: true }) })
+  }
+  return out
+}
 /** Une tâche à lancer : son titre court, ce qu'elle débloque, la carte de session prête. */
 export type MaestroCandidate = { task: Task; title: string; unlocks: number; brief: { title: string; prompt: string; background: string } }
 
@@ -3404,6 +3454,8 @@ export function maestroContext(o: {
   today: string
   waiting: readonly MaestroSession[]
   running: readonly MaestroSession[]
+  /** Les sessions d'une autre session ouverte (un autre Maestro) : une ligne, rien à relayer (#121). */
+  others?: readonly MaestroSession[]
   candidates: readonly MaestroCandidate[]
   more: number
   go: boolean
@@ -3424,11 +3476,14 @@ export function maestroContext(o: {
     '',
     '1. Attendent la réponse de ' + person() + ' (à débloquer d\'abord, la plus ancienne en tête) :',
     ...(waiting.length > 0
-      ? waiting.map(w => `${maestroTaskLine(w.task, w.title, o.today, [`attend depuis ${durationLabel(w.since)}${w.since >= MAESTRO_STUCK_MS ? ', coincée' : ''}`])}${w.link ? ` — ${w.link}` : ''}`)
+      ? waiting.map(w => `${maestroTaskLine(w.task, w.title, o.today, [`attend depuis ${durationLabel(w.since)}${w.since >= MAESTRO_STUCK_MS ? ', coincée' : ''}`])}${w.question ? ` : « ${w.question} »` : ''}${w.link ? ` — ${w.link}` : ''}`)
       : ['- aucune']),
     '',
     '2. En cours dans une session :',
-    ...(o.running.length > 0 ? o.running.map(r => maestroTaskLine(r.task, r.title, o.today, [`depuis ${durationLabel(r.since)}`])) : ['- aucune']),
+    ...(o.running.length > 0 ? o.running.map(r => maestroTaskLine(r.task, r.title, o.today, [r.idle ? 'au repos, aucune question' : `depuis ${durationLabel(r.since)}`])) : ['- aucune']),
+    ...(o.others && o.others.length > 0
+      ? ['', `Suivies par une autre session ouverte (un autre Maestro), pas les tiennes, aucune question à relayer : ${o.others.map(x => (x.task.id ? `#${x.task.id}` : x.title)).join(', ')}`]
+      : []),
     '',
     '3. À lancer, la plus utile d\'abord :',
     ...(o.candidates.length > 0
@@ -3440,6 +3495,10 @@ export function maestroContext(o: {
     "Ce que tu fais, sans rien coder ni écrire dans la roadmap (sauf la ligne d'une tâche que propose une de tes sessions) :",
     `- Ouvre ta réponse par une phrase de verdict : ce qui avance, ce qui coince${stuck.length > 0 ? ` (${stuck.length} session${stuck.length > 1 ? 's' : ''} coincée${stuck.length > 1 ? 's' : ''} depuis plus de ${durationLabel(MAESTRO_STUCK_MS)} : dis lesquelles et ${o.autonome ? 'réponds d\'abord toi-même à celles qui ne reviennent pas à ' + person() + ' (plus bas) ; les autres, à ' + person() + ' d\'y répondre d\'abord' : 'qu\'il revient à ' + person() + ' d\'y répondre d\'abord'}, avec leur lien)` : ''}.`,
   ]
+  // Une réponse peut être arrivée dans la session depuis cette liste (#121) : relire avant de demander.
+  lines.push(
+    `- Avant de relayer à ${person()} la question d'une de tes sessions (formulaire, choix de maquette), relis son état juste avant : get_session (isRunning) et list_events (son dernier message). Elle tourne, ou la réponse est déjà là : ne demande rien (skill roadmap:maestro, § 3).`,
+  )
   // Maestro suit ses sessions par sa liste d'étapes (#104), dans les deux modes.
   lines.push(MAESTRO_STEP_LIST)
   const card = `pose sa carte de session (${cardTool(o.launchEffort, projectSettings(o.source).mode)}) avec le titre et le brief donnés ci-dessous, sans la lancer toi-même`
@@ -3479,3 +3538,4 @@ export function maestroContext(o: {
   }
   return lines.join('\n')
 }
+

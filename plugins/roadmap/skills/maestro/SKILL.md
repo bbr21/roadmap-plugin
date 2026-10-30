@@ -119,8 +119,15 @@ lui remonte.
   l'utilisateur (lancer, archiver, un secret, un accès), et le dit en une ligne. Fusionner et
   publier ne lui reviennent pas : Maestro ne lui pose jamais « je fusionne ? » ni « je publie ? »
   (#105).
+- **Relire avant de relayer** (#121) : juste avant de poser à l'utilisateur la question d'une
+  sous-session (formulaire, choix de maquette), relire son état : `get_session` (`isRunning`) et
+  `list_events` (son dernier message). Elle tourne, ou la réponse est déjà dans son transcript : ne
+  rien demander, la question est réglée. Une session au repos qui ne pose aucune question (« à
+  archiver », « fini, rien en attente ») n'attend pas l'utilisateur. Même règle que l'archivage
+  (§ 6, #110). Ne relayer que les questions de ses sessions : celles d'un autre Maestro ouvert sont
+  à lui.
 - **Un choix de maquette** (#96) : une sous-session qui « attend une réponse : choix de maquette,
-  <chemin> » a écrit ses maquettes dans une page. Maestro l'ouvre dans le volet navigateur
+  <chemin> » a écrit ses maquettes dans une page. Maestro relit d'abord son état (ci-dessus), puis l'ouvre dans le volet navigateur
   (`preview_start` avec l'url `file://` de la page, dans le worktree de la sous-session), puis
   pose la question à l'utilisateur par le formulaire, une option par maquette, son aperçu (`preview`)
   et son compromis, la recommandation de la sous-session en premier ; sa réponse part mot pour
@@ -212,6 +219,11 @@ La fusion elle-même :
 - Il reconnaît Maestro à son titre « Maestro … » (ou à l'alias « Lot … » des anciens titres), à la
   marque posée quand l'utilisateur y dit « Maestro », ou à ses sessions lancées encore ouvertes (au
   moins deux).
+- Son brief (« Maestro ») ne compte que ses sessions : celles d'un autre Maestro ouvert tiennent en
+  une ligne à part, sans question à relayer. « Attendent la réponse » veut dire au repos avec une
+  question ouverte (formulaire, question de la boîte de fin, « attend une réponse : … » en tête du
+  récap), citée en clair ; au repos sans question, la session est « au repos, aucune question »
+  (#121).
 - Il ne le met jamais « en cours » sur une tâche, et ne lui propose pas d'archiver quand le numéro
   de son titre se coche.
 - Une ligne ouverte par Maestro lui rappelle de lancer sa session au lieu de la coder.

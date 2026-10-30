@@ -115,7 +115,6 @@ import {
   maestroCall,
   maestroContext,
   MAESTRO_MENU,
-  type MaestroSession,
   type Prio,
   rowPills,
   sortTasks,
@@ -213,6 +212,9 @@ import {
   finishedCheck,
   isChildStep,
   liveQuestion,
+  boxQuestion,
+  maestroSplit,
+  type MaestroTracked,
   type ChildRelaunch,
   type ChildRow,
   type ChildStatus,
@@ -1667,6 +1669,10 @@ let sessionMatches = new Map<string, LiveEntry>()
 const runningBySession = new Map<string, boolean>()
 /** La dernière activité de chaque session listée (ms) : depuis quand une session qui ne tourne pas attend Bertrand. */
 const lastActivityBySession = new Map<string, number>()
+/** La session qui a lancé chaque session listée (`startedBy`) : Maestro ne compte que les siennes (#121). */
+const startedBySession = new Map<string, string>()
+/** Les sessions ouvertes (non archivées) de la dernière relecture : le parent d'une session suivie est-il encore là (#121) ? */
+let openSessionIds = new Set<string>()
 let listDenied = false
 
 /** Les sessions lues par relecture : au-delà des 40 d'avant, une journée chargée en laissait dehors. */
@@ -1783,8 +1789,11 @@ async function matchSessions($: EngineInterface, source: Source): Promise<void> 
     const maestros = maestroSessionIds(sessions)
     // Une session qui finit son tour (ou le reprend) change sa marque : la main ou la roue.
     let runningChanged = false
+    const open = new Set<string>()
     for (const raw of sessions) {
-      const sess = raw as { sessionId?: unknown; title?: unknown; cwd?: unknown; isArchived?: unknown; lastActivityAt?: unknown; link?: unknown }
+      const sess = raw as { sessionId?: unknown; title?: unknown; cwd?: unknown; isArchived?: unknown; lastActivityAt?: unknown; link?: unknown; startedBy?: unknown }
+      if (typeof sess.sessionId === 'string' && sess.isArchived !== true) open.add(sess.sessionId)
+      if (typeof sess.sessionId === 'string' && typeof sess.startedBy === 'string') startedBySession.set(sess.sessionId, sess.startedBy)
       // Une rangée qui dit l'archivage vaut la fiche de la session : `probeLive` ne la relit pas.
       if (typeof sess.sessionId === 'string' && typeof sess.isArchived === 'boolean') listed.set(sess.sessionId, seenIn(raw))
       if (typeof sess.sessionId === 'string' && typeof (raw as { isRunning?: unknown }).isRunning === 'boolean') {
@@ -1817,6 +1826,7 @@ async function matchSessions($: EngineInterface, source: Source): Promise<void> 
         ...(typeof sess.link === 'string' ? { link: sess.link } : {}),
       })
     }
+    openSessionIds = open
     const same = next.size === sessionMatches.size && [...next].every(([k, v]) => sessionMatches.get(k)?.sessionId === v.sessionId)
     sessionMatches = next
     if (!same || runningChanged) await update($, liveVersionAtom, v => v + 1)
@@ -2092,17 +2102,29 @@ async function maestroText($: EngineInterface, go: boolean): Promise<string> {
   // Toutes les prérequises (#76) : une tâche est bloquée tant qu'une est ouverte, et débloque toutes ses dépendantes.
   const prereq = (t: Task) => prereqsOf(t, all, x => titles[hashLabel(x.label)]?.titre)
   const tracked = (t: Task) => (t.done ? undefined : trackedSession(source, t, live, ignored, now))
-  const waiting: MaestroSession[] = []
-  const running: MaestroSession[] = []
+  // Au repos n'est pas « en attente » : il y faut une question notée et vivante ; et seules ses
+  // sessions comptent, celles d'un autre Maestro ouvert se disent à part (#121).
+  const followed: MaestroTracked[] = []
   for (const t of open.filter(x => !x.done)) {
     const s = tracked(t)
     if (!s) continue
     const sid = s.entry.sessionId
-    const last = (sid && lastActivityBySession.get(sid)) || s.entry.startedAt
-    const link = s.entry.link
-    if (sid && runningBySession.get(sid) === false) waiting.push({ task: t, title: titleOf(t), since: now - last, ...(link ? { link } : {}) })
-    else running.push({ task: t, title: titleOf(t), since: now - s.entry.startedAt })
+    const parent = sid ? startedBySession.get(sid) : undefined
+    followed.push({
+      task: t,
+      title: titleOf(t),
+      ...(sid ? { id: sid } : {}),
+      running: !sid || runningBySession.get(sid) !== false,
+      startedAt: s.entry.startedAt,
+      lastActivityAt: (sid && lastActivityBySession.get(sid)) || s.entry.startedAt,
+      ...(parent ? { startedBy: parent } : {}),
+      ...(s.entry.link ? { link: s.entry.link } : {}),
+    })
   }
+  const statuses: Record<string, ChildStatus | undefined> = {}
+  for (const f of followed) if (f.id) statuses[f.id] = childStatusOf(await $.store.get(`${CHILD_STATUS_PREFIX}${f.id}`).catch(() => undefined))
+  const me = ownSession?.id
+  const { waiting, running, others } = maestroSplit({ tracked: followed, ...(me ? { me } : {}), openSessions: openSessionIds, statuses, now })
   // Mode Projet (#76) : seules mes tâches se lancent ; celles d'autres personnes se relancent.
   const projet = projectSettings(source).mode === 'projet'
   const ready = launchable(open, { prereqOf: prereq, isLive: t => tracked(t) !== undefined, me: source.me }).filter(
@@ -2131,6 +2153,7 @@ async function maestroText($: EngineInterface, go: boolean): Promise<string> {
     today: todayOf(now),
     waiting,
     running,
+    others,
     candidates,
     more: ready.length - candidates.length,
     go,
@@ -2982,7 +3005,15 @@ export const register: Register = (on, options) => {
     noteBox(e)
     if (!fromAgent(e)) closingTurn = { work: true, box: boxText(e) }
     const recap = (e as { recap?: unknown }).recap
-    if (!fromAgent(e)) await noteChild($, s => ({ ...withoutQuestion(s), ...(typeof recap === 'string' ? { recap: clip(recap, 200) } : {}) }))
+    // La question de la boîte, ou « attend une réponse : … » en tête du récap, attend jusqu'au tour suivant (#121).
+    const asked = boxQuestion((e as { ask?: unknown }).ask, recap)
+    if (!fromAgent(e)) {
+      await noteChild($, (s, now) => ({
+        ...withoutQuestion(s),
+        ...(typeof recap === 'string' ? { recap: clip(recap, 200) } : {}),
+        ...(asked !== undefined ? { question: { text: asked, since: now, from: 'box' as const } } : {}),
+      }))
+    }
     return next(e)
   })
   // Les outils du tour, ceux du modèle de la session seule (ni sous-agent, ni appel d'un plugin) :
@@ -3012,6 +3043,8 @@ export const register: Register = (on, options) => {
     }
     // Cette session reprend la main : sa tâche passe à la roue sans attendre la relecture.
     if (e.agentId === undefined) await markOwnRunning($, true)
+    // La réponse est arrivée (de Bertrand ou de Maestro) : la question de sa boîte de fin tombe (#121).
+    if (e.agentId === undefined) await noteChild($, s => (s.question?.from === 'box' ? withoutQuestion(s) : s))
     return next(e)
   })
 
