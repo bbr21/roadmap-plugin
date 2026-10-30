@@ -628,8 +628,11 @@ export function stepListReminder(): string {
   ].join('\n')
 }
 
-/** Ce qui manque au bloc de fin de tour (#85) : une de ses trois lignes, ou le bouton d'archivage. */
-export type ClosingGap = 'etat' | 'atoi' | 'session' | 'archiver'
+/**
+ * Ce qui manque au bloc de fin de tour (#85) : une de ses trois lignes, la mission de la fiche de fin
+ * de session (#123), ou le bouton d'archivage.
+ */
+export type ClosingGap = 'etat' | 'atoi' | 'session' | 'mission' | 'archiver'
 
 /** Les trois lignes du bloc, dans leur ordre : l'étiquette telle qu'écrite, et le début de ligne qui la reconnaît. */
 const CLOSING_LINES: readonly { gap: ClosingGap; label: string; start: RegExp }[] = [
@@ -638,45 +641,78 @@ const CLOSING_LINES: readonly { gap: ClosingGap; label: string; start: RegExp }[
   { gap: 'session', label: '**Session**', start: /^session\s*:/ },
 ]
 
-/** Le bloc tel que Claude l'écrit, dit au démarrage (mode ADHD) et redit par le rappel de fin de tour. */
+/** La ligne de la mission, que la fiche de fin de session porte en premier (#123). */
+const MISSION_LINE = /^mission\s*:/
+
+/**
+ * Le bloc tel que Claude l'écrit, dit au démarrage (mode ADHD) et redit par le rappel de fin de tour,
+ * sans emoji de valeur depuis #123 (maquette A1).
+ */
 const CLOSING_FORMAT = [
-  '🟡 **État** : fini · pas fini · bloqué (✅ · 🟡 · ⛔), et une phrase sur où on en est',
-  '👉 **À toi** : rien (🙌), ou une à trois actions (👉), chacune avec où et comment',
-  '📌 **Session** : à archiver (🗄️), ou à garder (📌) et pourquoi',
+  '**État** : fini · pas fini · bloqué, et une phrase sur où on en est',
+  '**À toi** : rien, ou une à trois actions, chacune avec où et comment',
+  '**Session** : à garder, et pourquoi, ou à archiver',
+]
+
+/** La fiche de fin de session (#123, maquette A1) : un tableau markdown, la mission d'abord, sans marque. */
+const FICHE_FORMAT = [
+  '| Fin | #<id> · <la tâche, en quelques mots> |',
+  '|---|---|',
+  "| Mission | ce qu'on voulait faire, et pourquoi, en deux ou trois lignes |",
+  '| Livré | ce qui a été livré : version, commits, fichiers, tests |',
+  '| État | fini · pas fini · bloqué, et une phrase |',
+  '| À toi | rien, ou une à trois actions, chacune avec où et comment |',
+  '| Session | à archiver |',
 ]
 
 /**
  * Une ligne sans gras, puces, emoji de tête ni accents : « - **État :** fini » et « > 🟡 **État** :
- * pas fini » deviennent « etat : … ». L'emoji de valeur (#107) est accepté, pas exigé.
+ * pas fini » deviennent « etat : … ». L'emoji de valeur (#107) est accepté, pas exigé. Une ligne de
+ * tableau (#123) se lit de même : « | État | Fini | » devient « etat : fini | ».
  */
 const closingLine = (line: string) =>
-  normalizeTitle(line.replace(/[*_]/g, '')).replace(/^(?:[-•>]\s*|\d+[.)]\s*|[\p{Extended_Pictographic}\uFE0F\u200D]+\s*)+/u, '')
+  normalizeTitle(line.replace(/[*_]/g, '').replace(/^\s*\|\s*([^|]*?)\s*\|/, '$1 : ')).replace(
+    /^(?:[-•>]\s*|\d+[.)]\s*|[\p{Extended_Pictographic}\uFE0F\u200D]+\s*)+/u,
+    '',
+  )
 
 /**
  * Ce qui manque à la fin d'un tour de travail en mode ADHD (#85) : chaque ligne du bloc absente de
- * la dernière réponse, et le bouton « Oui, archiver » de la boîte de fin quand la ligne Session dit
- * « à archiver » (#87). Des étiquettes, pas leurs valeurs : une tournure ne renvoie pas Claude.
+ * la dernière réponse ; quand la ligne Session dit « à archiver », la mission de la fiche de fin de
+ * session (#123) et le bouton « Oui, archiver » de la boîte de fin (#87). Des étiquettes, pas leurs
+ * valeurs : une tournure ne renvoie pas Claude.
  */
 export function closingBlockGaps(last: string | undefined, box: string): ClosingGap[] {
   const lines = (last ?? '').split('\n').map(closingLine)
   const gaps = CLOSING_LINES.filter(l => !lines.some(line => l.start.test(line))).map(l => l.gap)
   const session = lines.find(line => /^session\s*:/.test(line))
   const archive = session !== undefined && /archiv/.test(session) && !/gard/.test(session)
+  if (archive && !lines.some(line => MISSION_LINE.test(line))) gaps.push('mission')
   if (archive && !normalizeTitle(box).includes('oui, archiver')) gaps.push('archiver')
   return gaps
 }
 
-/** Le rappel de fin de tour d'un bloc incomplet (#85) : ce qui manque, puis le format. */
+/**
+ * Le rappel de fin de tour d'un bloc incomplet (#85) : ce qui manque, puis le format. Fin de session
+ * sans mission : la fiche (#123). Seul le bouton manque : la boîte seule, sans rien réécrire (le bloc
+ * revenait deux fois, capture « Retours · #2 » du 2026-10-30).
+ */
 export function closingBlockReminder(gaps: readonly ClosingGap[]): string {
   const missing = CLOSING_LINES.filter(l => gaps.includes(l.gap)).map(l => l.label)
   const lines = [
     `Plugin roadmap : ce tour de travail finit sans son bloc de fin de tour complet (mode ADHD).`,
   ]
-  if (missing.length > 0) {
+  if (gaps.includes('mission')) {
+    lines.push(
+      "Ta ligne **Session** dit « à archiver » : c'est la fin de la session. Termine ta réponse, après la boîte de fin, par la fiche de fin de session à la place du bloc de trois lignes, une seule fois, sans emoji :",
+      ...FICHE_FORMAT,
+    )
+  } else if (missing.length > 0) {
     lines.push(`Il manque ${missing.join(', ')}. Termine ta réponse, après la boîte de fin, par ces trois lignes, telles quelles :`, ...CLOSING_FORMAT)
   }
   if (gaps.includes('archiver')) {
-    lines.push(`Ta ligne **Session** dit « à archiver », mais la boîte de fin n'a pas son bouton : termine par ${ARCHIVE_BOX}. ${archiveThen()}`)
+    const only = gaps.length === 1 ? ' Pose seulement cette boîte : ne réécris ni ton message ni ta fiche, déjà écrits.' : ''
+    lines.push(`Ta ligne **Session** dit « à archiver », mais la boîte de fin n'a pas son bouton : termine par ${ARCHIVE_BOX}.${only} ${archiveThen()}`)
   }
   return lines.join('\n')
 }
@@ -3130,7 +3166,7 @@ export function sessionPrefsText(prefs: SessionPrefs, error?: string, project?: 
   }
   if (prefs.adhd) {
     lines.push(
-      "- **Mode ADHD** : chaque message commence par une seule ligne, en gras : un emoji qui dit l'état de l'étape, son numéro sur le total, son nom, rien d'autre. Étape en cours : `⏳ **2/4 Écrire le plan**` ; étape qui vient de finir : `✅ **2/4 Écrire le plan**` ; détour (erreur, question, retour en arrière) : `⚠️ **3/4 Coder et tester** ↳ test rouge` ; tâche finie : `✅ **4/4 Publier la version**`, le nom de la dernière étape. Les étapes sont celles de la liste d'étapes (`update_plan`), dans le même ordre et sous le même nom : un verbe et son objet, 2 à 4 mots qui disent le geste (« Écrire le plan », pas « Plan »), posés au premier message d'une tâche et jamais renommés ; le total ne bouge que si une étape s'ajoute. Une question ou une réponse courte hors tâche : pas de ligne du tout. Après la ligne, une phrase de constat (« Bucket créé. »), puis, s'il en reste une, la seule action ou décision qui revient à " + person() + ", jamais un geste qu'un outil fait à ta place. Réponses très courtes, listes à puces, gras sur l'essentiel, jamais de paragraphe dense. Seule exception : une explication que " + person() + " demande prend la place qu'il faut pour être comprise, en mots simples, avec un exemple concret. Un tour de travail (boîte de fin ou liste d'étapes) se termine, après la boîte de fin, par le bloc de fin de tour, trois lignes telles quelles, chacune ouverte par l'emoji de sa valeur : `🟡 **État** : pas fini` (`✅` fini, `⛔` bloqué), et une phrase sur où on en est ; `🙌 **À toi** : rien`, ou `👉 **À toi** :` une à trois actions, chacune avec où et comment (le volet, le fichier, le bouton) ; `📌 **Session** : à garder`, et pourquoi, ou `🗄️ **Session** : à archiver` (la boîte de fin pose alors « Archiver cette session ? » avec le bouton de réponse « Oui, archiver »).",
+      "- **Mode ADHD** : chaque message commence par une seule ligne, en gras : un emoji qui dit l'état de l'étape, son numéro sur le total, son nom, rien d'autre. Étape en cours : `⏳ **2/4 Écrire le plan**` ; étape qui vient de finir : `✅ **2/4 Écrire le plan**` ; détour (erreur, question, retour en arrière) : `⚠️ **3/4 Coder et tester** ↳ test rouge` ; tâche finie : `✅ **4/4 Publier la version**`, le nom de la dernière étape. Les étapes sont celles de la liste d'étapes (`update_plan`), dans le même ordre et sous le même nom : un verbe et son objet, 2 à 4 mots qui disent le geste (« Écrire le plan », pas « Plan »), posés au premier message d'une tâche et jamais renommés ; le total ne bouge que si une étape s'ajoute. Une question ou une réponse courte hors tâche : pas de ligne du tout. Après la ligne, une phrase de constat (« Bucket créé. »), puis, s'il en reste une, la seule action ou décision qui revient à " + person() + ", jamais un geste qu'un outil fait à ta place. Réponses très courtes, listes à puces, gras sur l'essentiel, jamais de paragraphe dense. Seule exception : une explication que " + person() + " demande prend la place qu'il faut pour être comprise, en mots simples, avec un exemple concret. Un tour de travail (boîte de fin ou liste d'étapes) se termine, après la boîte de fin, par le bloc de fin de tour, trois lignes telles quelles, sans emoji : `**État** : pas fini` (ou fini, bloqué), et une phrase sur où on en est ; `**À toi** : rien`, ou une à trois actions, chacune avec où et comment (le volet, le fichier, le bouton) ; `**Session** : à garder`, et pourquoi, ou `**Session** : à archiver` (la boîte de fin pose alors « Archiver cette session ? » avec le bouton de réponse « Oui, archiver »). Au dernier tour de la session (à archiver), la fiche de fin de session remplace le bloc, une seule fois : un tableau markdown sans marque, `| Fin | #<id> · <la tâche> |`, `|---|---|`, puis une ligne par étiquette, dans cet ordre : `| Mission |` ce qu'on voulait faire et pourquoi, en deux ou trois lignes ; `| Livré |` ce qui a été livré ; `| État |` ; `| À toi |` ; `| Session | à archiver |`. Si un rappel ne réclame que le bouton de la boîte, pose la boîte seule, sans réécrire le message ni la fiche.",
     )
   }
   if (prefs.francais) lines.push('- **Langue** : réponds en français, comptes rendus, récaps et boîte de fin compris.')
@@ -3178,7 +3214,7 @@ export function prefsChangedLead(): string {
 // s'effaçait au fil d'une longue session (fil absent 3 messages sur 4). Une ligne la redit à chaque message.
 export function sessionPrefsReminder(prefs: SessionPrefs): string | undefined {
   if (!prefs.adhd) return undefined
-  return "Mode ADHD : ouvre le message par une ligne en gras, emoji d'état + étape/total + son nom dans la liste d'étapes (en cours ⏳ **2/4 Écrire le plan**, finie ✅ **2/4 Écrire le plan**, détour ⚠️ **3/4 Coder et tester** ↳ raison ; mêmes noms, verbe et objet, qu'au message d'avant ; pas de ligne pour une réponse courte hors tâche), puis une phrase de constat, puis la seule action ou décision qui revient à " + person() + ", s'il y en a une ; un tour de travail finit par le bloc 🟡 État, 👉 À toi, 📌 Session, chaque ligne ouverte par l'emoji de sa valeur."
+  return "Mode ADHD : ouvre le message par une ligne en gras, emoji d'état + étape/total + son nom dans la liste d'étapes (en cours ⏳ **2/4 Écrire le plan**, finie ✅ **2/4 Écrire le plan**, détour ⚠️ **3/4 Coder et tester** ↳ raison ; mêmes noms, verbe et objet, qu'au message d'avant ; pas de ligne pour une réponse courte hors tâche), puis une phrase de constat, puis la seule action ou décision qui revient à " + person() + ", s'il y en a une ; un tour de travail finit par le bloc État, À toi, Session, sans emoji ; le dernier tour d'une session, par la fiche en tableau Mission, Livré, État, À toi, Session, à sa place."
 }
 
 // Le volet Réglages (#81, 2026-10-28) : Bertrand voit chaque réglage et le change d'un clic, sans
@@ -3204,7 +3240,7 @@ export const SESSION_PREF_INFO: readonly { key: PrefKey; name: string; detail: s
     key: 'adhd',
     name: 'Mode ADHD',
     detail:
-      "Chaque message s'ouvre sur une ligne en gras : l'étape en cours, son numéro et un emoji d'état (⏳ 2/4 Écrire le plan). Puis des réponses courtes en puces, et à la fin du tour trois lignes : État, À toi, Session.",
+      "Chaque message s'ouvre sur une ligne en gras : l'étape en cours, son numéro et un emoji d'état (⏳ 2/4 Écrire le plan). Puis des réponses courtes en puces, et à la fin du tour trois lignes sans emoji : État, À toi, Session. À la toute fin de la session, une fiche en tableau à leur place : la mission d'abord, puis ce qui a été livré, l'état, ce qui te revient et le sort de la session.",
     off: "Des messages libres, sans ligne d'étape ni bloc de fin.",
   },
   {

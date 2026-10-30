@@ -652,7 +652,7 @@ let closingTurn = { work: false, box: '' }
 async function closingNote($: EngineInterface, last: string | undefined, rangementPending = false): Promise<string | undefined> {
   if (!closingTurn.work) return undefined
   if (!(await readSessionPrefs($)).prefs.adhd) return undefined
-  const gaps = closingBlockGaps(last, closingTurn.box).filter(g => !(rangementPending && g === 'archiver'))
+  const gaps = closingBlockGaps(last, closingTurn.box).filter(g => !(rangementPending && (g === 'archiver' || g === 'mission')))
   return gaps.length === 0 ? undefined : closingBlockReminder(gaps)
 }
 

@@ -349,10 +349,11 @@ remplaçant le précédent (#119) :
   fil d'une longue session : depuis le 24/10/2026, une ligne de rappel l'accompagne à chaque
   message de Bertrand (hook `prompt.submit` depuis #116). Depuis le 29/10/2026 (#85), un tour de travail
   (boîte de fin ou liste d'étapes) se termine, après la boîte de fin, par le **bloc de fin de
-  tour**, trois lignes, chacune ouverte par l'emoji de sa valeur depuis #107 : `**État**` (`✅` fini,
-  `🟡` pas fini, `⛔` bloqué) et une phrase, `**À toi**` (`🙌` rien, `👉` une à trois actions avec
-  où et comment), `**Session**` (`🗄️` à archiver, avec la boîte « Archiver cette session ? » et le
-  bouton de réponse « Oui, archiver » ; `📌` à garder, et pourquoi). Éteint, Maestro ne demande plus
+  tour**, trois lignes sans emoji depuis #123 : `**État**` (fini, pas fini, bloqué) et une phrase,
+  `**À toi**` (rien, ou une à trois actions avec où et comment), `**Session**` (à archiver, avec
+  la boîte « Archiver cette session ? » et le bouton de réponse « Oui, archiver » ; à garder, et
+  pourquoi). Au dernier tour d'une session, une fiche en tableau les remplace (#123) : Mission,
+  Livré, État, À toi, Session. Éteint, Maestro ne demande plus
   que des réponses courtes (#119) ;
 - `francais` : réponses en français ;
 - `autonome` (#77, #105, en mode Code comme en mode Projet, éteint par défaut) : Claude suit sa
@@ -487,6 +488,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.72.0 (2026-10-30)** : reglages-session : mode ADHD, bloc de fin de tour sans emoji, et au dernier tour d'une session une fiche en tableau (Mission, Livré, État, À toi, Session) ; un rappel qui ne réclame que le bouton d'archivage ne fait plus réécrire le message (#123)
 - **0.71.0 (2026-10-30)** : panneau : seconde vue, le tableau des sessions (T'attend, En cours, Prête, À lancer, Livrées), bascule Liste · Tableau en tête du panneau, compteurs cliquables par colonne, une session au repos sans question reste En cours (#120)
 - **0.70.0 (2026-10-30)** : maestro : la carte est la question, la boîte de fin de Maestro qui redemande de lancer une carte posée dans le tour ou une session liée qui tourne est refusée une fois (#122)
 - **0.69.0 (2026-10-30)** : maestro : « en attente » veut dire une question ouverte (boîte de fin, formulaire), au repos sans question n'attend pas, seules ses sessions comptent, et Maestro relit l'état d'une session avant de relayer sa question (#121)
