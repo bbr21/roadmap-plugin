@@ -2429,7 +2429,7 @@ export function checkBrief(
     '- **périmée ou abandonnée** : le besoin a disparu ou une autre task le couvre ;',
     '- **toujours à faire telle quelle**.',
     '',
-    "Puis propose l'écriture qui va avec — cocher la ligne avec `fait:` et son bilan, réécrire son libellé sur ce qui reste, l'abandonner, ou la laisser — par une question AskUserQuestion, ta recommandation en premier.",
+    "Puis propose l'écriture qui va avec — cocher la ligne avec `fait:` et son bilan, réécrire son libellé sur ce qui reste, l'abandonner, ou la laisser — par une question, ta recommandation en premier.",
     "Fais l'écriture choisie, et elle seule, selon les règles du dossier ; rien n'est écrit sans la réponse de " + person() + ".",
     '',
     `Termine sur ${ARCHIVE_BOX}. ${archiveThen()}`,
@@ -3027,6 +3027,27 @@ export function sessionPrefsText(prefs: SessionPrefs, error?: string, project?: 
   ].join('\n')
 }
 
+/** Sous cette part du contexte du message précédent, le contexte a été compacté. */
+export const COMPACT_RATIO = 0.5
+
+/**
+ * Une compaction que `session.compact` n'a pas vue (#119) : sous sec-default, ce hook est sauté, et les
+ * réglages complets ne revenaient pas. Entre deux messages, le contexte ne fait que croître ; s'il a
+ * fondu de moitié, ou s'il n'est plus mesuré (un `/compact`, jusqu'à la réponse suivante), il a été
+ * compacté. `before` : le contexte du message précédent, 0 quand rien n'a été mesuré depuis.
+ */
+export function contextShrank(before: number, now: number | undefined): boolean {
+  return before > 0 && (now === undefined || now < before * COMPACT_RATIO)
+}
+
+/**
+ * La tête d'un bloc redonné en cours de session (#119) : un réglage changé dans le volet ou par la skill
+ * ne valait qu'à moitié, le rappel ADHD le suivant et le bloc d'avant restant dans la conversation.
+ */
+export function prefsChangedLead(): string {
+  return "Plugin roadmap : les réglages de session ont changé depuis le dernier bloc donné à cette conversation (volet Réglages, skill reglages-session ou une autre session du projet). Ce bloc remplace le précédent : un réglage qui n'y figure plus est éteint, n'en suis plus la consigne."
+}
+
 // Le rappel d'un message (2026-10-24) : donnée seulement au démarrage, la consigne du mode ADHD
 // s'effaçait au fil d'une longue session (fil absent 3 messages sur 4). Une ligne la redit à chaque message.
 export function sessionPrefsReminder(prefs: SessionPrefs): string | undefined {
@@ -3389,6 +3410,10 @@ export function maestroContext(o: {
   launchEffort?: string
   /** Le réglage de session `autonome` (#77) : pas de menu, fusion seule, réponses aux sessions qui attendent. */
   autonome?: boolean
+  /** Le réglage de session `questions` (#119) : éteint, le menu se pose dans le message, sans formulaire. Absent : allumé. */
+  questions?: boolean
+  /** Le réglage de session `adhd` (#119) : éteint, Maestro ne parle plus du mode ADHD. Absent : allumé. */
+  adhd?: boolean
   /** Mode Projet (#76) : les tâches d'autres personnes en retard, à relancer plutôt qu'à lancer. */
   othersLate?: number
 }): string {
@@ -3425,8 +3450,11 @@ export function maestroContext(o: {
     const lead = o.go ? Person() + ' a demandé de lancer' : 'Réglage autonome, sans menu : ta recommandation est l\'ordre ci-dessus'
     lines.push(`- ${lead} : pour chacune des ${n} première${n > 1 ? 's' : ''} tâche${n > 1 ? 's' : ''} à lancer, ${card}. ${Person()} clique Start sur celles à lancer. Puis une phrase au plus.`)
   } else {
+    const menu = Math.min(MAESTRO_MENU, o.candidates.length)
     lines.push(
-      `- Puis demande lesquelles lancer par AskUserQuestion (multiSelect, question « Je lance lesquelles ? », en-tête « Lancer ») : une option par tâche à lancer, ${Math.min(MAESTRO_MENU, o.candidates.length)} au plus, dans l'ordre ci-dessus, la première marquée (Recommandé) ; libellé « #N · titre court », description : sa priorité et ce qu'elle débloque.`,
+      o.questions === false
+        ? `- Puis demande dans ton message lesquelles lancer : une liste numérotée de ${menu} tâche${menu > 1 ? 's' : ''} au plus, dans l'ordre ci-dessus, la première marquée (recommandé), chacune « #N · titre court » avec sa priorité et ce qu'elle débloque.`
+        : `- Puis demande lesquelles lancer par AskUserQuestion (multiSelect, question « Je lance lesquelles ? », en-tête « Lancer ») : une option par tâche à lancer, ${menu} au plus, dans l'ordre ci-dessus, la première marquée (Recommandé) ; libellé « #N · titre court », description : sa priorité et ce qu'elle débloque.`,
       `- Pour chaque tâche choisie, ${card}. ${Person()} peut aussi lancer depuis le panneau (▶ devant chaque tâche).`,
     )
   }
@@ -3441,7 +3469,7 @@ export function maestroContext(o: {
         ? []
         : ['- La fusion de la branche prête d\'une de tes sessions attend le clic de ' + person() + ' : propose-la-lui, une branche à la fois (skill roadmap:maestro, § 5).']),
     "- Les nouvelles de tes sessions enfants (celles qui coincent ou sont à archiver) t'arrivent à chaque message de " + person() + ", sous « Roadmap — nouvelles de tes sessions enfants » : suis leurs consignes. Sans ce bloc, toutes avancent.",
-    '- Mode ADHD et réponses courtes : pas de tableau, pas de récapitulatif.',
+    o.adhd === false ? '- Réponses courtes : pas de tableau, pas de récapitulatif.' : '- Mode ADHD et réponses courtes : pas de tableau, pas de récapitulatif.',
   )
   if (o.candidates.length > 0) {
     lines.push('', 'Les cartes prêtes, une par tâche à lancer :')

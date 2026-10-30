@@ -198,8 +198,8 @@ type SettingsSection = { id: string; title: string; prefs?: readonly PrefKey[]; 
 
 /**
  * Les sections du volet (#118, maquette A1 choisie par Bertrand le 2026-10-29), par sujet et dans cet
- * ordre. Les réglages de session valent pour le projet, à la prochaine session ; les options du
- * panneau, partout et tout de suite. `def` suit le `default` du `plugin.json` : tools/test_reglages.py
+ * ordre. Les réglages de session valent pour le projet, au prochain message de chacune de ses
+ * sessions (#119) ; les options du panneau, partout et tout de suite. `def` suit le `default` du `plugin.json` : tools/test_reglages.py
  * le vérifie, comme la place de chaque option dans une section.
  */
 export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
@@ -348,11 +348,12 @@ export async function drawSettings($: EngineInterface, e: RenderInput<'Pane'>, p
   )
 
   // Hors projet, un clic écrit les clés du haut : les valeurs de départ des projets jamais réglés.
-  const sessionScope = project.name === undefined ? 'hors projet · prochaine session' : `ce projet (${project.name}) · prochaine session`
+  // Un changement revient au message suivant de chaque session ouverte (#119), sans attendre la suivante.
+  const sessionScope = project.name === undefined ? 'hors projet · au prochain message' : `ce projet (${project.name}) · au prochain message`
   const sessionWhen =
     project.name === undefined
-      ? 'à la prochaine session hors projet et dans les projets jamais réglés, ou après /clear'
-      : `à la prochaine session de ce projet (${project.name}), ou après /clear`
+      ? 'au prochain message, dans chaque session hors projet et des projets jamais réglés'
+      : `au prochain message, dans chaque session de ce projet (${project.name})`
 
   const prefRow = (key: PrefKey) => {
     const info = SESSION_PREF_INFO.find(i => i.key === key)!

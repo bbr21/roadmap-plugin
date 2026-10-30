@@ -181,9 +181,12 @@ import {
   zoneReady,
   zoneReload,
   zoneWatch,
+  DEFAULT_SESSION_PREFS,
   sessionPrefs,
   sessionPrefsText,
   sessionPrefsReminder,
+  prefsChangedLead,
+  contextShrank,
   closingBlockGaps,
   STEP_LIST_MIN_TOOLS,
   stepListReminder,
@@ -384,8 +387,13 @@ const retryAtom = atom({ plugin: 'roadmap', key: 'retry' } as const, 0)
 const zoneGenAtom = atom({ plugin: 'roadmap', key: 'zoneGen' } as const, 0)
 /** Pourquoi les autres sessions manquent (liste refusée ou illisible) ; vide quand elle se lit. */
 const scanNoteAtom = atom({ plugin: 'roadmap', key: 'scanNote' } as const, '')
-/** Les réglages de session complets sont dans la conversation (#116) ; l'état de session survit au rechargement du module. */
-const prefsGivenAtom = atom({ plugin: 'roadmap', key: 'prefsGiven' } as const, false)
+/**
+ * Le bloc des réglages de session donné en dernier à la conversation (#116), vide sinon : un bloc qui
+ * a changé depuis (#119) se redonne. L'état de session survit au rechargement du module.
+ */
+const prefsGivenAtom = atom({ plugin: 'roadmap', key: 'prefsGivenText' } as const, '')
+/** Le contexte du message précédent, en jetons (#119) : 0 quand rien n'est mesuré depuis le dernier vidage. */
+const contextSeenAtom = atom({ plugin: 'roadmap', key: 'contextSeen' } as const, 0)
 
 /**
  * Change l'état d'un clic en une écriture : `patch` dit les champs qui changent, d'après l'état
@@ -2102,9 +2110,13 @@ async function maestroText($: EngineInterface, go: boolean): Promise<string> {
   )
   const openTasks = open.filter(t => !t.done)
   const othersLate = projet ? openTasks.filter(t => !isMine(t, source.me) && isOverdue(t, todayOf(now))).length : 0
-  // Le réglage autonome (#77) : les cartes sans menu, comme « Maestro go ». Illisible : éteint. Il
-  // ne vaut qu'en mode Code (décision du 2026-10-28 : le mode Projet n'a pas de fusion).
-  const autonome = !projet && (await readSessionPrefs($).then(r => r.prefs.autonome, () => false))
+  // Les réglages de session du projet (#119) : `questions` et `adhd` règlent le texte de Maestro.
+  // Illisibles : les défauts, `autonome` éteint.
+  const prefs = await readSessionPrefs($).then(r => r.prefs, () => DEFAULT_SESSION_PREFS)
+  // Le réglage autonome (#77) : les cartes sans menu, comme « Maestro go ». En mode Projet, Maestro
+  // garde son menu : seules la fusion et la publication sans demander y valent, par le bloc des
+  // réglages (#105, README « Mode Projet »).
+  const autonome = !projet && prefs.autonome
   const shown = ready.slice(0, go || autonome ? 3 : MAESTRO_MENU)
   const candidates = await Promise.all(
     shown.map(async t => ({
@@ -2123,6 +2135,8 @@ async function maestroText($: EngineInterface, go: boolean): Promise<string> {
     more: ready.length - candidates.length,
     go,
     autonome,
+    questions: prefs.questions,
+    adhd: prefs.adhd,
     ...(othersLate > 0 ? { othersLate } : {}),
     ...(LAUNCH_EFFORTS.has(settings.launchEffort) ? { launchEffort: settings.launchEffort } : {}),
   })
@@ -2824,24 +2838,31 @@ export const register: Register = (on, options) => {
   // Sous sec-default (compte Team ou Enterprise, #116), ce hook est sauté : le premier message les porte.
   on('classic.SessionStart', async ($, e, next) => {
     const result = await next(e)
+    const text = await sessionPrefsBlock($)
     try {
-      await update($, prefsGivenAtom, () => true)
+      await update($, prefsGivenAtom, () => text ?? '')
     } catch {
       // état de session illisible : le premier message les redonnera aussi
     }
-    const text = await sessionPrefsBlock($)
     return text === undefined ? result : { ...result, additionalContext: [...(result.additionalContext ?? []), text] }
   })
 
   // Un /clear ou une compaction efface les réglages donnés : le démarrage classique qui suit les redonne,
   // sinon le message suivant. Sous sec-default, la compaction est sautée aussi (#116).
+  // Le contexte mesuré repart de zéro avec elles : la chute qui suit n'est pas une compaction cachée (#119).
   on('session.end', async ($, e, next) => {
-    if (e.reason === 'clear') await update($, prefsGivenAtom, () => false)
+    if (e.reason === 'clear') {
+      await update($, prefsGivenAtom, () => '')
+      await update($, contextSeenAtom, () => 0)
+    }
     return next(e)
   })
   on('session.compact', async ($, e, next) => {
     // `precompute` n'installe rien, et la compaction d'un agent laisse la conversation principale.
-    if (e.trigger !== 'precompute' && e.agentId === undefined) await update($, prefsGivenAtom, () => false)
+    if (e.trigger !== 'precompute' && e.agentId === undefined) {
+      await update($, prefsGivenAtom, () => '')
+      await update($, contextSeenAtom, () => 0)
+    }
     return next(e)
   })
 
@@ -2853,21 +2874,30 @@ export const register: Register = (on, options) => {
     // Un seul hook prompt.submit par module (le moteur refuse le second) : l'appel vit ici.
     await ensurePane($)
     const texts: string[] = []
-    // Les réglages complets, quand aucun démarrage ne les a donnés à cette conversation.
+    // Une compaction que sec-default cache à session.compact (#119) : le contexte a fondu depuis le
+    // message précédent, et les réglages complets sont à redonner.
     try {
-      if (!(await read($, prefsGivenAtom))) {
-        const block = await sessionPrefsBlock($)
-        if (block !== undefined) texts.push(block)
-        await update($, prefsGivenAtom, () => true)
-      }
+      const tokens = (await $.session.usage()).context.tokens
+      if (contextShrank(await read($, contextSeenAtom), tokens)) await update($, prefsGivenAtom, () => '')
+      await update($, contextSeenAtom, () => tokens ?? 0)
     } catch {
-      // état de session illisible : le rappel court suit quand même
+      // contexte non mesuré : les réglages suivent la seule règle du démarrage
     }
+    // Les réglages complets : quand aucun démarrage ne les a donnés à cette conversation, ou quand ils
+    // ont changé depuis le dernier bloc donné (#119 : le volet, la skill, une autre session du projet) ;
+    // le nouveau bloc remplace alors l'ancien. Puis le rappel du mode ADHD.
     try {
-      const reminder = sessionPrefsReminder((await readSessionPrefs($)).prefs)
+      const current = await readSessionPrefs($)
+      const block = sessionPrefsText(current.prefs, current.error, current.project)
+      const given = await read($, prefsGivenAtom)
+      if (block !== given) {
+        texts.push(given === '' ? block : `${prefsChangedLead()}\n\n${block}`)
+        await update($, prefsGivenAtom, () => block)
+      }
+      const reminder = sessionPrefsReminder(current.prefs)
       if (reminder !== undefined) texts.push(reminder)
     } catch {
-      // réglages illisibles : pas de rappel
+      // réglages ou état de session illisibles : le message passe sans eux
     }
     // Un Maestro reçoit les propositions de ses sous-sessions que le message direct n'a pas portées.
     try {

@@ -1,6 +1,6 @@
 {
   "name": "roadmap",
-  "version": "0.67.0",
+  "version": "0.68.0",
   "description": "Panneau Claude Code à côté du chat : la roadmap du projet de la session, filtrable, avec le détail d'une tâche et son lancement dans une nouvelle session",
   "author": {
     "name": "Bertrand Fargheon"
@@ -22,7 +22,7 @@
     "capture": {
       "type": "boolean",
       "title": "Capter les tasks",
-      "description": "Contrôle la grammaire de chaque ligne écrite dans la roadmap, et en fin de tour rappelle d'inscrire le travail quand des fichiers du projet ont changé sans que la roadmap bouge.",
+      "description": "Contrôle la grammaire de chaque ligne écrite dans la roadmap. En fin de tour, rappelle d'inscrire le travail quand des fichiers ont changé sans que la roadmap bouge, le bilan d'une tâche cochée, son rangement et l'archivage de la session, la ligne d'une idée à coder, et, après un commit, les tests, les skills de méthode et les maquettes. Éteint : aucun de ces contrôles ni rappels ; la liste d'étapes et le bloc de fin de tour restent.",
       "default": true
     },
     "titleModel": {
@@ -64,7 +64,7 @@
     "launchBypass": {
       "type": "boolean",
       "title": "Lancer en bypass",
-      "description": "Les sessions lancées depuis le panneau ou depuis Maestro demandent le mode bypass : plus aucune demande de permission. L'app ne l'accorde que si la session d'où tu lances y est déjà ; sinon la session lancée te le demande d'un clic à son démarrage. Éteint : elles prennent le mode de la session d'où tu lances.",
+      "description": "Les sessions lancées depuis le panneau, ou par une carte que pose Claude (Maestro compris), demandent le mode bypass : plus aucune demande de permission. L'app ne l'accorde que si la session d'où tu lances y est déjà ; sinon la session lancée te le demande d'un clic à son démarrage. Éteint : elles prennent le mode de la session d'où tu lances.",
       "default": false
     }
   }

@@ -319,8 +319,10 @@ leurs hooks `classic.*` et `skill.prompt` (le transcript le dit en lignes grises
 skipped »). Le plugin passe alors par les événements qui restent aux plugins installés : le message
 (`prompt.submit`) porte les réglages de session, le rappel du mode ADHD et l'état de Maestro ; l'outil
 Skill et la commande tapée notent les skills et ouvrent les volets ; le rappel de fin de tour, si Stop
-n'a pas tourné, arrive en message du plugin, qui ouvre un tour de plus. Seuls les réglages complets
-après une compaction ne reviennent pas. Le doctor le dit (ligne « Hooks du plugin »), avec la voie
+n'a pas tourné, arrive en message du plugin, qui ouvre un tour de plus. Une compaction, que
+sec-default cache aussi, se voit au contexte qui fond entre deux messages (moitié moins, ou plus
+mesuré du tout, `$.session.usage()`) : les réglages complets reviennent au message suivant (#119).
+Le doctor le dit (ligne « Hooks du plugin »), avec la voie
 admin : `roadmap@roadmap` en `appendPlugins` dans les réglages gérés.
 
 ## Réglages de session
@@ -328,12 +330,16 @@ admin : `roadmap@roadmap` en `appendPlugins` dans les réglages gérés.
 Demande de Bertrand du 23/10/2026 : les mêmes réglages dans chaque session, sans les répéter. Au
 démarrage de chaque session (et après `/clear` ou un compactage), dans tout projet, roadmap ou
 non, le plugin lit `~/.claude/reglages-session.json` et donne au modèle, en contexte additionnel,
-les réglages allumés :
+les réglages allumés (sur un compte Team ou Enterprise : au premier message, et au message qui suit
+une compaction, voir plus haut). Un réglage changé en cours de session (le volet, la skill, une autre
+session du projet) revient au message suivant de chaque session ouverte du projet, le nouveau bloc
+remplaçant le précédent (#119) :
 
 - `questions` : toute question à Bertrand par l'outil AskUserQuestion, jamais en texte libre, et
   jamais pour un geste qu'un outil fait : un volet de l'app fermé ou masqué (navigateur, fichier,
   diff) s'ouvre par la session elle-même (`preview_start`, `mcp__ccd_view__show_pane`), depuis le
-  28/10/2026 (#74) ;
+  28/10/2026 (#74). Éteint, Maestro pose aussi son menu « Je lance lesquelles ? » dans son message,
+  sans formulaire (#119) ;
 - `adhd` : chaque message commence par une ligne en gras, emoji d'état + étape sur le total + nom
   (en cours `⏳ **2/4 Écrire le plan**` ; finie `✅ **2/4 Écrire le plan**` ; détour
   `⚠️ **3/4 Coder et tester** ↳ test rouge` ; fin `✅ **4/4 Publier la version**`, #107) ; les
@@ -346,7 +352,8 @@ les réglages allumés :
   tour**, trois lignes, chacune ouverte par l'emoji de sa valeur depuis #107 : `**État**` (`✅` fini,
   `🟡` pas fini, `⛔` bloqué) et une phrase, `**À toi**` (`🙌` rien, `👉` une à trois actions avec
   où et comment), `**Session**` (`🗄️` à archiver, avec la boîte « Archiver cette session ? » et le
-  bouton de réponse « Oui, archiver » ; `📌` à garder, et pourquoi) ;
+  bouton de réponse « Oui, archiver » ; `📌` à garder, et pourquoi). Éteint, Maestro ne demande plus
+  que des réponses courtes (#119) ;
 - `francais` : réponses en français ;
 - `autonome` (#77, #105, en mode Code comme en mode Projet, éteint par défaut) : Claude suit sa
   recommandation au lieu de poser la question, sauf pour une question d'architecture, c'est-à-dire
@@ -394,20 +401,26 @@ retenir de phrase. Refait le 29/10/2026 sur la maquette qu'il a choisie (#91, «
 `/reglages` ouvre le volet « Réglages » dans tout projet, roadmap ou non ; la roue en haut à droite
 du panneau (le bouton « Réglages » au terminal) et la skill `reglages-session` l'ouvrent aussi.
 
-- **Une ligne par réglage** : le nom à gauche, le contrôle à droite. Un oui/non a deux boutons
-  côte à côte, « On » et « Off », le choix actif en bouton principal ; un clic sur l'autre change
-  la valeur, un clic sur l'actif ne fait rien. L'explication de la ligne s'affiche quand le
-  pointeur la survole (toujours affichée sur l'application mobile, sans pointeur).
-- **Session · <projet>** : les quatre réglages de session du projet où l'on est, son nom dans le
-  titre (« Session » seul hors projet) ; un clic change ce projet seulement (#102), sans section
+Rangé en sections par sujet depuis #118 (29/10/2026, maquette A1) : un titre, sa portée en
+dessous, un filet et un grand écart entre deux sections.
+
+- **Une ligne par réglage** : le nom et son ⓘ à gauche, le contrôle à droite. Un oui/non a deux
+  boutons côte à côte, « On » et « Off », le choix actif en bouton principal ; un clic sur l'autre
+  change la valeur, un clic sur l'actif ne fait rien. Le ⓘ ouvre sous la ligne son explication (ce
+  qu'il fait, ce que fait Off, le défaut, quand il prend effet), une seule à la fois ; plus rien au
+  survol.
+- **Claude et toi** : les quatre réglages de session du projet où l'on est, sa portée le nomme
+  (« ce projet (Roadmap) · au prochain message », « hors projet · … » hors projet) ; un clic change
+  ce projet seulement (#102), sans section
   « Par défaut », écartée par Bertrand (« le projet c'est le projet »). Le volet relit le
   fichier avant chaque écriture et garde tout ce qu'il ne touche pas ; un fichier illisible n'est
   jamais réécrit. Il suit aussi le fichier écrit ailleurs (la skill, une autre session) : il le
-  relit toutes les 2 s tant qu'il est ouvert. Un changement vaut pour les sessions ouvertes
-  ensuite, ou après `/clear` ; le rappel du mode ADHD et Maestro le suivent dès le message suivant.
-- **Panneau Roadmap** : les options ci-dessous, avec le titre et l'explication du menu de
-  configuration de Claude Code : les oui/non d'abord, puis les listes (un choix), puis les textes
-  (un champ). Le volet les reconnaît à leur clé (`roadmap.<option>`) : dans l'app, leur
+  relit toutes les 2 s tant qu'il est ouvert. Un changement vaut au message suivant, dans chaque
+  session ouverte du projet (le plugin y redonne le bloc, #119), et dans les sessions ouvertes ensuite.
+- **Sessions lancées, Roadmap, Panneau** : les options ci-dessous, sous un nom court, avec
+  l'explication du menu de configuration de Claude Code ; portée « partout · tout de suite ». Une
+  option qu'aucune section ne range encore tombe dans « Autres » : les oui/non d'abord, puis les
+  listes (un choix), puis les textes (un champ). Le volet les reconnaît à leur clé (`roadmap.<option>`) : dans l'app, leur
   fournisseur s'écrit `roadmap@inline`. Un changement recharge le plugin, et les panneaux se
   redessinent. Une option verrouillée par l'organisation se montre sans contrôle.
 
@@ -443,10 +456,17 @@ ferme pas, un toast renvoie à ce réglage ; éteint, seul `/roadmap` l'ouvre, e
 défaut oui), `theme` (thème du panneau : auto suit le thème de Claude Code, sombre ou clair l'imposent),
 `launchEffort` (effort d'une session lancée du panneau, défaut high, borné par l'app à celui de la session
 qui lance ; une carte refusée avec son effort est reposée sans lui ; « hérite » n'en passe aucun),
-`launchBypass` (« Lancer en bypass », défaut non : les sessions lancées du panneau, de Maestro ou
-d'un Maestro demandent le mode bypass ; l'app ne l'accorde que depuis une session déjà en bypass, sinon
+`launchBypass` (« Lancer en bypass », défaut non : les sessions lancées du panneau, ou par une carte
+que pose Claude, Maestro compris, demandent le mode bypass ; l'app ne l'accorde que depuis une session déjà en bypass, sinon
 la carte est reposée sans lui et la session lancée demande elle-même le bypass à son démarrage, par
 la carte d'approbation de l'app ; il faut d'abord activer le bypass dans Réglages → Claude Code).
+`capture` éteint coupe tous les contrôles et rappels de la roadmap : la grammaire, et en fin de tour
+le travail à inscrire, le bilan d'une tâche cochée, son rangement et l'archivage de la session,
+l'idée à coder sans ligne, et après un commit les tests, les skills de méthode et les maquettes ; la
+liste d'étapes et le bloc de fin de tour restent (#119). Les noms (`me`) : Claude emploie le premier
+de l'option, sinon du fichier local ; « À moi » compte, dans cet ordre, les noms du
+`.claude/roadmap.json` du projet, de sa source dans le fichier local, de l'option, puis du fichier
+local (#119).
 Le **garde-fou du dossier principal** vaut dans tous les modes : dans un dépôt qui a au moins deux
 worktrees, le plugin refuse dans le dossier principal `git reset --hard`, `git clean`, `git stash`,
 `git checkout <branche>`, `git add -A`, `git commit -a` et un `push` forcé, et partout un `push`
@@ -467,6 +487,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.68.0 (2026-10-29)** : réglages : audit des 11 réglages (#119), un réglage changé revient au message suivant de chaque session du projet, réglages redonnés après une compaction sous sec-default, Maestro suit questions et adhd, descriptions de capture et launchBypass justes
 - **0.67.0 (2026-10-29)** : panneau : toujours ouvert, il se rouvre au message s'il n'est pas dessiné et sa croix est refusée tant que le réglage est allumé, son ouverture non dessinée part au journal (#117)
 - **0.66.0 (2026-10-29)** : hooks et volet Réglages : les hooks du plugin tournent sous sec-default sur un compte Team ou Enterprise, par prompt.submit et des secours de Stop et skill.prompt (#116) ; le volet Réglages en quatre sections, l'explication derrière un ⓘ (#118)
 - **0.65.0 (2026-10-29)** : panneau : le bas refait en maquette C (#115) — « À traiter » en quatre lignes à icône cliquables, la choisie surlignée ; « Plus de filtres » replié avec Qui ; roue des réglages en haut à droite ; menu « Ranger » qui montre le rangement en cours ; recherche sans bouton « chercher »
