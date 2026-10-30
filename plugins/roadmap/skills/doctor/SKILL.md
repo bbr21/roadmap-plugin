@@ -24,6 +24,7 @@ plus. Il ne change rien : ni au projet, ni à la machine.
 | Skills de méthode | chaque skill que citent les sessions lancées existe dans la version installée : une skill renommée par Superpowers se voit ici |
 | Mise à jour de Superpowers | installé par l'app : suivie par l'app, avec la date de la dernière ; installé par le terminal : automatique, sinon la date de la dernière et comment l'allumer |
 | Skill swiftui-pro | seulement dans un projet Swift : installée |
+| Hooks du plugin | pas de `cc-plugin-sec-default`, ou le plugin posé par l'admin en `appendPlugins` ; sur un compte Team ou Enterprise, ou des réglages gérés, À voir (le plugin passe par ses secours) |
 | Nom de l'utilisateur | `me` de `~/.claude/roadmap-perso.json` porte un nom (sinon À voir : Claude dit « l'utilisateur ») |
 
 ### En mode Projet
@@ -40,6 +41,7 @@ GitHub, ni `check.mjs`, ni `swiftui-pro`.
 | Champs exigés | chaque tâche ouverte porte les champs de `requis` ; sinon À voir, avec le compte (une ligne écrite hors de Claude Code n'est signalée qu'ici) |
 | Plugin roadmap | comme en mode Code |
 | Superpowers, sa mise à jour | facultatif (#94) : absent ou éteint, À voir avec la commande, jamais KO |
+| Hooks du plugin | comme en mode Code |
 | Nom de l'utilisateur | comme en mode Code |
 | Skills de méthode | celles que le brief Projet propose sans les exiger : `brainstorming`, `writing-plans` ; une qui manque est À voir |
 
@@ -79,6 +81,11 @@ commande qui corrige, telle que le script la donne. Puis le verdict en une phras
   `claude plugin update`, si elle reste introuvable, la liste du plugin roadmap est à mettre à
   jour, dans `hooks/parse.ts` et dans `references/requis.json`, par la mise à jour du dépôt du
   plugin.
+- Hooks du plugin À voir : le compte (Team ou Enterprise) ou la machine (réglages gérés) a
+  `cc-plugin-sec-default`, qui saute les hooks classiques du plugin. Rien n'est cassé : le plugin
+  passe par ses secours, et seuls les réglages complets après une compaction manquent. Pour tout
+  retrouver, la correction est un geste de l'admin de l'organisation, pas de l'utilisateur ; ne
+  propose jamais de poser `appendPlugins` dans les réglages de l'utilisateur.
 - Tout est vert : dis-le en une phrase, et que « Maestro » marche dans ce projet.
 - Le doctor ne lit pas le contenu des tâches. Des tâches en paquets, en double ou sans échéance :
   propose la skill `audit`, qui découpe, fusionne et complète après validation.

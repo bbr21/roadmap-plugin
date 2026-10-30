@@ -171,9 +171,10 @@ export const TEXT = { pill: 12, count: 10, axis: 13, percent: 28, chainStep: 10,
 /**
  * Les pas d'espacement du panneau, dans l'unité du mod : un nombre compte des cellules de caractère,
  * un nom suit l'échelle de la surface. Par rôle : écart dans une rangée, retrait standard, retrait
- * des écrans vide et erreur, rangée de boutons texte, retrait des tiers ; pile serrée, bloc, racine.
+ * des écrans vide et erreur, rangée de boutons texte, retrait des tiers ; pile serrée, bloc, racine,
+ * et l'écart entre deux sections du volet Réglages (#118).
  */
-export const SPACE = { row: 1, indent: 1, screen: 2, textButtons: 2, nest: 4, tight: 'xs', block: 'sm', root: 'md' } as const
+export const SPACE = { row: 1, indent: 1, screen: 2, textButtons: 2, nest: 4, tight: 'xs', block: 'sm', root: 'md', section: 'xl' } as const
 
 /**
  * L'échelle en pixels du paquet React (`design/`), qui ne dessine pas en cellules. Cellule et ligne

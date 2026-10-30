@@ -590,6 +590,19 @@ export function ideaReminder(source: Source, phrase: string): string {
 /** Un tour « travaille » à partir de deux outils de la session, hors liste d'étapes et boîte de fin (#98, partout depuis #104). */
 export const STEP_LIST_MIN_TOOLS = 2
 
+// Sous sec-default (compte Team ou Enterprise, #116), le hook Stop est sauté : le rappel de fin de tour
+// part en message du plugin, qui ouvre un tour de plus. Sa marque dit à ce tour qu'il en vient : il ne
+// relance pas de rappel, comme le deuxième arrêt d'un tour (`stop_hook_active`).
+const STOP_FALLBACK_MARK = 'Rappel de fin de tour du plugin roadmap'
+
+export function stopFallbackPrompt(block: string): string {
+  return `${STOP_FALLBACK_MARK} (sur ce compte, le hook Stop ne tourne pas : le rappel arrive en message). Fais ce qu'il demande, sans refaire le reste du tour :\n\n${block}`
+}
+
+export function isStopFallback(text: string): boolean {
+  return text.includes(STOP_FALLBACK_MARK)
+}
+
 /**
  * Le rappel de fin de tour d'une session qui travaille sans liste d'étapes (#98, en mode Code aussi
  * depuis #104) : la liste native est le seul repère de Bertrand, ou de Caro sans ses réglages de session.
@@ -3015,14 +3028,37 @@ export function sessionPrefsReminder(prefs: SessionPrefs): string | undefined {
 export type PrefKey = (typeof PREF_KEYS)[number]
 
 /** Le nom et l'explication de chaque réglage, tels que le volet les montre, dans son ordre. */
-export const SESSION_PREF_INFO: readonly { key: PrefKey; name: string; help: string }[] = [
-  { key: 'questions', name: 'Questions par formulaire', help: 'Toute question te vient en formulaire à choix, la recommandation en premier.' },
-  { key: 'adhd', name: 'Mode ADHD', help: "Une ligne d'étape en gras en tête de chaque message, des réponses courtes." },
-  { key: 'francais', name: 'Français', help: 'Claude répond en français, récaps et boîte de fin compris.' },
+/**
+ * Chaque réglage de session dans le volet : son nom, son explication détaillée, ouverte par son ⓘ
+ * (#118), et ce que fait Off.
+ */
+export const SESSION_PREF_INFO: readonly { key: PrefKey; name: string; detail: string; off: string }[] = [
+  {
+    key: 'questions',
+    name: 'Questions par formulaire',
+    detail:
+      "Quand Claude a besoin de toi, il pose la question en formulaire à choix : 2 à 4 options, sa recommandation en premier, chacune avec son compromis. Tu cliques au lieu d'écrire. Quand c'est toi qui demandes une explication, il répond en texte.",
+    off: 'Les questions arrivent en texte libre, dans le message.',
+  },
+  {
+    key: 'adhd',
+    name: 'Mode ADHD',
+    detail:
+      "Chaque message s'ouvre sur une ligne en gras : l'étape en cours, son numéro et un emoji d'état (⏳ 2/4 Écrire le plan). Puis des réponses courtes en puces, et à la fin du tour trois lignes : État, À toi, Session.",
+    off: "Des messages libres, sans ligne d'étape ni bloc de fin.",
+  },
+  {
+    key: 'francais',
+    name: 'Français',
+    detail: 'Claude te répond en français : messages, comptes rendus, récap et boîte de fin compris. Les noms du code restent en anglais.',
+    off: 'Claude répond dans la langue de ton message.',
+  },
   {
     key: 'autonome',
     name: 'Autonome',
-    help: "Claude suit sa recommandation sauf question d'architecture ; il fusionne et publie seul, sans te demander. Lancer et archiver restent à ton clic.",
+    detail:
+      "Claude suit sa recommandation au lieu de te demander, sauf pour une question d'architecture (un format, une dépendance, la vision). Il fusionne et publie seul (une branche prête, une version, un déploiement), puis te le dit en une ligne. Lancer une session et archiver attendent toujours ton clic.",
+    off: "Claude te demande avant de fusionner, de publier ou d'écrire hors du code.",
   },
 ]
 

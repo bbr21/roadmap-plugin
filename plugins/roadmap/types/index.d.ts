@@ -23,6 +23,14 @@ declare module 'claude-code' {
       scanNote: string
       /** Monte après chaque écriture des réglages de session (par le volet Réglages ou ailleurs) : le volet se redessine. */
       prefsStamp: number
+      /**
+       * Les réglages de session complets sont dans la conversation (#116) : donnés par le démarrage
+       * classique, ou par le premier message quand sec-default saute ce démarrage. Faux après un `/clear`
+       * ou une compaction.
+       */
+      prefsGiven: boolean
+      /** L'explication ouverte dans le volet Réglages (#118) : la clé de sa ligne (`pref:adhd`, `opt:theme`), vide sinon. */
+      settingsInfo: string
     }
   }
 }

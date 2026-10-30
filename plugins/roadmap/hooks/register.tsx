@@ -229,6 +229,8 @@ import {
   todoCounters,
   secondaryFilters,
   groupings,
+  isStopFallback,
+  stopFallbackPrompt,
   type TodoCounter,
 } from './parse'
 
@@ -379,6 +381,8 @@ const retryAtom = atom({ plugin: 'roadmap', key: 'retry' } as const, 0)
 const zoneGenAtom = atom({ plugin: 'roadmap', key: 'zoneGen' } as const, 0)
 /** Pourquoi les autres sessions manquent (liste refusée ou illisible) ; vide quand elle se lit. */
 const scanNoteAtom = atom({ plugin: 'roadmap', key: 'scanNote' } as const, '')
+/** Les réglages de session complets sont dans la conversation (#116) ; l'état de session survit au rechargement du module. */
+const prefsGivenAtom = atom({ plugin: 'roadmap', key: 'prefsGiven' } as const, false)
 
 /**
  * Change l'état d'un clic en une écriture : `patch` dit les champs qui changent, d'après l'état
@@ -657,6 +661,56 @@ let stepList = { planned: false, tools: 0 }
 /** Le rappel de la liste d'étapes : tour de travail, aucune liste posée dans la session, dans tout projet (#104). */
 function stepListNote(): string | undefined {
   return stepList.planned || stepList.tools < STEP_LIST_MIN_TOOLS ? undefined : stepListReminder()
+}
+
+/**
+ * Le tour du fil principal, pour le rappel de fin de tour (#116) : son id, si Stop a tourné pendant lui
+ * (sinon sec-default l'a sauté), et s'il vient du message de secours (il tient alors le rôle du
+ * deuxième arrêt d'un tour, `stop_hook_active`).
+ */
+let stopTurn = { id: '', stopRan: false, fromReminder: false }
+
+/**
+ * Le rappel de fin de tour, ou rien : roadmap, méthode, idée, liste d'étapes, bloc de fin, rangement.
+ * `active` : le modèle a déjà eu le rappel de ce tour ; `blocked` : un autre rappel bloque déjà l'arrêt.
+ * Le hook Stop le rend en `block`, le secours de `turn.complete` en message.
+ */
+async function endOfTurnBlock($: EngineInterface, last: string | undefined, active: boolean, blocked: boolean): Promise<string | undefined> {
+  const c = capture
+  // Un autre rappel bloque déjà l'arrêt : la ligne se note, l'archivage attend l'arrêt suivant.
+  const ranged = settings.capture ? rangementNote(c, last, active && !blocked) : undefined
+  if (ranged !== undefined) return ranged
+  // Deuxième arrêt du même tour : le modèle a déjà eu le rappel, il a tranché.
+  if (active || blocked) return undefined
+  const notes: (string | undefined)[] = []
+  // Les rappels de la roadmap : seulement dans un projet qui en a une, capture allumée.
+  if (settings.capture && c) {
+    try {
+      notes.push(await roadmapBlock($, c))
+    } catch {
+      // roadmap illisible : pas de rappel de roadmap
+    }
+    try {
+      notes.push(await methodNote($, c))
+    } catch {
+      // git illisible : pas de rappel de méthode
+    }
+    try {
+      notes.push(await ideaNote($, c, last))
+    } catch {
+      // pas de rappel d'idée
+    }
+  }
+  // La liste d'étapes (#98, #104) : dans tout projet.
+  notes.push(stepListNote())
+  // Le bloc de fin de tour (#85) : dans tout projet.
+  try {
+    notes.push(await closingNote($, last, settings.capture && c !== undefined && rangementWaiting(c) !== undefined))
+  } catch {
+    // réglages illisibles : pas de rappel du bloc
+  }
+  const block = notes.filter((b): b is string => b !== undefined).join('\n\n')
+  return block === '' ? undefined : block
 }
 
 type BilanData = { config: BilanConfig; bilans: Map<string, Bilan>; viaCowork: boolean }
@@ -2601,8 +2655,44 @@ async function readSessionPrefs($: EngineInterface): Promise<{ prefs: SessionPre
   return project.name === undefined ? read : { ...read, project: project.name }
 }
 
+/** Le bloc des réglages de session complets ; une panne de lecture ne bloque jamais le démarrage ni le message. */
+async function sessionPrefsBlock($: EngineInterface): Promise<string | undefined> {
+  try {
+    const { prefs, error, project } = await readSessionPrefs($)
+    return sessionPrefsText(prefs, error, project)
+  } catch {
+    return undefined
+  }
+}
+
 function openPane($: EngineInterface, source: Source) {
   return $.ui.open({ id: PANE, title: `Roadmap ${source.name}`, columns: COLUMNS })
+}
+
+/** Une skill a rendu son texte (skill.prompt) pendant l'appel de l'outil Skill en cours : sec-default ne l'a pas sautée (#116). */
+let skillPrompted = false
+
+/** Une skill lancée, par quelque chemin que ce soit : une skill de méthode ou `swiftui-pro` compte pour le rappel. */
+function noteSkill(name: string): void {
+  if (capture && isMethodSkill(name)) capture.methodUsed = true
+  if (capture && isSwiftUISkill(name)) capture.swiftUIUsed = true
+}
+
+/**
+ * La skill des réglages ou du panneau lancée : son volet s'ouvre, et la note que Claude lit en tête de
+ * la skill ; une autre skill, ou un projet sans roadmap pour le panneau : rien.
+ */
+async function skillPaneNote($: EngineInterface, name: string): Promise<string | undefined> {
+  if (SETTINGS_SKILL.test(name)) {
+    await openSettings($)
+    return settingsSkillNote()
+  }
+  if (!PANEL_SKILL.test(name)) return undefined
+  const source = await sourceNow($)
+  if (!source) return undefined
+  await refresh($)
+  await openPane($, source)
+  return panelSkillNote(source.name)
 }
 
 /** La réponse de /roadmap (et de /roadmap:roadmap-panel tapée seule) : le panneau ouvert, ou ce qui manque. */
@@ -2703,23 +2793,45 @@ export const register: Register = (on, options) => {
 
   // Réglages de session : ceux du projet de la session (#102), injectés comme contexte additionnel au
   // démarrage (startup, resume, clear, compact), dans tout projet, roadmap ou non. Une panne de lecture ne bloque jamais le démarrage.
+  // Sous sec-default (compte Team ou Enterprise, #116), ce hook est sauté : le premier message les porte.
   on('classic.SessionStart', async ($, e, next) => {
     const result = await next(e)
-    let text: string | undefined
     try {
-      const { prefs, error, project } = await readSessionPrefs($)
-      text = sessionPrefsText(prefs, error, project)
+      await update($, prefsGivenAtom, () => true)
     } catch {
-      text = undefined
+      // état de session illisible : le premier message les redonnera aussi
     }
+    const text = await sessionPrefsBlock($)
     return text === undefined ? result : { ...result, additionalContext: [...(result.additionalContext ?? []), text] }
+  })
+
+  // Un /clear ou une compaction efface les réglages donnés : le démarrage classique qui suit les redonne,
+  // sinon le message suivant. Sous sec-default, la compaction est sautée aussi (#116).
+  on('session.end', async ($, e, next) => {
+    if (e.reason === 'clear') await update($, prefsGivenAtom, () => false)
+    return next(e)
+  })
+  on('session.compact', async ($, e, next) => {
+    // `precompute` n'installe rien, et la compaction d'un agent laisse la conversation principale.
+    if (e.trigger !== 'precompute' && e.agentId === undefined) await update($, prefsGivenAtom, () => false)
+    return next(e)
   })
 
   // Le rappel du mode ADHD, à chaque message : la consigne du démarrage s'efface au fil de la session.
   // « Maestro » en tête du message : le panneau s'ouvre et Claude reçoit l'état d'avancement.
-  on('classic.UserPromptSubmit', async ($, e, next) => {
-    const result = await next(e)
+  // Par prompt.submit, que sec-default laisse aux plugins installés (#116), le contexte joint à la descente.
+  on('prompt.submit', async ($, e, next) => {
     const texts: string[] = []
+    // Les réglages complets, quand aucun démarrage ne les a donnés à cette conversation.
+    try {
+      if (!(await read($, prefsGivenAtom))) {
+        const block = await sessionPrefsBlock($)
+        if (block !== undefined) texts.push(block)
+        await update($, prefsGivenAtom, () => true)
+      }
+    } catch {
+      // état de session illisible : le rappel court suit quand même
+    }
     try {
       const reminder = sessionPrefsReminder((await readSessionPrefs($)).prefs)
       if (reminder !== undefined) texts.push(reminder)
@@ -2745,8 +2857,7 @@ export const register: Register = (on, options) => {
     } catch {
       // store illisible : les vieilles notes attendent le prochain chargement
     }
-    const prompt = (e as { prompt?: unknown }).prompt
-    const call = typeof prompt === 'string' ? maestroCall(prompt) : undefined
+    const call = maestroCall(e.text)
     if (call) {
       try {
         await markMaestro($)
@@ -2759,7 +2870,7 @@ export const register: Register = (on, options) => {
         texts.push(`${Person()} a dit « Maestro », mais l'état de la roadmap n'a pas pu être lu (${err instanceof Error ? err.message : String(err)}) : dis-le en une phrase.`)
       }
     }
-    return texts.length === 0 ? result : { ...result, additionalContext: [...(result.additionalContext ?? []), ...texts] }
+    return next(texts.length === 0 ? e : { ...e, context: [...(e.context ?? []), ...texts] })
   })
 
   // Capture des tasks : la grammaire contrôlée à chaque écriture, le rappel en fin de tour.
@@ -2827,6 +2938,7 @@ export const register: Register = (on, options) => {
   })
 
   on('turn.start', async ($, e, next) => {
+    if (e.agentId === undefined) stopTurn = { id: e.turnId, stopRan: false, fromReminder: isStopFallback(e.text) }
     if (e.agentId === undefined) closingTurn = { work: false, box: '' }
     if (e.agentId === undefined) stepList.tools = 0
     if (e.agentId === undefined && settings.capture && capture) {
@@ -2843,56 +2955,44 @@ export const register: Register = (on, options) => {
   })
 
   // Fin d'un tour de cette session (pas d'un agent) : sa tâche « attend ta réponse » tout de suite.
+  // Sous sec-default, Stop est sauté (#116) : le rappel de fin de tour part en message, qui ouvre un tour.
   on('turn.complete', async ($, e, next) => {
     const result = await next(e)
-    if (e.agentId === undefined) await markOwnRunning($, false)
+    if (e.agentId !== undefined) return result
+    await markOwnRunning($, false)
+    if (e.turnId === stopTurn.id && !stopTurn.stopRan && e.reason === 'answer') {
+      const block = await endOfTurnBlock($, e.answer, stopTurn.fromReminder, false)
+      if (block !== undefined) void $.prompt.submit({ text: stopFallbackPrompt(block) }).catch(() => undefined)
+    }
     return result
   })
 
   // Une skill de méthode superpowers, ou swiftui-pro, lancée (outil Skill, commande, préchargement) : notée pour le rappel.
   on('skill.prompt', async ($, e, next) => {
-    if (capture && isMethodSkill(e.skill)) capture.methodUsed = true
-    if (capture && isSwiftUISkill(e.skill)) capture.swiftUIUsed = true
+    skillPrompted = true
+    noteSkill(e.skill)
+    return next(e)
+  })
+  // Sous sec-default, skill.prompt est sauté (#116) : l'outil Skill et la commande tapée notent la skill
+  // aussi, et l'outil ouvre le volet des skills Réglages et panneau, la note dans le contexte du résultat.
+  on('tool.call', { tool: 'Skill' }, async ($, e, next) => {
+    noteSkill(e.skill)
+    skillPrompted = false
+    const result = await next(e)
+    if (result.deny !== undefined || result.isError === true || skillPrompted) return result
+    const note = await skillPaneNote($, e.skill)
+    return note === undefined ? result : { ...result, context: [...(result.context ?? []), note] }
+  })
+  on('command.run', async ($, e, next) => {
+    noteSkill(e.command)
     return next(e)
   })
 
   on('classic.Stop', async ($, e, next) => {
+    stopTurn.stopRan = true
     const result = await next(e)
-    const c = capture
-    // Un autre rappel bloque déjà l'arrêt : la ligne se note, l'archivage attend l'arrêt suivant.
-    const ranged = settings.capture ? rangementNote(c, e.last_assistant_message, e.stop_hook_active === true && result.block === undefined) : undefined
-    if (ranged !== undefined) return { ...result, block: ranged }
-    // Deuxième arrêt du même tour : le modèle a déjà eu le rappel, il a tranché.
-    if (e.stop_hook_active || result.block !== undefined) return result
-    const notes: (string | undefined)[] = []
-    // Les rappels de la roadmap : seulement dans un projet qui en a une, capture allumée.
-    if (settings.capture && c) {
-      try {
-        notes.push(await roadmapBlock($, c))
-      } catch {
-        // roadmap illisible : pas de rappel de roadmap
-      }
-      try {
-        notes.push(await methodNote($, c))
-      } catch {
-        // git illisible : pas de rappel de méthode
-      }
-      try {
-        notes.push(await ideaNote($, c, e.last_assistant_message))
-      } catch {
-        // pas de rappel d'idée
-      }
-    }
-    // La liste d'étapes (#98, #104) : dans tout projet.
-    notes.push(stepListNote())
-    // Le bloc de fin de tour (#85) : dans tout projet.
-    try {
-      notes.push(await closingNote($, e.last_assistant_message, settings.capture && c !== undefined && rangementWaiting(c) !== undefined))
-    } catch {
-      // réglages illisibles : pas de rappel du bloc
-    }
-    const block = notes.filter((b): b is string => b !== undefined).join('\n\n')
-    return block === '' ? result : { ...result, block }
+    const block = await endOfTurnBlock($, e.last_assistant_message, e.stop_hook_active === true, result.block !== undefined)
+    return block === undefined ? result : { ...result, block }
   })
 
   // Un clic sur la barre : la zone de clic dit quel segment ; un second clic retire le filtre.
@@ -2930,28 +3030,34 @@ export const register: Register = (on, options) => {
 
   // La skill des réglages tapée seule ouvre le volet sans passer par le modèle ; suivie d'une demande
   // (« coupe le mode ADHD »), la skill la traite. Lancée par le modèle, le volet s'ouvre aussi.
-  on('command.run', { command: SETTINGS_SKILL }, async ($, e, next) => (e.args.trim() === '' ? openSettings($) : next(e)))
+  // Suivie d'une demande, le volet s'ouvre dès la commande : sous sec-default, skill.prompt ne l'ouvre pas (#116).
+  on('command.run', { command: SETTINGS_SKILL }, async ($, e, next) => {
+    if (e.args.trim() === '') return openSettings($)
+    await skillPaneNote($, e.command)
+    return next(e)
+  })
 
   on('skill.prompt', { skill: SETTINGS_SKILL }, async ($, e, next) => {
     const result = await next(e)
-    await openSettings($)
-    return { ...result, text: `${settingsSkillNote()}\n\n${result.text}` }
+    const note = await skillPaneNote($, e.skill)
+    return note === undefined ? result : { ...result, text: `${note}\n\n${result.text}` }
   })
 
   // /roadmap:roadmap-panel tapée seule (Splitmybill, 2026-10-28) : Bertrand la tape pour faire paraître
   // le panneau, et le modèle déroulait la skill jusqu'à un diagnostic. Elle répond comme /roadmap, sans
   // passer par le modèle ; suivie d'une demande (« change les sujets »), la skill la traite.
-  on('command.run', { command: PANEL_SKILL }, async ($, e, next) => (e.args.trim() === '' ? openCommand($) : next(e)))
+  on('command.run', { command: PANEL_SKILL }, async ($, e, next) => {
+    if (e.args.trim() === '') return openCommand($)
+    await skillPaneNote($, e.command)
+    return next(e)
+  })
 
   // La même skill lancée par le modèle, ou tapée sous un nom que le hook ci-dessus n'a pas pris : le
   // panneau s'ouvre aussi, et le texte de la skill le dit en tête.
   on('skill.prompt', { skill: PANEL_SKILL }, async ($, e, next) => {
     const result = await next(e)
-    const source = await sourceNow($)
-    if (!source) return result
-    await refresh($)
-    await openPane($, source)
-    return { ...result, text: `${panelSkillNote(source.name)}\n\n${result.text}` }
+    const note = await skillPaneNote($, e.skill)
+    return note === undefined ? result : { ...result, text: `${note}\n\n${result.text}` }
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {

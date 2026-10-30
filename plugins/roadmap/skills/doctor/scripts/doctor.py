@@ -13,6 +13,7 @@ Python 3.9 et plus, bibliothèque standard seulement.
 """
 
 import argparse
+import glob
 import json
 import os
 import re
@@ -30,6 +31,10 @@ MARQUE = {OK: "✅", KO: "❌", VOIR: "⚠️"}
 IGNORES = {".git", "node_modules", ".build", "Pods", "DerivedData", "build", "dist", ".venv", "venv"}
 # Le magasin de plugins de l'app de bureau, sous le home : <compte>/<org>/rpm/manifest.json.
 MAGASIN = ("Library", "Application Support", "Claude", "local-agent-mode-sessions")
+# Les réglages gérés de la machine (managed-settings.json, managed-settings.d/, managed-mcp.json).
+GERE = "/Library/Application Support/ClaudeCode" if sys.platform == "darwin" else "/etc/claude-code"
+# Le plugin intégré de sécurité de Claude Code, sous ses deux noms (#116).
+SEC_DEFAULT = ("sec-default@builtin", "cc-plugin-sec-default@builtin")
 
 
 def charger_requis():
@@ -500,7 +505,61 @@ def nom_utilisateur(home):
                  "ou remplir le réglage « Tes noms dans les roadmaps » du plugin")
 
 
-def diagnostiquer(dossier, plugins="lire", home=None, avec_outils=True):
+def _est_roadmap(plugin_id):
+    return plugin_id.startswith("roadmap@")
+
+
+def _place(liste, est):
+    """La place du premier id de `liste` qui vérifie `est`, ou la longueur de la liste."""
+    return next((i for i, p in enumerate(liste or []) if isinstance(p, str) and est(p)), len(liste or []))
+
+
+def sec_default(home, gere=None):
+    """sec-default (#116) : Claude Code pose son plugin intégré cc-plugin-sec-default devant les plugins
+    installés sur une machine aux réglages gérés et pour une organisation Team ou Enterprise, sauf si
+    des réglages gérés posent prependPlugins. Il saute alors les hooks classiques du plugin roadmap, qui
+    passe par ses voies de secours : À voir, jamais KO. L'admin peut poser le plugin en appendPlugins."""
+    gere = GERE if gere is None else gere
+    fichiers = [os.path.join(gere, "managed-settings.json")] + sorted(glob.glob(os.path.join(gere, "managed-settings.d", "*.json")))
+    # Les réglages gérés à distance (console d'admin), que Claude Code garde dans ~/.claude.
+    fichiers.append(os.path.join(home, ".claude", "remote-settings.json"))
+    lus = [_json(f) for f in fichiers if os.path.isfile(f)]
+    reglages = [d.get("settings") if isinstance(d.get("settings"), dict) else d for d in lus if isinstance(d, dict)]
+    # Les ajouts de managed-settings.d passent après le fichier de base : le dernier qui pose une clé l'emporte.
+    prepend = append = None
+    for d in reglages:
+        if isinstance(d.get("prependPlugins"), list):
+            prepend = d["prependPlugins"]
+        if isinstance(d.get("appendPlugins"), list):
+            append = d["appendPlugins"]
+    # Posé en appendPlugins, le plugin est au rang où sec-default rend la main ; en prependPlugins,
+    # seulement devant sec-default (derrière lui, il serait sauté comme un plugin installé).
+    if _place(append, _est_roadmap) < len(append or []):
+        return ligne(OK, "Hooks du plugin", "roadmap posé par l'admin en appendPlugins : tous ses hooks tournent")
+    if _place(prepend, _est_roadmap) < _place(prepend, lambda p: p in SEC_DEFAULT):
+        return ligne(OK, "Hooks du plugin", "roadmap posé par l'admin en prependPlugins : tous ses hooks tournent")
+    compte = _json(os.path.join(home, ".claude.json"))
+    org = (compte.get("oauthAccount") or {}).get("organizationType") if isinstance(compte, dict) else None
+    if prepend is not None and not any(p in SEC_DEFAULT for p in prepend):
+        return ligne(OK, "Hooks du plugin", "les réglages gérés posent prependPlugins sans sec-default : tous les hooks tournent")
+    if prepend is not None:
+        raison = "listé dans prependPlugins"
+    elif org in ("claude_team", "claude_enterprise"):
+        raison = "compte %s" % ("Enterprise" if org == "claude_enterprise" else "Team")
+    elif reglages or os.path.isfile(os.path.join(gere, "managed-mcp.json")):
+        raison = "réglages gérés sur cette machine"
+    else:
+        return ligne(OK, "Hooks du plugin", "ni réglages gérés ni compte Team ou Enterprise : pas de sec-default")
+    return ligne(VOIR, "Hooks du plugin",
+                 "sec-default (%s) saute les hooks classiques du plugin, qui passe par ses voies de secours : "
+                 "après une compaction, les réglages de session complets ne reviennent pas, et le rappel de fin "
+                 "de tour arrive en message, un tour de plus" % raison,
+                 "rien d'obligatoire ; pour tout retrouver, l'admin de l'organisation ajoute aux réglages gérés "
+                 "\"enabledPlugins\": {\"roadmap@roadmap\": true} et \"appendPlugins\": [\"roadmap@roadmap\"] "
+                 "(catalogue bbr21/roadmap-plugin), sec-default restant en place")
+
+
+def diagnostiquer(dossier, plugins="lire", home=None, avec_outils=True, gere=None):
     dossier = os.path.abspath(os.path.expanduser(dossier))
     home = home or os.path.expanduser("~")
     requis = charger_requis()
@@ -515,6 +574,7 @@ def diagnostiquer(dossier, plugins="lire", home=None, avec_outils=True):
             lignes += outils(requis, "projet", est_git)
         lignes += roadmap_projet(principal)
         lignes += plugins_et_skills(requis, plugins, home, requis["projet"]["skills"], facultatif=True)
+        lignes.append(sec_default(home, gere))
         lignes.append(nom_utilisateur(home))
         return {"dossier": principal, "lignes": lignes,
                 "ko": sum(1 for l in lignes if l["statut"] == KO), "a_voir": sum(1 for l in lignes if l["statut"] == VOIR)}
@@ -528,6 +588,7 @@ def diagnostiquer(dossier, plugins="lire", home=None, avec_outils=True):
     if git(dossier, "rev-parse", "--git-dir").returncode == 0:
         lignes += roadmap(main)
     lignes += plugins_et_skills(requis, plugins, home)
+    lignes.append(sec_default(home, gere))
     lignes.append(nom_utilisateur(home))
     if est_ios(main):
         lignes.append(skill_ios(requis, plugins, home))

@@ -295,7 +295,8 @@ chaque projet qui a une roadmap :
   bug, `verification-before-completion` avant de cocher, `brainstorming` seulement si Bertrand
   répond). En fin de tour, si le tour a enregistré un commit qui touche du code (ses commits,
   sans les merges) sans aucun fichier de test, ou si la session n'a lancé aucune skill de méthode
-  (vue par l'expansion de la skill, `skill.prompt`), le plugin le rappelle, une fois par commit.
+  (vue par l'expansion de la skill, `skill.prompt`, ou par l'outil Skill et la commande tapée),
+  le plugin le rappelle, une fois par commit.
   C'est un rappel : un commit sans comportement (doc, config, renommage) se dit et termine.
   Depuis 0.23.0, un écran ou une vue SwiftUI créé ou modifié appelle `swiftui-pro` sur les
   fichiers touchés avant de dire fini : le brief le dit, et un commit qui touche un fichier
@@ -310,6 +311,17 @@ chaque projet qui a une roadmap :
 
 Pour adBricks, le repo et ses worktrees comptent comme le projet du dossier Adbricks Cowork, qui
 porte la roadmap. Le réglage `capture` coupe les deux.
+
+## Sur un compte Team ou Enterprise (#116)
+
+Claude Code y pose devant les plugins installés son plugin intégré `cc-plugin-sec-default`, qui saute
+leurs hooks `classic.*` et `skill.prompt` (le transcript le dit en lignes grises, « hook was
+skipped »). Le plugin passe alors par les événements qui restent aux plugins installés : le message
+(`prompt.submit`) porte les réglages de session, le rappel du mode ADHD et l'état de Maestro ; l'outil
+Skill et la commande tapée notent les skills et ouvrent les volets ; le rappel de fin de tour, si Stop
+n'a pas tourné, arrive en message du plugin, qui ouvre un tour de plus. Seuls les réglages complets
+après une compaction ne reviennent pas. Le doctor le dit (ligne « Hooks du plugin »), avec la voie
+admin : `roadmap@roadmap` en `appendPlugins` dans les réglages gérés.
 
 ## Réglages de session
 
@@ -329,7 +341,7 @@ les réglages allumés :
   « Écrire le plan », jamais renommé) ; pas de ligne pour une réponse courte hors tâche, puis une phrase de constat et, s'il en reste une, la seule
   action ou décision qui revient à Bertrand, listes et gras, pas de pavé. Donnée seulement au démarrage, la consigne s'effaçait au
   fil d'une longue session : depuis le 24/10/2026, une ligne de rappel l'accompagne à chaque
-  message de Bertrand (hook `UserPromptSubmit`). Depuis le 29/10/2026 (#85), un tour de travail
+  message de Bertrand (hook `prompt.submit` depuis #116). Depuis le 29/10/2026 (#85), un tour de travail
   (boîte de fin ou liste d'étapes) se termine, après la boîte de fin, par le **bloc de fin de
   tour**, trois lignes, chacune ouverte par l'emoji de sa valeur depuis #107 : `**État**` (`✅` fini,
   `🟡` pas fini, `⛔` bloqué) et une phrase, `**À toi**` (`🙌` rien, `👉` une à trois actions avec
@@ -453,6 +465,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.66.0 (2026-10-29)** : hooks et volet Réglages : les hooks du plugin tournent sous sec-default sur un compte Team ou Enterprise, par prompt.submit et des secours de Stop et skill.prompt (#116) ; le volet Réglages en quatre sections, l'explication derrière un ⓘ (#118)
 - **0.65.0 (2026-10-29)** : panneau : le bas refait en maquette C (#115) — « À traiter » en quatre lignes à icône cliquables, la choisie surlignée ; « Plus de filtres » replié avec Qui ; roue des réglages en haut à droite ; menu « Ranger » qui montre le rangement en cours ; recherche sans bouton « chercher »
 - **0.64.3 (2026-10-29)** : maquettes : une maquette du plugin s'appuie sur son design system roadmap-design, publié dans claude.ai par /design-sync (#113)
 - **0.64.2 (2026-10-29)** : panneau : le relevé d'un défilement porte le refus du moteur et la durée de sa réponse (#111)
