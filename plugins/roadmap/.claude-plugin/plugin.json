@@ -1,6 +1,6 @@
 {
   "name": "roadmap",
-  "version": "0.66.0",
+  "version": "0.67.0",
   "description": "Panneau Claude Code à côté du chat : la roadmap du projet de la session, filtrable, avec le détail d'une tâche et son lancement dans une nouvelle session",
   "author": {
     "name": "Bertrand Fargheon"
@@ -15,8 +15,8 @@
     },
     "autoOpen": {
       "type": "boolean",
-      "title": "Ouvrir le panneau au démarrage",
-      "description": "Ouvre le panneau au début de chaque session dans un projet qui a une roadmap ; sinon /roadmap l'ouvre.",
+      "title": "Panneau toujours ouvert",
+      "description": "Dans un projet qui a une roadmap, le panneau s'ouvre au début de la session, se rouvre à ton message s'il n'est pas affiché, et ne se ferme pas à la main. Éteint : /roadmap l'ouvre, et il se ferme.",
       "default": true
     },
     "capture": {

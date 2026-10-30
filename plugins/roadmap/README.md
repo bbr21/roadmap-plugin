@@ -436,7 +436,9 @@ Rien de tout ça : pas de panneau, et `/roadmap` dit quoi ajouter (la skill `onb
 
 Dans le volet `/reglages` (voir plus haut) ou dans les réglages du plugin (menu de configuration de Claude Code) : `me` (tes noms : le premier est celui que Claude emploie avec toi, tous comptent « À moi » ;
 vide par défaut, et alors ceux de `me` dans `~/.claude/roadmap-perso.json`, que pose l'onboarding ;
-sans nom, Claude dit « l'utilisateur »), `autoOpen` (ouvrir le panneau au démarrage, défaut oui),
+sans nom, Claude dit « l'utilisateur »), `autoOpen` (« Panneau toujours ouvert », défaut oui : le panneau
+s'ouvre au démarrage, se rouvre au message suivant s'il n'est pas dessiné ou a disparu, et sa croix ne le
+ferme pas, un toast renvoie à ce réglage ; éteint, seul `/roadmap` l'ouvre, et il se ferme, #117),
 `titleModel` (modèle des titres courts, défaut sonnet), `capture` (contrôle de grammaire et rappel de fin de tour,
 défaut oui), `theme` (thème du panneau : auto suit le thème de Claude Code, sombre ou clair l'imposent),
 `launchEffort` (effort d'une session lancée du panneau, défaut high, borné par l'app à celui de la session
@@ -465,6 +467,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.67.0 (2026-10-29)** : panneau : toujours ouvert, il se rouvre au message s'il n'est pas dessiné et sa croix est refusée tant que le réglage est allumé, son ouverture non dessinée part au journal (#117)
 - **0.66.0 (2026-10-29)** : hooks et volet Réglages : les hooks du plugin tournent sous sec-default sur un compte Team ou Enterprise, par prompt.submit et des secours de Stop et skill.prompt (#116) ; le volet Réglages en quatre sections, l'explication derrière un ⓘ (#118)
 - **0.65.0 (2026-10-29)** : panneau : le bas refait en maquette C (#115) — « À traiter » en quatre lignes à icône cliquables, la choisie surlignée ; « Plus de filtres » replié avec Qui ; roue des réglages en haut à droite ; menu « Ranger » qui montre le rangement en cours ; recherche sans bouton « chercher »
 - **0.64.3 (2026-10-29)** : maquettes : une maquette du plugin s'appuie sur son design system roadmap-design, publié dans claude.ai par /design-sync (#113)

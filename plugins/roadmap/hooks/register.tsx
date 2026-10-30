@@ -67,6 +67,9 @@ import {
   isSwiftUISkill,
   PANEL_SKILL,
   panelSkillNote,
+  pinnedPaneToast,
+  refusesPaneClose,
+  PANE_ID,
   SETTINGS_SKILL,
   settingsSkillNote,
   methodReminder,
@@ -234,7 +237,7 @@ import {
   type TodoCounter,
 } from './parse'
 
-const PANE = 'roadmap'
+const PANE = PANE_ID
 const BAR_HIT = 'bar-hit'
 // Les zones de clic des lignes et des boutons dessinés : `press-<empreinte>`, et ce que chaque id déclenche,
 // reposé à chaque dessin.
@@ -2665,8 +2668,30 @@ async function sessionPrefsBlock($: EngineInterface): Promise<string | undefined
   }
 }
 
-function openPane($: EngineInterface, source: Source) {
-  return $.ui.open({ id: PANE, title: `Roadmap ${source.name}`, columns: COLUMNS })
+// Le moteur ne dessine une ouverture « non demandée » (démarrage, minuteur) qu'à partir de 144 colonnes,
+// 110 pour un volet déjà ouvert à la main ; en dessous, le volet attend sans rien dire. La raison part au
+// journal de débogage : chez Caro (#117), c'est elle qui dit pourquoi le panneau ne paraissait pas.
+async function openPane($: EngineInterface, source: Source) {
+  const opened = await $.ui.open({ id: PANE, title: `Roadmap ${source.name}`, columns: COLUMNS })
+  if (!opened.isPlaced) $.ui.log(`roadmap : panneau ouvert sans être dessiné (${opened.reason})`, { to: 'debug' })
+  return opened
+}
+
+/**
+ * Le panneau toujours ouvert (#117) : absent ou pas dessiné, il se rouvre. Appelé depuis le message de la
+ * personne, l'ouverture est « demandée » et le moteur la dessine à toute largeur. La roadmap vient de celle
+ * que le démarrage a lue : pas de lecture de fichier par message.
+ */
+async function ensurePane($: EngineInterface): Promise<void> {
+  if (!settings.autoOpen) return
+  try {
+    const source = knownSource === undefined ? await sourceNow($) : knownSource ?? undefined
+    if (!source) return
+    if ((await $.ui.panes()).some(p => p.id === PANE && p.isPlaced)) return
+    void openPane($, source)
+  } catch {
+    // liste des volets ou roadmap illisible : le message passe, le panneau attend le suivant
+  }
 }
 
 /** Une skill a rendu son texte (skill.prompt) pendant l'appel de l'outil Skill en cours : sec-default ne l'a pas sautée (#116). */
@@ -2764,8 +2789,11 @@ export const register: Register = (on, options) => {
     // Un rechargement (une option changée dans le volet, une mise à jour) garde le volet dessiné avec
     // les boutons de l'ancien module : il se redessine, comme le panneau plus bas.
     let settingsOpen = false
+    let paneOpen = false
     try {
-      settingsOpen = (await $.ui.panes()).some(p => p.id === SETTINGS_PANE)
+      const panes = await $.ui.panes()
+      settingsOpen = panes.some(p => p.id === SETTINGS_PANE)
+      paneOpen = panes.some(p => p.id === PANE)
       if (settingsOpen) {
         await redrawSettings($)
         await watchSettings($)
@@ -2775,9 +2803,9 @@ export const register: Register = (on, options) => {
     }
     const source = await sourceNow($)
     if (source) {
-      // Volet Réglages ouvert : ce démarrage est le rechargement d'une option changée, pas une session
-      // neuve ; le panneau que Bertrand a fermé reste fermé.
-      if (settings.autoOpen && !settingsOpen) void openPane($, source)
+      // Le panneau toujours ouvert (#117) s'ouvre s'il manque, rechargement compris (une option allumée
+      // dans le volet Réglages doit se voir) ; déjà là, il reste tel quel, le volet Réglages devant.
+      if (settings.autoOpen && !paneOpen) void openPane($, source)
       $.clock.every(TICK_MS, () => void poll($))
       void summarize($, source)
       void matchSessions($, source)
@@ -2821,6 +2849,9 @@ export const register: Register = (on, options) => {
   // « Maestro » en tête du message : le panneau s'ouvre et Claude reçoit l'état d'avancement.
   // Par prompt.submit, que sec-default laisse aux plugins installés (#116), le contexte joint à la descente.
   on('prompt.submit', async ($, e, next) => {
+    // Le panneau toujours ouvert (#117) : le message de la personne rouvre le panneau qui manque ou attend.
+    // Un seul hook prompt.submit par module (le moteur refuse le second) : l'appel vit ici.
+    await ensurePane($)
     const texts: string[] = []
     // Les réglages complets, quand aucun démarrage ne les a donnés à cette conversation.
     try {
@@ -3025,6 +3056,12 @@ export const register: Register = (on, options) => {
   })
 
   on('command.run', { command: 'roadmap' }, async $ => openCommand($))
+
+  // Sa fermeture à la main est refusée tant que le réglage est allumé ; un toast dit comment la permettre.
+  on('ui.close', { id: PANE }, async ($, e, next) => {
+    if (!refusesPaneClose(settings.autoOpen, e.id, e.origin.kind)) return next(e)
+    $.ui.toast(pinnedPaneToast())
+  })
 
   on('command.run', { command: 'reglages' }, async $ => openSettings($))
 

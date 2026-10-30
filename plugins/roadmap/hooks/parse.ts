@@ -407,6 +407,19 @@ export function panelSkillNote(name: string): string {
   return `Le panneau de la roadmap ${name} vient de s'ouvrir (plugin roadmap). Si ${person()} n'a rien demandé d'autre que la commande, réponds d'une seule ligne, « Panneau de la roadmap ${name} ouvert. », sans diagnostic ni vérification ; sinon, suis la skill ci-dessous pour sa demande.`
 }
 
+// Le panneau toujours ouvert (#117) : sa fermeture à la main est refusée, et ce toast dit comment la permettre.
+export function pinnedPaneToast(): string {
+  return 'Panneau toujours ouvert : coupe ce réglage dans /reglages pour pouvoir le fermer.'
+}
+
+/** L'id du volet du panneau, que `register.tsx` ouvre et dessine. */
+export const PANE_ID = 'roadmap'
+
+/** Le hook `ui.close` refuse la fermeture : le panneau (pas le volet Réglages), par la personne, réglage allumé. */
+export function refusesPaneClose(autoOpen: boolean, id: string, origin: string): boolean {
+  return autoOpen && id === PANE_ID && origin === 'person'
+}
+
 // La skill des réglages (#81, 2026-10-28) : tapée seule, elle ouvre le volet Réglages sans passer par
 // le modèle ; lancée par le modèle (« mes réglages », « coupe le mode ADHD »), le volet s'ouvre
 // aussi, et Bertrand voit l'état à l'écran.

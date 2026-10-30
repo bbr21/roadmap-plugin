@@ -225,7 +225,7 @@ export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
     id: 'panel',
     title: 'Panneau',
     options: [
-      { field: 'autoOpen', name: 'Ouvrir au démarrage', def: 'On' },
+      { field: 'autoOpen', name: 'Toujours ouvert', def: 'On' },
       { field: 'theme', name: 'Thème', def: 'auto' },
     ],
   },
