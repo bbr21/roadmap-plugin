@@ -221,6 +221,13 @@ import {
   type ChildRelaunch,
   type ChildRow,
   type ChildStatus,
+  BOARD_ORDER,
+  boardColumn,
+  boardColumnName,
+  boardGroups,
+  type BoardColumn,
+  type BoardEntry,
+  type BoardSession,
   type ChildStep,
   type FinishedFacts,
   BYPASS_MODE,
@@ -4692,9 +4699,161 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   }
   headZones = graphic && fixedZones + numberZones.size + groups.length <= ZONE_LIMIT
 
-  return (
-    <Box flexDirection="column" gap={SPACE.root} paddingX={SPACE.indent}>
-      {/* L'avancement et sa barre font un seul bloc : la barre colle aux chiffres. */}
+  // --- Tableau des sessions (#120, maquette A) ----------------------------------------------------
+  // La seconde vue : l'en-tête reste, le reste devient cinq colonnes selon l'état de la session de
+  // chaque tâche, ce qui attend Bertrand d'abord. Une bascule de deux boutons de l'app, sans zone.
+  const layout = view.layout === 'board' ? 'board' : 'list'
+  const layoutToggle = (
+    <Box flexDirection="row" alignItems="center" gap={SPACE.row} flexShrink={0} marginLeft={1}>
+      <Button key="layout:list" plain dimColor={layout !== 'list'} label="Liste" onPress={() => void setView($, () => ({ layout: 'list' }))} />
+      <Button key="layout:board" plain dimColor={layout !== 'board'} label="Tableau" onPress={() => void setView($, () => ({ layout: 'board' }))} />
+    </Box>
+  )
+  const boardView = async (): Promise<RenderElement> => {
+    const focus = BOARD_ORDER.find(c => c === view.boardFocus)
+    const more = view.boardMore ?? []
+    // La session d'une tâche ouverte, et sa note d'enfant (étapes, question, récap) quand Maestro l'a lancée.
+    const sessionFacts = async (t: Task): Promise<BoardSession | undefined> => {
+      const live = liveOf(t)
+      if (!live) return undefined
+      const sid = live.entry.sessionId
+      let status: ChildStatus | undefined
+      if (sid) {
+        try {
+          status = childStatusOf(await $.store.get(`${CHILD_STATUS_PREFIX}${sid}`))
+        } catch {
+          // note illisible : la tâche se classe sans elle
+        }
+      }
+      const running = sid ? runningBySession.get(sid) : undefined
+      const last = sid ? lastActivityBySession.get(sid) : undefined
+      return { startedAt: live.entry.startedAt, ...(running !== undefined ? { running } : {}), ...(last !== undefined ? { lastActivityAt: last } : {}), ...(status ? { status } : {}) }
+    }
+    const facts = new Map<Task, BoardSession | undefined>()
+    await Promise.all(openTasks.map(async t => facts.set(t, await sessionFacts(t))))
+    const entries: BoardEntry[] = []
+    for (const t of [...openTasks, ...doneTasks]) {
+      const session = facts.get(t)
+      const column = boardColumn(t, session, today)
+      if (!column) continue
+      const asked = column === 'ask' ? session?.status?.question : undefined
+      const since = !session ? 0 : column === 'run' && session.running !== false ? now - session.startedAt : now - (asked?.since ?? session.lastActivityAt ?? session.startedAt)
+      entries.push({ task: t, column, since })
+    }
+    const grouped = boardGroups(entries)
+
+    // Des colonnes d'au moins 24 cellules, autant de front que la largeur du panneau le permet (1 à 5).
+    const usable = Math.max(24, ((e.props as { bodyColumns?: number }).bodyColumns ?? 76) - 4)
+    const perRow = focus ? 1 : Math.max(1, Math.min(BOARD_ORDER.length, Math.floor((usable + 2) / 26)))
+    const colWidth = Math.floor((usable - 2 * (perRow - 1)) / perRow)
+    const tone: Record<BoardColumn, string> = { ask: palette.waitOn, run: palette.liveOn, ready: palette.ok, todo: palette.text, done: palette.text2 }
+    const toggleFocus = (c: BoardColumn) => () => void setView($, v => ({ boardFocus: v.boardFocus === c ? '' : c }))
+    // Un compteur par colonne : un clic ne montre qu'elle, un second les remet toutes. Une zone chacun.
+    const counter = (c: BoardColumn) => (
+      <Box key={`hit:board:${c}`} flexDirection="column" flexGrow={1} flexShrink={1} minWidth={0} paddingX={SPACE.indent} backgroundColor={focus === c ? palette.sel : palette.btn} hover={{ backgroundColor: palette.btnHover }}>
+        <Text weight="semibold" tabular color={tone[c]}>{String(grouped[c].length)}</Text>
+        {graphic ? (
+          <Text size="caption" color={palette.text2} wrap="truncate-end">{boardColumnName(c, mode)}</Text>
+        ) : (
+          <Button key={`board:${c}`} plain dimColor label={boardColumnName(c, mode)} onPress={toggleFocus(c)} />
+        )}
+        {hit(`board:${c}`, toggleFocus(c))}
+      </Box>
+    )
+    const stepText = (s: ChildStatus | undefined): string | undefined => {
+      const steps = s?.steps ?? []
+      if (steps.length === 0) return undefined
+      const at = steps.findIndex(x => x.status === 'in_progress')
+      return `étape ${at >= 0 ? at + 1 : steps.filter(x => x.status === 'completed').length}/${steps.length}`
+    }
+    // Une carte : carré d'axe, numéro, titre court (le détail d'un clic), puis ce que dit sa colonne.
+    const card = (x: BoardEntry) => {
+      const t = x.task
+      const session = facts.get(t)
+      const pills: RenderElement[] = []
+      if (!t.done && t.prio) pills.push(prioPill(t.prio))
+      if (x.column === 'ask') pills.push(drawnPill({ text: `depuis ${durationLabel(x.since)}`, bg: palette.waitTint, fg: palette.waitOn }))
+      // Au repos (arrêtée, sans question) : la pastille le dit à la place de l'étape, le récap en note.
+      const resting = x.column === 'run' && session?.running === false
+      if (x.column === 'run') pills.push(drawnPill({ text: resting ? 'au repos' : (stepText(session?.status) ?? 'en session'), bg: palette.liveTint, fg: palette.liveOn }))
+      if (x.column === 'ready') pills.push(drawnPill({ text: `prête · ${durationLabel(x.since)}`, bg: palette.sel, fg: palette.ok }))
+      if (x.column === 'todo') {
+        const pre = blocked(t) ? prereqFor(t) : undefined
+        if (pre) pills.push(drawnPill({ text: pre.id ? `après #${pre.id}` : 'bloquée', bg: palette.blockTint, fg: palette.blockOn }))
+        pills.push(...rowPills(t, today, me).map(rowPill))
+      }
+      const note = x.column === 'ask' ? (session?.status?.question?.text ?? session?.status?.recap) : resting ? session?.status?.recap : undefined
+      const when = t.done && t.fait ? (t.fait.slice(0, 10) === today ? t.fait.slice(11).trim() || "aujourd'hui" : 'hier') : undefined
+      return (
+        <Box key={`card:${t.key}`} flexDirection="column" paddingX={SPACE.indent} backgroundColor={palette.btn} hover={{ backgroundColor: palette.btnHover }}>
+          <Box flexDirection="row" alignItems="center" gap={SPACE.row}>
+            <Box flexShrink={0}>
+              {Svg ? (
+                <Svg source={t.done ? checkRowIcon(palette.ok) : squareRowIcon(axisHex(t.axis))} alt={t.done ? 'faite' : t.axis} width={16} height={24} />
+              ) : (
+                <Text color={t.done ? 'success' : axisTheme(t.axis)}>{t.done ? '✓' : '■'}</Text>
+              )}
+            </Box>
+            {t.id && <Text size="caption" tabular color={palette.text2}>{`#${t.id}`}</Text>}
+            <Box flexGrow={1} flexShrink={1} minWidth={0}>
+              <Button key={`board:${t.key}`} plain onPress={select(selectionOf(t))}>
+                <Text wrap="truncate-end">{short(t).titre}</Text>
+              </Button>
+            </Box>
+          </Box>
+          {(pills.length > 0 || when) && (
+            <Box flexDirection="row" alignItems="center" gap={SPACE.row} flexWrap="wrap">
+              {pills}
+              {when && <Text size="caption" tabular color={palette.text2}>{when}</Text>}
+            </Box>
+          )}
+          {note && <Text size="caption" color={palette.text2} wrap="truncate-end">{clip(note, 80)}</Text>}
+        </Box>
+      )
+    }
+    // Au plus 6 cartes par colonne, 3 pour les livrées, puis « Voir les N autres ».
+    const cap = (c: BoardColumn) => (focus === c || more.includes(c) ? ROW_BUDGET : c === 'done' ? 3 : 6)
+    const column = (c: BoardColumn) => {
+      const list = grouped[c]
+      const shown = list.slice(0, cap(c))
+      const rest = list.length - shown.length
+      return (
+        <Box key={`col:${c}`} flexDirection="column" width={colWidth} flexShrink={0} gap={SPACE.tight}>
+          <Box flexDirection="row" alignItems="center" gap={SPACE.row}>
+            {c === 'ask' && hand()}
+            {c === 'run' && spinner()}
+            <Box flexGrow={1} flexShrink={1} minWidth={0}>
+              <Text weight="semibold" wrap="truncate-end">{boardColumnName(c, mode)}</Text>
+            </Box>
+            <Text size="caption" tabular color={palette.text2}>{String(list.length)}</Text>
+          </Box>
+          {shown.length === 0 ? <Text size="caption" color={palette.text3}>rien</Text> : shown.map(card)}
+          {rest > 0 && (
+            <Button key={`board-more:${c}`} plain dimColor label={`Voir les ${rest} autres`} onPress={() => void setView($, v => ({ boardMore: [...(v.boardMore ?? []), c] }))} />
+          )}
+        </Box>
+      )
+    }
+    // Une colonne vide ne prend pas de place : son compteur dit 0. Choisie seule, elle se montre, vide ou non.
+    const shownColumns = focus ? [focus] : BOARD_ORDER.filter(c => grouped[c].length > 0)
+    const rows: BoardColumn[][] = []
+    for (let i = 0; i < shownColumns.length; i += perRow) rows.push(shownColumns.slice(i, i + perRow))
+    return (
+      <Box flexDirection="column" gap={SPACE.block}>
+        <Box flexDirection="row" gap={SPACE.row}>{BOARD_ORDER.map(counter)}</Box>
+        {Svg && <Svg source={ruleIcon(palette.border, wide)} alt="séparateur" height={1} />}
+        {scanNote !== '' && <Text color={palette.text2}>{scanNote}</Text>}
+        {rows.map((r, i) => (
+          <Box key={`board-row:${i}`} flexDirection="row" gap={SPACE.textButtons} alignItems="flex-start">
+            {r.map(column)}
+          </Box>
+        ))}
+      </Box>
+    )
+  }
+
+  // L'avancement et sa barre font un seul bloc : la barre colle aux chiffres. La liste et le tableau le partagent.
+  const head = (
       <Box flexDirection="column">
       <Box flexDirection="row" justifyContent="space-between" alignItems="flex-end" paddingX={SPACE.indent}>
         {Svg ? (
@@ -4713,6 +4872,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
               : `${doneTasks.length} faites sur ${total}`}
           </Text>
         </Box>
+        {layoutToggle}
         {/* La roue des réglages, en haut à droite (#115) ; au terminal, le bouton « Réglages ». */}
         {graphic && Svg ? (
           <Box key="hit:open-settings" flexDirection="row" alignItems="center" flexShrink={0} marginLeft={1} hover={{ backgroundColor: palette.hover }}>
@@ -4747,6 +4907,19 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
         )}
       </Box>
       </Box>
+  )
+  if (layout === 'board') {
+    return (
+      <Box flexDirection="column" gap={SPACE.root} paddingX={SPACE.indent}>
+        {head}
+        {await boardView()}
+      </Box>
+    )
+  }
+
+  return (
+    <Box flexDirection="column" gap={SPACE.root} paddingX={SPACE.indent}>
+      {head}
 
       {pending && (
         <Box flexDirection="row" alignItems="center" gap={SPACE.row} paddingX={SPACE.indent}>

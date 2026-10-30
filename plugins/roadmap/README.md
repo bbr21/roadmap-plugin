@@ -487,6 +487,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.71.0 (2026-10-30)** : panneau : seconde vue, le tableau des sessions (T'attend, En cours, Prête, À lancer, Livrées), bascule Liste · Tableau en tête du panneau, compteurs cliquables par colonne, une session au repos sans question reste En cours (#120)
 - **0.70.0 (2026-10-30)** : maestro : la carte est la question, la boîte de fin de Maestro qui redemande de lancer une carte posée dans le tour ou une session liée qui tourne est refusée une fois (#122)
 - **0.69.0 (2026-10-30)** : maestro : « en attente » veut dire une question ouverte (boîte de fin, formulaire), au repos sans question n'attend pas, seules ses sessions comptent, et Maestro relit l'état d'une session avant de relayer sa question (#121)
 - **0.68.0 (2026-10-29)** : réglages : audit des 11 réglages (#119), un réglage changé revient au message suivant de chaque session du projet, réglages redonnés après une compaction sous sec-default, Maestro suit questions et adhd, descriptions de capture et launchBypass justes

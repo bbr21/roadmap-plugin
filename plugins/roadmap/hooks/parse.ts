@@ -1810,6 +1810,63 @@ export function liveQuestion(status: ChildStatus | undefined, child: ChildRow): 
   return child.lastActivityAt - question.since > QUESTION_STALE_MS ? undefined : question
 }
 
+// --- Tableau des sessions (#120, maquette A) -------------------------------------------------------
+// La seconde vue du panneau : chaque tâche dans une colonne selon l'état de sa session, ce qui attend
+// Bertrand d'abord.
+
+/** `ask` t'attend, `run` en cours, `ready` prête, `todo` à lancer, `done` livrée. */
+export type BoardColumn = 'ask' | 'run' | 'ready' | 'todo' | 'done'
+/** L'ordre des colonnes : ce qui attend Bertrand d'abord. */
+export const BOARD_ORDER: readonly BoardColumn[] = ['ask', 'run', 'ready', 'todo', 'done']
+
+/** Le nom d'une colonne ; le mode Projet clôt au lieu de fusionner, et fait au lieu de lancer. */
+export function boardColumnName(c: BoardColumn, mode: Mode): string {
+  const projet = mode === 'projet'
+  return { ask: "T'attend", run: 'En cours', ready: projet ? 'Prête à clore' : 'Prête', todo: projet ? 'À faire' : 'À lancer', done: 'Livrées' }[c]
+}
+
+/** Ce que le panneau sait de la session d'une tâche : si elle tourne, sa dernière activité, son lancement, sa note d'enfant. */
+export type BoardSession = { running?: boolean; lastActivityAt?: number; startedAt: number; status?: ChildStatus }
+
+/**
+ * La colonne d'une tâche, ou aucune (faite avant la veille, ou annulée). Seule une question vivante
+ * (`liveQuestion`, boîte de fin comprise) attend Bertrand, que la session tourne ou non ; une session
+ * arrêtée est prête quand toutes ses étapes sont faites ou que son récap commence par « prête », sinon
+ * elle est au repos et reste en cours (#121 : au repos sans question n'attend pas) ; un état inconnu
+ * vaut en cours.
+ */
+export function boardColumn(t: Task, session: BoardSession | undefined, today: string): BoardColumn | undefined {
+  if (t.done) {
+    if (isAbandoned(t) || !t.fait) return undefined
+    return daysBetween(t.fait.slice(0, 10), today) <= 1 ? 'done' : undefined
+  }
+  if (!session) return 'todo'
+  const steps = session.status?.steps ?? []
+  const child = { id: '', title: '', running: session.running === true, lastActivityAt: session.lastActivityAt ?? session.startedAt }
+  if (liveQuestion(session.status, child)) return 'ask'
+  if (session.running !== false) return 'run'
+  const allDone = steps.length > 0 && steps.every(s => s.status === 'completed')
+  return allDone || /^\s*pr[êe]te\b/i.test(session.status?.recap ?? '') ? 'ready' : 'run'
+}
+
+/** Une carte du tableau : sa tâche, sa colonne, depuis combien de temps (ms) elle y est. */
+export type BoardEntry = { task: Task; column: BoardColumn; since: number }
+
+/**
+ * Les cartes par colonne : la plus longue attente d'abord (t'attend, en cours, prête) ; à lancer, la
+ * priorité, puis l'échéance la plus proche, puis le numéro ; livrées, la plus récente d'abord.
+ */
+export function boardGroups(entries: readonly BoardEntry[]): Record<BoardColumn, BoardEntry[]> {
+  const out = Object.fromEntries(BOARD_ORDER.map(c => [c, [] as BoardEntry[]])) as Record<BoardColumn, BoardEntry[]>
+  for (const e of entries) out[e.column].push(e)
+  const num = (t: Task) => Number(t.id ?? Number.MAX_SAFE_INTEGER)
+  const prio = (t: Task) => (t.prio ? Number(t.prio) : 4)
+  for (const c of ['ask', 'run', 'ready'] as const) out[c].sort((a, b) => b.since - a.since)
+  out.todo.sort((a, b) => prio(a.task) - prio(b.task) || (a.task.due ?? '9999').localeCompare(b.task.due ?? '9999') || num(a.task) - num(b.task))
+  out.done.sort((a, b) => (b.task.fait ?? '').localeCompare(a.task.fait ?? '') || num(b.task) - num(a.task))
+  return out
+}
+
 /**
  * Ce que le parent sait d'un enfant pour le dire fini : `dirty`, ses fichiers non commités
  * (`undefined` : git en échec) ; `landed`, sa ligne close et ses commits arrivés, ou sa branche
