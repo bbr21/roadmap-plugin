@@ -2287,6 +2287,55 @@ export function stepLabel(steps: readonly ChildStep[]): string | undefined {
   return `étape ${at + 1}/${steps.length} ${clip((steps[at] as ChildStep).content, 40)}`
 }
 
+/** L'état d'une étape dans le panneau (#143) : faite, en cours, à faire. */
+export type StepSegment = 'done' | 'now' | 'todo'
+
+/** Une rangée de la carte des étapes : une étape, ou les faites repliées en une ligne. */
+export type StepsRow = { kind: 'folded'; text: string } | { kind: 'step'; status: StepSegment; content: string }
+
+/** Ce que le panneau dessine d'une liste d'étapes (#143, maquette C + A) : la barre, le compte, la carte. */
+export type StepsView = { segments: StepSegment[]; total: number; done: number; count: string; current?: string; rows: StepsRow[]; age: string }
+
+/**
+ * La liste d'étapes d'une session, pour le panneau (#143) : un segment par étape, « 3/7 » (ou « 7/7
+ * faites »), l'étape en cours (la première à faire quand aucune n'est en cours), les rangées de la carte
+ * (au-delà de `fold` faites, 3 par défaut, elles se replient en « N étapes faites ») et l'âge de la note.
+ * Rien sans liste, ni pour une note d'un autre format (#90).
+ */
+export function stepsView(steps: readonly ChildStep[], opts: { now: number; at: number; fold?: number }): StepsView | undefined {
+  if (steps.length === 0) return undefined
+  const done = steps.filter(s => s.status === 'completed').length
+  let at = steps.findIndex(s => s.status === 'in_progress')
+  if (at < 0) at = steps.findIndex(s => s.status === 'pending')
+  if (at < 0 && done < steps.length) return undefined
+  const segments: StepSegment[] = steps.map((s, i) => (s.status === 'completed' ? 'done' : i === at ? 'now' : 'todo'))
+  const all: StepsRow[] = steps.map((s, i) => ({ kind: 'step', status: segments[i] as StepSegment, content: s.content }))
+  const fold = opts.fold ?? 3
+  const rows: StepsRow[] = done > fold ? [{ kind: 'folded', text: `${done} étapes faites` }, ...all.filter(r => r.kind === 'step' && r.status !== 'done')] : all
+  const ms = Math.max(0, opts.now - opts.at)
+  return {
+    segments,
+    total: steps.length,
+    done,
+    count: at < 0 ? `${steps.length}/${steps.length} faites` : `${at + 1}/${steps.length}`,
+    ...(at >= 0 ? { current: (steps[at] as ChildStep).content } : {}),
+    rows,
+    age: ms < 60_000 ? "à l'instant" : `il y a ${durationLabel(ms)}`,
+  }
+}
+
+/** L'empreinte des notes d'étapes suivies (#143) : elle change avec une étape, pas avec l'ordre des clés. */
+export function stepsStamp(statuses: Record<string, ChildStatus | undefined>): string {
+  return JSON.stringify(
+    Object.keys(statuses)
+      .sort()
+      .map(id => {
+        const s = statuses[id]
+        return [id, s ? s.at : null, s ? s.steps.map(x => x.status[0]).join('') : null, s?.question?.since ?? null]
+      }),
+  )
+}
+
 /** Au-delà, une session qui attend ou se tait est « coincée » : 15 min partout (choix de Bertrand, #84). */
 export const STUCK_MS = 15 * 60_000
 
@@ -4144,7 +4193,8 @@ export function maestroRelaunchContext(o: { source: Source; tasks: readonly Task
 // Maestro et ses tâches rattachées, ou la tâche d'une sous-session, son axe et son Maestro.
 
 /** Une tâche rattachée à Maestro : `wait` sa session attend une réponse, `live` elle tourne, `done` close. */
-export type BrandTask = { id: string; label: string; state: 'wait' | 'live' | 'done' }
+/** Une tâche lancée par Maestro : son état et, quand on la connaît, sa session (ses étapes, son ouverture, #143). */
+export type BrandTask = { id: string; label: string; state: 'wait' | 'live' | 'done'; sessionId?: string }
 
 export type Brand =
   | { kind: 'maestro'; project: string; tasks: BrandTask[]; welcome?: Welcome }
@@ -4172,7 +4222,6 @@ export function briefTaskOf(text: string): { id: string; maestro?: string } | un
   return maestro ? { id: m[1], maestro } : { id: m[1] }
 }
 
-const BRAND_RANK: Record<BrandTask['state'], number> = { wait: 0, live: 1, done: 2 }
 
 /**
  * Les tâches que la session `me` a lancées, chacune avec sa session : une fille ouverte dont le titre
@@ -4205,13 +4254,22 @@ export function maestroTaskSessions(o: {
   })
 }
 
-/** Les tâches des sessions lancées par Maestro, dans l'ordre où l'œil les cherche : qui attend, qui tourne, ce qui est clos. */
+/** Les tâches des sessions lancées par Maestro, par création de leur session, par numéro en secours (#143). */
 export function maestroBrandTasks(
-  entries: readonly { id: string; label: string; running: boolean; open: boolean; done: boolean }[],
+  entries: readonly { id: string; label: string; running: boolean; open: boolean; done: boolean; sessionId?: string; createdAt?: number }[],
 ): BrandTask[] {
-  return entries
-    .map(e => ({ id: e.id, label: e.label, state: (e.done || !e.open ? 'done' : e.running ? 'live' : 'wait') as BrandTask['state'] }))
-    .sort((a, b) => BRAND_RANK[a.state] - BRAND_RANK[b.state])
+  // Par création de leur session, la plus ancienne en haut, closes à leur place (#143, demande de
+  // Bertrand) ; sans la date de toutes, par numéro : les numéros suivent l'ordre d'ouverture.
+  const dated = entries.length > 0 && entries.every(e => typeof e.createdAt === 'number' && !Number.isNaN(e.createdAt))
+  const byNumber = (a: { id: string }, b: { id: string }) => Number(a.id) - Number(b.id) || a.id.localeCompare(b.id)
+  return [...entries]
+    .sort((a, b) => (dated ? (a.createdAt as number) - (b.createdAt as number) || byNumber(a, b) : byNumber(a, b)))
+    .map(e => ({
+      id: e.id,
+      label: e.label,
+      state: (e.done || !e.open ? 'done' : e.running ? 'live' : 'wait') as BrandTask['state'],
+      ...(e.sessionId ? { sessionId: e.sessionId } : {}),
+    }))
 }
 
 const BRAND_STATE_WORD: Record<BrandTask['state'], string> = { wait: "t'attend", live: 'en session', done: 'close' }

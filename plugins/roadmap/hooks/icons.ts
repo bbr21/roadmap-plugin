@@ -3,7 +3,7 @@
 // Couleurs et mesures : tokens.ts (#108) ; dessins du handoff de design (README « Icônes »). Un SVG
 // dessiné en image ne connaît pas `currentColor`, d'où la couleur passée à chaque dessin.
 
-import type { TodoIcon } from './parse'
+import type { StepSegment, TodoIcon } from './parse'
 import { FONT, MIX, PALETTES, RADIUS, SIZE, STROKE, TEXT, type Palette, type ThemeName } from './tokens'
 
 // Les palettes et les traits sont des tokens du design system (#108) ; on les sert aussi d'ici.
@@ -608,4 +608,39 @@ export function barCuts(segments: BarSegment[], width = BAR_WIDTH): { cuts: numb
     cuts: layout.map(({ x, w }) => Math.min((x + w + BAR_GAP / 2) / width, 1)),
     names: layout.map(({ segment }) => segment.name ?? ''),
   }
+}
+
+/**
+ * La barre d'étapes d'une session (#143, maquette C + A) : un segment par étape, 1 px entre eux, 2 px
+ * au moins chacun (la barre s'élargit au-delà de `width`) ; vert fait, bleu en cours (violet quand la
+ * session attend), `sel` à faire.
+ */
+export function stepsBarIcon(
+  palette: Palette,
+  segments: readonly StepSegment[],
+  opts: { width: number; height?: number; waiting?: boolean },
+): { source: string; width: number; height: number } {
+  const height = opts.height ?? 6
+  const gap = 1
+  const n = Math.max(1, segments.length)
+  const width = Math.max(opts.width, n * 2 + (n - 1) * gap)
+  const w = (width - (n - 1) * gap) / n
+  const fill = (s: StepSegment) => (s === 'done' ? palette.ok : s === 'now' ? (opts.waiting ? palette.wait : palette.live) : palette.sel)
+  const body = segments
+    .map((s, i) => `<rect x="${(i * (w + gap)).toFixed(1)}" y="0" width="${w.toFixed(1)}" height="${height}" rx="${Math.min(RADIUS.bar, height / 2)}" fill="${fill(s)}"/>`)
+    .join('')
+  return {
+    source: `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">${body}</svg>`,
+    width,
+    height,
+  }
+}
+
+/** La marque d'une étape dans la carte (#143) : disque vert coché, roue bleue immobile, cercle à faire. */
+export function stepIcon(palette: Palette, status: StepSegment, size = 16): string {
+  if (status === 'done') {
+    return svg(size, 16, `<circle cx="8" cy="8" r="7" fill="${palette.ok}"/><path d="M4.8 8.2l2.1 2.1 4.3-4.4" fill="none" stroke="${palette.bg}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>`)
+  }
+  if (status === 'now') return spinnerIcon(palette.live, size)
+  return svg(size, 16, `<circle cx="8" cy="8" r="6" fill="none" stroke="${palette.text3}" stroke-width="1.4"/>`)
 }

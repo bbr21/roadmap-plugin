@@ -536,6 +536,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.91.0 (2026-10-31)** : panneau, maestro : les étapes des sessions de Maestro en direct, en barre sous chaque voie et ligne en session, la liste au survol ou épinglée, dans la fiche ; l'arbre rangé par création (#143)
 - **0.90.0 (2026-10-31)** : maestro : « Maestro » seul ouvre une carte d'accueil chiffrée sans scan (le jour, les faites sur le total, ce qui attend) et quatre boutons d'action directe (#141)
 - **0.89.0 (2026-10-30)** : panneau : une seule fiche par tâche, en cartes, dans sa session comme au clic dans la roadmap : titre cliquable, mission dans un cadre, cartes selon l'état ; design/ : TaskFiche remplace TaskFocus (#142)
 - **0.88.0 (2026-10-30)** : panneau, Maestro : sous sec-default, un lancement depuis le panneau n'affiche plus qu'une ligne (« Lancement de #N… »), le brief en contexte caché ; le rappel de fin de tour ne s'affiche plus en message, il rejoint le message suivant, et aucun rappel après un tour qui n'a posé qu'une carte (#140)

@@ -49,6 +49,8 @@ import {
   ruleIcon,
   fullWidth,
   spinnerIcon,
+  stepIcon,
+  stepsBarIcon,
   squareIcon,
   STROKE,
   type Palette,
@@ -265,6 +267,8 @@ import {
   type ChildWake,
   applyPlan,
   childAlerts,
+  stepsStamp,
+  stepsView,
   childAlertText,
   childrenOf,
   finishedCheck,
@@ -276,6 +280,7 @@ import {
   type ChildRelaunch,
   type ChildRow,
   type ChildStatus,
+  type StepSegment,
   BOARD_ORDER,
   boardColumn,
   boardColumnName,
@@ -2167,7 +2172,9 @@ async function matchSessions($: EngineInterface, source: Source): Promise<void> 
     sessionRows = sessions
     const same = next.size === sessionMatches.size && [...next].every(([k, v]) => sessionMatches.get(k)?.sessionId === v.sessionId)
     sessionMatches = next
-    if (!same || runningChanged) await update($, liveVersionAtom, v => v + 1)
+    // Les étapes des sessions suivies (#143) : une étape cochée en plein tour redessine le panneau.
+    const stepsChanged = await stepsMoved($)
+    if (!same || runningChanged || stepsChanged) await update($, liveVersionAtom, v => v + 1)
   } catch {
     // réponse illisible : rien
   }
@@ -3731,20 +3738,54 @@ export const register: Register = (on, options) => {
 // --- Identité Roadmap à l'ouverture (#127) ---------------------------------------------------
 // La carte qui prend la place du message d'ouverture (maquette A) et l'en-tête du panneau (maquette B).
 
+/**
+ * La date de création de chaque session, lue une fois par session (`get_session` : `list_sessions` ne la
+ * donne pas) et gardée dans le module ; illisible, `NaN`, et l'arbre de Maestro se range par numéro (#143).
+ */
+const createdBySession = new Map<string, number>()
+
+async function learnCreated($: EngineInterface, ids: readonly string[]): Promise<void> {
+  const missing = ids.filter(id => !createdBySession.has(id))
+  await Promise.all(
+    missing.map(async id => {
+      createdBySession.set(id, Number.NaN)
+      try {
+        const ran = await $.tool.call({ tool: GET_SESSION_TOOL, session_id: id })
+        const created = (JSON.parse(ran.text ?? '{}') as { createdAt?: unknown }).createdAt
+        const at = typeof created === 'number' ? created : typeof created === 'string' ? Date.parse(created) : Number.NaN
+        createdBySession.set(id, at)
+      } catch {
+        // fiche illisible : rangée par numéro, sans redemander à chaque dessin
+      }
+    }),
+  )
+}
+
 /** Les tâches des sessions que cette session a lancées, avec leur état : ce que Maestro montre. */
-function maestroTasksOf(source: Source, tasks: readonly Task[], live: Record<string, LiveEntry>, me: string | undefined, short: (t: Task) => string): BrandTask[] {
+async function maestroTasksOf(
+  $: EngineInterface,
+  source: Source,
+  tasks: readonly Task[],
+  live: Record<string, LiveEntry>,
+  me: string | undefined,
+  short: (t: Task) => string,
+): Promise<BrandTask[]> {
   if (!me) return []
   // Le suivi du panneau, ou la session trouvée par son titre ; les filles « #N · … » d'abord (#137).
   const tracked = (t: Task) => live[liveKeyOf(source, t)]?.sessionId ?? sessionMatches.get(taskKey(t))?.sessionId
   const rows = [...sessionRows, ...[...startedBySession].map(([sessionId, startedBy]) => ({ sessionId, startedBy }))]
+  const found = maestroTaskSessions({ tasks, me, rows, tracked })
+  await learnCreated($, found.map(f => f.sessionId))
   return maestroBrandTasks(
-    maestroTaskSessions({ tasks, me, rows, tracked }).map(({ task: t, sessionId: sid }) => ({
+    found.map(({ task: t, sessionId: sid }) => ({
       id: t.id as string,
       label: short(t),
       running: runningBySession.get(sid) ?? false,
       // Avant la première relecture des sessions, une session suivie compte pour ouverte.
       open: openSessionIds.size === 0 || openSessionIds.has(sid),
       done: t.done,
+      sessionId: sid,
+      createdAt: createdBySession.get(sid) ?? Number.NaN,
     })),
   )
 }
@@ -3768,7 +3809,7 @@ async function brandData($: EngineInterface) {
     const task = tasks.find(t => t.id === brand.id)
     return task ? { ...brand, label: short(task) } : brand
   }
-  return { source, tasks, palette: data.palette, own, shorten, short, maestroTasks: maestroTasksOf(source, tasks, data.live, own.id, short) }
+  return { source, tasks, palette: data.palette, own, shorten, short, maestroTasks: await maestroTasksOf($, source, tasks, data.live, own.id, short) }
 }
 
 /** La largeur de la barre de l'accueil, en px. */
@@ -3842,6 +3883,16 @@ function surfaceWidth(e: RenderInput<'UserMessage'> | RenderInput<'Pane'>, margi
  * `card` : à la place du message d'ouverture ; `header` : en haut du panneau ; `focus` : la tête de la
  * vue de tâche. Sans Svg (terminal), la liste et les mots restent.
  */
+/** Ce que l'arbre de Maestro montre des étapes de ses tâches (#143) : leurs notes par numéro, l'épinglée, ses gestes. */
+type BrandSteps = {
+  of: Record<string, ChildStatus>
+  now: number
+  /** Le numéro de la tâche dont la carte est épinglée ; vide : aucune. */
+  pin: string
+  setPin: (id: string) => void
+  open: (t: BrandTask) => void
+}
+
 function brandTree(
   $: EngineInterface,
   e: RenderInput<'UserMessage'> | RenderInput<'Pane'>,
@@ -3852,6 +3903,8 @@ function brandTree(
   state?: BrandTask['state'],
   // Le titre « #N … » d'une tâche, cliquable (#142) : la clé de son bouton et ce qu'il fait.
   onTitle?: { key: string; press: () => void },
+  // Chez Maestro, dans l'en-tête du panneau (#143) : les notes d'étapes de ses tâches, l'épingle, l'ouverture.
+  steps?: BrandSteps,
 ): RenderElement {
   const { Box, Text, Button } = $.ui.resolve(e)
   const resolved = $.ui.resolve(e)
@@ -3872,8 +3925,55 @@ function brandTree(
   if (brand.kind === 'maestro') {
     const shown = brand.tasks.slice(0, BRAND_TASKS_SHOWN)
     const more = brand.tasks.length - shown.length
-    const row = card ? 28 : SIZE.strut.row
+    // Les étapes de chaque voie (#143), seulement dans l'en-tête du panneau : une voie qui en a prend deux lignes.
+    const stepsOf = (t: BrandTask) => {
+      const status = steps?.of[t.id]
+      const view = status && steps ? stepsView(status.steps, { now: steps.now, at: status.at }) : undefined
+      return status && view ? { status, view } : undefined
+    }
+    const anySteps = !card && shown.some(t => stepsOf(t) !== undefined)
+    const row = card ? 28 : anySteps ? SIZE.strut.row + 20 : SIZE.strut.row
     const lanes = Svg && shown.length > 0 ? brandLanesIcon(palette, shown.map(t => t.state), row, card ? 40 : 32) : undefined
+    const laneName = (t: BrandTask) =>
+      steps && t.sessionId ? (
+        <Button key={`brand-open:${keyPart(t.id)}`} plain onPress={() => steps.open(t)}>
+          <Text size="footnote" wrap="truncate-end">{t.label}</Text>
+        </Button>
+      ) : (
+        <Text size="footnote" wrap="truncate-end">{t.label}</Text>
+      )
+    const laneSteps = (t: BrandTask) => {
+      const found = stepsOf(t)
+      if (!found || !steps) return null
+      const { status, view } = found
+      const pinned = steps.pin === t.id
+      const bar = stepsBarIcon(palette, view.segments, { width: 120, height: 4, waiting: t.state === 'wait' })
+      const label = view.current ? `${view.count} · ${clip(view.current, 40)}` : view.count
+      return (
+        <Box flexDirection="row" alignItems="center" gap={SPACE.row}>
+          {Svg && <Svg source={bar.source} alt={`étapes ${view.count}`} width={bar.width} height={bar.height} />}
+          <Box flexGrow={1} flexShrink={1} minWidth={0}>
+            <Button key={`brand-pin:${keyPart(t.id)}`} plain dimColor onPress={() => steps.setPin(pinned ? '' : t.id)}>
+              <Text size="caption" color={palette.text2} wrap="truncate-end">{label}</Text>
+            </Button>
+          </Box>
+          {stepsCard($, e, palette, {
+            key: `steps-card:${keyPart(t.id)}`,
+            id: t.id,
+            status,
+            now: steps.now,
+            top: 2,
+            pinned,
+            actions: (
+              <Box flexDirection="row" gap={SPACE.row}>
+                {t.sessionId && <Button key={`steps-open:${keyPart(t.id)}`} label="Ouvrir la session" onPress={() => steps.open(t)} />}
+                <Button key={`steps-close:${keyPart(t.id)}`} plain dimColor label="Fermer" onPress={() => steps.setPin('')} />
+              </Box>
+            ),
+          })}
+        </Box>
+      )
+    }
     const list = shown.length > 0 && (
       <Box key="brand-lanes" flexDirection="row" alignItems="center" gap={SPACE.row}>
         {lanes && Svg && <Svg source={lanes.source} alt="voies" width={lanes.width} height={lanes.height} />}
@@ -3881,11 +3981,16 @@ function brandTree(
           {shown.map((t, i) => (
             <Box key={`brand:${t.id}`} flexDirection="row" alignItems="center" gap={SPACE.row}>
               {strut(row)}
-              <Text size="footnote" tabular color={palette.text2}>{`#${t.id}`}</Text>
-              <Box flexGrow={1} flexShrink={1} minWidth={0}>
-                <Text size="footnote" wrap="truncate-end">{t.label}</Text>
+              <Box flexDirection="column" flexGrow={1} flexShrink={1} minWidth={0}>
+                <Box flexDirection="row" alignItems="center" gap={SPACE.row}>
+                  <Text size="footnote" tabular color={palette.text2}>{`#${t.id}`}</Text>
+                  <Box flexGrow={1} flexShrink={1} minWidth={0}>
+                    {laneName(t)}
+                  </Box>
+                  {pill(words.states[i] ?? '', ...tone(t.state))}
+                </Box>
+                {!card && laneSteps(t)}
               </Box>
-              {pill(words.states[i] ?? '', ...tone(t.state))}
             </Box>
           ))}
           {more > 0 && <Text size="caption" color={palette.text3}>{`et ${more} de plus`}</Text>}
@@ -3994,9 +4099,32 @@ async function sessionBrandOf($: EngineInterface): Promise<{ brand: Brand; data:
  * L'en-tête du panneau, au-dessus de la roadmap : Maestro et ses voies ; chez une tâche dont on a demandé
  * toute la roadmap, sa ligne de marque, dont le titre ramène à sa fiche (#137, #142).
  */
-function paneBrand($: EngineInterface, e: RenderInput<'Pane'>, found: Awaited<ReturnType<typeof sessionBrandOf>>, today: string): RenderElement | null {
+async function paneBrand(
+  $: EngineInterface,
+  e: RenderInput<'Pane'>,
+  found: Awaited<ReturnType<typeof sessionBrandOf>>,
+  today: string,
+  pin: string,
+  now: number,
+): Promise<RenderElement | null> {
   if (!found) return null
-  if (found.brand.kind !== 'task') return brandTree($, e, found.brand, found.data.palette, 'header', today)
+  if (found.brand.kind !== 'task') {
+    // Les étapes des sessions de Maestro (#143) : la barre sous chaque voie, la carte au survol, épinglée au clic.
+    const of: Record<string, ChildStatus> = {}
+    await Promise.all(
+      found.brand.tasks.map(async t => {
+        const status = await readSteps($, t.sessionId)
+        if (status) of[t.id] = status
+      }),
+    )
+    return brandTree($, e, found.brand, found.data.palette, 'header', today, undefined, undefined, {
+      of,
+      now,
+      pin,
+      setPin: id => void setView($, () => ({ stepsPin: id })),
+      open: t => void (t.sessionId ? openSession($, { sessionId: t.sessionId, startedAt: now, title: t.label }) : undefined),
+    })
+  }
   return brandTree($, e, found.brand, found.data.palette, 'header', today, undefined, {
     key: 'task-focus',
     press: () => void setView($, () => ({ whole: false, selected: '' })),
@@ -4037,13 +4165,137 @@ async function readFocusFacts($: EngineInterface, source: Source, task: Task, ow
   return focusFacts
 }
 
-/**
- * La place du bloc « Étapes » de la fiche (#142), sous la mission : la liste d'étapes de la session, en
- * direct, que #143 dessinera. Rien pour l'instant.
- */
-function ficheSteps(): RenderElement | null {
-  return null
+/** La note d'étapes d'une session (`child-status:<id>`), écrite par une session lancée par Maestro ; illisible : rien. */
+async function readSteps($: EngineInterface, sessionId: string | undefined): Promise<ChildStatus | undefined> {
+  if (!sessionId) return undefined
+  try {
+    return childStatusOf(await $.store.get(`${CHILD_STATUS_PREFIX}${sessionId}`))
+  } catch {
+    return undefined
+  }
 }
+
+/** L'empreinte des notes d'étapes au dernier pas du sondage (#143). */
+let lastStepsStamp = ''
+
+/**
+ * Les notes d'étapes des sessions suivies ont-elles bougé depuis le pas d'avant (#143) ? Le store est
+ * partagé entre les sessions, mais une écriture d'une autre ne redessine pas ce panneau : on compare.
+ */
+async function stepsMoved($: EngineInterface): Promise<boolean> {
+  const ids = new Set<string>()
+  for (const entry of sessionMatches.values()) if (entry.sessionId) ids.add(entry.sessionId)
+  for (const entry of Object.values(await loadLive($).catch(() => ({}) as Record<string, LiveEntry>))) if (entry.sessionId) ids.add(entry.sessionId)
+  if (ownSession?.id) ids.add(ownSession.id)
+  const statuses: Record<string, ChildStatus | undefined> = {}
+  await Promise.all([...ids].map(async id => (statuses[id] = await readSteps($, id))))
+  const stamp = stepsStamp(statuses)
+  // Au premier pas, l'empreinte d'avant est inconnue : un redessin de trop, jamais un de moins.
+  const moved = stamp !== lastStepsStamp
+  lastStepsStamp = stamp
+  return moved
+}
+
+/**
+ * Le bloc « Étapes » de la fiche (#142, #143 maquette C + A), sous la mission : « Étapes », le compte et
+ * l'âge de la note, la barre, puis toutes les étapes. Rien sans note lisible.
+ */
+function ficheSteps($: EngineInterface, e: RenderInput<'Pane'>, palette: Palette, status: ChildStatus | undefined, now: number): RenderElement | null {
+  const view = status ? stepsView(status.steps, { now, at: status.at, fold: Infinity }) : undefined
+  if (!status || !view) return null
+  const { Box, Text } = $.ui.resolve(e)
+  const Svg = e.surface === 'terminal' ? undefined : $.ui.resolve(e).Svg
+  const bar = stepsBarIcon(palette, view.segments, { width: 240, waiting: status.question !== undefined })
+  return (
+    <Box key="fiche-steps" flexDirection="column" gap={SPACE.tight} paddingX={SPACE.indent}>
+      <Box flexDirection="row" alignItems="center" gap={SPACE.row}>
+        <Text size="caption" weight="medium" color={palette.text2}>Étapes</Text>
+        <Text size="caption" color={palette.text3}>{`${view.count} · ${view.age}`}</Text>
+      </Box>
+      {Svg && <Svg source={bar.source} alt={`étapes ${view.count}`} width={bar.width} height={bar.height} />}
+      {view.rows.map((r, i) =>
+        r.kind === 'folded' ? (
+          <Text key={`fiche-step:${i}`} size="footnote" color={palette.text2}>{r.text}</Text>
+        ) : (
+          <Box key={`fiche-step:${i}`} flexDirection="row" alignItems="center" gap={SPACE.row}>
+            {Svg ? (
+              <Svg source={stepIcon(palette, r.status)} alt={STEP_WORDS[r.status]} width={SIZE.icon.md} height={SIZE.icon.md} />
+            ) : (
+              <Text size="footnote" color={palette.text2}>{STEP_MARKS[r.status]}</Text>
+            )}
+            <Text size="footnote" weight={r.status === 'now' ? 'semibold' : undefined} color={r.status === 'now' ? palette.text : palette.text2} wrap="wrap">
+              {r.content}
+            </Text>
+          </Box>
+        ),
+      )}
+    </Box>
+  )
+}
+
+/**
+ * La carte des étapes d'une session (#143, maquette C + A) : « #N · étape 2/6 · il y a 40 s », les
+ * étapes (les faites repliées au-delà de trois), la question quand la session attend. Posée en
+ * absolu sous la ligne qui la porte : cachée, elle paraît au survol de cette ligne ; `pinned` la
+ * garde ouverte. `actions` : ses boutons, quand elle est épinglée. Rien au terminal sans `pinned`.
+ */
+function stepsCard(
+  $: EngineInterface,
+  e: RenderInput<'Pane'> | RenderInput<'UserMessage'>,
+  palette: Palette,
+  card: { key: string; id?: string; status: ChildStatus; now: number; top?: number; pinned?: boolean; actions?: RenderElement },
+): RenderElement | null {
+  const view = stepsView(card.status.steps, { now: card.now, at: card.status.at })
+  if (!view) return null
+  const { Box, Text } = $.ui.resolve(e)
+  const Svg = e.surface === 'terminal' ? undefined : $.ui.resolve(e).Svg
+  if (!Svg && !card.pinned) return null
+  const head = `${card.id ? `#${card.id} · ` : ''}${view.current ? `étape ${view.count}` : view.count} · ${view.age}`
+  const question = card.status.question?.text
+  return (
+    // Sans clé : la Box à clé qui la porte (la ligne, la voie) est la portée du survol.
+    <Box
+      position="absolute"
+      top={card.top ?? 1}
+      left={2}
+      width={40}
+      flexDirection="column"
+      gap={SPACE.tight}
+      paddingX={SPACE.indent}
+      paddingY="xs"
+      backgroundColor={palette.bg}
+      borderStyle="round"
+      borderColor={question ? palette.wait : palette.border}
+      // Épinglée, elle est déjà là : le survol n'a rien à montrer (le moteur refuse un survol qui ne révèle rien).
+      display={card.pinned ? 'flex' : 'none'}
+      {...(card.pinned ? {} : { hover: { display: 'flex' as const } })}
+    >
+      <Text size="caption" color={palette.text2}>{head}</Text>
+      {view.rows.map((r, i) =>
+        r.kind === 'folded' ? (
+          <Text key={`${card.key}:${i}`} size="footnote" color={palette.text2}>{r.text}</Text>
+        ) : (
+          <Box key={`${card.key}:${i}`} flexDirection="row" alignItems="center" gap={SPACE.row}>
+            {Svg ? (
+              <Svg source={stepIcon(palette, r.status)} alt={STEP_WORDS[r.status]} width={SIZE.icon.md} height={SIZE.icon.md} />
+            ) : (
+              <Text size="footnote" color={palette.text2}>{STEP_MARKS[r.status]}</Text>
+            )}
+            <Text size="footnote" weight={r.status === 'now' ? 'semibold' : undefined} color={r.status === 'now' ? palette.text : palette.text2} wrap="truncate-end">
+              {r.content}
+            </Text>
+          </Box>
+        ),
+      )}
+      {question && <Text size="footnote" color={palette.waitOn} wrap="wrap">{question}</Text>}
+      {card.pinned && card.actions}
+    </Box>
+  )
+}
+
+/** Ce que dit la marque d'une étape, et sa marque au terminal (#143). */
+const STEP_WORDS: Record<StepSegment, string> = { done: 'faite', now: 'en cours', todo: 'à faire' }
+const STEP_MARKS: Record<StepSegment, string> = { done: '✓', now: '›', todo: '○' }
 
 async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<RenderElement> {
   // Les gestionnaires de clic ne se vident pas ici : un rendu attend ses lectures, et un clic
@@ -4165,6 +4417,14 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     return found && found.state === 'open' ? found : undefined
   }
   const isLive = (t: Task) => liveOf(t) !== undefined
+  // Les notes d'étapes des tâches en session (#143) : la mini-barre et la carte de leur ligne.
+  const rowSteps = new Map<string, ChildStatus>()
+  await Promise.all(
+    openTasks.map(async t => {
+      const found = await readSteps($, liveOf(t)?.entry.sessionId)
+      if (found) rowSteps.set(taskKey(t), found)
+    }),
+  )
   // Tâches enchaînées : `après:` désigne la prérequise ; une tâche est bloquée tant qu'elle n'est pas faite.
   const allTasks = [...openTasks, ...doneTasks]
   // Un seul calcul des prérequises par tâche : la chaîne prend la première, « Débloque » toutes.
@@ -5020,7 +5280,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
             {current.note && <Text color={palette.text2} wrap="wrap">{current.note}</Text>}
           </Box>
         </Box>
-        {ficheSteps()}
+        {ficheSteps($, e, palette, await readSteps($, inSession ? ownBrand?.data.own.id : liveOf(current)?.entry.sessionId), now)}
         {layout.cards.map(c => cards[c]())}
         <Box flexDirection="column" gap={SPACE.block} paddingX={SPACE.indent}>
           {openNote !== '' && <Text size="caption" color={palette.text2}>{openNote}</Text>}
@@ -5218,6 +5478,21 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     return drawnPill({ text: p.text, bg: c.bg, fg: c.fg, ...(mark ? { mark } : {}), weight: c.strong ? 600 : 500 })
   }
 
+  // La mini-barre d'une tâche en session et sa carte d'étapes, cachée jusqu'au survol de la ligne (#143).
+  const rowStepsOf = (t: Task) => {
+    const status = rowSteps.get(taskKey(t))
+    const view = status ? stepsView(status.steps, { now, at: status.at }) : undefined
+    if (!status || !view) return null
+    const bar = stepsBarIcon(palette, view.segments, { width: 56, height: 4, waiting: status.question !== undefined })
+    return (
+      <Box key={`steps:${t.key}`} flexDirection="row" alignItems="center" gap={SPACE.row} flexShrink={0}>
+        {Svg && <Svg source={bar.source} alt={`étapes ${view.count}`} width={bar.width} height={bar.height} />}
+        <Text size="caption" tabular color={palette.text3}>{view.count}</Text>
+        {stepsCard($, e, palette, { key: `steps-card:${keyPart(t.id ?? t.key)}`, ...(t.id ? { id: t.id } : {}), status, now })}
+      </Box>
+    )
+  }
+
   // Une tâche, toujours sur une ligne : carré d'axe, pastilles, titre tronqué, âge, chevron.
   // Une tâche faite : la coche, le titre et son axe à droite.
   const row = (t: Task, chain?: ChainStep, tree?: TreeMark) => {
@@ -5310,6 +5585,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
           </Button>
         </Box>
         {inSession && (waitingOn(t) ? hand() : spinner())}
+        {inSession && rowStepsOf(t)}
         {/* Le cadenas dit ce qu'il attend (#125) : « après » et le numéro de sa prérequise, ou « parent après » celui qu'attend son parent. */}
         {locked && pre && (
           <Box key={`lock:${t.key}`} flexDirection="row" alignItems="center" gap={SPACE.row} flexShrink={0}>
@@ -5951,7 +6227,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   }
 
   // L'en-tête Roadmap de la session (#127), au-dessus de l'avancement.
-  const brandHead = paneBrand($, e, ownBrand, today)
+  const brandHead = await paneBrand($, e, ownBrand, today, view.stepsPin ?? '', now)
   // L'avancement et sa barre font un seul bloc : la barre colle aux chiffres. La liste et le tableau le partagent.
   const head = (
       <Box flexDirection="column">

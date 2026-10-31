@@ -87,6 +87,8 @@ export type View = {
   boardFocus?: string
   /** Les colonnes du tableau dépliées en entier, au-delà de leur plafond de cartes. */
   boardMore?: string[]
+  /** La tâche (son numéro) dont la carte d'étapes est épinglée dans l'arbre de Maestro (#143) ; vide ou absente : aucune. */
+  stepsPin?: string
 }
 
 /** Une session lancée depuis le panneau, gardée dans `$.store` par empreinte du libellé de sa task. */
