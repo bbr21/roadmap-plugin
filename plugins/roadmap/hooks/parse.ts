@@ -1285,7 +1285,9 @@ export type TodoCounter = { key: string; name: string; icon: TodoIcon; tone: Tod
  * d'échéance (#99), en mode Code ce qu'une session travaille, ce qui dépasse et les retours (trois
  * lignes depuis que « Prioritaires » est parti, #130).
  */
-export function todoCounters(mode: Mode): TodoCounter[] {
+export function todoCounters(mode: Mode, maestro = false): TodoCounter[] {
+  // Chez Maestro (#149), « En cours » est sa propre ligne, au-dessus des filtres : elle ne se répète pas ici.
+  if (maestro) return todoCounters(mode).filter(c => c.key !== 'live')
   return mode === 'projet'
     ? [
         { key: 'today', name: 'Ma journée', icon: 'sun', tone: 'live' },
@@ -1300,8 +1302,29 @@ export function todoCounters(mode: Mode): TodoCounter[] {
       ]
 }
 
+/**
+ * La ligne des axes repliés sous la barre (#149) : « 7 axes · Merch-promo 39, Reporting 25, Automatisation 24… »,
+ * les `max` premiers avec leur nombre de tâches, des points de suite s'il en reste.
+ */
+export function axesSummary(axes: readonly { name: string; n: number }[], max = 3): string {
+  const head = axes.slice(0, max).map(a => `${a.name} ${a.n}`).join(', ')
+  return `${axes.length} axe${axes.length > 1 ? 's' : ''} · ${head}${axes.length > max ? '…' : ''}`
+}
+
+/**
+ * Le filtre que prend le panneau de Maestro à son ouverture (#149, décidé par Bertrand le 2026-10-31) :
+ * « En cours » si une session t'attend, sinon « Ma journée » (mode Projet) si elle a des tâches, sinon
+ * les récentes, sinon tout.
+ */
+export function openingFilter(o: { waiting: number; today: number; recent: number; mode: Mode }): 'live' | 'today' | 'recent' | 'all' {
+  if (o.waiting > 0) return 'live'
+  if (o.mode === 'projet' && o.today > 0) return 'today'
+  return o.recent > 0 ? 'recent' : 'all'
+}
+
 /** Les filtres repliés sous « Plus de filtres » (#115), dans l'ordre : ceux qui ne sont pas des lignes de « À traiter ». */
-export function secondaryFilters(mode: Mode): string[] {
+export function secondaryFilters(mode: Mode, maestro = false): string[] {
+  if (maestro) return secondaryFilters(mode).filter(k => k !== 'live')
   return mode === 'projet' ? ['mine', 'others', 'recent', 'live', 'feedback'] : ['recent', 'mine', 'others']
 }
 

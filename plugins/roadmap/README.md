@@ -23,22 +23,28 @@ Le panneau lit `ROADMAP.md` et `ROADMAP-fait.md` (grammaire des dossiers Cowork 
 tâche, `[axe | attend:… | ouvert:… | due:… | src:… | fiche:… | après:… | prio:… | feedback:… | tous:… | relance:…]`), relit les fichiers et
 les sessions toutes les 3 s (le dossier de la roadmap toutes les 15 s), et montre :
 
-- la part faite, une barre par axe (cliquable), la légende des axes (filtre), et en haut à droite la
-  roue qui ouvre les Réglages ;
-- sous les axes, « À traiter » (#115) : des lignes du même gabarit que les axes, une icône de
-  trait dans leur couleur, le nombre en pastille ; toute la ligne se clique, la choisie prend sa
-  teinte et un second clic la retire. En mode Code : En cours, En retard, Retours (`feedback:`) ;
-  en mode Projet : Ma journée, En retard, Cette semaine, À relancer ;
-- « Plus de filtres », replié : les autres états non vides (Récentes, ouvertes aujourd'hui ou hier ;
-  À moi ; Attend un tiers, avec la liste des tiers ; en mode Projet aussi En cours, Retours et le
-  menu « Qui ») ; il reste ouvert tant qu'un de ses filtres est choisi ;
+- la part faite, une barre par axe (cliquable), la légende des axes repliée derrière elle en une
+  ligne « › 7 axes · … » qu'un clic déplie (#149), et en haut à droite la roue qui ouvre les Réglages ;
+- chez Maestro, la ligne « En cours » (#149) : le compte de ses sessions et un point par voie ;
+  la choisir montre l'arbre des sessions (barre et étape sous chaque voie) à la place de la liste.
+  À l'ouverture, le panneau de Maestro la choisit si une session t'attend, sinon Ma journée, sinon
+  les récentes ;
+- les filtres en une rangée de pastilles (#115, #149) : une icône de trait dans leur couleur, le
+  nom, le nombre ; la choisie prend sa teinte et un second clic la retire. En mode Code : En cours
+  (sauf chez Maestro), En retard, Retours (`feedback:`) ; en mode Projet : Ma journée, En retard,
+  Cette semaine, À relancer ;
+- « Plus › », au bout de la rangée : les autres états non vides (Récentes, ouvertes aujourd'hui ou hier ;
+  À moi ; Attend un tiers, avec la liste des tiers ; en mode Projet aussi En cours hors Maestro,
+  Retours et le menu « Qui ») ; il reste ouvert tant qu'un de ses filtres est choisi ;
 - une recherche par mots ou par numéro (#47), dans les ouvertes et les faites, qui filtre à la frappe,
   et à côté le menu « Ranger » qui montre le rangement en cours ;
 - les tâches par sujet en sections repliables, une ligne par tâche (pastilles échéance, tiers,
   « à revoir », âge), triées : en session, puis par échéance, puis de la plus récente à la plus
-  ancienne ; une tâche se range sous sa prérequise ; devant chaque tâche ouverte (ni en session, ni
-  bloquée, ni déjà demandée), un ▶ lance sa session sans ouvrir le détail : même brief et même
-  carte que « Lancer » (un bouton de l'app, sans zone de clic : il tient sur toutes les lignes) ;
+  ancienne ; une tâche se range sous sa prérequise ; au bout de chaque tâche ouverte (ni en session,
+  ni bloquée, ni déjà demandée), un ▶ lance sa session sans ouvrir la fiche (#149 : à la place du
+  chevron ›) : même brief et même carte que « Lancer » (un bouton de l'app, sans zone de clic : il
+  tient sur toutes les lignes) ; chez Maestro, une tâche en session n'y porte que la pastille
+  « en session », sa barre et son étape sont dans l'arbre ;
 - toutes les faites, rangées par jour de clôture ou par sujet ;
 - dans toutes les vues, le menu « Ranger » (Par sujet, Par jour ; un bouton sur mobile) : un seul choix pour toutes les vues ;
   par jour, une ouverte se range au jour de son `ouvert:` (« En retard » reste en tête), une faite
@@ -241,11 +247,11 @@ Premiers usages : la roadmap de Caro et le dossier AAFES Cowork, depuis l'onglet
 - **La date d'un parent** (#125) : l'échéance la plus proche de ses enfants ouverts ; filtres, tri
   et pastilles la lisent. `due:` n'est plus exigé d'un parent (sauf `tous:`) ; posé, il reste
   l'échéance finale du sujet.
-  Sous les axes, « À traiter » en quatre lignes cliquables (#115) : Ma journée (soleil, bleu), En
+  Sous les axes, quatre filtres en pastilles cliquables (#115, #149) : Ma journée (soleil, bleu), En
   retard (horloge, rouge), Cette semaine (calendrier, orange, échéance dans les 7 jours) et À
   relancer (cloche, violet, une attente de tiers sans nouvelle depuis 14 jours, `"relance": N` dans
   `.claude/roadmap.json` pour un autre seuil). Les autres états et le menu « Qui » passent sous
-  « Plus de filtres » ; « Qui » se combine avec l'axe et la ligne choisie, et les nombres suivent. La date d'une ligne est rouge en retard (« 23/10 · 6 j »), orange dans
+  « Plus › » ; « Qui » se combine avec l'axe et la ligne choisie, et les nombres suivent. La date d'une ligne est rouge en retard (« 23/10 · 6 j »), orange dans
   les 7 jours, grise au-delà ; la pastille d'un tiers attendu dit son attente à partir de 7 jours
   (« Rong · 16 j », orange, rouge à 14). « Tout afficher » revient à toutes les tâches.
 - **Récurrence et relance** (#99) : `tous:semaine|2semaines|mois|trimestre|an`, avec `due:` à la
@@ -540,6 +546,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.97.0 (2026-10-31)** : panneau : chez Maestro, « En cours » est l'arbre des sessions ; axes repliés, filtres en pastilles, ▶ au bout de la ligne, plus de redite (#149)
 - **0.96.0 (2026-10-31)** : maestro : l'arbre des sessions de Maestro se tient au-dessus de la saisie (bande AbovePrompt, style C), à jour et cliquable (#147)
 - **0.95.0 (2026-10-31)** : panneau : plus de vue Tableau ni de sélecteur Liste | Tableau, le panneau n'a plus que la liste (#148)
 - **0.94.0 (2026-10-31)** : panneau, maestro : carte d'étapes opaque au-dessus de tout, barres alignées ; t'attend en orange, finie en violet ; étapes d'une tâche finie toutes cochées (#145)

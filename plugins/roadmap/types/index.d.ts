@@ -85,6 +85,8 @@ export type View = {
   cancelNote: string
   /** La tâche (son numéro) dont la carte d'étapes est épinglée dans l'arbre de Maestro (#143) ; vide ou absente : aucune. */
   stepsPin?: string
+  /** La légende des axes dépliée sous la barre (#149) ; absente, repliée en une ligne. */
+  axesOpen?: boolean
 }
 
 /** Une session lancée depuis le panneau, gardée dans `$.store` par empreinte du libellé de sa task. */

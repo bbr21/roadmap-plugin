@@ -173,6 +173,23 @@ export function brandMarkIcon(palette: Palette, size = 20): string {
 }
 
 /**
+ * Les voies de Maestro en points (#149) : un point par tâche lancée, à la couleur de sa voie, sur la ligne
+ * « En cours » repliée.
+ */
+export function laneDotsIcon(
+  palette: Palette,
+  states: readonly ('wait' | 'live' | 'done' | 'finished')[],
+): { source: string; width: number; height: number } {
+  const r = 3.5
+  const step = 10
+  const height = 12
+  const width = states.length * step
+  const hex = { wait: palette.block, live: palette.live, done: palette.done, finished: palette.finished }
+  const dots = states.map((state, i) => `<circle cx="${i * step + step / 2}" cy="${height / 2}" r="${r}" fill="${hex[state]}"/>`).join('')
+  return { source: `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">${dots}</svg>`, width, height }
+}
+
+/**
  * Les voies de Maestro (#137, style Voies) : le moyeu, la marque en grand, et une courbe vers chaque
  * rangée de la liste qui le suit, à la couleur de l'état de sa tâche (close : en pointillé). Le dessin
  * a la hauteur des rangées (ou du moyeu, s'il est plus haut) : la liste se pose à côté.
@@ -426,6 +443,50 @@ function pillIconRaw(o: {
 }
 
 export const pillIcon = memo(pillIconRaw)
+
+/**
+ * Une pastille de filtre (#149, maquette C′) : l'icône de trait de sa ligne d'avant, son nom, son compte,
+ * sur une rangée qui remplace les lignes de « À traiter ». 22 px de haut, texte de 13 px.
+ */
+function filterPillIconRaw(o: {
+  icon: TodoIcon
+  name: string
+  n: number
+  /** L'icône et le nom. */
+  ink: string
+  bg: string
+  /** Le compte. */
+  countInk: string
+  /** Le filtre choisi : nom et compte en gras. */
+  strong: boolean
+}): { source: string; width: number; height: number } {
+  const height = SIZE.pill.axis
+  const size = TEXT.axis
+  const weight = o.strong ? TEXT.weight.strong : TEXT.weight.soft
+  const padX = 9
+  const icon = 14
+  const gap = 5
+  const nameW = textWidth(o.name, size, o.strong)
+  const count = String(o.n)
+  const width = padX * 2 + icon + gap + nameW + gap + textWidth(count, size, o.strong)
+  const mid = height / 2
+  // L'icône de ligne, imbriquée à sa place : sa largeur et sa hauteur remplacées, x et y posés.
+  const glyph = todoIcon(o.icon, o.ink).replace(/ width="[^"]*" height="[^"]*"/, ` x="${padX}" y="${mid - icon / 2}" width="${icon}" height="${icon}"`)
+  const text = (x: number, fill: string, t: string) =>
+    `<text x="${x}" y="${mid}" dominant-baseline="central" font-family="${FONT}" font-size="${size}" font-weight="${weight}" fill="${fill}" style="font-variant-numeric:tabular-nums">${escapeXml(t)}</text>`
+  return {
+    source:
+      `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}"><rect width="${width}" height="${height}" rx="${mid}" fill="${o.bg}"/>` +
+      glyph +
+      text(padX + icon + gap, o.ink, o.name) +
+      text(padX + icon + gap + nameW + gap, o.countInk, count) +
+      '</svg>',
+    width,
+    height,
+  }
+}
+
+export const filterPillIcon = memo(filterPillIconRaw)
 
 // Les tracés des icônes de pastille, en viewBox 24.
 const MARK_PATHS: Record<PillMark, string> = {
