@@ -101,7 +101,7 @@ détail dit « étape 2 sur 4 de la chaîne ».
 **Priorité** (#130, 2026-10-30). `prio:` (1, 2 ou 3) reste lu sur la ligne et contrôlé, mais il
 est facultatif et ne se montre plus : ni pastille P1, P2, P3, ni filtre « Prioritaires », ni
 section P1 dans « Ma journée », ni mention par Maestro. Il ne range plus rien non plus : l'ordre
-d'un sujet, du tableau et des tâches à lancer ne dépend pas d'un critère qu'on ne voit pas.
+d'un sujet et des tâches à lancer ne dépend pas d'un critère qu'on ne voit pas.
 
 **Retours** (2026-10-27, id:227 de Splitmybill). `feedback:12,15` porte les numéros des retours
 envoyés depuis l'app d'où vient la tâche, ou qu'elle a reçus : une pastille violette « Feedback »
@@ -536,6 +536,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.95.0 (2026-10-31)** : panneau : plus de vue Tableau ni de sélecteur Liste | Tableau, le panneau n'a plus que la liste (#148)
 - **0.94.0 (2026-10-31)** : panneau, maestro : carte d'étapes opaque au-dessus de tout, barres alignées ; t'attend en orange, finie en violet ; étapes d'une tâche finie toutes cochées (#145)
 - **0.93.0 (2026-10-31)** : panneau : la fiche d'une ligne longue tient en une phrase coupée avec « Tout voir », et la voie vide (un point seul) ne paraît plus (#146)
 - **0.92.0 (2026-10-31)** : panneau : la fiche de tâche garde le récap de fin de sa session (Mission, Livré, État, À toi) dans le cadre de la mission, même la session archivée ; bouton Maquettes à côté de Spec et Plan (#144)

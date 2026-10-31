@@ -83,12 +83,6 @@ export type View = {
   closeKind: 'done' | 'abandon'
   /** La clôture en cours (`…`), ou ce qu'elle a donné quand ce n'est pas un succès net ; vide sinon. */
   cancelNote: string
-  /** La vue du panneau (#120) : `list` (la liste) ou `board` (le tableau des sessions) ; absente, la liste. */
-  layout?: 'list' | 'board'
-  /** La seule colonne montrée par le tableau (`ask`, `run`, `ready`, `todo`, `done`) ; vide ou absente, toutes. */
-  boardFocus?: string
-  /** Les colonnes du tableau dépliées en entier, au-delà de leur plafond de cartes. */
-  boardMore?: string[]
   /** La tâche (son numéro) dont la carte d'étapes est épinglée dans l'arbre de Maestro (#143) ; vide ou absente : aucune. */
   stepsPin?: string
 }
