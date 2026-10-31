@@ -173,6 +173,10 @@ par session lancée, son état en mots (#104). Il n'y a plus de carte HTML de Ma
 native est le seul affichage des étapes : la bande que le plugin dessinait au-dessus de la saisie
 (#104, #107) la doublait et est retirée (#109). La consigne la veut lisible : trois à sept étapes,
 un verbe et son objet chacune, jamais recopiée dans le message, à jour à chaque changement.
+Chez Maestro, la bande au-dessus de la saisie porte l'arbre de ses sessions (#147) : une ligne par
+tâche lancée, son état en couleur, son étape en cours, sa jauge, le nom qui ouvre la session. Elle
+reste visible quand le fil défile, cède à un sondage, et s'efface tant que la boîte de fin pose une
+question ; la liste native reste dans le fil.
 
 **Le réglage autonome** (#77, #105, réglage de session `autonome`, éteint par défaut) :
 Maestro ne pose plus le menu « Je lance lesquelles ? ». Il pose les cartes des trois premières
@@ -536,6 +540,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.96.0 (2026-10-31)** : maestro : l'arbre des sessions de Maestro se tient au-dessus de la saisie (bande AbovePrompt, style C), à jour et cliquable (#147)
 - **0.95.0 (2026-10-31)** : panneau : plus de vue Tableau ni de sélecteur Liste | Tableau, le panneau n'a plus que la liste (#148)
 - **0.94.0 (2026-10-31)** : panneau, maestro : carte d'étapes opaque au-dessus de tout, barres alignées ; t'attend en orange, finie en violet ; étapes d'une tâche finie toutes cochées (#145)
 - **0.93.0 (2026-10-31)** : panneau : la fiche d'une ligne longue tient en une phrase coupée avec « Tout voir », et la voie vide (un point seul) ne paraît plus (#146)

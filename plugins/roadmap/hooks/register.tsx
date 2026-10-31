@@ -64,6 +64,10 @@ import {
   branchText,
   brandText,
   briefTaskOf,
+  maestroBand,
+  bandSteps,
+  type MaestroBand,
+  type StepsView,
   maestroBrandTasks,
   maestroTaskSessions,
   openingBrand,
@@ -3733,6 +3737,26 @@ export const register: Register = (on, options) => {
     }
   })
 
+  // L'arbre de Maestro au-dessus de la saisie (#147, style C) : toujours visible, chez Maestro avec au
+  // moins une session, jamais pendant un sondage ; sinon la bande reste à l'app. La boîte de fin qui
+  // pose une question prend sa place (l'app) : l'arbre revient quand elle est répondue.
+  on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
+    if (e.props.hasSurvey) return next(e)
+    try {
+      const found = await sessionBrandOf($)
+      const band = maestroBand({ brand: found?.brand, hasSurvey: e.props.hasSurvey, shown: BRAND_TASKS_SHOWN })
+      if (!found || !band) return next(e)
+      const now = await $.clock.now()
+      const statuses = await Promise.all(band.tasks.map(t => readSteps($, t.sessionId)))
+      const views = statuses.map((status, i) => (status ? stepsView(status.steps, { now, at: status.at, closed: band.tasks[i]?.closed === true }) : undefined))
+      return maestroBandTree($, e, band, found.data.palette, views, t =>
+        void (t.sessionId ? openSession($, { sessionId: t.sessionId, startedAt: now, title: t.label }) : undefined),
+      )
+    } catch {
+      return next(e)
+    }
+  })
+
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     // Un lancement déposé par un bouton part d'ici, où le hook prompt.submit du plugin tourne (#140).
     sendLaunch($)
@@ -4134,6 +4158,89 @@ async function sessionBrandOf($: EngineInterface): Promise<{ brand: Brand; data:
     return undefined
   }
 }
+
+/**
+ * L'arbre de Maestro dans la bande au-dessus de la saisie (#147, style C retouché) : sur le fond du
+ * panneau, « Maestro » et ses sessions, la jauge de toutes leurs étapes ; puis une ligne par tâche, sans
+ * voies : le point de son état, le numéro, le nom (ouvre la session), l'étape en cours, sa jauge, « 2/6 »,
+ * l'état en mot. Colonnes de largeur fixe, la ligne s'éclaire au survol. Au terminal, le texte seul.
+ */
+function maestroBandTree(
+  $: EngineInterface,
+  e: RenderInput<'AbovePrompt'>,
+  band: MaestroBand,
+  palette: Palette,
+  views: readonly (StepsView | undefined)[],
+  open: (t: BrandTask) => void,
+): RenderElement {
+  const resolved = $.ui.resolve(e)
+  const { Box, Text, Button } = resolved
+  const Svg = 'Svg' in resolved && e.surface !== 'terminal' ? resolved.Svg : undefined
+  const words = brandText(band.brand)
+  const all = bandSteps(views)
+  // Les couleurs de #145 : t'attend en orange, toute finie en violet.
+  const hue = (t: BrandTask): [string, string] =>
+    t.finished ? [palette.finished, palette.finishedOn] : t.state === 'wait' ? [palette.block, palette.blockOn] : t.state === 'live' ? [palette.live, palette.liveOn] : [palette.done, palette.text2]
+  const strut = Svg && <Svg source={`<svg xmlns="http://www.w3.org/2000/svg" width="1" height="${SIZE.strut.row}"/>`} alt="espace" width={1} height={SIZE.strut.row} />
+  return (
+    <Box flexDirection="column" gap={SPACE.tight} backgroundColor={palette.bg} padding="sm">
+      <Box flexDirection="row" alignItems="center" gap={SPACE.row}>
+        <Text size="footnote" weight="semibold">{words.title}</Text>
+        {words.foot !== '' && <Text size="caption" color={palette.text3}>{`· ${words.foot}`}</Text>}
+        <Box flexGrow={1} />
+        {all.total > 0 && Svg && (
+          <Svg
+            source={barIcon([{ hex: palette.ok, n: all.done }, { hex: palette.sel, n: all.total - all.done }], palette.sel, BAND_GAUGE.head)}
+            alt={`${all.done} étapes faites sur ${all.total}`}
+            width={BAND_GAUGE.head}
+            height={4}
+          />
+        )}
+        {all.total > 0 && <Text size="caption" tabular color={palette.text3}>{`${all.done}/${all.total} étapes faites`}</Text>}
+      </Box>
+      <Box flexDirection="column">
+        {band.tasks.map((t, i) => {
+          const view = views[i]
+          const [dot, word] = hue(t)
+          const bar = view && Svg ? stepsBarIcon(palette, view.segments, { width: BAND_GAUGE.row, height: 4, waiting: t.state === 'wait', finished: t.finished === true }) : undefined
+          const name = <Text size="footnote" wrap="truncate-end">{t.label}</Text>
+          return (
+            <Box key={`band-row:${keyPart(t.id)}`} flexDirection="row" alignItems="center" gap={SPACE.row} paddingX={1} hover={{ backgroundColor: palette.hover }}>
+              {strut}
+              {Svg && <Svg source={discIcon(dot, 12)} alt={words.states[i] ?? ''} width={12} height={12} />}
+              <Box width={5}>
+                <Text size="caption" tabular color={palette.text3}>{`#${t.id}`}</Text>
+              </Box>
+              <Box flexShrink={1} minWidth={0}>
+                {t.sessionId ? (
+                  <Button key={`band-open:${keyPart(t.id)}`} plain hover={{ underline: true }} onPress={() => open(t)}>
+                    {name}
+                  </Button>
+                ) : (
+                  name
+                )}
+              </Box>
+              <Box flexGrow={1} flexShrink={1} minWidth={0}>
+                {view?.current && !t.finished && <Text size="caption" color={palette.text3} wrap="truncate-end">{`· ${view.current}`}</Text>}
+              </Box>
+              {bar && Svg && <Svg source={bar.source} alt={`étapes ${view?.count ?? ''}`} width={bar.width} height={bar.height} />}
+              <Box minWidth={4} alignItems="flex-end">
+                {view && <Text size="caption" tabular color={palette.text3}>{view.count}</Text>}
+              </Box>
+              <Box width={9} alignItems="flex-end">
+                <Text size="caption" color={word}>{words.states[i] ?? ''}</Text>
+              </Box>
+            </Box>
+          )
+        })}
+        {band.more > 0 && <Text size="caption" color={palette.text3}>{`et ${band.more} de plus`}</Text>}
+      </Box>
+    </Box>
+  )
+}
+
+/** Les largeurs des jauges de la bande de Maestro (#147), en px : celle de l'en-tête, celle d'une ligne. */
+const BAND_GAUGE = { head: 96, row: 64 }
 
 /**
  * L'en-tête du panneau, au-dessus de la roadmap : Maestro et ses voies ; chez une tâche dont on a demandé

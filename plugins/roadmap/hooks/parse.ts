@@ -4292,6 +4292,24 @@ export function maestroTaskSessions(o: {
   })
 }
 
+/** L'arbre de Maestro dans la bande au-dessus de la saisie (#147) : ses tâches montrées et le reste compté. */
+export type MaestroBand = { brand: Extract<Brand, { kind: 'maestro' }>; tasks: BrandTask[]; more: number }
+
+/**
+ * Si la bande au-dessus de la saisie porte l'arbre de Maestro (#147) : chez Maestro seulement, avec au
+ * moins une tâche lancée, et jamais quand un sondage de l'app la tient. Sinon rien : la bande reste à l'app.
+ */
+export function maestroBand(o: { brand: Brand | undefined; hasSurvey: boolean; shown: number }): MaestroBand | undefined {
+  if (o.hasSurvey || o.brand?.kind !== 'maestro' || o.brand.tasks.length === 0) return undefined
+  const tasks = o.brand.tasks.slice(0, o.shown)
+  return { brand: o.brand, tasks, more: o.brand.tasks.length - tasks.length }
+}
+
+/** La jauge de l'en-tête de la bande (#147) : les étapes faites et le total, sur les sessions qui en ont. */
+export function bandSteps(views: readonly (StepsView | undefined)[]): { done: number; total: number } {
+  return views.reduce((sum, v) => (v ? { done: sum.done + v.done, total: sum.total + v.total } : sum), { done: 0, total: 0 })
+}
+
 /** Les tâches des sessions lancées par Maestro, par création de leur session, par numéro en secours (#143). */
 export function maestroBrandTasks(
   entries: readonly { id: string; label: string; running: boolean; open: boolean; done: boolean; sessionId?: string; createdAt?: number }[],
