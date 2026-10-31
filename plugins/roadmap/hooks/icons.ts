@@ -425,6 +425,17 @@ export function chainRowIcon(mark: string, pos: 'first' | 'mid' | 'last', step: 
   return `<svg xmlns="http://www.w3.org/2000/svg" width="32" height="24" viewBox="0 0 32 24"><path d="M4 ${top}V${bottom}M4 12H7" fill="none" stroke="${lineHex}" stroke-width="1.6"/><text x="12.5" y="15.5" text-anchor="middle" font-family="${FONT}" font-size="${TEXT.chainStep}" font-weight="${TEXT.weight.soft}" fill="${textHex}">${step}</text>${inner}</svg>`
 }
 
+/**
+ * La tête d'un bloc de l'arbre (#125) : le chevron (déplié ou replié) sur 0-16, puis la marque de
+ * la ligne (carré d'axe) sur 16-32, en un seul dessin de 32 × 24. Le carré tombe au-dessus de ceux
+ * de ses enfants (`chainRowIcon`), et leur trait descend sous le chevron.
+ */
+export function treeHeadRowIcon(mark: string, open: boolean, chevronHex: string): string {
+  const chevron = chevronIcon(chevronHex, open).replace(/^<svg /, '<svg x="0" y="4" ')
+  const inner = mark.replace(/^<svg /, '<svg x="16" y="0" ')
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="32" height="24" viewBox="0 0 32 24">${chevron}${inner}</svg>`
+}
+
 /** Le drapeau des tâches prioritaires (P1, P2), plein, sur 16 px. */
 export function flagIcon(hex: string, size = 16): string {
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 16 16"><path d="M4 2.5v11.5" stroke="${hex}" stroke-width="1.6" stroke-linecap="round"/><path d="M4.6 2.8h8.2l-2.2 3.1 2.2 3.1H4.6z" fill="${hex}"/></svg>`

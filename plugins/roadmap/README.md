@@ -217,8 +217,11 @@ Premiers usages : la roadmap de Caro et le dossier AAFES Cowork, depuis l'onglet
   arrête la récurrence ; `cowork.py` ne la reconduit pas encore, et le panneau le dit.
   `relance:AAAA-MM-JJ` date la dernière relance du tiers attendu ; le brief demande de la poser.
 - **La vue** : hors de Ma journée, les tâches se rangent par échéance (en retard, cette semaine, plus tard, sans
-  échéance) ; le menu « Ranger » propose aussi le responsable, l'arbre des tâches (une section par
-  tâche mère et son avancement), le sujet, le jour. Une pastille dit le responsable quand ce n'est
+  échéance) ; le menu « Ranger » propose aussi le responsable, l'arbre des tâches, le sujet, le jour.
+  L'arbre (#125) : une tâche est seule, parent ou enfant ; un bloc par parent, sa ligne en tête une
+  seule fois avec son avancement (`1/3`) et son ▶, ses enfants dessous, reliés par un trait qui porte
+  leur rang (1, 2 : en séquence par `après:` ; 1, 1 : en parallèle) ; un parent hors du filtre reste
+  en tête, en gris ; les tâches sans parent ni enfant sous « Tâches seules ». Une pastille dit le responsable quand ce n'est
   pas « moi » ; « À moi » compte `resp:` ; le détail montre responsable, parent, sous-tâches,
   prérequises et clés déclarées. Une tâche est bloquée tant qu'une de ses prérequises est ouverte.
 - **Les sessions** : ▶ pose une carte sans worktree (reposée sans le champ si l'app le refuse) ; le
@@ -493,6 +496,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.76.0 (2026-10-30)** : panneau : en arbre, un bloc par parent, sa ligne en tête une seule fois avec son avancement, ses enfants en retrait et numérotés par rang, un parent hors filtre gardé en gris (#125, lot 1)
 - **0.75.0 (2026-10-30)** : onboarding, doctor, réglages : toute maquette s'appuie sur le design system que déclare le projet (clé design de .claude/roadmap.json), ou propose d'en poser un (#129)
 - **0.74.1 (2026-10-30)** : maestro : l'atome maestroIntro déclaré dans l'état du plugin, la validation repasse (#126)
 - **0.74.0 (2026-10-30)** : maestro : « Maestro » seul ouvre le panneau et se présente, le scan de la roadmap attend un oui (#126)

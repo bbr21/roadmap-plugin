@@ -1185,73 +1185,136 @@ export function byOwner(tasks: readonly Task[], me: readonly string[]): { label:
   return [...mine, ...others, ...(names.includes(nobody) ? [nobody] : [])].map(label => ({ label, tasks: tasks.filter(t => ownerOf(t) === label) }))
 }
 
-/** La marque de profondeur d'une ligne de l'arbre : rien pour une racine, puis « ↳ » décalé de deux espaces par niveau. */
-export function treePrefix(depth: number): string {
-  return depth <= 0 ? '' : `${'  '.repeat(depth - 1)}↳ `
+/**
+ * Un bloc de l'arbre (#125) : un parent en tête, une seule fois, et ses enfants dessous ; ou les
+ * tâches seules, sans tête. `ghost` : la tête n'a pas passé le filtre, elle est gardée pour le
+ * contexte. `done` et `total` comptent ses enfants directs, faits compris.
+ */
+export type TreeBlock = {
+  key: string
+  label: string
+  head?: Task
+  ghost: boolean
+  tasks: Task[]
+  rank: Map<Task, number>
+  done: number
+  total: number
 }
 
 /**
- * Les ouvertes en arbre (#76) : une section par racine qui a des descendantes, titrée « #12 Titre ·
- * 2/4 » (ses sous-tâches directes faites sur leur total, prises dans `all`) et tenue par la clé
- * `arbre:#12`, qui ne bouge pas avec l'avancement (#86) ; la racine puis ses descendantes en
- * profondeur d'abord, dans l'ordre reçu ; les tâches seules dans « Sans parent ».
- * Une tâche dont le parent est fait, introuvable ou hors de la liste est racine ; un cycle s'arrête
- * où il boucle, chaque tâche une fois.
+ * Le rang de chaque sœur (#125) : 1 sans prérequise parmi les sœurs, sinon un de plus que la plus
+ * haute de ses prérequises sœurs (le plus long chemin). Deux sœurs au même rang se font en
+ * parallèle. Une prérequise hors des sœurs ne compte pas ; un cycle s'arrête où il boucle.
+ */
+export function siblingRanks(sisters: readonly Task[], prereqsOf: (t: Task) => readonly Task[]): Map<Task, number> {
+  const among = new Set(sisters)
+  const rank = new Map<Task, number>()
+  const visit = (t: Task, path: Set<Task>): number => {
+    const known = rank.get(t)
+    if (known !== undefined) return known
+    if (path.has(t)) return 0
+    path.add(t)
+    const before = prereqsOf(t).filter(p => p !== t && among.has(p))
+    const r = 1 + Math.max(0, ...before.map(p => visit(p, path)))
+    path.delete(t)
+    rank.set(t, r)
+    return r
+  }
+  for (const t of sisters) visit(t, new Set())
+  return rank
+}
+
+const ALONE_KEY = 'Seules'
+const ALONE_LABEL = 'Tâches seules'
+
+/**
+ * Les ouvertes en arbre (#76, #125) : un bloc par parent, tenu par la clé `arbre:#12`, qui ne bouge
+ * pas avec l'avancement (#86), titré « #12 Titre · 2/4 » (enfants directs faits sur leur total,
+ * pris dans `all`). Ses lignes : ses enfants de `tasks` qui n'ont pas d'enfant ouvert, dans l'ordre
+ * reçu ; un enfant qui en a ouvre son propre bloc, juste après. Un parent ouvert hors de `tasks`
+ * dont un enfant y est reste en tête, `ghost`. Les tâches sans parent ni enfant, et celles dont le
+ * parent est fait ou introuvable, vont dans « Tâches seules ». Un cycle s'arrête où il boucle.
  */
 export function byTree(
   tasks: readonly Task[],
   all: readonly Task[],
   titleOf: (t: Task) => string,
-): { key: string; label: string; tasks: Task[]; depth: Map<Task, number> }[] {
-  // Une table par numéro, la première tâche qui le porte : pas de recherche par tâche.
-  const byId = new Map<string, Task>()
-  for (const t of tasks) if (t.id !== undefined && !byId.has(t.id)) byId.set(t.id, t)
-  const parentIn = (t: Task) => {
-    const p = t.parent === undefined ? undefined : byId.get(t.parent)
+  prereqsOf: (t: Task) => readonly Task[] = () => [],
+): TreeBlock[] {
+  const listed = new Set(tasks)
+  // Une table par numéro, la première tâche ouverte qui le porte : les parents possibles.
+  const openById = new Map<string, Task>()
+  for (const t of [...tasks, ...all]) if (!t.done && t.id !== undefined && !openById.has(t.id)) openById.set(t.id, t)
+  const parentOf = (t: Task) => {
+    const p = t.parent === undefined ? undefined : openById.get(t.parent)
     return p === t ? undefined : p
   }
-  // Les sous-tâches directes de chaque numéro, faites comprises, pour l'avancement.
+  // Les enfants directs de chaque numéro, faits compris : l'avancement et les rangs.
   const directOf = new Map<string, Task[]>()
-  for (const x of all) if (x.parent !== undefined) directOf.set(x.parent, [...(directOf.get(x.parent) ?? []), x])
-  const children = new Map<Task, Task[]>()
+  for (const x of all) if (x.parent !== undefined && x.parent !== x.id) directOf.set(x.parent, [...(directOf.get(x.parent) ?? []), x])
+  // Les enfants retenus de chaque parent, dans l'ordre reçu ; un parent gardé hors de `tasks`
+  // s'y range aussi sous le sien, pour que la remontée trouve sa tête.
+  const kids = new Map<Task, Task[]>()
   for (const t of tasks) {
-    const p = parentIn(t)
-    if (p) children.set(p, [...(children.get(p) ?? []), t])
+    const path = new Set([t])
+    for (let c = t, p = parentOf(c); p !== undefined && !path.has(p); c = p, p = parentOf(c)) {
+      path.add(p)
+      const list = kids.get(p) ?? []
+      if (!list.includes(c)) kids.set(p, [...list, c])
+      if (listed.has(p)) break
+    }
   }
-  const seen = new Set<Task>()
-  const sections: { key: string; label: string; tasks: Task[]; depth: Map<Task, number> }[] = []
+  const isParent = (t: Task) => (kids.get(t)?.length ?? 0) > 0 || (t.id !== undefined && (directOf.get(t.id) ?? []).some(x => !x.done))
+  const blocks: TreeBlock[] = []
   const alone: Task[] = []
-  const grow = (root: Task) => {
-    const depth = new Map<Task, number>()
-    const order: Task[] = []
-    const visit = (t: Task, d: number) => {
-      if (seen.has(t)) return
-      seen.add(t)
-      depth.set(t, d)
-      order.push(t)
-      for (const c of children.get(t) ?? []) visit(c, d + 1)
+  const seen = new Set<Task>()
+  const grow = (head: Task) => {
+    if (seen.has(head)) return
+    seen.add(head)
+    const children = kids.get(head) ?? []
+    const rows = children.filter(c => !isParent(c) && !seen.has(c))
+    for (const r of rows) seen.add(r)
+    const direct = head.id === undefined ? [] : (directOf.get(head.id) ?? []).filter(x => x !== head)
+    const ghost = !listed.has(head)
+    // Un grand-parent gardé sans ligne à lui ne paraît pas : son enfant-parent porte le contexte.
+    if (!ghost || rows.length > 0) {
+      blocks.push({
+        key: `arbre:${head.id ? `#${head.id}` : head.label}`,
+        label: `${head.id ? `#${head.id} ` : ''}${titleOf(head)} · ${direct.filter(x => x.done).length}/${direct.length}`,
+        head,
+        ghost,
+        tasks: rows,
+        rank: siblingRanks(direct, prereqsOf),
+        done: direct.filter(x => x.done).length,
+        total: direct.length,
+      })
     }
-    visit(root, 0)
-    if (order.length === 1) {
-      alone.push(root)
-      return
-    }
-    const direct = root.id === undefined ? [] : (directOf.get(root.id) ?? []).filter(x => x !== root)
-    const done = direct.filter(x => x.done).length
-    // La clé suit la racine, pas l'avancement : une section dépliée le reste quand une sous-tâche se clôt (#86).
-    sections.push({
-      key: `arbre:${root.id ? `#${root.id}` : root.label}`,
-      label: `${root.id ? `#${root.id} ` : ''}${titleOf(root)} · ${done}/${direct.length}`,
-      tasks: order,
-      depth,
-    })
+    for (const c of children) if (isParent(c)) grow(c)
   }
-  for (const t of tasks) if (parentIn(t) === undefined) grow(t)
-  // Ce qui reste n'a pas de racine : un cycle de parents. Sa première tâche en devient la racine.
+  // Les racines : la tête la plus haute de chaque tâche retenue, dans l'ordre reçu.
+  const rootOf = (t: Task) => {
+    let top = t
+    const path = new Set([t])
+    for (let p = parentOf(top); p !== undefined && !path.has(p); p = parentOf(top)) {
+      path.add(p)
+      top = p
+    }
+    return top
+  }
+  for (const t of tasks) {
+    const root = rootOf(t)
+    if (root === t && !isParent(t)) {
+      if (!seen.has(t)) {
+        seen.add(t)
+        alone.push(t)
+      }
+    } else grow(root)
+  }
+  // Ce qui reste n'a été atteint par aucune racine : un cycle de parents.
   for (const t of tasks) if (!seen.has(t)) grow(t)
   return alone.length > 0
-    ? [...sections, { key: 'Sans parent', label: 'Sans parent', tasks: alone, depth: new Map(alone.map(t => [t, 0])) }]
-    : sections
+    ? [...blocks, { key: ALONE_KEY, label: ALONE_LABEL, ghost: false, tasks: alone, rank: new Map(), done: 0, total: 0 }]
+    : blocks
 }
 
 /** Le résumé de la ligne de filtre : « Mcp · attend Martial · 4 tâches », ou le total sans filtre. */
