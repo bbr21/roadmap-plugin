@@ -75,6 +75,10 @@ export type Source = {
   rangement?: Rangement
   /** Le seuil « À relancer », en jours (#99). */
   relance?: number
+  /** `cles_visibles` (#125) : les clés déclarées montrées en pastilles sur la ligne. */
+  clesVisibles?: string[]
+  /** `ranger_par` (#125) : la clé déclarée dont les valeurs rangent l'arbre en bandes. */
+  rangerPar?: string
   /** Le design system du projet (#129), sur lequel s'appuie toute maquette ; sans lui, pas déclaré. */
   design?: Design
 }
@@ -105,7 +109,16 @@ const VUES: readonly Vue[] = ['echeance', 'responsable', 'arbre', 'sujet', 'jour
 export type RequiredOn = 'open' | 'launched'
 
 /** Les réglages d'une roadmap, défauts compris : le mode est un préréglage, chaque réglage se change. */
-export type ProjectSettings = { mode: Mode; requis: string[]; requiredOn: RequiredOn; cles: Record<string, string[]>; vue?: Vue; relanceDays: number }
+export type ProjectSettings = {
+  mode: Mode
+  requis: string[]
+  requiredOn: RequiredOn
+  cles: Record<string, string[]>
+  vue?: Vue
+  relanceDays: number
+  clesVisibles?: string[]
+  rangerPar?: string
+}
 
 /** Les champs exigés par défaut en mode Projet : `parent:` et `après:` renvoient à des numéros. */
 export const PROJECT_REQUIRED: readonly string[] = ['id', 'ouvert', 'due', 'resp', 'parent', 'après']
@@ -124,6 +137,8 @@ export function projectSettings(source: Source): ProjectSettings {
     cles: source.cles ?? {},
     ...(vue ? { vue } : {}),
     relanceDays: source.relance ?? RELAUNCH_DAYS,
+    ...(source.clesVisibles ? { clesVisibles: source.clesVisibles } : {}),
+    ...(source.rangerPar ? { rangerPar: source.rangerPar } : {}),
   }
 }
 
@@ -1165,6 +1180,40 @@ export function byOwner(tasks: readonly Task[], me: readonly string[]): { label:
   const mine = me.filter(n => names.includes(n))
   const others = names.filter(n => n !== nobody && !mine.includes(n)).sort((a, b) => a.localeCompare(b, 'fr'))
   return [...mine, ...others, ...(names.includes(nobody) ? [nobody] : [])].map(label => ({ label, tasks: tasks.filter(t => ownerOf(t) === label) }))
+}
+
+/** Une pastille de clé déclarée (#125) : la clé et sa valeur. */
+export type KeyPill = { key: string; text: string }
+
+/** Une attente, dans la clé `statut` : la pastille du tiers la dit déjà quand `attend:` est posé. */
+const WAITING_RE = /^(wait|attente|en attente)/i
+
+/**
+ * Les pastilles des clés de `visible` sur une ligne (#125), la première valeur de chacune. Un enfant
+ * (`parent` donné) ne reprend pas la valeur de son parent, sauf pour `statut`, propre à chaque tâche,
+ * qui tait sa première valeur déclarée (Todo) et une attente quand un tiers est attendu.
+ */
+export function keyPills(task: Task, visible: readonly string[], cles: Record<string, string[]>, parent?: Task): KeyPill[] {
+  return visible.flatMap(key => {
+    const text = task.extra?.[key]?.[0]
+    if (text === undefined || text === '') return []
+    // Le statut est celui de la tâche : il ne s'hérite pas, il se montre même pareil au parent.
+    if (key !== 'statut' && parent !== undefined && parent.extra?.[key]?.[0] === text) return []
+    if (key === 'statut' && (text === cles[key]?.[0] || (task.attend !== undefined && WAITING_RE.test(text)))) return []
+    return [{ key, text }]
+  })
+}
+
+/**
+ * Les bandes d'un rangement par clé (#125) : les valeurs déclarées dans leur ordre, puis les autres
+ * par ordre alphabétique, puis `none` pour les éléments sans valeur ; une bande vide n'apparaît pas.
+ */
+export function bandsOf<T>(items: readonly T[], valueOf: (x: T) => string | undefined, declared: readonly string[], none: string): { label: string; items: T[] }[] {
+  const present = new Set(items.map(valueOf))
+  const others = [...present].filter((v): v is string => v !== undefined && !declared.includes(v)).sort((a, b) => a.localeCompare(b, 'fr'))
+  const bands = [...declared.filter(v => present.has(v)), ...others].map(label => ({ label, items: items.filter(x => valueOf(x) === label) }))
+  const without = items.filter(x => valueOf(x) === undefined)
+  return without.length > 0 ? [...bands, { label: none, items: without }] : bands
 }
 
 /**
@@ -2931,7 +2980,7 @@ export function checkBrief(
 export function parseProjectConfig(text: string, base: string, defaults: { name: string; me: string[] }): Source | undefined {
   const data: unknown = JSON.parse(text)
   if (typeof data !== 'object' || data === null) return undefined
-  const c = data as { name?: unknown; dir?: unknown; me?: unknown; subjects?: unknown; mode?: unknown; requis?: unknown; cles?: unknown; vue?: unknown; rangement?: unknown; relance?: unknown; design?: unknown }
+  const c = data as { name?: unknown; dir?: unknown; me?: unknown; subjects?: unknown; mode?: unknown; requis?: unknown; cles?: unknown; vue?: unknown; rangement?: unknown; relance?: unknown; design?: unknown; cles_visibles?: unknown; ranger_par?: unknown }
   const dir = typeof c.dir === 'string' && c.dir !== '' ? (c.dir.startsWith('/') ? c.dir : `${base}/${c.dir}`) : base
   const strings = (v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : undefined)
   // Une valeur inconnue ou d'un mauvais type prend le défaut : le panneau s'ouvre quand même.
@@ -2949,6 +2998,10 @@ export function parseProjectConfig(text: string, base: string, defaults: { name:
   const r = (typeof c.rangement === 'object' && c.rangement !== null ? c.rangement : {}) as { skill?: unknown; ligne?: unknown }
   const rangement = typeof r.skill === 'string' && r.skill !== '' ? { skill: r.skill, ligne: typeof r.ligne === 'string' && r.ligne.trim() !== '' ? r.ligne.trim() : RANGEMENT_LIGNE } : undefined
   const design = designOf(c.design)
+  // Une clé montrée ou de rangement qui n'est pas déclarée ne se lirait sur aucune ligne : ignorée.
+  const declared = (k: string) => Object.prototype.hasOwnProperty.call(cles, k)
+  const clesVisibles = strings(c.cles_visibles)?.filter(declared)
+  const rangerPar = typeof c.ranger_par === 'string' && declared(c.ranger_par) ? c.ranger_par : undefined
   return {
     name: typeof c.name === 'string' && c.name !== '' ? c.name : defaults.name,
     match: [base],
@@ -2963,6 +3016,8 @@ export function parseProjectConfig(text: string, base: string, defaults: { name:
     ...(rangement ? { rangement } : {}),
     ...(Number.isInteger(c.relance) && (c.relance as number) > 0 ? { relance: c.relance as number } : {}),
     ...(design ? { design } : {}),
+    ...(clesVisibles && clesVisibles.length > 0 ? { clesVisibles } : {}),
+    ...(rangerPar ? { rangerPar } : {}),
   }
 }
 

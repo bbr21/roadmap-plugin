@@ -392,6 +392,17 @@ def reglages_projet(main):
             soucis.append("clé déclarée « %s » ignorée (clé de la grammaire ou mal écrite)" % k)
         elif not isinstance(v, list):
             soucis.append("cles.%s n'est pas une liste" % k)
+    # #125 : les clés montrées en pastilles et la clé de rangement doivent être déclarées.
+    visibles = cfg.get("cles_visibles", [])
+    if not isinstance(visibles, list):
+        soucis.append("cles_visibles n'est pas une liste")
+    else:
+        non_declarees = [str(k) for k in visibles if k not in cles]
+        if non_declarees:
+            soucis.append("cles_visibles : %s non déclarée(s) dans cles, ignorée(s)" % ", ".join(non_declarees))
+    ranger = cfg.get("ranger_par")
+    if ranger is not None and ranger not in cles:
+        soucis.append("ranger_par « %s » non déclarée dans cles, ignorée" % ranger)
     rangement = cfg.get("rangement")
     if rangement is not None and not (isinstance(rangement, dict) and isinstance(rangement.get("skill"), str) and rangement["skill"]):
         soucis.append("rangement sans skill, ignoré : l'archivage ne l'attend pas")

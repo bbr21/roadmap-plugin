@@ -38,7 +38,7 @@ GitHub, ni `check.mjs`, ni `swiftui-pro`.
 | Outils | `python3` ; `git` seulement si le dossier est un dépôt |
 | Roadmap | le panneau la trouve |
 | Structure | `CLAUDE.md` de règles Projet, la roadmap et `ROADMAP-fait.md`, des `id:` sur chaque ligne |
-| Réglages | `vue`, `cles` et `requis` de `.claude/roadmap.json` compris par le panneau ; sinon À voir |
+| Réglages | `vue`, `cles`, `requis`, `cles_visibles` et `ranger_par` de `.claude/roadmap.json` compris par le panneau ; sinon À voir |
 | Champs exigés | chaque tâche ouverte porte les champs de `requis` ; sinon À voir, avec le compte (une ligne écrite hors de Claude Code n'est signalée qu'ici) |
 | Plugin roadmap | comme en mode Code |
 | Superpowers, sa mise à jour | facultatif (#94) : absent ou éteint, À voir avec la commande, jamais KO |

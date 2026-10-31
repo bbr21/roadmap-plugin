@@ -105,6 +105,8 @@ import {
   byDeadline,
   byOwner,
   byTree,
+  bandsOf,
+  keyPills,
   filterSummary,
   fallbackTitle,
   openedLabel,
@@ -471,16 +473,16 @@ async function paletteOf($: EngineInterface): Promise<Palette> {
   return PALETTES[resolveTheme(settings.theme, configured)]
 }
 
+/** La place d'une ligne dans l'arbre (#125) : la tête d'un bloc, ou un enfant avec son rang. */
+type TreeMark =
+  | { kind: 'head'; id: string; open: boolean; ghost: boolean; progress: string }
+  | { kind: 'child'; rank: number; last: boolean; parent?: Task }
+
 /**
  * La capture des tasks, pour la session : la roadmap telle qu'au début de la session et telle que
  * vue à la dernière écriture, et ce que le tour en cours a modifié. Remise à zéro à chaque
  * rechargement du module, comme ses autres variables.
  */
-/** La place d'une ligne dans l'arbre (#125) : la tête d'un bloc, ou un enfant avec son rang. */
-type TreeMark =
-  | { kind: 'head'; id: string; open: boolean; ghost: boolean; progress: string }
-  | { kind: 'child'; rank: number; last: boolean }
-
 type Capture = {
   source: Source
   /** Dossiers dont une écriture compte comme du travail sur le projet. */
@@ -4412,7 +4414,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   const pct = (n: number, of: number) => (of === 0 ? 0 : Math.round((n * 100) / of))
 
   // Mode Projet (#99) : Ma journée à l'ouverture, quatre compteurs d'urgence, et le filtre « Qui ».
-  const { mode, vue, relanceDays } = projectSettings(source)
+  const { mode, vue, relanceDays, cles, clesVisibles, rangerPar } = projectSettings(source)
   const projet = mode === 'projet'
   axisKeepsState = projet
   const people = projet ? peopleOf(openTasks.filter(t => matches(t, axis, 'all', me)), me) : []
@@ -4673,6 +4675,9 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
         {t.id && taskNumber(t.id, rowSession ? () => void openSession($, rowSession.entry) : undefined)}
         {!ghost && !t.done && t.feedback && feedbackPill()}
         {!ghost && !inSession && !locked && rowPills(t, today, me).map(rowPill)}
+        {/* Les clés montrées (#125) : département, statut… en pastilles pleines, cadenas compris ; un
+            enfant de l'arbre ne reprend pas celles de son parent. */}
+        {!ghost && !t.done && clesVisibles && keyPills(t, clesVisibles, cles, child?.parent).map(p => drawnPill({ text: p.text, bg: palette.sel, fg: palette.text2, weight: 600 }))}
         <Box flexGrow={1} flexShrink={1} minWidth={0}>
           <Button key={t.key} plain dimColor={ghost || (!t.done && !titled(t))} onPress={select(selectionOf(t))}>
             <Text wrap="truncate-end" {...(head && !ghost ? { weight: 'semibold' as const } : {})}>{s.titre}</Text>
@@ -4727,7 +4732,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
           </Box>
           {isOpen && (
             <Box flexDirection="column" paddingBottom="sm">
-              {shown.map((t, i) => row(t, undefined, { kind: 'child', rank: block.rank.get(t) ?? 1, last: i === shown.length - 1 && rest <= 0 }))}
+              {shown.map((t, i) => row(t, undefined, { kind: 'child', rank: block.rank.get(t) ?? 1, last: i === shown.length - 1 && rest <= 0, parent: block.head }))}
               {rest > 0 && (
                 <Box key={`more-row:${id}`} flexDirection="row" paddingX={SPACE.indent} paddingLeft={SPACE.nest}>
                   <Button
@@ -4822,9 +4827,44 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   const foundShown = foundOpen.slice(0, SEARCH_MAX)
   const foundDoneShown = foundDone.slice(0, Math.max(0, SEARCH_MAX - foundShown.length))
 
+  // L'arbre, rangé en bandes par la valeur de `ranger_par` (#125) : une bande par valeur, les blocs
+  // sous la valeur de leur tête, les tâches seules coupées par bande. Une bande se replie à part.
+  type ListGroup = { key?: string; name: string; tasks: Task[]; lead?: RenderElement; mark?: RenderElement; block?: TreeBlock; band?: { count: number }; under?: string }
+  const bandValue = (t: Task) => (rangerPar ? t.extra?.[rangerPar]?.[0] : undefined)
+  const treeGroups: ListGroup[] = !rangerPar
+    ? tree.map(g => ({ key: g.key, name: g.label, tasks: g.tasks, block: g }))
+    : bandsOf(
+        tree.flatMap(g =>
+          g.head
+            ? [{ block: g, value: bandValue(g.head) }]
+            : bandsOf(g.tasks, bandValue, [], '').map(b => ({
+                block: { ...g, key: `${g.key}:${b.items[0] ? (bandValue(b.items[0]) ?? '-') : '-'}`, tasks: b.items },
+                value: b.items[0] ? bandValue(b.items[0]) : undefined,
+              })),
+        ),
+        u => u.value,
+        cles[rangerPar] ?? [],
+        `Sans ${rangerPar}`,
+      ).flatMap(band => {
+        const id = `bande:${band.label}`
+        const count = band.items.reduce((n, u) => n + (u.block.head && !u.block.ghost ? 1 : 0) + u.block.tasks.length, 0)
+        return [
+          { key: id, name: band.label, tasks: [], band: { count } },
+          ...band.items.map(u => ({ key: u.block.key, name: u.block.label, tasks: u.block.tasks, block: u.block, under: id })),
+        ]
+      })
+  const bandOpen = (id: string) => !closedGroups.includes(id)
+  const toggleBand = (id: string) => () => void setView($, v => ({ closedGroups: toggleIn(v.closedGroups, id) }))
+  const bandRow = (id: string, name: string, count: number) => (
+    <Box key={`band:${id}`} flexDirection="row" justifyContent="space-between" alignItems="center" paddingX={SPACE.indent} paddingTop="sm">
+      <Button key={`bande:${keyPart(name)}`} plain label={`${bandOpen(id) ? '⌄' : '›'} ${name}`} onPress={toggleBand(id)} />
+      {countPill(count, false, palette.text2)}
+    </Box>
+  )
+
   // Les groupes de la liste : « En retard » d'abord, puis les sujets ; les faites par jour.
   // `key` suit l'état d'une section quand son libellé bouge (l'avancement d'un arbre) ; sans lui, son nom.
-  const groups: { key?: string; name: string; tasks: Task[]; lead?: RenderElement; mark?: RenderElement; block?: TreeBlock }[] = searching
+  const allGroups: ListGroup[] = searching
     ? [
         ...(foundShown.length > 0 ? [{ name: 'Ouvertes', tasks: foundShown }] : []),
         ...(foundDoneShown.length > 0 ? [{ name: 'Faites', tasks: foundDoneShown }] : []),
@@ -4851,7 +4891,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
         ...(by === 'day' ? byDay(sortTasks(unsorted, sortOrder), today, t => headOf(t).ouvert).map(day => ({ name: day.label, tasks: day.tasks })) : []),
         ...(by === 'deadline' ? byDeadline(sortTasks(unsorted, sortOrder), today).map(g => ({ name: g.label, tasks: g.tasks })) : []),
         ...(by === 'owner' ? byOwner(sortTasks(unsorted, sortOrder), me).map(g => ({ name: g.label, tasks: g.tasks })) : []),
-        ...tree.map(g => ({ key: g.key, name: g.label, tasks: g.tasks, block: g })),
+        ...treeGroups,
         ...subjects.map(([name]) => {
           const tasks = sortTasks(unsorted.filter(t => groupOf(t) === name), sortOrder)
           return {
@@ -4867,6 +4907,8 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   // reste ; une section dépliée en entier (« Voir les N autres ») prend toutes les siennes. Sans
   // lui, une vue filtrée ou « Tout déplier » posait ~2 000 éléments et ~330 Svg par clic (260 Ko),
   // au seuil où le panneau gèle (2026-10-23).
+  // Les groupes d'une bande repliée ne se dessinent pas, et ne prennent rien au budget.
+  const groups = allGroups.filter(g => g.under === undefined || bandOpen(g.under))
   let budget = ROW_BUDGET
   const rowsOf = new Map<string, number>()
   const idOf = (g: { key?: string; name: string }) => g.key ?? g.name
@@ -4878,7 +4920,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   }
   // La tête d'un bloc de l'arbre est une ligne de tâche dessinée, comme ses enfants (#125).
   const drawnTasks = groups.flatMap(g => [...(g.block?.head ? [g.block.head] : []), ...g.tasks.slice(0, rowsOf.get(idOf(g)) ?? 0)])
-  const names = groups.map(idOf)
+  const names = groups.filter(g => !g.band).map(idOf)
   const allOpen = names.length > 0 && names.every(n => openGroups.includes(n))
   const action = searching
     ? { label: 'Effacer', run: () => void update($, searchAtom, () => '') }
@@ -5108,7 +5150,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     const shownWithSession = drawnTasks.filter(t => t.id && (liveOf(t) ?? doneSessionOf(t)))
     numberZones = new Set(shownWithSession.slice(0, Math.max(0, ZONE_LIMIT - fixedZones)).map(t => t.id as string))
   }
-  headZones = graphic && fixedZones + numberZones.size + groups.length <= ZONE_LIMIT
+  headZones = graphic && fixedZones + numberZones.size + groups.filter(g => !g.band).length <= ZONE_LIMIT
 
   // --- Tableau des sessions (#120, maquette A) ----------------------------------------------------
   // La seconde vue : l'en-tête reste, le reste devient cinq colonnes selon l'état de la session de
@@ -5431,7 +5473,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
         <Text color={palette.text2}>{attend === 'today' ? "Rien d'urgent aujourd'hui." : 'Aucune tâche ouverte pour ce filtre.'}</Text>
       )}
 
-      <Box flexDirection="column">{groups.map(g => section(idOf(g), g.name, g.tasks, rowsOf.get(idOf(g)) ?? 0, g.lead, g.mark, g.block))}</Box>
+      <Box flexDirection="column">{groups.map(g => (g.band ? bandRow(idOf(g), g.name, g.band.count) : section(idOf(g), g.name, g.tasks, rowsOf.get(idOf(g)) ?? 0, g.lead, g.mark, g.block)))}</Box>
     </Box>
   )
 }

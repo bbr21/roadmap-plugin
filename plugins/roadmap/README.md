@@ -202,7 +202,13 @@ Premiers usages : la roadmap de Caro et le dossier AAFES Cowork, depuis l'onglet
   `ouvert`, `due`, `resp`, `parent`, `après`) sont signalés au modèle à chaque écriture d'une tâche
   ouverte, jamais refusés ; le doctor compte les lignes incomplètes.
 - **Les tags d'un projet** : des clés déclarées dans `cles`, avec leurs valeurs admises ; le
-  détail les montre, la recherche les lit.
+  détail les montre, la recherche les lit. `"cles_visibles": ["dept", "statut"]` les montre en
+  pastilles pleines sur la ligne (#125) : en arbre, sur chaque parent et chaque tâche seule, et sur
+  un enfant seulement quand sa valeur diffère de celle de son parent ; `statut` tait sa première
+  valeur (Todo) et une attente dont le tiers est déjà en pastille. `"ranger_par": "projet"` range
+  l'arbre en bandes repliables, une par valeur de la clé (les déclarées dans leur ordre, puis les
+  autres, puis « Sans projet »), les blocs sous la valeur de leur parent. Une clé non déclarée
+  dans `cles` est ignorée, et le doctor le dit.
 - **Ma journée** (#99) : le panneau s'ouvre sur « Ma journée », les tâches à moi en retard, dues
   aujourd'hui ou demain, en P1, ou récurrentes qui tombent dans les 2 jours, rangées dans cet ordre.
   Sous les axes, « À traiter » en quatre lignes cliquables (#115) : Ma journée (soleil, bleu), En
@@ -497,6 +503,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.81.0 (2026-10-30)** : panneau : les clés de cles_visibles (département, statut) en pastilles sur la ligne, l'arbre rangé en bandes par la clé ranger_par, et le doctor signale une clé non déclarée (#125, lot 2)
 - **0.80.0 (2026-10-30)** : maestro : toute création de session demandée sous Maestro, carte, offer ou lancement, part au Maestro racine qui la pose ; une fille de Maestro n'en devient jamais un (#132)
 - **0.79.0 (2026-10-30)** : maestro : une session lancée par Maestro le prévient par message de l'état où elle finit chaque tour (prête, bloquée, en attente, question, finie), une fois par état (#131)
 - **0.78.0 (2026-10-30)** : panneau : la priorité ne s'affiche plus (ni pastille ni filtre Prioritaires), ne range plus et n'est plus demandée ; prio: reste lu et contrôlé (#130)
