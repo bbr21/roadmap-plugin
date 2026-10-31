@@ -210,7 +210,12 @@ Premiers usages : la roadmap de Caro et le dossier AAFES Cowork, depuis l'onglet
   autres, puis « Sans projet »), les blocs sous la valeur de leur parent. Une clé non déclarée
   dans `cles` est ignorée, et le doctor le dit.
 - **Ma journée** (#99) : le panneau s'ouvre sur « Ma journée », les tâches à moi en retard, dues
-  aujourd'hui ou demain, en P1, ou récurrentes qui tombent dans les 2 jours, rangées dans cet ordre.
+  aujourd'hui ou demain, ou récurrentes qui tombent dans les 2 jours, rangées dans cet ordre (la
+  priorité n'y entre plus, #130). Un parent n'y entre jamais en ligne propre : ses enfants dus y
+  entrent, et en arbre il les coiffe, en gris (#125).
+- **La date d'un parent** (#125) : l'échéance la plus proche de ses enfants ouverts ; filtres, tri
+  et pastilles la lisent. `due:` n'est plus exigé d'un parent (sauf `tous:`) ; posé, il reste
+  l'échéance finale du sujet.
   Sous les axes, « À traiter » en quatre lignes cliquables (#115) : Ma journée (soleil, bleu), En
   retard (horloge, rouge), Cette semaine (calendrier, orange, échéance dans les 7 jours) et À
   relancer (cloche, violet, une attente de tiers sans nouvelle depuis 14 jours, `"relance": N` dans
@@ -503,6 +508,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.83.0 (2026-10-30)** : panneau : la date d'un parent est celle de son enfant ouvert le plus proche, due: n'y est plus exigé, et Ma journée ne montre que les enfants dus, sous leur parent en gris (#125, lot 3)
 - **0.82.0 (2026-10-30)** : maestro : un tour réveillé par une session n'écrit rien à Bertrand sauf un besoin, ne repose pas une question en attente, et l'en-tête ADHD de Maestro devient un repère stable (#133)
 - **0.81.0 (2026-10-30)** : panneau : les clés de cles_visibles (département, statut) en pastilles sur la ligne, l'arbre rangé en bandes par la clé ranger_par, et le doctor signale une clé non déclarée (#125, lot 2)
 - **0.80.0 (2026-10-30)** : maestro : toute création de session demandée sous Maestro, carte, offer ou lancement, part au Maestro racine qui la pose ; une fille de Maestro n'en devient jamais un (#132)

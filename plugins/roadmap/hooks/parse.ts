@@ -39,6 +39,10 @@ export type Task = {
   relance?: string
   /** Les clés hors grammaire (les clés déclarées dans `cles`), valeurs coupées aux virgules. */
   extra?: Record<string, string[]>
+  /** Calculé par `withParentDates` (#125) : la tâche a des enfants ouverts ; `due` est alors la date du plus proche. */
+  isParent?: boolean
+  /** Calculé par `withParentDates` (#125) : le `due:` écrit d'un parent, que remplace sa date calculée. */
+  ownDue?: string
 }
 
 export type Prio = '1' | '2' | '3'
@@ -265,6 +269,8 @@ export function lintRoadmap(text: string, done: boolean, rules: Partial<LintRule
   const requiredOn = rules.requiredOn ?? 'open'
   const cles = rules.cles ?? {}
   const problems: LineProblem[] = []
+  // Les numéros des parents (#125) : leur date se calcule sur leurs enfants, `due:` ne s'y exige pas.
+  const parents = new Set([...text.matchAll(/^- \[ \].*\|\s*parent:\s*#?([1-9]\d*)\s*[|\]]/gm)].map(m => m[1] as string))
   let inFence = false
   text.split('\n').forEach((raw, i) => {
     const line = raw.replace(/\r$/, '')
@@ -312,7 +318,8 @@ export function lintRoadmap(text: string, done: boolean, rules: Partial<LintRule
     // Les champs exigés : sur une tâche ouverte de ROADMAP.md seulement (lancée, en mode Code) ; vide compte comme absent.
     const launched = keys.has('qui') || keys.has('branche')
     if (!done && !checked && (requiredOn === 'open' || launched)) {
-      for (const k of requis) if ((keys.get(k) ?? '') === '') say(`champ exigé absent : ${k}:${requiredExample(k)}`)
+      const parent = parents.has(keys.get('id') ?? '') && !keys.has('tous')
+      for (const k of requis) if ((keys.get(k) ?? '') === '' && !(k === 'due' && parent)) say(`champ exigé absent : ${k}:${requiredExample(k)}`)
     }
     if (!checked && keys.has('tous') && (keys.get('due') ?? '') === '') say('tous: demande une due:AAAA-MM-JJ, la prochaine occurrence')
     if (checked && !keys.has('fait')) say('task cochée sans fait:AAAA-MM-JJ HH:MM')
@@ -916,7 +923,8 @@ export function isDueSoon(task: Task, today: string): boolean {
 
 /** Les quatre raisons d'entrer dans « Ma journée » (#99), la première qui vaut ; `undefined` sinon. Le libellé est celui de la section. */
 function todayReason(task: Task, today: string, me: readonly string[]): string | undefined {
-  if (task.done || !isMine(task, me)) return undefined
+  // Un parent n'a pas d'action à lui (#125) : ses enfants dus y entrent, pas lui.
+  if (task.done || task.isParent || !isMine(task, me)) return undefined
   if (isOverdue(task, today)) return 'En retard'
   const days = task.due === undefined ? undefined : daysBetween(today, task.due)
   if (days !== undefined && days <= 1) return "Aujourd'hui et demain"
@@ -1180,6 +1188,34 @@ export function byOwner(tasks: readonly Task[], me: readonly string[]): { label:
   const mine = me.filter(n => names.includes(n))
   const others = names.filter(n => n !== nobody && !mine.includes(n)).sort((a, b) => a.localeCompare(b, 'fr'))
   return [...mine, ...others, ...(names.includes(nobody) ? [nobody] : [])].map(label => ({ label, tasks: tasks.filter(t => ownerOf(t) === label) }))
+}
+
+/**
+ * La date des parents (#125) : chaque tâche ouverte qui a des enfants ouverts devient une copie
+ * `isParent`, dont `due` est la plus proche échéance de ses descendants ouverts (sinon son `due:`
+ * écrit, gardé dans `ownDue`). Les autres tâches restent les mêmes objets ; l'ordre ne change pas.
+ */
+export function withParentDates(tasks: readonly Task[]): Task[] {
+  const kids = new Map<string, Task[]>()
+  for (const t of tasks) if (!t.done && t.parent !== undefined && t.parent !== t.id) kids.set(t.parent, [...(kids.get(t.parent) ?? []), t])
+  const nearest = (t: Task, seen: Set<Task>): string | undefined => {
+    const dates = (t.id === undefined ? [] : (kids.get(t.id) ?? []))
+      .filter(c => !seen.has(c))
+      .flatMap(c => {
+        seen.add(c)
+        return [c.due, nearest(c, seen)].filter((d): d is string => d !== undefined)
+      })
+    return dates.length === 0 ? undefined : dates.reduce((a, b) => (b < a ? b : a))
+  }
+  return tasks.map(t => {
+    if (t.done || t.id === undefined || !kids.has(t.id)) return t
+    const due = nearest(t, new Set([t])) ?? t.due
+    const copy: Task = { ...t, isParent: true }
+    if (t.due !== undefined) copy.ownDue = t.due
+    if (due !== undefined) copy.due = due
+    else delete copy.due
+    return copy
+  })
 }
 
 /** Une pastille de clé déclarée (#125) : la clé et sa valeur. */

@@ -429,6 +429,8 @@ def champs_exiges(rdir, requis, lancees=False):
     except OSError:
         return ligne(KO, "Champs exigés", "ROADMAP.md illisible")
     quelles = "lancée(s)" if lancees else "ouverte(s)"
+    # #125 : la date d'un parent se calcule sur ses enfants ; due: ne s'y exige pas, sauf récurrent.
+    parents = set(re.findall(r"\|\s*parent:\s*#?([1-9]\d*)\s*[|\]]", "\n".join(lignes)))
     comptees, incompletes, manquants = 0, 0, set()
     for l in lignes:
         bloc = re.findall(r"`\[([^`]*)\]`", l)
@@ -439,7 +441,8 @@ def champs_exiges(rdir, requis, lancees=False):
         if lancees and "qui" not in champs and "branche" not in champs:
             continue
         comptees += 1
-        absents = [k for k in requis if not champs.get(k)]
+        parent = champs.get("id") in parents and "tous" not in champs
+        absents = [k for k in requis if not champs.get(k) and not (k == "due" and parent)]
         if absents:
             incompletes += 1
             manquants.update(absents)

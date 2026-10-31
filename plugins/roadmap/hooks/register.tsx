@@ -105,6 +105,7 @@ import {
   byDeadline,
   byOwner,
   byTree,
+  withParentDates,
   bandsOf,
   keyPills,
   filterSummary,
@@ -3767,7 +3768,8 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   }
   const done = data.done
 
-  const openTasks = open.filter(t => !t.done)
+  // La date d'un parent est celle de son enfant ouvert le plus proche (#125) : filtres, tri et pastilles la lisent.
+  const openTasks = withParentDates(open.filter(t => !t.done))
   const doneTasks = done.filter(t => t.done)
   const short = (t: Task): ShortTitle =>
     titles[hashLabel(t.label)] ?? { titre: fallbackTitle(t.label), sujet: '…' }
@@ -4886,7 +4888,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
 
   // L'arbre, rangé en bandes par la valeur de `ranger_par` (#125) : une bande par valeur, les blocs
   // sous la valeur de leur tête, les tâches seules coupées par bande. Une bande se replie à part.
-  type ListGroup = { key?: string; name: string; tasks: Task[]; lead?: RenderElement; mark?: RenderElement; block?: TreeBlock; band?: { count: number }; under?: string }
+  type ListGroup = { key?: string; name: string; tasks: Task[]; lead?: RenderElement; mark?: RenderElement; block?: TreeBlock; band?: { count: number; lead?: RenderElement }; under?: string }
   const bandValue = (t: Task) => (rangerPar ? t.extra?.[rangerPar]?.[0] : undefined)
   const treeGroups: ListGroup[] = !rangerPar
     ? tree.map(g => ({ key: g.key, name: g.label, tasks: g.tasks, block: g }))
@@ -4912,10 +4914,13 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
       })
   const bandOpen = (id: string) => !closedGroups.includes(id)
   const toggleBand = (id: string) => () => void setView($, v => ({ closedGroups: toggleIn(v.closedGroups, id) }))
-  const bandRow = (id: string, name: string, count: number) => (
+  const bandRow = (id: string, name: string, count: number, lead?: RenderElement) => (
     <Box key={`band:${id}`} flexDirection="row" justifyContent="space-between" alignItems="center" paddingX={SPACE.indent} paddingTop="sm">
       <Button key={`bande:${keyPart(name)}`} plain label={`${bandOpen(id) ? '⌄' : '›'} ${name}`} onPress={toggleBand(id)} />
-      {countPill(count, false, palette.text2)}
+      <Box flexDirection="row" alignItems="center" gap={SPACE.row} flexShrink={0}>
+        {lead}
+        {countPill(count, false, palette.text2)}
+      </Box>
     </Box>
   )
 
@@ -4933,6 +4938,17 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     : attend === 'relaunch'
     ? // À relancer (#99) : les attentes les plus vieilles en haut.
       [{ name: 'À relancer', tasks: [...shown].sort((x, y) => (waitDays(y, today, me) ?? 0) - (waitDays(x, today, me) ?? 0)) }]
+    : attend === 'today' && by === 'tree'
+    ? // Ma journée en arbre (#125) : ses sections en bandes, et dans chacune les blocs de ses tâches,
+      // leur parent en gris ; la clé d'un bloc porte sa section (un parent peut être dans deux).
+      todaySections(sortTasks(shown, sortOrder), today, me).flatMap(g => {
+        const id = `jour:${g.label}`
+        const lead = g.label === 'En retard' ? icon(discIcon(palette.late), 'en retard', 16, '●', 'error') : undefined
+        return [
+          { key: id, name: g.label, tasks: [], band: { count: g.tasks.length, ...(lead ? { lead } : {}) } },
+          ...byTree(g.tasks, allTasks, t => short(t).titre, prereqsFor).map(b => ({ key: `${id}:${b.key}`, name: b.label, tasks: b.tasks, block: b, under: id })),
+        ]
+      })
     : attend === 'today'
     ? // Ma journée (#99) : ses quatre sections, dans l'ordre, chaque tâche une fois.
       todaySections(sortTasks(shown, sortOrder), today, me).map(g => ({
@@ -5530,7 +5546,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
         <Text color={palette.text2}>{attend === 'today' ? "Rien d'urgent aujourd'hui." : 'Aucune tâche ouverte pour ce filtre.'}</Text>
       )}
 
-      <Box flexDirection="column">{groups.map(g => (g.band ? bandRow(idOf(g), g.name, g.band.count) : section(idOf(g), g.name, g.tasks, rowsOf.get(idOf(g)) ?? 0, g.lead, g.mark, g.block)))}</Box>
+      <Box flexDirection="column">{groups.map(g => (g.band ? bandRow(idOf(g), g.name, g.band.count, g.band.lead) : section(idOf(g), g.name, g.tasks, rowsOf.get(idOf(g)) ?? 0, g.lead, g.mark, g.block)))}</Box>
     </Box>
   )
 }
