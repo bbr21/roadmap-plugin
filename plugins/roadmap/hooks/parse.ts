@@ -269,6 +269,9 @@ export function lintRoadmap(text: string, done: boolean, rules: Partial<LintRule
   const requiredOn = rules.requiredOn ?? 'open'
   const cles = rules.cles ?? {}
   const problems: LineProblem[] = []
+  // Les tâches ouvertes par numéro (#125) : les règles du modèle comparent une ligne à son parent et à ses prérequises.
+  const openById = new Map<string, Task>()
+  if (!done) for (const t of parseRoadmap(text, 'ROADMAP.md')) if (!t.done && t.id !== undefined && !openById.has(t.id)) openById.set(t.id, t)
   // Les numéros des parents (#125) : leur date se calcule sur leurs enfants, `due:` ne s'y exige pas.
   const parents = new Set([...text.matchAll(/^- \[ \].*\|\s*parent:\s*#?([1-9]\d*)\s*[|\]]/gm)].map(m => m[1] as string))
   let inFence = false
@@ -322,6 +325,18 @@ export function lintRoadmap(text: string, done: boolean, rules: Partial<LintRule
       for (const k of requis) if ((keys.get(k) ?? '') === '' && !(k === 'due' && parent)) say(`champ exigé absent : ${k}:${requiredExample(k)}`)
     }
     if (!checked && keys.has('tous') && (keys.get('due') ?? '') === '') say('tous: demande une due:AAAA-MM-JJ, la prochaine occurrence')
+    // Les règles du modèle (#125) : signalées, jamais refusées.
+    if (!done && !checked) {
+      const parentId = PARENT_RE.exec(keys.get('parent') ?? '')?.[1]
+      const parent = parentId === undefined ? undefined : openById.get(parentId)
+      if (parent?.parent !== undefined) say(`parent:${parentId} : #${parentId} est déjà l'enfant de #${parent.parent} ; deux niveaux au plus (parent › enfants)`)
+      for (const n of prereqNumbers(keys.get('après') ?? '') ?? []) {
+        const pre = openById.get(n)
+        if (pre !== undefined && pre.parent !== parentId) say(`après:${n} : #${n} n'a pas le même parent ; après: relie deux enfants d'un même parent, ou deux parents`)
+      }
+      const due = keys.get('due') ?? ''
+      if (parent?.due !== undefined && DATE_RE.test(due) && due > parent.due) say(`due: après l'échéance de son parent #${parentId} (${parent.due})`)
+    }
     if (checked && !keys.has('fait')) say('task cochée sans fait:AAAA-MM-JJ HH:MM')
     if (!checked && keys.has('fait')) say('fait: sur une task non cochée')
     if (done && !checked) say('task non cochée dans ROADMAP-fait.md : elle reste dans ROADMAP.md')

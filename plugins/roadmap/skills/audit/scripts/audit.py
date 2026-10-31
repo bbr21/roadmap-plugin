@@ -398,10 +398,18 @@ class _Preparation:
 
     # -- opérations
 
+    def deux_niveaux(self, mere, quoi):
+        """#125 : deux niveaux au plus ; une tâche qui a déjà un parent ne reçoit pas d'enfants."""
+        p = (mere.get("parent") or "-").lstrip("#")
+        if p != "-":
+            raise Erreur("%s : #%s est déjà l'enfant de #%s, ses enfants feraient un troisième niveau "
+                         "(deux niveaux au plus : propose-les en sœurs sous #%s)" % (quoi, mere.id, p, p))
+
     def decouper(self, d):
         mere = self.tache(d.get("id"), "découpage")
         quoi = "découpage de #%s" % mere.id
         self.libre(mere, quoi)
+        self.deux_niveaux(mere, quoi)
         frags = fragments(mere.libelle)
         avant_mere = mere.libelle + " " + mere.note
         m = d.get("mere") or {}
@@ -476,6 +484,9 @@ class _Preparation:
         else:
             mere = self.tache(m, "regroupement")
             enfants = [self.tache(e, "regroupement sous #%s" % mere.id) for e in g.get("enfants") or []]
+            # Son parent parmi les enfants regroupés : une boucle, que la relecture nomme.
+            if (mere.get("parent") or "-").lstrip("#") not in [e.id for e in enfants]:
+                self.deux_niveaux(mere, "regroupement sous #%s" % mere.id)
         for e in enfants:
             if e is mere:
                 raise Erreur("regroupement : #%s ne peut pas être sa propre mère" % e.id)

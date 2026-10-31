@@ -453,6 +453,57 @@ def champs_exiges(rdir, requis, lancees=False):
     return ligne(OK, "Champs exigés", "%d tâche(s) %s, toutes complètes" % (comptees, quelles))
 
 
+ENFANTS_MAX = 8
+
+
+def _champs_de(ligne_):
+    bloc = re.findall(r"`\[([^`]*)\]`", ligne_)
+    champs = {}
+    for f in (bloc[-1].split("|")[1:] if bloc else []):
+        k, _, v = f.strip().partition(":")
+        champs[k.strip()] = v.strip().lstrip("#") if k.strip() == "parent" else v.strip()
+    return champs
+
+
+def parents_enfants(rdir):
+    """#125 : les règles du modèle seule, parent, enfant, signalées sans rien refuser."""
+    def lire(nom):
+        try:
+            with open(os.path.join(rdir, nom), encoding="utf-8") as f:
+                return ob.lignes_de_taches(f.read())
+        except OSError:
+            return []
+    ouvertes = [_champs_de(l) for l in lire("ROADMAP.md") if l.startswith("- [ ]")]
+    faites = [_champs_de(l) for l in lire("ROADMAP-fait.md") if l.startswith("- [x]")]
+    par_id = {c["id"]: c for c in ouvertes if c.get("id")}
+    parent_de = lambda c: c.get("parent") if c.get("parent") not in (None, "", "-") else None
+    enfants = {}
+    for c in ouvertes:
+        if parent_de(c):
+            enfants.setdefault(parent_de(c), []).append(c)
+    soucis = []
+    for c in ouvertes:
+        p = par_id.get(parent_de(c) or "")
+        if p and parent_de(p):
+            soucis.append("troisième niveau : #%s sous #%s, lui-même enfant de #%s" % (c.get("id", "?"), p["id"], parent_de(p)))
+        for n in re.findall(r"\d+", c.get("après", "")):
+            if n in par_id and parent_de(par_id[n]) != parent_de(c):
+                soucis.append("après: hors des sœurs : #%s après #%s" % (c.get("id", "?"), n))
+        if p and p.get("due") and c.get("due") and c["due"] > p["due"]:
+            soucis.append("#%s dû après l'échéance de son parent #%s" % (c.get("id", "?"), p["id"]))
+    faits_par_parent = {parent_de(c) for c in faites if parent_de(c)}
+    for i, c in par_id.items():
+        if i in faits_par_parent and i not in enfants:
+            soucis.append("#%s ouvert, tous ses enfants faits : le cocher" % i)
+        if len(enfants.get(i, [])) > ENFANTS_MAX:
+            soucis.append("#%s a %d enfants ouverts : des étapes plus larges ?" % (i, len(enfants[i])))
+    if soucis:
+        return ligne(VOIR, "Parents et enfants", " ; ".join(soucis[:3]) + (" (et %d autre(s))" % (len(soucis) - 3) if len(soucis) > 3 else ""),
+                     "corriger ces lignes, ou la skill audit : deux niveaux, après: entre sœurs ou entre parents")
+    nb_enfants = sum(len(v) for k, v in enfants.items() if k in par_id)
+    return ligne(OK, "Parents et enfants", "%d parent(s), %d enfant(s)" % (len([k for k in enfants if k in par_id]), nb_enfants))
+
+
 def requis_code(main):
     """Les champs exigés d'une tâche lancée en mode Code : `requis` de .claude/roadmap.json s'il est une liste."""
     try:
@@ -484,6 +535,7 @@ def roadmap_projet(main):
     out.append(reglages)
     requis = cfg.get("requis", ob.REQUIS_PROJET) if isinstance(cfg.get("requis", []), list) else ob.REQUIS_PROJET
     out.append(champs_exiges(rdir, requis))
+    out.append(parents_enfants(rdir))
     return out
 
 

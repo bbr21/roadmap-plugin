@@ -222,6 +222,12 @@ Premiers usages : la roadmap de Caro et le dossier AAFES Cowork, depuis l'onglet
   aujourd'hui ou demain, ou récurrentes qui tombent dans les 2 jours, rangées dans cet ordre (la
   priorité n'y entre plus, #130). Un parent n'y entre jamais en ligne propre : ses enfants dus y
   entrent, et en arbre il les coiffe, en gris (#125).
+- **Le modèle** (#125) : une tâche est seule, parent (d'autres la citent en `parent:`) ou enfant,
+  sur deux niveaux au plus ; `après:` relie deux enfants d'un même parent, ou deux parents. Une
+  ligne qui en sort (troisième niveau, `après:` hors des sœurs, enfant dû après l'échéance posée de
+  son parent) est signalée à l'écriture et par le doctor (« Parents et enfants », qui dit aussi un
+  parent resté ouvert aux enfants faits, ou de plus de 8 enfants ouverts), jamais refusée ; la
+  skill `audit` ne crée pas de troisième niveau.
 - **La date d'un parent** (#125) : l'échéance la plus proche de ses enfants ouverts ; filtres, tri
   et pastilles la lisent. `due:` n'est plus exigé d'un parent (sauf `tous:`) ; posé, il reste
   l'échéance finale du sujet.
@@ -524,6 +530,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.87.0 (2026-10-30)** : panneau, doctor, audit : les règles du modèle seule, parent, enfant sur deux niveaux, signalées à l'écriture et comptées par le doctor ; l'audit ne crée plus de troisième niveau (#125, lot 5)
 - **0.86.0 (2026-10-30)** : panneau : un parent se ferme avec son dernier enfant (un parent récurrent se reconduit depuis son due: écrit), le cadenas dit ce qu'il attend, un parent bloqué bloque ses enfants, et les titres courts gardent la langue du libellé (#125, lot 4)
 - **0.85.0 (2026-10-30)** : panneau : identité Roadmap au style Voies chez Maestro et chez une tâche, vue de tâche dans une session #N, Maestro voit ses tâches lancées (#137)
 - **0.84.0 (2026-10-30)** : maestro : récap au fil des fusions, rappel de liste d'étapes après chaque fusion ou publication, ligne de récap par tâche livrée, fiche finale de Maestro avec le tableau de ses tâches (#136)

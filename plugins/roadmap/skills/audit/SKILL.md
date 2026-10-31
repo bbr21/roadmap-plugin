@@ -1,6 +1,6 @@
 ---
 name: audit
-description: "Audite le contenu de la roadmap d'un projet du plugin roadmap, en mode Code ou Projet : Claude lit toutes les tâches et propose de découper les paquets en tâche mère et sous-tâches datées (parent:), les dépendances (après:), les regroupements et doublons, et de combler les trous (sans échéance, en retard, sans responsable, attente à relancer, mère aux enfants faits). La personne valide paquet par paquet ; un script écrit tout ou rien, après sauvegarde, avec un bilan qui retrouve chaque fragment du texte d'origine. Lancé en fin d'onboarding. Déclenche sur « audite ma roadmap », « fais le doctor de ma roadmap », « fais le ménage dans ma roadmap », « découpe mes tâches », « mes tâches sont des paquets », « cherche les doublons dans ma roadmap ». Pas pour la structure du projet (doctor), ni pour importer une roadmap (onboarding), ni pour ajouter ou cocher une tâche nommée, ni pour prouver qu'une tâche est faite par les traces d'un dossier."
+description: "Audite le contenu de la roadmap d'un projet du plugin roadmap, en mode Code ou Projet : Claude lit toutes les tâches et propose de découper les paquets en un parent et ses enfants datés (parent:, deux niveaux), les dépendances (après:), les regroupements et doublons, et de combler les trous (sans échéance, en retard, sans responsable, attente à relancer, parent aux enfants faits). La personne valide paquet par paquet ; un script écrit tout ou rien, après sauvegarde, avec un bilan qui retrouve chaque fragment du texte d'origine. Lancé en fin d'onboarding. Déclenche sur « audite ma roadmap », « fais le doctor de ma roadmap », « fais le ménage dans ma roadmap », « découpe mes tâches », « mes tâches sont des paquets », « cherche les doublons dans ma roadmap ». Pas pour la structure du projet (doctor), ni pour importer une roadmap (onboarding), ni pour ajouter ou cocher une tâche nommée, ni pour prouver qu'une tâche est faite par les traces d'un dossier."
 ---
 
 # Auditer la roadmap
@@ -15,6 +15,13 @@ par action, datée, avec son responsable, ses dépendances, et un seul exemplair
   retrouve pas, mot pour mot (hors mots vides), dans la tâche qui le reçoit ou dans sa mère.
 - **Tout ou rien, avec sauvegarde.** Les fichiers se préparent en mémoire, se vérifient, se
   copient dans `sauvegarde-audit-…/`, puis s'écrivent d'un coup.
+
+**Le modèle** (#125) : une tâche est **seule**, **parent** (d'autres la citent en `parent:`) ou
+**enfant** (elle porte `parent:`), sur **deux niveaux au plus** : un enfant n'a pas d'enfant, et le
+script refuse d'en créer un troisième. Un parent porte un nom de sujet, pas une action ; ses
+enfants sont des étapes de travail (2 à 6 par parent), pas des gestes. `après:` relie deux enfants
+d'un même parent, ou deux parents (un sujet après un autre), jamais l'enfant d'un sujet à celui
+d'un autre.
 
 Le script est `scripts/audit.py`, lancé depuis le dossier de cette skill (le chemin donné au
 chargement de la skill). Il lit la grammaire avec l'import de la skill `onboarding`.
@@ -74,8 +81,11 @@ regroupement) et `après:` passe par `apres`.
 
 **Découper un paquet** :
 
-- **Une sous-tâche par action.** Le sujet commun (souvent le texte avant le premier « : ») devient
-  le libellé de la mère.
+- **Un enfant par étape de travail**, 2 à 6 par parent : une étape qu'on coche (« Analyser la
+  data et checker l'EFC »), pas chaque geste. Le sujet commun (souvent le texte avant le premier
+  « : ») devient le libellé du parent : un nom de sujet, sans action.
+- **Un enfant ne se découpe pas** : ses morceaux deviennent des sœurs sous son parent (le script
+  refuse un troisième niveau).
 - **Chaque fragment a une seule cible** : un enfant (`fragments`) ou la mère (`fragments_mere`).
   Ses mots restent : reformule (ordre, verbe à l'infinitif ajouté), ne retranche pas. Un mot peut
   passer dans un champ (« Thierry : envoyer… » → `attend:Thierry`), mais un jour de la semaine
@@ -83,14 +93,16 @@ regroupement) et `après:` passe par `apres`.
 - **Une date entre parenthèses avec un nom** (« (Caroline, 28/10) ») dit qui a parlé et quand :
   ce n'est pas une échéance. Un enfant n'a sa propre `due:` que si son fragment nomme une vraie
   échéance (« lundi 02/11 », « d'ici le 05/11 », « la semaine du 09/11 » → le lundi) ; sinon il
-  hérite de la `due:` de la mère. La mère prend la plus tardive de ses enfants.
+  hérite de la `due:` de la mère. Ne propose pas de `due:` au parent : sa date se calcule sur son
+  enfant ouvert le plus proche ; une `due:` posée sur lui reste l'échéance finale du sujet.
 - **Le contexte** (« (regroupement validé par Caroline, 27/10) », une attribution) va dans la note
   ou le libellé de la mère ; un fragment qui n'est qu'un état (« accès ShotGrid confirmé ») va
   dans la note de la tâche qu'il éclaire.
 - Les sous-tâches reprennent de leur mère `ouvert:`, l'axe, les champs exigés qui leur manquent
   (`après:-` sinon) et les clés de `heritage` ; jamais `ref:`.
 
-**Dépendances** : celles que le texte dit (« puis », « après », « une fois… », « attendre … avant »).
+**Dépendances** : celles que le texte dit (« puis », « après », « une fois… », « attendre … avant »),
+entre sœurs (1 puis 2 ; deux sœurs sans `après:` se font en parallèle) ou entre parents.
 
 **Regroupements et doublons** : deux tâches ouvertes sur le même sujet → une **fusion** (on garde
 le libellé le plus précis, l'autre se ferme « (fusionnée dans #N) ») ; des tâches distinctes d'un

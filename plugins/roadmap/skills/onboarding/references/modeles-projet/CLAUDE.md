@@ -12,7 +12,7 @@ Ce dossier se pilote en mode Projet du plugin roadmap : de la gestion de projet,
 
 ## Une tâche complète
 
-Chaque tâche ouverte porte {{REQUIS}}. `parent:-` et `après:-` disent qu'elle n'a ni tâche mère ni prérequise. Le panneau Roadmap signale une ligne écrite sans eux ; la grammaire est en tête de `{{RM}}ROADMAP.md`.
+Chaque tâche ouverte porte {{REQUIS}}. `parent:-` et `après:-` disent qu'elle n'a ni parent ni prérequise ; un parent porte un sujet et ses enfants ses étapes, sur deux niveaux au plus. Le panneau Roadmap signale une ligne écrite sans eux ; la grammaire est en tête de `{{RM}}ROADMAP.md`.
 
 ## Finir une tâche
 

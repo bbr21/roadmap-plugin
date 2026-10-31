@@ -23,7 +23,7 @@ roadmap d'un dossier Cowork : Projet).
    - Code (recommandé pour un dépôt de code) : la structure ci-dessous, worktree par session,
      fusion, `check.mjs`, GitHub
    - Projet (recommandé pour de la gestion de projet sans code) : un dossier simple, git en option,
-     des tâches complètes (échéance, responsable, tâche mère, dépendances) ; puis l'envoi « Projet »
+     des tâches complètes (échéance, responsable, parent, dépendances) ; puis l'envoi « Projet »
      à la fin de ce fichier, et rien d'autre
 
 ## Ce qui se prend dans la demande, sans question
