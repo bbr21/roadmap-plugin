@@ -549,6 +549,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.100.0 (2026-10-31)** : panneau : « En cours » répond au clic (zones de clic remontées après une démolition par l'app), « N faites » devient le lien vers les faites, bande de Maestro à une jauge par ligne avec la roue (#152)
 - **0.99.0 (2026-10-31)** : maestro : là où l'app ne dessine pas la carte d'accueil (compte Team), Claude dit l'accueil et pose ses boutons ; le plugin note ce que la carte a vu sur la machine (#153)
 - **0.98.0 (2026-10-31)** : panneau : le pied montre la version du plugin et un bouton Rafraîchir qui relit tout et dit si l'app retarde sur la version publiée, avec le geste (#138)
 - **0.97.0 (2026-10-31)** : panneau : chez Maestro, « En cours » est l'arbre des sessions ; axes repliés, filtres en pastilles, ▶ au bout de la ligne, plus de redite (#149)

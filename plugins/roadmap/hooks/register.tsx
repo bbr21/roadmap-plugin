@@ -67,7 +67,6 @@ import {
   brandText,
   briefTaskOf,
   maestroBand,
-  bandSteps,
   type MaestroBand,
   type StepsView,
   maestroBrandTasks,
@@ -231,6 +230,7 @@ import {
   type Source,
   type Task,
   zoneDrawn,
+  zoneFault,
   zoneReady,
   zoneReload,
   zoneWatch,
@@ -3784,6 +3784,12 @@ export const register: Register = (on, options) => {
     return block === undefined ? result : { ...result, block }
   })
 
+  // Une zone de clic démolie par l'app, même après son « prêt » (#152) : nouvelles clés, de nouvelles instances.
+  on('ui.fault', async ($, e, next) => {
+    if (zoneFault(zones, e.module, e.element, await read($, zoneGenAtom))) await update($, zoneGenAtom, v => v + 1)
+    return next(e)
+  })
+
   // Un clic sur la barre : la zone de clic dit quel segment ; un second clic retire le filtre.
   on('ui.message', async ($, e, next) => {
     const ready = (e.data as { ready?: unknown } | null)?.ready
@@ -3905,7 +3911,7 @@ export const register: Register = (on, options) => {
       const views = statuses.map((status, i) => (status ? stepsView(status.steps, { now, at: status.at, closed: band.tasks[i]?.closed === true }) : undefined))
       return maestroBandTree($, e, band, found.data.palette, views, t =>
         void (t.sessionId ? openSession($, { sessionId: t.sessionId, startedAt: now, title: t.label }) : undefined),
-      )
+      now)
     } catch {
       return next(e)
     }
@@ -4318,9 +4324,10 @@ async function sessionBrandOf($: EngineInterface): Promise<{ brand: Brand; data:
 
 /**
  * L'arbre de Maestro dans la bande au-dessus de la saisie (#147, style C retouché) : sur le fond du
- * panneau, « Maestro » et ses sessions, la jauge de toutes leurs étapes ; puis une ligne par tâche, sans
- * voies : le point de son état, le numéro, le nom (ouvre la session), l'étape en cours, sa jauge, « 2/6 »,
- * l'état en mot. Colonnes de largeur fixe, la ligne s'éclaire au survol. Au terminal, le texte seul.
+ * panneau, « Maestro » et ses sessions ; puis une ligne par tâche, sans voies : le point de son état, le
+ * numéro, le nom (ouvre la session), l'étape en cours, sa jauge, « 2/6 », l'état : la roue des lignes de
+ * la liste pour une session qui tourne, le mot pour les autres (#152 : plus de jauge d'ensemble, une seule
+ * jauge par ligne). Colonnes de largeur fixe, la ligne s'éclaire au survol. Au terminal, le texte seul.
  */
 function maestroBandTree(
   $: EngineInterface,
@@ -4329,12 +4336,12 @@ function maestroBandTree(
   palette: Palette,
   views: readonly (StepsView | undefined)[],
   open: (t: BrandTask) => void,
+  now: number,
 ): RenderElement {
   const resolved = $.ui.resolve(e)
   const { Box, Text, Button } = resolved
   const Svg = 'Svg' in resolved && e.surface !== 'terminal' ? resolved.Svg : undefined
   const words = brandText(band.brand)
-  const all = bandSteps(views)
   // Les couleurs de #145 : t'attend en orange, toute finie en violet.
   const hue = (t: BrandTask): [string, string] =>
     t.finished ? [palette.finished, palette.finishedOn] : t.state === 'wait' ? [palette.block, palette.blockOn] : t.state === 'live' ? [palette.live, palette.liveOn] : [palette.done, palette.text2]
@@ -4344,16 +4351,6 @@ function maestroBandTree(
       <Box flexDirection="row" alignItems="center" gap={SPACE.row}>
         <Text size="footnote" weight="semibold">{words.title}</Text>
         {words.foot !== '' && <Text size="caption" color={palette.text3}>{`· ${words.foot}`}</Text>}
-        <Box flexGrow={1} />
-        {all.total > 0 && Svg && (
-          <Svg
-            source={barIcon([{ hex: palette.ok, n: all.done }, { hex: palette.sel, n: all.total - all.done }], palette.sel, BAND_GAUGE.head)}
-            alt={`${all.done} étapes faites sur ${all.total}`}
-            width={BAND_GAUGE.head}
-            height={4}
-          />
-        )}
-        {all.total > 0 && <Text size="caption" tabular color={palette.text3}>{`${all.done}/${all.total} étapes faites`}</Text>}
       </Box>
       <Box flexDirection="column">
         {band.tasks.map((t, i) => {
@@ -4385,7 +4382,11 @@ function maestroBandTree(
                 {view && <Text size="caption" tabular color={palette.text3}>{view.count}</Text>}
               </Box>
               <Box width={9} alignItems="flex-end">
-                <Text size="caption" color={word}>{words.states[i] ?? ''}</Text>
+                {Svg && t.state === 'live' && !t.finished ? (
+                  <Svg source={spinnerIcon(palette.live, 14, words.states[i], false, now)} alt={words.states[i] ?? ''} width={SIZE.icon.sm} height={SIZE.icon.sm} isInteractive />
+                ) : (
+                  <Text size="caption" color={word}>{words.states[i] ?? ''}</Text>
+                )}
               </Box>
             </Box>
           )
@@ -4396,8 +4397,8 @@ function maestroBandTree(
   )
 }
 
-/** Les largeurs des jauges de la bande de Maestro (#147), en px : celle de l'en-tête, celle d'une ligne. */
-const BAND_GAUGE = { head: 96, row: 64 }
+/** La largeur de la jauge d'une ligne de la bande de Maestro (#147), en px. */
+const BAND_GAUGE = { row: 64 }
 
 /**
  * L'en-tête du panneau, au-dessus de la roadmap : Maestro et ses voies ; chez une tâche dont on a demandé
@@ -6348,7 +6349,8 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     block: { hex: palette.block, tint: palette.blockTint, on: palette.blockOn },
     wait: { hex: palette.wait, tint: palette.waitTint, on: palette.waitOn },
   }
-  const todo = showDone ? [] : todoCounters(mode, maestroLine)
+  // Sous les faites, les pastilles restent, estompées : un clic revient aux ouvertes, filtrées (#152).
+  const todo = todoCounters(mode, maestroLine)
   // Une ligne à 0 ne se clique plus, sauf choisie : un second clic la retire.
   const todoClickable = (c: TodoCounter) => (countOf[c.key] ?? 0) > 0 || attend === c.key
   const todoRow = (c: TodoCounter) => {
@@ -6368,9 +6370,9 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
       icon: c.icon,
       name: c.name,
       n,
-      ink: zero ? palette.text3 : on ? tone.on : palette.text,
+      ink: faded(zero ? palette.text3 : on ? tone.on : palette.text, showDone),
       bg: on ? tone.tint : palette.btn,
-      countInk: on ? tone.on : zero ? palette.text3 : palette.text2,
+      countInk: faded(on ? tone.on : zero ? palette.text3 : palette.text2, showDone),
       strong: on,
     })
     return (
@@ -6441,7 +6443,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     </Box>
   )
   // Les filtres en une rangée de pastilles (#149), « Plus › » au bout ; ses filtres dépliés dessous.
-  const todoBlock = showDone ? null : (
+  const todoBlock = (
     <Box flexDirection="column" gap={SPACE.tight}>
       <Box flexDirection="row" flexWrap="wrap" alignItems="center" gap={SPACE.row} paddingX={SPACE.indent}>
         {todo.map(todoRow)}
@@ -6454,11 +6456,12 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   if (graphic) sessionRows = new Set(doneTasks.filter(t => doneSessionOf(t) !== undefined).slice(0, SESSION_ROWS).map(taskKey))
   // Seules les lignes cliquables de « À traiter » ont une zone ; les filtres repliés sont des boutons de l'app (#115).
   // Les axes repliés sous la barre (#149), dépliés au clic ou dès qu'un axe ou « Faites » est choisi.
-  const axesShown = (view.axesOpen ?? false) || anyAxis
+  // Les faites, choisies par le lien de l'en-tête (#152), ne les déplient pas.
+  const axesShown = (view.axesOpen ?? false) || axis !== 'all'
   const axesLine = axesSummary(axes.map(a => ({ name: axisLabel(a), n: axisCount(openTasks, a) })))
   const toggleAxes = () => void setView($, v => ({ axesOpen: !(v.axesOpen ?? false) }))
   // Les zones fixes : axes et Faites, la roue, les lignes cliquables de « À traiter » et « Plus de filtres » (#115).
-  const fixedZones = 1 + (axesShown ? axes.length + 1 : 0) + (maestroLine ? 1 : 0) + 1 + todo.filter(todoClickable).length + (todoBlock && (secondary.length > 0 || people.length > 0 || showThirdParties) ? 1 : 0) + 2 * sessionRows.size
+  const fixedZones = 2 + (axesShown ? axes.length + 1 : 0) + (maestroLine ? 1 : 0) + 1 + todo.filter(todoClickable).length + (todoBlock && (secondary.length > 0 || people.length > 0 || showThirdParties) ? 1 : 0) + 2 * sessionRows.size
   if (graphic) {
     const shownWithSession = drawnTasks.filter(t => t.id && (liveOf(t) ?? doneSessionOf(t)))
     numberZones = new Set(shownWithSession.slice(0, Math.max(0, ZONE_LIMIT - fixedZones)).map(t => t.id as string))
@@ -6514,6 +6517,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     )
   const bodyPad = brandHead ? {} : { paddingX: SPACE.indent }
   // L'avancement et sa barre font un seul bloc : la barre colle aux chiffres. La liste et le tableau le partagent.
+  const tight = ((e.props as { bodyColumns?: number }).bodyColumns ?? 76) < 40
   const head = (
       <Box flexDirection="column">
       <Box flexDirection="row" justifyContent="space-between" alignItems="flex-end" paddingX={SPACE.indent}>
@@ -6526,12 +6530,18 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
           <Text size="title" weight="semibold" tabular>{`${pct(doneTasks.length, total)} %`}</Text>
         )}
         {/* Toujours sur une ligne, sans l'heure de lecture (retirée, 2026-10-22) ; forme courte si très étroit. */}
-        <Box flexShrink={1} minWidth={0} marginLeft={1}>
-          <Text size="caption" tabular color={palette.text2} wrap="truncate-end">
-            {((e.props as { bodyColumns?: number }).bodyColumns ?? 76) < 40
-              ? `${doneTasks.length}/${total}`
-              : `${doneTasks.length} faites sur ${total}`}
-          </Text>
+        {/* « N faites » est le lien vers les faites (#152, maquette C) : souligné, en gras une fois choisi. */}
+        <Box key="hit:done-count" flexDirection="row" flexShrink={1} minWidth={0} marginLeft={1} hover={{ backgroundColor: palette.hover }}>
+          {graphic && (
+            <Text size="caption" tabular underline color={showDone ? palette.text : palette.text2} weight={showDone ? 'semibold' : undefined} wrap="truncate-end">
+              {tight ? `${doneTasks.length}` : `${doneTasks.length} faites`}
+            </Text>
+          )}
+          {graphic && <Text size="caption" tabular color={palette.text2} wrap="truncate-end">{tight ? `/${total}` : ` sur ${total}`}</Text>}
+          {!graphic && (
+            <Button key="done-count" plain dimColor={!showDone} label={tight ? `${doneTasks.length}/${total}` : `${doneTasks.length} faites sur ${total}`} onPress={toggleDone} />
+          )}
+          {hit('done-count', toggleDone)}
         </Box>
         {/* La roue des réglages, en haut à droite (#115) ; au terminal, le bouton « Réglages ». */}
         {graphic && Svg ? (

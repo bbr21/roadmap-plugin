@@ -3744,6 +3744,24 @@ export function zoneReload(w: ZoneWatch, now: number): boolean {
   return true
 }
 
+/**
+ * Une zone de clic tombée (`ui.fault`) : faut-il relancer les zones ? L'app démolit aussi un cadre
+ * déjà « prêt » qui tarde à répondre (« did not answer a render within 2000ms », 2026-10-30), et
+ * démonte toutes ses zones ; le « prêt » d'avant ne vaut plus (#152). Une démolition fait tomber
+ * toutes les zones de la génération `gen` : la première relance, les suivantes (clé d'une autre
+ * génération) ne font rien. RELOAD_LIMIT relances d'affilée sans « prêt » au plus.
+ */
+export function zoneFault(w: ZoneWatch, module: string, element: string, gen: number): boolean {
+  const name = module.replace(/^.*\//, '').replace(/\.tsx?$/, '')
+  if (name !== 'press-hit' && name !== 'bar-hit') return false
+  if (element.match(/-g(\d+)$/)?.[1] !== String(gen)) return false
+  if (w.reloads >= RELOAD_LIMIT) return false
+  w.reloads += 1
+  w.readyAt.delete(name)
+  w.drawnAt.clear()
+  return true
+}
+
 // Réglages de session (2026-10-23) : ce que Bertrand veut dans ses sessions, lu dans
 // ~/.claude/reglages-session.json et injecté au démarrage. Sans fichier, tout est allumé, sauf
 // `autonome` (#77) : un nouvel utilisateur ne fusionne pas seul sans l'avoir choisi. Une valeur qui
@@ -4356,11 +4374,6 @@ export function maestroBand(o: { brand: Brand | undefined; hasSurvey: boolean; s
   if (o.hasSurvey || o.brand?.kind !== 'maestro' || o.brand.tasks.length === 0) return undefined
   const tasks = o.brand.tasks.slice(0, o.shown)
   return { brand: o.brand, tasks, more: o.brand.tasks.length - tasks.length }
-}
-
-/** La jauge de l'en-tête de la bande (#147) : les étapes faites et le total, sur les sessions qui en ont. */
-export function bandSteps(views: readonly (StepsView | undefined)[]): { done: number; total: number } {
-  return views.reduce((sum, v) => (v ? { done: sum.done + v.done, total: sum.total + v.total } : sum), { done: 0, total: 0 })
 }
 
 /** Les tâches des sessions lancées par Maestro, par création de leur session, par numéro en secours (#143). */
