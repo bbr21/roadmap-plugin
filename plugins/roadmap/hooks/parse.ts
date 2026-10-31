@@ -4996,3 +4996,75 @@ export function maestroContext(o: {
   return lines.join('\n')
 }
 
+
+// ── Version du plugin (#138) ──────────────────────────────────────────────
+
+/** Le geste qui fait charger à l'app la dernière version publiée (le catalogue se resynchronise, #88). */
+export const UPDATE_GESTURE =
+  'claude.ai › Customize › Plugins › Manage marketplaces › roadmap › Check for updates, puis une session neuve'
+
+/** -1, 0 ou 1 selon l'ordre des numéros (`0.100.0` après `0.95.0`) ; sans ordre (non numérique, différentes) : undefined. */
+export function compareVersions(a: string, b: string): -1 | 0 | 1 | undefined {
+  const parts = (v: string) => v.split('.').map(n => (/^\d+$/.test(n) ? Number(n) : NaN))
+  const [pa, pb] = [parts(a), parts(b)]
+  if (pa.some(Number.isNaN) || pb.some(Number.isNaN)) return a === b ? 0 : undefined
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const d = (pa[i] ?? 0) - (pb[i] ?? 0)
+    if (d !== 0) return d < 0 ? -1 : 1
+  }
+  return 0
+}
+
+/** La version d'un `plugin.json` (celui que rend `gh`, ou un fichier lu) ; rien s'il ne la porte pas. */
+export function publishedVersionOf(json: string): string | undefined {
+  try {
+    const version = (JSON.parse(json) as { version?: unknown }).version
+    return typeof version === 'string' && version !== '' ? version : undefined
+  } catch {
+    return undefined
+  }
+}
+
+export type VersionNote = { state: 'ok' | 'late' | 'unknown'; text: string; gesture?: string; foot: string }
+
+/**
+ * Les trois versions du plugin : celle que tourne cette session, celle du magasin de l'app (la prochaine
+ * session ; absente sous `--plugin-dir`), la dernière publiée. Dit la seule qui retarde et le geste ;
+ * `foot` est la ligne courte du pied du panneau (maquette B). Une version locale en avance (pas encore
+ * publiée) compte à jour.
+ */
+export function versionNote(v: { session: string; app?: string; published?: string; publishedError?: string }): VersionNote {
+  const behind = (a: string, b: string) => compareVersions(a, b) === -1 || compareVersions(a, b) === undefined
+  if (!v.published) {
+    return {
+      state: 'unknown',
+      text: `roadmap ${v.session} ; dernière version publiée non vérifiée (${v.publishedError ?? 'illisible'})`,
+      foot: `roadmap ${v.session} · non vérifiée`,
+    }
+  }
+  if (v.app && behind(v.app, v.published)) {
+    return {
+      state: 'late',
+      text: `L'app charge ${v.app}, la dernière est ${v.published}.`,
+      gesture: UPDATE_GESTURE,
+      foot: `${v.app} → ${v.published} · l'app retarde`,
+    }
+  }
+  if (v.app && behind(v.session, v.app)) {
+    return {
+      state: 'late',
+      text: `Cette session tourne ${v.session}, l'app a ${v.app}.`,
+      gesture: 'Ouvre une session neuve',
+      foot: `${v.session} → ${v.app} · cette session retarde`,
+    }
+  }
+  if (!v.app && behind(v.session, v.published)) {
+    return {
+      state: 'late',
+      text: `Cette session tourne ${v.session}, la dernière est ${v.published}.`,
+      gesture: UPDATE_GESTURE,
+      foot: `${v.session} → ${v.published} · cette session retarde`,
+    }
+  }
+  return { state: 'ok', text: `roadmap ${v.session}, à jour`, foot: `roadmap ${v.session} · à jour` }
+}

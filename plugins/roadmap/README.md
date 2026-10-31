@@ -25,6 +25,9 @@ les sessions toutes les 3 s (le dossier de la roadmap toutes les 15 s), et montr
 
 - la part faite, une barre par axe (cliquable), la légende des axes repliée derrière elle en une
   ligne « › 7 axes · … » qu'un clic déplie (#149), et en haut à droite la roue qui ouvre les Réglages ;
+- en pied, la version du plugin et « Rafraîchir » (#138) : un clic relit tout et compare la version
+  de la session, celle de l'app et la dernière publiée (dépôt public, par `curl` ou `gh`) ; si l'une retarde, le geste pour
+  la charger ;
 - chez Maestro, la ligne « En cours » (#149) : le compte de ses sessions et un point par voie ;
   la choisir montre l'arbre des sessions (barre et étape sous chaque voie) à la place de la liste.
   À l'ouverture, le panneau de Maestro la choisit si une session t'attend, sinon Ma journée, sinon
@@ -546,6 +549,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.98.0 (2026-10-31)** : panneau : le pied montre la version du plugin et un bouton Rafraîchir qui relit tout et dit si l'app retarde sur la version publiée, avec le geste (#138)
 - **0.97.0 (2026-10-31)** : panneau : chez Maestro, « En cours » est l'arbre des sessions ; axes repliés, filtres en pastilles, ▶ au bout de la ligne, plus de redite (#149)
 - **0.96.0 (2026-10-31)** : maestro : l'arbre des sessions de Maestro se tient au-dessus de la saisie (bande AbovePrompt, style C), à jour et cliquable (#147)
 - **0.95.0 (2026-10-31)** : panneau : plus de vue Tableau ni de sélecteur Liste | Tableau, le panneau n'a plus que la liste (#148)

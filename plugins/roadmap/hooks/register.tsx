@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, RenderElement, RenderInput, ToolCallResult } from 'claude-code'
 
-import type { LiveEntry, ShortTitle, View } from '../types'
+import type { LiveEntry, ShortTitle, VersionCheck, View } from '../types'
 import {
   AXIS_THEME,
   PALETTES,
@@ -317,6 +317,8 @@ import {
   groupings,
   type TodoCounter,
   type Design,
+  publishedVersionOf,
+  versionNote,
 } from './parse'
 
 const PANE = PANE_ID
@@ -467,6 +469,7 @@ const retryAtom = atom({ plugin: 'roadmap', key: 'retry' } as const, 0)
 const zoneGenAtom = atom({ plugin: 'roadmap', key: 'zoneGen' } as const, 0)
 /** Pourquoi les autres sessions manquent (liste refusée ou illisible) ; vide quand elle se lit. */
 const scanNoteAtom = atom({ plugin: 'roadmap', key: 'scanNote' } as const, '')
+const versionNoteAtom = atom({ plugin: 'roadmap', key: 'versionNote' } as const, { state: 'none', text: '', foot: '' } as VersionCheck)
 /**
  * Le bloc des réglages de session donné en dernier à la conversation (#116), vide sinon : un bloc qui
  * a changé depuis (#119) se redonne. L'état de session survit au rechargement du module.
@@ -2298,6 +2301,96 @@ async function refresh($: EngineInterface): Promise<void> {
   if (await restamp($, source)) await summarize($, source)
 }
 
+// ── Rafraîchir (#138) ─────────────────────────────────────────────────────
+
+/**
+ * Où la dernière version publiée se lit : le `plugin.json` du dépôt public, que `tools/release.py` publie
+ * à chaque version (`PUBLIC_REPO`). Le dépôt de travail, privé, n'est pas lisible des autres comptes.
+ */
+const PUBLISHED_RAW = 'https://raw.githubusercontent.com/bbr21/roadmap-plugin/main/plugins/roadmap/.claude-plugin/plugin.json'
+const PUBLISHED_API = 'repos/bbr21/roadmap-plugin/contents/plugins/roadmap/.claude-plugin/plugin.json'
+/**
+ * Les lectures, dans l'ordre : `curl`, sans compte ; puis `gh`, en secours. Chacune par le PATH, puis à sa
+ * place sur le Mac (l'app lance les commandes sans le PATH du terminal).
+ */
+const PUBLISHED_READS: readonly (readonly string[])[] = [
+  ...['curl', '/usr/bin/curl'].map(c => [c, '-fsSL', '--max-time', '10', PUBLISHED_RAW]),
+  ...['gh', '/opt/homebrew/bin/gh', '/usr/local/bin/gh'].map(g => [g, 'api', '-H', 'Accept: application/vnd.github.raw', PUBLISHED_API]),
+]
+
+/** La version que tourne cette session : lue au chargement du module, avant qu'une synchro de l'app ne réécrive le fichier. */
+let sessionVersion: string | undefined
+
+async function pluginVersionAt($: EngineInterface, root: string): Promise<string | undefined> {
+  return publishedVersionOf((await readOr($, `${root}/.claude-plugin/plugin.json`)) ?? '')
+}
+
+async function loadSessionVersion($: EngineInterface): Promise<string> {
+  // Illisible, elle vaut « ? » une fois pour toutes : un dessin ne relit pas le fichier (un clic ne relit rien).
+  sessionVersion ??= (await pluginVersionAt($, $.plugin.root)) ?? '?'
+  return sessionVersion
+}
+
+/**
+ * La version du magasin de l'app, que prendra la prochaine session : le `manifest.json` du dossier `rpm`
+ * qui contient ce plugin dit le dossier de l'entrée roadmap. Sans magasin (`--plugin-dir`, terminal) : rien.
+ */
+async function appVersion($: EngineInterface): Promise<string | undefined> {
+  const rpm = $.plugin.root.replace(/\/[^/]+\/?$/, '')
+  let manifest: { plugins?: { id?: unknown; name?: unknown; marketplaceName?: unknown }[] }
+  try {
+    manifest = JSON.parse(await $.fs.read(`${rpm}/manifest.json`)) as typeof manifest
+  } catch {
+    return undefined
+  }
+  const entry = (manifest.plugins ?? []).find(p => p.name === 'roadmap' && p.marketplaceName === 'roadmap')
+  return entry && typeof entry.id === 'string' ? pluginVersionAt($, `${rpm}/${entry.id}`) : undefined
+}
+
+/** La dernière version publiée, ou pourquoi elle ne se lit pas (la raison de la dernière lecture qui a démarré). */
+async function publishedVersion($: EngineInterface): Promise<{ version?: string; error?: string }> {
+  let error = 'ni curl ni gh'
+  // Un outil qui a démarré et échoué (hors ligne, refus) ne se relance pas par un autre chemin.
+  const started = new Set<string>()
+  for (const argv of PUBLISHED_READS) {
+    const tool = (argv[0] ?? '').replace(/^.*\//, '')
+    if (started.has(tool)) continue
+    try {
+      const r = await $.process.run(argv, { timeoutMs: 15_000 })
+      started.add(tool)
+      const version = r.exitCode === 0 ? publishedVersionOf(r.stdout) : undefined
+      if (version) return { version }
+      error = (r.stderr.trim().split('\n')[0] ?? '').slice(0, 80) || 'réponse de GitHub illisible'
+    } catch {
+      // cette commande ne démarre pas : la suivante
+    }
+  }
+  return { error }
+}
+
+let refreshing = false
+
+/** Le bouton Rafraîchir : tout se relit (fichiers, titres, sessions), puis les versions se comparent. */
+async function refreshAll($: EngineInterface): Promise<void> {
+  if (refreshing) return
+  refreshing = true
+  try {
+    const session = await loadSessionVersion($)
+    await update($, versionNoteAtom, () => ({ state: 'checking', text: '', foot: `roadmap ${session} · vérification…` }))
+    paneCache = undefined
+    await update($, retryAtom, v => v + 1)
+    await refresh($)
+    const [app, published] = await Promise.all([appVersion($), publishedVersion($)])
+    const note = versionNote({ session, app, published: published.version, publishedError: published.error })
+    await update($, versionNoteAtom, () => note)
+  } catch {
+    const session = await loadSessionVersion($)
+    await update($, versionNoteAtom, () => ({ state: 'unknown', text: '', foot: `roadmap ${session} · non vérifiée` }))
+  } finally {
+    refreshing = false
+  }
+}
+
 /** Le numéro du pas, pour la recherche du dossier ; une relecture en vol fait sauter le pas suivant. */
 let pollTick = 0
 let polling = false
@@ -3300,6 +3393,8 @@ export const register: Register = (on, options) => {
         writePerf($)
       })
     }
+    // La version de ce module, avant qu'une synchro de l'app ne réécrive son plugin.json (#138).
+    void loadSessionVersion($).catch(() => undefined)
     await $.command.register({
       name: 'roadmap',
       description: 'Ouvrir le panneau de la roadmap du projet',
@@ -4549,6 +4644,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   } = view
   const data = await paneData($, source, [stamp, titlesVersion, themeStamp, retry, liveVersion].join('|'))
   const { palette, bilan: bilanData, titles, live: liveEntries, ignored } = data
+  const [versionCheck, ownVersion] = await Promise.all([read($, versionNoteAtom), loadSessionVersion($)])
   const searching = search.trim() !== ''
   const today = todayOf(now)
   const me = source.me
@@ -6542,6 +6638,30 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
       {sessionsTree}
 
       {!sessionsTree && <Box flexDirection="column">{groups.map(g => (g.band ? bandRow(idOf(g), g.name, g.band.count, g.band.lead) : section(idOf(g), g.name, g.tasks, rowsOf.get(idOf(g)) ?? 0, g.lead, g.mark, g.block)))}</Box>}
+
+      {/* Le pied (#138, maquette B) : la version de cette session, et « Rafraîchir », qui relit tout et la compare à la publiée. */}
+      <Box flexDirection="column" gap="xs">
+        {Svg && <Svg source={ruleIcon(palette.border, wide)} alt="séparateur" height={1} />}
+        <Box flexDirection="row" justifyContent="space-between" alignItems="center" paddingX={SPACE.indent}>
+          <Box flexShrink={1} minWidth={0}>
+            <Text size="caption" tabular color={versionCheck.state === 'late' ? palette.blockOn : palette.text3} wrap="truncate-end">
+              {versionCheck.state === 'none' ? `roadmap ${ownVersion}` : versionCheck.foot}
+            </Text>
+          </Box>
+          <Box key="version-refresh-row" flexShrink={0} marginLeft={1} paddingX={SPACE.indent} alignItems="center" backgroundColor={palette.btn} hover={{ backgroundColor: palette.btnHover }}>
+            {corners(RADIUS.control, palette.bg)}
+            <Button key="version-refresh" plain label={versionCheck.state === 'checking' ? 'Rafraîchir…' : '↻ Rafraîchir'} onPress={() => void refreshAll($)} />
+          </Box>
+        </Box>
+        {versionCheck.state === 'late' && versionCheck.gesture && (
+          <Box paddingX={SPACE.indent}>
+            <Box paddingX={SPACE.indent} paddingY="xs" backgroundColor={palette.blockTint}>
+              {corners(RADIUS.control, palette.bg)}
+              <Text size="caption" color={palette.blockOn} wrap="wrap">{`${versionCheck.text} ${versionCheck.gesture}.`}</Text>
+            </Box>
+          </Box>
+        )}
+      </Box>
     </Box>,
   )
 }

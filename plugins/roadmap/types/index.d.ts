@@ -36,6 +36,8 @@ declare module 'claude-code' {
       pendingAsks: readonly string[]
       /** L'explication ouverte dans le volet Réglages (#118) : la clé de sa ligne (`pref:adhd`, `opt:theme`), vide sinon. */
       settingsInfo: string
+      /** Ce qu'a donné le dernier « Rafraîchir » du pied du panneau (#138) : les versions comparées ; `none` avant le premier clic. */
+      versionNote: VersionCheck
     }
   }
 }
@@ -101,3 +103,6 @@ export type LiveEntry = {
 
 /** Le titre court et le sujet d'une task, gardés dans `$.store` par empreinte du libellé. */
 export type ShortTitle = { titre: string; sujet: string }
+
+/** Le résultat du bouton Rafraîchir (#138) : `foot` pour le pied du panneau, `text` et `gesture` pour l'encart quand une version retarde. */
+export type VersionCheck = { state: 'none' | 'checking' | 'ok' | 'late' | 'unknown'; text: string; gesture?: string; foot: string }
