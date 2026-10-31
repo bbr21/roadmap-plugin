@@ -488,6 +488,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.73.0 (2026-10-30)** : maestro : rappel de roadmap muet chez un enfant de Maestro, archivage refusé tant que la ligne #N est ouverte, ligne État « fini : #N close le … » lue dans ROADMAP-fait, et un enfant archivé avant la clôture remonte à Maestro (#124)
 - **0.72.0 (2026-10-30)** : reglages-session : mode ADHD, bloc de fin de tour sans emoji, et au dernier tour d'une session une fiche en tableau (Mission, Livré, État, À toi, Session) ; un rappel qui ne réclame que le bouton d'archivage ne fait plus réécrire le message (#123)
 - **0.71.0 (2026-10-30)** : panneau : seconde vue, le tableau des sessions (T'attend, En cours, Prête, À lancer, Livrées), bascule Liste · Tableau en tête du panneau, compteurs cliquables par colonne, une session au repos sans question reste En cours (#120)
 - **0.70.0 (2026-10-30)** : maestro : la carte est la question, la boîte de fin de Maestro qui redemande de lancer une carte posée dans le tour ou une session liée qui tourne est refusée une fois (#122)

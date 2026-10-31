@@ -61,9 +61,12 @@ lui remonte.
     `docs/plans/<type>-<slug>/maquettes.html` ; mode Projet : à côté du document), dis « attend
     une réponse : choix de maquette, <chemin> » en tête de ton compte rendu et termine ton tour ;
   - ne coche pas ta ligne : ton dernier compte rendu dit ce qui a été fait et le souci rencontré ;
-  - ta ligne close et plus rien en attente, ton dernier tour finit sur « fini, rien en attente »,
-    « Archiver cette session ? » et le bouton de réponse « Oui, archiver » (l'app ne propose pas le
-    bouton d'app `archive`) ; sur ce clic, `archive_session` (`self`) ; refusé par l'app, dis-le ;
+  - ta ligne close (lue dans `ROADMAP-fait.md`, jamais supposée) et plus rien en attente, ton
+    dernier tour finit sur « fini, rien en attente », ta ligne État dit « fini : #N close par Maestro
+    le AAAA-MM-JJ », puis « Archiver cette session ? » et le bouton de réponse « Oui, archiver »
+    (l'app ne propose pas le bouton d'app `archive`) ; sur ce clic, `archive_session` (`self`) ;
+    refusé par l'app, dis-le ; ta ligne encore ouverte, ne propose pas l'archivage : Maestro la
+    coche à la fusion ;
   - une tâche que tu proposes remonte à Maestro : pose ta carte comme d'habitude, le panneau la lui
     transmet au lieu de la laisser dans ton transcript.
 
@@ -216,6 +219,15 @@ La fusion elle-même :
     question s'il n'en reste pas ;
   - **le panneau le garantit** : une boîte de fin de Maestro qui nomme encore une session déjà archivée
     est refusée, avec les numéros à retirer ; Maestro la repose sans elles.
+- **Archiver ne clôt rien, et ne fait rien perdre** (#124) : la ligne d'une tâche ne se coche que par
+  Maestro, après la fusion. Une sous-session dont la ligne est encore ouverte ne propose pas son
+  archivage (le panneau refuse sa boîte de fin), et sa fiche de fin dit « #N close par Maestro le
+  AAAA-MM-JJ » une fois la ligne close. Archivée quand même (barre latérale, clic trop tôt), elle
+  paraît dans les nouvelles de Maestro pendant 7 jours : « archivée avant la clôture de sa ligne »,
+  avec sa branche fusionnée ou non. Fusionnée, Maestro coche la ligne avec son bilan (le dernier
+  compte rendu reste lisible par `search_session_transcripts`) ; pas fusionnée, sa branche reste :
+  Maestro la relit et la fusionne (§ 5), ou la désarchive (`unarchive_session`) s'il lui reste du
+  travail.
 - **Maestro finit** quand toutes ses lignes sont cochées : boîte de fin (`wrap_up`) avec la question
   « Archiver cette session ? » et le bouton de réponse « Oui, archiver » en premier
   (`actions: [{"label": "Oui, archiver", "message": "Oui, archive cette session."}]` : l'app ne
@@ -242,6 +254,10 @@ La fusion elle-même :
   message de l'utilisateur, Maestro reçoit les enfants qui coincent depuis 15 min et ceux à archiver
   (§ 3, « Prendre des nouvelles »).
 - Il refuse la boîte de fin de Maestro qui propose d'archiver une session déjà archivée (§ 6, #110).
+- Il ne relance pas une sous-session avec le rappel « la roadmap n'a pas bougé » : Maestro tient sa
+  ligne (#124). Il refuse sa boîte de fin « Archiver cette session ? » tant que sa ligne est ouverte,
+  et lui donne la phrase de l'État une fois close ; il signale à Maestro une sous-session archivée
+  avant la clôture de sa ligne (§ 6).
 - Il refuse une fois la boîte de fin qui redemande de lancer une carte posée dans le tour ou une
   session liée qui tourne déjà (§ 2, #122).
 - Le brief de Maestro et les nouvelles des enfants lui rappellent de tenir sa liste d'étapes

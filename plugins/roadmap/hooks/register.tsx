@@ -190,6 +190,12 @@ import {
   prefsChangedLead,
   contextShrank,
   closingBlockGaps,
+  archivedChildrenOf,
+  archivedOpenText,
+  type ArchivedOpen,
+  ownLineState,
+  lineOpenRefusal,
+  type OwnLineContext,
   STEP_LIST_MIN_TOOLS,
   stepListReminder,
   closingBlockReminder,
@@ -607,11 +613,12 @@ async function roadmapBlock($: EngineInterface, c: Capture): Promise<string | un
       return rangementReminder(id, r)
     }
     c.archiveAsked.add(id)
-    return archiveReminder(id)
+    return archiveReminder(id, ownLineState(id, now.open, now.done).fait, await parentIsMaestro($))
   }
   const git = c.gitAtTurn === undefined ? undefined : await gitState($)
   const changed = c.wroteThisTurn || (git !== undefined && git !== c.gitAtTurn)
-  return changed ? captureReminder(c.source) : undefined
+  // Un enfant de Maestro ne touche pas la roadmap : le rappel ne lui ferait écrire qu'une justification (#124).
+  return changed && !(await parentIsMaestro($)) ? captureReminder(c.source) : undefined
 }
 
 /**
@@ -652,8 +659,41 @@ let closingTurn = { work: false, box: '' }
 async function closingNote($: EngineInterface, last: string | undefined, rangementPending = false): Promise<string | undefined> {
   if (!closingTurn.work) return undefined
   if (!(await readSessionPrefs($)).prefs.adhd) return undefined
-  const gaps = closingBlockGaps(last, closingTurn.box).filter(g => !(rangementPending && (g === 'archiver' || g === 'mission')))
-  return gaps.length === 0 ? undefined : closingBlockReminder(gaps)
+  // La ligne #N de la session (#124) : ouverte, l'archivage vient trop tôt ; close, l'État le dit.
+  const line = await ownLine($).catch(() => undefined)
+  const gaps = closingBlockGaps(last, closingTurn.box, line).filter(g => !(rangementPending && (g === 'archiver' || g === 'mission' || g === 'etat-close')))
+  return gaps.length === 0 ? undefined : closingBlockReminder(gaps, line)
+}
+
+/**
+ * La ligne `#N` de cette session dans la roadmap de la capture (#124), lue à chaque fois : Maestro la
+ * coche pendant que l'enfant attend. Aucune sans capture, sans numéro, pour une session de
+ * vérification (elle ne porte pas la tâche), ou quand la ligne est dans une autre roadmap.
+ */
+async function ownLine($: EngineInterface): Promise<OwnLineContext | undefined> {
+  const c = capture
+  if (!settings.capture || !c) return undefined
+  const title = (await readOwnSession($)).title
+  const id = sessionTitleId(title)
+  if (id === undefined || sessionTitleKind(title) === 'check') return undefined
+  const now = await roadmapNow($, c.source)
+  const line = ownLineState(id, now.open, now.done)
+  if (line.state === 'absent') return undefined
+  return { ...line, id, file: files(c.source).open, maestro: await parentIsMaestro($) }
+}
+
+/**
+ * La garde de l'archivage à la boîte de fin (#124) : « Archiver cette session ? » alors que la ligne de
+ * la session est encore ouverte. Une boîte sans cette question, ou une roadmap illisible, passe.
+ */
+async function openLineAsk($: EngineInterface, ask: unknown): Promise<string | undefined> {
+  if (typeof ask !== 'string' || !/archiver cette session/i.test(ask)) return undefined
+  try {
+    const line = await ownLine($)
+    return line?.state === 'open' ? lineOpenRefusal(line.id, line.file, line.maestro) : undefined
+  } catch {
+    return undefined
+  }
 }
 
 /** Une tâche de la session dont le rangement a été rappelé et dont l'archivage attend encore (#101). */
@@ -1292,6 +1332,28 @@ async function ownParent($: EngineInterface): Promise<{ id: string; parent: stri
   return { id: me.sessionId, parent: me.parentSessionId }
 }
 
+/** Le parent de cette session est un Maestro : gardé, un parent ne cesse pas de l'être (#124). */
+let parentMaestro = false
+
+/**
+ * Cette session a-t-elle été lancée par un Maestro (#124) ? Sa ligne est alors tenue par lui, qui la
+ * coche à la fusion : la clause lui interdit d'y toucher. Le parent se juge comme Maestro lui-même :
+ * son titre, sa marque, ou sa famille. Une fiche illisible dit non, sans se garder.
+ */
+async function parentIsMaestro($: EngineInterface): Promise<boolean> {
+  if (parentMaestro) return true
+  try {
+    const me = await ownParent($)
+    if (!me) return false
+    const ran = await $.tool.call({ tool: GET_SESSION_TOOL, session_id: me.parent })
+    const title = ran.deny === undefined && !ran.isError ? sessionTitleIn(ran.text ?? '') : ''
+    parentMaestro = await ownIsMaestro($, { id: me.parent, title })
+  } catch {
+    // fiche illisible : pas un enfant de Maestro
+  }
+  return parentMaestro
+}
+
 /**
  * Une note d'enfant lue du store ; illisible, aucune : une étape ou une question d'un autre format
  * ferait lever la lecture du parent et couperait les nouvelles de tous ses enfants (#90).
@@ -1459,7 +1521,8 @@ async function finishedFacts(
  * qu'il n'a pas d'enfant. Note les relances faites, pour n'en faire qu'une par attente.
  */
 async function childAlertContext($: EngineInterface): Promise<string | undefined> {
-  const listed = await $.tool.call({ tool: LIST_SESSIONS_TOOL, linked: true, limit: LIST_LIMIT })
+  // Les archivées comprises : le filet de #124 voit un enfant archivé avant la clôture de sa ligne.
+  const listed = await $.tool.call({ tool: LIST_SESSIONS_TOOL, linked: true, include_archived: true, limit: LIST_LIMIT })
   if (listed.deny !== undefined || listed.isError) return undefined
   const rows: unknown = JSON.parse(listed.text ?? '[]')
   if (!Array.isArray(rows)) return undefined
@@ -1470,7 +1533,13 @@ async function childAlertContext($: EngineInterface): Promise<string | undefined
   const id = (await readOwnSession($)).id
   if (!id) return undefined
   const children = childrenOf(rows, id)
-  if (children.length === 0) return undefined
+  let archived: ChildRow[] = []
+  try {
+    archived = archivedChildrenOf(rows, id, await $.clock.now())
+  } catch {
+    // horloge illisible : pas de filet ce message-ci
+  }
+  if (children.length === 0 && archived.length === 0) return undefined
   let known: Promise<ParentLines | undefined> | undefined
   const lines = () => {
     known ??= (async () => {
@@ -1518,7 +1587,39 @@ async function childAlertContext($: EngineInterface): Promise<string | undefined
   } else if (JSON.stringify(next) !== JSON.stringify(alerted)) {
     await $.store.set(alertedKey, next)
   }
-  return childAlertText(alerts)
+  const lost = await archivedOpen($, archived, lines).catch(() => [])
+  const text = [childAlertText(alerts), archivedOpenText(lost)].filter((t): t is string => t !== undefined).join('\n\n')
+  return text === '' ? undefined : text
+}
+
+/**
+ * Le filet (#124) : les enfants archivés dont la ligne `#N` est encore ouverte dans la roadmap de
+ * Maestro, et leur branche fusionnée ou non dans leur base, lue dans le dépôt de Maestro (le worktree
+ * de l'enfant a pu partir avec l'archivage, sa branche reste). Hors du projet de Maestro : rien.
+ */
+async function archivedOpen($: EngineInterface, archived: readonly ChildRow[], lines: () => Promise<ParentLines | undefined>): Promise<ArchivedOpen[]> {
+  if (archived.length === 0) return []
+  const known = await lines()
+  if (!known) return []
+  const root = await $.session.root()
+  const out: ArchivedOpen[] = []
+  for (const child of archived) {
+    const n = sessionTitleId(child.title)
+    const cwd = child.cwd
+    if (!n || !known.open.has(n) || known.done.has(n) || !cwd || !known.match.some(prefix => cwd.startsWith(prefix))) continue
+    let merged: boolean | undefined
+    if (child.branch) {
+      try {
+        const base = (await childFiche($, child.id)).base
+        const code = (await gitIn($, root, 'merge-base', '--is-ancestor', child.branch, base)).code
+        merged = code === 0 ? true : code === 1 ? false : undefined
+      } catch {
+        // git illisible : la ligne ouverte suffit à le dire
+      }
+    }
+    out.push({ child, ...(merged !== undefined ? { merged } : {}) })
+  }
+  return out
 }
 
 /**
@@ -3044,7 +3145,8 @@ export const register: Register = (on, options) => {
     }
   })
   on('tool.call', { tool: WRAP_UP_TOOL }, async ($, e, next) => {
-    const refusal = fromAgent(e) ? undefined : ((await archivedAsk($, (e as { ask?: unknown }).ask)) ?? (await launchAsk($, e as never)))
+    const ask = (e as { ask?: unknown }).ask
+    const refusal = fromAgent(e) ? undefined : ((await archivedAsk($, ask)) ?? (await openLineAsk($, ask)) ?? (await launchAsk($, e as never)))
     if (refusal !== undefined) return { deny: refusal }
     noteBox(e)
     if (!fromAgent(e)) closingTurn = { work: true, box: boxText(e) }
