@@ -517,6 +517,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.85.0 (2026-10-30)** : panneau : identité Roadmap au style Voies chez Maestro et chez une tâche, vue de tâche dans une session #N, Maestro voit ses tâches lancées (#137)
 - **0.84.0 (2026-10-30)** : maestro : récap au fil des fusions, rappel de liste d'étapes après chaque fusion ou publication, ligne de récap par tâche livrée, fiche finale de Maestro avec le tableau de ses tâches (#136)
 - **0.83.1 (2026-10-30)** : maestro : chez Maestro, la boîte de fin sans question est refusée tant que sa liste d'étapes suit des sessions en cours, pour que le menu reste visible (#133)
 - **0.83.0 (2026-10-30)** : panneau : la date d'un parent est celle de son enfant ouvert le plus proche, due: n'y est plus exigé, et Ma journée ne montre que les enfants dus, sous leur parent en gris (#125, lot 3)

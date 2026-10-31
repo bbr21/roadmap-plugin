@@ -172,6 +172,92 @@ export function brandMarkIcon(palette: Palette, size = 20): string {
   )
 }
 
+/**
+ * Les voies de Maestro (#137, style Voies) : le moyeu, la marque en grand, et une courbe vers chaque
+ * rangée de la liste qui le suit, à la couleur de l'état de sa tâche (close : en pointillé). Le dessin
+ * a la hauteur des rangées (ou du moyeu, s'il est plus haut) : la liste se pose à côté.
+ */
+export function brandLanesIcon(
+  palette: Palette,
+  states: readonly ('wait' | 'live' | 'done')[],
+  row = 24,
+  hub = 32,
+): { source: string; width: number; height: number } {
+  const height = Math.max(states.length * row, hub)
+  const top = (height - states.length * row) / 2
+  const cy = height / 2
+  const width = hub + 52
+  const hex = { wait: palette.wait, live: palette.live, done: palette.done }
+  const lanes = states
+    .map((state, i) => {
+      const y = top + i * row + row / 2
+      const dash = state === 'done' ? ' stroke-dasharray="1 4"' : ''
+      return (
+        `<path class="lane" d="M${hub} ${cy}C${hub + 26} ${cy} ${hub + 16} ${y} ${hub + 44} ${y}" fill="none" stroke="${hex[state]}" stroke-width="2.4" stroke-linecap="round"${dash}/>` +
+        `<circle cx="${hub + 46}" cy="${y}" r="3.2" fill="${hex[state]}"/>`
+      )
+    })
+    .join('')
+  const u = hub / 20
+  const hy = cy - hub / 2
+  const bar = (y: number, w: number, i: number) =>
+    `<rect x="${4 * u}" y="${hy + y * u}" width="${w * u}" height="${2.4 * u}" rx="${1.2 * u}" fill="${axisColor(palette, i)}"/>`
+  const mark =
+    `<rect x="${0.5 * u}" y="${hy + 0.5 * u}" width="${19 * u}" height="${19 * u}" rx="${5 * u}" fill="${palette.btn}" stroke="${palette.border}"/>` +
+    bar(5, 12, 0) +
+    bar(8.8, 8.5, 1) +
+    bar(12.6, 5, 2)
+  return {
+    source: `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">${lanes}${mark}</svg>`,
+    width,
+    height,
+  }
+}
+
+/**
+ * La voie d'une tâche (#137, style Voies) : la station d'avant (faite : pleine et cochée ; ouverte :
+ * creuse, à la couleur du blocage), la sienne en grand à la couleur de l'axe, et celle qu'elle débloque,
+ * reliées par la voie (pleine jusqu'à elle, pointillée après). Les mots sont ceux de `brandText`.
+ */
+export function brandStationsIcon(
+  palette: Palette,
+  accent: string,
+  o: { before?: { text: string; done: boolean }; here: string; next?: string },
+  width: number,
+): { source: string; width: number; height: number } {
+  const height = 52
+  const y = 20
+  const pad = 14
+  const a = pad
+  const c = width - pad
+  const b = o.before && o.next ? width / 2 : o.before ? c : a
+  const label = (x: number, text: string, anchor: string, fill: string, weight: number) =>
+    `<text x="${x}" y="${y + 26}" text-anchor="${anchor}" font-family="${FONT}" font-size="${TEXT.pill}" font-weight="${weight}" fill="${fill}">${escapeXml(text)}</text>`
+  const anchorOf = (x: number) => (x === a ? 'start' : x === c ? 'end' : 'middle')
+  let body = ''
+  if (o.before) {
+    body += `<path d="M${a} ${y}H${b}" stroke="${accent}" stroke-width="4" stroke-linecap="round"/>`
+  }
+  if (o.next) {
+    body += `<path d="M${b} ${y}H${c}" stroke="${accent}" stroke-width="4" stroke-linecap="round" stroke-dasharray="2 7" stroke-opacity="0.6"/>`
+    body += `<circle cx="${c}" cy="${y}" r="6" fill="${palette.bg}" stroke="${accent}" stroke-width="2"/>`
+    body += label(c, o.next, 'end', palette.text2, TEXT.weight.soft)
+  }
+  if (o.before) {
+    body += o.before.done
+      ? `<circle cx="${a}" cy="${y}" r="6" fill="${palette.done}"/><path d="M${a - 2.6} ${y}l2 2 3.4-3.6" fill="none" stroke="${palette.bg}" stroke-width="1.6"/>`
+      : `<circle cx="${a}" cy="${y}" r="6" fill="${palette.bg}" stroke="${palette.block}" stroke-width="2"/>`
+    body += label(a, o.before.text, 'start', o.before.done ? palette.text2 : palette.block, TEXT.weight.soft)
+  }
+  body += `<circle cx="${b}" cy="${y}" r="12" fill="${axisTint(palette, accent)}"/><circle cx="${b}" cy="${y}" r="7" fill="${accent}"/>`
+  body += label(b, o.here, anchorOf(b), palette.text, TEXT.weight.strong)
+  return {
+    source: `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">${body}</svg>`,
+    width,
+    height,
+  }
+}
+
 /** Lecture, plein. */
 export function playIcon(hex: string, size = 14): string {
   return svg(size, 24, `<path d="M7 4.5v15l12.5-7.5z" fill="${hex}"/>`)

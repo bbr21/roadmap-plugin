@@ -3896,7 +3896,20 @@ export type BrandTask = { id: string; label: string; state: 'wait' | 'live' | 'd
 
 export type Brand =
   | { kind: 'maestro'; project: string; tasks: BrandTask[] }
-  | { kind: 'task'; project: string; id: string; label: string; axis: string; axisIndex: number; due?: string; apres?: string; maestro?: string }
+  | {
+      kind: 'task'
+      project: string
+      id: string
+      label: string
+      axis: string
+      axisIndex: number
+      due?: string
+      /** La station d'avant sur sa voie : sa première prérequise (`après:`), faite ou non. */
+      before?: { id: string; done: boolean }
+      /** La station d'après : la première tâche ouverte qui l'attend. */
+      next?: string
+      maestro?: string
+    }
 
 /** Le brief de `launchBrief` en tête du message : son numéro de tâche, et le Maestro de sa clause. */
 export function briefTaskOf(text: string): { id: string; maestro?: string } | undefined {
@@ -3909,6 +3922,37 @@ export function briefTaskOf(text: string): { id: string; maestro?: string } | un
 
 const BRAND_RANK: Record<BrandTask['state'], number> = { wait: 0, live: 1, done: 2 }
 
+/**
+ * Les tâches que la session `me` a lancées, chacune avec sa session : une fille ouverte dont le titre
+ * porte « #N · … » (Maestro lance par `start_session`, rien n'entre alors dans le suivi du panneau), ou
+ * la session suivie d'une tâche quand c'est `me` qui l'a lancée. Avant #137, seul le suivi comptait :
+ * un Maestro et ses deux filles ouvertes lisaient « Aucune tâche rattachée ».
+ */
+export function maestroTaskSessions(o: {
+  tasks: readonly Task[]
+  me: string
+  rows: readonly unknown[]
+  tracked: (t: Task) => string | undefined
+}): { task: Task; sessionId: string }[] {
+  const startedBy = new Map<string, string>()
+  const byId = new Map<string, string>()
+  for (const raw of o.rows) {
+    if (typeof raw !== 'object' || raw === null) continue
+    const r = raw as { sessionId?: unknown; title?: unknown; startedBy?: unknown; isArchived?: unknown }
+    if (typeof r.sessionId !== 'string' || typeof r.startedBy !== 'string') continue
+    startedBy.set(r.sessionId, r.startedBy)
+    if (r.startedBy !== o.me || r.isArchived === true || typeof r.title !== 'string') continue
+    const id = sessionTitleId(r.title)
+    if (id !== undefined && !byId.has(id)) byId.set(id, r.sessionId)
+  }
+  return o.tasks.flatMap(task => {
+    if (!task.id) return []
+    const tracked = o.tracked(task)
+    const sessionId = byId.get(task.id) ?? (tracked !== undefined && startedBy.get(tracked) === o.me ? tracked : undefined)
+    return sessionId ? [{ task, sessionId }] : []
+  })
+}
+
 /** Les tâches des sessions lancées par Maestro, dans l'ordre où l'œil les cherche : qui attend, qui tourne, ce qui est clos. */
 export function maestroBrandTasks(
   entries: readonly { id: string; label: string; running: boolean; open: boolean; done: boolean }[],
@@ -3918,38 +3962,93 @@ export function maestroBrandTasks(
     .sort((a, b) => BRAND_RANK[a.state] - BRAND_RANK[b.state])
 }
 
-const BRAND_STATE_WORD: Record<BrandTask['state'], string> = { wait: 'attend une réponse', live: 'en session', done: 'close' }
+const BRAND_STATE_WORD: Record<BrandTask['state'], string> = { wait: "t'attend", live: 'en session', done: 'close' }
+
+const FR_MONTHS = ['janv.', 'févr.', 'mars', 'avr.', 'mai', 'juin', 'juil.', 'août', 'sept.', 'oct.', 'nov.', 'déc.']
+
+/** « 6 nov. », « 1er déc. » : une date AAAA-MM-JJ comme on la dit. */
+function frDay(iso: string): string {
+  const [, m, d] = iso.slice(0, 10).split('-')
+  const day = Number(d)
+  const month = FR_MONTHS[Number(m) - 1]
+  return month && day ? `${day === 1 ? '1er' : day} ${month}` : iso
+}
+
+/** L'échéance d'une tâche en clair : « 6 nov., dans 4 jours » ; sans date du jour, la date seule. */
+function dueWords(due: string, today: string): string {
+  if (!today) return frDay(due)
+  const days = daysBetween(today, due)
+  const plural = (n: number) => `${n} jour${n > 1 ? 's' : ''}`
+  const rel = days < 0 ? `en retard de ${plural(-days)}` : days === 0 ? "aujourd'hui" : days === 1 ? 'demain' : `dans ${plural(days)}`
+  return `${frDay(due)}, ${rel}`
+}
 
 /**
- * Les mots d'une marque : le surtitre, le titre, la phrase dessous ; chez Maestro, l'état de chaque tâche
- * rattachée et le pied ; chez une tâche, ses repères (après, échéance). La carte et l'en-tête les partagent.
+ * Les mots d'une marque, au style Voies (#137) : le titre, la phrase dessous, le pied de l'en-tête ;
+ * chez Maestro, l'état de chaque tâche lancée ; chez une tâche, son échéance et les mots des stations
+ * de sa voie. La carte, l'en-tête, la vue de tâche et le design system les partagent.
  */
-export function brandText(brand: Brand): { eyebrow: string; title: string; sub: string; foot: string; states: string[]; meta: string[] } {
-  const eyebrow = `Roadmap · ${brand.project}`
+export function brandText(
+  brand: Brand,
+  today = '',
+): {
+  title: string
+  sub: string
+  foot: string
+  states: string[]
+  meta: string[]
+  stations?: { before?: { text: string; done: boolean }; here: string; next?: string }
+} {
   if (brand.kind === 'maestro') {
-    const n = brand.tasks.length
+    const n = brand.tasks.filter(t => t.state !== 'done').length
     const waiting = brand.tasks.filter(t => t.state === 'wait').length
-    const foot =
-      n === 0
-        ? "Aucune tâche rattachée pour l'instant"
-        : `${n} tâche${n > 1 ? 's' : ''} rattachée${n > 1 ? 's' : ''}${waiting > 0 ? ` · ${waiting} attend${waiting > 1 ? 'ent' : ''} une réponse` : ''}`
-    return {
-      eyebrow,
-      title: 'Maestro',
-      sub: 'Session orchestratrice : elle lance une session par tâche, suit et fusionne. Elle ne code pas.',
-      foot,
-      states: brand.tasks.map(t => BRAND_STATE_WORD[t.state]),
-      meta: [],
-    }
+    const sessions = `${n} session${n > 1 ? 's' : ''}`
+    const wait = waiting > 0 ? `, ${waiting} t'attend${waiting > 1 ? 'ent' : ''}` : ''
+    const sub =
+      n > 0
+        ? `Orchestre ${sessions} sur ${brand.project}${wait}`
+        : brand.tasks.length > 0
+          ? `Ses ${brand.tasks.length} tâches lancées sont closes`
+          : "Aucune session lancée pour l'instant"
+    const foot = n > 0 ? `${sessions}${wait}` : brand.tasks.length > 0 ? 'aucune session ouverte' : 'aucune session'
+    return { title: 'Maestro', sub, foot, states: brand.tasks.map(t => BRAND_STATE_WORD[t.state]), meta: [] }
   }
   return {
-    eyebrow,
-    title: `#${brand.id} · ${brand.label}`,
-    sub: brand.maestro ? `Lancée par ${brand.maestro}` : `Tâche de la roadmap ${brand.project}`,
+    title: `#${brand.id} ${brand.label}`,
+    sub: brand.maestro ? `Tâche lancée par ${brand.maestro}` : `Tâche de la roadmap ${brand.project}`,
     foot: '',
     states: [],
-    meta: [...(brand.apres ? [`après ${/^\d+$/.test(brand.apres) ? `#${brand.apres}` : brand.apres}`] : []), ...(brand.due ? [`due ${frDate(brand.due)}`] : [])],
+    meta: brand.due ? [dueWords(brand.due, today)] : [],
+    stations: {
+      ...(brand.before ? { before: { text: brand.before.done ? `#${brand.before.id} faite` : `après #${brand.before.id}`, done: brand.before.done } } : {}),
+      here: `#${brand.id}, ici`,
+      ...(brand.next ? { next: `débloque #${brand.next}` } : {}),
+    },
   }
+}
+
+/**
+ * Ce que montre le panneau d'une session (#137) : sa tâche, dans une session « #N · … », tant qu'aucune
+ * tâche n'est ouverte en détail et que « Toute la roadmap » n'a pas été demandée ; sinon la roadmap.
+ */
+export function paneFocus(brand: Brand | undefined, view: { selected: string; whole?: boolean }): 'task' | 'roadmap' {
+  return brand?.kind === 'task' && view.selected === '' && view.whole !== true ? 'task' : 'roadmap'
+}
+
+/** L'écart d'une branche avec sa base : `git rev-list --left-right --count <base>...HEAD` et `git diff --name-only <base>...HEAD`. */
+export function branchGap(counts: string, names: string): { ahead: number; behind: number; files: number } | undefined {
+  const m = /^\s*(\d+)\s+(\d+)\s*$/.exec(counts)
+  if (!m) return undefined
+  return { behind: Number(m[1]), ahead: Number(m[2]), files: names.split('\n').filter(l => l.trim() !== '').length }
+}
+
+/** L'écart en mots : ce qui reste à fusionner, puis ce que la base a gagné depuis (rien à dire à 0). */
+export function branchText(gap: { ahead: number; behind: number; files: number }, base: string): string[] {
+  const n = (k: number, word: string) => `${k} ${word}${k > 1 ? 's' : ''}`
+  return [
+    gap.ahead === 0 ? 'rien à fusionner' : `${n(gap.ahead, 'commit')} à fusionner, ${n(gap.files, 'fichier')}`,
+    ...(gap.behind > 0 ? [`${base} a avancé de ${n(gap.behind, 'commit')}`] : []),
+  ]
 }
 
 /** La marque d'une tâche de la roadmap, sa couleur d'axe prise dans l'ordre du panneau ; absente, rien. */
@@ -3957,6 +4056,9 @@ function taskBrand(id: string, source: Source, tasks: readonly Task[], maestro?:
   const task = tasks.find(t => t.id === id)
   if (!task) return undefined
   const order = axisOrder(tasks.filter(t => !t.done), tasks.filter(t => t.done))
+  // Sa voie : la prérequise qui trace la chaîne, et la première ouverte qui l'attend.
+  const before = prereqOf(task, tasks)
+  const next = tasks.find(t => !t.done && t.id !== undefined && prereqsOf(t, tasks).includes(task))
   return {
     kind: 'task',
     project: source.name,
@@ -3965,7 +4067,8 @@ function taskBrand(id: string, source: Source, tasks: readonly Task[], maestro?:
     axis: task.axis,
     axisIndex: Math.max(0, order.indexOf(task.axis)),
     ...(task.due ? { due: task.due } : {}),
-    ...(task.apres && task.apres !== '-' ? { apres: task.apres } : {}),
+    ...(before?.id ? { before: { id: before.id, done: before.done } } : {}),
+    ...(next?.id ? { next: next.id } : {}),
     ...(maestro ? { maestro } : {}),
   }
 }

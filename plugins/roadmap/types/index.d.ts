@@ -61,6 +61,8 @@ export type View = {
   groupBy: string
   /** Task ouverte en détail, par clé `<fichier>:<ligne>` ; vide = la liste. */
   selected: string
+  /** Dans une session « #N · … », toute la roadmap demandée à la place de la vue de tâche (#137) ; absent, la vue de tâche. */
+  whole?: boolean
   /** Sections de sujet dépliées dans la vue d'ensemble (sans filtre). */
   openGroups: string[]
   /** Tâches dont le lancement a été demandé depuis ce panneau (clé `taskKey`) : leur bouton est grisé. */

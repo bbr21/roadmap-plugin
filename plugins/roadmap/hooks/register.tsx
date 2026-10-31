@@ -6,7 +6,9 @@ import {
   AXIS_THEME,
   PALETTES,
   axisColor,
+  brandLanesIcon,
   brandMarkIcon,
+  brandStationsIcon,
   barCuts,
   barIcon,
   axisPillIcon,
@@ -56,10 +58,14 @@ import { SETTINGS_PANE, drawSettings, openSettings, prefsFile, redrawSettings, s
 import {
   ageLabel,
   axisLabel,
+  branchGap,
+  branchText,
   brandText,
   briefTaskOf,
   maestroBrandTasks,
+  maestroTaskSessions,
   openingBrand,
+  paneFocus,
   sessionBrand,
   type Brand,
   type BrandTask,
@@ -1985,6 +1991,8 @@ const lastActivityBySession = new Map<string, number>()
 const startedBySession = new Map<string, string>()
 /** Les sessions ouvertes (non archivées) de la dernière relecture : le parent d'une session suivie est-il encore là (#121) ? */
 let openSessionIds = new Set<string>()
+/** Les rangées de la dernière relecture, fiche de cette session comprise : les filles de Maestro s'y lisent (#137). */
+let sessionRows: unknown[] = []
 let listDenied = false
 
 /** Les sessions lues par relecture : au-delà des 40 d'avant, une journée chargée en laissait dehors. */
@@ -2139,6 +2147,7 @@ async function matchSessions($: EngineInterface, source: Source): Promise<void> 
       })
     }
     openSessionIds = open
+    sessionRows = sessions
     const same = next.size === sessionMatches.size && [...next].every(([k, v]) => sessionMatches.get(k)?.sessionId === v.sessionId)
     sessionMatches = next
     if (!same || runningChanged) await update($, liveVersionAtom, v => v + 1)
@@ -3557,7 +3566,7 @@ export const register: Register = (on, options) => {
       const data = await brandData($)
       const brand = data?.shorten(openingBrand({ text: e.props.text, source: data.source, tasks: data.tasks, maestroTasks: data.maestroTasks }))
       if (!data || !brand) return next(e)
-      const card = brandTree($, e, brand, data.palette, 'card')
+      const card = brandTree($, e, brand, data.palette, 'card', todayOf(await $.clock.now()))
       if (!e.props.isExpanded || brand.kind === 'maestro') return card
       const { Box, Text } = $.ui.resolve(e)
       return (
@@ -3605,13 +3614,18 @@ export const register: Register = (on, options) => {
 /** Les tâches des sessions que cette session a lancées, avec leur état : ce que Maestro montre. */
 function maestroTasksOf(source: Source, tasks: readonly Task[], live: Record<string, LiveEntry>, me: string | undefined, short: (t: Task) => string): BrandTask[] {
   if (!me) return []
+  // Le suivi du panneau, ou la session trouvée par son titre ; les filles « #N · … » d'abord (#137).
+  const tracked = (t: Task) => live[liveKeyOf(source, t)]?.sessionId ?? sessionMatches.get(taskKey(t))?.sessionId
+  const rows = [...sessionRows, ...[...startedBySession].map(([sessionId, startedBy]) => ({ sessionId, startedBy }))]
   return maestroBrandTasks(
-    tasks.flatMap(t => {
-      const sid = t.id ? live[liveKeyOf(source, t)]?.sessionId : undefined
-      if (!t.id || !sid || startedBySession.get(sid) !== me) return []
+    maestroTaskSessions({ tasks, me, rows, tracked }).map(({ task: t, sessionId: sid }) => ({
+      id: t.id as string,
+      label: short(t),
+      running: runningBySession.get(sid) ?? false,
       // Avant la première relecture des sessions, une session suivie compte pour ouverte.
-      return [{ id: t.id, label: short(t), running: runningBySession.get(sid) ?? false, open: openSessionIds.size === 0 || openSessionIds.has(sid), done: t.done }]
-    }),
+      open: openSessionIds.size === 0 || openSessionIds.has(sid),
+      done: t.done,
+    })),
   )
 }
 
@@ -3637,100 +3651,276 @@ async function brandData($: EngineInterface) {
   return { source, tasks, palette: data.palette, own, shorten, maestroTasks: maestroTasksOf(source, tasks, data.live, own.id, short) }
 }
 
-/** Les tâches rattachées montrées sur la carte ; les suivantes se comptent dans le pied. */
+/** Les tâches lancées montrées sur la carte et l'en-tête ; les suivantes se comptent. */
 const BRAND_TASKS_SHOWN = 6
 
+/** La largeur de dessin d'une surface : ses colonnes (le panneau les donne), moins `margin` colonnes. */
+function surfaceWidth(e: RenderInput<'UserMessage'> | RenderInput<'Pane'>, margin: number, max = Infinity): number {
+  const columns = (e.props as { bodyColumns?: number }).bodyColumns ?? 56
+  return Math.min(max, fullWidth(Math.max(24, columns - margin)))
+}
+
 /**
- * La carte ou l'en-tête Roadmap, dans les éléments de la surface : la marque et « Roadmap · projet »,
- * le titre, l'axe et les repères d'une tâche, la phrase, et chez Maestro ses tâches et leur état. Le
- * filet de gauche prend la couleur de l'axe. Les mots sont ceux de `brandText`, comme au design system.
+ * L'identité Roadmap au style Voies (#137, maquette A choisie par Bertrand le 2026-10-30), sans cadre ni
+ * filet : chez Maestro, le moyeu d'où part une voie vers chaque tâche lancée, à la couleur de son état ;
+ * chez une tâche, sa ligne de marque, son titre, son axe et son échéance, et (carte, vue de tâche) sa
+ * voie : la station d'avant, la sienne, celle qu'elle débloque. Les mots sont ceux de `brandText`.
+ * `card` : à la place du message d'ouverture ; `header` : en haut du panneau ; `focus` : la tête de la
+ * vue de tâche. Sans Svg (terminal), la liste et les mots restent.
  */
 function brandTree(
   $: EngineInterface,
   e: RenderInput<'UserMessage'> | RenderInput<'Pane'>,
   brand: Brand,
   palette: Palette,
-  variant: 'card' | 'header',
+  variant: 'card' | 'header' | 'focus',
+  today = '',
+  state?: BrandTask['state'],
 ): RenderElement {
   const { Box, Text } = $.ui.resolve(e)
   const resolved = $.ui.resolve(e)
-  const Svg = 'Svg' in resolved ? resolved.Svg : undefined
-  const words = brandText(brand)
-  const header = variant === 'header'
-  const accent = axisColor(palette, brand.kind === 'task' ? brand.axisIndex : 0)
+  const Svg = 'Svg' in resolved && e.surface !== 'terminal' ? resolved.Svg : undefined
+  const words = brandText(brand, today)
+  const card = variant === 'card'
+  const strut = (height: number) =>
+    Svg ? <Svg source={`<svg xmlns="http://www.w3.org/2000/svg" width="1" height="${height}"/>`} alt="espace" width={1} height={height} /> : null
   const pill = (label: string, bg: string, fg: string) => {
     if (!Svg) return <Text key={label} size="caption" color={fg}>{` ${label} `}</Text>
     const p = pillIcon({ text: label, bg, fg, height: SIZE.pill.row, weight: TEXT.weight.soft })
     return <Svg key={label} source={p.source} alt={label} width={p.width} height={p.height} />
   }
-  const tone = (state: BrandTask['state']) =>
-    state === 'wait' ? [palette.waitTint, palette.waitOn] : state === 'live' ? [palette.liveTint, palette.liveOn] : [palette.sel, palette.text2]
-  const shown = brand.kind === 'maestro' && !header ? brand.tasks.slice(0, BRAND_TASKS_SHOWN) : []
-  return (
-    <Box flexDirection="row" borderStyle="round" borderColor={palette.border} backgroundColor={palette.note}>
-      <Box width={1} backgroundColor={accent} />
-      <Box flexDirection="column" flexGrow={1} gap={SPACE.tight} paddingX={SPACE.indent} paddingY={header ? 'xs' : 'sm'}>
-        <Box flexDirection="row" alignItems="center" gap={SPACE.row}>
-          {Svg && <Svg source={brandMarkIcon(palette, header ? 18 : 20)} alt="Roadmap" width={header ? 18 : 20} height={header ? 18 : 20} />}
-          <Text size="footnote" weight="semibold">Roadmap</Text>
-          <Text size="footnote" color={palette.text2}>{words.eyebrow.replace(/^Roadmap · /, '· ')}</Text>
-        </Box>
-        <Text size={header ? 'heading' : 'title'} weight="semibold" wrap="wrap">{words.title}</Text>
-        {brand.kind === 'task' && (
-          <Box flexDirection="row" alignItems="center" gap={SPACE.row}>
-            {Svg ? (
-              (() => {
-                const a = axisPillIcon({ name: axisLabel(brand.axis), hex: accent, bg: axisTint(palette, accent), fg: palette.text })
-                return <Svg source={a.source} alt={brand.axis} width={a.width} height={a.height} />
-              })()
-            ) : (
-              <Text size="caption" color={accent}>{axisLabel(brand.axis)}</Text>
-            )}
-            {words.meta.map(m => pill(m, palette.sel, palette.text2))}
-          </Box>
-        )}
-        <Text size="footnote" color={palette.text2} wrap="wrap">{words.sub}</Text>
-        {shown.length > 0 && (
-          <Box flexDirection="column">
-            {shown.map((t, i) => (
-              <Box key={`brand:${t.id}`} flexDirection="row" alignItems="center" gap={SPACE.row}>
-                <Text size="footnote" tabular color={palette.text2}>{`#${t.id}`}</Text>
-                <Box flexGrow={1} flexShrink={1}>
-                  <Text size="footnote" wrap="truncate-end">{t.label}</Text>
-                </Box>
-                {pill(words.states[i] ?? '', ...(tone(t.state) as [string, string]))}
+  const tone = (s: BrandTask['state']): [string, string] =>
+    s === 'wait' ? [palette.waitTint, palette.waitOn] : s === 'live' ? [palette.liveTint, palette.liveOn] : [palette.sel, palette.text2]
+  const mark = (size: number) => Svg && <Svg source={brandMarkIcon(palette, size)} alt="Roadmap" width={size} height={size} />
+
+  if (brand.kind === 'maestro') {
+    const shown = brand.tasks.slice(0, BRAND_TASKS_SHOWN)
+    const more = brand.tasks.length - shown.length
+    const row = card ? 28 : SIZE.strut.row
+    const lanes = Svg && shown.length > 0 ? brandLanesIcon(palette, shown.map(t => t.state), row, card ? 40 : 32) : undefined
+    const list = shown.length > 0 && (
+      <Box key="brand-lanes" flexDirection="row" alignItems="center" gap={SPACE.row}>
+        {lanes && Svg && <Svg source={lanes.source} alt="voies" width={lanes.width} height={lanes.height} />}
+        <Box flexDirection="column" flexGrow={1} flexShrink={1} minWidth={0}>
+          {shown.map((t, i) => (
+            <Box key={`brand:${t.id}`} flexDirection="row" alignItems="center" gap={SPACE.row}>
+              {strut(row)}
+              <Text size="footnote" tabular color={palette.text2}>{`#${t.id}`}</Text>
+              <Box flexGrow={1} flexShrink={1} minWidth={0}>
+                <Text size="footnote" wrap="truncate-end">{t.label}</Text>
               </Box>
-            ))}
-          </Box>
-        )}
-        {brand.kind === 'maestro' && header && brand.tasks.length > 0 && (
-          <Box flexDirection="row" flexWrap="wrap" gap={SPACE.row}>
-            {brand.tasks.slice(0, BRAND_TASKS_SHOWN).map(t => pill(`#${t.id}`, ...(tone(t.state) as [string, string])))}
-          </Box>
-        )}
-        {brand.kind === 'maestro' && <Text size="caption" color={palette.text3}>{words.foot}</Text>}
+              {pill(words.states[i] ?? '', ...tone(t.state))}
+            </Box>
+          ))}
+          {more > 0 && <Text size="caption" color={palette.text3}>{`et ${more} de plus`}</Text>}
+        </Box>
       </Box>
+    )
+    if (card) {
+      return (
+        <Box flexDirection="column" gap={SPACE.block} paddingY="xs">
+          <Box flexDirection="row" alignItems="center" gap={SPACE.row}>
+            {shown.length === 0 && mark(28)}
+            <Box flexDirection="column">
+              <Text size="title" weight="semibold">{words.title}</Text>
+              <Text size="footnote" color={palette.text2} wrap="wrap">{words.sub}</Text>
+            </Box>
+          </Box>
+          {list}
+        </Box>
+      )
+    }
+    return (
+      <Box flexDirection="column" gap={SPACE.tight}>
+        {list}
+        <Box flexDirection="row" alignItems="center" gap={SPACE.row}>
+          {shown.length === 0 && mark(18)}
+          <Text size="heading" weight="semibold">{words.title}</Text>
+          <Text size="footnote" color={palette.text2}>{words.foot}</Text>
+        </Box>
+      </Box>
+    )
+  }
+
+  const accent = axisColor(palette, brand.axisIndex)
+  const axis = Svg ? (
+    (() => {
+      const a = axisPillIcon({ name: axisLabel(brand.axis), hex: accent, bg: axisTint(palette, accent), fg: palette.text })
+      return <Svg key="axis" source={a.source} alt={brand.axis} width={a.width} height={a.height} />
+    })()
+  ) : (
+    <Text key="axis" size="caption" color={accent}>{axisLabel(brand.axis)}</Text>
+  )
+  const stations =
+    variant !== 'header' && Svg && words.stations
+      ? brandStationsIcon(palette, accent, words.stations, surfaceWidth(e, variant === 'focus' ? 4 : 6, card ? 520 : Infinity))
+      : undefined
+  return (
+    <Box flexDirection="column" gap={SPACE.tight} paddingY={card ? 'xs' : undefined}>
+      <Box flexDirection="row" alignItems="center" gap={SPACE.row}>
+        {mark(variant === 'focus' ? 16 : 18)}
+        <Box flexGrow={1} flexShrink={1} minWidth={0}>
+          <Text size="footnote" color={palette.text2} wrap="truncate-end">{words.sub}</Text>
+        </Box>
+        {state && pill(BRAND_STATE_WORDS[state], ...tone(state))}
+      </Box>
+      <Box flexDirection="row" gap={SPACE.row}>
+        <Text size={card ? 'title' : 'heading'} weight="semibold" color={accent}>{`#${brand.id}`}</Text>
+        <Box flexShrink={1} minWidth={0}>
+          <Text size={card ? 'title' : 'heading'} weight="semibold" wrap="wrap">{brand.label}</Text>
+        </Box>
+      </Box>
+      <Box flexDirection="row" alignItems="center" gap={SPACE.row}>
+        {axis}
+        {words.meta.map(m => pill(m, palette.sel, palette.text2))}
+      </Box>
+      {stations && Svg && <Svg source={stations.source} alt={words.stations?.here ?? ''} width={stations.width} height={stations.height} />}
     </Box>
   )
 }
 
+/** Les mots d'état d'une tâche lancée, ceux des pastilles de Maestro. */
+const BRAND_STATE_WORDS: Record<BrandTask['state'], string> = { wait: "t'attend", live: 'en session', done: 'close' }
+
 /**
- * L'en-tête du panneau (maquette B) : chez Maestro (son titre ou sa marque), « Maestro » et ses tâches ;
- * chez une session « #N · … », sa tâche et son Maestro ; rien ailleurs, ni sur une lecture en panne.
+ * La marque de cette session : chez Maestro (son titre ou sa marque), Maestro et ses tâches ; chez une
+ * session « #N · … », sa tâche et son Maestro ; rien ailleurs, ni sur une lecture en panne.
  */
-async function paneBrand($: EngineInterface, e: RenderInput<'Pane'>): Promise<RenderElement | null> {
+async function sessionBrandOf($: EngineInterface): Promise<{ brand: Brand; data: NonNullable<Awaited<ReturnType<typeof brandData>>> } | undefined> {
   try {
     const data = await brandData($)
-    if (!data) return null
+    if (!data) return undefined
     const { own } = data
     const isMaestro = isMaestroSession(own.title) || (own.id !== undefined && (await loadMaestros($))[own.id] !== undefined)
     const brand = data.shorten(
       sessionBrand({ title: own.title, isMaestro, source: data.source, tasks: data.tasks, maestroTasks: data.maestroTasks, ...(parentMaestro ? { maestro: 'Maestro' } : {}) }),
     )
-    return brand ? brandTree($, e, brand, data.palette, 'header') : null
+    return brand ? { brand, data } : undefined
   } catch {
-    return null
+    return undefined
   }
+}
+
+/**
+ * L'en-tête du panneau, au-dessus de la roadmap : Maestro et ses voies ; chez une tâche dont on a demandé
+ * toute la roadmap, sa ligne de marque et « Ma tâche », qui ramène à la vue de tâche (#137).
+ */
+function paneBrand($: EngineInterface, e: RenderInput<'Pane'>, found: Awaited<ReturnType<typeof sessionBrandOf>>, today: string): RenderElement | null {
+  if (!found) return null
+  const tree = brandTree($, e, found.brand, found.data.palette, 'header', today)
+  if (found.brand.kind !== 'task') return tree
+  const { Box, Button } = $.ui.resolve(e)
+  return (
+    <Box flexDirection="column" gap={SPACE.tight}>
+      {tree}
+      <Box flexDirection="row">
+        <Button key="task-focus" plain dimColor label="‹ Ma tâche" onPress={() => void setView($, () => ({ whole: false, selected: '' }))} />
+      </Box>
+    </Box>
+  )
+}
+
+/** Ce que la vue de tâche lit hors de la roadmap : l'écart de la branche, la spec et le plan ; relu au plus toutes les 30 s. */
+let focusFacts: { key: string; at: number; branch: string[]; base: string; docs: { label: string; path: string }[] } | undefined
+const FOCUS_FACTS_MS = 30_000
+
+async function readFocusFacts($: EngineInterface, source: Source, task: Task, ownId: string | undefined, now: number) {
+  const root = await $.session.root()
+  const key = `${root}|${task.id ?? ''}|${task.spec ?? ''}`
+  if (focusFacts && focusFacts.key === key && now - focusFacts.at < FOCUS_FACTS_MS) return focusFacts
+  let branch: string[] = []
+  const base = ownId ? (await childFiche($, ownId)).base : 'main'
+  try {
+    const counts = await gitIn($, root, 'rev-list', '--left-right', '--count', `${base}...HEAD`)
+    const names = await gitIn($, root, 'diff', '--name-only', `${base}...HEAD`)
+    const gap = counts.code === 0 && names.code === 0 ? branchGap(counts.out, names.out) : undefined
+    if (gap) branch = branchText(gap, base)
+  } catch {
+    // pas de git (mode Projet, dossier hors dépôt) : pas de ligne Branche
+  }
+  const docs: { label: string; path: string }[] = []
+  if (task.spec) {
+    const at = `${source.dir}/${task.spec.replace(/\/$/, '')}`
+    for (const [label, path] of [['Spec', `${at}/spec.md`], ['Plan', `${at}/plan.md`], ['Spec', at]] as const) {
+      if (docs.some(d => d.label === label)) continue
+      try {
+        if ((await $.fs.stat(path)).kind === 'file') docs.push({ label, path })
+      } catch {
+        // absent
+      }
+    }
+  }
+  focusFacts = { key, at: now, branch, base, docs }
+  return focusFacts
+}
+
+/**
+ * La vue de tâche (#137) : dans une session « #N · … », sa tâche à la place de toute la roadmap. La tête
+ * au style Voies, la mission entière, puis le dossier (spec, plan), la branche et son écart avec sa base,
+ * et l'état vu par Maestro ; « Toute la roadmap » ramène à la vue d'ensemble. Pas de liste d'étapes :
+ * celle de l'app suffit (#109).
+ */
+async function taskFocusView(
+  $: EngineInterface,
+  e: RenderInput<'Pane'>,
+  found: NonNullable<Awaited<ReturnType<typeof sessionBrandOf>>>,
+  today: string,
+  now: number,
+): Promise<RenderElement | null> {
+  const { brand, data } = found
+  if (brand.kind !== 'task') return null
+  const task = data.tasks.find(t => t.id === brand.id)
+  if (!task) return null
+  const { Box, Text, Button } = $.ui.resolve(e)
+  const resolved = $.ui.resolve(e)
+  const Svg = 'Svg' in resolved && e.surface !== 'terminal' ? resolved.Svg : undefined
+  const palette = data.palette
+  const facts = await readFocusFacts($, data.source, task, data.own.id, now)
+  const running = data.own.id !== undefined ? runningBySession.get(data.own.id) : undefined
+  const state: BrandTask['state'] | undefined = task.done ? 'done' : brand.maestro && running !== undefined ? (running ? 'live' : 'wait') : undefined
+  const strut = (height: number) =>
+    Svg ? <Svg source={`<svg xmlns="http://www.w3.org/2000/svg" width="1" height="${height}"/>`} alt="espace" width={1} height={height} /> : null
+  const field = (name: string, value: RenderElement) => (
+    <Box key={`focus:${name}`} flexDirection="row" alignItems="center" gap={SPACE.row}>
+      <Box width={10} flexShrink={0} flexDirection="row" alignItems="center">
+        {strut(SIZE.strut.control)}
+        <Text size="footnote" color={palette.text2}>{name}</Text>
+      </Box>
+      <Box flexDirection="row" alignItems="center" gap={SPACE.row} flexShrink={1} minWidth={0} flexWrap="wrap">
+        {value}
+      </Box>
+    </Box>
+  )
+  return (
+    <Box flexDirection="column" gap={SPACE.root} paddingX={SPACE.indent}>
+      {brandTree($, e, brand, palette, 'focus', today, state)}
+      <Text size="footnote" wrap="wrap">{task.label}</Text>
+      <Box flexDirection="column">
+        {facts.docs.length > 0 &&
+          field(
+            'Dossier',
+            <Box flexDirection="row" gap={SPACE.row}>
+              {facts.docs.map(d => (
+                <Button key={`focus-doc:${d.label}`} label={d.label} onPress={() => void openFile($, d.path)} />
+              ))}
+            </Box>,
+          )}
+        {facts.branch.length > 0 &&
+          field(
+            'Branche',
+            <Box flexDirection="column">
+              {facts.branch.map(l => (
+                <Text key={`focus-branch:${l}`} size="footnote" wrap="wrap">{l}</Text>
+              ))}
+            </Box>,
+          )}
+        {task.attend !== undefined && field('Attend', <Text size="footnote" wrap="wrap">{task.attend}</Text>)}
+      </Box>
+      <Box flexDirection="row">
+        <Button key="whole-roadmap" label="Toute la roadmap" onPress={() => void setView($, () => ({ whole: true }))} />
+      </Box>
+    </Box>
+  )
 }
 
 async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<RenderElement> {
@@ -3827,6 +4017,13 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     )
   }
   const done = data.done
+
+  // Dans une session « #N · … » : sa tâche plutôt que toute la roadmap (#137).
+  const ownBrand = await sessionBrandOf($)
+  if (ownBrand && paneFocus(ownBrand.brand, view) === 'task') {
+    const focus = await taskFocusView($, e, ownBrand, today, now)
+    if (focus) return focus
+  }
 
   // La date d'un parent est celle de son enfant ouvert le plus proche (#125) : filtres, tri et pastilles la lisent.
   const openTasks = withParentDates(open.filter(t => !t.done))
@@ -5438,7 +5635,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   }
 
   // L'en-tête Roadmap de la session (#127), au-dessus de l'avancement.
-  const brandHead = await paneBrand($, e)
+  const brandHead = paneBrand($, e, ownBrand, today)
   // L'avancement et sa barre font un seul bloc : la barre colle aux chiffres. La liste et le tableau le partagent.
   const head = (
       <Box flexDirection="column">
