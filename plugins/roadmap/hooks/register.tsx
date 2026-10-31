@@ -18,7 +18,6 @@ import {
   checkRowIcon,
   chainRowIcon,
   treeHeadRowIcon,
-  flagIcon,
   bubbleIcon,
   squareRowIcon,
   cornerIcon,
@@ -129,7 +128,6 @@ import {
   maestroIntro,
   maestroYes,
   MAESTRO_MENU,
-  type Prio,
   rowPills,
   sortTasks,
   type Pill,
@@ -3789,14 +3787,6 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
       : kind === 'wait'
         ? drawnPill({ text, bg: palette.waitTint, fg: palette.waitOn, mark: 'person', height: SIZE.pill.detail })
         : drawnPill({ text, bg: palette.sel, fg: palette.text2, height: SIZE.pill.detail, weight: TEXT.weight.soft })
-  // La priorité (`prio:`) : P1 rouge, P2 orange, P3 grise. Elle reste sur la ligne d'une tâche en
-  // session ou bloquée : un P1 bloqué est justement ce qu'il faut voir.
-  const prioColors: Record<Prio, { bg: string; fg: string; weight: 500 | 600 }> = {
-    '1': { bg: palette.lateTint, fg: palette.lateOn, weight: TEXT.weight.strong },
-    '2': { bg: palette.blockTint, fg: palette.blockOn, weight: TEXT.weight.strong },
-    '3': { bg: palette.sel, fg: palette.text2, weight: TEXT.weight.soft },
-  }
-  const prioPill = (p: Prio, height?: number) => drawnPill({ text: `P${p}`, ...prioColors[p], ...(height ? { height } : {}) })
   // Une tâche née d'un retour de l'app, ou qui en a reçu (`feedback:`) : violette, la voix d'un testeur.
   const feedbackPill = (height?: number) =>
     drawnPill({ text: 'Feedback', bg: palette.waitTint, fg: palette.waitOn, weight: TEXT.weight.soft, ...(height ? { height } : {}) })
@@ -4043,7 +4033,6 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
         <Box flexDirection="column" gap={SPACE.tight} paddingX={SPACE.indent}>
           <Box flexDirection="row" alignItems="center" gap={SPACE.row}>
             {axisPill(current)}
-            {current.prio && !current.done && prioPill(current.prio, 20)}
             {current.feedback && feedbackPill(20)}
             {current.id && <Text tabular color={palette.text2}>{`#${current.id}`}</Text>}
             <Text color={palette.text2} wrap="truncate-end">{subject}</Text>
@@ -4362,8 +4351,6 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   // « En cours » : les tâches qu'une session travaille (roue, ou main quand elle t'attend) et
   // celles bloquées par leur prérequise (cadenas).
   const liveAll = inAxis.filter(t => isLive(t) || blocked(t))
-  // « Prioritaires » : P1 et P2 (P3 veut dire « quand on a le temps »).
-  const prioAll = inAxis.filter(t => t.prio === '1' || t.prio === '2')
   // « Retours » : les tâches nées d'un retour de l'app, ou qui en ont reçu.
   const feedbackAll = inAxis.filter(t => t.feedback !== undefined)
   // Par défaut, les tâches en cours ; aucune en cours, toutes.
@@ -4387,11 +4374,9 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
         ? recentAll
         : attend === 'live'
           ? liveAll
-          : attend === 'prio'
-            ? prioAll
-            : attend === 'feedback'
-              ? feedbackAll
-              : openTasks.filter(t => matches(t, axis, attend, me) && matchesWho(t, who, me))
+          : attend === 'feedback'
+            ? feedbackAll
+            : openTasks.filter(t => matches(t, axis, attend, me) && matchesWho(t, who, me))
   const filtered = axis !== 'all' || attend !== 'all' || who !== 'all' || showDone || searching
   const unsorted = shown.filter(t => attend === 'late' || !isOverdue(t, today))
   const late = sortTasks(shown.filter(t => isOverdue(t, today)), sortOrder)
@@ -4609,7 +4594,6 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
         </Box>
         {/* Le numéro d'abord, à sa colonne : les pastilles suivent, les numéros restent alignés. */}
         {t.id && taskNumber(t.id, rowSession ? () => void openSession($, rowSession.entry) : undefined)}
-        {!ghost && !t.done && t.prio && prioPill(t.prio)}
         {!ghost && !t.done && t.feedback && feedbackPill()}
         {!ghost && !inSession && !locked && rowPills(t, today, me).map(rowPill)}
         <Box flexGrow={1} flexShrink={1} minWidth={0}>
@@ -4846,7 +4830,6 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   const states = [
     // En cours : une session y travaille ; la roue de la légende reste fixe (un dessin en image).
     { key: 'live', name: 'En cours', n: liveAll.length, mark: (d: boolean) => tallIcon(fade(spinnerIcon(palette.live, 16, undefined, true), d), 'en cours', 16, '◌', 'suggestion') },
-    { key: 'prio', name: 'Prioritaires', n: prioAll.length, mark: (d: boolean) => tallIcon(fade(flagIcon(palette.late), d), 'prioritaires', 16, '⚑', 'error') },
     { key: 'feedback', name: 'Retours', n: feedbackAll.length, mark: (d: boolean) => tallIcon(fade(bubbleIcon(palette.wait), d), 'retours', 16, '❝', 'permission') },
     { key: 'late', name: 'En retard', n: lateAll.length, mark: (d: boolean) => tallIcon(fade(discIcon(palette.late), d), 'en retard', 16, '●', 'error') },
     // Récentes : ouvertes aujourd'hui ou hier.
@@ -4895,15 +4878,14 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
       })}
     </Box>
   )
-  // « À traiter » (#115, maquette C) : quatre lignes du gabarit des axes, une icône de trait dans la
-  // couleur de la ligne ; la choisie prend sa teinte, son encre et une pastille pleine. Au terminal, des boutons.
+  // « À traiter » (#115, maquette C) : quatre lignes (trois en mode Code, #130) du gabarit des axes,
+  // une icône de trait dans la couleur de la ligne ; la choisie prend sa teinte, son encre et une pastille pleine. Au terminal, des boutons.
   const countOf: Record<string, number> = {
     today: todayAll.length,
     late: lateAll.length,
     soon: soonAll.length,
     relaunch: relaunchAll.length,
     live: liveAll.length,
-    prio: prioAll.length,
     feedback: feedbackAll.length,
     recent: recentAll.length,
     mine: mineCount,
@@ -5123,7 +5105,6 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
       const t = x.task
       const session = facts.get(t)
       const pills: RenderElement[] = []
-      if (!t.done && t.prio) pills.push(prioPill(t.prio))
       if (x.column === 'ask') pills.push(drawnPill({ text: `depuis ${durationLabel(x.since)}`, bg: palette.waitTint, fg: palette.waitOn }))
       // Au repos (arrêtée, sans question) : la pastille le dit à la place de l'étape, le récap en note.
       const resting = x.column === 'run' && session?.running === false

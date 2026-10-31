@@ -99,7 +99,7 @@ même chantier → un **regroupement** sous une mère, existante ou nouvelle (`{
 doublons.
 
 **Trous** : une valeur proposée par tâche, tirée du texte (`due`, `resp`, `relance`, `attend`,
-`prio`, `ouvert`, `parent`) ; une mère dont tous les enfants sont faits se propose en `fermetures`
+`ouvert`, `parent`) ; jamais une `prio` à poser : la priorité ne s'affiche plus (#130) ; une mère dont tous les enfants sont faits se propose en `fermetures`
 (refusée si l'audit vient de lui fusionner une tâche ou de lui donner un enfant ouvert). Une
 boucle de `parent:` ou d'`après:` est refusée.
 

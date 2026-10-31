@@ -14,7 +14,7 @@ Les tâches de {{NOM}}, une ligne par tâche. Une tâche close part en tête de 
 - **resp** : la personne qui porte la tâche, {{QUI}} ou une autre ; un nom pour suivre, pas une assignation, jamais `-`.
 - **parent** : le numéro de la tâche mère (`12` ou `#12`), ou `-` si elle n'en a pas. **après** : les numéros des tâches à faire d'abord, séparés par des virgules, ou `-` si elle n'en a aucune ; le panneau Roadmap la bloque tant qu'une est ouverte.
 - **attend** : ce qui bloque, et qui doit agir. **qui** : la session qui tient la tâche.
-- **prio** : `1` (urgent), `2` (important) ou `3` (quand on a le temps).
+- **prio** : facultatif, `1` (urgent), `2` (important) ou `3` (quand on a le temps). Lu et contrôlé, mais le panneau ne l'affiche pas et ne range pas par lui.
 - **tous** : la tâche revient au calendrier, `semaine`, `2semaines`, `mois`, `trimestre` ou `an` ; `due:` dit sa prochaine occurrence. Cochée, elle se reconduit : l'occurrence part dans ROADMAP-fait sous un numéro neuf (`src:#N`), la ligne reste avec la `due:` suivante.
 - **relance** : la date de la dernière relance du tiers attendu (`attend:`) ; le panneau compte l'attente depuis elle, sinon depuis `ouvert:`.
 - **fiche** : document de contexte. **src** : d'où vient la tâche (email, réunion, note).{{CLES_PUCES}}

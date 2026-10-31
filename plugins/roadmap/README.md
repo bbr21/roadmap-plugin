@@ -25,13 +25,13 @@ les sessions toutes les 3 s (le dossier de la roadmap toutes les 15 s), et montr
 
 - la part faite, une barre par axe (cliquable), la légende des axes (filtre), et en haut à droite la
   roue qui ouvre les Réglages ;
-- sous les axes, « À traiter » (#115) : quatre lignes du même gabarit que les axes, une icône de
+- sous les axes, « À traiter » (#115) : des lignes du même gabarit que les axes, une icône de
   trait dans leur couleur, le nombre en pastille ; toute la ligne se clique, la choisie prend sa
-  teinte et un second clic la retire. En mode Code : En cours, En retard, Prioritaires (P1 et P2),
-  Retours (`feedback:`) ; en mode Projet : Ma journée, En retard, Cette semaine, À relancer ;
+  teinte et un second clic la retire. En mode Code : En cours, En retard, Retours (`feedback:`) ;
+  en mode Projet : Ma journée, En retard, Cette semaine, À relancer ;
 - « Plus de filtres », replié : les autres états non vides (Récentes, ouvertes aujourd'hui ou hier ;
-  À moi ; Attend un tiers, avec la liste des tiers ; en mode Projet aussi Prioritaires, En cours,
-  Retours et le menu « Qui ») ; il reste ouvert tant qu'un de ses filtres est choisi ;
+  À moi ; Attend un tiers, avec la liste des tiers ; en mode Projet aussi En cours, Retours et le
+  menu « Qui ») ; il reste ouvert tant qu'un de ses filtres est choisi ;
 - une recherche par mots ou par numéro (#47), dans les ouvertes et les faites, qui filtre à la frappe,
   et à côté le menu « Ranger » qui montre le rangement en cours ;
 - les tâches par sujet en sections repliables, une ligne par tâche (pastilles échéance, tiers,
@@ -91,16 +91,17 @@ session sans Maestro posent la leur comme avant. La doctrine entière est dans l
 bloquée ou à faire. `après:<début du libellé>` désigne la tâche à faire d'abord : la tâche est bloquée
 (cadenas) tant que l'autre n'est pas faite.
 
-**Chaînes et priorité** (2026-10-27). Une chaîne de tâches reliées par `après:` reste d'un bloc,
+**Chaînes** (2026-10-27). Une chaîne de tâches reliées par `après:` reste d'un bloc,
 dans l'ordre d'exécution : elle se range sous le sujet (ou le jour) de sa tête, même quand les
 tâches suivantes ont un autre sujet, et chaque ligne porte le trait qui la relie aux autres et son
 étape (1 pour la tête ; deux suites de la même tâche partagent leur étape, elles se font en
 parallèle). Le trait fait partie de la marque de la ligne : un dessin par ligne, comme avant. Le
-détail dit « étape 2 sur 4 de la chaîne ». `prio:1` (urgent, rouge), `prio:2` (important,
-orange) et `prio:3` (quand on a le temps, gris) se montrent en pastille, même sur une tâche en
-session ou bloquée ; dans un sujet, l'ordre devient en session, P1, P2, sans priorité, P3, puis
-l'échéance et la date d'ouverture, et une chaîne prend la priorité de sa tâche la plus
-prioritaire, sans changer son ordre interne. L'état « Prioritaires » filtre les P1 et P2.
+détail dit « étape 2 sur 4 de la chaîne ».
+
+**Priorité** (#130, 2026-10-30). `prio:` (1, 2 ou 3) reste lu sur la ligne et contrôlé, mais il
+est facultatif et ne se montre plus : ni pastille P1, P2, P3, ni filtre « Prioritaires », ni
+section P1 dans « Ma journée », ni mention par Maestro. Il ne range plus rien non plus : l'ordre
+d'un sujet, du tableau et des tâches à lancer ne dépend pas d'un critère qu'on ne voit pas.
 
 **Retours** (2026-10-27, id:227 de Splitmybill). `feedback:12,15` porte les numéros des retours
 envoyés depuis l'app d'où vient la tâche, ou qu'elle a reçus : une pastille violette « Feedback »
@@ -132,7 +133,7 @@ déclenche rien.
    elles sont « coincées » et se débloquent avant tout lancement.
 2. **Ce qui tourne**, avec depuis quand.
 3. **Ce qu'on peut lancer** : ni bloqué par sa prérequise, ni en session, ni déjà demandé ; rangé
-   par priorité, puis ce qui ne dort pas chez un tiers, puis ce qui débloque le plus de tâches,
+   par ce qui ne dort pas chez un tiers, puis ce qui débloque le plus de tâches,
    puis l'échéance, puis la plus ancienne. Les quatre premières arrivent avec leur carte de session
    prête (même brief que « Lancer »).
 
@@ -496,6 +497,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.78.0 (2026-10-30)** : panneau : la priorité ne s'affiche plus (ni pastille ni filtre Prioritaires), ne range plus et n'est plus demandée ; prio: reste lu et contrôlé (#130)
 - **0.77.0 (2026-10-30)** : panneau : identité Roadmap à l'ouverture, carte Roadmap à la place du message « Maestro » ou du brief d'une tâche, en-tête Roadmap du panneau (#127)
 - **0.76.0 (2026-10-30)** : panneau : en arbre, un bloc par parent, sa ligne en tête une seule fois avec son avancement, ses enfants en retrait et numérotés par rang, un parent hors filtre gardé en gris (#125, lot 1)
 - **0.75.0 (2026-10-30)** : onboarding, doctor, réglages : toute maquette s'appuie sur le design system que déclare le projet (clé design de .claude/roadmap.json), ou propose d'en poser un (#129)

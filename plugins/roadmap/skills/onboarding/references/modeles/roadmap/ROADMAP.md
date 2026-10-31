@@ -15,7 +15,7 @@ Les tâches ouvertes de {{NOM}}. Ce fichier ne se modifie que dans le dossier pr
 - **verrou** : ressource unique réservée, datée, par exemple `verrou:{{VERROU_EXEMPLE}}@AAAA-MM-JJ`. Liste des verrous : [CLAUDE.md]({{RM_UP}}CLAUDE.md#verrous).
 - **due** : échéance. **après** : le numéro de la tâche à faire d'abord ; le panneau Roadmap range la chaîne dans l'ordre d'exécution, reliée par un trait et numérotée.
 - **feedback** : les numéros des retours reçus (`feedback:12,15`).
-- **prio** : `1` (urgent), `2` (important) ou `3` (quand on a le temps) ; sans `prio:`, pas de priorité posée. Le panneau la montre en pastille et range les P1 en tête.
+- **prio** : facultatif, `1` (urgent), `2` (important) ou `3` (quand on a le temps). Lu et contrôlé, mais le panneau ne l'affiche pas et ne range pas par lui.
 - **spec** : dossier `docs/plans/<type>-<slug>/`. **fiche** : document de contexte. Sur une ligne prise, ils peuvent n'exister que sur sa branche jusqu'à la fusion ; `node scripts/check.mjs` les exige sur `main` pour une ligne libre ou close. **src** : d'où vient la demande.
 - **fait** : date de clôture (et son heure, `fait:AAAA-MM-JJ HH:MM`), dans ROADMAP-fait seulement, suivie de ce qui a été livré.
 - Seuls l'axe, `id:` et le libellé sont obligatoires. Une ligne prise porte aussi `ouvert:`, `due:`, `qui:` et `après:` (`après:-` si rien ne la précède) : le panneau Roadmap les rappelle à l'écriture.

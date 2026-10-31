@@ -119,11 +119,6 @@ export function bellIcon(hex: string, size = 16, width: number = STROKE.base): s
   return line(hex, size, width, '<path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/>')
 }
 
-/** Prioritaires, au trait (le drapeau plein reste dans « Plus de filtres »). */
-export function flagLineIcon(hex: string, size = 16, width: number = STROKE.base): string {
-  return line(hex, size, width, '<path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><path d="M4 22v-7"/>')
-}
-
 /** Retours, au trait : une bulle de parole. */
 export function bubbleLineIcon(hex: string, size = 16, width: number = STROKE.base): string {
   return line(hex, size, width, '<path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/>')
@@ -156,8 +151,6 @@ export function todoIcon(icon: TodoIcon, hex: string): string {
       return bellIcon(hex)
     case 'spin':
       return spinnerIcon(hex, 16, undefined, true)
-    case 'flag':
-      return flagLineIcon(hex)
     case 'bubble':
       return bubbleLineIcon(hex)
   }
@@ -450,11 +443,6 @@ export function treeHeadRowIcon(mark: string, open: boolean, chevronHex: string)
   const chevron = chevronIcon(chevronHex, open).replace(/^<svg /, '<svg x="0" y="4" ')
   const inner = mark.replace(/^<svg /, '<svg x="16" y="0" ')
   return `<svg xmlns="http://www.w3.org/2000/svg" width="32" height="24" viewBox="0 0 32 24">${chevron}${inner}</svg>`
-}
-
-/** Le drapeau des tâches prioritaires (P1, P2), plein, sur 16 px. */
-export function flagIcon(hex: string, size = 16): string {
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 16 16"><path d="M4 2.5v11.5" stroke="${hex}" stroke-width="1.6" stroke-linecap="round"/><path d="M4.6 2.8h8.2l-2.2 3.1 2.2 3.1H4.6z" fill="${hex}"/></svg>`
 }
 
 /** Les tâches nées d'un retour de l'app (`feedback:`) : une bulle de parole, pleine, sur 16 px. */

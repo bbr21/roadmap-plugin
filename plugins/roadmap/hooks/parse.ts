@@ -25,7 +25,7 @@ export type Task = {
   apres?: string
   /** `id:` : le numéro de la tâche, unique dans le dossier, gardé quand elle passe dans les faites. */
   id?: string
-  /** `prio:` : 1 (urgent), 2 (important) ou 3 (quand on a le temps) ; absente, pas de priorité posée. */
+  /** `prio:` : 1 (urgent), 2 (important) ou 3 (quand on a le temps) ; facultative, lue et contrôlée, mais ni affichée ni triée (#130). */
   prio?: Prio
   /** `feedback:` : les numéros des retours de l'app d'où vient la tâche, ou qu'elle a reçus (Splitmybill). */
   feedback?: string[]
@@ -905,15 +905,14 @@ function todayReason(task: Task, today: string, me: readonly string[]): string |
   if (isOverdue(task, today)) return 'En retard'
   const days = task.due === undefined ? undefined : daysBetween(today, task.due)
   if (days !== undefined && days <= 1) return "Aujourd'hui et demain"
-  if (task.prio === '1') return 'P1'
   // Une récurrente entre un jour plus tôt : le temps de la préparer.
   if (task.tous !== undefined && days !== undefined && days <= 2) return 'Récurrentes qui tombent'
   return undefined
 }
 
-const TODAY_SECTIONS = ['En retard', "Aujourd'hui et demain", 'P1', 'Récurrentes qui tombent'] as const
+const TODAY_SECTIONS = ['En retard', "Aujourd'hui et demain", 'Récurrentes qui tombent'] as const
 
-/** « Ma journée » (#99) : à moi, et en retard, due aujourd'hui ou demain, en P1, ou récurrente qui tombe dans les 2 jours. */
+/** « Ma journée » (#99) : à moi, et en retard, due aujourd'hui ou demain, ou récurrente qui tombe dans les 2 jours ; la priorité n'y entre plus (#130). */
 export function isToday(task: Task, today: string, me: readonly string[]): boolean {
   return todayReason(task, today, me) !== undefined
 }
@@ -1016,18 +1015,12 @@ export type SortOptions = {
   prereqOf?: (task: Task) => Task | undefined
 }
 
-/** Le rang d'une priorité, le plus petit d'abord : P1, P2, sans priorité posée, puis P3. */
-export function prioRank(task: Task): number {
-  return task.prio === '1' ? 0 : task.prio === '2' ? 1 : task.prio === '3' ? 3 : 2
-}
-
 /**
- * L'ordre d'une section : en session d'abord, puis par priorité (P1, P2, sans, P3 ; Bertrand,
- * 2026-10-27), puis avec échéance (la plus proche en haut), puis la plus récente en haut et la plus
- * ancienne en bas (choix de Bertrand, 2026-10-22 ; le design disait l'inverse) ; une tâche sans date
- * d'ouverture vient en dernier. Une tâche dont la prérequise est dans la même liste se range juste
- * dessous, en chaîne ; un cycle garde l'ordre. Une chaîne prend la priorité de sa tâche la plus
- * prioritaire : un P1 en bout de chaîne fait monter toute la chaîne, dans son ordre.
+ * L'ordre d'une section : en session d'abord, puis avec échéance (la plus proche en haut), puis la
+ * plus récente en haut et la plus ancienne en bas (choix de Bertrand, 2026-10-22 ; le design disait
+ * l'inverse) ; une tâche sans date d'ouverture vient en dernier. La priorité (`prio:`) ne range plus :
+ * elle ne se voit plus (#130). Une tâche dont la prérequise est dans la même liste se range juste
+ * dessous, en chaîne ; un cycle garde l'ordre.
  */
 export function sortTasks(tasks: readonly Task[], options: SortOptions = {}): Task[] {
   const live = (t: Task) => (options.isLive?.(t) ? 1 : 0)
@@ -1041,20 +1034,9 @@ export function sortTasks(tasks: readonly Task[], options: SortOptions = {}): Ta
     const p = parent(t)
     if (p) children.set(p, [...(children.get(p) ?? []), t])
   }
-  const best = new Map<Task, number>()
-  const bestOf = (t: Task, seen: Set<Task> = new Set()): number => {
-    const known = best.get(t)
-    if (known !== undefined) return known
-    if (seen.has(t)) return prioRank(t)
-    seen.add(t)
-    const rank = Math.min(prioRank(t), ...(children.get(t) ?? []).map(c => bestOf(c, seen)))
-    best.set(t, rank)
-    return rank
-  }
   const sorted = [...tasks].sort(
     (a, b) =>
       live(b) - live(a) ||
-      bestOf(a) - bestOf(b) ||
       Number(b.due !== undefined) - Number(a.due !== undefined) ||
       (a.due !== undefined && b.due !== undefined ? a.due.localeCompare(b.due) : 0) ||
       Number(a.ouvert === undefined) - Number(b.ouvert === undefined) ||
@@ -1128,14 +1110,15 @@ export function nextGrouping(by: Grouping, mode: Mode, showDone: boolean): Group
 }
 
 /** L'icône d'une ligne de « À traiter » (#115), dessinée au trait dans icons.ts. */
-export type TodoIcon = 'sun' | 'clock' | 'calendar' | 'bell' | 'spin' | 'flag' | 'bubble'
+export type TodoIcon = 'sun' | 'clock' | 'calendar' | 'bell' | 'spin' | 'bubble'
 /** La couleur d'une ligne de « À traiter » : un ton de la palette, avec sa teinte (`<ton>Tint`) et son encre (`<ton>On`). */
 export type TodoTone = 'live' | 'late' | 'block' | 'wait'
 export type TodoCounter = { key: string; name: string; icon: TodoIcon; tone: TodoTone }
 
 /**
  * Les quatre lignes de « À traiter » sous les axes (#115, maquette C) : en mode Projet les urgences
- * d'échéance (#99), en mode Code ce qu'une session travaille, ce qui dépasse, le P1/P2 et les retours.
+ * d'échéance (#99), en mode Code ce qu'une session travaille, ce qui dépasse et les retours (trois
+ * lignes depuis que « Prioritaires » est parti, #130).
  */
 export function todoCounters(mode: Mode): TodoCounter[] {
   return mode === 'projet'
@@ -1148,14 +1131,13 @@ export function todoCounters(mode: Mode): TodoCounter[] {
     : [
         { key: 'live', name: 'En cours', icon: 'spin', tone: 'live' },
         { key: 'late', name: 'En retard', icon: 'clock', tone: 'late' },
-        { key: 'prio', name: 'Prioritaires', icon: 'flag', tone: 'block' },
         { key: 'feedback', name: 'Retours', icon: 'bubble', tone: 'wait' },
       ]
 }
 
 /** Les filtres repliés sous « Plus de filtres » (#115), dans l'ordre : ceux qui ne sont pas des lignes de « À traiter ». */
 export function secondaryFilters(mode: Mode): string[] {
-  return mode === 'projet' ? ['prio', 'mine', 'others', 'recent', 'live', 'feedback'] : ['recent', 'mine', 'others']
+  return mode === 'projet' ? ['mine', 'others', 'recent', 'live', 'feedback'] : ['recent', 'mine', 'others']
 }
 
 /** Le nom d'un rangement sur le bouton : « Par échéance », « En arbre »… */
@@ -1334,7 +1316,6 @@ export function filterSummary(view: { axis: string; attend: string; showDone: bo
   else if (view.attend === 'mine') parts.push('à moi')
   else if (view.attend === 'recent') parts.push('récentes')
   else if (view.attend === 'live') parts.push('en cours')
-  else if (view.attend === 'prio') parts.push('prioritaires')
   else if (view.attend === 'feedback') parts.push('retours')
   else if (view.attend === 'others') parts.push('attend un tiers')
   else if (view.attend !== 'all') parts.push(`attend ${view.attend}`)
@@ -2022,16 +2003,15 @@ export function boardColumn(t: Task, session: BoardSession | undefined, today: s
 export type BoardEntry = { task: Task; column: BoardColumn; since: number }
 
 /**
- * Les cartes par colonne : la plus longue attente d'abord (t'attend, en cours, prête) ; à lancer, la
- * priorité, puis l'échéance la plus proche, puis le numéro ; livrées, la plus récente d'abord.
+ * Les cartes par colonne : la plus longue attente d'abord (t'attend, en cours, prête) ; à lancer,
+ * l'échéance la plus proche, puis le numéro ; livrées, la plus récente d'abord.
  */
 export function boardGroups(entries: readonly BoardEntry[]): Record<BoardColumn, BoardEntry[]> {
   const out = Object.fromEntries(BOARD_ORDER.map(c => [c, [] as BoardEntry[]])) as Record<BoardColumn, BoardEntry[]>
   for (const e of entries) out[e.column].push(e)
   const num = (t: Task) => Number(t.id ?? Number.MAX_SAFE_INTEGER)
-  const prio = (t: Task) => (t.prio ? Number(t.prio) : 4)
   for (const c of ['ask', 'run', 'ready'] as const) out[c].sort((a, b) => b.since - a.since)
-  out.todo.sort((a, b) => prio(a.task) - prio(b.task) || (a.task.due ?? '9999').localeCompare(b.task.due ?? '9999') || num(a.task) - num(b.task))
+  out.todo.sort((a, b) => (a.task.due ?? '9999').localeCompare(b.task.due ?? '9999') || num(a.task) - num(b.task))
   out.done.sort((a, b) => (b.task.fait ?? '').localeCompare(a.task.fait ?? '') || num(b.task) - num(a.task))
   return out
 }
@@ -3653,9 +3633,9 @@ export function sessionBrand(o: {
 
 /**
  * Les tâches qu'on peut lancer maintenant : ouvertes, ni bloquées par leur prérequise, ni déjà en
- * session. Rangées pour avancer : priorité (P1, P2, sans, P3), puis celles qui ne dorment pas chez
- * un tiers, puis celles qui débloquent le plus de tâches, puis l'échéance la plus proche, puis la
- * plus ancienne (une tâche ne doit pas pourrir en bas de liste).
+ * session. Rangées pour avancer : celles qui ne dorment pas chez un tiers, puis celles qui
+ * débloquent le plus de tâches, puis l'échéance la plus proche, puis la plus ancienne (une tâche ne
+ * doit pas pourrir en bas de liste) ; la priorité, invisible, n'y compte plus (#130).
  */
 export function launchable(
   tasks: readonly Task[],
@@ -3667,7 +3647,6 @@ export function launchable(
     .filter(t => !prereqList(o.prereqOf, t).some(p => !p.done) && !o.isLive(t))
     .sort(
       (a, b) =>
-        prioRank(a) - prioRank(b) ||
         Number(!isMine(a, o.me)) - Number(!isMine(b, o.me)) ||
         (unlocks.get(b) ?? 0) - (unlocks.get(a) ?? 0) ||
         Number(b.due !== undefined) - Number(a.due !== undefined) ||
@@ -3927,7 +3906,6 @@ export const MAESTRO_STUCK_MS = STUCK_MS
 
 function maestroTaskLine(t: Task, title: string, today: string, extra: string[] = []): string {
   const bits = [
-    ...(t.prio ? [`P${t.prio}`] : []),
     ...(t.due ? [`${isOverdue(t, today) ? 'en retard, ' : ''}échéance ${frDate(t.due)}`] : []),
     ...(t.attend ? [`attend ${shortAttend(t.attend)}`] : []),
     ...extra,
@@ -4003,8 +3981,8 @@ export function maestroContext(o: {
     const menu = Math.min(MAESTRO_MENU, o.candidates.length)
     lines.push(
       o.questions === false
-        ? `- Puis demande dans ton message lesquelles lancer : une liste numérotée de ${menu} tâche${menu > 1 ? 's' : ''} au plus, dans l'ordre ci-dessus, la première marquée (recommandé), chacune « #N · titre court » avec sa priorité et ce qu'elle débloque.`
-        : `- Puis demande lesquelles lancer par AskUserQuestion (multiSelect, question « Je lance lesquelles ? », en-tête « Lancer ») : une option par tâche à lancer, ${menu} au plus, dans l'ordre ci-dessus, la première marquée (Recommandé) ; libellé « #N · titre court », description : sa priorité et ce qu'elle débloque.`,
+        ? `- Puis demande dans ton message lesquelles lancer : une liste numérotée de ${menu} tâche${menu > 1 ? 's' : ''} au plus, dans l'ordre ci-dessus, la première marquée (recommandé), chacune « #N · titre court » avec ce qu'elle débloque.`
+        : `- Puis demande lesquelles lancer par AskUserQuestion (multiSelect, question « Je lance lesquelles ? », en-tête « Lancer ») : une option par tâche à lancer, ${menu} au plus, dans l'ordre ci-dessus, la première marquée (Recommandé) ; libellé « #N · titre court », description : ce qu'elle débloque.`,
       `- Pour chaque tâche choisie, ${card} ; ${MAESTRO_CARD_IS_QUESTION} ${Person()} peut aussi lancer depuis le panneau (▶ devant chaque tâche).`,
     )
   }
