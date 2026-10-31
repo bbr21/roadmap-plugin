@@ -4200,13 +4200,43 @@ export function welcomeText(f: WelcomeFacts, o: { person: string; now: Date }): 
 }
 
 /**
+ * Ce que le hook de la carte d'accueil a vu sur cette machine (#153), gardé au store : un dessin de
+ * message reçu (`reachedAt`), une carte d'accueil dessinée (`drawnAt`), une carte tombée en panne
+ * (`failedAt`, son `error`).
+ */
+export type WelcomeCardSeen = { reachedAt?: number; drawnAt?: number; failedAt?: number; error?: string }
+
+/**
+ * La carte d'accueil paraît-elle ici ? Il faut que l'app confie ses messages au plugin, et qu'aucune
+ * panne ne soit plus récente que la dernière carte dessinée. Chez Caroline (compte Team, #153), l'app
+ * ne les lui confiait pas : « Maestro » ne donnait que l'encouragement.
+ */
+export function welcomeCardShown(seen: WelcomeCardSeen | undefined): boolean {
+  if (seen?.reachedAt === undefined) return false
+  return seen.failedAt === undefined || (seen.drawnAt !== undefined && seen.drawnAt > seen.failedAt)
+}
+
+/**
  * Le contexte de « Maestro » seul (#126) : le panneau s'ouvre, Maestro se présente et propose le scan
  * d'un bouton de la boîte de fin, dont le clic envoie « Maestro scan » (un formulaire ne passerait pas :
- * sa réponse revient en résultat d'outil, pas en message). Rien n'est lu avant le oui.
+ * sa réponse revient en résultat d'outil, pas en message). Rien n'est lu avant le oui. Là où la carte
+ * ne paraît pas (`cardShown` faux, #153), Claude dit l'accueil et pose ses boutons dans sa boîte de fin.
  */
-export function maestroIntro(o: { source: Source; welcome: Welcome }): string {
+export function maestroIntro(o: { source: Source; welcome: Welcome; cardShown?: boolean }): string {
   const w = o.welcome
   const typed = w.actions.map(a => `« ${a.message} »`).join(', ')
+  if (o.cardShown === false) {
+    return [
+      `${Person()} a dit « Maestro » : le panneau de la roadmap ${o.source.name} vient de s'ouvrir, mais la carte d'accueil ne paraît pas dans son app (elle n'y a jamais été dessinée). Tu es Maestro, l'orchestrateur : tu lances les tâches de la roadmap, une session par tâche, tu les suis et tu fusionnes pour elles (skill roadmap:maestro).`,
+      '',
+      `Rien n'est scanné : avant le choix de ${person()}, ne lis ni la roadmap ni tes sessions (pas de list_sessions, pas de lecture de ROADMAP.md) ; les chiffres ci-dessous sont comptés par le plugin.`,
+      "- Si le bloc « Roadmap — nouvelles de tes sessions enfants » est là, dis d'abord ces nouvelles et suis leurs consignes.",
+      `- Puis dis l'accueil à la place de la carte, en trois lignes courtes : « ${w.hello} » ; ${w.counts}${w.week ? ` (${w.week})` : ''} ; aujourd'hui : ${w.pills.map(p => p.text).join(', ')}.`,
+      `- Puis cette phrase : « ${w.cheer} »`,
+      `- Puis la boîte de fin (wrap_up) : un récap d'une ligne, la question « Par quoi on commence ? » et deux boutons de réponse, chacun envoyant son message tel quel : ${w.actions.slice(0, 2).map(a => `« ${a.label.replace(/^[^\p{L}]+/u, '')} » → « ${a.message} »`).join(', ')}. Pas de formulaire AskUserQuestion. Avant la boîte, une ligne dit ce qu'on peut aussi écrire : ${w.actions.slice(2).map(a => `« ${a.message} »`).join(', ') || '« Maestro go »'}.`,
+      `- ${Person()} peut aussi écrire ce que les boutons envoient : ${typed}, ou « Maestro go » (les cartes des trois premières tâches à lancer).`,
+    ].join('\n')
+  }
   return [
     `${Person()} a dit « Maestro » : le panneau de la roadmap ${o.source.name} vient de s'ouvrir, et la carte d'accueil s'affiche à la place de son message : « ${w.hello} », ${w.counts}${w.week ? ` (${w.week})` : ''}, aujourd'hui : ${w.pills.map(p => p.text).join(', ')}, et ses boutons ${w.actions.map(a => `« ${a.label} »`).join(', ')}. Tu es Maestro, l'orchestrateur : tu lances les tâches de la roadmap, une session par tâche, tu les suis et tu fusionnes pour elles (skill roadmap:maestro).`,
     '',

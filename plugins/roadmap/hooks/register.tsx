@@ -156,10 +156,12 @@ import {
   maestroDayContext,
   maestroIntro,
   maestroRelaunchContext,
+  welcomeCardShown,
   welcomeFacts,
   welcomeText,
   type MaestroAction,
   type Welcome,
+  type WelcomeCardSeen,
   type WelcomePill,
   MAESTRO_MENU,
   listPills,
@@ -402,6 +404,8 @@ const CHILD_ALERTED_PREFIX = 'child-alerted:'
 const CHILD_NOTE_MAX_MS = 30 * 86_400_000
 /** Les sessions où Bertrand a dit « Maestro » : elles coordonnent ce qu'elles lancent (#71). */
 const MAESTROS_KEY = 'maestro-sessions'
+/** Ce que le hook de la carte d'accueil a vu sur cette machine (#153) : `WelcomeCardSeen`. */
+const WELCOME_CARD_KEY = 'welcome-card'
 /** Une marque sans nouveau « Maestro » depuis 30 jours tombe. */
 const MAESTRO_MARK_MS = 30 * 86_400_000
 /** Les efforts que l'outil de lancement accepte ; « hérite » (ou toute autre valeur) n'en passe pas. */
@@ -2665,7 +2669,40 @@ async function maestroIntroText($: EngineInterface): Promise<string> {
   void openPane($, source)
   const data = await brandData($)
   if (!data) throw new Error('roadmap illisible')
-  return maestroIntro({ source, welcome: await welcomeOf($, data) })
+  return maestroIntro({ source, welcome: await welcomeOf($, data), cardShown: welcomeCardShown(await loadWelcomeCard($)) })
+}
+
+/** Ce que la carte d'accueil a vu sur cette machine ; store illisible : la carte compte pour vue. */
+async function loadWelcomeCard($: EngineInterface): Promise<WelcomeCardSeen | undefined> {
+  try {
+    const stored = await $.store.get(WELCOME_CARD_KEY)
+    return typeof stored === 'object' && stored !== null && !Array.isArray(stored) ? (stored as WelcomeCardSeen) : undefined
+  } catch {
+    return { reachedAt: 0 }
+  }
+}
+
+/** Le dessin d'un message se note une fois par module ; une carte, dessinée ou en panne, à chaque fois (#153). */
+let welcomeCardReached = false
+/** Les écritures du sort, l'une après l'autre : deux dessins ne s'effacent pas leurs champs. */
+let welcomeCardWrites: Promise<void> = Promise.resolve()
+
+/** Note le sort de la carte d'accueil (#153) ; jamais bloquant. */
+function noteWelcomeCard($: EngineInterface, kind: 'reachedAt' | 'drawnAt' | 'failedAt', error?: string): Promise<void> {
+  if (kind === 'reachedAt') {
+    if (welcomeCardReached) return welcomeCardWrites
+    welcomeCardReached = true
+  }
+  welcomeCardWrites = welcomeCardWrites.then(async () => {
+    try {
+      const at = await $.clock.now()
+      const seen = (await loadWelcomeCard($)) ?? {}
+      await $.store.set(WELCOME_CARD_KEY, { ...seen, [kind]: at, ...(error !== undefined ? { error } : {}) })
+    } catch {
+      // store illisible : le sort se notera au prochain chargement du module
+    }
+  })
+  return welcomeCardWrites
 }
 
 /** Une action de l'accueil (#141) : ce que lit son bouton, à la place du scan entier. */
@@ -3822,14 +3859,21 @@ export const register: Register = (on, options) => {
   // deviennent la carte Roadmap ; le modèle lit toujours le message d'origine. Déplié (ctrl+o), le texte
   // entier d'un brief suit la carte. Tout autre message, ou une lecture en panne, garde sa rangée.
   on('ui.render', { component: 'UserMessage' }, async ($, e, next) => {
+    // L'app confie ses messages au plugin : la carte d'accueil peut paraître ici (#153).
+    void noteWelcomeCard($, 'reachedAt')
     if (!maestroCall(e.props.text) && !briefTaskOf(e.props.text)) return next(e)
+    const welcomeCall = maestroCall(e.props.text)
     try {
       const data = await brandData($)
       const opened = data?.shorten(openingBrand({ text: e.props.text, source: data.source, tasks: data.tasks, maestroTasks: data.maestroTasks }))
-      if (!data || !opened) return next(e)
+      if (!data || !opened) {
+        if (welcomeCall && !welcomeCall.scan) void noteWelcomeCard($, 'failedAt', data ? 'pas de carte' : 'roadmap illisible')
+        return next(e)
+      }
       // « Maestro » seul ouvre l'accueil (#141) : le bonjour, les chiffres et les boutons.
       const brand = opened.kind === 'maestro' && !maestroCall(e.props.text)?.scan ? { ...opened, welcome: await welcomeOf($, data) } : opened
       const card = brandTree($, e, brand, data.palette, 'card', todayOf(await $.clock.now()))
+      if ('welcome' in brand && brand.welcome) void noteWelcomeCard($, 'drawnAt')
       if (!e.props.isExpanded || brand.kind === 'maestro') return card
       const { Box, Text } = $.ui.resolve(e)
       return (
@@ -3838,7 +3882,11 @@ export const register: Register = (on, options) => {
           <Text size="footnote" color={data.palette.text2} wrap="wrap">{e.props.text}</Text>
         </Box>
       )
-    } catch {
+    } catch (err) {
+      // Une carte d'accueil en panne : « Maestro » passera par Claude tant qu'elle n'aura pas reparu (#153).
+      const reason = err instanceof Error ? err.message : String(err)
+      $.ui.log(`roadmap : carte d'ouverture non dessinée (${reason})`, { to: 'debug' })
+      if (welcomeCall && !welcomeCall.scan) void noteWelcomeCard($, 'failedAt', reason)
       return next(e)
     }
   })
