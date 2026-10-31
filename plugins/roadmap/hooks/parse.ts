@@ -649,17 +649,37 @@ export function ideaReminder(source: Source, phrase: string): string {
 /** Un tour « travaille » à partir de deux outils de la session, hors liste d'étapes et boîte de fin (#98, partout depuis #104). */
 export const STEP_LIST_MIN_TOOLS = 2
 
-// Sous sec-default (compte Team ou Enterprise, #116), le hook Stop est sauté : le rappel de fin de tour
-// part en message du plugin, qui ouvre un tour de plus. Sa marque dit à ce tour qu'il en vient : il ne
-// relance pas de rappel, comme le deuxième arrêt d'un tour (`stop_hook_active`).
-const STOP_FALLBACK_MARK = 'Rappel de fin de tour du plugin roadmap'
-
-export function stopFallbackPrompt(block: string): string {
-  return `${STOP_FALLBACK_MARK} (sur ce compte, le hook Stop ne tourne pas : le rappel arrive en message). Fais ce qu'il demande, sans refaire le reste du tour :\n\n${block}`
+// Sous sec-default (compte Team ou Enterprise, #116), le hook Stop est sauté. Le rappel de fin de tour
+// ne part plus en message, qui s'affichait en entier (#140) : il attend le message suivant et le
+// rejoint en contexte, que la personne ne voit pas.
+export function deferredReminder(block: string): string {
+  return `Rappel de fin de tour du plugin roadmap, pour ton tour précédent (sur ce compte, le hook Stop ne tourne pas : le rappel attend le message suivant). Fais ce qu'il demande, en plus de répondre à ce message :\n\n${block}`
 }
 
-export function isStopFallback(text: string): boolean {
-  return text.includes(STOP_FALLBACK_MARK)
+// Le lancement par Claude depuis le panneau (#140) : la conversation n'en montre que la première ligne,
+// le hook prompt.submit du plugin passe le reste en contexte caché.
+const LAUNCH_LINE = /^(Lancement de .+…)\n\n([\s\S]+)$/
+
+export function launchPrompt(title: string, body: string): string {
+  return `Lancement de ${title}…\n\n${body}`
+}
+
+export function splitLaunch(text: string): { line: string; context: string } | undefined {
+  const m = LAUNCH_LINE.exec(text)
+  if (!m) return undefined
+  return {
+    line: m[1]!,
+    context: `Le brief de ce lancement, demandé par ${person()} d'un clic ▶ dans le panneau Roadmap (le plugin roadmap le joint ici pour que la conversation n'en affiche qu'une ligne) :\n\n${m[2]}`,
+  }
+}
+
+/**
+ * Le lancement à réécrire : le texte de `launchPrompt` envoyé par ce plugin, jamais celui que la
+ * personne tape ou qu'un autre plugin envoie. Le moteur pose toujours l'origine ; le kit de test, non.
+ */
+export function ownLaunch(text: string, origin: { kind: string; name?: string } | undefined): { line: string; context: string } | undefined {
+  if (origin !== undefined && !(origin.kind === 'plugin' && origin.name === 'roadmap')) return undefined
+  return splitLaunch(text)
 }
 
 /**

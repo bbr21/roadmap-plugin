@@ -147,6 +147,8 @@ import {
   keyPart,
   integerShares,
   launchBrief,
+  launchPrompt,
+  ownLaunch,
   checkBrief,
   briefPaths,
   type BriefFound,
@@ -227,6 +229,7 @@ import {
   STEP_LIST_MIN_TOOLS,
   stepListReminder,
   deliveries,
+  deferredReminder,
   deliveryReminder,
   closingBlockReminder,
   isAbandoned,
@@ -291,8 +294,6 @@ import {
   todoCounters,
   secondaryFilters,
   groupings,
-  isStopFallback,
-  stopFallbackPrompt,
   type TodoCounter,
   type Design,
 } from './parse'
@@ -721,12 +722,6 @@ async function maestroHere($: EngineInterface): Promise<boolean> {
 }
 
 /**
- * Un tour de Maestro réveillé par une de ses sessions, pas par la personne (#133) : le tour de secours
- * du plugin (#116) garde le genre du tour qu'il prolonge.
- */
-const wakeText = (text: string) => wakeTurn(text) || (isStopFallback(text) && closingTurn.wake)
-
-/**
  * La boîte de fin d'un tour réveillé qui repose une question en attente (#133) : refusée une fois par
  * tour ; une question vraiment nouvelle passe au second envoi.
  */
@@ -814,7 +809,16 @@ let stepList = { planned: false, tools: 0 }
  * Les cartes de session posées pendant le tour (leur « #N ») et le refus déjà donné (#122) : une boîte de
  * fin qui redemande de les lancer est refusée une fois par tour, jamais deux, pour ne pas enfermer le modèle.
  */
-let launchTurn: { cards: string[]; refused: boolean } = { cards: [], refused: false }
+let launchTurn: { cards: string[]; refused: boolean; fromPanel: boolean } = { cards: [], refused: false, fromPanel: false }
+/** Le message du plugin qui lance depuis le panneau (#140) est entré : le tour qu'il ouvre ne laisse aucun rappel. */
+let launchPending = false
+/**
+ * Sous sec-default, le rappel de fin de tour attend le message suivant (#140) : `pendingReminder` le
+ * garde, `reminderCarried` dit que le message qui ouvre le tour l'a reçu (le tour tient alors le rôle
+ * du deuxième arrêt d'un tour, `stop_hook_active`).
+ */
+let pendingReminder: string | undefined
+let reminderCarried = false
 
 /** Le rappel de la liste d'étapes : tour de travail, aucune liste posée dans la session, dans tout projet (#104). */
 function stepListNote(): string | undefined {
@@ -852,7 +856,7 @@ function deliveryNote(): string | undefined {
 
 /**
  * Le tour du fil principal, pour le rappel de fin de tour (#116) : son id, si Stop a tourné pendant lui
- * (sinon sec-default l'a sauté), et s'il vient du message de secours (il tient alors le rôle du
+ * (sinon sec-default l'a sauté), et si son message a reçu le rappel du tour d'avant (#140 ; il tient alors le rôle du
  * deuxième arrêt d'un tour, `stop_hook_active`).
  */
 let stopTurn = { id: '', stopRan: false, fromReminder: false }
@@ -860,9 +864,11 @@ let stopTurn = { id: '', stopRan: false, fromReminder: false }
 /**
  * Le rappel de fin de tour, ou rien : roadmap, méthode, idée, liste d'étapes, bloc de fin, rangement.
  * `active` : le modèle a déjà eu le rappel de ce tour ; `blocked` : un autre rappel bloque déjà l'arrêt.
- * Le hook Stop le rend en `block`, le secours de `turn.complete` en message.
+ * Le hook Stop le rend en `block` ; sous sec-default, `turn.complete` le garde pour le message suivant (#140).
  */
 async function endOfTurnBlock($: EngineInterface, last: string | undefined, active: boolean, blocked: boolean): Promise<string | undefined> {
+  // Le tour d'un lancement depuis le panneau n'a fait que poser une carte : aucun rappel (#140).
+  if (launchTurn.fromPanel) return undefined
   const c = capture
   // Un autre rappel bloque déjà l'arrêt : la ligne se note, l'archivage attend l'arrêt suivant.
   const ranged = settings.capture ? rangementNote(c, last, active && !blocked) : undefined
@@ -2514,16 +2520,42 @@ async function askClaude($: EngineInterface, brief: { title: string; prompt: str
   }
 }
 
+/**
+ * Le lancement par Claude en attente d'envoi (#140). Un envoi parti d'un bouton du panneau saute tous
+ * les hooks de ce plugin (vérifié au kit, 2026-10-30) : le hook prompt.submit n'y réduirait pas le
+ * brief à une ligne. Le bouton dépose donc le texte ici, et le dessin du panneau qui suit l'envoie.
+ */
+let launchOutbox: string | undefined
+/** Sans dessin du panneau dans ce délai, le lancement part quand même, le brief entier visible. */
+const LAUNCH_FALLBACK_MS = 3000
+
+/** Envoie le lancement en attente, une seule fois : depuis le dessin du panneau, ou le secours. */
+function sendLaunch($: EngineInterface, text?: string): void {
+  if (launchOutbox === undefined || (text !== undefined && launchOutbox !== text)) return
+  const out = launchOutbox
+  launchOutbox = undefined
+  void $.prompt.submit({ text: out }).catch(() => undefined)
+}
+
 async function submitLaunch($: EngineInterface, brief: { title: string; prompt: string; background: string }, note: string, mode: Mode = 'code'): Promise<void> {
-  await $.prompt.submit({
-    text: [
+  // La conversation n'en montre que la première ligne : le hook prompt.submit passe le reste en contexte (#140).
+  const text = launchPrompt(
+    brief.title,
+    [
       `Propose cette session sous forme de carte (${cardTool(LAUNCH_EFFORTS.has(settings.launchEffort) ? settings.launchEffort : undefined, mode)}), titre « ${brief.title} », avec ce brief. Pose la carte sans essayer de la lancer, puis réponds en une phrase au plus :`,
       '',
       brief.prompt,
       '',
       `Contexte : ${brief.background}`,
     ].join('\n'),
-  })
+  )
+  launchOutbox = text
+  try {
+    $.clock.after(LAUNCH_FALLBACK_MS, () => sendLaunch($, text))
+  } catch {
+    // horloge refusée : le dessin qui suit la note l'envoie seul
+  }
+  // La note change la vue : le panneau se redessine et envoie le lancement.
   await setView($, () => ({ launchNote: note }))
 }
 
@@ -3248,6 +3280,18 @@ export const register: Register = (on, options) => {
     // Un seul hook prompt.submit par module (le moteur refuse le second) : l'appel vit ici.
     await ensurePane($)
     const texts: string[] = []
+    // Le lancement du panneau, envoyé par ce plugin : une ligne à montrer, le brief en contexte (#140).
+    const launch = ownLaunch(e.text, e.origin as typeof e.origin | undefined)
+    if (launch) {
+      texts.push(launch.context)
+      launchPending = true
+    }
+    // Le rappel de fin de tour laissé par le tour précédent sous sec-default (#140).
+    if (pendingReminder !== undefined) {
+      texts.push(deferredReminder(pendingReminder))
+      pendingReminder = undefined
+      reminderCarried = true
+    }
     // Une compaction que sec-default cache à session.compact (#119) : le contexte a fondu depuis le
     // message précédent, et les réglages complets sont à redonner.
     try {
@@ -3270,7 +3314,7 @@ export const register: Register = (on, options) => {
       }
       // Chez Maestro (#133) : au réveil, le rappel du réveil ; aux tours de la personne, l'en-tête stable.
       const maestro = await maestroHere($)
-      const reminder = maestro && wakeText(e.text)
+      const reminder = maestro && wakeTurn(e.text)
         ? maestroWakeReminder(await read($, pendingAsksAtom))
         : maestro ? maestroPrefsReminder(current.prefs) : sessionPrefsReminder(current.prefs)
       if (reminder !== undefined) texts.push(reminder)
@@ -3318,7 +3362,8 @@ export const register: Register = (on, options) => {
         texts.push(`${Person()} a dit « Maestro », mais l'état de la roadmap n'a pas pu être lu (${err instanceof Error ? err.message : String(err)}) : dis-le en une phrase.`)
       }
     }
-    return next(texts.length === 0 ? e : { ...e, context: [...(e.context ?? []), ...texts] })
+    const text = launch ? launch.line : e.text
+    return next(texts.length === 0 ? e : { ...e, text, context: [...(e.context ?? []), ...texts] })
   })
 
   // Capture des tasks : la grammaire contrôlée à chaque écriture, le rappel en fin de tour.
@@ -3424,21 +3469,27 @@ export const register: Register = (on, options) => {
   })
 
   on('turn.start', async ($, e, next) => {
-    if (e.agentId === undefined) stopTurn = { id: e.turnId, stopRan: false, fromReminder: isStopFallback(e.text) }
+    if (e.agentId === undefined) {
+      stopTurn = { id: e.turnId, stopRan: false, fromReminder: reminderCarried }
+      reminderCarried = false
+    }
     if (e.agentId === undefined) {
       // Le genre du tour (#133) : un réveil de Maestro par une de ses sessions, ou un tour de la personne,
-      // qui fait tomber les questions en attente (le tour de secours du plugin n'en est pas un).
+      // qui fait tomber les questions en attente.
       const maestro = await maestroHere($)
-      const wake = maestro && wakeText(e.text)
+      const wake = maestro && wakeTurn(e.text)
       closingTurn = { work: false, box: '', wake, maestro }
       wakeRefused = false
-      if (maestro && !wake && !isStopFallback(e.text)) await update($, pendingAsksAtom, () => []).catch(() => undefined)
+      if (maestro && !wake) await update($, pendingAsksAtom, () => []).catch(() => undefined)
     }
     if (e.agentId === undefined) stepList.tools = 0
-    if (e.agentId === undefined) launchTurn = { cards: [], refused: false }
+    if (e.agentId === undefined) {
+      launchTurn = { cards: [], refused: false, fromPanel: launchPending }
+      launchPending = false
+    }
     // Un vrai message (de Maestro ou de Bertrand) relance la session : sa réponse sera une nouvelle à dire (#131).
     if (e.agentId === undefined) wakeBox = {}
-    if (e.agentId === undefined && !isStopFallback(e.text)) toldMaestro = undefined
+    if (e.agentId === undefined) toldMaestro = undefined
     if (e.agentId === undefined && settings.capture && capture) {
       capture.wroteThisTurn = false
       capture.gitAtTurn = await gitState($)
@@ -3455,17 +3506,17 @@ export const register: Register = (on, options) => {
   })
 
   // Fin d'un tour de cette session (pas d'un agent) : sa tâche « attend ta réponse » tout de suite.
-  // Sous sec-default, Stop est sauté (#116) : le rappel de fin de tour part en message, qui ouvre un tour.
+  // Sous sec-default, Stop est sauté (#116) : le rappel de fin de tour attend le message suivant, en contexte (#140).
   on('turn.complete', async ($, e, next) => {
     const result = await next(e)
     if (e.agentId !== undefined) return result
     await markOwnRunning($, false)
     // Une session de Maestro prévient Maestro de l'état où elle s'arrête (#131) ; interrompue, la personne est là.
     if (!e.isAborted) await tellMaestro($, childWake({ ...wakeBox, answer: e.answer }))
-    // Un réveil de Maestro n'envoie pas le rappel en message, qui s'écrirait dans son fil (#133).
+    // Un réveil de Maestro ne laisse pas de rappel, qui ferait écrire son fil (#133).
     if (e.turnId === stopTurn.id && !stopTurn.stopRan && e.reason === 'answer' && !closingTurn.wake) {
       const block = await endOfTurnBlock($, e.answer, stopTurn.fromReminder, false)
-      if (block !== undefined) void $.prompt.submit({ text: stopFallbackPrompt(block) }).catch(() => undefined)
+      if (block !== undefined) pendingReminder = block
     }
     return result
   })
@@ -3593,6 +3644,8 @@ export const register: Register = (on, options) => {
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
+    // Un lancement déposé par un bouton part d'ici, où le hook prompt.submit du plugin tourne (#140).
+    sendLaunch($)
     const t0 = tick()
     perfLoaded = t0
     perfCached = false
