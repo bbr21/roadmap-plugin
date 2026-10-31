@@ -217,6 +217,8 @@ import {
   type OwnLineContext,
   STEP_LIST_MIN_TOOLS,
   stepListReminder,
+  deliveries,
+  deliveryReminder,
   closingBlockReminder,
   isAbandoned,
   closeInTexts,
@@ -267,6 +269,7 @@ import {
   bypassCard,
   isModeRefusal,
   forbiddenGit,
+  type Delivery,
   guardText,
   type GitHit,
   isToday,
@@ -736,8 +739,10 @@ async function closingNote($: EngineInterface, last: string | undefined, rangeme
   if (!(await readSessionPrefs($)).prefs.adhd) return undefined
   // La ligne #N de la session (#124) : ouverte, l'archivage vient trop tôt ; close, l'État le dit.
   const line = await ownLine($).catch(() => undefined)
-  const gaps = closingBlockGaps(last, closingTurn.box, line).filter(g => !(rangementPending && (g === 'archiver' || g === 'mission' || g === 'etat-close')))
-  return gaps.length === 0 ? undefined : closingBlockReminder(gaps, line)
+  // Maestro finit sur le tableau de ses tâches (#136).
+  const maestro = await maestroHere($)
+  const gaps = closingBlockGaps(last, closingTurn.box, line, maestro).filter(g => !(rangementPending && (g === 'archiver' || g === 'mission' || g === 'etat-close' || g === 'taches')))
+  return gaps.length === 0 ? undefined : closingBlockReminder(gaps, line, maestro)
 }
 
 /**
@@ -807,6 +812,35 @@ function stepListNote(): string | undefined {
 }
 
 /**
+ * Les livraisons (#136) dont la liste d'étapes n'a pas encore été renvoyée : une fusion sur main ou une
+ * publication les note, un `update_plan` avec sa liste entière les efface, la fin de tour les redit une fois.
+ */
+let delivered: { kinds: Delivery['kind'][]; maestro: boolean } = { kinds: [], maestro: false }
+
+/** Les livraisons d'une commande Bash réussie : une fusion seulement dans le dossier principal du dépôt. */
+async function deliveredBy($: EngineInterface, command: unknown): Promise<Delivery['kind'][]> {
+  if (typeof command !== 'string' || !/\bmerge\b|release\.py/.test(command)) return []
+  const kinds: Delivery['kind'][] = []
+  for (const d of deliveries(command, await $.session.cwd(), (await $.env.get('HOME')) ?? '')) {
+    if (d.kind === 'publication') {
+      kinds.push('publication')
+      continue
+    }
+    const repo = /[$`]/.test(d.dir) ? undefined : await repoOf($, d.dir)
+    if (repo !== undefined && repo.top === repo.main) kinds.push('fusion')
+  }
+  return kinds
+}
+
+/** Le rappel de fin de tour d'une livraison sans liste renvoyée (#136), une seule fois. */
+function deliveryNote(): string | undefined {
+  if (delivered.kinds.length === 0) return undefined
+  const text = deliveryReminder(delivered.kinds, delivered.maestro, true, closingTurn.wake)
+  delivered = { kinds: [], maestro: false }
+  return text
+}
+
+/**
  * Le tour du fil principal, pour le rappel de fin de tour (#116) : son id, si Stop a tourné pendant lui
  * (sinon sec-default l'a sauté), et s'il vient du message de secours (il tient alors le rôle du
  * deuxième arrêt d'un tour, `stop_hook_active`).
@@ -844,8 +878,9 @@ async function endOfTurnBlock($: EngineInterface, last: string | undefined, acti
       // pas de rappel d'idée
     }
   }
-  // La liste d'étapes (#98, #104) : dans tout projet.
+  // La liste d'étapes (#98, #104) : dans tout projet ; après une fusion ou une publication (#136).
   notes.push(stepListNote())
+  notes.push(deliveryNote())
   // Le bloc de fin de tour (#85) : dans tout projet.
   try {
     notes.push(await closingNote($, last, settings.capture && c !== undefined && rangementWaiting(c) !== undefined))
@@ -3288,6 +3323,8 @@ export const register: Register = (on, options) => {
     if (!fromAgent(e)) {
       closingTurn.work = true
       stepList.planned = true
+      // La liste renvoyée entière : la livraison est dite (#136).
+      if (Array.isArray((e as { items?: unknown }).items)) delivered = { kinds: [], maestro: false }
       ownSteps = applyPlan(ownSteps, e as never)
       await noteChild($, s => ({ ...withoutQuestion(s), steps: applyPlan(s.steps, e as never) }))
     }
@@ -3350,7 +3387,19 @@ export const register: Register = (on, options) => {
   // Garde-fou du dossier principal (#87) : une commande git interdite n'est pas lancée.
   on('tool.call', { tool: 'Bash' }, async ($, e, next) => {
     const refusal = await guardBash($, (e as { command?: unknown }).command)
-    return refusal !== undefined ? { deny: refusal } : written($, () => next(e), undefined, writesRoadmap(e.command))
+    if (refusal !== undefined) return { deny: refusal }
+    const ran = await written($, () => next(e), undefined, writesRoadmap(e.command))
+    if (fromAgent(e) || ran.deny !== undefined || ran.isError === true) return ran
+    // Une fusion sur main ou une publication (#136) : la liste d'étapes se renvoie avant la commande suivante.
+    try {
+      const kinds = await deliveredBy($, e.command)
+      if (kinds.length === 0) return ran
+      const maestro = await maestroHere($)
+      delivered = { kinds: [...new Set([...delivered.kinds, ...kinds])], maestro: maestro || delivered.maestro }
+      return { ...ran, context: [...(ran.context ?? []), deliveryReminder(kinds, maestro, false, closingTurn.wake)] }
+    } catch {
+      return ran
+    }
   })
 
   on('turn.start', async ($, e, next) => {

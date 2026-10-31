@@ -145,6 +145,15 @@ lui remonte.
   - **À chaque changement d'état** (une fin de tour d'une sous-session, une nouvelle du panneau,
     une fusion), renvoyer la liste entière (`items`) : seul le texte après `·` change, le début
     `#<id> <libellé court>` reste. Une tâche nouvelle ajoute son étape.
+  - **Après chaque fusion ou publication, avant la commande suivante** (#136) : renvoyer la liste
+    entière, la tâche livrée cochée avec sa version (`#130 Sans priorités · livrée 0.78.0` ; sans
+    publication, `· fusionnée`), la suivante en cours. Dans un tour lancé par l'utilisateur, dire
+    aussi dans le message la ligne de récap, sans emoji : `#<id> livrée · <version> · <ce qui
+    change>` ; dans un tour réveillé par une session, rien de plus (#133) : la liste le montre.
+    Quatre fusions dans un tour, c'est quatre listes : l'encadré au-dessus de la saisie ne doit
+    jamais dire « en cours » une tâche déjà sur `main`. **Le panneau le
+    rappelle** : il ajoute la consigne au résultat d'un `git merge` réussi dans le dossier principal
+    ou d'un `release.py release`, et la redit à la fin du tour si la liste n'a pas bougé depuis.
   - **Pas de boîte de fin sans question tant qu'une étape reste ouverte** (#133) : la boîte de fin
     de l'app coche toute la liste, et l'utilisateur perd son repère (« je n'ai pas le petit menu qui
     me dit où on en est »). Le panneau la refuse à chaque fois ; le tour finit sur le message. Une
@@ -243,6 +252,14 @@ La fusion elle-même :
   temps.
 - **Dès qu'une branche est prête** (#131) : le message de sa session suffit, Maestro la relit et la
   fusionne (sans le réglage `autonome`, la propose) sans attendre que les autres sessions finissent.
+- **Vite mais bien, plusieurs prêtes en même temps** (#136) : les fusionner à la suite, dans l'ordre
+  ci-dessus, sans attendre d'avoir tout fini, mais une à la fois et chacune en entier : la mettre à
+  jour de `main` (après la fusion de la précédente), relire son diff, rejouer ses tests sur cette
+  branche à jour, fusionner, publier, renvoyer la liste et dire la ligne de récap, puis seulement la
+  suivante. **Une publication par fusion** (choix de l'utilisateur, 2026-10-30, règle « Finir un
+  chantier » des projets posés par l'onboarding) : chaque tâche a sa version, que disent sa ligne de
+  récap et la fiche finale, et une erreur se défait tâche par tâche. Une branche rouge sur `main` à
+  jour sort de la série : elle repart à sa session, les autres continuent.
 - **Après chaque fusion** : rejouer les tests sur `main`, puis prévenir aussitôt, par message, les
   sous-sessions dont la ligne porte `après:` sur la tâche fusionnée (elle peut démarrer ou reprendre)
   et celles dont la branche touche des fichiers voisins (la mettre à jour).
@@ -280,6 +297,12 @@ La fusion elle-même :
   compte rendu reste lisible par `search_session_transcripts`) ; pas fusionnée, sa branche reste :
   Maestro la relit et la fusionne (§ 5), ou la désarchive (`unarchive_session`) s'il lui reste du
   travail.
+- **La fiche finale de Maestro** (#136, maquette B) : au tour où il propose son archivage, en mode
+  ADHD, sa réponse finit sur la fiche de fin de #123 (`| Fin | Maestro · <le lot> |`, Mission, Livré,
+  État, À toi, Session), puis le tableau de ses tâches, une ligne par tâche qu'il a lancée :
+  `| Tâche | Livré | Version | État |` (`| #130 Sans priorités | plus de pastille P1/P2/P3 | 0.78.0 |
+  close |`). Le panneau refuse la fin de tour de Maestro « à archiver » sans ce tableau. Une tâche
+  encore ouverte n'y est pas « close » : la fiche n'est posée qu'une fois toutes ses lignes cochées.
 - **Maestro finit** quand toutes ses lignes sont cochées : boîte de fin (`wrap_up`) avec la question
   « Archiver cette session ? » et le bouton de réponse « Oui, archiver » en premier
   (`actions: [{"label": "Oui, archiver", "message": "Oui, archive cette session."}]` : l'app ne
@@ -325,5 +348,9 @@ La fusion elle-même :
   session liée qui tourne déjà (§ 2, #122).
 - Le brief de Maestro et les nouvelles des enfants lui rappellent de tenir sa liste d'étapes
   (§ 3) ; il ne demande plus de carte (#97 retirée par #104).
+- Après une fusion sur `main` ou une publication, il rappelle à Maestro de renvoyer sa liste
+  d'étapes et de dire sa ligne de récap (dans le résultat de la commande), puis le redit à la fin du
+  tour si la liste n'a pas bougé (§ 3, #136) ; il refuse sa fin « à archiver » sans le tableau de ses
+  tâches (§ 6).
 - Toute session, Maestro compris, qui travaille (au moins deux outils dans le tour) sans avoir posé de
   liste d'étapes reçoit un rappel en fin de tour, en mode Code comme en mode Projet (#98, #104).

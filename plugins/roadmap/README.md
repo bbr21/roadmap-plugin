@@ -177,6 +177,15 @@ et donne seul la main sur une ressource unique (#105). Il répond lui-même à u
 attend, sauf pour une question d'architecture ou un geste qui revient à Bertrand. Sans le réglage,
 la fusion et la publication attendent le clic de Bertrand.
 
+**Le récap au fil des fusions** (#136) : après chaque `git merge` réussi dans le dossier principal
+et chaque `release.py release`, le panneau rappelle dans le résultat de la commande de renvoyer la
+liste d'étapes entière avant la suivante ; chez Maestro, l'étape de la tâche dit `· livrée <version>`,
+et un tour lancé par Bertrand dit aussi une ligne par tâche livrée (`#N livrée · version · ce qui
+change`), un tour réveillé par une session rien de plus (#133). Liste toujours pas renvoyée à la fin du tour : le rappel
+revient une fois. Plusieurs branches prêtes se fusionnent à la suite, une à la fois, avec une
+publication par fusion. Maestro finit sur la fiche de fin de #123 suivie du tableau de ses tâches
+(`| Tâche | Livré | Version | État |`, maquette B), que le contrôle de fin de tour réclame.
+
 Une session lancée (par le panneau ou par Maestro) reçoit le **cap** dans son brief : finir la
 task dans la session ; décider seule ce que les fichiers, le code ou un défaut raisonnable
 tranchent ; ne poser à Bertrand que ce qui est à lui, en une fois ; écrire un blocage sur la ligne
@@ -508,6 +517,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.84.0 (2026-10-30)** : maestro : récap au fil des fusions, rappel de liste d'étapes après chaque fusion ou publication, ligne de récap par tâche livrée, fiche finale de Maestro avec le tableau de ses tâches (#136)
 - **0.83.1 (2026-10-30)** : maestro : chez Maestro, la boîte de fin sans question est refusée tant que sa liste d'étapes suit des sessions en cours, pour que le menu reste visible (#133)
 - **0.83.0 (2026-10-30)** : panneau : la date d'un parent est celle de son enfant ouvert le plus proche, due: n'y est plus exigé, et Ma journée ne montre que les enfants dus, sous leur parent en gris (#125, lot 3)
 - **0.82.0 (2026-10-30)** : maestro : un tour réveillé par une session n'écrit rien à Bertrand sauf un besoin, ne repose pas une question en attente, et l'en-tête ADHD de Maestro devient un repère stable (#133)

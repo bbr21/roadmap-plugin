@@ -663,7 +663,7 @@ export function stepListReminder(): string {
  * Ce qui manque au bloc de fin de tour (#85) : une de ses trois lignes, la mission de la fiche de fin
  * de session (#123), ou le bouton d'archivage.
  */
-export type ClosingGap = 'etat' | 'atoi' | 'session' | 'mission' | 'archiver' | 'ouverte' | 'etat-close'
+export type ClosingGap = 'etat' | 'atoi' | 'session' | 'mission' | 'archiver' | 'ouverte' | 'etat-close' | 'taches'
 
 /** La ligne `#N` de la session dans sa roadmap (#124) : ouverte, close (avec son `fait:`), ou absente. */
 export type OwnLine = { state: 'open' | 'closed' | 'absent'; fait?: string }
@@ -748,6 +748,27 @@ const FICHE_FORMAT = [
 ]
 
 /**
+ * La fiche de fin de Maestro (#136, maquette B choisie par Bertrand) : celle de #123, la mission étant
+ * celle du lot, puis le tableau de ses tâches, une ligne par tâche lancée.
+ */
+const MAESTRO_FICHE_FORMAT = [
+  '| Fin | Maestro · <le lot, en quelques mots> |',
+  '|---|---|',
+  "| Mission | ce que voulait le lot, et pourquoi, en deux ou trois lignes |",
+  '| Livré | le nombre de tâches livrées, de la première version à la dernière |',
+  '| État | fini : #<id>, #<id> … closes le AAAA-MM-JJ, lu dans ROADMAP-fait |',
+  '| À toi | rien, ou une à trois actions, chacune avec où et comment |',
+  '| Session | à archiver |',
+  '',
+  '| Tâche | Livré | Version | État |',
+  '|---|---|---|---|',
+  '| #<id> <libellé court> | ce qui a changé, en quelques mots | X.Y.Z, ou « – » sans publication | close, ou ce qui reste |',
+]
+
+/** Une ligne du tableau des tâches de Maestro (#136) : « | #129 … | … | » devient « #129 … : … ». */
+const TASK_ROW = /^#\d+\b.*:/
+
+/**
  * Une ligne sans gras, puces, emoji de tête ni accents : « - **État :** fini » et « > 🟡 **État** :
  * pas fini » deviennent « etat : … ». L'emoji de valeur (#107) est accepté, pas exigé. Une ligne de
  * tableau (#123) se lit de même : « | État | Fini | » devient « etat : fini | ».
@@ -764,7 +785,7 @@ const closingLine = (line: string) =>
  * session (#123) et le bouton « Oui, archiver » de la boîte de fin (#87). Des étiquettes, pas leurs
  * valeurs : une tournure ne renvoie pas Claude.
  */
-export function closingBlockGaps(last: string | undefined, box: string, line?: OwnLine): ClosingGap[] {
+export function closingBlockGaps(last: string | undefined, box: string, line?: OwnLine, maestro = false): ClosingGap[] {
   const lines = (last ?? '').split('\n').map(closingLine)
   const gaps = CLOSING_LINES.filter(l => !lines.some(line => l.start.test(line))).map(l => l.gap)
   const session = lines.find(line => /^session\s*:/.test(line))
@@ -772,6 +793,8 @@ export function closingBlockGaps(last: string | undefined, box: string, line?: O
   // Ligne encore ouverte (#124) : l'archivage vient trop tôt, ni fiche ni bouton ne se réclament.
   if (line?.state === 'open') return archiveIntent(last, box) ? [...gaps, 'ouverte'] : gaps
   if (archive && !lines.some(line => MISSION_LINE.test(line))) gaps.push('mission')
+  // Maestro finit sur le tableau de ses tâches, sous sa fiche (#136).
+  if (archive && maestro && !lines.some(line => TASK_ROW.test(line))) gaps.push('taches')
   if (archive && !normalizeTitle(box).includes('oui, archiver')) gaps.push('archiver')
   // Ligne close (#124) : l'État le dit, « close », pas « Maestro clôt la ligne ».
   if (archive && line?.state === 'closed' && !lines.some(l => /^etat\s*:.*\bclose?\b/.test(l))) gaps.push('etat-close')
@@ -783,7 +806,7 @@ export function closingBlockGaps(last: string | undefined, box: string, line?: O
  * sans mission : la fiche (#123). Seul le bouton manque : la boîte seule, sans rien réécrire (le bloc
  * revenait deux fois, capture « Retours · #2 » du 2026-10-30).
  */
-export function closingBlockReminder(gaps: readonly ClosingGap[], line?: OwnLineContext): string {
+export function closingBlockReminder(gaps: readonly ClosingGap[], line?: OwnLineContext, maestro = false): string {
   const missing = CLOSING_LINES.filter(l => gaps.includes(l.gap)).map(l => l.label)
   const lines = [
     `Plugin roadmap : ce tour de travail finit sans son bloc de fin de tour complet (mode ADHD).`,
@@ -794,7 +817,12 @@ export function closingBlockReminder(gaps: readonly ClosingGap[], line?: OwnLine
       `Ta tâche #${line.id} est close (ROADMAP-fait.md). Ta ligne **État** le dit, mot pour mot : « ${closedStatePhrase(line.id, line.fait, line.maestro)} ». Redonne seulement ta fiche (ou ton bloc) avec cette ligne État ; ne réécris pas le reste du message.`,
     )
   }
-  if (gaps.includes('mission')) {
+  if (maestro && (gaps.includes('mission') || gaps.includes('taches'))) {
+    lines.push(
+      "Ta ligne **Session** dit « à archiver » : c'est la fin de Maestro. Termine ta réponse, après la boîte de fin, par ta fiche de fin à la place du bloc de trois lignes, puis le tableau de tes tâches, une ligne par tâche que tu as lancée, une seule fois, sans emoji :",
+      ...MAESTRO_FICHE_FORMAT,
+    )
+  } else if (gaps.includes('mission')) {
     lines.push(
       "Ta ligne **Session** dit « à archiver » : c'est la fin de la session. Termine ta réponse, après la boîte de fin, par la fiche de fin de session à la place du bloc de trois lignes, une seule fois, sans emoji :",
       ...FICHE_FORMAT,
@@ -3618,7 +3646,7 @@ export function sessionPrefsText(prefs: SessionPrefs, error?: string, project?: 
   }
   if (prefs.adhd) {
     lines.push(
-      "- **Mode ADHD** : chaque message commence par une seule ligne, en gras : un emoji qui dit l'état de l'étape, son numéro sur le total, son nom, rien d'autre. Étape en cours : `⏳ **2/4 Écrire le plan**` ; étape qui vient de finir : `✅ **2/4 Écrire le plan**` ; détour (erreur, question, retour en arrière) : `⚠️ **3/4 Coder et tester** ↳ test rouge` ; tâche finie : `✅ **4/4 Publier la version**`, le nom de la dernière étape. Les étapes sont celles de la liste d'étapes (`update_plan`), dans le même ordre et sous le même nom : un verbe et son objet, 2 à 4 mots qui disent le geste (« Écrire le plan », pas « Plan »), posés au premier message d'une tâche et jamais renommés ; le total ne bouge que si une étape s'ajoute. Une question ou une réponse courte hors tâche : pas de ligne du tout. Après la ligne, une phrase de constat (« Bucket créé. »), puis, s'il en reste une, la seule action ou décision qui revient à " + person() + ", jamais un geste qu'un outil fait à ta place. Réponses très courtes, listes à puces, gras sur l'essentiel, jamais de paragraphe dense. Seule exception : une explication que " + person() + " demande prend la place qu'il faut pour être comprise, en mots simples, avec un exemple concret. Un tour de travail (boîte de fin ou liste d'étapes) se termine, après la boîte de fin, par le bloc de fin de tour, trois lignes telles quelles, sans emoji : `**État** : pas fini` (ou fini, bloqué), et une phrase sur où on en est ; `**À toi** : rien`, ou une à trois actions, chacune avec où et comment (le volet, le fichier, le bouton) ; `**Session** : à garder`, et pourquoi, ou `**Session** : à archiver` (la boîte de fin pose alors « Archiver cette session ? » avec le bouton de réponse « Oui, archiver »). Au dernier tour de la session (à archiver), la fiche de fin de session remplace le bloc, une seule fois : un tableau markdown sans marque, `| Fin | #<id> · <la tâche> |`, `|---|---|`, puis une ligne par étiquette, dans cet ordre : `| Mission |` ce qu'on voulait faire et pourquoi, en deux ou trois lignes ; `| Livré |` ce qui a été livré ; `| État |`, qui dit, lu dans ROADMAP-fait, « fini : #<id> close le AAAA-MM-JJ » (« close par Maestro » pour une session qu'il a lancée), jamais « Maestro clôt la ligne » ; `| À toi |` ; `| Session | à archiver |`. Ta ligne #<id> encore ouverte, la session n'est pas à archiver. Si un rappel ne réclame que le bouton de la boîte, pose la boîte seule, sans réécrire le message ni la fiche.",
+      "- **Mode ADHD** : chaque message commence par une seule ligne, en gras : un emoji qui dit l'état de l'étape, son numéro sur le total, son nom, rien d'autre. Étape en cours : `⏳ **2/4 Écrire le plan**` ; étape qui vient de finir : `✅ **2/4 Écrire le plan**` ; détour (erreur, question, retour en arrière) : `⚠️ **3/4 Coder et tester** ↳ test rouge` ; tâche finie : `✅ **4/4 Publier la version**`, le nom de la dernière étape. Les étapes sont celles de la liste d'étapes (`update_plan`), dans le même ordre et sous le même nom : un verbe et son objet, 2 à 4 mots qui disent le geste (« Écrire le plan », pas « Plan »), posés au premier message d'une tâche et jamais renommés ; le total ne bouge que si une étape s'ajoute. Une question ou une réponse courte hors tâche : pas de ligne du tout. Après la ligne, une phrase de constat (« Bucket créé. »), puis, s'il en reste une, la seule action ou décision qui revient à " + person() + ", jamais un geste qu'un outil fait à ta place. Réponses très courtes, listes à puces, gras sur l'essentiel, jamais de paragraphe dense. Seule exception : une explication que " + person() + " demande prend la place qu'il faut pour être comprise, en mots simples, avec un exemple concret. Un tour de travail (boîte de fin ou liste d'étapes) se termine, après la boîte de fin, par le bloc de fin de tour, trois lignes telles quelles, sans emoji : `**État** : pas fini` (ou fini, bloqué), et une phrase sur où on en est ; `**À toi** : rien`, ou une à trois actions, chacune avec où et comment (le volet, le fichier, le bouton) ; `**Session** : à garder`, et pourquoi, ou `**Session** : à archiver` (la boîte de fin pose alors « Archiver cette session ? » avec le bouton de réponse « Oui, archiver »). Au dernier tour de la session (à archiver), la fiche de fin de session remplace le bloc, une seule fois : un tableau markdown sans marque, `| Fin | #<id> · <la tâche> |`, `|---|---|`, puis une ligne par étiquette, dans cet ordre : `| Mission |` ce qu'on voulait faire et pourquoi, en deux ou trois lignes ; `| Livré |` ce qui a été livré ; `| État |`, qui dit, lu dans ROADMAP-fait, « fini : #<id> close le AAAA-MM-JJ » (« close par Maestro » pour une session qu'il a lancée), jamais « Maestro clôt la ligne » ; `| À toi |` ; `| Session | à archiver |`. Maestro, lui, finit sur sa fiche (la mission du lot, ce qu'il a livré, ses tâches closes), puis le tableau de ses tâches, `| Tâche | Livré | Version | État |`, une ligne par tâche qu'il a lancée ; et à chaque tâche livrée, l'étape de sa liste dit `· livrée <version>`, et, dans un tour que tu as lancé, il dit une ligne : `#<id> livrée · version · ce qui change`. Ta ligne #<id> encore ouverte, la session n'est pas à archiver. Si un rappel ne réclame que le bouton de la boîte, pose la boîte seule, sans réécrire le message ni la fiche.",
     )
   }
   if (prefs.francais) lines.push('- **Langue** : réponds en français, comptes rendus, récaps et boîte de fin compris.')
@@ -4172,13 +4200,15 @@ function gitRule(sub: string, args: string[]): { rule: string; anywhere: boolean
   }
 }
 
+/** Une commande git d'une ligne shell : le dossier où elle agit, sa sous-commande et ses arguments. */
+type GitCall = { dir: string; sub: string; args: string[] }
+
 /**
- * Les commandes git interdites d'une ligne de commande, avec leur dossier : `-C <chemin>`, sinon le
- * dernier `cd` de la ligne, sinon `cwd`. Le crochet décide ensuite si ce dossier est le dossier
- * principal d'un dépôt partagé.
+ * Les commandes d'une ligne shell, chacune avec le dossier où elle tourne (le dernier `cd`, sinon
+ * `cwd`) et ses variables en tête ; les shells imbriqués (`bash -c`, `eval`) lus à leur tour.
  */
-export function forbiddenGit(command: string, cwd: string, home: string): GitHit[] {
-  const hits: GitHit[] = []
+function shellSteps(command: string, cwd: string, home: string): ShellStep[] {
+  const steps: ShellStep[] = []
   let dir = cwd
   for (const all of shellCommands(command, home)) {
     // `GIT_TRACE=1 git …`, `env GIT_DIR=… git …` : les variables en tête ne sont pas la commande,
@@ -4197,33 +4227,99 @@ export function forbiddenGit(command: string, cwd: string, home: string): GitHit
     }
     // Une commande dans un shell imbriqué (relecture de sécurité du 2026-10-29) : lue à son tour.
     if (['bash', 'sh', 'zsh'].includes(words[0] ?? '') && words[1] === '-c' && words[2] !== undefined) {
-      hits.push(...forbiddenGit(words[2], dir, home))
+      steps.push(...shellSteps(words[2], dir, home))
       continue
     }
     if (words[0] === 'eval') {
-      hits.push(...forbiddenGit(words.slice(1).join(' '), dir, home))
+      steps.push(...shellSteps(words.slice(1).join(' '), dir, home))
       continue
     }
-    if (words[0] !== 'git') continue
-    let base = dir
-    let workTree = env.get('GIT_WORK_TREE')
-    let gitDir = env.get('GIT_DIR')
-    let i = 1
-    while (i < words.length && words[i]!.startsWith('-')) {
-      const [option, inline] = words[i]!.split(/=(.*)/s) as [string, string | undefined]
-      const takes = ['-C', '-c', '--work-tree', '--git-dir'].includes(option) && inline === undefined
-      const value = inline ?? (takes ? words[i + 1] : undefined)
-      if (option === '-C') base = resolvePath(base, value ?? '.')
-      if (option === '--work-tree') workTree = value
-      if (option === '--git-dir') gitDir = value
-      i += takes ? 2 : 1
-    }
-    // Le dossier de travail l'emporte ; sinon celui du dépôt (`…/.git` : son parent).
-    const target = workTree !== undefined ? resolvePath(base, workTree) : gitDir !== undefined ? resolvePath(base, gitDir).replace(/\/\.git$/, '') : base
-    const found = gitRule(words[i] ?? '', words.slice(i + 1))
-    if (found) hits.push({ ...found, dir: target })
+    steps.push({ dir, env, words })
+  }
+  return steps
+}
+
+type ShellStep = { dir: string; env: Map<string, string>; words: string[] }
+
+/** Une commande git, avec son dossier : `-C <chemin>`, `--work-tree`, `--git-dir`, sinon celui de la commande ; une autre commande, rien. */
+function gitCall({ dir, env, words }: ShellStep): GitCall | undefined {
+  if (words[0] !== 'git') return undefined
+  let base = dir
+  let workTree = env.get('GIT_WORK_TREE')
+  let gitDir = env.get('GIT_DIR')
+  let i = 1
+  while (i < words.length && words[i]!.startsWith('-')) {
+    const [option, inline] = words[i]!.split(/=(.*)/s) as [string, string | undefined]
+    const takes = ['-C', '-c', '--work-tree', '--git-dir'].includes(option) && inline === undefined
+    const value = inline ?? (takes ? words[i + 1] : undefined)
+    if (option === '-C') base = resolvePath(base, value ?? '.')
+    if (option === '--work-tree') workTree = value
+    if (option === '--git-dir') gitDir = value
+    i += takes ? 2 : 1
+  }
+  // Le dossier de travail l'emporte ; sinon celui du dépôt (`…/.git` : son parent).
+  const target = workTree !== undefined ? resolvePath(base, workTree) : gitDir !== undefined ? resolvePath(base, gitDir).replace(/\/\.git$/, '') : base
+  return { dir: target, sub: words[i] ?? '', args: words.slice(i + 1) }
+}
+
+/**
+ * Les commandes git interdites d'une ligne de commande, avec leur dossier : `-C <chemin>`, sinon le
+ * dernier `cd` de la ligne, sinon `cwd`. Le crochet décide ensuite si ce dossier est le dossier
+ * principal d'un dépôt partagé.
+ */
+export function forbiddenGit(command: string, cwd: string, home: string): GitHit[] {
+  const hits: GitHit[] = []
+  for (const step of shellSteps(command, cwd, home)) {
+    const call = gitCall(step)
+    const found = call && gitRule(call.sub, call.args)
+    if (call && found) hits.push({ ...found, dir: call.dir })
   }
   return hits
+}
+
+/** Une livraison (#136) : une fusion (`git merge`, avec le dossier où elle tourne) ou une publication (`release.py release`). */
+export type Delivery = { kind: 'fusion'; dir: string } | { kind: 'publication' }
+
+/**
+ * Les livraisons d'une ligne shell, dans l'ordre (#136). Une fusion se dit avec son dossier : seul le
+ * dossier principal livre, un `git merge main` dans un worktree met une branche à jour, et c'est le
+ * crochet qui les trie. Les contrôles (`release.py check`, `status`) et `merge-base` ne livrent rien.
+ */
+export function deliveries(command: string, cwd: string, home: string): Delivery[] {
+  const found: Delivery[] = []
+  for (const step of shellSteps(command, cwd, home)) {
+    const call = gitCall(step)
+    if (call?.sub === 'merge') found.push({ kind: 'fusion', dir: call.dir })
+    const tool = step.words.findIndex(w => /(^|\/)release\.py$/.test(w))
+    if (tool >= 0 && step.words[tool + 1] === 'release') found.push({ kind: 'publication' })
+  }
+  return found
+}
+
+/**
+ * Le rappel d'une livraison (#136) : dans le résultat de la commande, puis à la fin du tour si la liste
+ * d'étapes n'a pas été renvoyée depuis. Maestro met la version dans l'étape de la tâche, et dit sa
+ * ligne de récap dans un tour lancé par la personne ; un tour réveillé par une session n'écrit rien de
+ * plus (#133).
+ */
+export function deliveryReminder(kinds: readonly Delivery['kind'][], maestro: boolean, atEnd = false, wake = false): string {
+  const what = kinds.includes('fusion') && kinds.includes('publication') ? 'fusionné et publié' : kinds.includes('publication') ? 'publié' : 'fusionné sur main'
+  const head = atEnd
+    ? `Plugin roadmap : tu as ${what} dans ce tour, et ta liste d'étapes n'a pas bougé depuis : l'encadré de ${person()} dit encore la tâche en cours.`
+    : `Plugin roadmap : tu viens de ${what === 'fusionné sur main' ? 'fusionner sur main' : what === 'publié' ? 'publier' : 'fusionner et publier'}.`
+  const lines = [
+    head,
+    `Renvoie ta liste d'étapes entière (\`update_plan\` avec \`items\`)${atEnd ? ' maintenant' : ' avant la commande suivante'} : la tâche livrée cochée, son état « livrée », la suivante en cours. C'est elle que ${person()} lit, au-dessus de la saisie.`,
+  ]
+  if (maestro) {
+    lines.push("Dans l'étape de chaque tâche livrée, l'état dit sa version : `· livrée <version>` (sans publication, `· fusionnée`).")
+    lines.push(
+      wake
+        ? "Ce tour est réveillé par une session : rien de plus à l'utilisateur (#133), la liste le lui montre."
+        : "Puis dis, dans ton message, une ligne de récap par tâche livrée, sans emoji : `#N livrée · version · ce qui change`, ce qui change en quelques mots.",
+    )
+  }
+  return lines.join('\n')
 }
 
 /** Le refus du garde-fou, que lit le modèle à la place de la sortie de la commande. */
