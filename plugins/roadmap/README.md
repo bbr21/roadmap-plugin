@@ -237,6 +237,11 @@ Premiers usages : la roadmap de Caro et le dossier AAFES Cowork, depuis l'onglet
   ROADMAP-fait sous un numéro neuf (`src:#N`) et avance `due:` d'une période, « Annuler la tâche »
   arrête la récurrence ; `cowork.py` ne la reconduit pas encore, et le panneau le dit.
   `relance:AAAA-MM-JJ` date la dernière relance du tiers attendu ; le brief demande de la poser.
+- **La fin d'un parent** (#125) : « Marquer faite » sur son dernier enfant ouvert ferme aussi le
+  parent, dans la même écriture, avec son bilan (« parent #375 fait aussi ») ; un parent `tous:`
+  est reconduit à la place, depuis son `due:` écrit (« parent #411 reconduit au 10/11 »). Une
+  annulation ou un enfant récurrent ne ferment rien d'autre ; par `cowork.py`, la note dit le parent
+  à cocher.
 - **La vue** : hors de Ma journée, les tâches se rangent par échéance (en retard, cette semaine, plus tard, sans
   échéance) ; le menu « Ranger » propose aussi le responsable, l'arbre des tâches, le sujet, le jour.
   L'arbre (#125) : une tâche est seule, parent ou enfant ; un bloc par parent, sa ligne en tête une
@@ -244,7 +249,9 @@ Premiers usages : la roadmap de Caro et le dossier AAFES Cowork, depuis l'onglet
   leur rang (1, 2 : en séquence par `après:` ; 1, 1 : en parallèle) ; un parent hors du filtre reste
   en tête, en gris ; les tâches sans parent ni enfant sous « Tâches seules ». Une pastille dit le responsable quand ce n'est
   pas « moi » ; « À moi » compte `resp:` ; le détail montre responsable, parent, sous-tâches,
-  prérequises et clés déclarées. Une tâche est bloquée tant qu'une de ses prérequises est ouverte.
+  prérequises et clés déclarées. Une tâche est bloquée tant qu'une de ses prérequises est ouverte,
+  ou que son parent attend la sienne (#125) ; le cadenas dit quoi : « après #601 », « parent après
+  #12 ». Les titres courts gardent la langue du libellé.
 - **Les sessions** : ▶ pose une carte sans worktree (reposée sans le champ si l'app le refuse) ; le
   brief ne cite ni TDD ni plan de code, dit que la tâche passe par les connecteurs MCP et que rien
   ne part chez un tiers sans accord ; la clause de Maestro n'a ni branche ni fusion ; le rappel
@@ -517,6 +524,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.86.0 (2026-10-30)** : panneau : un parent se ferme avec son dernier enfant (un parent récurrent se reconduit depuis son due: écrit), le cadenas dit ce qu'il attend, un parent bloqué bloque ses enfants, et les titres courts gardent la langue du libellé (#125, lot 4)
 - **0.85.0 (2026-10-30)** : panneau : identité Roadmap au style Voies chez Maestro et chez une tâche, vue de tâche dans une session #N, Maestro voit ses tâches lancées (#137)
 - **0.84.0 (2026-10-30)** : maestro : récap au fil des fusions, rappel de liste d'étapes après chaque fusion ou publication, ligne de récap par tâche livrée, fiche finale de Maestro avec le tableau de ses tâches (#136)
 - **0.83.1 (2026-10-30)** : maestro : chez Maestro, la boîte de fin sans question est refusée tant que sa liste d'étapes suit des sessions en cours, pour que le menu reste visible (#133)

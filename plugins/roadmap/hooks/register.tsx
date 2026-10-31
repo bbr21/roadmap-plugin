@@ -111,6 +111,9 @@ import {
   byDeadline,
   byOwner,
   byTree,
+  parentLeftAlone,
+  blockerOf,
+  closeWithParentInTexts,
   withParentDates,
   bandsOf,
   keyPills,
@@ -350,7 +353,8 @@ const POLL_MS = 15_000
 const TICK_MS = 3_000
 const BATCH = 30
 // Titres de Sonnet : une clé neuve les régénère tous une fois, ceux de Haiku restent ignorés.
-const STORE_KEY = 'titles-sonnet'
+// `titles-langue` (#125) : les titres gardent la langue du libellé, les anciens (en français) se refont.
+const STORE_KEY = 'titles-langue'
 // L'outil de l'app de bureau qui démarre une session à part.
 const START_SESSION_TOOL = 'mcp__ccd_session__start_session'
 /** Le message d'une session à une autre : la proposition d'une sous-session part à son Maestro. */
@@ -2635,6 +2639,8 @@ async function closeTask(
   const bilan = abandon ? abandonBilan(reason) : doneBilan()
   const closed = abandon ? 'Annulée' : 'Faite'
   if (await $.fs.exists(`${source.dir}/_cowork/cowork.py`).catch(() => false)) {
+    // cowork.py ne ferme pas le parent d'un dernier enfant (#125) : la note le dit.
+    const alone = abandon ? undefined : parentLeftAlone(await readOr($, files(source).open) ?? '', task)
     const out = await runPython(
       $,
       [
@@ -2648,7 +2654,8 @@ async function closeTask(
     // Le numéro sur la ligne close qu'imprime cowork.py, pas dans les avertissements qui la précèdent.
     const id = /- \[x\][^\n]*\bid:(\d+)/.exec(out.stdout)?.[1] ?? task.id
     // cowork.py ne connaît pas `tous:` (#99) : il ferme la récurrente, et le panneau le dit.
-    return task.tous !== undefined && !abandon ? { id, note: 'récurrence non reconduite par cowork.py' } : { id }
+    if (task.tous !== undefined && !abandon) return { id, note: 'récurrence non reconduite par cowork.py' }
+    return alone ? { id, note: `parent #${alone} à cocher : cowork.py ne le ferme pas` } : { id }
   }
   const config = bilanConfigFor(await readOr($, `${source.dir}/cowork.json`))
   if (!isInsideRelative(config.log)) return { error: `Le journal des bilans « ${config.log} » sort du dossier de la roadmap : rien n'a été écrit.` }
@@ -2675,21 +2682,26 @@ async function closeTask(
   const { open, done } = files(source)
   const doneText = await readOr($, done)
   if (doneText === undefined) return { error: "ROADMAP-fait.md est introuvable : rien n'a été écrit." }
-  const out = closeInTexts(await $.fs.read(open), doneText, task, moment, kind, reason)
+  // Le dernier enfant fait ferme (ou reconduit) son parent dans la même écriture (#125).
+  const out = closeWithParentInTexts(await $.fs.read(open), doneText, task, moment, kind, reason)
   if ('error' in out) return out
+  const closedParent = out.parent !== undefined && out.parent.next === undefined ? out.parent.id : undefined
+  const parentNote = out.parent === undefined ? undefined : out.parent.next !== undefined ? `parent #${out.parent.id} reconduit au ${frDate(out.parent.next)}` : `parent #${out.parent.id} fait aussi`
   // Les faites d'abord : une ligne perdue entre les deux écritures ne se retrouve pas.
   await $.fs.write(done, out.done)
   await $.fs.write(open, out.open)
   if (written.length > 2) {
     const log = `${source.dir}/${config.log}`
-    await $.fs.write(log, appendBilanCsv(await readOr($, log), bilanCsvRow(day, out.id, bilan)))
+    const withChild = appendBilanCsv(await readOr($, log), bilanCsvRow(day, out.id, bilan))
+    await $.fs.write(log, closedParent ? appendBilanCsv(withChild, bilanCsvRow(day, closedParent, doneBilan())) : withChild)
   }
-  if (!inGit) return { id: out.id }
+  const done1 = (id: string, note?: string) => ({ id, ...(note ? { note } : {}) })
+  if (!inGit) return done1(out.id, parentNote)
   if (written.length > 2) await git('add', '--', config.log)
-  const commit = await git('commit', '-q', '-m', `roadmap: ${abandon ? 'abandon' : 'done'} #${out.id}`, '--', ...written)
+  const commit = await git('commit', '-q', '-m', `roadmap: ${abandon ? 'abandon' : 'done'} #${out.id}${out.parent ? `, #${out.parent.id}` : ''}`, '--', ...written)
   if (commit.exitCode !== 0) return { id: out.id, note: `${closed}, mais pas committée : ${lastLine(commit.stderr || commit.stdout)}` }
-  if (!upstream) return { id: out.id }
-  if ((await git('push', '-q')).exitCode === 0) return { id: out.id }
+  if (!upstream) return done1(out.id, parentNote)
+  if ((await git('push', '-q')).exitCode === 0) return done1(out.id, parentNote)
   // Un autre clone a avancé : on se remet dessus, puis un seul nouvel essai.
   const rebase = await git('pull', '--rebase', '-q')
   const push = rebase.exitCode === 0 ? await git('push', '-q') : rebase
@@ -4055,7 +4067,11 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     return prereqsCache.get(t) ?? []
   }
   const prereqFor = (t: Task): Task | undefined => firstPrereq(prereqsFor(t))
-  const blocked = (t: Task) => isBlocked(t, prereqFor(t))
+  // Un parent bloqué bloque ses enfants (#125) : `blockerOf` dit la prérequise qui bloque, et par quel parent.
+  const openById = new Map(openTasks.filter(t => t.id !== undefined).map(t => [t.id as string, t]))
+  const parentOf = (t: Task) => (t.parent === undefined ? undefined : openById.get(t.parent))
+  const blockerFor = (t: Task) => blockerOf(t, prereqFor, parentOf)
+  const blocked = (t: Task) => blockerFor(t) !== undefined
   const sortOrder = { isLive, prereqOf: prereqFor }
   const select = (key: string) => () => {
     launchExtra = ''
@@ -4201,6 +4217,8 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     const abandoned = isAbandoned(current)
     const asking = cancelAsk === taskKey(current)
     const pre = prereqFor(current)
+    // Ce qui la bloque : sa prérequise, ou celle de son parent (#125).
+    const holder = blockerFor(current)
     const { cles } = projectSettings(source)
     const unlocks = allTasks.filter(t => prereqsFor(t).includes(current))
     // Sa place dans sa chaîne d'ouvertes : « étape 2 sur 4 ».
@@ -4463,9 +4481,9 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
             field(
               'État',
               <Box flexDirection="row" alignItems="center" gap={SPACE.row}>
-                {pre && isBlocked(current, pre) && Svg && <Svg source={lockIcon(palette.block, 14)} alt="bloquée" width={SIZE.icon.sm} height={SIZE.icon.sm} />}
-                <Text color={pre && isBlocked(current, pre) ? palette.block : palette.text}>
-                  {pre && isBlocked(current, pre) ? 'Bloquée' : 'À faire'}
+                {holder && Svg && <Svg source={lockIcon(palette.block, 14)} alt="bloquée" width={SIZE.icon.sm} height={SIZE.icon.sm} />}
+                <Text color={holder ? palette.block : palette.text}>
+                  {holder ? 'Bloquée' : 'À faire'}
                 </Text>
               </Box>,
             )}
@@ -4530,7 +4548,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
 
         <Box flexDirection="column" gap={SPACE.block}>
           {/* Bloquée : l'avertissement au-dessus des actions ; « Lancer » reste possible. */}
-          {pre && isBlocked(current, pre) && (
+          {holder && (
             <Box flexDirection="row" alignItems="center" gap={SPACE.row} paddingX={SPACE.indent} backgroundColor={palette.blockTint}>
               {corners(RADIUS.control, palette.bg)}
               {strut(SIZE.strut.control)}
@@ -4540,7 +4558,11 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
                 <Text color="warning">⊘</Text>
               )}
               <Box flexShrink={1}>
-                <Text weight="semibold" color={palette.blockOn}>{`Bloquée : « ${short(pre).titre} » n'est pas encore faite.`}</Text>
+                <Text weight="semibold" color={palette.blockOn}>
+                  {holder.parent
+                    ? `Bloquée : son parent « ${short(holder.parent).titre} » attend « ${short(holder.pre).titre} ».`
+                    : `Bloquée : « ${short(holder.pre).titre} » n'est pas encore faite.`}
+                </Text>
               </Box>
             </Box>
           )}
@@ -4944,8 +4966,9 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     // La session de la tâche, ouverte ou faite : son numéro y mène.
     const rowSession = liveOf(t) ?? doneSessionOf(t)
     // La roue l'emporte sur le cadenas : une tâche en session n'attend plus sa prérequise.
-    const locked = !inSession && blocked(t)
-    const pre = locked ? prereqFor(t) : undefined
+    const blocker = inSession ? undefined : blockerFor(t)
+    const locked = blocker !== undefined
+    const pre = blocker?.pre
     // Le ▶ lance la session de la tâche sans passer par le détail : même brief, même carte que
     // « Lancer ». Un bouton de l'app, sans zone de clic : il tient sur toutes les lignes sous
     // ZONE_LIMIT. Ni sur une tâche en session, bloquée ou déjà demandée ; sa colonne reste, vide,
@@ -5000,7 +5023,13 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
           </Button>
         </Box>
         {inSession && (waitingOn(t) ? hand() : spinner())}
-        {locked && pre && lock(`Bloquée : ${short(pre).titre} n'est pas encore faite`)}
+        {/* Le cadenas dit ce qu'il attend (#125) : « après » et le numéro de sa prérequise, ou « parent après » celui qu'attend son parent. */}
+        {locked && pre && (
+          <Box key={`lock:${t.key}`} flexDirection="row" alignItems="center" gap={SPACE.row} flexShrink={0}>
+            {lock(blocker?.parent ? `Bloquée : son parent attend ${short(pre).titre}, pas encore faite` : `Bloquée : ${short(pre).titre} n'est pas encore faite`)}
+            <Text size="caption" color={palette.text2} wrap="end">{`${blocker?.parent ? 'parent ' : ''}après ${pre.id ? `#${pre.id}` : short(pre).titre}`}</Text>
+          </Box>
+        )}
         {kept && (
           <Box flexDirection="row" alignItems="center" gap={SPACE.row} flexShrink={0}>
             <Box key={`so:${t.key}`} flexDirection="row" alignItems="center" flexShrink={0}>
@@ -5560,7 +5589,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
       if (x.column === 'run') pills.push(drawnPill({ text: resting ? 'au repos' : (stepText(session?.status) ?? 'en session'), bg: palette.liveTint, fg: palette.liveOn }))
       if (x.column === 'ready') pills.push(drawnPill({ text: `prête · ${durationLabel(x.since)}`, bg: palette.sel, fg: palette.ok }))
       if (x.column === 'todo') {
-        const pre = blocked(t) ? prereqFor(t) : undefined
+        const pre = blockerFor(t)?.pre
         if (pre) pills.push(drawnPill({ text: pre.id ? `après #${pre.id}` : 'bloquée', bg: palette.blockTint, fg: palette.blockOn }))
         pills.push(...rowPills(t, today, me).map(rowPill))
       }

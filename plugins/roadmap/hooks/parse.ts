@@ -1599,6 +1599,23 @@ export function isBlocked(task: Task, prereq: Task | undefined): boolean {
 }
 
 /**
+ * Ce qui bloque une tâche ouverte (#125) : sa prérequise encore ouverte, sinon celle, encore
+ * ouverte, de son parent (un parent bloqué bloque ses enfants), avec ce parent. Rien sinon.
+ */
+export function blockerOf(
+  task: Task,
+  prereqOf: (t: Task) => Task | undefined,
+  parentOf: (t: Task) => Task | undefined,
+): { pre: Task; parent?: Task } | undefined {
+  if (task.done) return undefined
+  const pre = prereqOf(task)
+  if (pre !== undefined && isBlocked(task, pre)) return { pre }
+  const parent = parentOf(task)
+  const up = parent === undefined || parent === task ? undefined : prereqOf(parent)
+  return parent !== undefined && up !== undefined && isBlocked(parent, up) ? { pre: up, parent } : undefined
+}
+
+/**
  * La tête de la chaîne d'une tâche parmi `among` : on remonte les `après:` tant que la prérequise
  * est dans l'ensemble (une prérequise faite n'y est plus, la suivante devient la tête). Une tâche
  * hors chaîne est sa propre tête ; un cycle s'arrête où il boucle.
@@ -2765,7 +2782,8 @@ export function titlePrompt(items: { id: string; label: string }[], subjects: re
       ? `et un sujet choisi dans cette liste exacte : ${subjects.join(', ')}.`
       : 'et un sujet de 1 ou 2 mots qui regroupe les tâches voisines (une douzaine de sujets au plus, réutilisés d\'une tâche à l\'autre).'
   return [
-    'Pour chaque tâche de roadmap ci-dessous, donne un titre très court en français (2 à 4 mots,',
+    // La langue du libellé (#125) : « Little Zoo · vendor agreement » ne devient pas « Contrat Little Zoo ».
+    'Pour chaque tâche de roadmap ci-dessous, donne un titre très court dans la langue du libellé (2 à 4 mots,',
     'garde les noms propres et numéros utiles : « Avocat new-yorkais », « Leads 3057 », « Carte d\'accueil »)',
     subjectRule,
     'Réponds uniquement par un tableau JSON : [{"id":"…","titre":"…","sujet":"…"}].',
@@ -3263,7 +3281,9 @@ export function closeInTexts(
   }
   const all = (m[3] ?? '').split('|').map(f => f.trim()).filter(f => f !== '')
   // Une récurrente marquée faite se reconduit (#99) : l'occurrence part sous un numéro neuf, la ligne reste.
-  const recurring = kind === 'done' && task.tous !== undefined && task.due !== undefined
+  // Un parent avance depuis son `due:` écrit (`ownDue`), jamais depuis sa date calculée (#125).
+  const base = task.ownDue ?? task.due
+  const recurring = kind === 'done' && task.tous !== undefined && base !== undefined
   const fields = all.filter(f => !f.startsWith('attend:') && !(recurring && /^(tous|relance|src|id):/.test(f)))
   let id = task.id
   let kept: string | undefined
@@ -3272,7 +3292,7 @@ export function closeInTexts(
     const own = task.id ?? String(nextFreeId(open, done))
     id = String(Number(own) >= nextFreeId(open, done) ? Number(own) + 1 : nextFreeId(open, done))
     fields.splice(1, 0, `id:${id}`, `src:#${own}`)
-    const due = nextDue(task.due as string, task.tous as Recurrence, moment.slice(0, 10))
+    const due = nextDue(base as string, task.tous as Recurrence, moment.slice(0, 10))
     const keptFields = all.filter(f => !f.startsWith('relance:')).map(f => (f.startsWith('due:') ? `due:${due}` : f))
     if (task.id === undefined) keptFields.splice(1, 0, `id:${own}`)
     kept = `- [ ] ${task.label} \`[${keptFields.join(' | ')}]\`${(m[4] ?? '').trim() !== '' ? ` ${(m[4] ?? '').trim()}` : ''}`
@@ -3302,6 +3322,44 @@ export function closeInTexts(
   if (kept !== undefined) lines.splice(at, 1, kept)
   else lines.splice(at, 1)
   return { open: lines.join('\n'), done: `${done.slice(0, cut)}\n\n${line}\n${rest}`, line, id }
+}
+
+/**
+ * Le numéro du parent ouvert dont `task`, faite, serait le dernier enfant ouvert (#125) ; rien pour
+ * une tâche récurrente (elle se reconduit et reste ouverte), sans parent, ou qui a des sœurs ouvertes.
+ */
+export function parentLeftAlone(open: string, task: Task): string | undefined {
+  if (task.parent === undefined || task.tous !== undefined) return undefined
+  const tasks = parseRoadmap(open, 'ROADMAP.md')
+  if (!tasks.some(t => !t.done && t.id === task.parent)) return undefined
+  return tasks.some(t => !t.done && t.parent === task.parent && t.key !== task.key) ? undefined : task.parent
+}
+
+/**
+ * Clôt une tâche (`closeInTexts`) et, quand c'était le dernier enfant ouvert de son parent et qu'elle
+ * est faite, son parent dans la même écriture (#125) : fermé, ou reconduit s'il est récurrent
+ * (`parent.next`, sa nouvelle échéance). Un enfant récurrent qui se reconduit reste ouvert, et son
+ * parent avec lui ; une annulation ne ferme rien d'autre. Un parent qui ne se ferme pas laisse
+ * l'enfant clos, sans erreur.
+ */
+export function closeWithParentInTexts(
+  open: string,
+  done: string,
+  task: Task,
+  moment: string,
+  kind: CloseKind,
+  reason = '',
+): { open: string; done: string; line: string; id: string; parent?: { id: string; next?: string } } | { error: string } {
+  const out = closeInTexts(open, done, task, moment, kind, reason)
+  if ('error' in out || kind !== 'done' || task.parent === undefined) return out
+  const fresh = parseRoadmap(out.open, 'ROADMAP.md')
+  if (fresh.some(t => !t.done && t.parent === task.parent)) return out
+  const parent = fresh.find(t => !t.done && t.id === task.parent)
+  if (parent === undefined) return out
+  const closed = closeInTexts(out.open, out.done, parent, moment, 'done')
+  if ('error' in closed) return out
+  const next = parent.tous !== undefined ? parseRoadmap(closed.open, 'ROADMAP.md').find(t => t.id === parent.id)?.due : undefined
+  return { open: closed.open, done: closed.done, line: out.line, id: out.id, parent: { id: task.parent, ...(next ? { next } : {}) } }
 }
 
 /** Un chemin relatif qui reste dans son dossier (le journal nommé par cowork.json) : ni absolu, ni `..`, ni `~`, ni barre inverse. */
