@@ -34,6 +34,8 @@ declare module 'claude-code' {
       maestroIntro: boolean
       /** Le contexte du message précédent, en jetons (#119) : 0 quand rien n'est mesuré depuis le dernier `/clear` ou la dernière compaction vue. */
       contextSeen: number
+      /** Les questions des boîtes de fin de Maestro depuis le dernier message de la personne (#133) : un réveil ne les repose pas. */
+      pendingAsks: readonly string[]
       /** L'explication ouverte dans le volet Réglages (#118) : la clé de sa ligne (`pref:adhd`, `opt:theme`), vide sinon. */
       settingsInfo: string
     }

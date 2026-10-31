@@ -3633,6 +3633,56 @@ export function sessionPrefsReminder(prefs: SessionPrefs): string | undefined {
   return "Mode ADHD : ouvre le message par une ligne en gras, emoji d'état + étape/total + son nom dans la liste d'étapes (en cours ⏳ **2/4 Écrire le plan**, finie ✅ **2/4 Écrire le plan**, détour ⚠️ **3/4 Coder et tester** ↳ raison ; mêmes noms, verbe et objet, qu'au message d'avant ; pas de ligne pour une réponse courte hors tâche), puis une phrase de constat, puis la seule action ou décision qui revient à " + person() + ", s'il y en a une ; un tour de travail finit par le bloc État, À toi, Session, sans emoji ; le dernier tour d'une session, par la fiche en tableau Mission, Livré, État, À toi, Session, à sa place."
 }
 
+// --- Fil de Maestro (#133) -----------------------------------------------------------------------
+// Bertrand, le 2026-10-30, devant le fil de Maestro d'AAFES : chaque réveil par une session refaisait
+// le compte rendu, le bloc et une boîte qui reposait la même question. Maestro ne lui parle plus que
+// quand il a besoin de lui ; le détail reste chez les sessions enfants.
+
+/** Les débuts des messages que le panneau envoie à Maestro : nouvelle d'une session (#131), proposition (#67, #132). */
+const WAKE_LEADS = /^(?:Roadmap — nouvelle de ta session|Tâches? proposées? par une session que tu as lancée|Lancements? demandés? dans une session que tu as lancée)/
+
+/**
+ * Un tour qui ne vient pas de la personne : des notes de l'app seules (fin de tour d'un enfant), des
+ * messages de session (`<cross-session-message>`, `<side-sessions-event>`), ou un message du panneau.
+ * Un texte de la personne, même précédé de notes de l'app, n'en est pas un ; un texte vide non plus.
+ */
+export function wakeTurn(text: string): boolean {
+  const notes = /<system-reminder>[\s\S]*?<\/system-reminder>/g
+  const hadNote = notes.test(text)
+  const rest = text
+    .replace(notes, '')
+    .replace(/<cross-session-message\b[\s\S]*?<\/cross-session-message>/g, '\u0000')
+    .replace(/<side-sessions-event>[\s\S]*?<\/side-sessions-event>/g, '\u0000')
+    .replace(/^\s*Another Claude session sent a message:\s*$/gm, '')
+    .replace(/^\s*This came from another Claude session\b.*$/gm, '')
+    .trim()
+  if (rest === '') return hadNote
+  if (WAKE_LEADS.test(rest)) return true
+  return rest.replace(/\u0000/g, '').trim() === '' && rest.includes('\u0000')
+}
+
+/** Ce qu'est un besoin de la personne, le seul qui s'écrit chez Maestro. */
+const NEEDS = 'une question que lui seul tranche, un geste à lui (envoyer, un secret, une connexion), un clic (lancer ou archiver une session), un blocage que tu ne lèves pas'
+
+const quoted = (asks: readonly string[]) => asks.map(a => `« ${a} »`).join(', ')
+
+/** Le rappel d'un tour de Maestro réveillé par une de ses sessions, à la place du rappel du mode ADHD. */
+export function maestroWakeReminder(pending: readonly string[]): string {
+  const ask = pending.length === 0 ? '' : ` ${pending.length > 1 ? 'Ces questions attendent' : 'La question'} ${quoted(pending)} ${pending.length > 1 ? 'déjà sa réponse : ne les repose pas' : 'attend déjà sa réponse : ne la repose pas'}, même reformulée.`
+  return `Maestro, tour réveillé par une de tes sessions, pas par ${person()} (#133). Fais avancer : lis, débloque, relance, fusionne, tiens ta liste d'étapes. N'écris rien à ${person()}, même quand une note de l'app te dit de le lui dire en une ligne, sauf un besoin de lui : ${NEEDS}. Alors une ligne par besoin, sans en-tête ni bloc de fin. Rien pour lui : ni texte ni boîte de fin (wrap_up sans ask, ou pas du tout).${ask}`
+}
+
+/** Le rappel du mode ADHD chez Maestro, aux tours que lance la personne : un en-tête stable. */
+export function maestroPrefsReminder(prefs: SessionPrefs): string | undefined {
+  if (!prefs.adhd) return undefined
+  return `Mode ADHD, chez Maestro : ouvre le message par un repère stable en gras, compté sur ta liste d'étapes, ⏳ **Maestro · 2 en cours · 1 t'attend** (✅ **Maestro · tout est livré** quand rien ne reste), jamais l'étape d'une tâche. Puis ce qui attend ${person()} en premier, court ; le détail reste chez les sessions enfants. Le tour finit par le bloc État, À toi (ses besoins : ${NEEDS}), Session, sans emoji.`
+}
+
+/** Le refus d'une boîte de fin qui repose une question en attente, pendant un tour réveillé (#133). */
+export function pendingAskRefusal(pending: readonly string[]): string {
+  return `Plugin roadmap : ${pending.length > 1 ? 'ces questions attendent' : 'cette question attend'} déjà ${person()} : ${quoted(pending)}. Ce tour, réveillé par une de tes sessions, ne la repose pas, même reformulée : retire ask et actions de la boîte de fin (ou ne la pose pas). Si ta question est vraiment nouvelle et différente, renvoie la boîte telle quelle.`
+}
+
 // Le volet Réglages (#81, 2026-10-28) : Bertrand voit chaque réglage et le change d'un clic, sans
 // retenir de phrase. Ces fonctions lisent et réécrivent le fichier ; tout ce que le volet ne touche
 // pas reste tel quel, dans son ordre.

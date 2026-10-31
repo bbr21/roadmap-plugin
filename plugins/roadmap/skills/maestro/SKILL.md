@@ -86,6 +86,25 @@ lui remonte.
 
 ## 3. Suivre : Maestro est le seul à tout voir
 
+- **Parler à l'utilisateur seulement quand il a besoin de lui** (#133) : le détail vit dans les
+  sessions enfants (leur compte rendu, leur fiche de fin) ; Maestro fait avancer et se tait. Un
+  besoin de l'utilisateur, c'est seulement : une question que lui seul tranche (architecture, choix
+  visuel, question d'une sous-session que ni le code, ni la roadmap, ni `autonome` ne tranchent) ;
+  un geste à lui qu'aucun outil ne fait (envoyer un email, un secret, une connexion) ; un clic qui
+  lui revient (lancer une session par sa carte, archiver) ; un blocage que Maestro ne lève pas. Une
+  tâche qui avance, une session relancée, une branche relue, fusionnée ou publiée n'en sont pas :
+  la liste d'étapes les montre.
+  - **Tour réveillé par une session** (sa nouvelle, sa fin de tour, un message, une proposition) :
+    rien à l'utilisateur, ni en-tête, ni bloc, ni boîte de fin, même quand une note de l'app dit de
+    le lui dire en une ligne ; un besoin, une ligne par besoin. Le panneau ne réclame pas le bloc
+    à ces tours et n'envoie pas son rappel de fin de tour en message.
+  - **Une question posée et sans réponse ne revient pas**, même reformulée : le panneau refuse une
+    fois, dans un tour réveillé, la boîte de fin qui en pose une alors qu'une autre attend ; une
+    question vraiment nouvelle passe au second envoi. Les questions en attente tombent au premier
+    message de l'utilisateur (ou clic d'un bouton).
+  - **Tour lancé par l'utilisateur** : un repère stable en tête, compté sur la liste d'étapes,
+    `⏳ **Maestro · 2 en cours · 1 t'attend**` (`✅ **Maestro · tout est livré**`), jamais l'étape
+    d'une tâche ; puis ce qui l'attend en premier, court ; le bloc dont « À toi » liste ses besoins.
 - **Lire** : chaque fin de tour d'une sous-session arrive à Maestro (le début de son compte rendu) ;
   `list_sessions` avec `linked: true` donne l'état de toutes (en cours, en attente, PR). Une note
   n'est pas une preuve : relire le diff et les tests de la branche avant de la dire prête.
@@ -96,16 +115,17 @@ lui remonte.
   finissent : **prête à fusionner**, § 5 ; **bloquée**, **en attente** ou **pose une question**,
   débloquer d'abord (ci-dessous) ; **arrêtée en cours de route**, la relancer par message
   (« continue : … ») sauf si elle attend quelque chose de lui ; **finie**, § 6. Puis il met sa liste
-  à jour. Le même tour lui donne les nouvelles de tous ses enfants (ci-dessous) : une muette se
+  à jour, sans un mot à l'utilisateur sauf un besoin de lui (ci-dessus, #133). Le même tour lui donne les nouvelles de tous ses enfants (ci-dessous) : une muette se
   relance de ce réveil. La note de l'app qui arrive ensuite sur le même état ne se traite pas deux fois.
 - **Prendre des nouvelles** (#84) : L'utilisateur pilote depuis Maestro, jamais depuis les enfants. À
   chacun de ses messages, et de ceux de ses sessions (#131), le panneau donne à Maestro, sous « Roadmap — nouvelles de tes sessions
   enfants », une ligne par enfant qui coince ou qui est à archiver, et rien quand tout avance :
-  - **attend la réponse de l'utilisateur** depuis 15 min : la lui rappeler en une ligne, avec le lien ;
+  - **attend la réponse de l'utilisateur** depuis 15 min : la lui rappeler en une ligne, avec le lien,
+    à un tour qu'il lance, ou au réveil si elle n'est pas déjà posée et sans réponse (#133) ;
   - **silencieuse** depuis 15 min (son étape, ou « état inconnu ») : lui écrire **une fois**
-    (`SendMessage` à son id) « où en es-tu, qu'est-ce qui te bloque, de quoi as-tu besoin ? », puis
-    dire à l'utilisateur qu'elle est relancée (sa réponse arrive à la fin de son tour) ; toujours au
-    même point ensuite, muette ou non, le dire, sans relancer ;
+    (`SendMessage` à son id) « où en es-tu, qu'est-ce qui te bloque, de quoi as-tu besoin ? », sans le
+    dire à l'utilisateur (sa réponse arrive à la fin de son tour, #133) ; toujours au même point
+    ensuite, muette ou non, c'est un blocage : le lui dire en une ligne, sans relancer ;
   - **prête** (toutes ses étapes faites, pas encore fusionnée ou close) : § 5 et 6 ;
   - **à archiver** (§ 6), à proposer dans ce tour même : une note de fin d'une sous-session arrive
     par un tour à elle, et ses nouvelles avec.
@@ -284,6 +304,11 @@ La fusion elle-même :
 - Chaque sous-session prévient Maestro par message de l'état où elle finit son tour, et de sa
   question de formulaire, une fois par état, même quand d'autres tournent encore (§ 3, « Agir dès
   son message », #131).
+- Il reconnaît un tour de Maestro réveillé par une session (§ 3, #133) : il lui rappelle de ne rien
+  écrire sauf un besoin de l'utilisateur, ne réclame pas le bloc, n'envoie pas son rappel de fin de
+  tour en message, et refuse une fois la boîte qui repose une question en attente. Aux tours de
+  l'utilisateur, son rappel du mode ADHD demande le repère stable « Maestro · N en cours · N
+  t'attend ».
 - Il refuse la boîte de fin de Maestro qui propose d'archiver une session déjà archivée (§ 6, #110).
 - Il ne relance pas une sous-session avec le rappel « la roadmap n'a pas bougé » : Maestro tient sa
   ligne (#124). Il refuse sa boîte de fin « Archiver cette session ? » tant que sa ligne est ouverte,

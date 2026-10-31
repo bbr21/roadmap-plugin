@@ -503,6 +503,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.82.0 (2026-10-30)** : maestro : un tour réveillé par une session n'écrit rien à Bertrand sauf un besoin, ne repose pas une question en attente, et l'en-tête ADHD de Maestro devient un repère stable (#133)
 - **0.81.0 (2026-10-30)** : panneau : les clés de cles_visibles (département, statut) en pastilles sur la ligne, l'arbre rangé en bandes par la clé ranger_par, et le doctor signale une clé non déclarée (#125, lot 2)
 - **0.80.0 (2026-10-30)** : maestro : toute création de session demandée sous Maestro, carte, offer ou lancement, part au Maestro racine qui la pose ; une fille de Maestro n'en devient jamais un (#132)
 - **0.79.0 (2026-10-30)** : maestro : une session lancée par Maestro le prévient par message de l'état où elle finit chaque tour (prête, bloquée, en attente, question, finie), une fois par état (#131)

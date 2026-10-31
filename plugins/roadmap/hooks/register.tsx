@@ -199,6 +199,10 @@ import {
   sessionPrefs,
   sessionPrefsText,
   sessionPrefsReminder,
+  maestroPrefsReminder,
+  maestroWakeReminder,
+  pendingAskRefusal,
+  wakeTurn,
   prefsChangedLead,
   contextShrank,
   closingBlockGaps,
@@ -432,6 +436,11 @@ const scanNoteAtom = atom({ plugin: 'roadmap', key: 'scanNote' } as const, '')
 const prefsGivenAtom = atom({ plugin: 'roadmap', key: 'prefsGivenText' } as const, '')
 /** Maestro vient de se présenter sans scanner (#126) : un oui nu au message suivant demande le scan. */
 const maestroIntroAtom = atom({ plugin: 'roadmap', key: 'maestroIntro' } as const, false)
+/**
+ * Les questions que les boîtes de fin de Maestro ont posées depuis le dernier message de la personne
+ * (#133) : un tour réveillé par une session ne les repose pas. L'état de session survit au rechargement.
+ */
+const pendingAsksAtom = atom({ plugin: 'roadmap', key: 'pendingAsks' } as const, [] as readonly string[])
 /** Le contexte du message précédent, en jetons (#119) : 0 quand rien n'est mesuré depuis le dernier vidage. */
 const contextSeenAtom = atom({ plugin: 'roadmap', key: 'contextSeen' } as const, 0)
 
@@ -677,7 +686,36 @@ function noteBox(e: unknown): void {
  * Le tour en cours de cette session, pour le bloc de fin de tour (#85) : hors de `Capture`, il vaut
  * dans tout projet, roadmap ou non. Un tour de travail a appelé la boîte de fin ou la liste d'étapes.
  */
-let closingTurn = { work: false, box: '' }
+let closingTurn = { work: false, box: '', wake: false, maestro: false }
+/** La boîte qui reposait une question en attente, déjà refusée dans ce tour réveillé (#133) : une fois, jamais deux. */
+let wakeRefused = false
+
+/** Cette session est-elle un Maestro (#133) ? Fiche ou liste illisible : non, rien ne change. */
+async function maestroHere($: EngineInterface): Promise<boolean> {
+  try {
+    return await ownIsMaestro($, await readOwnSession($))
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Un tour de Maestro réveillé par une de ses sessions, pas par la personne (#133) : le tour de secours
+ * du plugin (#116) garde le genre du tour qu'il prolonge.
+ */
+const wakeText = (text: string) => wakeTurn(text) || (isStopFallback(text) && closingTurn.wake)
+
+/**
+ * La boîte de fin d'un tour réveillé qui repose une question en attente (#133) : refusée une fois par
+ * tour ; une question vraiment nouvelle passe au second envoi.
+ */
+async function pendingAsk($: EngineInterface, ask: unknown): Promise<string | undefined> {
+  if (!closingTurn.wake || wakeRefused || typeof ask !== 'string' || ask.trim() === '') return undefined
+  const pending = await read($, pendingAsksAtom).catch(() => [] as readonly string[])
+  if (pending.length === 0) return undefined
+  wakeRefused = true
+  return pendingAskRefusal(pending)
+}
 
 /**
  * Le rappel du bloc de fin de tour : mode ADHD, tour de travail, une ligne ou le bouton d'archivage
@@ -685,6 +723,8 @@ let closingTurn = { work: false, box: '' }
  */
 async function closingNote($: EngineInterface, last: string | undefined, rangementPending = false): Promise<string | undefined> {
   if (!closingTurn.work) return undefined
+  // Un réveil de Maestro n'écrit rien à la personne, sauf un besoin : pas de bloc (#133).
+  if (closingTurn.wake) return undefined
   if (!(await readSessionPrefs($)).prefs.adhd) return undefined
   // La ligne #N de la session (#124) : ouverte, l'archivage vient trop tôt ; close, l'État le dit.
   const line = await ownLine($).catch(() => undefined)
@@ -3164,7 +3204,11 @@ export const register: Register = (on, options) => {
         texts.push(given === '' ? block : `${prefsChangedLead()}\n\n${block}`)
         await update($, prefsGivenAtom, () => block)
       }
-      const reminder = sessionPrefsReminder(current.prefs)
+      // Chez Maestro (#133) : au réveil, le rappel du réveil ; aux tours de la personne, l'en-tête stable.
+      const maestro = await maestroHere($)
+      const reminder = maestro && wakeText(e.text)
+        ? maestroWakeReminder(await read($, pendingAsksAtom))
+        : maestro ? maestroPrefsReminder(current.prefs) : sessionPrefsReminder(current.prefs)
       if (reminder !== undefined) texts.push(reminder)
     } catch {
       // réglages ou état de session illisibles : le message passe sans eux
@@ -3263,10 +3307,14 @@ export const register: Register = (on, options) => {
   })
   on('tool.call', { tool: WRAP_UP_TOOL }, async ($, e, next) => {
     const ask = (e as { ask?: unknown }).ask
-    const refusal = fromAgent(e) ? undefined : ((await archivedAsk($, ask)) ?? (await openLineAsk($, ask)) ?? (await launchAsk($, e as never)))
+    const refusal = fromAgent(e) ? undefined : ((await archivedAsk($, ask)) ?? (await openLineAsk($, ask)) ?? (await launchAsk($, e as never)) ?? (await pendingAsk($, ask)))
     if (refusal !== undefined) return { deny: refusal }
     noteBox(e)
-    if (!fromAgent(e)) closingTurn = { work: true, box: boxText(e) }
+    if (!fromAgent(e)) closingTurn = { ...closingTurn, work: true, box: boxText(e) }
+    // La question de Maestro attend la personne : un réveil ne la reposera pas (#133).
+    if (!fromAgent(e) && closingTurn.maestro && typeof ask === 'string' && ask.trim() !== '') {
+      await update($, pendingAsksAtom, asks => (asks.includes(ask) ? asks : [...asks, ask])).catch(() => undefined)
+    }
     const recap = (e as { recap?: unknown }).recap
     if (!fromAgent(e)) wakeBox = { ...(typeof recap === 'string' ? { recap } : {}), ...(typeof ask === 'string' ? { ask } : {}) }
     // La question de la boîte, ou « attend une réponse : … » en tête du récap, attend jusqu'au tour suivant (#121).
@@ -3295,7 +3343,15 @@ export const register: Register = (on, options) => {
 
   on('turn.start', async ($, e, next) => {
     if (e.agentId === undefined) stopTurn = { id: e.turnId, stopRan: false, fromReminder: isStopFallback(e.text) }
-    if (e.agentId === undefined) closingTurn = { work: false, box: '' }
+    if (e.agentId === undefined) {
+      // Le genre du tour (#133) : un réveil de Maestro par une de ses sessions, ou un tour de la personne,
+      // qui fait tomber les questions en attente (le tour de secours du plugin n'en est pas un).
+      const maestro = await maestroHere($)
+      const wake = maestro && wakeText(e.text)
+      closingTurn = { work: false, box: '', wake, maestro }
+      wakeRefused = false
+      if (maestro && !wake && !isStopFallback(e.text)) await update($, pendingAsksAtom, () => []).catch(() => undefined)
+    }
     if (e.agentId === undefined) stepList.tools = 0
     if (e.agentId === undefined) launchTurn = { cards: [], refused: false }
     // Un vrai message (de Maestro ou de Bertrand) relance la session : sa réponse sera une nouvelle à dire (#131).
@@ -3324,7 +3380,8 @@ export const register: Register = (on, options) => {
     await markOwnRunning($, false)
     // Une session de Maestro prévient Maestro de l'état où elle s'arrête (#131) ; interrompue, la personne est là.
     if (!e.isAborted) await tellMaestro($, childWake({ ...wakeBox, answer: e.answer }))
-    if (e.turnId === stopTurn.id && !stopTurn.stopRan && e.reason === 'answer') {
+    // Un réveil de Maestro n'envoie pas le rappel en message, qui s'écrirait dans son fil (#133).
+    if (e.turnId === stopTurn.id && !stopTurn.stopRan && e.reason === 'answer' && !closingTurn.wake) {
       const block = await endOfTurnBlock($, e.answer, stopTurn.fromReminder, false)
       if (block !== undefined) void $.prompt.submit({ text: stopFallbackPrompt(block) }).catch(() => undefined)
     }
