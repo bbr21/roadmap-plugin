@@ -145,6 +145,11 @@ lui remonte.
   - **À chaque changement d'état** (une fin de tour d'une sous-session, une nouvelle du panneau,
     une fusion), renvoyer la liste entière (`items`) : seul le texte après `·` change, le début
     `#<id> <libellé court>` reste. Une tâche nouvelle ajoute son étape.
+  - **Pas de boîte de fin sans question tant qu'une étape reste ouverte** (#133) : la boîte de fin
+    de l'app coche toute la liste, et l'utilisateur perd son repère (« je n'ai pas le petit menu qui
+    me dit où on en est »). Le panneau la refuse à chaque fois ; le tour finit sur le message. Une
+    question pour l'utilisateur passe par une boîte avec `ask` : reposer alors la liste entière
+    (`items`) au tour suivant.
   - Le travail fini, toutes les étapes sont cochées.
   - **L'ordre de fusion et les conflits** se calculent depuis git, en lecture seule : écrire
     `maestro.json` dans le scratchpad (`{"base": "main", "taches": [{"id", "titre", "branche", "tests":
@@ -306,7 +311,9 @@ La fusion elle-même :
   son message », #131).
 - Il reconnaît un tour de Maestro réveillé par une session (§ 3, #133) : il lui rappelle de ne rien
   écrire sauf un besoin de l'utilisateur, ne réclame pas le bloc, n'envoie pas son rappel de fin de
-  tour en message, et refuse une fois la boîte qui repose une question en attente. Aux tours de
+  tour en message, et refuse une fois la boîte qui repose une question en attente. Il refuse aussi
+  la boîte de fin sans question tant que la liste d'étapes de Maestro a une étape ouverte (elle la
+  cocherait toute). Aux tours de
   l'utilisateur, son rappel du mode ADHD demande le repère stable « Maestro · N en cours · N
   t'attend ».
 - Il refuse la boîte de fin de Maestro qui propose d'archiver une session déjà archivée (§ 6, #110).

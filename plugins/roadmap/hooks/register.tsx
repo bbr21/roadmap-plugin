@@ -203,6 +203,8 @@ import {
   maestroPrefsReminder,
   maestroWakeReminder,
   pendingAskRefusal,
+  openListBox,
+  openListRefusal,
   wakeTurn,
   prefsChangedLead,
   contextShrank,
@@ -688,6 +690,11 @@ function noteBox(e: unknown): void {
  * dans tout projet, roadmap ou non. Un tour de travail a appelé la boîte de fin ou la liste d'étapes.
  */
 let closingTurn = { work: false, box: '', wake: false, maestro: false }
+/**
+ * La liste d'étapes de cette session telle que l'app la montre (#133) : chez Maestro, une boîte de fin
+ * sans question la cocherait toute. Une boîte acceptée la coche ici aussi.
+ */
+let ownSteps: ChildStep[] = []
 /** La boîte qui reposait une question en attente, déjà refusée dans ce tour réveillé (#133) : une fois, jamais deux. */
 let wakeRefused = false
 
@@ -3281,6 +3288,7 @@ export const register: Register = (on, options) => {
     if (!fromAgent(e)) {
       closingTurn.work = true
       stepList.planned = true
+      ownSteps = applyPlan(ownSteps, e as never)
       await noteChild($, s => ({ ...withoutQuestion(s), steps: applyPlan(s.steps, e as never) }))
     }
     return next(e)
@@ -3310,6 +3318,9 @@ export const register: Register = (on, options) => {
     const ask = (e as { ask?: unknown }).ask
     const refusal = fromAgent(e) ? undefined : ((await archivedAsk($, ask)) ?? (await openLineAsk($, ask)) ?? (await launchAsk($, e as never)) ?? (await pendingAsk($, ask)))
     if (refusal !== undefined) return { deny: refusal }
+    // Chez Maestro, la boîte sans question cocherait sa liste ouverte : refusée à chaque fois (#133).
+    if (!fromAgent(e) && closingTurn.maestro && openListBox(ownSteps, ask)) return { deny: openListRefusal() }
+    if (!fromAgent(e)) ownSteps = ownSteps.map(st => ({ ...st, status: 'completed' as const }))
     noteBox(e)
     if (!fromAgent(e)) closingTurn = { ...closingTurn, work: true, box: boxText(e) }
     // La question de Maestro attend la personne : un réveil ne la reposera pas (#133).

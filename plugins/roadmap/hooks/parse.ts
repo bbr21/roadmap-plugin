@@ -3705,13 +3705,28 @@ const quoted = (asks: readonly string[]) => asks.map(a => `« ${a} »`).join(', 
 /** Le rappel d'un tour de Maestro réveillé par une de ses sessions, à la place du rappel du mode ADHD. */
 export function maestroWakeReminder(pending: readonly string[]): string {
   const ask = pending.length === 0 ? '' : ` ${pending.length > 1 ? 'Ces questions attendent' : 'La question'} ${quoted(pending)} ${pending.length > 1 ? 'déjà sa réponse : ne les repose pas' : 'attend déjà sa réponse : ne la repose pas'}, même reformulée.`
-  return `Maestro, tour réveillé par une de tes sessions, pas par ${person()} (#133). Fais avancer : lis, débloque, relance, fusionne, tiens ta liste d'étapes. N'écris rien à ${person()}, même quand une note de l'app te dit de le lui dire en une ligne, sauf un besoin de lui : ${NEEDS}. Alors une ligne par besoin, sans en-tête ni bloc de fin. Rien pour lui : ni texte ni boîte de fin (wrap_up sans ask, ou pas du tout).${ask}`
+  return `Maestro, tour réveillé par une de tes sessions, pas par ${person()} (#133). Fais avancer : lis, débloque, relance, fusionne, tiens ta liste d'étapes. N'écris rien à ${person()}, même quand une note de l'app te dit de le lui dire en une ligne, sauf un besoin de lui : ${NEEDS}. Alors une ligne par besoin, sans en-tête ni bloc de fin. Rien pour lui : ni texte ni boîte de fin (pas de wrap_up : il cocherait toute ta liste d'étapes, qui suit des sessions encore en cours).${ask}`
 }
 
 /** Le rappel du mode ADHD chez Maestro, aux tours que lance la personne : un en-tête stable. */
 export function maestroPrefsReminder(prefs: SessionPrefs): string | undefined {
   if (!prefs.adhd) return undefined
-  return `Mode ADHD, chez Maestro : ouvre le message par un repère stable en gras, compté sur ta liste d'étapes, ⏳ **Maestro · 2 en cours · 1 t'attend** (✅ **Maestro · tout est livré** quand rien ne reste), jamais l'étape d'une tâche. Puis ce qui attend ${person()} en premier, court ; le détail reste chez les sessions enfants. Le tour finit par le bloc État, À toi (ses besoins : ${NEEDS}), Session, sans emoji.`
+  return `Mode ADHD, chez Maestro : ouvre le message par un repère stable en gras, compté sur ta liste d'étapes, ⏳ **Maestro · 2 en cours · 1 t'attend** (✅ **Maestro · tout est livré** quand rien ne reste), jamais l'étape d'une tâche. Puis ce qui attend ${person()} en premier, court ; le détail reste chez les sessions enfants. Le tour finit par le bloc État, À toi (ses besoins : ${NEEDS}), Session, sans emoji. Pas de boîte de fin sans question tant qu'une étape de ta liste reste ouverte : l'app cocherait toute la liste, le seul repère de ${person()} sur ses sessions ; après une boîte avec question, repose ta liste entière (items) au tour suivant.`
+}
+
+/**
+ * La boîte de fin de l'app coche toute la liste d'étapes (Bertrand, 2026-10-30 : « je n'ai pas le petit
+ * menu qui me dit où on en est ») : chez Maestro, une boîte sans question, alors qu'une étape de sa
+ * liste est encore ouverte, est à refuser (#133). Une question pour la personne passe.
+ */
+export function openListBox(steps: readonly ChildStep[], ask: unknown): boolean {
+  if (typeof ask === 'string' && ask.trim() !== '') return false
+  return steps.some(s => s.status !== 'completed')
+}
+
+/** Le refus de cette boîte de fin, chez Maestro (#133). */
+export function openListRefusal(): string {
+  return `Plugin roadmap : ta liste d'étapes suit des sessions encore en cours, et la boîte de fin la cocherait toute : ${person()} perdrait son repère sur où on en est. Ne pose pas de boîte de fin sans question (ne la renvoie pas) : finis ton tour sur ton message, la liste reste telle quelle. Une question pour ${person()} passe par une boîte avec ask ; repose alors ta liste entière au tour suivant.`
 }
 
 /** Le refus d'une boîte de fin qui repose une question en attente, pendant un tour réveillé (#133). */
