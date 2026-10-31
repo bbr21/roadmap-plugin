@@ -54,6 +54,13 @@ roadmap d'un dossier Cowork : Projet).
 4. **Langue** (« Langue »)
    - Docs en français, code et commits en anglais (recommandé) : `langue_code = anglais`
    - Tout en français, sauf les identifiants : `langue_code = français`
+5. **Design system** (« Design ») : celui sur lequel s'appuiera toute maquette (#129). Pour un
+   projet existant, lancer d'abord `onboarding.py design <dossier>` : ses `candidats` (un
+   `design/`, le dossier d'un `.design-sync/config.json`, un modèle de document) font les options.
+   - Déclarer celui qui est là (recommandé quand un candidat existe) : `design = [{"chemin": "design/", "pour": "…"}]`
+   - En poser un (recommandé pour une app sans design system) : une tâche `id:2` « Poser le design
+     system » s'ajoute à la roadmap après l'init, et `design` se déclare quand il existe
+   - S'en passer (un outil sans interface) : `design = "aucun"`, les maquettes ne le proposent plus
 
 ## Envoi 2 : ce qui dépend du type
 
@@ -116,6 +123,13 @@ premier nom de `me` dans `~/.claude/roadmap-perso.json`, sinon demandé), celui 
      de python3
    - Avec git : l'historique de la roadmap, et un dépôt GitHub possible ; le panneau committe
      les clôtures sur `main`
+5. **Modèles** (« Modèles ») : le design system du mode Projet, ce sur quoi s'appuie toute
+   maquette d'un document, d'un tableau ou d'un deck (#129). `onboarding.py design <dossier>`
+   donne les modèles déjà là (`.potx`, `.dotx`, un deck rangé dans `modeles/` ou `templates/`).
+   - Déclarer ces modèles (recommandé quand il y en a) : `design = [{"chemin": "modeles/deck-qbr.pptx", "pour": "les decks de QBR"}]`,
+     une entrée par type de tâche
+   - En poser plus tard : rien de déclaré ; la première maquette proposera d'en poser
+   - S'en passer : `design = "aucun"`
 
 ## Les réponses, en JSON
 
@@ -133,6 +147,7 @@ premier nom de `me` dans `~/.claude/roadmap-perso.json`, sinon demandé), celui 
 | `migrations` | dossier des migrations, ou `""` |
 | `env` | `true` si le projet a un `.env` (non versionné, relié dans chaque worktree) |
 | `secrets` | motifs de fichiers en plus de `.env`, `*.pem`, `*.key`, `*.p8`, `*.p12` |
+| `design` | liste de `{"chemin": "design/", "pour": "…"}` (une chaîne vaut son chemin ; relatif au projet, absolu ou `https://`), ou `"aucun"` ; absent : rien de déclaré. Écrit dans `.claude/roadmap.json`, dans les deux modes |
 | `fin_en_plus` | étapes en plus de « Finir un chantier », une phrase chacune |
 | `github` | `<compte>/<nom>` ou `""` |
 | `ignorer` | dossiers dont `check.mjs` ne contrôle pas les liens : des modèles Markdown, comme ceux d'un plugin (`[]` par défaut) |

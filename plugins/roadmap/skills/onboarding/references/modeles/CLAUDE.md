@@ -58,7 +58,7 @@ Le verrou tombe quand la session le retire (commit sur `main`), au plus tard à 
 1. **Secrets.** L'agent ne saisit ni ne lit aucun jeton, clé ou secret : {{QUI}} les colle lui-même là où ils servent. {{REGLE_SECRETS}}
 2. **La doc suit le code dans le même commit.** Voir « Où écrire quoi ». Une règle tient en une ou deux phrases ici, avec un lien vers le détail.
 3. {{REGLE_LANGUE}}
-4. **Maquettes avant un choix visuel.** Un écran, une vue, un composant ou une mise en page passe par 2 ou 3 maquettes simples, la recommandation en premier, que {{QUI}} choisit avant qu'on le code.
+4. **Maquettes avant un choix visuel.** Un écran, une vue, un composant ou une mise en page passe par 2 ou 3 maquettes simples, la recommandation en premier, que {{QUI}} choisit avant qu'on le code. Elles s'appuient sur le design system que déclare `design` de `.claude/roadmap.json` ; sans lui, on propose d'en poser un (sauf maquette de démo).
 
 ## Pièges
 

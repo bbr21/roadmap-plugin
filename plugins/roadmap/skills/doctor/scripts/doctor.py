@@ -559,6 +559,41 @@ def sec_default(home, gere=None):
                  "(catalogue bbr21/roadmap-plugin), sec-default restant en place")
 
 
+def design_system(main):
+    """Le design system que déclare `.claude/roadmap.json` (#129), sur lequel s'appuie toute maquette.
+
+    Dans les deux modes. Absent : « À voir », avec ce que le projet a déjà (un `design/`, un modèle de
+    deck) ou la proposition d'en poser un. Un chemin local doit exister ; une adresse ne se vérifie pas.
+    """
+    commande = 'python3 "<dossier de la skill onboarding>/scripts/onboarding.py" design %s --poser \'[…]\'' % main
+    try:
+        with open(os.path.join(main, ".claude", "roadmap.json"), encoding="utf-8") as f:
+            cfg = json.load(f)
+    except (OSError, ValueError):
+        cfg = None
+    design = cfg.get("design") if isinstance(cfg, dict) else None
+    if design == "aucun":
+        return ligne(OK, "Design system", "aucun, choisi : les maquettes ne proposent pas d'en poser un")
+    if design is None or design == []:
+        candidats = ob.reperer_design(main)
+        if candidats:
+            return ligne(VOIR, "Design system", "pas déclaré ; déjà là : %s" % ", ".join(candidats[:5]),
+                         "le déclarer pour que toute maquette s'y appuie : " + commande)
+        return ligne(VOIR, "Design system", "pas déclaré, et aucun trouvé dans le projet",
+                     "en poser un (composants et variables, ou modèles de document et de deck), puis le déclarer : "
+                     + commande + ' ; ou « "aucun" » si le projet s\'en passe')
+    try:
+        entrees = ob.normaliser_design(design)
+    except ob.Erreur as e:
+        return ligne(VOIR, "Design system", "illisible, ignoré par le panneau : %s" % e, "corriger « design » : " + commande)
+    absents = [e["chemin"] for e in entrees if not re.match(r"^https?://", e["chemin"])
+               and not os.path.exists(os.path.join(main, os.path.expanduser(e["chemin"])))]
+    if absents:
+        return ligne(VOIR, "Design system", "introuvable(s) : %s" % ", ".join(absents),
+                     "corriger le chemin dans « design » : " + commande)
+    return ligne(OK, "Design system", ", ".join(e["chemin"] for e in entrees))
+
+
 def diagnostiquer(dossier, plugins="lire", home=None, avec_outils=True, gere=None):
     dossier = os.path.abspath(os.path.expanduser(dossier))
     home = home or os.path.expanduser("~")
@@ -573,6 +608,7 @@ def diagnostiquer(dossier, plugins="lire", home=None, avec_outils=True, gere=Non
         if avec_outils:
             lignes += outils(requis, "projet", est_git)
         lignes += roadmap_projet(principal)
+        lignes.append(design_system(principal))
         lignes += plugins_et_skills(requis, plugins, home, requis["projet"]["skills"], facultatif=True)
         lignes.append(sec_default(home, gere))
         lignes.append(nom_utilisateur(home))
@@ -587,6 +623,7 @@ def diagnostiquer(dossier, plugins="lire", home=None, avec_outils=True, gere=Non
     lignes += faits
     if git(dossier, "rev-parse", "--git-dir").returncode == 0:
         lignes += roadmap(main)
+    lignes.append(design_system(main))
     lignes += plugins_et_skills(requis, plugins, home)
     lignes.append(sec_default(home, gere))
     lignes.append(nom_utilisateur(home))

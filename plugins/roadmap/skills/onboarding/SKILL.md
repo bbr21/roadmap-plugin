@@ -123,7 +123,14 @@ tout le cadrage.
    GitHub : pousse le commit de l'onboarding sur `main`, comme ses règles le disent.
 2. Une roadmap importée ou déjà remplie : l'audit (étape 7 de « Importer une roadmap existante »)
    passe avant le doctor.
-3. Lance le doctor (skill `doctor` de ce plugin) sur le dossier. Un KO qui tient à la machine
+3. **Design system** (#129) : toute maquette du projet s'appuie sur celui que déclare `design` de
+   `.claude/roadmap.json`. La réponse « Design » de l'envoi 1 l'a posé à `init`. Pour un projet déjà
+   onboardé, `python3 "<dossier de la skill>/scripts/onboarding.py" design <dossier>` dit la
+   déclaration et les candidats (un `design/`, un `.design-sync/config.json`, un modèle de document) ;
+   `design <dossier> --poser '<JSON>'` écrit le champ sans toucher au reste du fichier. Ni
+   déclaré ni refusé (`"aucun"`) : propose d'en poser un, par une question à choix (« Je
+   déclare `design/` ? », « J'ouvre la tâche « Poser le design system » ? », « S'en passer »).
+4. Lance le doctor (skill `doctor` de ce plugin) sur le dossier. Un KO qui tient à la machine
    (Superpowers absent, `gh` non connecté) se dit avec sa commande ; un KO qui tient au projet se
    corrige ici. En mode Projet, Superpowers absent n'est qu'À voir : il y est facultatif.
 
@@ -158,8 +165,11 @@ dossier même.
 4. **Pas d'historique** : `historique` refuse un dossier en mode Projet.
 5. **Vérifier** : `verifier <dossier>` (« Conforme au format. »). Avec git, un premier commit des
    seuls fichiers posés. Pas de `check.mjs` : le panneau contrôle chaque ligne écrite.
-6. **Doctor** (skill `doctor`) : il lit le mode et passe la checklist du mode Projet.
-7. **Rendre compte** : ce qui a été posé, puis comment s'en servir : ouvrir le dossier dans
+6. **Modèles** (#129) : la réponse « Modèles » déclare les modèles de document ou de deck, un par
+   type de tâche, dans `design` ; ensuite, `onboarding.py design <dossier> [--poser …]` comme en
+   mode Code (étape 7.3).
+7. **Doctor** (skill `doctor`) : il lit le mode et passe la checklist du mode Projet.
+8. **Rendre compte** : ce qui a été posé, puis comment s'en servir : ouvrir le dossier dans
    l'onglet Code, le panneau par échéance (le bouton passe au responsable et à l'arbre), ▶ sur une
    tâche, « Maestro » pour ce qu'on peut lancer ; la tâche `id:1` liste les tâches en cours.
 

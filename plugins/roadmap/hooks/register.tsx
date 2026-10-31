@@ -258,6 +258,7 @@ import {
   isStopFallback,
   stopFallbackPrompt,
   type TodoCounter,
+  type Design,
 } from './parse'
 
 const PANE = PANE_ID
@@ -2844,21 +2845,25 @@ async function readPerso($: EngineInterface): Promise<{ me: string[]; sources: S
   return perso
 }
 
-/** Les réglages de session du projet de la session (#102), et son nom pour le bloc du démarrage. */
-async function readSessionPrefs($: EngineInterface): Promise<{ prefs: SessionPrefs; error?: string; project?: string }> {
+/**
+ * Les réglages de session du projet de la session (#102), son nom pour le bloc du démarrage, et le
+ * design system que déclare son `.claude/roadmap.json` (#129), que cite la règle des maquettes.
+ */
+async function readSessionPrefs($: EngineInterface): Promise<{ prefs: SessionPrefs; error?: string; project?: string; design?: Design }> {
   await readPerso($)
   const file = await prefsFile($)
   const text = file && (await $.fs.exists(file.path)) ? await $.fs.read(file.path) : undefined
   const project = await sessionProject($)
-  const read = sessionPrefs(text, project.key, project.home)
+  const design = (await currentSource($))?.design
+  const read = { ...sessionPrefs(text, project.key, project.home), ...(design ? { design } : {}) }
   return project.name === undefined ? read : { ...read, project: project.name }
 }
 
 /** Le bloc des réglages de session complets ; une panne de lecture ne bloque jamais le démarrage ni le message. */
 async function sessionPrefsBlock($: EngineInterface): Promise<string | undefined> {
   try {
-    const { prefs, error, project } = await readSessionPrefs($)
-    return sessionPrefsText(prefs, error, project)
+    const { prefs, error, project, design } = await readSessionPrefs($)
+    return sessionPrefsText(prefs, error, project, design)
   } catch {
     return undefined
   }
@@ -3070,7 +3075,7 @@ export const register: Register = (on, options) => {
     // le nouveau bloc remplace alors l'ancien. Puis le rappel du mode ADHD.
     try {
       const current = await readSessionPrefs($)
-      const block = sessionPrefsText(current.prefs, current.error, current.project)
+      const block = sessionPrefsText(current.prefs, current.error, current.project, current.design)
       const given = await read($, prefsGivenAtom)
       if (block !== given) {
         texts.push(given === '' ? block : `${prefsChangedLead()}\n\n${block}`)

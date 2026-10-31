@@ -209,6 +209,7 @@ def valider(r):
         raise Erreur("les réponses sont un objet JSON")
     if r.get("mode", "code") not in ("code", "projet"):
         raise Erreur("mode : code ou projet")
+    r["design"] = normaliser_design(r.get("design"))
     if r.get("mode") == "projet":
         return valider_projet(r)
     for cle in ("nom", "dossier", "resume", "qui"):
@@ -469,6 +470,8 @@ def fichiers_projet(r, aujourdhui=None):
     if r.get("cles"):
         cfg["cles"] = r["cles"]
     cfg["vue"] = "echeance"
+    if r.get("design"):
+        cfg["design"] = r["design"]
     out[".claude/roadmap.json"] = json.dumps(cfg, ensure_ascii=False, indent=2) + "\n"
     return out
 
@@ -489,6 +492,8 @@ def fichiers(r, aujourdhui=None):
     cfg = {"name": v["NOM"], "me": [v["QUI"]]}
     if r.get("roadmap", DOSSIER_ROADMAP) != ".":
         cfg["dir"] = DOSSIER_ROADMAP
+    if r.get("design"):
+        cfg["design"] = r["design"]
     out[".claude/roadmap.json"] = json.dumps(cfg, ensure_ascii=False, indent=2) + "\n"
     return out
 
@@ -978,6 +983,100 @@ def reglages_import(dossier):
     return qui, requis
 
 
+# ---------------------------------------------------------------- design system (#129)
+
+# Un dossier de ce nom est un design system ; un modèle Office l'est partout, un document seulement
+# rangé dans un dossier de modèles (les decks d'AAFES, un par type de tâche).
+DOSSIERS_DESIGN = {"design", "design-system", "design_system", "designsystem"}
+DOSSIERS_MODELES = {"templates", "modeles", "modèles", "gabarits"}
+MODELES_OFFICE = (".potx", ".dotx", ".xltx")
+DOCUMENTS = (".pptx", ".docx", ".xlsx", ".key")
+SANS_DESIGN = {".git", "node_modules", ".build", "Pods", "DerivedData", "build", "dist", ".venv", "venv", "_inbox"}
+PROFONDEUR_DESIGN = 4
+
+
+def normaliser_design(v):
+    """`design` des réponses ou de `--poser` : liste d'entrées `{chemin, pour?}` (une chaîne vaut son
+    chemin), « aucun » pour un projet qui s'en passe ; None ou liste vide : rien de déclaré."""
+    if v is None or v == []:
+        return None
+    if v == "aucun":
+        return "aucun"
+    if not isinstance(v, list):
+        raise Erreur("design : une liste d'entrées {chemin, pour}, ou « aucun »")
+    out = []
+    for e in v:
+        e = {"chemin": e} if isinstance(e, str) else e
+        chemin = e.get("chemin") if isinstance(e, dict) else None
+        if not isinstance(chemin, str) or not chemin.strip():
+            raise Erreur("design : entrée %r sans chemin" % (e,))
+        # Comme le panneau, qui le cite dans la règle des maquettes : ni retour à la ligne ni accent grave.
+        if re.search(r"[\r\n`]", chemin):
+            raise Erreur("design : chemin %r avec un retour à la ligne ou un accent grave" % chemin)
+        entree = {"chemin": chemin.strip()}
+        pour = e.get("pour")
+        if isinstance(pour, str) and pour.strip():
+            entree["pour"] = pour.strip()
+        out.append(entree)
+    return out
+
+
+def reperer_design(dossier):
+    """Les design systems déjà là, chemins relatifs au projet, triés : un dossier `design/` (ou d'un
+    nom voisin), le dossier d'un `.design-sync/config.json`, un modèle de document ou de deck."""
+    trouves = set()
+    racine = os.path.abspath(dossier)
+    for haut, dossiers, fichiers in os.walk(racine):
+        rel = os.path.relpath(haut, racine)
+        profondeur = 0 if rel == "." else rel.count(os.sep) + 1
+        prefixe = "" if rel == "." else rel.replace(os.sep, "/") + "/"
+        if os.path.isfile(os.path.join(haut, ".design-sync", "config.json")):
+            trouves.add(prefixe or "./")
+        for d in list(dossiers):
+            if d.lower() in DOSSIERS_DESIGN:
+                trouves.add(prefixe + d + "/")
+        modeles = os.path.basename(haut).lower() in DOSSIERS_MODELES
+        for f in fichiers:
+            bas = f.lower()
+            if bas.endswith(MODELES_OFFICE) or (modeles and bas.endswith(DOCUMENTS)):
+                trouves.add(prefixe + f)
+        # Ni dans un design system déjà trouvé, ni dans les dossiers techniques, ni trop profond.
+        dossiers[:] = [d for d in dossiers if d not in SANS_DESIGN and d.lower() not in DOSSIERS_DESIGN
+                       and not d.startswith(".") and profondeur < PROFONDEUR_DESIGN]
+    return sorted(trouves)
+
+
+def design(dossier, poser=None):
+    """Sans `poser` : la déclaration de `.claude/roadmap.json` et les candidats. Avec : écrit `design`
+    dans `.claude/roadmap.json`, le reste du fichier gardé ; le fichier doit exister (init le pose)."""
+    dossier = os.path.abspath(os.path.expanduser(dossier))
+    chemin = os.path.join(dossier, ".claude", "roadmap.json")
+    cfg = None
+    if os.path.isfile(chemin):
+        try:
+            with open(chemin, encoding="utf-8") as f:
+                cfg = json.load(f)
+        except ValueError as e:
+            raise Erreur(".claude/roadmap.json illisible : %s" % e)
+        if not isinstance(cfg, dict):
+            raise Erreur(".claude/roadmap.json n'est pas un objet JSON")
+    if poser is None:
+        return {"declare": (cfg or {}).get("design"), "candidats": reperer_design(dossier)}
+    if cfg is None:
+        raise Erreur("pas de .claude/roadmap.json dans %s : onboarder le projet d'abord (init)" % dossier)
+    try:
+        valeur = normaliser_design(json.loads(poser))
+    except ValueError as e:
+        raise Erreur("--poser : JSON illisible (%s)" % e)
+    if valeur is None:
+        raise Erreur("--poser : rien à déclarer (une liste d'entrées, ou « aucun »)")
+    cfg["design"] = valeur
+    with open(chemin, "w", encoding="utf-8") as f:
+        f.write(json.dumps(cfg, ensure_ascii=False, indent=2) + "\n")
+    print("Design system déclaré dans .claude/roadmap.json.")
+    return {"declare": valeur, "candidats": reperer_design(dossier)}
+
+
 # ---------------------------------------------------------------- ligne de commande
 
 
@@ -1009,6 +1108,9 @@ def main(argv=None):
     pm = sub.add_parser("importer")
     pm.add_argument("dossier")
     pm.add_argument("--analyse", required=True)
+    pd = sub.add_parser("design")
+    pd.add_argument("dossier")
+    pd.add_argument("--poser")
     a = p.parse_args(argv)
     try:
         if a.cmd == "exemple":
@@ -1025,6 +1127,11 @@ def main(argv=None):
             print(json.dumps(importer.analyser(a.fichier, a.fait, a.qui or qui, requis), ensure_ascii=False, indent=2))
         elif a.cmd == "importer":
             importer.importer(a.dossier, a.analyse)
+        elif a.cmd == "design":
+            if a.poser is None:
+                print(json.dumps(design(a.dossier), ensure_ascii=False, indent=2))
+            else:
+                design(a.dossier, a.poser)
         else:
             ecarts = verifier(a.dossier)
             if ecarts:

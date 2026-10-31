@@ -26,6 +26,7 @@ plus. Il ne change rien : ni au projet, ni à la machine.
 | Skill swiftui-pro | seulement dans un projet Swift : installée |
 | Hooks du plugin | pas de `cc-plugin-sec-default`, ou le plugin posé par l'admin en `appendPlugins` ; sur un compte Team ou Enterprise, ou des réglages gérés, À voir (le plugin passe par ses secours) |
 | Nom de l'utilisateur | `me` de `~/.claude/roadmap-perso.json` porte un nom (sinon À voir : Claude dit « l'utilisateur ») |
+| Design system | `design` de `.claude/roadmap.json` déclare celui sur lequel s'appuie toute maquette (#129), chaque chemin local présent, ou `"aucun"` ; pas déclaré : À voir, avec ce qui est déjà là (un `design/`, un modèle de deck) ou la proposition d'en poser un, et la commande `onboarding.py design` qui le déclare |
 
 ### En mode Projet
 
@@ -43,6 +44,7 @@ GitHub, ni `check.mjs`, ni `swiftui-pro`.
 | Superpowers, sa mise à jour | facultatif (#94) : absent ou éteint, À voir avec la commande, jamais KO |
 | Hooks du plugin | comme en mode Code |
 | Nom de l'utilisateur | comme en mode Code |
+| Design system | comme en mode Code : ses modèles de document ou de deck, un par type de tâche |
 | Skills de méthode | celles que le brief Projet propose sans les exiger : `brainstorming`, `writing-plans` ; une qui manque est À voir |
 
 La liste de ce qui est exigé est dans `references/requis.json` (`projet` pour le mode Projet). Les skills de méthode y suivent

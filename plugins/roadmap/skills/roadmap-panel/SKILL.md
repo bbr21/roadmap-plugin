@@ -88,6 +88,20 @@ sa tâche cochée, qu'une fois la ligne de rangement écrite dans une réponse d
 - `ligne` : le début de la ligne qui dit le rangement, en début de ligne d'une réponse ou de la
   boîte de fin (sans casse, accents, gras ni puce). Défaut : « Rangé dans ». « Rien à ranger »
   vaut toujours, pour un sujet sans rien de durable.
+
+Le design system (#129), facultatif : celui sur lequel s'appuie toute maquette du projet, en mode
+Code (composants, variables) comme en mode Projet (modèles de document ou de deck, un par type de
+tâche). Les réglages de session le citent dans la règle « Maquettes avant un choix visuel » ; sans
+lui, la règle propose d'en poser un, sauf pour une maquette de démo.
+
+```json
+{ "design": [{ "chemin": "design/", "pour": "le panneau et ses composants" }] }
+```
+
+- `chemin` : relatif au projet, absolu, ou une adresse `https://` ; une simple chaîne vaut son
+  chemin. `pour` : ce que l'entrée couvre. Une entrée sans chemin est ignorée.
+- `"design": "aucun"` : le projet s'en passe, la règle ne propose plus d'en poser un.
+- `onboarding.py design <dossier> --poser '<JSON>'` (skill `onboarding`) l'écrit ; le doctor le vérifie.
 - Ligne absente : la fin de tour rappelle la règle de rangement au lieu de proposer l'archivage,
   puis le propose dès que la ligne est écrite. Sans ce réglage, rien ne change.
 

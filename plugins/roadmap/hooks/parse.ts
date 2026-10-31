@@ -75,7 +75,16 @@ export type Source = {
   rangement?: Rangement
   /** Le seuil « À relancer », en jours (#99). */
   relance?: number
+  /** Le design system du projet (#129), sur lequel s'appuie toute maquette ; sans lui, pas déclaré. */
+  design?: Design
 }
+
+/**
+ * Le design system d'un projet (#129) : ses entrées (un dossier, un fichier, une adresse ; `pour` dit
+ * ce que chacune couvre, un modèle de deck par type de tâche), ou `aucun` quand le projet s'en passe.
+ */
+export type DesignEntry = { chemin: string; pour?: string }
+export type Design = DesignEntry[] | 'aucun'
 
 /**
  * Le rangement d'un projet (#101) : la skill qui range sa mémoire en fin de sujet, et le début de
@@ -2573,7 +2582,7 @@ const CODE_METHOD: readonly string[] = [
   '- Un changement de comportement : `superpowers:test-driven-development`, le test rouge d\'abord.',
   '- Un bug, un test en échec, un comportement inattendu : `superpowers:systematic-debugging` avant tout correctif.',
   '- Un écran ou une vue SwiftUI créé ou modifié : `swiftui-pro` sur les fichiers touchés, avant de dire fini.',
-  '- Un choix visuel (écran, vue, panneau, composant, mise en page, graphique) : 2 ou 3 maquettes que je choisis avant de coder (règle « Maquettes avant un choix visuel »).',
+  '- Un choix visuel (écran, vue, panneau, composant, mise en page, graphique) : 2 ou 3 maquettes, sur le design system du projet (ou en proposant d\'en poser un), que je choisis avant de coder (règle « Maquettes avant un choix visuel »).',
   '- Avant de dire la task finie et de cocher sa ligne : `superpowers:verification-before-completion`.',
   '- `superpowers:brainstorming` seulement si je suis là pour répondre : il pose des questions.',
   'Une retouche de doc ou d\'une ligne s\'en passe.',
@@ -2593,7 +2602,7 @@ const PROJECT_METHOD: readonly string[] = [
   'La task passe par les connecteurs MCP de cette session (messagerie, agenda, documents…) ; rien ne part chez un tiers (email, message, invitation) sans ton accord.',
   "Liste d'étapes : dès le premier geste, pose la liste d'étapes de l'app (`update_plan`), même pour une task rapide : c'est mon seul repère pour savoir où tu en es. Choisis les étapes qui vont à la task, coche chacune dès qu'elle finit, et aucune ne se renomme en route : une étape nouvelle s'ajoute, et le total bouge. Rien d'autre à montrer : pas de carte `show_widget`.",
   "Méthode : aucune skill n'est exigée. Si la task a besoin d'être cadrée ou découpée, propose-moi un brainstorm (`superpowers:brainstorming`, seulement si je suis là pour répondre) ou un plan (`superpowers:writing-plans`), sans l'imposer.",
-  "Une mise en page à choisir (document, tableau, présentation) : 2 ou 3 maquettes simples que je choisis avant de la faire (règle « Maquettes avant un choix visuel »).",
+  "Une mise en page à choisir (document, tableau, présentation) : 2 ou 3 maquettes simples, sur le design system du projet (ses modèles de document ou de deck, ou en proposant d'en poser un), que je choisis avant de la faire (règle « Maquettes avant un choix visuel »).",
   "Avant de dire la task finie et de cocher sa ligne : vérifie que ce qui était demandé est fait (le message parti, le document à jour, la réponse reçue) et dis-moi sur quoi tu t'appuies.",
 ]
 
@@ -2699,7 +2708,7 @@ export function checkBrief(
 export function parseProjectConfig(text: string, base: string, defaults: { name: string; me: string[] }): Source | undefined {
   const data: unknown = JSON.parse(text)
   if (typeof data !== 'object' || data === null) return undefined
-  const c = data as { name?: unknown; dir?: unknown; me?: unknown; subjects?: unknown; mode?: unknown; requis?: unknown; cles?: unknown; vue?: unknown; rangement?: unknown; relance?: unknown }
+  const c = data as { name?: unknown; dir?: unknown; me?: unknown; subjects?: unknown; mode?: unknown; requis?: unknown; cles?: unknown; vue?: unknown; rangement?: unknown; relance?: unknown; design?: unknown }
   const dir = typeof c.dir === 'string' && c.dir !== '' ? (c.dir.startsWith('/') ? c.dir : `${base}/${c.dir}`) : base
   const strings = (v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : undefined)
   // Une valeur inconnue ou d'un mauvais type prend le défaut : le panneau s'ouvre quand même.
@@ -2716,6 +2725,7 @@ export function parseProjectConfig(text: string, base: string, defaults: { name:
   const requis = strings(c.requis)?.filter(k => GRAMMAR_KEYS.includes(k) || Object.prototype.hasOwnProperty.call(cles, k))
   const r = (typeof c.rangement === 'object' && c.rangement !== null ? c.rangement : {}) as { skill?: unknown; ligne?: unknown }
   const rangement = typeof r.skill === 'string' && r.skill !== '' ? { skill: r.skill, ligne: typeof r.ligne === 'string' && r.ligne.trim() !== '' ? r.ligne.trim() : RANGEMENT_LIGNE } : undefined
+  const design = designOf(c.design)
   return {
     name: typeof c.name === 'string' && c.name !== '' ? c.name : defaults.name,
     match: [base],
@@ -2729,7 +2739,29 @@ export function parseProjectConfig(text: string, base: string, defaults: { name:
     ...(vue ? { vue } : {}),
     ...(rangement ? { rangement } : {}),
     ...(Number.isInteger(c.relance) && (c.relance as number) > 0 ? { relance: c.relance as number } : {}),
+    ...(design ? { design } : {}),
   }
+}
+
+/** La longueur de `pour` dans la règle des maquettes (#129). */
+const DESIGN_POUR_MAX = 120
+
+/**
+ * `design` de `.claude/roadmap.json` (#129) : une entrée illisible s'ignore, une liste vide ne déclare rien.
+ * Ses valeurs passent dans la règle donnée à chaque session : un chemin à retour à la ligne ou à accent
+ * grave s'ignore, `pour` perd les siens et se coupe, pour que rien n'en sorte comme une consigne.
+ */
+function designOf(v: unknown): Design | undefined {
+  if (v === 'aucun') return 'aucun'
+  if (!Array.isArray(v)) return undefined
+  const entries = v.flatMap((e): DesignEntry[] => {
+    const o = typeof e === 'string' ? { chemin: e } : typeof e === 'object' && e !== null ? (e as { chemin?: unknown; pour?: unknown }) : {}
+    if (typeof o.chemin !== 'string' || o.chemin.trim() === '' || /[\r\n`]/.test(o.chemin)) return []
+    const flat = typeof o.pour === 'string' ? o.pour.replace(/`/g, '').replace(/\s+/g, ' ').trim() : ''
+    const pour = flat.length > DESIGN_POUR_MAX ? `${flat.slice(0, DESIGN_POUR_MAX - 1)}…` : flat
+    return [{ chemin: o.chemin.trim(), ...(pour !== '' ? { pour } : {}) }]
+  })
+  return entries.length > 0 ? entries : undefined
 }
 
 /** Le dossier principal d'un worktree (`…/projet/.claude/worktrees/x` → `…/projet`), sinon le dossier lui-même. */
@@ -3249,12 +3281,21 @@ function gesturesText(autonome: boolean): string {
 
 // Les maquettes (#96, Bertrand, 2026-10-29) : le volet Réglages (#81) codé sans maquette, jugé
 // « horrible », refait sur maquettes (#91). Pas un réglage : dite à toute session, dans les deux modes.
-// Une maquette du plugin parle la langue de son design system (#108), publié par /design-sync (#113).
-function mockupText(): string {
-  return "- **Maquettes avant un choix visuel** (en mode Code comme en mode Projet) : tout choix dont le résultat se voit (en mode Code : un écran, une vue, un panneau, un volet, un composant, une mise en page, un graphique ; en mode Projet : la mise en page d'un document, d'un tableau ou d'une présentation) passe par 2 ou 3 maquettes simples, jamais par une description seule. Chacune a un parti net et son compromis, ta recommandation en premier ; " + person() + " choisit, et alors seulement tu codes ou tu décides. Prends le support le plus léger qui permet de décider : l'aperçu de chaque option du formulaire à choix (champ `preview`) pour un petit choix (une disposition, un ordre, un libellé) ; un widget de maquette (`mcp__visualize__show_widget`, module `mockup`, après `read_me`) pour un écran ou un panneau ; une page HTML statique ouverte dans le volet navigateur (`preview_start` avec son url `file://`) pour une interface riche ou qui se clique, posée dans le dossier du projet (hors de lui, le volet n'en montre qu'un instantané). Une maquette du plugin roadmap lui-même (son panneau, son volet Réglages, un de ses composants) s'appuie sur son design system : les composants et les variables `--rm-*` du paquet `roadmap-design` (dossier `design/` du dépôt du plugin), publiés dans le projet claude.ai que nomme le `projectId` de `design/.design-sync/config.json`. Le réglage autonome ne s'y applique pas : un choix visuel revient à " + person() + ". Sans personne pour répondre, garde les maquettes dans le dossier du chantier, suis ta recommandation et dis-le. Pas pour un choix sans rendu (une règle, un format, un correctif de logique), ni pour un rendu déjà choisi sur maquette."
+// Toute maquette s'appuie sur le design system que le projet déclare (#129, après celui du plugin, #108),
+// ou propose d'en poser un : la cohérence d'un projet ne tient plus à la mémoire de la session.
+function mockupText(design?: Design): string {
+  return "- **Maquettes avant un choix visuel** (en mode Code comme en mode Projet) : tout choix dont le résultat se voit (en mode Code : un écran, une vue, un panneau, un volet, un composant, une mise en page, un graphique ; en mode Projet : la mise en page d'un document, d'un tableau ou d'une présentation) passe par 2 ou 3 maquettes simples, jamais par une description seule. Chacune a un parti net et son compromis, ta recommandation en premier ; " + person() + " choisit, et alors seulement tu codes ou tu décides. Prends le support le plus léger qui permet de décider : l'aperçu de chaque option du formulaire à choix (champ `preview`) pour un petit choix (une disposition, un ordre, un libellé) ; un widget de maquette (`mcp__visualize__show_widget`, module `mockup`, après `read_me`) pour un écran ou un panneau ; une page HTML statique ouverte dans le volet navigateur (`preview_start` avec son url `file://`) pour une interface riche ou qui se clique, posée dans le dossier du projet (hors de lui, le volet n'en montre qu'un instantané). " + designText(design) + " Le réglage autonome ne s'y applique pas : un choix visuel revient à " + person() + ". Sans personne pour répondre, garde les maquettes dans le dossier du chantier, suis ta recommandation et dis-le. Pas pour un choix sans rendu (une règle, un format, un correctif de logique), ni pour un rendu déjà choisi sur maquette."
 }
 
-export function sessionPrefsText(prefs: SessionPrefs, error?: string, project?: string): string {
+/** Le design system dans la règle des maquettes (#129) : celui que déclare le projet, son refus, ou la proposition d'en poser un. */
+function designText(design?: Design): string {
+  if (design === 'aucun') return 'Ce projet a choisi de se passer de design system (`"design": "aucun"` dans `.claude/roadmap.json`) : ses maquettes suivent ce que le projet montre déjà.'
+  if (design === undefined) return "Ce projet ne déclare pas de design system (champ `design` de `.claude/roadmap.json`) : avant de dessiner la maquette d'une feature, propose d'en poser un (en mode Code : ses composants et ses variables, au besoin publiés dans claude.ai par `/design-sync` ; en mode Projet : les modèles de document ou de deck, un par type de tâche), car c'est lui qui tient la cohérence du projet ; la skill onboarding le déclare (`onboarding.py design`), le doctor le vérifie. Une maquette de démo s'en passe."
+  const entries = design.map(e => `\`${e.chemin}\`${e.pour ? ` (${e.pour})` : ''}`)
+  return `Toute maquette de ce projet s'appuie sur son design system, déclaré dans \`.claude/roadmap.json\` (\`design\`) : ${listFr(entries)}. Lis-le avant de dessiner (son README, ses composants, ses variables, son modèle ; s'il est publié par \`/design-sync\`, le projet claude.ai que nomme sa configuration \`.design-sync/config.json\`), et n'invente ni couleur, ni police, ni composant qu'il a déjà ; ce qui lui manque se propose comme un ajout au design system.`
+}
+
+export function sessionPrefsText(prefs: SessionPrefs, error?: string, project?: string, design?: Design): string {
   const lines: string[] = []
   if (prefs.questions) {
     lines.push(
@@ -3277,7 +3318,7 @@ export function sessionPrefsText(prefs: SessionPrefs, error?: string, project?: 
     "- **Liste d'étapes** (en mode Code comme en mode Projet) : une tâche de plus d'un geste tient sa liste d'étapes (`update_plan` dans l'app), posée dès le premier geste. C'est le seul affichage des étapes : jamais recopiée dans le message, ni en liste ni en widget. Elle se lit d'un coup d'œil : trois à sept étapes, chacune nommée par un verbe et son objet, 2 à 4 mots qui disent le geste (« Écrire le plan », pas « Plan » ni une phrase), les mêmes noms que la ligne du mode ADHD quand il est allumé, jamais renommées (une étape nouvelle s'ajoute) ; mise à jour à chaque changement, une étape cochée dès qu'elle finit, une seule en cours. C'est par elle que la session qui t'a lancée voit où tu en es, sans ouvrir ta conversation. Maestro tient la sienne pour ses sessions : une étape par tâche lancée, son état en mots.",
   )
   lines.push(gesturesText(prefs.autonome))
-  lines.push(mockupText())
+  lines.push(mockupText(design))
   const broken = error === undefined ? [] : [`- Le fichier ${SESSION_PREFS_FILE} est illisible (${error}) : réglages par défaut. La skill reglages-session le répare.`]
   return [
     `Réglages de session de ${person()}${project === undefined ? '' : ` pour le projet ${project}`} (plugin roadmap, ${SESSION_PREFS_FILE} ; la skill reglages-session les lit et les change). Ils valent pour toute la session, en plus des règles du projet ; une consigne de ${person()} dans la conversation l'emporte.`,
