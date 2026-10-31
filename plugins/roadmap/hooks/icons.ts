@@ -179,7 +179,8 @@ export function brandMarkIcon(palette: Palette, size = 20): string {
  */
 export function brandLanesIcon(
   palette: Palette,
-  states: readonly ('wait' | 'live' | 'done')[],
+  // `finished` : toute finie, violette pointillée (#145) ; `wait` : t'attend, orange.
+  states: readonly ('wait' | 'live' | 'done' | 'finished')[],
   row = 24,
   hub = 32,
 ): { source: string; width: number; height: number } {
@@ -187,11 +188,11 @@ export function brandLanesIcon(
   const top = (height - states.length * row) / 2
   const cy = height / 2
   const width = hub + 52
-  const hex = { wait: palette.wait, live: palette.live, done: palette.done }
+  const hex = { wait: palette.block, live: palette.live, done: palette.done, finished: palette.finished }
   const lanes = states
     .map((state, i) => {
       const y = top + i * row + row / 2
-      const dash = state === 'done' ? ' stroke-dasharray="1 4"' : ''
+      const dash = state === 'done' || state === 'finished' ? ' stroke-dasharray="1 4"' : ''
       return (
         `<path class="lane" d="M${hub} ${cy}C${hub + 26} ${cy} ${hub + 16} ${y} ${hub + 44} ${y}" fill="none" stroke="${hex[state]}" stroke-width="2.4" stroke-linecap="round"${dash}/>` +
         `<circle cx="${hub + 46}" cy="${y}" r="3.2" fill="${hex[state]}"/>`
@@ -612,20 +613,22 @@ export function barCuts(segments: BarSegment[], width = BAR_WIDTH): { cuts: numb
 
 /**
  * La barre d'étapes d'une session (#143, maquette C + A) : un segment par étape, 1 px entre eux, 2 px
- * au moins chacun (la barre s'élargit au-delà de `width`) ; vert fait, bleu en cours (violet quand la
- * session attend), `sel` à faire.
+ * au moins chacun (la barre s'élargit au-delà de `width`) ; vert fait, bleu en cours (orange quand la
+ * session t'attend), `sel` à faire ; toute violette quand la tâche est toute finie (#145).
  */
 export function stepsBarIcon(
   palette: Palette,
   segments: readonly StepSegment[],
-  opts: { width: number; height?: number; waiting?: boolean },
+  opts: { width: number; height?: number; waiting?: boolean; finished?: boolean },
 ): { source: string; width: number; height: number } {
   const height = opts.height ?? 6
   const gap = 1
   const n = Math.max(1, segments.length)
   const width = Math.max(opts.width, n * 2 + (n - 1) * gap)
   const w = (width - (n - 1) * gap) / n
-  const fill = (s: StepSegment) => (s === 'done' ? palette.ok : s === 'now' ? (opts.waiting ? palette.wait : palette.live) : palette.sel)
+  // Toute finie, toute violette ; la session t'attend, l'étape en cours orange (#145).
+  const fill = (s: StepSegment) =>
+    opts.finished ? palette.finished : s === 'done' ? palette.ok : s === 'now' ? (opts.waiting ? palette.block : palette.live) : palette.sel
   const body = segments
     .map((s, i) => `<rect x="${(i * (w + gap)).toFixed(1)}" y="0" width="${w.toFixed(1)}" height="${height}" rx="${Math.min(RADIUS.bar, height / 2)}" fill="${fill(s)}"/>`)
     .join('')

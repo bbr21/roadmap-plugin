@@ -2379,10 +2379,16 @@ export type StepsView = { segments: StepSegment[]; total: number; done: number; 
  * La liste d'étapes d'une session, pour le panneau (#143) : un segment par étape, « 3/7 » (ou « 7/7
  * faites »), l'étape en cours (la première à faire quand aucune n'est en cours), les rangées de la carte
  * (au-delà de `fold` faites, 3 par défaut, elles se replient en « N étapes faites ») et l'âge de la note.
- * Rien sans liste, ni pour une note d'un autre format (#90).
+ * Rien sans liste, ni pour une note d'un autre format (#90). `closed` : la ligne de la tâche est close,
+ * toutes ses étapes comptent faites (#145) ; la boîte de fin de l'app coche la dernière sans passer par
+ * `update_plan`, et la note la garde en cours.
  */
-export function stepsView(steps: readonly ChildStep[], opts: { now: number; at: number; fold?: number }): StepsView | undefined {
+export function stepsView(steps: readonly ChildStep[], opts: { now: number; at: number; fold?: number; closed?: boolean }): StepsView | undefined {
   if (steps.length === 0) return undefined
+  if (opts.closed) {
+    if (steps.some(s => s.status !== 'completed' && s.status !== 'in_progress' && s.status !== 'pending')) return undefined
+    return stepsView(steps.map(s => ({ ...s, status: 'completed' as const })), { ...opts, closed: false })
+  }
   const done = steps.filter(s => s.status === 'completed').length
   let at = steps.findIndex(s => s.status === 'in_progress')
   if (at < 0) at = steps.findIndex(s => s.status === 'pending')
@@ -2896,6 +2902,11 @@ export function rowPills(task: Task, today: string, me: readonly string[]): Pill
     pills.push({ kind, text: waited >= 7 ? `${shortAttend(task.attend)} · ${waited} j` : shortAttend(task.attend) })
   }
   return pills
+}
+
+/** Les pastilles d'une ligne de la vue liste : sans le tiers attendu (#145, la liste était trop chargée) ; la fiche le garde. */
+export function listPills(task: Task, today: string, me: readonly string[]): Pill[] {
+  return rowPills(task, today, me).filter(p => p.kind !== 'wait' && p.kind !== 'waitAging' && p.kind !== 'waitOld')
 }
 
 /** La pastille d'échéance (#99) : rouge en retard avec le retard, orange dans les 7 jours, grise au-delà. */
@@ -4273,7 +4284,11 @@ export function maestroRelaunchContext(o: { source: Source; tasks: readonly Task
 
 /** Une tâche rattachée à Maestro : `wait` sa session attend une réponse, `live` elle tourne, `done` close. */
 /** Une tâche lancée par Maestro : son état et, quand on la connaît, sa session (ses étapes, son ouverture, #143). */
-export type BrandTask = { id: string; label: string; state: 'wait' | 'live' | 'done'; sessionId?: string }
+/**
+ * Une tâche lancée par Maestro. `closed` : sa ligne est close ; `finished` : close et sa session ne tourne
+ * plus (finie ou archivée), la tâche est toute finie (#145).
+ */
+export type BrandTask = { id: string; label: string; state: 'wait' | 'live' | 'done'; sessionId?: string; closed?: true; finished?: true }
 
 export type Brand =
   | { kind: 'maestro'; project: string; tasks: BrandTask[]; welcome?: Welcome }
@@ -4348,6 +4363,8 @@ export function maestroBrandTasks(
       label: e.label,
       state: (e.done || !e.open ? 'done' : e.running ? 'live' : 'wait') as BrandTask['state'],
       ...(e.sessionId ? { sessionId: e.sessionId } : {}),
+      ...(e.done ? { closed: true as const } : {}),
+      ...(e.done && !(e.open && e.running) ? { finished: true as const } : {}),
     }))
 }
 

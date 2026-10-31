@@ -24,10 +24,14 @@ export type Palette = {
   lateOn: string
   /** À moi, point « En cours ». */
   mine: string
-  /** Attend un tiers. */
+  /** Attend un tiers (attend : Martial), les retours ; sa couleur propre depuis #145. */
   wait: string
   waitTint: string
   waitOn: string
+  /** Tâche toute finie dans l'arbre de Maestro : ligne close, session finie ou archivée (#145). */
+  finished: string
+  finishedTint: string
+  finishedOn: string
   /** Coche, session lancée. */
   ok: string
   /** Segment et carré « Faites ». */
@@ -44,7 +48,7 @@ export type Palette = {
   live: string
   liveTint: string
   liveOn: string
-  /** Tâche bloquée par sa prérequise. */
+  /** Tâche bloquée par sa prérequise, et session qui t'attend (#145). */
   block: string
   blockTint: string
   blockOn: string
@@ -70,9 +74,13 @@ export const PALETTES: Record<ThemeName, Palette> = {
     lateTint: '#47231F',
     lateOn: '#FF928A',
     mine: '#6E9CF0',
-    wait: '#A781F0',
-    waitTint: '#2F2742',
-    waitOn: '#C7AEFA',
+    // Bleu-vert, ni l'orange de « t'attend » et « bloquée », ni le violet de fin (#145).
+    wait: '#45B5C4',
+    waitTint: '#1B3236',
+    waitOn: '#8DD3DD',
+    finished: '#A781F0',
+    finishedTint: '#2F2742',
+    finishedOn: '#C7AEFA',
     ok: '#5BAE6A',
     done: '#7D8590',
     pri: '#ECEBE7',
@@ -101,9 +109,12 @@ export const PALETTES: Record<ThemeName, Palette> = {
     lateTint: '#FCE7E5',
     lateOn: '#B0261E',
     mine: '#2F6BD8',
-    wait: '#7C4FD6',
-    waitTint: '#EFE9FC',
-    waitOn: '#5F35BF',
+    wait: '#1A8496',
+    waitTint: '#E1F2F5',
+    waitOn: '#136878',
+    finished: '#7C4FD6',
+    finishedTint: '#EFE9FC',
+    finishedOn: '#5F35BF',
     ok: '#2E8540',
     done: '#848B95',
     pri: '#1F1E1D',

@@ -536,6 +536,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.94.0 (2026-10-31)** : panneau, maestro : carte d'étapes opaque au-dessus de tout, barres alignées ; t'attend en orange, finie en violet ; étapes d'une tâche finie toutes cochées (#145)
 - **0.93.0 (2026-10-31)** : panneau : la fiche d'une ligne longue tient en une phrase coupée avec « Tout voir », et la voie vide (un point seul) ne paraît plus (#146)
 - **0.92.0 (2026-10-31)** : panneau : la fiche de tâche garde le récap de fin de sa session (Mission, Livré, État, À toi) dans le cadre de la mission, même la session archivée ; bouton Maquettes à côté de Spec et Plan (#144)
 - **0.91.0 (2026-10-31)** : panneau, maestro : les étapes des sessions de Maestro en direct, en barre sous chaque voie et ligne en session, la liste au survol ou épinglée, dans la fiche ; l'arbre rangé par création (#143)
