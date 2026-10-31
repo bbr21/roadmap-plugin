@@ -872,6 +872,74 @@ export function closingBlockReminder(gaps: readonly ClosingGap[], line?: OwnLine
   return lines.join('\n')
 }
 
+/** La fiche de fin d'une session (#123), lue dans sa réponse pour la fiche de tâche (#144). */
+export type EndFiche = { id?: string; mission: string; livre?: string; etat?: string; atoi?: string }
+/** Une fiche de fin gardée dans le store (#144), avec l'heure où la session l'a écrite. */
+export type StoredRecap = EndFiche & { at: number }
+
+const END_FICHE_FIELDS: Record<string, keyof Omit<EndFiche, 'id'>> = { mission: 'mission', livre: 'livre', etat: 'etat', 'a toi': 'atoi' }
+/** Une ligne de tableau markdown : « | étiquette | valeur | ». */
+const TABLE_ROW = /^\s*\|\s*([^|]*?)\s*\|\s*(.*?)\s*\|\s*$/
+const cellText = (cell: string) => cell.replace(/<br\s*\/?>/gi, ' ').replace(/\*\*|__/g, '').replace(/\s+/g, ' ').trim()
+
+/**
+ * La dernière fiche de fin d'une réponse (#144) : la ligne `| Fin | #<id> · … |`, puis les lignes du
+ * tableau qui la suivent, sans gras ni `<br>`. Sans Mission (#123 la rend obligatoire) : rien. La fiche
+ * de Maestro, sans numéro, n'appartient à aucune tâche : rien non plus.
+ */
+export function parseEndFiche(text: string): EndFiche | undefined {
+  const lines = text.split('\n')
+  const label = (line: string) => {
+    const m = TABLE_ROW.exec(line)
+    return m ? normalizeTitle(cellText(m[1]!)) : undefined
+  }
+  let start = -1
+  for (let i = lines.length - 1; i >= 0 && start < 0; i--) if (label(lines[i]!) === 'fin') start = i
+  if (start < 0) return undefined
+  const id = /#(\d+)/.exec(TABLE_ROW.exec(lines[start]!)![2]!)?.[1]
+  if (id === undefined) return undefined
+  const fiche: Partial<EndFiche> = { id }
+  for (const line of lines.slice(start + 1)) {
+    const m = TABLE_ROW.exec(line)
+    if (!m) break
+    const field = END_FICHE_FIELDS[label(line)!]
+    const value = cellText(m[2]!)
+    if (field && value !== '') fiche[field] = value
+  }
+  return fiche.mission ? (fiche as EndFiche) : undefined
+}
+
+/** La clé du récap d'une tâche dans le store (#144) : le store sert tous les projets. */
+export function recapKey(project: string, id: string): string {
+  return `recap:${project}#${id}`
+}
+
+/** Une entrée du store relue (#144) : une mission et une heure, sinon rien ; les champs d'un autre type tombent. */
+export function recapOf(value: unknown): StoredRecap | undefined {
+  const v = value as Record<string, unknown> | null
+  if (typeof v !== 'object' || v === null || typeof v.mission !== 'string' || v.mission === '' || typeof v.at !== 'number') return undefined
+  const out: StoredRecap = { mission: v.mission, at: v.at }
+  for (const k of ['id', 'livre', 'etat', 'atoi'] as const) if (typeof v[k] === 'string' && v[k] !== '') out[k] = v[k]
+  return out
+}
+
+/**
+ * Le cadre de la mission de la fiche de tâche (#144, maquette B) : sans récap, le libellé de la ligne ;
+ * avec, la mission écrite par la session, l'heure de sa fin et ses lignes Livré, État, À toi non vides.
+ */
+export function missionFrame(
+  label: string,
+  recap?: StoredRecap,
+): { recap: false; text: string } | { recap: true; text: string; when: string; rows: [string, string][] } {
+  if (!recap) return { recap: false, text: label }
+  const d = new Date(recap.at)
+  const two = (n: number) => String(n).padStart(2, '0')
+  const when = `fin de session · ${two(d.getDate())}/${two(d.getMonth() + 1)} ${two(d.getHours())}:${two(d.getMinutes())}`
+  const rows: [string, string][] = []
+  for (const [name, value] of [['Livré', recap.livre], ['État', recap.etat], ['À toi', recap.atoi]] as const) if (value) rows.push([name, value])
+  return { recap: true, text: recap.mission, when, rows }
+}
+
 export function parseSources(text: string): Source[] {
   const data: unknown = JSON.parse(text)
   const list = (data as { sources?: unknown }).sources
@@ -4405,7 +4473,7 @@ export type FicheCard = 'avancement' | 'lancer' | 'chaine' | 'details'
  * `roadmap` : au clic dans la roadmap) et son état : la conclusion devant la mission quand elle est
  * faite, puis les cartes qui ont quelque chose à dire. Avancement : dans sa session, le dossier, la
  * branche et l'attente ; dans la roadmap, l'attente, le blocage, la session qui y travaille ou celle,
- * encore ouverte, d'une faite. Lancer : dans la roadmap, une ouverte sans session.
+ * encore ouverte, d'une faite, et le dossier (Spec, Plan, Maquettes : #144). Lancer : dans la roadmap, une ouverte sans session.
  */
 export function ficheCards(o: {
   context: 'session' | 'roadmap'
@@ -4421,7 +4489,7 @@ export function ficheCards(o: {
 }): { conclusion: boolean; cards: FicheCard[] } {
   const session = o.context === 'session'
   const cards: FicheCard[] = []
-  if (session ? o.docs > 0 || o.branch > 0 || o.attend : o.attend || o.blocked || o.live || o.kept) cards.push('avancement')
+  if (session ? o.docs > 0 || o.branch > 0 || o.attend : o.attend || o.blocked || o.live || o.kept || o.docs > 0) cards.push('avancement')
   if (!session && !o.done && !o.live) cards.push('lancer')
   if (o.links > 0) cards.push('chaine')
   if (o.details > 0) cards.push('details')

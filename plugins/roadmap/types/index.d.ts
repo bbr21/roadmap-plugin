@@ -75,6 +75,8 @@ export type View = {
   closedGroups: string[]
   /** Task faite dont la boîte « Conclusion » est dépliée (clé `<fichier>:<ligne>`) ; vide sinon. */
   conclusionOpen: string
+  /** Tâche dont le cadre de la mission montre, sous le récap de fin de sa session, le libellé entier de sa ligne (clé `<fichier>:<ligne>`, #144) ; vide ou absente sinon. */
+  missionOpen?: string
   /** Tâche dont la clôture (faite ou annulée, selon `closeKind`) attend sa confirmation (clé `taskKey`) ; vide sinon. */
   cancelAsk: string
   /** La clôture que confirme l'encart de `cancelAsk` : « Marquer faite » ou « Annuler la tâche » (#73). */

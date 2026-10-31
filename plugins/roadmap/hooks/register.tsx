@@ -106,6 +106,10 @@ import {
   dueLabel,
   findSelected,
   ficheCards,
+  missionFrame,
+  parseEndFiche,
+  recapKey,
+  recapOf,
   type FicheCard,
   taskBrandOf,
   byDay,
@@ -777,6 +781,27 @@ async function ownLine($: EngineInterface): Promise<OwnLineContext | undefined> 
   const line = ownLineState(id, now.open, now.done)
   if (line.state === 'absent') return undefined
   return { ...line, id, file: files(c.source).open, maestro: await parentIsMaestro($) }
+}
+
+/**
+ * La fiche de fin d'une session (#123) gardée pour la fiche de sa tâche (#144) : dans le store, sous
+ * le projet et le numéro du titre de la session (sinon celui de la ligne Fin), sans purge, pour
+ * survivre à l'archivage. Une session de vérification ne remplace pas le récap de celle de travail.
+ */
+async function saveEndFiche($: EngineInterface, answer: string | undefined): Promise<void> {
+  const c = capture
+  if (!settings.capture || !c || !answer) return
+  const fiche = parseEndFiche(answer)
+  if (!fiche) return
+  try {
+    const title = (await readOwnSession($)).title
+    if (sessionTitleKind(title) === 'check') return
+    const id = sessionTitleId(title) ?? fiche.id
+    if (id === undefined) return
+    await $.store.set(recapKey(c.source.name, id), { ...fiche, at: await $.clock.now() })
+  } catch {
+    // store ou fiche de session illisibles : la fiche de tâche garde son cadre
+  }
 }
 
 /**
@@ -3571,6 +3596,8 @@ export const register: Register = (on, options) => {
     const result = await next(e)
     if (e.agentId !== undefined) return result
     await markOwnRunning($, false)
+    // La fiche de fin de la session se garde pour la fiche de sa tâche (#144).
+    if (!e.isAborted) await saveEndFiche($, e.answer)
     // Une session de Maestro prévient Maestro de l'état où elle s'arrête (#131) ; interrompue, la personne est là.
     if (!e.isAborted) await tellMaestro($, childWake({ ...wakeBox, answer: e.answer }))
     // Un réveil de Maestro ne laisse pas de rappel, qui ferait écrire son fil (#133).
@@ -4131,8 +4158,8 @@ async function paneBrand(
   })
 }
 
-/** Ce que la vue de tâche lit hors de la roadmap : l'écart de la branche, la spec et le plan ; relu au plus toutes les 30 s. */
-let focusFacts: { key: string; at: number; branch: string[]; base: string; docs: { label: string; path: string }[] } | undefined
+/** Ce que la vue de tâche lit hors de la roadmap, dans sa session : l'écart de la branche ; relu au plus toutes les 30 s. */
+let focusFacts: { key: string; at: number; branch: string[]; base: string } | undefined
 const FOCUS_FACTS_MS = 30_000
 
 async function readFocusFacts($: EngineInterface, source: Source, task: Task, ownId: string | undefined, now: number) {
@@ -4149,19 +4176,7 @@ async function readFocusFacts($: EngineInterface, source: Source, task: Task, ow
   } catch {
     // pas de git (mode Projet, dossier hors dépôt) : pas de ligne Branche
   }
-  const docs: { label: string; path: string }[] = []
-  if (task.spec) {
-    const at = `${source.dir}/${task.spec.replace(/\/$/, '')}`
-    for (const [label, path] of [['Spec', `${at}/spec.md`], ['Plan', `${at}/plan.md`], ['Spec', at]] as const) {
-      if (docs.some(d => d.label === label)) continue
-      try {
-        if ((await $.fs.stat(path)).kind === 'file') docs.push({ label, path })
-      } catch {
-        // absent
-      }
-    }
-  }
-  focusFacts = { key, at: now, branch, base, docs }
+  focusFacts = { key, at: now, branch, base }
   return focusFacts
 }
 
@@ -4194,6 +4209,28 @@ async function stepsMoved($: EngineInterface): Promise<boolean> {
   const moved = stamp !== lastStepsStamp
   lastStepsStamp = stamp
   return moved
+}
+
+/** Le dossier de la tâche (`spec:`) : Spec, Plan et Maquettes (#144), dans sa session comme au clic ; relu au plus toutes les 30 s. */
+let ficheDocs: { key: string; at: number; docs: { label: string; path: string }[] } | undefined
+
+async function readFicheDocs($: EngineInterface, source: Source, task: Task, now: number) {
+  const key = `${source.dir}|${task.spec ?? ''}`
+  if (ficheDocs && ficheDocs.key === key && now - ficheDocs.at < FOCUS_FACTS_MS) return ficheDocs.docs
+  const docs: { label: string; path: string }[] = []
+  if (task.spec) {
+    const at = `${source.dir}/${task.spec.replace(/\/$/, '')}`
+    for (const [label, path] of [['Spec', `${at}/spec.md`], ['Spec', at], ['Plan', `${at}/plan.md`], ['Maquettes', `${at}/maquettes.html`]] as const) {
+      if (docs.some(d => d.label === label)) continue
+      try {
+        if ((await $.fs.stat(path)).kind === 'file') docs.push({ label, path })
+      } catch {
+        // absent
+      }
+    }
+  }
+  ficheDocs = { key, at: now, docs }
+  return docs
 }
 
 /**
@@ -4354,7 +4391,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   ])
   const {
     axis: axisRaw, attend: attendRaw, who: whoRaw = 'all', moreFilters = false, showDone, groupBy, selected, openGroups, closedGroups, moreGroups,
-    launchNote, launched, openNote, conclusionOpen, cancelAsk = '', closeKind = 'abandon', cancelNote = '',
+    launchNote, launched, openNote, conclusionOpen, missionOpen = '', cancelAsk = '', closeKind = 'abandon', cancelNote = '',
   } = view
   const data = await paneData($, source, [stamp, titlesVersion, themeStamp, retry, liveVersion].join('|'))
   const { palette, bilan: bilanData, titles, live: liveEntries, ignored } = data
@@ -4564,6 +4601,10 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   if (current) {
     // Dans sa session : le dossier, la branche et son écart, lus hors de la roadmap.
     const facts = inSession && ownBrand ? await readFocusFacts($, ownBrand.data.source, current, ownBrand.data.own.id, now) : undefined
+    // Son dossier (Spec, Plan, Maquettes) et le récap de fin de sa session (#144), dans les deux contextes.
+    const ficheSource = inSession && ownBrand ? ownBrand.data.source : source
+    const docs = await readFicheDocs($, ficheSource, current, now)
+    const frame = missionFrame(current.label, current.id ? recapOf(await $.store.get(recapKey(ficheSource.name, current.id)).catch(() => undefined)) : undefined)
     const s = short(current)
     const days = age(current)
     const line = Number(current.key.split(':').pop())
@@ -4814,7 +4855,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
       blocked: holder !== undefined,
       kept: kept !== undefined,
       attend: current.attend !== undefined,
-      docs: facts?.docs.length ?? 0,
+      docs: docs.length,
       branch: facts?.branch.length ?? 0,
       links,
       details: detailCount,
@@ -4850,12 +4891,11 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
           'Avancement',
           <Box flexDirection="column" gap={SPACE.block}>
             <Box flexDirection="column">
-              {facts &&
-                facts.docs.length > 0 &&
+              {docs.length > 0 &&
                 field(
                   'Dossier',
                   <Box flexDirection="row" gap={SPACE.row}>
-                    {facts.docs.map(d => (
+                    {docs.map(d => (
                       <Button key={`focus-doc:${d.label}`} label={d.label} onPress={() => void openFile($, d.path)} />
                     ))}
                   </Box>,
@@ -5271,13 +5311,48 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
           })}
         </Box>
         {layout.conclusion && conclusionBox()}
-        {/* La mission dans son cadre : fond `note`, légende, texte en taille courante. */}
+        {/* La mission dans son cadre : fond `note`, légende, texte en taille courante. Avec le récap de fin
+            de sa session (#144, maquette B) : sa mission, l'heure de sa fin, Livré, État, À toi, puis la
+            ligne de la roadmap repliée derrière « Tout voir ». */}
         <Box paddingX={SPACE.indent}>
           <Box flexDirection="column" gap={SPACE.tight} paddingX={SPACE.indent} paddingY="sm" flexGrow={1} backgroundColor={palette.note}>
             {corners(RADIUS.control, palette.bg)}
-            <Text size="caption" weight="medium" color={palette.text2}>Mission</Text>
-            <Text wrap="wrap">{current.label}</Text>
-            {current.note && <Text color={palette.text2} wrap="wrap">{current.note}</Text>}
+            {frame.recap ? (
+              <Box flexDirection="row" justifyContent="space-between" alignItems="center" gap={SPACE.row}>
+                <Text size="caption" weight="medium" color={palette.text2}>Mission</Text>
+                <Text size="caption" color={palette.text2}>{frame.when}</Text>
+              </Box>
+            ) : (
+              <Text size="caption" weight="medium" color={palette.text2}>Mission</Text>
+            )}
+            <Text wrap="wrap">{frame.text}</Text>
+            {frame.recap &&
+              frame.rows.map(([name, value]) => (
+                <Box key={`recap:${name}`} flexDirection="row" gap={SPACE.row}>
+                  <Box width={10} flexShrink={0}>
+                    <Text color={palette.text2}>{name}</Text>
+                  </Box>
+                  <Box flexShrink={1} minWidth={0}>
+                    <Text wrap="wrap">{value}</Text>
+                  </Box>
+                </Box>
+              ))}
+            {frame.recap && (
+              <Box flexDirection="row" alignItems="center" gap={SPACE.row}>
+                <Box flexShrink={1} minWidth={0}>
+                  <Text size="caption" color={palette.text2} wrap="truncate-end">{`La ligne de la roadmap : « ${s.titre} »`}</Text>
+                </Box>
+                <Button
+                  key="mission-line"
+                  plain
+                  dimColor
+                  label={missionOpen === current.key ? 'Replier' : 'Tout voir'}
+                  onPress={() => void setView($, v => ({ missionOpen: v.missionOpen === current.key ? '' : current.key }))}
+                />
+              </Box>
+            )}
+            {frame.recap && missionOpen === current.key && <Text size="caption" wrap="wrap">{current.label}</Text>}
+            {current.note && (!frame.recap || missionOpen === current.key) && <Text color={palette.text2} wrap="wrap">{current.note}</Text>}
           </Box>
         </Box>
         {ficheSteps($, e, palette, await readSteps($, inSession ? ownBrand?.data.own.id : liveOf(current)?.entry.sessionId), now)}
