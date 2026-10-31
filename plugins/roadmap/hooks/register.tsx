@@ -140,8 +140,14 @@ import {
   launchable,
   maestroCall,
   maestroContext,
+  maestroDayContext,
   maestroIntro,
-  maestroYes,
+  maestroRelaunchContext,
+  welcomeFacts,
+  welcomeText,
+  type MaestroAction,
+  type Welcome,
+  type WelcomePill,
   MAESTRO_MENU,
   rowPills,
   sortTasks,
@@ -454,8 +460,6 @@ const scanNoteAtom = atom({ plugin: 'roadmap', key: 'scanNote' } as const, '')
  * a changé depuis (#119) se redonne. L'état de session survit au rechargement du module.
  */
 const prefsGivenAtom = atom({ plugin: 'roadmap', key: 'prefsGivenText' } as const, '')
-/** Maestro vient de se présenter sans scanner (#126) : un oui nu au message suivant demande le scan. */
-const maestroIntroAtom = atom({ plugin: 'roadmap', key: 'maestroIntro' } as const, false)
 /**
  * Les questions que les boîtes de fin de Maestro ont posées depuis le dernier message de la personne
  * (#133) : un tour réveillé par une session ne les repose pas. L'état de session survit au rechargement.
@@ -2412,7 +2416,7 @@ async function briefFound($: EngineInterface, source: Source, task: Task): Promi
  * orienté objectif — les sessions qui attendent Bertrand, celles qui tournent, et les tâches à
  * lancer, la plus utile d'abord, avec leur carte prête. Rien n'est lancé ni écrit ici.
  */
-async function maestroText($: EngineInterface, go: boolean): Promise<string> {
+async function maestroText($: EngineInterface, go: boolean, only?: 'launch' | 'sessions'): Promise<string> {
   const source = await sourceNow($)
   if (!source) {
     return `${Person()} a dit « Maestro », mais ce projet (${await $.session.root()}) n'a pas de roadmap : dis-le en une phrase, et propose la skill roadmap:onboarding, qui la pose dans le dépôt (et peut la reconstituer depuis son historique).`
@@ -2496,21 +2500,70 @@ async function maestroText($: EngineInterface, go: boolean): Promise<string> {
     adhd: prefs.adhd,
     ...(othersLate > 0 ? { othersLate } : {}),
     ...(LAUNCH_EFFORTS.has(settings.launchEffort) ? { launchEffort: settings.launchEffort } : {}),
+    ...(only ? { only } : {}),
   })
 }
 
+/** Sans roadmap dans ce projet, « Maestro » propose l'onboarding. */
+async function noRoadmapText($: EngineInterface): Promise<string> {
+  return `${Person()} a dit « Maestro », mais ce projet (${await $.session.root()}) n'a pas de roadmap : dis-le en une phrase, et propose la skill roadmap:onboarding, qui la pose dans le dépôt (et peut la reconstituer depuis son historique).`
+}
+
 /**
- * « Maestro » seul (#126) : le panneau s'ouvre et Maestro se présente ; rien n'est lu de la roadmap
- * ni des sessions avant le oui de Bertrand, que l'atome attend au message suivant.
+ * L'accueil de Maestro (#141), compté sur la roadmap seule : la carte et le contexte de « Maestro »
+ * le partagent. Rien des sessions n'est relu (#126) : seules les tâches de Maestro déjà connues comptent.
+ */
+async function welcomeOf($: EngineInterface, data: NonNullable<Awaited<ReturnType<typeof brandData>>>): Promise<Welcome> {
+  const ms = await $.clock.now()
+  const settings = projectSettings(data.source)
+  const facts = welcomeFacts({
+    tasks: data.tasks,
+    today: todayOf(ms),
+    me: data.source.me ?? [],
+    mode: settings.mode,
+    relanceDays: settings.relanceDays,
+    sessions: data.maestroTasks.filter(t => t.state !== 'done').length,
+  })
+  return welcomeText(facts, { person: Person(), now: new Date(ms) })
+}
+
+/**
+ * « Maestro » seul (#126, #141) : le panneau s'ouvre, la carte d'accueil porte les chiffres et les
+ * boutons, et Maestro ne dit que l'encouragement ; rien n'est lu des sessions avant un clic.
  */
 async function maestroIntroText($: EngineInterface): Promise<string> {
   const source = await sourceNow($)
-  if (!source) {
-    return `${Person()} a dit « Maestro », mais ce projet (${await $.session.root()}) n'a pas de roadmap : dis-le en une phrase, et propose la skill roadmap:onboarding, qui la pose dans le dépôt (et peut la reconstituer depuis son historique).`
-  }
+  if (!source) return noRoadmapText($)
   void openPane($, source)
-  await update($, maestroIntroAtom, () => true)
-  return maestroIntro({ source })
+  const data = await brandData($)
+  if (!data) throw new Error('roadmap illisible')
+  return maestroIntro({ source, welcome: await welcomeOf($, data) })
+}
+
+/** Une action de l'accueil (#141) : ce que lit son bouton, à la place du scan entier. */
+async function maestroActionText($: EngineInterface, action: MaestroAction): Promise<string> {
+  if (action === 'lancer') return maestroText($, false, 'launch')
+  if (action === 'sessions') return maestroText($, false, 'sessions')
+  const source = await sourceNow($)
+  if (!source) return noRoadmapText($)
+  void openPane($, source)
+  const data = await brandData($)
+  if (!data) throw new Error('roadmap illisible')
+  const today = todayOf(await $.clock.now())
+  const me = source.me ?? []
+  if (action === 'journee') return maestroDayContext({ source, sections: todaySections(data.tasks, today, me), titleOf: data.short, today })
+  const relanceDays = projectSettings(source).relanceDays
+  return maestroRelaunchContext({ source, tasks: data.tasks.filter(t => isToRelaunch(t, today, me, relanceDays)), titleOf: data.short, today, me })
+}
+
+/**
+ * Un bouton de l'accueil envoie son message au nom de la personne (#141). Parti d'un clic, l'envoi
+ * sauterait les hooks de ce plugin (#140) : il attend dans la boîte d'envoi, que le dessin du panneau
+ * vide ; le panneau se redessine tout de suite.
+ */
+async function submitWelcome($: EngineInterface, text: string): Promise<void> {
+  queueSubmit($, text)
+  await update($, liveVersionAtom, v => v + 1)
 }
 
 /** Sans outil de lancement utilisable, la demande part à Claude dans la conversation en cours. */
@@ -2540,6 +2593,16 @@ function sendLaunch($: EngineInterface, text?: string): void {
   void $.prompt.submit({ text: out }).catch(() => undefined)
 }
 
+/** Dépose un envoi dans la boîte d'envoi : le prochain dessin du panneau l'envoie, sinon le secours. */
+function queueSubmit($: EngineInterface, text: string): void {
+  launchOutbox = text
+  try {
+    $.clock.after(LAUNCH_FALLBACK_MS, () => sendLaunch($, text))
+  } catch {
+    // horloge refusée : le prochain dessin du panneau l'envoie seul
+  }
+}
+
 async function submitLaunch($: EngineInterface, brief: { title: string; prompt: string; background: string }, note: string, mode: Mode = 'code'): Promise<void> {
   // La conversation n'en montre que la première ligne : le hook prompt.submit passe le reste en contexte (#140).
   const text = launchPrompt(
@@ -2552,12 +2615,7 @@ async function submitLaunch($: EngineInterface, brief: { title: string; prompt: 
       `Contexte : ${brief.background}`,
     ].join('\n'),
   )
-  launchOutbox = text
-  try {
-    $.clock.after(LAUNCH_FALLBACK_MS, () => sendLaunch($, text))
-  } catch {
-    // horloge refusée : le dessin qui suit la note l'envoie seul
-  }
+  queueSubmit($, text)
   // La note change la vue : le panneau se redessine et envoie le lancement.
   await setView($, () => ({ launchNote: note }))
 }
@@ -3343,16 +3401,8 @@ export const register: Register = (on, options) => {
     } catch {
       // store illisible : les vieilles notes attendent le prochain chargement
     }
-    // « Maestro » seul se présente ; le scan vient sur une demande, « Maestro go », ou le oui qui suit (#126).
-    let call = maestroCall(e.text)
-    try {
-      if (await read($, maestroIntroAtom)) {
-        await update($, maestroIntroAtom, () => false)
-        if (!call && maestroYes(e.text)) call = { go: false, scan: true }
-      }
-    } catch {
-      // état de session illisible : seul « Maestro scan » demande le scan
-    }
+    // « Maestro » seul accueille (#126, #141) ; un bouton de l'accueil lit sa part ; une demande ou « Maestro go » scannent.
+    const call = maestroCall(e.text)
     if (call) {
       try {
         await markMaestro($)
@@ -3360,7 +3410,7 @@ export const register: Register = (on, options) => {
         // fiche ou store illisible : le titre et la famille jugent seuls
       }
       try {
-        texts.push(call.scan ? await maestroText($, call.go) : await maestroIntroText($))
+        texts.push(call.action ? await maestroActionText($, call.action) : call.scan ? await maestroText($, call.go) : await maestroIntroText($))
       } catch (err) {
         texts.push(`${Person()} a dit « Maestro », mais l'état de la roadmap n'a pas pu être lu (${err instanceof Error ? err.message : String(err)}) : dis-le en une phrase.`)
       }
@@ -3630,8 +3680,10 @@ export const register: Register = (on, options) => {
     if (!maestroCall(e.props.text) && !briefTaskOf(e.props.text)) return next(e)
     try {
       const data = await brandData($)
-      const brand = data?.shorten(openingBrand({ text: e.props.text, source: data.source, tasks: data.tasks, maestroTasks: data.maestroTasks }))
-      if (!data || !brand) return next(e)
+      const opened = data?.shorten(openingBrand({ text: e.props.text, source: data.source, tasks: data.tasks, maestroTasks: data.maestroTasks }))
+      if (!data || !opened) return next(e)
+      // « Maestro » seul ouvre l'accueil (#141) : le bonjour, les chiffres et les boutons.
+      const brand = opened.kind === 'maestro' && !maestroCall(e.props.text)?.scan ? { ...opened, welcome: await welcomeOf($, data) } : opened
       const card = brandTree($, e, brand, data.palette, 'card', todayOf(await $.clock.now()))
       if (!e.props.isExpanded || brand.kind === 'maestro') return card
       const { Box, Text } = $.ui.resolve(e)
@@ -3716,7 +3768,61 @@ async function brandData($: EngineInterface) {
     const task = tasks.find(t => t.id === brand.id)
     return task ? { ...brand, label: short(task) } : brand
   }
-  return { source, tasks, palette: data.palette, own, shorten, maestroTasks: maestroTasksOf(source, tasks, data.live, own.id, short) }
+  return { source, tasks, palette: data.palette, own, shorten, short, maestroTasks: maestroTasksOf(source, tasks, data.live, own.id, short) }
+}
+
+/** La largeur de la barre de l'accueil, en px. */
+const WELCOME_BAR = 160
+
+/**
+ * L'accueil de Maestro sous son bonjour (#141, maquette A) : les faites sur le total et leur barre, les
+ * closes de la semaine, « Aujourd'hui » et ses pastilles, puis les boutons. Un bouton envoie son message
+ * au nom de la personne, par la boîte d'envoi (`submitWelcome`).
+ */
+function welcomeTree(
+  $: EngineInterface,
+  e: RenderInput<'UserMessage'> | RenderInput<'Pane'>,
+  w: Welcome,
+  palette: Palette,
+  pill: (label: string, bg: string, fg: string) => RenderElement,
+): RenderElement {
+  const { Box, Text, Button } = $.ui.resolve(e)
+  const resolved = $.ui.resolve(e)
+  const Svg = 'Svg' in resolved && e.surface !== 'terminal' ? resolved.Svg : undefined
+  const { done, total, pct } = w.progress
+  const tone: Record<WelcomePill['tone'], [string, string]> = {
+    late: [palette.lateTint, palette.lateOn],
+    soon: [palette.blockTint, palette.blockOn],
+    wait: [palette.waitTint, palette.waitOn],
+    live: [palette.liveTint, palette.liveOn],
+    none: [palette.sel, palette.text2],
+  }
+  return (
+    <Box key="welcome" flexDirection="column" gap={SPACE.tight}>
+      <Box flexDirection="row" alignItems="center" gap={SPACE.row} flexWrap="wrap">
+        <Text size="footnote" color={palette.text2}>{w.counts}</Text>
+        {Svg && total > 0 && (
+          <Svg source={barIcon([{ hex: palette.ok, n: done }, { hex: palette.sel, n: total - done }], palette.done, WELCOME_BAR)} alt={`${pct} % fait`} width={WELCOME_BAR} height={6} />
+        )}
+        {total > 0 && <Text size="footnote" color={palette.text2}>{`${pct} %`}</Text>}
+        {w.week && <Text size="caption" weight="semibold" color={palette.ok}>{w.week}</Text>}
+      </Box>
+      <Box flexDirection="row" alignItems="center" gap={SPACE.tight} flexWrap="wrap">
+        <Text size="footnote" color={palette.text2}>Aujourd'hui</Text>
+        {w.pills.map(p => pill(p.text, ...tone[p.tone]))}
+      </Box>
+      <Box flexDirection="row" alignItems="center" gap={SPACE.tight} flexWrap="wrap" paddingTop="xs">
+        {w.actions.map(a => (
+          <Button
+            key={`welcome:${a.key}`}
+            {...(a.primary ? { variant: 'primary' as const } : {})}
+            label={a.n !== undefined ? `${a.label} ${a.n}` : a.label}
+            onPress={() => void submitWelcome($, a.message)}
+          />
+        ))}
+      </Box>
+    </Box>
+  )
 }
 
 /** Les tâches lancées montrées sur la carte et l'en-tête ; les suivantes se comptent. */
@@ -3790,12 +3896,13 @@ function brandTree(
       return (
         <Box flexDirection="column" gap={SPACE.block} paddingY="xs">
           <Box flexDirection="row" alignItems="center" gap={SPACE.row}>
-            {shown.length === 0 && mark(28)}
-            <Box flexDirection="column">
-              <Text size="title" weight="semibold">{words.title}</Text>
+            {(shown.length === 0 || brand.welcome) && mark(28)}
+            <Box flexDirection="column" flexShrink={1} minWidth={0}>
+              <Text size="title" weight="semibold" wrap="wrap">{words.title}</Text>
               <Text size="footnote" color={palette.text2} wrap="wrap">{words.sub}</Text>
             </Box>
           </Box>
+          {brand.welcome && welcomeTree($, e, brand.welcome, palette, pill)}
           {list}
         </Box>
       )

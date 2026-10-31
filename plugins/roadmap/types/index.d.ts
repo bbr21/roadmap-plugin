@@ -30,8 +30,6 @@ declare module 'claude-code' {
        * bloc qui a changé depuis (le volet, la skill) se redonne au message suivant (#119).
        */
       prefsGivenText: string
-      /** Maestro vient de se présenter sans scanner (#126) : un oui nu au message suivant demande le scan. */
-      maestroIntro: boolean
       /** Le contexte du message précédent, en jetons (#119) : 0 quand rien n'est mesuré depuis le dernier `/clear` ou la dernière compaction vue. */
       contextSeen: number
       /** Les questions des boîtes de fin de Maestro depuis le dernier message de la personne (#133) : un réveil ne les repose pas. */

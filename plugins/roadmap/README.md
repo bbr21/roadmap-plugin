@@ -117,11 +117,17 @@ contournements sont écrits en commentaire dans `hooks/register.tsx` et `hooks/i
 ## Maestro
 
 Demande de Bertrand du 27/10/2026 : « Maestro » en tête d'un message ouvre le panneau. Seul
-(« Maestro », `/maestro`), il ne scanne plus rien (#126, 30/10/2026) : Maestro se présente en une
-ligne et propose le scan d'un bouton de sa boîte de fin, « Je scanne ta roadmap pour te dire quoi
-faire ? », dont le clic envoie « Maestro scan » ; un « oui » au message suivant vaut ce clic (« ok »
-non). Sur ce oui, sur « Maestro scan », « Maestro go » ou une demande (« Maestro, on en est où ? »),
-Claude reçoit, en contexte additionnel, l'état d'avancement du projet, orienté objectif : faire
+(« Maestro », `/maestro`), il ne scanne rien (#126) : une carte d'accueil prend la place du message
+(#141, 31/10/2026), comptée par le plugin sur la roadmap seule : le bonjour du jour (« Bonjour
+Bertrand, on est vendredi. »), les tâches faites sur le total avec leur barre, les closes de la
+semaine, les pastilles du jour (en retard, aujourd'hui ou demain, tiers à relancer ou sessions qui
+tournent), puis quatre boutons : « Ma journée », « Quoi lancer », « À relancer » en mode Projet ou
+« Mes sessions » en mode Code (cachés à zéro), « Tout scanner ». Maestro ne dit qu'une phrase
+d'encouragement. Un clic envoie son message (« Maestro journée », « Maestro quoi lancer »,
+« Maestro relances », « Maestro sessions », « Maestro scan ») par la boîte d'envoi de #140, que vide
+le dessin du panneau : il passe ainsi par le hook `prompt.submit`, qui joint la part à lire (la
+journée par sections, les relances, ce qu'on peut lancer, les sessions, ou l'état entier). Sur
+« Maestro scan », « Maestro go » ou une demande (« Maestro, on en est où ? »), Claude reçoit, en contexte additionnel, l'état d'avancement du projet, orienté objectif : faire
 avancer les tâches, qu'aucune ne reste bloquée des heures. Les nouvelles des sessions enfants qui
 coincent arrivent à chaque message, scan ou non.
 La tête du message se lit après les blocs `<system-reminder>` que l'app met devant le texte de
@@ -530,6 +536,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.90.0 (2026-10-31)** : maestro : « Maestro » seul ouvre une carte d'accueil chiffrée sans scan (le jour, les faites sur le total, ce qui attend) et quatre boutons d'action directe (#141)
 - **0.89.0 (2026-10-30)** : panneau : une seule fiche par tâche, en cartes, dans sa session comme au clic dans la roadmap : titre cliquable, mission dans un cadre, cartes selon l'état ; design/ : TaskFiche remplace TaskFocus (#142)
 - **0.88.0 (2026-10-30)** : panneau, Maestro : sous sec-default, un lancement depuis le panneau n'affiche plus qu'une ligne (« Lancement de #N… »), le brief en contexte caché ; le rappel de fin de tour ne s'affiche plus en message, il rejoint le message suivant, et aucun rappel après un tour qui n'a posé qu'une carte (#140)
 - **0.87.0 (2026-10-30)** : panneau, doctor, audit : les règles du modèle seule, parent, enfant sur deux niveaux, signalées à l'écriture et comptées par le doctor ; l'audit ne crée plus de troisième niveau (#125, lot 5)

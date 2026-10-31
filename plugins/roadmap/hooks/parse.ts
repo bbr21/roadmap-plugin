@@ -3947,20 +3947,150 @@ const withoutReminders = (prompt: string) => prompt.replace(/^(?:\s*<system-remi
  * `scan` : il veut l'état de la roadmap. L'appel nu ne scanne pas (#126) : le panneau s'ouvre et Maestro
  * propose le scan ; « Maestro scan », « Maestro go » ou une demande après « Maestro » scannent.
  */
-export function maestroCall(prompt: string): { go: boolean; scan: boolean } | undefined {
+export function maestroCall(prompt: string): { go: boolean; scan: boolean; action?: MaestroAction } | undefined {
   // « /maestro » (et « /roadmap:maestro ») lance la skill du même nom : il vaut « Maestro » (#112).
   const m = /^\s*(?:\/(?:roadmap:)?)?maestro\b[\s,.:!?-]*(.*)$/is.exec(withoutReminders(prompt))
   if (!m) return undefined
   const rest = (m[1] ?? '').trim()
-  return { go: /^(go|lance|lancer|vas-y|vas y|start|démarre|demarre)\b/i.test(rest), scan: rest !== '' }
+  const go = /^(go|lance|lancer|vas-y|vas y|start|démarre|demarre)\b/i.test(rest)
+  const action = go ? undefined : MAESTRO_ACTIONS.find(([, re]) => re.test(rest))?.[0]
+  return { go, scan: rest !== '', ...(action ? { action } : {}) }
+}
+
+/** Les actions de l'accueil (#141) : ce que lit chaque bouton, à la place du scan entier. */
+export type MaestroAction = 'journee' | 'lancer' | 'relances' | 'sessions'
+
+const MAESTRO_ACTIONS: readonly (readonly [MaestroAction, RegExp])[] = [
+  ['journee', /^(ma\s+)?journ[ée]e\b/i],
+  ['lancer', /^quoi\s+lancer\b/i],
+  ['relances', /^(à\s+|a\s+)?relances?\b|^relancer\b/i],
+  ['sessions', /^(mes\s+)?sessions\b/i],
+]
+
+/** Ce que compte l'accueil de Maestro (#141), sans scan : la roadmap seule, aux règles du panneau. */
+export type WelcomeFacts = {
+  total: number
+  done: number
+  /** Les faites sur le total, arrondi ; 0 sans tâche. */
+  pct: number
+  /** Les closes depuis le lundi de la semaine du jour. */
+  closedWeek: number
+  /** Ma journée : en retard, aujourd'hui ou demain, et toutes ses sections. */
+  late: number
+  soon: number
+  day: number
+  /** La 4e action : les relances d'un tiers en mode Projet, les sessions de Maestro en mode Code ; absente à zéro. */
+  extra?: { kind: 'relances' | 'sessions'; n: number }
+}
+
+/** Les jours écoulés depuis lundi : 0 un lundi, 6 un dimanche. */
+function sinceMonday(today: string): number {
+  return (new Date(`${today}T00:00:00Z`).getUTCDay() + 6) % 7
+}
+
+export function welcomeFacts(o: {
+  tasks: readonly Task[]
+  today: string
+  me: readonly string[]
+  mode: Mode
+  relanceDays: number
+  /** Les tâches de Maestro qui tournent ou attendent. */
+  sessions: number
+}): WelcomeFacts {
+  // Une mère n'est pas une action à elle (#125) : ses filles comptent, pas elle.
+  const tasks = o.tasks.filter(t => !t.isParent)
+  const done = tasks.filter(t => t.done)
+  const monday = sinceMonday(o.today)
+  const closedWeek = done.filter(t => {
+    if (!t.fait) return false
+    const days = daysBetween(t.fait.slice(0, 10), o.today)
+    return days >= 0 && days <= monday
+  }).length
+  const sections = todaySections(tasks, o.today, o.me)
+  const count = (label: string) => sections.find(g => g.label === label)?.tasks.length ?? 0
+  const n = o.mode === 'projet' ? tasks.filter(t => isToRelaunch(t, o.today, o.me, o.relanceDays)).length : o.sessions
+  return {
+    total: tasks.length,
+    done: done.length,
+    pct: tasks.length === 0 ? 0 : Math.round((done.length / tasks.length) * 100),
+    closedWeek,
+    late: count('En retard'),
+    soon: count("Aujourd'hui et demain"),
+    day: sections.reduce((sum, g) => sum + g.tasks.length, 0),
+    ...(n > 0 ? { extra: { kind: o.mode === 'projet' ? ('relances' as const) : ('sessions' as const), n } } : {}),
+  }
 }
 
 /** Le message du bouton de la présentation de Maestro : il demande le scan (#126). */
 export const MAESTRO_SCAN_MESSAGE = 'Maestro scan'
 
-/** Un oui nu, au message qui suit la présentation de Maestro (#126). « ok » n'en est pas un : il accuse réception. */
-export function maestroYes(prompt: string): boolean {
-  return /^\s*(oui|ouais|yes|vas-y|vas y|d'accord|d’accord|scanne|scan)(\s*,?\s*(scanne|vas-y))?\s*[.!]*\s*$/i.test(withoutReminders(prompt))
+/** Les actions de l'accueil (#141) : `journee`, `lancer`, `relances`, `sessions`, puis `scan`, le scan de #126. */
+export type WelcomeKey = 'journee' | 'lancer' | 'relances' | 'sessions' | 'scan'
+export type WelcomeAction = { key: WelcomeKey; label: string; message: string; n?: number; primary?: boolean }
+export type WelcomePill = { tone: 'late' | 'soon' | 'wait' | 'live' | 'none'; text: string }
+export type Welcome = { hello: string; sub: string; counts: string; progress: { done: number; total: number; pct: number }; week?: string; pills: WelcomePill[]; actions: WelcomeAction[]; cheer: string }
+
+/** Le message que chaque bouton de l'accueil envoie au nom de la personne. */
+export const WELCOME_MESSAGES: Record<WelcomeKey, string> = {
+  journee: 'Maestro journée',
+  lancer: 'Maestro quoi lancer',
+  relances: 'Maestro relances',
+  sessions: 'Maestro sessions',
+  scan: MAESTRO_SCAN_MESSAGE,
+}
+
+const FR_WEEKDAYS = ['dimanche', 'lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi']
+
+/** « 2 retards », « 1 retard » : le nombre et son mot, au pluriel en s au-delà de 1. */
+const nWord = (n: number, one: string, many = `${one}s`) => `${n} ${n > 1 ? many : one}`
+
+/** Les mots de l'accueil de Maestro (#141) : le bonjour, les chiffres, les pastilles du jour, les boutons, l'encouragement. */
+export function welcomeText(f: WelcomeFacts, o: { person: string; now: Date }): Welcome {
+  const hour = o.now.getHours()
+  const greet = hour >= 5 && hour < 12 ? 'Bonjour' : hour >= 12 && hour < 18 ? 'Bon après-midi' : 'Bonsoir'
+  const friday = o.now.getDay() === 5
+  const open = f.total - f.done
+  const extraPill: WelcomePill | undefined =
+    f.extra?.kind === 'relances'
+      ? { tone: 'wait', text: `${f.extra.n} tiers à relancer` }
+      : f.extra?.kind === 'sessions'
+        ? { tone: 'live', text: `${nWord(f.extra.n, 'session')} ${f.extra.n > 1 ? 'tournent' : 'tourne'}` }
+        : undefined
+  const pills: WelcomePill[] = [
+    ...(f.late > 0 ? [{ tone: 'late' as const, text: `${f.late} en retard` }] : []),
+    ...(f.soon > 0 ? [{ tone: 'soon' as const, text: `${f.soon} aujourd'hui ou demain` }] : []),
+    ...(extraPill ? [extraPill] : []),
+  ]
+  const action = (key: WelcomeKey, label: string, n?: number): WelcomeAction => ({ key, label, message: WELCOME_MESSAGES[key], ...(n !== undefined ? { n } : {}) })
+  const actions: WelcomeAction[] = [
+    { ...action('journee', '☀ Ma journée', f.day), primary: true },
+    action('lancer', '▶ Quoi lancer'),
+    ...(f.extra ? [action(f.extra.kind, f.extra.kind === 'relances' ? 'À relancer' : 'Mes sessions', f.extra.n)] : []),
+    action('scan', '⟳ Tout scanner'),
+  ]
+  const week = f.closedWeek > 0 ? `+ ${nWord(f.closedWeek, 'close')} cette semaine` : undefined
+  const cheer =
+    f.total === 0
+      ? 'Ta roadmap est vide : on la remplit ?'
+      : open === 0
+        ? 'Tout est fait, bravo !'
+        : f.late > 0
+          ? `Bravo : ${nWord(f.done, 'faite')}${f.closedWeek > 0 ? `, dont ${f.closedWeek} cette semaine` : ''}. ${f.late > 1 ? `${f.late} retards` : 'Un retard'} à solder et ${friday ? 'le week-end' : 'la journée'} sera propre.`
+          : f.closedWeek > 0
+            ? `Joli rythme : ${nWord(f.closedWeek, 'close')} cette semaine, plus que ${nWord(open, 'ouverte')}.`
+            : f.soon > 0
+              ? `${nWord(open, 'ouverte')}, ${f.soon} pour aujourd'hui ou demain : on s'y met ?`
+              : `${nWord(open, 'ouverte')}, rien d'urgent : bon moment pour avancer.`
+  return {
+    hello: `${greet} ${o.person}, on est ${FR_WEEKDAYS[o.now.getDay()]}.`,
+    sub: 'Maestro est là : je lance tes tâches, je suis tes sessions.',
+    counts: `${nWord(f.done, 'faite')} sur ${f.total}`,
+    progress: { done: f.done, total: f.total, pct: f.pct },
+    ...(week ? { week } : {}),
+    pills: pills.length > 0 ? pills : [{ tone: 'none', text: "Rien d'urgent aujourd'hui" }],
+    actions,
+    cheer,
+  }
 }
 
 /**
@@ -3968,16 +4098,45 @@ export function maestroYes(prompt: string): boolean {
  * d'un bouton de la boîte de fin, dont le clic envoie « Maestro scan » (un formulaire ne passerait pas :
  * sa réponse revient en résultat d'outil, pas en message). Rien n'est lu avant le oui.
  */
-export function maestroIntro(o: { source: Source }): string {
+export function maestroIntro(o: { source: Source; welcome: Welcome }): string {
+  const w = o.welcome
+  const typed = w.actions.map(a => `« ${a.message} »`).join(', ')
   return [
-    `${Person()} a dit « Maestro » : le panneau de la roadmap ${o.source.name} vient de s'ouvrir. Tu es Maestro, l'orchestrateur : tu lances les tâches de la roadmap, une session par tâche, tu les suis et tu fusionnes pour elles (skill roadmap:maestro).`,
+    `${Person()} a dit « Maestro » : le panneau de la roadmap ${o.source.name} vient de s'ouvrir, et la carte d'accueil s'affiche à la place de son message : « ${w.hello} », ${w.counts}${w.week ? ` (${w.week})` : ''}, aujourd'hui : ${w.pills.map(p => p.text).join(', ')}, et ses boutons ${w.actions.map(a => `« ${a.label} »`).join(', ')}. Tu es Maestro, l'orchestrateur : tu lances les tâches de la roadmap, une session par tâche, tu les suis et tu fusionnes pour elles (skill roadmap:maestro).`,
     '',
-    `Rien n'est scanné : avant le oui de ${person()}, ne lis ni la roadmap ni tes sessions (pas de list_sessions, pas de lecture de ROADMAP.md), le scan peut être long.`,
+    `Rien n'est scanné : avant le clic de ${person()} sur un bouton, ne lis ni la roadmap ni tes sessions (pas de list_sessions, pas de lecture de ROADMAP.md) ; la carte dit déjà les chiffres.`,
     "- Si le bloc « Roadmap — nouvelles de tes sessions enfants » est là, dis d'abord ces nouvelles et suis leurs consignes.",
-    `- Présente-toi en une ligne : « Maestro · ${o.source.name} — je lance tes tâches, je suis tes sessions et je fusionne pour elles. »`,
-    `- Puis propose le scan par ta boîte de fin (wrap_up) : recap d'une phrase (le panneau est ouvert, rien n'est scanné), ask « Je scanne ta roadmap pour te dire quoi faire ? », actions [{"label": "Oui, scanne", "message": "${MAESTRO_SCAN_MESSAGE}"}]. Pas de formulaire AskUserQuestion pour ce oui : sa réponse ne relancerait pas le scan.`,
-    `- Sans boîte de fin, pose la question en dernière ligne. ${Person()} peut aussi répondre « oui », taper « ${MAESTRO_SCAN_MESSAGE} », ou « Maestro go » (les cartes des trois premières tâches à lancer).`,
+    `- Puis dis cette phrase, et rien d'autre : « ${w.cheer} »`,
+    '- Les boutons de la carte sont la question : pas de boîte de fin à boutons, pas de formulaire AskUserQuestion. Ta boîte de fin, s\'il en faut une, n\'a que son récap.',
+    `- ${Person()} peut aussi écrire ce que les boutons envoient : ${typed}, ou « Maestro go » (les cartes des trois premières tâches à lancer).`,
   ].join('\n')
+}
+
+/** « Ma journée », cliqué sur l'accueil (#141) : ses sections, comptées par le plugin, et la première chose à faire. */
+export function maestroDayContext(o: { source: Source; sections: readonly { label: string; tasks: readonly Task[] }[]; titleOf: (t: Task) => string; today: string }): string {
+  const lines = [`${Person()} a cliqué « Ma journée » sur l'accueil de Maestro (roadmap ${o.source.name}). Sa journée, comptée par le plugin roadmap :`, '']
+  if (o.sections.length === 0) lines.push("- Rien dans ta journée : ni retard, ni échéance aujourd'hui ou demain.")
+  for (const g of o.sections) lines.push(`${g.label} :`, ...g.tasks.map(t => maestroTaskLine(t, o.titleOf(t), o.today)), '')
+  if (o.sections.length === 0) lines.push('')
+  lines.push(
+    "Ce que tu fais, sans relire la roadmap (tout est là) : montre cette journée en quelques lignes, la plus urgente d'abord, puis dis la première chose à faire ; si c'est une tâche à lancer, propose sa carte. Sans rien dans la journée, dis-le en une phrase et propose « Maestro quoi lancer ».",
+  )
+  return lines.join('\n')
+}
+
+/** « À relancer », cliqué sur l'accueil en mode Projet (#141) : les tiers sans nouvelle, et un mot de relance à proposer. */
+export function maestroRelaunchContext(o: { source: Source; tasks: readonly Task[]; titleOf: (t: Task) => string; today: string; me: readonly string[] }): string {
+  const lines = [`${Person()} a cliqué « À relancer » sur l'accueil de Maestro (roadmap ${o.source.name}). Les tâches qui attendent un tiers sans nouvelle, comptées par le plugin roadmap :`, '']
+  if (o.tasks.length === 0) lines.push('- aucune : personne à relancer')
+  for (const t of o.tasks) {
+    const days = waitDays(t, o.today, o.me)
+    lines.push(maestroTaskLine(t, o.titleOf(t), o.today, days === undefined ? [] : [`sans nouvelle depuis ${days} jour${days > 1 ? 's' : ''}`]))
+  }
+  lines.push(
+    '',
+    "Ce que tu fais, sans relire la roadmap : pour chacune, la plus ancienne d'abord, dis qui relancer et propose un mot de relance court, à copier, sans l'envoyer. Une relance faite se note par `relance:` sur sa ligne, quand " + person() + ' te le dit.',
+  )
+  return lines.join('\n')
 }
 
 // --- Identité Roadmap à l'ouverture (#127) ------------------------------------
@@ -3988,7 +4147,7 @@ export function maestroIntro(o: { source: Source }): string {
 export type BrandTask = { id: string; label: string; state: 'wait' | 'live' | 'done' }
 
 export type Brand =
-  | { kind: 'maestro'; project: string; tasks: BrandTask[] }
+  | { kind: 'maestro'; project: string; tasks: BrandTask[]; welcome?: Welcome }
   | {
       kind: 'task'
       project: string
@@ -4097,14 +4256,16 @@ export function brandText(
     const waiting = brand.tasks.filter(t => t.state === 'wait').length
     const sessions = `${n} session${n > 1 ? 's' : ''}`
     const wait = waiting > 0 ? `, ${waiting} t'attend${waiting > 1 ? 'ent' : ''}` : ''
-    const sub =
-      n > 0
+    // L'accueil (#141) remplace le titre et la phrase de la carte ; sans session, rien d'administratif.
+    const sub = brand.welcome
+      ? brand.welcome.sub
+      : n > 0
         ? `Orchestre ${sessions} sur ${brand.project}${wait}`
         : brand.tasks.length > 0
           ? `Ses ${brand.tasks.length} tâches lancées sont closes`
-          : "Aucune session lancée pour l'instant"
-    const foot = n > 0 ? `${sessions}${wait}` : brand.tasks.length > 0 ? 'aucune session ouverte' : 'aucune session'
-    return { title: 'Maestro', sub, foot, states: brand.tasks.map(t => BRAND_STATE_WORD[t.state]), meta: [] }
+          : `Prêt à lancer tes tâches sur ${brand.project}`
+    const foot = n > 0 ? `${sessions}${wait}` : brand.tasks.length > 0 ? 'aucune session ouverte' : ''
+    return { title: brand.welcome?.hello ?? 'Maestro', sub, foot, states: brand.tasks.map(t => BRAND_STATE_WORD[t.state]), meta: [] }
   }
   return {
     title: `#${brand.id} ${brand.label}`,
@@ -4608,11 +4769,13 @@ export function maestroContext(o: {
   adhd?: boolean
   /** Mode Projet (#76) : les tâches d'autres personnes en retard, à relancer plutôt qu'à lancer. */
   othersLate?: number
+  /** Une action de l'accueil (#141) : `launch` saute les sessions, `sessions` ne lance rien. */
+  only?: 'launch' | 'sessions'
 }): string {
   const waiting = [...o.waiting].sort((a, b) => b.since - a.since)
   const stuck = waiting.filter(w => w.since >= MAESTRO_STUCK_MS)
-  const lines: string[] = [
-    `${Person()} a dit « Maestro » : le panneau de la roadmap ${o.source.name} vient de s'ouvrir. Tu es Maestro, l'orchestrateur : ton but est que les tâches avancent et qu'aucune ne reste bloquée des heures.`,
+  const header = `${Person()} a dit « Maestro » : le panneau de la roadmap ${o.source.name} vient de s'ouvrir. Tu es Maestro, l'orchestrateur : ton but est que les tâches avancent et qu'aucune ne reste bloquée des heures.`
+  const sessionLines = [
     '',
     '1. Attendent la réponse de ' + person() + ' (à débloquer d\'abord, la plus ancienne en tête) :',
     ...(waiting.length > 0
@@ -4624,6 +4787,8 @@ export function maestroContext(o: {
     ...(o.others && o.others.length > 0
       ? ['', `Suivies par une autre session ouverte (un autre Maestro), pas les tiennes, aucune question à relayer : ${o.others.map(x => (x.task.id ? `#${x.task.id}` : x.title)).join(', ')}`]
       : []),
+  ]
+  const launchLines = [
     '',
     '3. À lancer, la plus utile d\'abord :',
     ...(o.candidates.length > 0
@@ -4631,6 +4796,12 @@ export function maestroContext(o: {
       : ['- aucune : tout est en session, bloqué par une prérequise, ou fait']),
     ...(o.more > 0 ? [`- et ${o.more} autre${o.more > 1 ? 's' : ''}, dans le panneau`] : []),
     ...(o.othersLate ? [`- ${o.othersLate} tâche${o.othersLate > 1 ? 's' : ''} d'une autre personne en retard : à relancer, pas à lancer (filtre « Attend un tiers » du panneau)`] : []),
+  ]
+  const lines: string[] = [
+    header,
+    // Une action de l'accueil (#141) ne montre que sa part : les sessions, ou ce qu'on peut lancer.
+    ...(o.only === 'launch' ? [] : sessionLines),
+    ...(o.only === 'sessions' ? [] : launchLines),
     '',
     "Ce que tu fais, sans rien coder ni écrire dans la roadmap (sauf la ligne d'une tâche que propose une de tes sessions) :",
     `- Ouvre ta réponse par une phrase de verdict : ce qui avance, ce qui coince${stuck.length > 0 ? ` (${stuck.length} session${stuck.length > 1 ? 's' : ''} coincée${stuck.length > 1 ? 's' : ''} depuis plus de ${durationLabel(MAESTRO_STUCK_MS)} : dis lesquelles et ${o.autonome ? 'réponds d\'abord toi-même à celles qui ne reviennent pas à ' + person() + ' (plus bas) ; les autres, à ' + person() + ' d\'y répondre d\'abord' : 'qu\'il revient à ' + person() + ' d\'y répondre d\'abord'}, avec leur lien)` : ''}.`,
@@ -4642,7 +4813,9 @@ export function maestroContext(o: {
   // Maestro suit ses sessions par sa liste d'étapes (#104), dans les deux modes.
   lines.push(MAESTRO_STEP_LIST)
   const card = `pose sa carte de session (${cardTool(o.launchEffort, projectSettings(o.source).mode)}) avec le titre et le brief donnés ci-dessous, sans la lancer toi-même`
-  if (o.candidates.length === 0) {
+  if (o.only === 'sessions') {
+    lines.push(`- Puis dis où en est chacune et laquelle débloquer d'abord ; ne lance rien ici (« Maestro quoi lancer » pour ça).`)
+  } else if (o.candidates.length === 0) {
     lines.push('- Rien à lancer : dis-le en une phrase, et ce qui le débloquerait.')
   } else if (o.go || o.autonome) {
     const n = Math.min(3, o.candidates.length)
@@ -4670,7 +4843,7 @@ export function maestroContext(o: {
     "- Les nouvelles de tes sessions enfants (celles qui coincent ou sont à archiver) t'arrivent à chaque message de " + person() + ", sous « Roadmap — nouvelles de tes sessions enfants » : suis leurs consignes. Sans ce bloc, toutes avancent.",
     o.adhd === false ? '- Réponses courtes : pas de tableau, pas de récapitulatif.' : '- Mode ADHD et réponses courtes : pas de tableau, pas de récapitulatif.',
   )
-  if (o.candidates.length > 0) {
+  if (o.candidates.length > 0 && o.only !== 'sessions') {
     lines.push('', 'Les cartes prêtes, une par tâche à lancer :')
     for (const c of o.candidates.slice(0, o.go || o.autonome ? 3 : MAESTRO_MENU)) {
       lines.push('', `### ${c.task.id ? `#${c.task.id}` : c.title}`, `Titre : ${c.brief.title}`, 'Brief :', c.brief.prompt, `Contexte : ${c.brief.background}`)
