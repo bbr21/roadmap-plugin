@@ -174,6 +174,7 @@ import {
   sessionTitleId,
   sessionTitleKind,
   sessionTitleIn,
+  sessionParentIn,
   oneTaskStep,
   isMaestroSession,
   maestroSessionIds,
@@ -220,6 +221,10 @@ import {
   isAutoModeRefusal,
   viaClaudeNote,
   maestroParentOf,
+  maestroRootOf,
+  PROPOSAL_OPTIONS,
+  ELSEWHERE_OPTIONS,
+  proposalRetryNote,
   maestroProposalText,
   proposalSentNote,
   type MaestroProposal,
@@ -1163,14 +1168,14 @@ async function probeLive($: EngineInterface): Promise<void> {
  * Cette session dans l'app : son identifiant (`local_…`) et son titre, lus sur sa fiche. `fresh` la
  * relit : Bertrand peut la nommer après le chargement du panneau (« Maestro »).
  */
-let ownSession: { id: string | undefined; title: string } | null = null
+let ownSession: { id: string | undefined; title: string; parent?: string | null } | null = null
 
-async function readOwnSession($: EngineInterface, fresh = false): Promise<{ id: string | undefined; title: string }> {
+async function readOwnSession($: EngineInterface, fresh = false): Promise<{ id: string | undefined; title: string; parent?: string | null }> {
   if (ownSession !== null && !fresh) return ownSession
   try {
     const ran = await $.tool.call({ tool: GET_SESSION_TOOL, session_id: 'self' })
     const text = ran.deny === undefined && !ran.isError ? (ran.text ?? '') : ''
-    ownSession = { id: sessionIdIn(text), title: sessionTitleIn(text) }
+    ownSession = { id: sessionIdIn(text), title: sessionTitleIn(text), parent: sessionParentIn(text) }
   } catch {
     ownSession = { id: undefined, title: '' }
   }
@@ -1182,23 +1187,33 @@ async function ownAppSession($: EngineInterface): Promise<string | undefined> {
 }
 
 /**
- * Cette session est-elle un Maestro ? Son titre (« Maestro … », ou son alias « Lot … »), sinon sa famille : au moins deux
- * sessions qu'elle a lancées encore ouvertes (`maestroSessionIds`). La liste se relit à la demande —
- * une ligne ouverte, une fin de tour qui cocherait sa tâche, un ▶ — et une liste refusée ou
- * illisible laisse le titre seul juger.
+ * Cette session est-elle un Maestro ? Son titre (« Maestro … », ou son alias « Lot … »), sa marque, ou
+ * sa famille : au moins deux sessions qu'elle a lancées encore ouvertes (`maestroSessionIds`). Une
+ * session qui a un Maestro au-dessus n'en est jamais un (#132). Un Maestro titré ou marqué sans parent
+ * (`parent: null`, fiche lue) n'a personne au-dessus : la liste ne se relit pas. Sinon elle se relit
+ * à la demande — une ligne ouverte, une fin de tour qui cocherait sa tâche, un ▶ — et une liste
+ * refusée ou illisible laisse le titre et la marque juger seuls.
  */
-async function ownIsMaestro($: EngineInterface, own: { id: string | undefined; title: string }): Promise<boolean> {
-  if (isMaestroSession(own.title)) return true
-  if (own.id && (await loadMaestros($))[own.id] !== undefined) return true
-  if (!own.id || listDenied) return false
+async function ownIsMaestro($: EngineInterface, own: { id: string | undefined; title: string; parent?: string | null }): Promise<boolean> {
+  const marks = await loadMaestros($)
+  const named = isMaestroSession(own.title) || (own.id !== undefined && marks[own.id] !== undefined)
+  if (named && own.parent === null) return true
+  if (!own.id || listDenied) return named
   try {
     toolCalls++
     const ran = await $.tool.call({ tool: LIST_SESSIONS_TOOL, limit: LIST_LIMIT })
-    if (ran.deny !== undefined || ran.isError) return false
-    const rows: unknown = JSON.parse(ran.text ?? '[]')
-    return Array.isArray(rows) && maestroSessionIds(rows).has(own.id)
+    if (ran.deny !== undefined || ran.isError) return named
+    const listedRows: unknown = JSON.parse(ran.text ?? '[]')
+    if (!Array.isArray(listedRows)) return named
+    // La liste exclut cette session : sa rangée, avec son parent, la rejoint.
+    const rows = typeof own.parent === 'string'
+      ? withSelfRow(listedRows, { sessionId: own.id, title: own.title, startedBy: own.parent, isArchived: false })
+      : listedRows
+    const maestros = new Set(Object.keys(marks))
+    if (maestroRootOf(own.id, undefined, rows, maestros, named)) return false
+    return named || maestroSessionIds(rows, maestros).has(own.id)
   } catch {
-    return false
+    return named
   }
 }
 
@@ -1238,14 +1253,18 @@ async function loadProposals($: EngineInterface): Promise<MaestroProposal[]> {
 }
 
 /**
- * Bertrand ne pilote ses sessions que par Maestro (demande du 2026-10-27) : la carte New task que le modèle
- * pose dans une sous-session (`own_initiative`) resterait dans un transcript qu'il ne regarde pas.
- * Elle remonte donc à Maestro, par message (il se réveille et la lit dans son transcript) ; un message
- * refusé la garde dans le store, et Maestro la reçoit à son prochain tour. Le modèle lit, à la place
- * de sa carte, qu'elle est à Maestro. Tout le reste passe : `offer` et `user_asked` (Bertrand parle à
- * la sous-session), le ▶ du panneau, une session sans Maestro, et toute panne. Le moteur ne fait pas
- * passer les `$.tool.call` du panneau par ses propres hooks (mesuré en test le 2026-10-28) :
- * l'origine vérifiée ici garde le ▶ si cela changeait.
+ * Bertrand ne pilote ses sessions que par Maestro (demande du 2026-10-27) et ne veut qu'un niveau sous
+ * lui (#132, 2026-10-30) : toute création de session que le modèle demande dans un descendant de
+ * Maestro, carte `own_initiative`, `offer` ou lancement `user_asked`, part à son Maestro racine
+ * (`maestroParentOf`), qui pose la carte : la session créée est sa fille directe. Un lancement ailleurs
+ * (`ELSEWHERE_OPTIONS` : autre dossier, SSH, cloud) reste ici, l'app ne le prenant qu'en `user_asked`. Elle part par message
+ * (il se réveille et la lit dans son transcript) ; un message refusé la garde dans le store, et Maestro
+ * la reçoit à son prochain tour. Une `offer` sans brief ou une carte `fork` revient à la sous-session,
+ * à reposer en `own_initiative` `fresh` : le brief s'écrit là où est le contexte. Le modèle lit, à la
+ * place de sa carte, où elle est partie. Tout le reste passe : le ▶ du panneau, une carte à
+ * `proposal_id`, une session sans Maestro, et toute panne. Le moteur ne fait pas passer les
+ * `$.tool.call` du panneau par ses propres hooks (mesuré en test le 2026-10-28) : l'origine vérifiée
+ * ici garde le ▶ si cela changeait.
  */
 async function forwardProposal(
   $: EngineInterface,
@@ -1253,9 +1272,13 @@ async function forwardProposal(
   origin: string,
   pass: () => Promise<ToolCallResult>,
 ): Promise<ToolCallResult> {
-  const card = e as { initiation?: unknown; title?: unknown; prompt?: unknown; background?: unknown }
-  if (origin !== 'engine' || card.initiation !== 'own_initiative') return pass()
-  if (typeof card.title !== 'string' || typeof card.prompt !== 'string') return pass()
+  const card = e as Record<string, unknown> & { initiation?: unknown; title?: unknown; prompt?: unknown; background?: unknown; context?: unknown; proposal_id?: unknown }
+  const initiation = card.initiation
+  if (origin !== 'engine' || card.proposal_id !== undefined) return pass()
+  if (initiation !== 'own_initiative' && initiation !== 'user_asked' && initiation !== 'offer') return pass()
+  if (typeof card.title !== 'string') return pass()
+  // Un lancement ailleurs ne tient que dans un user_asked : une carte de Maestro ne le porterait pas.
+  if (ELSEWHERE_OPTIONS.some(k => card[k] !== undefined)) return pass()
   let maestro: { id: string; title: string } | undefined
   let self: { sessionId?: unknown; title?: unknown } | undefined
   try {
@@ -1272,6 +1295,14 @@ async function forwardProposal(
     return pass()
   }
   if (!maestro || typeof self?.sessionId !== 'string') return pass()
+  const name = maestro.title || 'Maestro'
+  if (card.context === 'fork') return { deny: proposalRetryNote(name, 'fork', initiation) }
+  if (typeof card.prompt !== 'string' || card.prompt === '') {
+    return initiation === 'offer' ? { deny: proposalRetryNote(name, 'offer', initiation) } : pass()
+  }
+  const options = Object.fromEntries(PROPOSAL_OPTIONS
+    .filter(k => typeof card[k] === 'string' || typeof card[k] === 'boolean')
+    .map(k => [k, card[k] as string | boolean]))
   const proposal: MaestroProposal = {
     lot: maestro.id,
     from: self.sessionId,
@@ -1280,17 +1311,18 @@ async function forwardProposal(
     prompt: card.prompt,
     ...(typeof card.background === 'string' && card.background !== '' ? { background: card.background } : {}),
     at: await $.clock.now(),
+    ...(initiation !== 'own_initiative' ? { initiation } : {}),
+    ...(Object.keys(options).length > 0 ? { options } : {}),
   }
-  const name = maestro.title || 'Maestro'
   try {
     const sent = await $.tool.call({ tool: SEND_MESSAGE_TOOL, session_id: maestro.id, message: maestroProposalText([proposal]) })
-    if (sent.deny === undefined && !sent.isError) return { deny: proposalSentNote(name, card.title, 'message') }
+    if (sent.deny === undefined && !sent.isError) return { deny: proposalSentNote(name, card.title, 'message', proposal.initiation) }
   } catch {
     // outil absent : la proposition est gardée pour Maestro
   }
   try {
     await $.store.set(PROPOSALS_KEY, [...(await loadProposals($)), proposal])
-    return { deny: proposalSentNote(name, card.title, 'store') }
+    return { deny: proposalSentNote(name, card.title, 'store', proposal.initiation) }
   } catch {
     return pass()
   }
@@ -1803,14 +1835,15 @@ async function markWorking($: EngineInterface, source: Source, added: Task[]): P
   if (added.length === 0) return undefined
   let note: string | undefined
   try {
-    const { id: sessionId, title } = await readOwnSession($, true)
+    const own = await readOwnSession($, true)
+    const { id: sessionId, title } = own
     if (!sessionId) return undefined
     const live = await loadLive($)
     const ignored = await loadIgnored($)
     const mine = Object.keys(live).filter(k => live[k]?.via === 'write' && live[k]?.sessionId === sessionId)
     const keys = new Set([...mine, ...added.map(t => liveKeyOf(source, t))])
     // Un Maestro (titre ou famille) n'est sur aucune tâche : il les lance.
-    const maestro = await ownIsMaestro($, { id: sessionId, title })
+    const maestro = await ownIsMaestro($, own)
     if (maestro) note = maestroTasksNote(added)
     const step = oneTaskStep(title, added)
     if (!maestro && step.kind === 'other') return otherTaskNote(step.own, step.task, await shortTitleOf($, step.task))
@@ -1932,7 +1965,7 @@ async function readSelfRow($: EngineInterface): Promise<unknown> {
     const text = ran.text ?? ''
     const row: unknown = JSON.parse(text)
     if (typeof row !== 'object' || row === null) return undefined
-    ownSession = { id: sessionIdIn(text), title: sessionTitleIn(text) }
+    ownSession = { id: sessionIdIn(text), title: sessionTitleIn(text), parent: sessionParentIn(text) }
     return row
   } catch {
     return undefined
@@ -1980,7 +2013,7 @@ async function matchSessions($: EngineInterface, source: Source): Promise<void> 
     const titles = await loadTitles($)
     const now = await $.clock.now()
     const next = new Map<string, LiveEntry>()
-    const maestros = maestroSessionIds(sessions)
+    const maestros = maestroSessionIds(sessions, new Set(Object.keys(await loadMaestros($))))
     // Une session qui finit son tour (ou le reprend) change sa marque : la main ou la roue.
     let runningChanged = false
     const open = new Set<string>()

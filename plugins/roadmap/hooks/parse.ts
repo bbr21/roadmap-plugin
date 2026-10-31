@@ -1375,6 +1375,19 @@ export function sessionTitleIn(text: string): string {
   }
 }
 
+/** Le parent d'une session sur sa fiche (`parentSessionId`) : `null` sans parent, `undefined` si la fiche est illisible. */
+export function sessionParentIn(text: string): string | null | undefined {
+  try {
+    const fiche = JSON.parse(text) as { parentSessionId?: unknown; detached?: unknown } | null
+    if (typeof fiche !== 'object' || fiche === null) return undefined
+    // Détachée, elle n'a plus de parent : son ancien Maestro ne la déclasse pas.
+    if (fiche.detached === true) return null
+    return typeof fiche.parentSessionId === 'string' && fiche.parentSessionId !== '' ? fiche.parentSessionId : null
+  } catch {
+    return undefined
+  }
+}
+
 /**
  * L'état d'une session lancée, d'après la fiche que rend l'outil de l'app (`isArchived`) :
  * ouverte tant qu'elle n'est pas archivée ; illisible, on ne sait pas.
@@ -1643,8 +1656,12 @@ const LOT_ALIAS = /^\s*lot\b/i
  */
 export const MAESTRO_MIN_OPEN_CHILDREN = 2
 
-/** Les sessions qui coordonnent (les Maestros), d'après les rangées de `list_sessions` (champ `startedBy`). */
-export function maestroSessionIds(rows: readonly unknown[]): Set<string> {
+/**
+ * Les sessions qui coordonnent par leur famille (les Maestros), d'après les rangées de `list_sessions`
+ * (champ `startedBy`). Une session qui a un Maestro au-dessus n'en est pas un, même avec deux filles
+ * ouvertes (#132) : `#527`, fille de Maestro, avait lancé `#532` et `#533`, et recevait leurs cartes.
+ */
+export function maestroSessionIds(rows: readonly unknown[], maestros: ReadonlySet<string> = new Set()): Set<string> {
   const open = new Map<string, number>()
   for (const raw of rows) {
     if (typeof raw !== 'object' || raw === null) continue
@@ -1652,7 +1669,9 @@ export function maestroSessionIds(rows: readonly unknown[]): Set<string> {
     if (typeof startedBy !== 'string' || isArchived !== false) continue
     open.set(startedBy, (open.get(startedBy) ?? 0) + 1)
   }
-  return new Set([...open].filter(([, n]) => n >= MAESTRO_MIN_OPEN_CHILDREN).map(([id]) => id))
+  return new Set([...open]
+    .filter(([id, n]) => n >= MAESTRO_MIN_OPEN_CHILDREN && !maestroRootOf(id, undefined, rows, maestros))
+    .map(([id]) => id))
 }
 
 /**
@@ -1681,15 +1700,66 @@ function openChildren(rows: readonly unknown[], id: string): number {
 /** Une remontée de famille plus longue s'arrête : une chaîne de lancements n'a jamais cette taille. */
 const MAESTRO_MAX_DEPTH = 10
 
+/** La rangée d'une session, ou rien. */
+function rowOf(rows: readonly unknown[], id: string): { title?: unknown; isArchived?: unknown; startedBy?: unknown; parentSessionId?: unknown; detached?: unknown } | undefined {
+  return rows.find(r => typeof r === 'object' && r !== null && (r as { sessionId?: unknown }).sessionId === id) as never
+}
+
+/** Le parent d'une session listée : `startedBy` d'une rangée de `list_sessions`, `parentSessionId` d'une fiche `get_session`. */
+function parentIn(rows: readonly unknown[], id: string): string | undefined {
+  const row = rowOf(rows, id)
+  if (row?.detached === true) return undefined
+  const parent = row?.startedBy ?? row?.parentSessionId
+  return typeof parent === 'string' && parent !== '' ? parent : undefined
+}
+
 /**
- * Maestro d'une sous-session (demande de Bertrand du 2026-10-27) : le premier ancêtre ouvert qui
- * coordonne (titre « Maestro … » ou son alias « Lot … », marque Maestro, ou au moins deux filles ouvertes,
- * en comptant celle-ci pour son parent, car la liste de l'app l'exclut). La remontée passe les
- * parents archivés ou qui ne coordonnent pas (#71 : #69 et #70, lancées par les cartes de #68 et
- * de #1, ensuite archivées, étaient les petites-filles de Maestro). Une session sans parent,
- * détachée, ou qui coordonne elle-même n'en a pas : ses cartes restent chez elle. `self` est sa
- * fiche (`get_session self`), `rows` la liste de sa famille (`list_sessions` `linked: true`,
- * archivées comprises), `maestros` les sessions où Bertrand a dit « Maestro ».
+ * Le Maestro racine au-dessus d'une session (#132, choix de Bertrand du 2026-10-30) : parmi ses
+ * ancêtres ouverts, le plus haut reconnu par son titre (« Maestro … », alias « Lot … ») ou sa marque,
+ * sinon le plus haut qui a au moins deux filles ouvertes (en comptant `id` pour son parent quand la
+ * liste de l'app l'exclut). La remontée passe les ancêtres archivés (#71) et s'arrête sur une boucle
+ * ou une chaîne trop longue ; sans `parentId`, le parent se lit dans `rows`. Une session nommée Maestro
+ * elle-même (titre ou marque, `selfNamed`) n'est déclassée que par un Maestro nommé au-dessus, jamais
+ * par une session ordinaire qui a deux filles ouvertes. Toute création de session demandée sous lui lui revient, pour que la
+ * session créée soit sa fille directe, jamais une petite-fille.
+ */
+export function maestroRootOf(
+  id: string | undefined,
+  parentId: string | undefined,
+  rows: readonly unknown[],
+  maestros: ReadonlySet<string> = new Set(),
+  selfNamed?: boolean,
+): { id: string; title: string } | undefined {
+  const start = parentId ?? (id !== undefined ? parentIn(rows, id) : undefined)
+  // La liste de l'app exclut la session qui la demande : sa rangée absente, elle compte pour son parent.
+  const own = id !== undefined ? rowOf(rows, id) : undefined
+  // Archivée, elle n'est pas une fille ouverte ; une fiche `get_session` (`parentSessionId`) n'est pas comptée par `openChildren`.
+  const counted = own !== undefined && (own.isArchived === true || (own.startedBy === start && own.isArchived === false))
+  const selfIsNamed = selfNamed ?? (id !== undefined && (maestros.has(id) || (typeof own?.title === 'string' && isMaestroSession(own.title))))
+  let named: { id: string; title: string } | undefined
+  let family: { id: string; title: string } | undefined
+  const seen = new Set<string>()
+  let at = start
+  while (at !== undefined && at !== '' && !seen.has(at) && seen.size < MAESTRO_MAX_DEPTH) {
+    const row = rowOf(rows, at)
+    if (!row) break
+    seen.add(at)
+    if (row.isArchived === false) {
+      const title = typeof row.title === 'string' ? row.title : ''
+      const children = openChildren(rows, at) + (at === start && !counted ? 1 : 0)
+      if (isMaestroSession(title) || maestros.has(at)) named = { id: at, title }
+      else if (children >= MAESTRO_MIN_OPEN_CHILDREN) family = { id: at, title }
+    }
+    at = parentIn(rows, at)
+  }
+  return named ?? (selfIsNamed ? undefined : family)
+}
+
+/**
+ * Maestro d'une sous-session (demande de Bertrand du 2026-10-27) : son Maestro racine (`maestroRootOf`,
+ * #132). Une session sans parent ou détachée n'en a pas ; un Maestro racine non plus : ses cartes
+ * restent chez lui. `self` est sa fiche (`get_session self`), `rows` la liste de sa famille
+ * (`list_sessions` `linked: true`, archivées comprises), `maestros` les sessions où Bertrand a dit « Maestro ».
  */
 export function maestroParentOf(
   self: unknown,
@@ -1698,27 +1768,10 @@ export function maestroParentOf(
 ): { id: string; title: string } | undefined {
   if (typeof self !== 'object' || self === null) return undefined
   const me = self as { sessionId?: unknown; title?: unknown; parentSessionId?: unknown; detached?: unknown }
-  const parentId = me.parentSessionId
-  if (typeof parentId !== 'string' || parentId === '' || me.detached === true) return undefined
-  const myTitle = typeof me.title === 'string' ? me.title : ''
-  if (isMaestroSession(myTitle)) return undefined
-  if (typeof me.sessionId === 'string' && (maestros.has(me.sessionId) || openChildren(rows, me.sessionId) >= MAESTRO_MIN_OPEN_CHILDREN)) return undefined
-  const seen = new Set<string>()
-  let id: unknown = parentId
-  while (typeof id === 'string' && id !== '' && !seen.has(id) && seen.size < MAESTRO_MAX_DEPTH) {
-    const at: string = id
-    const row = rows.find(r => typeof r === 'object' && r !== null && (r as { sessionId?: unknown }).sessionId === at) as
-      | { title?: unknown; isArchived?: unknown; startedBy?: unknown }
-      | undefined
-    if (!row) return undefined
-    const title = typeof row.title === 'string' ? row.title : ''
-    const children = openChildren(rows, at) + (at === parentId ? 1 : 0)
-    const coordinates = isMaestroSession(title) || maestros.has(at) || children >= MAESTRO_MIN_OPEN_CHILDREN
-    if (row.isArchived === false && coordinates) return { id: at, title }
-    seen.add(at)
-    id = row.startedBy
-  }
-  return undefined
+  if (typeof me.parentSessionId !== 'string' || me.parentSessionId === '' || me.detached === true) return undefined
+  const id = typeof me.sessionId === 'string' ? me.sessionId : undefined
+  const named = (typeof me.title === 'string' && isMaestroSession(me.title)) || (id !== undefined && maestros.has(id))
+  return maestroRootOf(id, me.parentSessionId, rows, maestros, named)
 }
 
 /**
@@ -1820,7 +1873,7 @@ export function maestroClause(maestro: string, mode: Mode = 'code'): string[] {
       `- ${maestroMockups('à côté du document')}`,
       '- Ne coche pas ta ligne : Maestro la coche, avec son bilan. Ton dernier compte rendu dit ce qui a été fait et le souci rencontré.',
       `- ${maestroClauseEnd()}`,
-      "- Une tâche que tu proposes (suite, idée, défaut hors de ta tâche) remonte à Maestro : pose ta carte comme d'habitude, le panneau Roadmap la lui transmet au lieu de la laisser dans ton transcript, que " + person() + " ne regarde pas ; Maestro ouvre sa ligne et la lui propose.",
+      "- Une tâche que tu proposes (suite, idée, défaut hors de ta tâche), ou un lancement que " + person() + " te demande, remonte à Maestro : pose ta carte comme d'habitude (ou lance comme demandé), le panneau Roadmap la lui transmet au lieu de la laisser dans ton transcript, que " + person() + " ne regarde pas, et pour que la session créée soit sa fille directe ; Maestro ouvre sa ligne et pose la carte.",
     ]
   }
   return [
@@ -1834,7 +1887,7 @@ export function maestroClause(maestro: string, mode: Mode = 'code'): string[] {
     `- ${maestroMockups('dans le dossier du chantier, `docs/plans/<type>-<slug>/maquettes.html`')}`,
     '- Ne coche pas ta ligne : Maestro la coche à la fusion, avec son bilan. Ton dernier compte rendu dit ce qui a été fait et le souci rencontré.',
     `- ${maestroClauseEnd()} Rien de non commité ne doit rester dans ton worktree.`,
-    "- Une tâche que tu proposes (suite, idée, défaut hors de ta tâche) remonte à Maestro : pose ta carte comme d'habitude, le panneau Roadmap la lui transmet au lieu de la laisser dans ton transcript, que " + person() + " ne regarde pas ; Maestro ouvre sa ligne et la lui propose.",
+    "- Une tâche que tu proposes (suite, idée, défaut hors de ta tâche), ou un lancement que " + person() + " te demande, remonte à Maestro : pose ta carte comme d'habitude (ou lance comme demandé), le panneau Roadmap la lui transmet au lieu de la laisser dans ton transcript, que " + person() + " ne regarde pas, et pour que la session créée soit sa fille directe ; Maestro ouvre sa ligne et pose la carte.",
   ]
 }
 
@@ -1854,33 +1907,75 @@ export type MaestroProposal = {
   background?: string
   /** Quand elle a été gardée (ms), pour retirer les vieilles. */
   at: number
+  /** Qui la veut (#132) : `user_asked`, la personne l'a demandée à la sous-session ; absent, `own_initiative`. */
+  initiation?: 'own_initiative' | 'user_asked' | 'offer'
+  /** Les réglages de la carte d'origine (`PROPOSAL_OPTIONS`), que Maestro reproduit. */
+  options?: Record<string, string | boolean>
 }
+
+/**
+ * Les réglages d'une carte `start_session` qui remontent à Maestro avec elle (#132). `use_worktree`
+ * n'en est pas : `false` visait le dossier de la sous-session, et chez Maestro ce serait le sien.
+ */
+export const PROPOSAL_OPTIONS = ['model', 'effort', 'source_branch', 'branch_name'] as const
+
+/**
+ * Les champs qui lancent une session ailleurs (autre dossier, SSH, cloud, préréglage) : l'app ne les
+ * prend qu'en `user_asked`, jamais sur une carte. Un tel lancement reste chez la sous-session (#132).
+ */
+export const ELSEWHERE_OPTIONS = ['cwd', 'target', 'host', 'environment', 'preset', 'repository'] as const
 
 /** Un brief remonté à Maestro, coupé : Maestro réécrit le sien de toute façon. */
 const PROPOSAL_PROMPT_MAX = 2000
 
 /** Ce que lit Maestro : chaque proposition, d'où elle vient, et ce qu'il en fait (skill `roadmap:maestro`, § 3). */
 export function maestroProposalText(proposals: readonly MaestroProposal[]): string {
-  const items = proposals.map((p, i) => [
-    `${proposals.length > 1 ? `${i + 1}. ` : ''}De la sous-session « ${p.fromTitle || p.from} » : « ${p.title} »`,
-    `Brief : ${clip(p.prompt, PROPOSAL_PROMPT_MAX)}`,
-    ...(p.background ? [`Contexte : ${clip(p.background, PROPOSAL_PROMPT_MAX)}`] : []),
-  ].join('\n'))
+  const asked = proposals.some(p => p.initiation === 'user_asked')
+  const items = proposals.map((p, i) => {
+    const from = p.fromTitle || p.from
+    const head = p.initiation === 'user_asked'
+      ? `${Person()} a demandé dans la session « ${from} » de lancer : « ${p.title} »`
+      : `De la sous-session « ${from} » : « ${p.title} »`
+    const options = Object.entries(p.options ?? {}).map(([k, v]) => `${k} : ${String(v)}`)
+    return [
+      `${proposals.length > 1 ? `${i + 1}. ` : ''}${head}`,
+      `Brief : ${clip(p.prompt, PROPOSAL_PROMPT_MAX)}`,
+      ...(p.background ? [`Contexte : ${clip(p.background, PROPOSAL_PROMPT_MAX)}`] : []),
+      ...(options.length > 0 ? [`Réglages de la carte d'origine, à reproduire sur la tienne : ${options.join(', ')}`] : []),
+    ].join('\n')
+  })
+  const intro = asked && proposals.every(p => p.initiation === 'user_asked')
+    ? `${proposals.length > 1 ? 'Lancements demandés' : 'Lancement demandé'} dans une session que tu as lancée : la session créée là serait sa fille, une petite-fille de Maestro, et ${person()} ne veut qu'un niveau sous Maestro. Le panneau Roadmap te le remonte (skill roadmap:maestro, « Les propositions des sous-sessions »).`
+    : `${proposals.length > 1 ? 'Tâches proposées' : 'Tâche proposée'} par une session que tu as lancée : sa carte New task serait restée dans son transcript, que ${person()} ne regarde pas, et la session lancée de là serait une petite-fille de Maestro. Le panneau Roadmap te la remonte (skill roadmap:maestro, « Les propositions des sous-sessions »).`
   return [
-    `${proposals.length > 1 ? 'Tâches proposées' : 'Tâche proposée'} par une session que tu as lancée : sa carte New task serait restée dans son transcript, que ${person()} ne regarde pas. Le panneau Roadmap te la remonte (skill roadmap:maestro, « Les propositions des sous-sessions »).`,
+    intro,
     '',
     items.join('\n\n'),
     '',
     "À toi : ouvre sa ligne dans la roadmap (ou rattache-la à une ligne qui la couvre déjà), puis propose-la à " + person() + " depuis Maestro, par une carte (start_session, initiation own_initiative), titrée « #<id> · <libellé court> », avec un brief complet et la clause de Maestro. Ne la code pas toi-même. Puis dis-le à " + person() + " en une ligne : quelle session la propose, quoi, et qu'il clique Start sur ta carte pour la lancer.",
+    ...(asked ? [`Un lancement que ${person()} a demandé : sa demande vaut accord, pose la carte dans ce tour sans lui redemander s'il la veut. Une carte, pas un lancement direct : l'app refuse user_asked sur un tour qu'a réveillé le message d'une session.`] : []),
   ].join('\n')
 }
 
 /** Ce que lit la sous-session à la place de sa carte : transmise à Maestro (`message`) ou gardée pour lui (`store`). */
-export function proposalSentNote(maestro: string, title: string, via: 'message' | 'store'): string {
-  const where = via === 'message'
-    ? `Carte non posée ici : la proposition « ${title} » est transmise à Maestro (« ${maestro} ») par message, car ${person()} pilote par Maestro et ne regarde pas ce transcript.`
-    : `Carte non posée ici : la proposition « ${title} » est gardée pour Maestro (« ${maestro} »), qui la recevra à son prochain tour (le message direct a été refusé), car ${person()} pilote par Maestro et ne regarde pas ce transcript.`
+export function proposalSentNote(maestro: string, title: string, via: 'message' | 'store', initiation: MaestroProposal['initiation'] = 'own_initiative'): string {
+  const how = via === 'message' ? 'par message' : 'et gardée pour lui, qui la recevra à son prochain tour (le message direct a été refusé)'
+  if (initiation === 'user_asked') {
+    return `Lancement non fait ici : la session « ${title} » serait ta fille, une petite-fille de Maestro, et ${person()} ne veut qu'un niveau sous Maestro. Sa demande est transmise à Maestro (« ${maestro} ») ${how} ; Maestro ouvre sa ligne et pose la carte. Ne le relance pas, sous aucune forme ; dis seulement à ${person()}, en une ligne, que la carte l'attend dans Maestro et qu'il clique Start pour la lancer.`
+  }
+  const where = `Carte non posée ici : la proposition « ${title} » est transmise à Maestro (« ${maestro} ») ${how}, car ${person()} pilote par Maestro et ne regarde pas ce transcript.`
   return `${where} Maestro ouvre sa ligne et la propose à ${person()}. Ne la repose pas, sous aucune forme ; dis seulement, en une ligne de ton compte rendu, que tu l'as remontée à Maestro.`
+}
+
+/**
+ * Une carte que Maestro ne peut pas reprendre telle quelle (#132) : une `offer` n'a que son titre, une
+ * carte `fork` porte la conversation de la sous-session. Le brief s'écrit là où est le contexte.
+ */
+export function proposalRetryNote(maestro: string, reason: 'offer' | 'fork', initiation: MaestroProposal['initiation'] = 'own_initiative'): string {
+  const why = reason === 'offer'
+    ? 'cette carte offer n\'a que son titre'
+    : 'une carte fork emporterait ta conversation, que Maestro n\'a pas'
+  return `Carte non posée : toute création de session demandée ici part à Maestro (« ${maestro} »), pour que la session soit sa fille directe, et ${why}. Repose-la tout de suite en start_session, initiation ${initiation === 'own_initiative' ? 'own_initiative' : `user_asked (c'est ${person()} qui la demande)`}, contexte fresh, avec un brief complet (la tâche, les fichiers, ce que veut dire « fini ») et un contexte (background) qui dit d'où vient la demande : le panneau la remontera à Maestro. Ne la code pas toi-même ici.`
 }
 
 // --- Réveil de Maestro (#131) ------------------------------------------------------------------

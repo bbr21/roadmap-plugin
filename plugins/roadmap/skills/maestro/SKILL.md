@@ -72,8 +72,9 @@ lui remonte.
     (l'app ne propose pas le bouton d'app `archive`) ; sur ce clic, `archive_session` (`self`) ;
     refusé par l'app, dis-le ; ta ligne encore ouverte, ne propose pas l'archivage : Maestro la
     coche à la fusion ;
-  - une tâche que tu proposes remonte à Maestro : pose ta carte comme d'habitude, le panneau la lui
-    transmet au lieu de la laisser dans ton transcript.
+  - une tâche que tu proposes, ou un lancement que l'utilisateur te demande, remonte à Maestro : pose
+    ta carte comme d'habitude, le panneau la lui transmet pour que la session créée soit sa fille
+    directe.
 
 - **La carte est la question** (#122) : une carte posée demande déjà « je lance ? » ; l'utilisateur
   y répond en cliquant Start. La boîte de fin de Maestro ne la double pas : pas de « Quelle session
@@ -157,14 +158,23 @@ lui remonte.
   pose la question à l'utilisateur par le formulaire, une option par maquette, son aperçu (`preview`)
   et son compromis, la recommandation de la sous-session en premier ; sa réponse part mot pour
   mot. Le réglage `autonome` ne s'y applique pas : un choix visuel revient à l'utilisateur.
-- **Les propositions des sous-sessions** : une carte New task (`own_initiative`) posée par une
-  sous-session resterait dans son transcript, que l'utilisateur ne regarde pas. Le panneau la remonte à
-  Maestro : par message (« Tâche proposée par une session que tu as lancée… »), sinon au message suivant
-  de l'utilisateur. Maestro ouvre sa ligne (ou la rattache à une ligne qui la couvre), puis la propose à
-  l'utilisateur depuis Maestro : carte `own_initiative`, titre `#<id> · <libellé court>`, brief complet et
-  clause de Maestro, puis lui dit en une ligne quelle session la propose et qu'il clique Start sur cette
-  carte. Il ne la code pas, et ajoute son étape à sa liste quand elle est lancée. La carte d'une session lancée depuis
-  une sous-session remonte aussi : au premier ancêtre ouvert qui coordonne.
+- **Les propositions des sous-sessions** (#67, #132) : toute création de session qu'une sous-session
+  demande, sa carte New task (`own_initiative`, `offer`) ou le lancement que l'utilisateur lui a demandé
+  (`user_asked`), ferait une petite-fille de Maestro, et l'utilisateur ne veut qu'un niveau sous Maestro.
+  Le panneau la remonte au Maestro racine : par message (« Tâche proposée… » ou « Lancement demandé… »),
+  sinon au message suivant de l'utilisateur. Maestro ouvre sa ligne (ou la rattache à une ligne qui la
+  couvre), puis la propose depuis Maestro : carte `own_initiative`, titre `#<id> · <libellé court>`,
+  brief complet, clause de Maestro et les réglages de la carte d'origine, puis dit en une ligne quelle
+  session la propose et qu'il clique Start. Un lancement que l'utilisateur a demandé vaut accord : la
+  carte se pose dans ce tour, sans lui redemander s'il la veut ; c'est une carte et non un lancement,
+  car l'app refuse `user_asked` sur un tour qu'a réveillé le message d'une session. Il ne la code pas,
+  et ajoute son étape à sa liste quand elle est lancée.
+- **Le Maestro racine** (#132) : le plus haut ancêtre ouvert reconnu Maestro par son titre ou sa marque,
+  sinon le plus haut qui a lancé au moins deux sessions encore ouvertes. Une session qui a un Maestro
+  au-dessus n'en est jamais un, même avec deux sessions lancées : ses créations remontent, et son
+  panneau la traite en session de tâche. Une session titrée ou marquée Maestro n'est déclassée que par
+  un Maestro titré ou marqué au-dessus. Seul un lancement ailleurs (autre dossier, SSH, cloud) reste
+  chez la sous-session : une carte ne le porte pas. Les petites-filles déjà nées restent où elles sont.
 
 ## 4. Les ressources uniques, le simulateur iOS d'abord
 
@@ -265,8 +275,9 @@ La fusion elle-même :
   de son titre se coche.
 - Une ligne ouverte par Maestro lui rappelle de lancer sa session au lieu de la coder.
 - Le ▶ lancé depuis Maestro met la clause de Maestro dans le brief de la sous-session.
-- La carte New task d'une sous-session, ou d'une session lancée par elle, ne reste pas chez elle :
-  elle remonte à Maestro (§ 3).
+- Toute création de session demandée dans une sous-session ou plus bas (carte New task, `offer`,
+  lancement `user_asked`) ne reste pas chez elle : elle remonte au Maestro racine (§ 3) ; une `offer`
+  sans brief ou une carte `fork` revient à la sous-session, à reposer en `own_initiative` `fresh`.
 - Chaque sous-session note sa liste d'étapes, sa question en attente et son dernier récap ; à chaque
   message de l'utilisateur, Maestro reçoit les enfants qui coincent depuis 15 min et ceux à archiver
   (§ 3, « Prendre des nouvelles »).
