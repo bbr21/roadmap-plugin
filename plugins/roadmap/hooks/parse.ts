@@ -4147,23 +4147,66 @@ export function branchText(gap: { ahead: number; behind: number; files: number }
 /** La marque d'une tâche de la roadmap, sa couleur d'axe prise dans l'ordre du panneau ; absente, rien. */
 function taskBrand(id: string, source: Source, tasks: readonly Task[], maestro?: string): Brand | undefined {
   const task = tasks.find(t => t.id === id)
-  if (!task) return undefined
+  return task ? taskBrandOf(task, source, tasks, maestro ? { maestro } : {}) : undefined
+}
+
+/**
+ * La marque Voies d'une tâche quelconque (#142) : celle de la session, ou celle qu'on ouvre au clic dans
+ * la roadmap, avec son titre court. Une ligne sans `id:` garde un id vide, sans voie.
+ */
+export function taskBrandOf(
+  task: Task,
+  source: Source,
+  tasks: readonly Task[],
+  o: { label?: string; maestro?: string } = {},
+): Extract<Brand, { kind: 'task' }> {
   const order = axisOrder(tasks.filter(t => !t.done), tasks.filter(t => t.done))
   // Sa voie : la prérequise qui trace la chaîne, et la première ouverte qui l'attend.
-  const before = prereqOf(task, tasks)
-  const next = tasks.find(t => !t.done && t.id !== undefined && prereqsOf(t, tasks).includes(task))
+  const before = task.id ? prereqOf(task, tasks) : undefined
+  const next = task.id ? tasks.find(t => !t.done && t.id !== undefined && prereqsOf(t, tasks).includes(task)) : undefined
   return {
     kind: 'task',
     project: source.name,
-    id,
-    label: task.label,
+    id: task.id ?? '',
+    label: o.label ?? task.label,
     axis: task.axis,
     axisIndex: Math.max(0, order.indexOf(task.axis)),
     ...(task.due ? { due: task.due } : {}),
     ...(before?.id ? { before: { id: before.id, done: before.done } } : {}),
     ...(next?.id ? { next: next.id } : {}),
-    ...(maestro ? { maestro } : {}),
+    ...(o.maestro ? { maestro: o.maestro } : {}),
   }
+}
+
+/** Les cartes de la fiche d'une tâche (#142, maquette C), dans l'ordre où elles se lisent. */
+export type FicheCard = 'avancement' | 'lancer' | 'chaine' | 'details'
+
+/**
+ * Ce que montre la fiche d'une tâche selon où on la lit (`session` : la session lancée pour elle ;
+ * `roadmap` : au clic dans la roadmap) et son état : la conclusion devant la mission quand elle est
+ * faite, puis les cartes qui ont quelque chose à dire. Avancement : dans sa session, le dossier, la
+ * branche et l'attente ; dans la roadmap, l'attente, le blocage, la session qui y travaille ou celle,
+ * encore ouverte, d'une faite. Lancer : dans la roadmap, une ouverte sans session.
+ */
+export function ficheCards(o: {
+  context: 'session' | 'roadmap'
+  done: boolean
+  live: boolean
+  blocked: boolean
+  kept: boolean
+  attend: boolean
+  docs: number
+  branch: number
+  links: number
+  details: number
+}): { conclusion: boolean; cards: FicheCard[] } {
+  const session = o.context === 'session'
+  const cards: FicheCard[] = []
+  if (session ? o.docs > 0 || o.branch > 0 || o.attend : o.attend || o.blocked || o.live || o.kept) cards.push('avancement')
+  if (!session && !o.done && !o.live) cards.push('lancer')
+  if (o.links > 0) cards.push('chaine')
+  if (o.details > 0) cards.push('details')
+  return { conclusion: o.done, cards }
 }
 
 /**

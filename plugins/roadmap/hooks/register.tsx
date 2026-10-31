@@ -103,6 +103,9 @@ import {
   launchBoxRefusal,
   dueLabel,
   findSelected,
+  ficheCards,
+  type FicheCard,
+  taskBrandOf,
   byDay,
   doneByDay,
   groupingOf,
@@ -3741,8 +3744,10 @@ function brandTree(
   variant: 'card' | 'header' | 'focus',
   today = '',
   state?: BrandTask['state'],
+  // Le titre « #N … » d'une tâche, cliquable (#142) : la clé de son bouton et ce qu'il fait.
+  onTitle?: { key: string; press: () => void },
 ): RenderElement {
-  const { Box, Text } = $.ui.resolve(e)
+  const { Box, Text, Button } = $.ui.resolve(e)
   const resolved = $.ui.resolve(e)
   const Svg = 'Svg' in resolved && e.surface !== 'terminal' ? resolved.Svg : undefined
   const words = brandText(brand, today)
@@ -3816,8 +3821,10 @@ function brandTree(
   ) : (
     <Text key="axis" size="caption" color={accent}>{axisLabel(brand.axis)}</Text>
   )
+  // Une ligne sans `id:` (#142) : ni numéro, ni voie.
+  const numbered = brand.id !== ''
   const stations =
-    variant !== 'header' && Svg && words.stations
+    variant !== 'header' && Svg && words.stations && numbered
       ? brandStationsIcon(palette, accent, words.stations, surfaceWidth(e, variant === 'focus' ? 4 : 6, card ? 520 : Infinity))
       : undefined
   return (
@@ -3829,12 +3836,22 @@ function brandTree(
         </Box>
         {state && pill(BRAND_STATE_WORDS[state], ...tone(state))}
       </Box>
-      <Box flexDirection="row" gap={SPACE.row}>
-        <Text size={card ? 'title' : 'heading'} weight="semibold" color={accent}>{`#${brand.id}`}</Text>
-        <Box flexShrink={1} minWidth={0}>
-          <Text size={card ? 'title' : 'heading'} weight="semibold" wrap="wrap">{brand.label}</Text>
+      {onTitle ? (
+        // Un bouton de l'app ne tient que du texte : le numéro et le titre, deux Text dedans.
+        <Box key={`title:${onTitle.key}`} flexDirection="row" flexShrink={1} minWidth={0}>
+          <Button key={onTitle.key} plain hover={{ underline: true }} onPress={onTitle.press}>
+            {numbered && <Text size={card ? 'title' : 'heading'} weight="semibold" color={accent}>{`#${brand.id} `}</Text>}
+            <Text size={card ? 'title' : 'heading'} weight="semibold" wrap="wrap">{brand.label}</Text>
+          </Button>
         </Box>
-      </Box>
+      ) : (
+        <Box flexDirection="row" gap={SPACE.row}>
+          {numbered && <Text size={card ? 'title' : 'heading'} weight="semibold" color={accent}>{`#${brand.id}`}</Text>}
+          <Box flexShrink={1} minWidth={0}>
+            <Text size={card ? 'title' : 'heading'} weight="semibold" wrap="wrap">{brand.label}</Text>
+          </Box>
+        </Box>
+      )}
       <Box flexDirection="row" alignItems="center" gap={SPACE.row}>
         {axis}
         {words.meta.map(m => pill(m, palette.sel, palette.text2))}
@@ -3868,21 +3885,15 @@ async function sessionBrandOf($: EngineInterface): Promise<{ brand: Brand; data:
 
 /**
  * L'en-tête du panneau, au-dessus de la roadmap : Maestro et ses voies ; chez une tâche dont on a demandé
- * toute la roadmap, sa ligne de marque et « Ma tâche », qui ramène à la vue de tâche (#137).
+ * toute la roadmap, sa ligne de marque, dont le titre ramène à sa fiche (#137, #142).
  */
 function paneBrand($: EngineInterface, e: RenderInput<'Pane'>, found: Awaited<ReturnType<typeof sessionBrandOf>>, today: string): RenderElement | null {
   if (!found) return null
-  const tree = brandTree($, e, found.brand, found.data.palette, 'header', today)
-  if (found.brand.kind !== 'task') return tree
-  const { Box, Button } = $.ui.resolve(e)
-  return (
-    <Box flexDirection="column" gap={SPACE.tight}>
-      {tree}
-      <Box flexDirection="row">
-        <Button key="task-focus" plain dimColor label="‹ Ma tâche" onPress={() => void setView($, () => ({ whole: false, selected: '' }))} />
-      </Box>
-    </Box>
-  )
+  if (found.brand.kind !== 'task') return brandTree($, e, found.brand, found.data.palette, 'header', today)
+  return brandTree($, e, found.brand, found.data.palette, 'header', today, undefined, {
+    key: 'task-focus',
+    press: () => void setView($, () => ({ whole: false, selected: '' })),
+  })
 }
 
 /** Ce que la vue de tâche lit hors de la roadmap : l'écart de la branche, la spec et le plan ; relu au plus toutes les 30 s. */
@@ -3920,72 +3931,11 @@ async function readFocusFacts($: EngineInterface, source: Source, task: Task, ow
 }
 
 /**
- * La vue de tâche (#137) : dans une session « #N · … », sa tâche à la place de toute la roadmap. La tête
- * au style Voies, la mission entière, puis le dossier (spec, plan), la branche et son écart avec sa base,
- * et l'état vu par Maestro ; « Toute la roadmap » ramène à la vue d'ensemble. Pas de liste d'étapes :
- * celle de l'app suffit (#109).
+ * La place du bloc « Étapes » de la fiche (#142), sous la mission : la liste d'étapes de la session, en
+ * direct, que #143 dessinera. Rien pour l'instant.
  */
-async function taskFocusView(
-  $: EngineInterface,
-  e: RenderInput<'Pane'>,
-  found: NonNullable<Awaited<ReturnType<typeof sessionBrandOf>>>,
-  today: string,
-  now: number,
-): Promise<RenderElement | null> {
-  const { brand, data } = found
-  if (brand.kind !== 'task') return null
-  const task = data.tasks.find(t => t.id === brand.id)
-  if (!task) return null
-  const { Box, Text, Button } = $.ui.resolve(e)
-  const resolved = $.ui.resolve(e)
-  const Svg = 'Svg' in resolved && e.surface !== 'terminal' ? resolved.Svg : undefined
-  const palette = data.palette
-  const facts = await readFocusFacts($, data.source, task, data.own.id, now)
-  const running = data.own.id !== undefined ? runningBySession.get(data.own.id) : undefined
-  const state: BrandTask['state'] | undefined = task.done ? 'done' : brand.maestro && running !== undefined ? (running ? 'live' : 'wait') : undefined
-  const strut = (height: number) =>
-    Svg ? <Svg source={`<svg xmlns="http://www.w3.org/2000/svg" width="1" height="${height}"/>`} alt="espace" width={1} height={height} /> : null
-  const field = (name: string, value: RenderElement) => (
-    <Box key={`focus:${name}`} flexDirection="row" alignItems="center" gap={SPACE.row}>
-      <Box width={10} flexShrink={0} flexDirection="row" alignItems="center">
-        {strut(SIZE.strut.control)}
-        <Text size="footnote" color={palette.text2}>{name}</Text>
-      </Box>
-      <Box flexDirection="row" alignItems="center" gap={SPACE.row} flexShrink={1} minWidth={0} flexWrap="wrap">
-        {value}
-      </Box>
-    </Box>
-  )
-  return (
-    <Box flexDirection="column" gap={SPACE.root} paddingX={SPACE.indent}>
-      {brandTree($, e, brand, palette, 'focus', today, state)}
-      <Text size="footnote" wrap="wrap">{task.label}</Text>
-      <Box flexDirection="column">
-        {facts.docs.length > 0 &&
-          field(
-            'Dossier',
-            <Box flexDirection="row" gap={SPACE.row}>
-              {facts.docs.map(d => (
-                <Button key={`focus-doc:${d.label}`} label={d.label} onPress={() => void openFile($, d.path)} />
-              ))}
-            </Box>,
-          )}
-        {facts.branch.length > 0 &&
-          field(
-            'Branche',
-            <Box flexDirection="column">
-              {facts.branch.map(l => (
-                <Text key={`focus-branch:${l}`} size="footnote" wrap="wrap">{l}</Text>
-              ))}
-            </Box>,
-          )}
-        {task.attend !== undefined && field('Attend', <Text size="footnote" wrap="wrap">{task.attend}</Text>)}
-      </Box>
-      <Box flexDirection="row">
-        <Button key="whole-roadmap" label="Toute la roadmap" onPress={() => void setView($, () => ({ whole: true }))} />
-      </Box>
-    </Box>
-  )
+function ficheSteps(): RenderElement | null {
+  return null
 }
 
 async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<RenderElement> {
@@ -4083,12 +4033,9 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   }
   const done = data.done
 
-  // Dans une session « #N · … » : sa tâche plutôt que toute la roadmap (#137).
+  // Dans une session « #N · … » : la fiche de sa tâche plutôt que toute la roadmap (#137, #142).
   const ownBrand = await sessionBrandOf($)
-  if (ownBrand && paneFocus(ownBrand.brand, view) === 'task') {
-    const focus = await taskFocusView($, e, ownBrand, today, now)
-    if (focus) return focus
-  }
+  const focusBrand = ownBrand?.brand.kind === 'task' && paneFocus(ownBrand.brand, view) === 'task' ? ownBrand.brand : undefined
 
   // La date d'un parent est celle de son enfant ouvert le plus proche (#125) : filtres, tri et pastilles la lisent.
   const openTasks = withParentDates(open.filter(t => !t.done))
@@ -4229,19 +4176,6 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
       </Box>
     )
   }
-  const axisPill = (t: Task) => {
-    const bg = axisTint(palette, axisHex(t.axis))
-    if (Svg) {
-      const pill = axisPillIcon({ name: axisLabel(t.axis), hex: axisHex(t.axis), bg, fg: palette.text })
-      return <Svg source={pill.source} alt={axisLabel(t.axis)} width={pill.width} height={pill.height} />
-    }
-    return (
-      <Box flexDirection="row" alignItems="center" gap={SPACE.tight} paddingX={SPACE.indent} backgroundColor={bg}>
-        {icon(squareIcon(axisHex(t.axis)), t.axis, 16, '■', axisTheme(t.axis))}
-        <Text weight="semibold" color={palette.text}>{axisLabel(t.axis)}</Text>
-      </Box>
-    )
-  }
   // Une pastille du détail : grise (date relative), rouge (retard, horloge) ou violette (tiers, personne).
   const tag = (text: string, kind: 'soft' | 'late' | 'soon' | 'wait') =>
     kind === 'late'
@@ -4255,12 +4189,16 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   const feedbackPill = (height?: number) =>
     drawnPill({ text: 'Feedback', bg: palette.waitTint, fg: palette.waitOn, weight: TEXT.weight.soft, ...(height ? { height } : {}) })
 
-  // --- Détail d'une task ---------------------------------------------------
-  const current = findSelected([...openTasks, ...doneTasks], selected)
+  // --- La fiche d'une tâche (#142) : celle de la session, ou celle du clic ---------
+  // Sa tâche introuvable (ligne retirée), la session voit toute la roadmap.
+  const ownTask = focusBrand ? allTasks.find(t => t.id === focusBrand.id) : undefined
+  const inSession = ownTask !== undefined
+  const current = ownTask ?? findSelected([...openTasks, ...doneTasks], selected)
   if (current) {
+    // Dans sa session : le dossier, la branche et son écart, lus hors de la roadmap.
+    const facts = inSession && ownBrand ? await readFocusFacts($, ownBrand.data.source, current, ownBrand.data.own.id, now) : undefined
     const s = short(current)
     const days = age(current)
-    const subject = s.sujet === '…' ? 'À classer' : s.sujet
     const line = Number(current.key.split(':').pop())
     const fichePath = current.fiche ? `${source.dir}/${current.fiche}` : undefined
     const srcPath = current.src ? `${source.dir}/${current.src}` : undefined
@@ -4480,322 +4418,511 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
         </Box>,
         <Button key={key} plain label={label} onPress={onPress} />,
       )
+    // La fiche (#142, maquette C) : l'en-tête Voies, la mission dans son cadre, puis les cartes que
+    // l'état rend utiles (`ficheCards`), dans sa session comme au clic dans la roadmap.
+    const children = allTasks.filter(x => x !== current && current.id !== undefined && x.parent === current.id)
+    const links =
+      prereqsFor(current).length + missingPrereqs(current, allTasks).length + unlocks.length + (current.parent !== undefined ? 1 : 0) + children.length
+    const detailCount = [
+      current.done,
+      s.sujet !== '…',
+      current.section !== '' && current.section !== 'En cours',
+      stepOf,
+      current.feedback,
+      current.resp,
+      ...Object.keys(cles).map(k => current.extra?.[k]?.length),
+      current.qui,
+      current.branche,
+      current.due,
+      current.fait,
+      current.src,
+      current.spec,
+      fichePath ?? srcPath,
+      current.ouvert,
+    ].filter(Boolean).length
+    const layout = ficheCards({
+      context: inSession ? 'session' : 'roadmap',
+      done: current.done,
+      live: live !== undefined,
+      blocked: holder !== undefined,
+      kept: kept !== undefined,
+      attend: current.attend !== undefined,
+      docs: facts?.docs.length ?? 0,
+      branch: facts?.branch.length ?? 0,
+      links,
+      details: detailCount,
+    })
+    // L'état en pastille : celui que Maestro voit dans sa session, celui de la session qui y travaille ailleurs.
+    const ownRunning = focusBrand && ownBrand?.data.own.id !== undefined ? runningBySession.get(ownBrand.data.own.id) : undefined
+    const headState: BrandTask['state'] | undefined = current.done
+      ? 'done'
+      : focusBrand
+        ? focusBrand.maestro && ownRunning !== undefined
+          ? ownRunning
+            ? 'live'
+            : 'wait'
+          : undefined
+        : live
+          ? live.entry.sessionId && runningBySession.get(live.entry.sessionId) === false
+            ? 'wait'
+            : 'live'
+          : undefined
+    const headBrand = focusBrand ?? taskBrandOf(current, source, allTasks, { label: s.titre })
+    // Une carte : sa légende, puis ses lignes, dans un cadre à bord fin.
+    const card = (name: string, body: RenderElement) => (
+      <Box key={`card:${name}`} paddingX={SPACE.indent}>
+        <Box flexDirection="column" gap={SPACE.tight} paddingX={SPACE.indent} paddingY="xs" flexGrow={1} borderStyle="round" borderColor={palette.border}>
+          <Text size="caption" weight="medium" color={palette.text2}>{name}</Text>
+          {body}
+        </Box>
+      </Box>
+    )
+    const cards: Record<FicheCard, () => RenderElement> = {
+      avancement: () =>
+        card(
+          'Avancement',
+          <Box flexDirection="column" gap={SPACE.block}>
+            <Box flexDirection="column">
+              {facts &&
+                facts.docs.length > 0 &&
+                field(
+                  'Dossier',
+                  <Box flexDirection="row" gap={SPACE.row}>
+                    {facts.docs.map(d => (
+                      <Button key={`focus-doc:${d.label}`} label={d.label} onPress={() => void openFile($, d.path)} />
+                    ))}
+                  </Box>,
+                )}
+              {facts &&
+                facts.branch.length > 0 &&
+                field(
+                  'Branche',
+                  <Box flexDirection="column">
+                    {facts.branch.map(l => (
+                      <Text key={`focus-branch:${l}`} wrap="wrap">{l}</Text>
+                    ))}
+                  </Box>,
+                  'focus-branch',
+                )}
+              {field(
+                'Attend',
+                // Au détail, la pastille courte puis la précision entière, sur plusieurs lignes s'il le faut.
+                current.attend !== undefined &&
+                  (me.includes(attendWho(current.attend)) && current.attend === attendWho(current.attend) ? (
+                    plain(current.attend)
+                  ) : (
+                    <Box flexDirection="column" gap={SPACE.tight} flexShrink={1}>
+                      {me.includes(attendWho(current.attend)) ? plain(attendWho(current.attend)) : tag(shortAttend(current.attend), 'wait')}
+                      {current.attend.trim() !== attendWho(current.attend) && (
+                        <Text size="caption" color={palette.text2} wrap="wrap">{current.attend}</Text>
+                      )}
+                    </Box>
+                  )),
+              )}
+            </Box>
+            {!inSession && (
+              <Box flexDirection="column" gap={SPACE.block}>
+                {/* Bloquée : l'avertissement au-dessus des actions ; « Lancer » reste possible. */}
+                {holder && (
+                  <Box flexDirection="row" alignItems="center" gap={SPACE.row} paddingX={SPACE.indent} backgroundColor={palette.blockTint}>
+                    {corners(RADIUS.control, palette.bg)}
+                    {strut(SIZE.strut.control)}
+                    {Svg ? (
+                      <Svg source={lockIcon(palette.blockOn, 14, STROKE.small)} alt="bloquée" width={SIZE.icon.sm} height={SIZE.icon.sm} />
+                    ) : (
+                      <Text color="warning">⊘</Text>
+                    )}
+                    <Box flexShrink={1}>
+                      <Text weight="semibold" color={palette.blockOn}>
+                        {holder.parent
+                          ? `Bloquée : son parent « ${short(holder.parent).titre} » attend « ${short(holder.pre).titre} ».`
+                          : `Bloquée : « ${short(holder.pre).titre} » n'est pas encore faite.`}
+                      </Text>
+                    </Box>
+                  </Box>
+                )}
+                {/* En session : une carte bleue, l'état et depuis quand, puis « Ouvrir la session ». */}
+                {live && (
+                  <Box key="live-card" flexDirection="column" gap={SPACE.block} padding="sm" borderStyle="round" borderColor={mixOver(palette.liveOn, palette.bg, MIX.sessionBorder)} backgroundColor={palette.liveTint}>
+                    <Box flexDirection="row" justifyContent="space-between" alignItems="center">
+                      <Box flexDirection="row" alignItems="center" gap={SPACE.row}>
+                        {live.state === 'open' && Svg && (live.entry.sessionId && runningBySession.get(live.entry.sessionId) === false ? (
+                          <Svg source={handIcon(palette.liveOn, 16)} alt="attend ta réponse" width={SIZE.icon.md} height={SIZE.icon.md} />
+                        ) : (
+                          <Svg source={spinnerIcon(palette.liveOn, 16, undefined, false, now)} alt="en cours" width={SIZE.icon.md} height={SIZE.icon.md} isInteractive />
+                        ))}
+                        <Text color={palette.liveOn}>
+                          {live.state !== 'open'
+                            ? sessionTitleKind(live.entry.title) === 'check' ? 'Vérification lancée' : 'Session lancée'
+                            : live.entry.sessionId && runningBySession.get(live.entry.sessionId) === false
+                              ? sessionTitleKind(live.entry.title) === 'check' ? 'La vérification attend ta réponse' : 'La session attend ta réponse'
+                              : sessionTitleKind(live.entry.title) === 'check' ? 'Vérification en cours' : 'Session en cours'}
+                        </Text>
+                      </Box>
+                      <Text tabular color={palette.liveOn}>{durationLabel(now - live.entry.startedAt)}</Text>
+                    </Box>
+                    <Box flexDirection="row">
+                      {primary('open-session', externalIcon(palette.bg, 14), 'Ouvrir la session', () => void openSession($, live.entry), {
+                        bg: palette.live,
+                        fg: palette.bg,
+                        around: palette.liveTint,
+                      })}
+                    </Box>
+                  </Box>
+                )}
+                {kept && (
+                  <Box flexDirection="row" alignItems="stretch" gap={SPACE.row}>
+                    {kept && primary('open-session', externalIcon(palette.priText, 14), 'Ouvrir la session', () => void openSession($, kept.entry))}
+                    {kept && action('archive-session', archiveIcon(palette.text), 'Archiver la session', () => void archiveSession($, kept.key, kept.entry))}
+                  </Box>
+                )}
+                {live && (
+                  <Box flexDirection="column" gap={SPACE.block}>
+                    {/* « Marquer faite » (#73) et « Annuler la tâche » : la tâche ne s'efface pas, elle descend en
+                        tête des faites, avec son bilan ; une confirmation d'abord (décisions de Bertrand du
+                        2026-10-26 et du 2026-10-28). Visibles même quand une session tient la tâche : elle a pu
+                        livrer sans cocher ; l'encart le rappelle. Une rangée à eux : avec « Lancer » et
+                        « Vérifier », quatre boutons débordent du panneau étroit. */}
+                    {!current.done && !(asking && cancelNote === CANCEL_BUSY) && (
+                      <Box key="close-row" flexDirection="row" alignItems="center" gap={SPACE.row}>
+                        {(['done', 'abandon'] as const)
+                          .filter(kind => !(asking && closeKind === kind))
+                          .map(kind => (
+                            <Button
+                              key={kind === 'done' ? 'done' : 'cancel'}
+                              plain
+                              dimColor
+                              label={kind === 'done' ? 'Marquer faite' : 'Annuler la tâche'}
+                              onPress={() => {
+                                cancelReason = ''
+                                void setView($, () => ({ cancelAsk: taskKey(current), closeKind: kind, cancelNote: '' }))
+                              }}
+                            />
+                          ))}
+                      </Box>
+                    )}
+                    {asking && !current.done && (
+                      <Box key="cancel-box" flexDirection="column" gap={SPACE.block} padding="sm" borderStyle="round" borderColor={palette.border}>
+                        <Text weight="semibold" wrap="wrap">
+                          {closeKind === 'done'
+                            ? `Marquer${current.id ? ` #${current.id}` : ''} « ${s.titre} » faite ?`
+                            : `Annuler${current.id ? ` #${current.id}` : ''} « ${s.titre} » ?`}
+                        </Text>
+                        <Text size="caption" color={palette.text2} wrap="wrap">
+                          {`${
+                            closeKind === 'done'
+                              ? 'Elle descend en tête des faites, avec le bilan « Marquée faite depuis le panneau Roadmap ».'
+                              : "Elle ne s'efface pas : cochée « (abandonné) », elle descend en tête des faites, avec son bilan."
+                          }${bilanData.viaCowork ? '' : ' Dans git : commit et push sur main.'}`}
+                        </Text>
+                        {(live || launched.includes(taskKey(current))) && (
+                          <Text size="caption" color={palette.lateOn} wrap="wrap">Une session tient cette tâche : elle peut encore l'écrire.</Text>
+                        )}
+                        {closeKind === 'abandon' && Input && (
+                          <Input
+                            key={`cancel-reason:${current.key}`}
+                            rows={2}
+                            placeholder="Raison (facultatif)"
+                            submitLabel="annuler"
+                            onInput={(value: string) => {
+                              cancelReason = value
+                            }}
+                            onSubmit={(value: string) => {
+                              cancelReason = value
+                              void confirmClose($, source, current, 'abandon')
+                            }}
+                          />
+                        )}
+                        <Box flexDirection="row" alignItems="center" gap={SPACE.row}>
+                          {closeKind === 'done' ? (
+                            <Button
+                              key="done-confirm"
+                              label={cancelNote === CANCEL_BUSY ? 'Écriture…' : 'Confirmer'}
+                              onPress={() => void confirmClose($, source, current, 'done')}
+                            />
+                          ) : (
+                            <Button
+                              key="cancel-confirm"
+                              label={cancelNote === CANCEL_BUSY ? 'Annulation…' : "Confirmer l'annulation"}
+                              onPress={() => void confirmClose($, source, current, 'abandon')}
+                            />
+                          )}
+                          <Button key="cancel-keep" plain dimColor label="Garder" onPress={() => void setView($, () => ({ cancelAsk: '', cancelNote: '' }))} />
+                        </Box>
+                        {cancelNote !== '' && cancelNote !== CANCEL_BUSY && (
+                          <Text color={palette.lateOn} wrap="wrap">{cancelNote}</Text>
+                        )}
+                      </Box>
+                    )}
+                    {!asking && cancelNote !== '' && cancelNote !== CANCEL_BUSY && (
+                      <Box paddingX={SPACE.indent}>
+                        <Text size="caption" color={palette.lateOn} wrap="wrap">{cancelNote}</Text>
+                      </Box>
+                    )}
+                  </Box>
+                )}
+              </Box>
+            )}
+          </Box>,
+        ),
+      lancer: () =>
+        card(
+          'Lancer',
+          <Box flexDirection="column" gap={SPACE.block}>
+              <Box flexDirection="row" alignItems="stretch" gap={SPACE.row}>
+                {!current.done && !live && launched.includes(taskKey(current)) && requested()}
+                {/* Un clic lance : plus de confirmation (2026-10-25) ; le message additionnel suit. */}
+                {!current.done &&
+                  !live &&
+                  !launched.includes(taskKey(current)) &&
+                  primary('launch', playIcon(palette.priText, 14), 'Lancer', () => void launchSession($, source, current, s.titre, launchExtra))}
+                {/* « Vérifier » : une session qui dit si la tâche est encore à jour, sans la faire. Un
+                    bouton de l'app, sans zone de clic : le dessin en compte au plus ZONE_LIMIT. */}
+                {!current.done && !live && !launched.includes(taskKey(current)) && (
+                  <Box key="check-row" flexDirection="row" alignItems="center">
+                    <Button key="check" label="Vérifier" onPress={() => void launchSession($, source, current, s.titre, launchExtra, 'check')} />
+                  </Box>
+                )}
+              </Box>
+              {/* Un message en plus du brief, facultatif ; Entrée lance comme « Lancer ». Sa clé suit la
+                  tâche : un message tapé pour l'une ne reste pas affiché sur une autre. */}
+              {!current.done && !live && !launched.includes(taskKey(current)) && Input && (
+                <Box paddingX={SPACE.indent}>
+                  <Input
+                    key={`launch-extra:${current.key}`}
+                    rows={2}
+                    placeholder="Message additionnel (facultatif)"
+                    submitLabel="lancer"
+                    onInput={(value: string) => {
+                      launchExtra = value
+                    }}
+                    onSubmit={(value: string) => {
+                      launchExtra = value
+                      void launchSession($, source, current, s.titre, value)
+                    }}
+                  />
+                </Box>
+              )}
+              {!current.done && !live && launched.includes(taskKey(current)) && (
+                <Box flexDirection="row" alignItems="center" gap={SPACE.row} paddingX={SPACE.indent}>
+                  <Text size="caption" color={palette.text2}>La session est demandée : sa carte attend dans la conversation.</Text>
+                  <Button
+                    key="launch-again"
+                    plain
+                    dimColor
+                    label="Relancer"
+                    onPress={() => void setView($, v => ({ launched: v.launched.filter(k => k !== taskKey(current)) }))}
+                  />
+                </Box>
+              )}
+              {/* La session tourne : le bloc « Session en cours » dit tout, la note de lancement se tait. */}
+              {live ? null : launchNote === LAUNCHED ? (
+                <Box flexDirection="row" alignItems="center" gap={SPACE.row} padding="sm" borderStyle="round" borderColor={palette.border}>
+                  {icon(checkIcon(palette.ok), 'lancée', 16, '✓', 'success')}
+                  <Text>{LAUNCHED}</Text>
+                </Box>
+              ) : (
+                launchNote !== '' && launchNote !== LAUNCHING && <Text color={palette.text2}>{launchNote}</Text>
+              )}
+              {/* « Marquer faite » (#73) et « Annuler la tâche » : la tâche ne s'efface pas, elle descend en
+                  tête des faites, avec son bilan ; une confirmation d'abord (décisions de Bertrand du
+                  2026-10-26 et du 2026-10-28). Visibles même quand une session tient la tâche : elle a pu
+                  livrer sans cocher ; l'encart le rappelle. Une rangée à eux : avec « Lancer » et
+                  « Vérifier », quatre boutons débordent du panneau étroit. */}
+              {!current.done && !(asking && cancelNote === CANCEL_BUSY) && (
+                <Box key="close-row" flexDirection="row" alignItems="center" gap={SPACE.row}>
+                  {(['done', 'abandon'] as const)
+                    .filter(kind => !(asking && closeKind === kind))
+                    .map(kind => (
+                      <Button
+                        key={kind === 'done' ? 'done' : 'cancel'}
+                        plain
+                        dimColor
+                        label={kind === 'done' ? 'Marquer faite' : 'Annuler la tâche'}
+                        onPress={() => {
+                          cancelReason = ''
+                          void setView($, () => ({ cancelAsk: taskKey(current), closeKind: kind, cancelNote: '' }))
+                        }}
+                      />
+                    ))}
+                </Box>
+              )}
+              {asking && !current.done && (
+                <Box key="cancel-box" flexDirection="column" gap={SPACE.block} padding="sm" borderStyle="round" borderColor={palette.border}>
+                  <Text weight="semibold" wrap="wrap">
+                    {closeKind === 'done'
+                      ? `Marquer${current.id ? ` #${current.id}` : ''} « ${s.titre} » faite ?`
+                      : `Annuler${current.id ? ` #${current.id}` : ''} « ${s.titre} » ?`}
+                  </Text>
+                  <Text size="caption" color={palette.text2} wrap="wrap">
+                    {`${
+                      closeKind === 'done'
+                        ? 'Elle descend en tête des faites, avec le bilan « Marquée faite depuis le panneau Roadmap ».'
+                        : "Elle ne s'efface pas : cochée « (abandonné) », elle descend en tête des faites, avec son bilan."
+                    }${bilanData.viaCowork ? '' : ' Dans git : commit et push sur main.'}`}
+                  </Text>
+                  {(live || launched.includes(taskKey(current))) && (
+                    <Text size="caption" color={palette.lateOn} wrap="wrap">Une session tient cette tâche : elle peut encore l'écrire.</Text>
+                  )}
+                  {closeKind === 'abandon' && Input && (
+                    <Input
+                      key={`cancel-reason:${current.key}`}
+                      rows={2}
+                      placeholder="Raison (facultatif)"
+                      submitLabel="annuler"
+                      onInput={(value: string) => {
+                        cancelReason = value
+                      }}
+                      onSubmit={(value: string) => {
+                        cancelReason = value
+                        void confirmClose($, source, current, 'abandon')
+                      }}
+                    />
+                  )}
+                  <Box flexDirection="row" alignItems="center" gap={SPACE.row}>
+                    {closeKind === 'done' ? (
+                      <Button
+                        key="done-confirm"
+                        label={cancelNote === CANCEL_BUSY ? 'Écriture…' : 'Confirmer'}
+                        onPress={() => void confirmClose($, source, current, 'done')}
+                      />
+                    ) : (
+                      <Button
+                        key="cancel-confirm"
+                        label={cancelNote === CANCEL_BUSY ? 'Annulation…' : "Confirmer l'annulation"}
+                        onPress={() => void confirmClose($, source, current, 'abandon')}
+                      />
+                    )}
+                    <Button key="cancel-keep" plain dimColor label="Garder" onPress={() => void setView($, () => ({ cancelAsk: '', cancelNote: '' }))} />
+                  </Box>
+                  {cancelNote !== '' && cancelNote !== CANCEL_BUSY && (
+                    <Text color={palette.lateOn} wrap="wrap">{cancelNote}</Text>
+                  )}
+                </Box>
+              )}
+              {!asking && cancelNote !== '' && cancelNote !== CANCEL_BUSY && (
+                <Box paddingX={SPACE.indent}>
+                  <Text size="caption" color={palette.lateOn} wrap="wrap">{cancelNote}</Text>
+                </Box>
+              )}
+          </Box>,
+        ),
+      chaine: () =>
+        card(
+          'Chaîne',
+          <Box flexDirection="column">
+              {prereqsFor(current).map((x, i) => field(i === 0 ? 'Après' : '', link(x), `Après:${x.key}`))}
+              {missingPrereqs(current, allTasks).map((n, i) =>
+                field(i === 0 && prereqsFor(current).length === 0 ? 'Après' : '', plain(`#${n} introuvable`), `Après:#${n}`),
+              )}
+              {unlocks.map((d, i) => field(i === 0 ? 'Débloque' : '', link(d), `Débloque:${d.key}`))}
+              {current.parent !== undefined &&
+                (() => {
+                  const mother = allTasks.find(x => x !== current && x.id === current.parent)
+                  return field(
+                    'Parent',
+                    // Son lien dit déjà « faite » (#86).
+                    mother ? link(mother) : plain(`#${current.parent} introuvable`),
+                  )
+                })()}
+              {allTasks
+                .filter(x => x !== current && current.id !== undefined && x.parent === current.id)
+                .map((x, i) => field(i === 0 ? 'Sous-tâches' : '', link(x), `Sous-tâches:${x.key}`))}
+          </Box>,
+        ),
+      details: () =>
+        card(
+          'Détails',
+          <Box flexDirection="column">
+            {/* Close : faite (la coche verte) ou annulée (⊘). */}
+            {current.done &&
+              field(
+                'État',
+                <Box flexDirection="row" alignItems="center" gap={SPACE.row}>
+                  {abandoned ? <Text color={palette.text2}>⊘</Text> : icon(checkIcon(palette.ok, 14), 'faite', 14, '✓', 'success')}
+                  <Text color={abandoned ? palette.text2 : palette.ok}>{abandoned ? 'annulée' : 'faite'}</Text>
+                </Box>,
+              )}
+            {s.sujet !== '…' && field('Sujet', plain(s.sujet))}
+              {current.section !== '' && current.section !== 'En cours' && field('Section', plain(current.section))}
+              {stepOf && field('Étape', plain(`${stepOf.step} sur ${lastStep} de la chaîne`))}
+              {field('Retours', current.feedback && plain(current.feedback.map(n => `#${n}`).join(', ')))}
+              {/* Mode Projet (#76) : la personne qui porte la tâche, sa mère et ses sous-tâches, les clés déclarées. */}
+              {field(
+                'Responsable',
+                current.resp !== undefined && (me.includes(attendWho(current.resp)) ? plain(current.resp) : tag(shortAttend(current.resp), 'wait')),
+              )}
+              {Object.keys(cles).map(k =>
+                field(`${k.charAt(0).toUpperCase()}${k.slice(1)}`, plain(current.extra?.[k]?.join(', ')), `cle:${k}`),
+              )}
+              {field('Qui', plain(current.qui))}
+              {field('Branche', mono(current.branche))}
+              {field(
+                'Échéance',
+                current.due !== undefined && (
+                  <Box flexDirection="row" alignItems="center" gap={SPACE.row}>
+                    {strong(frDate(current.due))}
+                    {due && current.due && tag(due.text, due.late ? 'late' : isDueSoon(current, today) ? 'soon' : 'soft')}
+                  </Box>
+                ),
+              )}
+              {field(abandoned ? 'Annulée le' : 'Faite le', current.fait !== undefined && strong(doneLabel(current.fait)))}
+              {field('Source', mono(current.src))}
+              {field('Spec', mono(current.spec))}
+            {(fichePath || srcPath) &&
+              field(
+                'Fichiers',
+                <Box flexDirection="row" alignItems="center" gap={SPACE.row}>
+                  {fichePath && action('open-fiche', documentIcon(palette.text), 'Fiche', () => void openFile($, fichePath))}
+                  {srcPath && action('open-src', externalIcon(palette.text), 'Source', () => void openFile($, srcPath))}
+                </Box>,
+              )}
+            {current.ouvert !== undefined &&
+              field(
+                'Ouverte le',
+                <Box key="opened" flexDirection="row" alignItems="center" gap={SPACE.row}>
+                  <Text weight="semibold" tabular>{frDate(current.ouvert)}</Text>
+                  {days !== undefined && <Text color={palette.text2}>{`· ${openedLabel(days)}`}</Text>}
+                </Box>,
+              )}
+          </Box>,
+        ),
+    }
     return (
       <Box flexDirection="column" gap={SPACE.root} paddingX={SPACE.indent}>
-        <Box key="back-row" flexDirection="row" justifyContent="space-between" paddingX={SPACE.indent} alignItems="center">
-          <Box flexDirection="row" alignItems="center">
+        {!inSession && (
+          <Box key="back-row" flexDirection="row" paddingX={SPACE.indent} alignItems="center">
             {strut(SIZE.strut.row)}
             <Button key="back" plain dimColor label="‹ Retour à la liste" onPress={select('')} />
           </Box>
-          <Button
-            key="open-line"
-            plain
-            dimColor
-            label="Voir dans la roadmap"
-            onPress={() => void openFile($, `${source.dir}/${current.done ? 'ROADMAP-fait.md' : 'ROADMAP.md'}`, line)}
-          />
+        )}
+        {/* L'en-tête Voies (#137) ; son titre ouvre la ligne dans la roadmap. */}
+        <Box paddingX={SPACE.indent}>
+          {brandTree($, e, headBrand, palette, 'focus', today, headState, {
+            key: 'open-line',
+            press: () => void openFile($, current.done ? paths.done : paths.open, line),
+          })}
         </Box>
-
-        <Box flexDirection="column" gap={SPACE.tight} paddingX={SPACE.indent}>
-          <Box flexDirection="row" alignItems="center" gap={SPACE.row}>
-            {axisPill(current)}
-            {current.feedback && feedbackPill(20)}
-            {current.id && <Text tabular color={palette.text2}>{`#${current.id}`}</Text>}
-            <Text color={palette.text2} wrap="truncate-end">{subject}</Text>
-            {current.done && !abandoned && icon(checkIcon(palette.ok, 14), 'faite', 14, '✓', 'success')}
-            {current.done && !abandoned && <Text color={palette.ok}>faite</Text>}
-            {abandoned && <Text color={palette.text2}>⊘</Text>}
-            {abandoned && <Text color={palette.text2}>annulée</Text>}
-          </Box>
-          {/* La fiche (et la source) devant le titre : ce qu'on lit avant de lancer. */}
-          <Box flexDirection="row" alignItems="center" gap={SPACE.row}>
-            {fichePath && action('open-fiche', documentIcon(palette.text), 'Fiche', () => void openFile($, fichePath))}
-            {srcPath && action('open-src', externalIcon(palette.text), 'Source', () => void openFile($, srcPath))}
-            <Text size="heading" weight="semibold">{s.titre}</Text>
-          </Box>
-        </Box>
-
-        {conclusionBox()}
-
-        {/* La note, au retrait du texte : 2 colonnes de marge intérieure, fond `note`. */}
+        {layout.conclusion && conclusionBox()}
+        {/* La mission dans son cadre : fond `note`, légende, texte en taille courante. */}
         <Box paddingX={SPACE.indent}>
           <Box flexDirection="column" gap={SPACE.tight} paddingX={SPACE.indent} paddingY="sm" flexGrow={1} backgroundColor={palette.note}>
             {corners(RADIUS.control, palette.bg)}
-            <Text>{current.label}</Text>
-            {current.note && <Text color={palette.text2}>{current.note}</Text>}
+            <Text size="caption" weight="medium" color={palette.text2}>Mission</Text>
+            <Text wrap="wrap">{current.label}</Text>
+            {current.note && <Text color={palette.text2} wrap="wrap">{current.note}</Text>}
           </Box>
         </Box>
-
-        <Box flexDirection="column" paddingX={SPACE.indent}>
-          {/* « En cours » veut dire : une session y travaille. La section « ## En cours » du fichier
-              est la liste à faire, elle ne s'affiche pas comme un état (choix de Bertrand, 2026-10-22). */}
-          {!current.done &&
-            !live &&
-            field(
-              'État',
-              <Box flexDirection="row" alignItems="center" gap={SPACE.row}>
-                {holder && Svg && <Svg source={lockIcon(palette.block, 14)} alt="bloquée" width={SIZE.icon.sm} height={SIZE.icon.sm} />}
-                <Text color={holder ? palette.block : palette.text}>
-                  {holder ? 'Bloquée' : 'À faire'}
-                </Text>
-              </Box>,
-            )}
-          {current.section !== '' && current.section !== 'En cours' && field('Section', plain(current.section))}
-          {stepOf && field('Étape', plain(`${stepOf.step} sur ${lastStep} de la chaîne`))}
-          {prereqsFor(current).map((x, i) => field(i === 0 ? 'Après' : '', link(x), `Après:${x.key}`))}
-          {missingPrereqs(current, allTasks).map((n, i) =>
-            field(i === 0 && prereqsFor(current).length === 0 ? 'Après' : '', plain(`#${n} introuvable`), `Après:#${n}`),
-          )}
-          {unlocks.map((d, i) => field(i === 0 ? 'Débloque' : '', link(d), `Débloque:${d.key}`))}
-          {field(
-            'Attend',
-            // Au détail, la pastille courte puis la précision entière, sur plusieurs lignes s'il le faut.
-            current.attend !== undefined &&
-              (me.includes(attendWho(current.attend)) && current.attend === attendWho(current.attend) ? (
-                plain(current.attend)
-              ) : (
-                <Box flexDirection="column" gap={SPACE.tight} flexShrink={1}>
-                  {me.includes(attendWho(current.attend)) ? plain(attendWho(current.attend)) : tag(shortAttend(current.attend), 'wait')}
-                  {current.attend.trim() !== attendWho(current.attend) && (
-                    <Text size="caption" color={palette.text2} wrap="wrap">{current.attend}</Text>
-                  )}
-                </Box>
-              )),
-          )}
-          {field('Retours', current.feedback && plain(current.feedback.map(n => `#${n}`).join(', ')))}
-          {/* Mode Projet (#76) : la personne qui porte la tâche, sa mère et ses sous-tâches, les clés déclarées. */}
-          {field(
-            'Responsable',
-            current.resp !== undefined && (me.includes(attendWho(current.resp)) ? plain(current.resp) : tag(shortAttend(current.resp), 'wait')),
-          )}
-          {current.parent !== undefined &&
-            (() => {
-              const mother = allTasks.find(x => x !== current && x.id === current.parent)
-              return field(
-                'Parent',
-                // Son lien dit déjà « faite » (#86).
-                mother ? link(mother) : plain(`#${current.parent} introuvable`),
-              )
-            })()}
-          {allTasks
-            .filter(x => x !== current && current.id !== undefined && x.parent === current.id)
-            .map((x, i) => field(i === 0 ? 'Sous-tâches' : '', link(x), `Sous-tâches:${x.key}`))}
-          {Object.keys(cles).map(k =>
-            field(`${k.charAt(0).toUpperCase()}${k.slice(1)}`, plain(current.extra?.[k]?.join(', ')), `cle:${k}`),
-          )}
-          {field('Qui', plain(current.qui))}
-          {field('Branche', mono(current.branche))}
-          {field(
-            'Échéance',
-            current.due !== undefined && (
-              <Box flexDirection="row" alignItems="center" gap={SPACE.row}>
-                {strong(frDate(current.due))}
-                {due && current.due && tag(due.text, due.late ? 'late' : isDueSoon(current, today) ? 'soon' : 'soft')}
-              </Box>
-            ),
-          )}
-          {field(abandoned ? 'Annulée le' : 'Faite le', current.fait !== undefined && strong(doneLabel(current.fait)))}
-          {field('Source', mono(current.src))}
-          {field('Spec', mono(current.spec))}
-        </Box>
-
-        <Box flexDirection="column" gap={SPACE.block}>
-          {/* Bloquée : l'avertissement au-dessus des actions ; « Lancer » reste possible. */}
-          {holder && (
-            <Box flexDirection="row" alignItems="center" gap={SPACE.row} paddingX={SPACE.indent} backgroundColor={palette.blockTint}>
-              {corners(RADIUS.control, palette.bg)}
-              {strut(SIZE.strut.control)}
-              {Svg ? (
-                <Svg source={lockIcon(palette.blockOn, 14, STROKE.small)} alt="bloquée" width={SIZE.icon.sm} height={SIZE.icon.sm} />
-              ) : (
-                <Text color="warning">⊘</Text>
-              )}
-              <Box flexShrink={1}>
-                <Text weight="semibold" color={palette.blockOn}>
-                  {holder.parent
-                    ? `Bloquée : son parent « ${short(holder.parent).titre} » attend « ${short(holder.pre).titre} ».`
-                    : `Bloquée : « ${short(holder.pre).titre} » n'est pas encore faite.`}
-                </Text>
-              </Box>
-            </Box>
-          )}
-          {/* En session : une carte bleue, l'état et depuis quand, puis « Ouvrir la session ». */}
-          {live && (
-            <Box key="live-card" flexDirection="column" gap={SPACE.block} padding="sm" borderStyle="round" borderColor={mixOver(palette.liveOn, palette.bg, MIX.sessionBorder)} backgroundColor={palette.liveTint}>
-              <Box flexDirection="row" justifyContent="space-between" alignItems="center">
-                <Box flexDirection="row" alignItems="center" gap={SPACE.row}>
-                  {live.state === 'open' && Svg && (live.entry.sessionId && runningBySession.get(live.entry.sessionId) === false ? (
-                    <Svg source={handIcon(palette.liveOn, 16)} alt="attend ta réponse" width={SIZE.icon.md} height={SIZE.icon.md} />
-                  ) : (
-                    <Svg source={spinnerIcon(palette.liveOn, 16, undefined, false, now)} alt="en cours" width={SIZE.icon.md} height={SIZE.icon.md} isInteractive />
-                  ))}
-                  <Text color={palette.liveOn}>
-                    {live.state !== 'open'
-                      ? sessionTitleKind(live.entry.title) === 'check' ? 'Vérification lancée' : 'Session lancée'
-                      : live.entry.sessionId && runningBySession.get(live.entry.sessionId) === false
-                        ? sessionTitleKind(live.entry.title) === 'check' ? 'La vérification attend ta réponse' : 'La session attend ta réponse'
-                        : sessionTitleKind(live.entry.title) === 'check' ? 'Vérification en cours' : 'Session en cours'}
-                  </Text>
-                </Box>
-                <Text tabular color={palette.liveOn}>{durationLabel(now - live.entry.startedAt)}</Text>
-              </Box>
-              <Box flexDirection="row">
-                {primary('open-session', externalIcon(palette.bg, 14), 'Ouvrir la session', () => void openSession($, live.entry), {
-                  bg: palette.live,
-                  fg: palette.bg,
-                  around: palette.liveTint,
-                })}
-              </Box>
-            </Box>
-          )}
-          <Box flexDirection="row" alignItems="stretch" gap={SPACE.row}>
-            {kept && primary('open-session', externalIcon(palette.priText, 14), 'Ouvrir la session', () => void openSession($, kept.entry))}
-            {kept && action('archive-session', archiveIcon(palette.text), 'Archiver la session', () => void archiveSession($, kept.key, kept.entry))}
-            {!current.done && !live && launched.includes(taskKey(current)) && requested()}
-            {/* Un clic lance : plus de confirmation (2026-10-25) ; le message additionnel suit. */}
-            {!current.done &&
-              !live &&
-              !launched.includes(taskKey(current)) &&
-              primary('launch', playIcon(palette.priText, 14), 'Lancer', () => void launchSession($, source, current, s.titre, launchExtra))}
-            {/* « Vérifier » : une session qui dit si la tâche est encore à jour, sans la faire. Un
-                bouton de l'app, sans zone de clic : le dessin en compte au plus ZONE_LIMIT. */}
-            {!current.done && !live && !launched.includes(taskKey(current)) && (
-              <Box key="check-row" flexDirection="row" alignItems="center">
-                <Button key="check" label="Vérifier" onPress={() => void launchSession($, source, current, s.titre, launchExtra, 'check')} />
-              </Box>
-            )}
-          </Box>
-          {/* « Marquer faite » (#73) et « Annuler la tâche » : la tâche ne s'efface pas, elle descend en
-              tête des faites, avec son bilan ; une confirmation d'abord (décisions de Bertrand du
-              2026-10-26 et du 2026-10-28). Visibles même quand une session tient la tâche : elle a pu
-              livrer sans cocher ; l'encart le rappelle. Une rangée à eux : avec « Lancer » et
-              « Vérifier », quatre boutons débordent du panneau étroit. */}
-          {!current.done && !(asking && cancelNote === CANCEL_BUSY) && (
-            <Box key="close-row" flexDirection="row" alignItems="center" gap={SPACE.row}>
-              {(['done', 'abandon'] as const)
-                .filter(kind => !(asking && closeKind === kind))
-                .map(kind => (
-                  <Button
-                    key={kind === 'done' ? 'done' : 'cancel'}
-                    plain
-                    dimColor
-                    label={kind === 'done' ? 'Marquer faite' : 'Annuler la tâche'}
-                    onPress={() => {
-                      cancelReason = ''
-                      void setView($, () => ({ cancelAsk: taskKey(current), closeKind: kind, cancelNote: '' }))
-                    }}
-                  />
-                ))}
-            </Box>
-          )}
-          {asking && !current.done && (
-            <Box key="cancel-box" flexDirection="column" gap={SPACE.block} padding="sm" borderStyle="round" borderColor={palette.border}>
-              <Text weight="semibold" wrap="wrap">
-                {closeKind === 'done'
-                  ? `Marquer${current.id ? ` #${current.id}` : ''} « ${s.titre} » faite ?`
-                  : `Annuler${current.id ? ` #${current.id}` : ''} « ${s.titre} » ?`}
-              </Text>
-              <Text size="caption" color={palette.text2} wrap="wrap">
-                {`${
-                  closeKind === 'done'
-                    ? 'Elle descend en tête des faites, avec le bilan « Marquée faite depuis le panneau Roadmap ».'
-                    : "Elle ne s'efface pas : cochée « (abandonné) », elle descend en tête des faites, avec son bilan."
-                }${bilanData.viaCowork ? '' : ' Dans git : commit et push sur main.'}`}
-              </Text>
-              {(live || launched.includes(taskKey(current))) && (
-                <Text size="caption" color={palette.lateOn} wrap="wrap">Une session tient cette tâche : elle peut encore l'écrire.</Text>
-              )}
-              {closeKind === 'abandon' && Input && (
-                <Input
-                  key={`cancel-reason:${current.key}`}
-                  rows={2}
-                  placeholder="Raison (facultatif)"
-                  submitLabel="annuler"
-                  onInput={(value: string) => {
-                    cancelReason = value
-                  }}
-                  onSubmit={(value: string) => {
-                    cancelReason = value
-                    void confirmClose($, source, current, 'abandon')
-                  }}
-                />
-              )}
-              <Box flexDirection="row" alignItems="center" gap={SPACE.row}>
-                {closeKind === 'done' ? (
-                  <Button
-                    key="done-confirm"
-                    label={cancelNote === CANCEL_BUSY ? 'Écriture…' : 'Confirmer'}
-                    onPress={() => void confirmClose($, source, current, 'done')}
-                  />
-                ) : (
-                  <Button
-                    key="cancel-confirm"
-                    label={cancelNote === CANCEL_BUSY ? 'Annulation…' : "Confirmer l'annulation"}
-                    onPress={() => void confirmClose($, source, current, 'abandon')}
-                  />
-                )}
-                <Button key="cancel-keep" plain dimColor label="Garder" onPress={() => void setView($, () => ({ cancelAsk: '', cancelNote: '' }))} />
-              </Box>
-              {cancelNote !== '' && cancelNote !== CANCEL_BUSY && (
-                <Text color={palette.lateOn} wrap="wrap">{cancelNote}</Text>
-              )}
-            </Box>
-          )}
-          {!asking && cancelNote !== '' && cancelNote !== CANCEL_BUSY && (
-            <Box paddingX={SPACE.indent}>
-              <Text size="caption" color={palette.lateOn} wrap="wrap">{cancelNote}</Text>
-            </Box>
-          )}
-          {/* Un message en plus du brief, facultatif ; Entrée lance comme « Lancer ». Sa clé suit la
-              tâche : un message tapé pour l'une ne reste pas affiché sur une autre. */}
-          {!current.done && !live && !launched.includes(taskKey(current)) && Input && (
-            <Box paddingX={SPACE.indent}>
-              <Input
-                key={`launch-extra:${current.key}`}
-                rows={2}
-                placeholder="Message additionnel (facultatif)"
-                submitLabel="lancer"
-                onInput={(value: string) => {
-                  launchExtra = value
-                }}
-                onSubmit={(value: string) => {
-                  launchExtra = value
-                  void launchSession($, source, current, s.titre, value)
-                }}
-              />
-            </Box>
-          )}
-          {!current.done && !live && launched.includes(taskKey(current)) && (
-            <Box flexDirection="row" alignItems="center" gap={SPACE.row} paddingX={SPACE.indent}>
-              <Text size="caption" color={palette.text2}>La session est demandée : sa carte attend dans la conversation.</Text>
-              <Button
-                key="launch-again"
-                plain
-                dimColor
-                label="Relancer"
-                onPress={() => void setView($, v => ({ launched: v.launched.filter(k => k !== taskKey(current)) }))}
-              />
-            </Box>
-          )}
-          {/* La session tourne : le bloc « Session en cours » dit tout, la note de lancement se tait. */}
-          {live ? null : launchNote === LAUNCHED ? (
-            <Box flexDirection="row" alignItems="center" gap={SPACE.row} padding="sm" borderStyle="round" borderColor={palette.border}>
-              {icon(checkIcon(palette.ok), 'lancée', 16, '✓', 'success')}
-              <Text>{LAUNCHED}</Text>
-            </Box>
-          ) : (
-            launchNote !== '' && launchNote !== LAUNCHING && <Text color={palette.text2}>{launchNote}</Text>
-          )}
+        {ficheSteps()}
+        {layout.cards.map(c => cards[c]())}
+        <Box flexDirection="column" gap={SPACE.block} paddingX={SPACE.indent}>
           {openNote !== '' && <Text size="caption" color={palette.text2}>{openNote}</Text>}
-          {/* L'ouverture, en bas, en une phrase : « Ouverte le 23/10 · aujourd'hui ». */}
-          {current.ouvert !== undefined && (
-            <Box key="opened" flexDirection="row" alignItems="center" gap={SPACE.row} paddingX={SPACE.indent}>
-              <Text color={palette.text2}>Ouverte le</Text>
-              <Text weight="semibold" tabular>{frDate(current.ouvert)}</Text>
-              {days !== undefined && <Text color={palette.text2}>{`· ${openedLabel(days)}`}</Text>}
-            </Box>
-          )}
         </Box>
+        {inSession && (
+          <Box flexDirection="row" paddingX={SPACE.indent}>
+            <Button key="whole-roadmap" label="Toute la roadmap" onPress={() => void setView($, () => ({ whole: true }))} />
+          </Box>
+        )}
       </Box>
     )
   }

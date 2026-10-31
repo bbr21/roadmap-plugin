@@ -530,6 +530,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.89.0 (2026-10-30)** : panneau : une seule fiche par tâche, en cartes, dans sa session comme au clic dans la roadmap : titre cliquable, mission dans un cadre, cartes selon l'état ; design/ : TaskFiche remplace TaskFocus (#142)
 - **0.88.0 (2026-10-30)** : panneau, Maestro : sous sec-default, un lancement depuis le panneau n'affiche plus qu'une ligne (« Lancement de #N… »), le brief en contexte caché ; le rappel de fin de tour ne s'affiche plus en message, il rejoint le message suivant, et aucun rappel après un tour qui n'a posé qu'une carte (#140)
 - **0.87.0 (2026-10-30)** : panneau, doctor, audit : les règles du modèle seule, parent, enfant sur deux niveaux, signalées à l'écriture et comptées par le doctor ; l'audit ne crée plus de troisième niveau (#125, lot 5)
 - **0.86.0 (2026-10-30)** : panneau : un parent se ferme avec son dernier enfant (un parent récurrent se reconduit depuis son due: écrit), le cadenas dit ce qu'il attend, un parent bloqué bloque ses enfants, et les titres courts gardent la langue du libellé (#125, lot 4)
