@@ -3371,8 +3371,9 @@ export function abandonInTexts(
   task: Task,
   moment: string,
   reason: string,
+  cles: LintRules['cles'] = {},
 ): { open: string; done: string; line: string; id: string } | { error: string } {
-  return closeInTexts(open, done, task, moment, 'abandon', reason)
+  return closeInTexts(open, done, task, moment, 'abandon', reason, cles)
 }
 
 /**
@@ -3380,7 +3381,8 @@ export function abandonInTexts(
  * que `cowork.py roadmap close` (cochée, `fait:` après `ouvert:`, sans `attend:`), numérotée si elle
  * ne l'était pas, en tête de `## Fait`. Annulée : « (abandonné) » au bout du libellé et la raison au
  * bout de sa note (`--abandon`) ; faite : « marquée faite depuis le panneau Roadmap » au bout de sa note.
- * La ligne doit être encore celle affichée (`task.key`) : sinon rien ne change.
+ * La ligne doit être encore celle affichée (`task.key`) : sinon rien ne change. La ligne close se
+ * contrôle avec les axes de la roadmap et les clés déclarées par le projet (`cles`, #155).
  */
 const PERIOD_MONTHS: Record<Recurrence, number> = { semaine: 0, '2semaines': 0, mois: 1, trimestre: 3, an: 12 }
 const PERIOD_DAYS: Record<Recurrence, number> = { semaine: 7, '2semaines': 14, mois: 0, trimestre: 0, an: 0 }
@@ -3412,6 +3414,7 @@ export function closeInTexts(
   moment: string,
   kind: CloseKind,
   reason = '',
+  cles: LintRules['cles'] = {},
 ): { open: string; done: string; line: string; id: string } | { error: string } {
   const lines = open.split('\n')
   const at = Number(task.key.slice(task.key.lastIndexOf(':') + 1)) - 1
@@ -3452,7 +3455,7 @@ export function closeInTexts(
     .filter(n => n !== '')
     .join(' ; ')
   const line = `- [x] ${label} \`[${fields.join(' | ')}]\`${note !== '' ? ` ${note}` : ''}`
-  const problems = lintRoadmap(line, true, { axes: declaredAxes(open) })
+  const problems = lintRoadmap(line, true, { axes: declaredAxes(open), cles })
   if (problems.length > 0) {
     return { error: `La ligne ${abandon ? 'annulée' : 'faite'} serait hors grammaire (${problems[0]?.why}) : rien n'a été écrit.` }
   }
@@ -3490,14 +3493,15 @@ export function closeWithParentInTexts(
   moment: string,
   kind: CloseKind,
   reason = '',
+  cles: LintRules['cles'] = {},
 ): { open: string; done: string; line: string; id: string; parent?: { id: string; next?: string } } | { error: string } {
-  const out = closeInTexts(open, done, task, moment, kind, reason)
+  const out = closeInTexts(open, done, task, moment, kind, reason, cles)
   if ('error' in out || kind !== 'done' || task.parent === undefined) return out
   const fresh = parseRoadmap(out.open, 'ROADMAP.md')
   if (fresh.some(t => !t.done && t.parent === task.parent)) return out
   const parent = fresh.find(t => !t.done && t.id === task.parent)
   if (parent === undefined) return out
-  const closed = closeInTexts(out.open, out.done, parent, moment, 'done')
+  const closed = closeInTexts(out.open, out.done, parent, moment, 'done', '', cles)
   if ('error' in closed) return out
   const next = parent.tous !== undefined ? parseRoadmap(closed.open, 'ROADMAP.md').find(t => t.id === parent.id)?.due : undefined
   return { open: closed.open, done: closed.done, line: out.line, id: out.id, parent: { id: task.parent, ...(next ? { next } : {}) } }

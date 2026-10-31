@@ -2940,8 +2940,8 @@ async function closeTask(
   const { open, done } = files(source)
   const doneText = await readOr($, done)
   if (doneText === undefined) return { error: "ROADMAP-fait.md est introuvable : rien n'a été écrit." }
-  // Le dernier enfant fait ferme (ou reconduit) son parent dans la même écriture (#125).
-  const out = closeWithParentInTexts(await $.fs.read(open), doneText, task, moment, kind, reason)
+  // Le dernier enfant fait ferme (ou reconduit) son parent dans la même écriture (#125), contrôlé avec les clés du projet (#155).
+  const out = closeWithParentInTexts(await $.fs.read(open), doneText, task, moment, kind, reason, projectSettings(source).cles)
   if ('error' in out) return out
   const closedParent = out.parent !== undefined && out.parent.next === undefined ? out.parent.id : undefined
   const parentNote = out.parent === undefined ? undefined : out.parent.next !== undefined ? `parent #${out.parent.id} reconduit au ${frDate(out.parent.next)}` : `parent #${out.parent.id} fait aussi`
