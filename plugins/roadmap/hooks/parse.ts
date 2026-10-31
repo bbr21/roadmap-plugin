@@ -3543,6 +3543,114 @@ export function maestroIntro(o: { source: Source }): string {
   ].join('\n')
 }
 
+// --- Identité Roadmap à l'ouverture (#127) ------------------------------------
+// La carte qui prend la place du message d'ouverture (maquette A) et l'en-tête du panneau (maquette B) :
+// Maestro et ses tâches rattachées, ou la tâche d'une sous-session, son axe et son Maestro.
+
+/** Une tâche rattachée à Maestro : `wait` sa session attend une réponse, `live` elle tourne, `done` close. */
+export type BrandTask = { id: string; label: string; state: 'wait' | 'live' | 'done' }
+
+export type Brand =
+  | { kind: 'maestro'; project: string; tasks: BrandTask[] }
+  | { kind: 'task'; project: string; id: string; label: string; axis: string; axisIndex: number; due?: string; apres?: string; maestro?: string }
+
+/** Le brief de `launchBrief` en tête du message : son numéro de tâche, et le Maestro de sa clause. */
+export function briefTaskOf(text: string): { id: string; maestro?: string } | undefined {
+  const body = withoutReminders(text)
+  const m = /^\s*Prends en charge cette task de la roadmap .*?\(id:([1-9]\d*)\) :/.exec(body)
+  if (!m?.[1]) return undefined
+  const maestro = /Tu travailles pour Maestro : la session qui t'a lancée, « ([^»]+) »/.exec(body)?.[1]?.trim()
+  return maestro ? { id: m[1], maestro } : { id: m[1] }
+}
+
+const BRAND_RANK: Record<BrandTask['state'], number> = { wait: 0, live: 1, done: 2 }
+
+/** Les tâches des sessions lancées par Maestro, dans l'ordre où l'œil les cherche : qui attend, qui tourne, ce qui est clos. */
+export function maestroBrandTasks(
+  entries: readonly { id: string; label: string; running: boolean; open: boolean; done: boolean }[],
+): BrandTask[] {
+  return entries
+    .map(e => ({ id: e.id, label: e.label, state: (e.done || !e.open ? 'done' : e.running ? 'live' : 'wait') as BrandTask['state'] }))
+    .sort((a, b) => BRAND_RANK[a.state] - BRAND_RANK[b.state])
+}
+
+const BRAND_STATE_WORD: Record<BrandTask['state'], string> = { wait: 'attend une réponse', live: 'en session', done: 'close' }
+
+/**
+ * Les mots d'une marque : le surtitre, le titre, la phrase dessous ; chez Maestro, l'état de chaque tâche
+ * rattachée et le pied ; chez une tâche, ses repères (après, échéance). La carte et l'en-tête les partagent.
+ */
+export function brandText(brand: Brand): { eyebrow: string; title: string; sub: string; foot: string; states: string[]; meta: string[] } {
+  const eyebrow = `Roadmap · ${brand.project}`
+  if (brand.kind === 'maestro') {
+    const n = brand.tasks.length
+    const waiting = brand.tasks.filter(t => t.state === 'wait').length
+    const foot =
+      n === 0
+        ? "Aucune tâche rattachée pour l'instant"
+        : `${n} tâche${n > 1 ? 's' : ''} rattachée${n > 1 ? 's' : ''}${waiting > 0 ? ` · ${waiting} attend${waiting > 1 ? 'ent' : ''} une réponse` : ''}`
+    return {
+      eyebrow,
+      title: 'Maestro',
+      sub: 'Session orchestratrice : elle lance une session par tâche, suit et fusionne. Elle ne code pas.',
+      foot,
+      states: brand.tasks.map(t => BRAND_STATE_WORD[t.state]),
+      meta: [],
+    }
+  }
+  return {
+    eyebrow,
+    title: `#${brand.id} · ${brand.label}`,
+    sub: brand.maestro ? `Lancée par ${brand.maestro}` : `Tâche de la roadmap ${brand.project}`,
+    foot: '',
+    states: [],
+    meta: [...(brand.apres ? [`après ${/^\d+$/.test(brand.apres) ? `#${brand.apres}` : brand.apres}`] : []), ...(brand.due ? [`due ${frDate(brand.due)}`] : [])],
+  }
+}
+
+/** La marque d'une tâche de la roadmap, sa couleur d'axe prise dans l'ordre du panneau ; absente, rien. */
+function taskBrand(id: string, source: Source, tasks: readonly Task[], maestro?: string): Brand | undefined {
+  const task = tasks.find(t => t.id === id)
+  if (!task) return undefined
+  const order = axisOrder(tasks.filter(t => !t.done), tasks.filter(t => t.done))
+  return {
+    kind: 'task',
+    project: source.name,
+    id,
+    label: task.label,
+    axis: task.axis,
+    axisIndex: Math.max(0, order.indexOf(task.axis)),
+    ...(task.due ? { due: task.due } : {}),
+    ...(task.apres && task.apres !== '-' ? { apres: task.apres } : {}),
+    ...(maestro ? { maestro } : {}),
+  }
+}
+
+/**
+ * La carte du message d'ouverture : « Maestro » seul ou « Maestro go », ou le brief d'une tâche lancée ;
+ * tout autre message garde sa rangée, « Maestro scan » du bouton de #126 compris.
+ */
+export function openingBrand(o: { text: string; source: Source; tasks: readonly Task[]; maestroTasks: BrandTask[] }): Brand | undefined {
+  const call = maestroCall(o.text)
+  if (call && (!call.scan || call.go)) return { kind: 'maestro', project: o.source.name, tasks: o.maestroTasks }
+  const brief = briefTaskOf(o.text)
+  return brief ? taskBrand(brief.id, o.source, o.tasks, brief.maestro) : undefined
+}
+
+/** L'en-tête du panneau : Maestro, ou la tâche d'une session « #N · … » ; une autre session n'en a pas. */
+export function sessionBrand(o: {
+  title: string
+  isMaestro: boolean
+  source: Source
+  tasks: readonly Task[]
+  maestroTasks: BrandTask[]
+  maestro?: string
+}): Brand | undefined {
+  if (o.isMaestro) return { kind: 'maestro', project: o.source.name, tasks: o.maestroTasks }
+  const id = sessionTitleId(o.title)
+  return id ? taskBrand(id, o.source, o.tasks, o.maestro) : undefined
+}
+
 /**
  * Les tâches qu'on peut lancer maintenant : ouvertes, ni bloquées par leur prérequise, ni déjà en
  * session. Rangées pour avancer : priorité (P1, P2, sans, P3), puis celles qui ne dorment pas chez

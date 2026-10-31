@@ -163,6 +163,22 @@ export function todoIcon(icon: TodoIcon, hex: string): string {
   }
 }
 
+/**
+ * La marque Roadmap (#127) : trois voies de longueur décroissante aux couleurs des trois premiers axes,
+ * celles de la barre du panneau, dans un carré arrondi au fond des boutons.
+ */
+export function brandMarkIcon(palette: Palette, size = 20): string {
+  const lane = (y: number, w: number, hex: string) => `<rect x="4" y="${y}" width="${w}" height="2.4" rx="1.2" fill="${hex}"/>`
+  return svg(
+    size,
+    20,
+    `<rect x="0.5" y="0.5" width="19" height="19" rx="5" fill="${palette.btn}" stroke="${palette.border}"/>` +
+      lane(5, 12, axisColor(palette, 0)) +
+      lane(8.8, 8.5, axisColor(palette, 1)) +
+      lane(12.6, 5, axisColor(palette, 2)),
+  )
+}
+
 /** Lecture, plein. */
 export function playIcon(hex: string, size = 14): string {
   return svg(size, 24, `<path d="M7 4.5v15l12.5-7.5z" fill="${hex}"/>`)

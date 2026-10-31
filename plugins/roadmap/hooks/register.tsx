@@ -6,6 +6,7 @@ import {
   AXIS_THEME,
   PALETTES,
   axisColor,
+  brandMarkIcon,
   barCuts,
   barIcon,
   axisPillIcon,
@@ -56,6 +57,13 @@ import { SETTINGS_PANE, drawSettings, openSettings, prefsFile, redrawSettings, s
 import {
   ageLabel,
   axisLabel,
+  brandText,
+  briefTaskOf,
+  maestroBrandTasks,
+  openingBrand,
+  sessionBrand,
+  type Brand,
+  type BrandTask,
   axisOrder,
   archiveReminder,
   rangementReminder,
@@ -3345,6 +3353,29 @@ export const register: Register = (on, options) => {
     return note === undefined ? result : { ...result, text: `${note}\n\n${result.text}` }
   })
 
+  // L'identité Roadmap à l'ouverture (#127, maquette A) : « Maestro » ou le brief d'une tâche lancée
+  // deviennent la carte Roadmap ; le modèle lit toujours le message d'origine. Déplié (ctrl+o), le texte
+  // entier d'un brief suit la carte. Tout autre message, ou une lecture en panne, garde sa rangée.
+  on('ui.render', { component: 'UserMessage' }, async ($, e, next) => {
+    if (!maestroCall(e.props.text) && !briefTaskOf(e.props.text)) return next(e)
+    try {
+      const data = await brandData($)
+      const brand = data?.shorten(openingBrand({ text: e.props.text, source: data.source, tasks: data.tasks, maestroTasks: data.maestroTasks }))
+      if (!data || !brand) return next(e)
+      const card = brandTree($, e, brand, data.palette, 'card')
+      if (!e.props.isExpanded || brand.kind === 'maestro') return card
+      const { Box, Text } = $.ui.resolve(e)
+      return (
+        <Box flexDirection="column" gap={SPACE.block}>
+          {card}
+          <Text size="footnote" color={data.palette.text2} wrap="wrap">{e.props.text}</Text>
+        </Box>
+      )
+    } catch {
+      return next(e)
+    }
+  })
+
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const t0 = tick()
     perfLoaded = t0
@@ -3373,6 +3404,140 @@ export const register: Register = (on, options) => {
 }
 
 /** Le dessin du panneau : la vue d'ensemble, le détail d'une tâche, ou ce qui manque. */
+// --- Identité Roadmap à l'ouverture (#127) ---------------------------------------------------
+// La carte qui prend la place du message d'ouverture (maquette A) et l'en-tête du panneau (maquette B).
+
+/** Les tâches des sessions que cette session a lancées, avec leur état : ce que Maestro montre. */
+function maestroTasksOf(source: Source, tasks: readonly Task[], live: Record<string, LiveEntry>, me: string | undefined, short: (t: Task) => string): BrandTask[] {
+  if (!me) return []
+  return maestroBrandTasks(
+    tasks.flatMap(t => {
+      const sid = t.id ? live[liveKeyOf(source, t)]?.sessionId : undefined
+      if (!t.id || !sid || startedBySession.get(sid) !== me) return []
+      // Avant la première relecture des sessions, une session suivie compte pour ouverte.
+      return [{ id: t.id, label: short(t), running: runningBySession.get(sid) ?? false, open: openSessionIds.size === 0 || openSessionIds.has(sid), done: t.done }]
+    }),
+  )
+}
+
+/**
+ * Ce que la marque lit : la roadmap et les sessions suivies, celles du panneau (même clé de cache), et
+ * cette session. Lire les atomes du panneau abonne le dessin : une session qui avance le redessine.
+ */
+async function brandData($: EngineInterface) {
+  const source = knownSource === undefined ? await sourceNow($) : (knownSource ?? undefined)
+  if (!source) return undefined
+  const version = await Promise.all([read($, stampAtom), read($, titlesVersionAtom), read($, themeStampAtom), read($, retryAtom), read($, liveVersionAtom)])
+  const data = await paneData($, source, version.join('|'))
+  if (typeof data.open === 'string') return undefined
+  const tasks = [...data.open, ...data.done]
+  const own = await readOwnSession($)
+  const short = (t: Task) => data.titles[hashLabel(t.label)]?.titre ?? fallbackTitle(t.label)
+  // Le titre court d'une tâche à la place de son libellé : la carte se lit d'un coup d'œil.
+  const shorten = (brand: Brand | undefined): Brand | undefined => {
+    if (brand?.kind !== 'task') return brand
+    const task = tasks.find(t => t.id === brand.id)
+    return task ? { ...brand, label: short(task) } : brand
+  }
+  return { source, tasks, palette: data.palette, own, shorten, maestroTasks: maestroTasksOf(source, tasks, data.live, own.id, short) }
+}
+
+/** Les tâches rattachées montrées sur la carte ; les suivantes se comptent dans le pied. */
+const BRAND_TASKS_SHOWN = 6
+
+/**
+ * La carte ou l'en-tête Roadmap, dans les éléments de la surface : la marque et « Roadmap · projet »,
+ * le titre, l'axe et les repères d'une tâche, la phrase, et chez Maestro ses tâches et leur état. Le
+ * filet de gauche prend la couleur de l'axe. Les mots sont ceux de `brandText`, comme au design system.
+ */
+function brandTree(
+  $: EngineInterface,
+  e: RenderInput<'UserMessage'> | RenderInput<'Pane'>,
+  brand: Brand,
+  palette: Palette,
+  variant: 'card' | 'header',
+): RenderElement {
+  const { Box, Text } = $.ui.resolve(e)
+  const resolved = $.ui.resolve(e)
+  const Svg = 'Svg' in resolved ? resolved.Svg : undefined
+  const words = brandText(brand)
+  const header = variant === 'header'
+  const accent = axisColor(palette, brand.kind === 'task' ? brand.axisIndex : 0)
+  const pill = (label: string, bg: string, fg: string) => {
+    if (!Svg) return <Text key={label} size="caption" color={fg}>{` ${label} `}</Text>
+    const p = pillIcon({ text: label, bg, fg, height: SIZE.pill.row, weight: TEXT.weight.soft })
+    return <Svg key={label} source={p.source} alt={label} width={p.width} height={p.height} />
+  }
+  const tone = (state: BrandTask['state']) =>
+    state === 'wait' ? [palette.waitTint, palette.waitOn] : state === 'live' ? [palette.liveTint, palette.liveOn] : [palette.sel, palette.text2]
+  const shown = brand.kind === 'maestro' && !header ? brand.tasks.slice(0, BRAND_TASKS_SHOWN) : []
+  return (
+    <Box flexDirection="row" borderStyle="round" borderColor={palette.border} backgroundColor={palette.note}>
+      <Box width={1} backgroundColor={accent} />
+      <Box flexDirection="column" flexGrow={1} gap={SPACE.tight} paddingX={SPACE.indent} paddingY={header ? 'xs' : 'sm'}>
+        <Box flexDirection="row" alignItems="center" gap={SPACE.row}>
+          {Svg && <Svg source={brandMarkIcon(palette, header ? 18 : 20)} alt="Roadmap" width={header ? 18 : 20} height={header ? 18 : 20} />}
+          <Text size="footnote" weight="semibold">Roadmap</Text>
+          <Text size="footnote" color={palette.text2}>{words.eyebrow.replace(/^Roadmap · /, '· ')}</Text>
+        </Box>
+        <Text size={header ? 'heading' : 'title'} weight="semibold" wrap="wrap">{words.title}</Text>
+        {brand.kind === 'task' && (
+          <Box flexDirection="row" alignItems="center" gap={SPACE.row}>
+            {Svg ? (
+              (() => {
+                const a = axisPillIcon({ name: axisLabel(brand.axis), hex: accent, bg: axisTint(palette, accent), fg: palette.text })
+                return <Svg source={a.source} alt={brand.axis} width={a.width} height={a.height} />
+              })()
+            ) : (
+              <Text size="caption" color={accent}>{axisLabel(brand.axis)}</Text>
+            )}
+            {words.meta.map(m => pill(m, palette.sel, palette.text2))}
+          </Box>
+        )}
+        <Text size="footnote" color={palette.text2} wrap="wrap">{words.sub}</Text>
+        {shown.length > 0 && (
+          <Box flexDirection="column">
+            {shown.map((t, i) => (
+              <Box key={`brand:${t.id}`} flexDirection="row" alignItems="center" gap={SPACE.row}>
+                <Text size="footnote" tabular color={palette.text2}>{`#${t.id}`}</Text>
+                <Box flexGrow={1} flexShrink={1}>
+                  <Text size="footnote" wrap="truncate-end">{t.label}</Text>
+                </Box>
+                {pill(words.states[i] ?? '', ...(tone(t.state) as [string, string]))}
+              </Box>
+            ))}
+          </Box>
+        )}
+        {brand.kind === 'maestro' && header && brand.tasks.length > 0 && (
+          <Box flexDirection="row" flexWrap="wrap" gap={SPACE.row}>
+            {brand.tasks.slice(0, BRAND_TASKS_SHOWN).map(t => pill(`#${t.id}`, ...(tone(t.state) as [string, string])))}
+          </Box>
+        )}
+        {brand.kind === 'maestro' && <Text size="caption" color={palette.text3}>{words.foot}</Text>}
+      </Box>
+    </Box>
+  )
+}
+
+/**
+ * L'en-tête du panneau (maquette B) : chez Maestro (son titre ou sa marque), « Maestro » et ses tâches ;
+ * chez une session « #N · … », sa tâche et son Maestro ; rien ailleurs, ni sur une lecture en panne.
+ */
+async function paneBrand($: EngineInterface, e: RenderInput<'Pane'>): Promise<RenderElement | null> {
+  try {
+    const data = await brandData($)
+    if (!data) return null
+    const { own } = data
+    const isMaestro = isMaestroSession(own.title) || (own.id !== undefined && (await loadMaestros($))[own.id] !== undefined)
+    const brand = data.shorten(
+      sessionBrand({ title: own.title, isMaestro, source: data.source, tasks: data.tasks, maestroTasks: data.maestroTasks, ...(parentMaestro ? { maestro: 'Maestro' } : {}) }),
+    )
+    return brand ? brandTree($, e, brand, data.palette, 'header') : null
+  } catch {
+    return null
+  }
+}
+
 async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<RenderElement> {
   // Les gestionnaires de clic ne se vident pas ici : un rendu attend ses lectures, et un clic
   // arrivé pendant ce temps ne trouvait plus son bouton. Chaque rendu réécrit ceux qu'il dessine.
@@ -5039,6 +5204,8 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     )
   }
 
+  // L'en-tête Roadmap de la session (#127), au-dessus de l'avancement.
+  const brandHead = await paneBrand($, e)
   // L'avancement et sa barre font un seul bloc : la barre colle aux chiffres. La liste et le tableau le partagent.
   const head = (
       <Box flexDirection="column">
@@ -5098,6 +5265,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   if (layout === 'board') {
     return (
       <Box flexDirection="column" gap={SPACE.root} paddingX={SPACE.indent}>
+        {brandHead}
         {head}
         {await boardView()}
       </Box>
@@ -5106,6 +5274,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
 
   return (
     <Box flexDirection="column" gap={SPACE.root} paddingX={SPACE.indent}>
+      {brandHead}
       {head}
 
       {pending && (
