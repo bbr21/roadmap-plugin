@@ -25,7 +25,12 @@ fusionne en premier. Règle posée le 25/10/2026 sous le nom de « Lot » (ancie
 ## 1. Ouvrir les tâches
 
 - **Le nom** : « Maestro » (« Maestro · Abonnements »), posé au lancement, puis il ne change plus.
-  Dire « Maestro » (ou `/maestro`) en tête d'un message ouvre le panneau et donne l'état des tâches.
+  Dire « Maestro » (ou `/maestro`) seul en tête d'un message ouvre le panneau : Maestro se présente
+  en une ligne et propose le scan d'un bouton de sa boîte de fin (« Je scanne ta roadmap pour te dire
+  quoi faire ? », bouton « Oui, scanne », qui envoie « Maestro scan »), sans rien lire avant ce oui
+  (#126) : le scan peut être long. L'état des tâches vient sur ce clic, sur « oui » au message
+  suivant, sur « Maestro scan », sur « Maestro go » (les cartes des trois premières) ou sur
+  « Maestro, <une demande> ». Les nouvelles des enfants qui coincent, elles, se disent tout de suite.
   Le panneau Roadmap reconnaît Maestro à ce titre, à la marque posée quand l'utilisateur y dit
   « Maestro », ou à ce qu'il a lancé au moins deux sessions encore ouvertes ; un ancien titre
   « Lot … » reste reconnu (alias des sessions ouvertes avant #112). Il ne le met jamais « en cours »

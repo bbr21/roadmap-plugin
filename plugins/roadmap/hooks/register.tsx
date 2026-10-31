@@ -117,6 +117,8 @@ import {
   launchable,
   maestroCall,
   maestroContext,
+  maestroIntro,
+  maestroYes,
   MAESTRO_MENU,
   type Prio,
   rowPills,
@@ -410,6 +412,8 @@ const scanNoteAtom = atom({ plugin: 'roadmap', key: 'scanNote' } as const, '')
  * a changé depuis (#119) se redonne. L'état de session survit au rechargement du module.
  */
 const prefsGivenAtom = atom({ plugin: 'roadmap', key: 'prefsGivenText' } as const, '')
+/** Maestro vient de se présenter sans scanner (#126) : un oui nu au message suivant demande le scan. */
+const maestroIntroAtom = atom({ plugin: 'roadmap', key: 'maestroIntro' } as const, false)
 /** Le contexte du message précédent, en jetons (#119) : 0 quand rien n'est mesuré depuis le dernier vidage. */
 const contextSeenAtom = atom({ plugin: 'roadmap', key: 'contextSeen' } as const, 0)
 
@@ -2306,6 +2310,20 @@ async function maestroText($: EngineInterface, go: boolean): Promise<string> {
   })
 }
 
+/**
+ * « Maestro » seul (#126) : le panneau s'ouvre et Maestro se présente ; rien n'est lu de la roadmap
+ * ni des sessions avant le oui de Bertrand, que l'atome attend au message suivant.
+ */
+async function maestroIntroText($: EngineInterface): Promise<string> {
+  const source = await sourceNow($)
+  if (!source) {
+    return `${Person()} a dit « Maestro », mais ce projet (${await $.session.root()}) n'a pas de roadmap : dis-le en une phrase, et propose la skill roadmap:onboarding, qui la pose dans le dépôt (et peut la reconstituer depuis son historique).`
+  }
+  void openPane($, source)
+  await update($, maestroIntroAtom, () => true)
+  return maestroIntro({ source })
+}
+
 /** Sans outil de lancement utilisable, la demande part à Claude dans la conversation en cours. */
 async function askClaude($: EngineInterface, brief: { title: string; prompt: string; background: string }, refusals: readonly string[] = []): Promise<void> {
   try {
@@ -3082,7 +3100,16 @@ export const register: Register = (on, options) => {
     } catch {
       // store illisible : les vieilles notes attendent le prochain chargement
     }
-    const call = maestroCall(e.text)
+    // « Maestro » seul se présente ; le scan vient sur une demande, « Maestro go », ou le oui qui suit (#126).
+    let call = maestroCall(e.text)
+    try {
+      if (await read($, maestroIntroAtom)) {
+        await update($, maestroIntroAtom, () => false)
+        if (!call && maestroYes(e.text)) call = { go: false, scan: true }
+      }
+    } catch {
+      // état de session illisible : seul « Maestro scan » demande le scan
+    }
     if (call) {
       try {
         await markMaestro($)
@@ -3090,7 +3117,7 @@ export const register: Register = (on, options) => {
         // fiche ou store illisible : le titre et la famille jugent seuls
       }
       try {
-        texts.push(await maestroText($, call.go))
+        texts.push(call.scan ? await maestroText($, call.go) : await maestroIntroText($))
       } catch (err) {
         texts.push(`${Person()} a dit « Maestro », mais l'état de la roadmap n'a pas pu être lu (${err instanceof Error ? err.message : String(err)}) : dis-le en une phrase.`)
       }

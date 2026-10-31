@@ -3397,15 +3397,46 @@ export function setSessionPref(text: string | undefined, key: PrefKey, value: bo
 // d'avancement, orienté objectif — d'abord ce qui attend Bertrand (une session coincée ne doit pas
 // le rester des heures), puis ce qu'on peut lancer, le plus utile d'abord.
 
-/** « Maestro » en tête du message ; `go` : il demande de lancer sans menu (« Maestro go », « Maestro lance »). */
-export function maestroCall(prompt: string): { go: boolean } | undefined {
-  // Au premier message d'une session en worktree, l'app met un bloc <system-reminder> avant le texte
-  // de Bertrand, et le hook reçoit les blocs joints (#69) : la tête du message vient après eux.
-  const text = prompt.replace(/^(?:\s*<system-reminder>[\s\S]*?<\/system-reminder>)*/, '')
+/** Au premier message d'une session en worktree, l'app met un bloc <system-reminder> avant le texte
+ * de Bertrand, et le hook reçoit les blocs joints (#69) : la tête du message vient après eux. */
+const withoutReminders = (prompt: string) => prompt.replace(/^(?:\s*<system-reminder>[\s\S]*?<\/system-reminder>)*/, '')
+
+/**
+ * « Maestro » en tête du message ; `go` : il demande de lancer sans menu (« Maestro go », « Maestro lance ») ;
+ * `scan` : il veut l'état de la roadmap. L'appel nu ne scanne pas (#126) : le panneau s'ouvre et Maestro
+ * propose le scan ; « Maestro scan », « Maestro go » ou une demande après « Maestro » scannent.
+ */
+export function maestroCall(prompt: string): { go: boolean; scan: boolean } | undefined {
   // « /maestro » (et « /roadmap:maestro ») lance la skill du même nom : il vaut « Maestro » (#112).
-  const m = /^\s*(?:\/(?:roadmap:)?)?maestro\b[\s,.:!?-]*(.*)$/is.exec(text)
+  const m = /^\s*(?:\/(?:roadmap:)?)?maestro\b[\s,.:!?-]*(.*)$/is.exec(withoutReminders(prompt))
   if (!m) return undefined
-  return { go: /^(go|lance|lancer|vas-y|vas y|start|démarre|demarre)\b/i.test((m[1] ?? '').trim()) }
+  const rest = (m[1] ?? '').trim()
+  return { go: /^(go|lance|lancer|vas-y|vas y|start|démarre|demarre)\b/i.test(rest), scan: rest !== '' }
+}
+
+/** Le message du bouton de la présentation de Maestro : il demande le scan (#126). */
+export const MAESTRO_SCAN_MESSAGE = 'Maestro scan'
+
+/** Un oui nu, au message qui suit la présentation de Maestro (#126). « ok » n'en est pas un : il accuse réception. */
+export function maestroYes(prompt: string): boolean {
+  return /^\s*(oui|ouais|yes|vas-y|vas y|d'accord|d’accord|scanne|scan)(\s*,?\s*(scanne|vas-y))?\s*[.!]*\s*$/i.test(withoutReminders(prompt))
+}
+
+/**
+ * Le contexte de « Maestro » seul (#126) : le panneau s'ouvre, Maestro se présente et propose le scan
+ * d'un bouton de la boîte de fin, dont le clic envoie « Maestro scan » (un formulaire ne passerait pas :
+ * sa réponse revient en résultat d'outil, pas en message). Rien n'est lu avant le oui.
+ */
+export function maestroIntro(o: { source: Source }): string {
+  return [
+    `${Person()} a dit « Maestro » : le panneau de la roadmap ${o.source.name} vient de s'ouvrir. Tu es Maestro, l'orchestrateur : tu lances les tâches de la roadmap, une session par tâche, tu les suis et tu fusionnes pour elles (skill roadmap:maestro).`,
+    '',
+    `Rien n'est scanné : avant le oui de ${person()}, ne lis ni la roadmap ni tes sessions (pas de list_sessions, pas de lecture de ROADMAP.md), le scan peut être long.`,
+    "- Si le bloc « Roadmap — nouvelles de tes sessions enfants » est là, dis d'abord ces nouvelles et suis leurs consignes.",
+    `- Présente-toi en une ligne : « Maestro · ${o.source.name} — je lance tes tâches, je suis tes sessions et je fusionne pour elles. »`,
+    `- Puis propose le scan par ta boîte de fin (wrap_up) : recap d'une phrase (le panneau est ouvert, rien n'est scanné), ask « Je scanne ta roadmap pour te dire quoi faire ? », actions [{"label": "Oui, scanne", "message": "${MAESTRO_SCAN_MESSAGE}"}]. Pas de formulaire AskUserQuestion pour ce oui : sa réponse ne relancerait pas le scan.`,
+    `- Sans boîte de fin, pose la question en dernière ligne. ${Person()} peut aussi répondre « oui », taper « ${MAESTRO_SCAN_MESSAGE} », ou « Maestro go » (les cartes des trois premières tâches à lancer).`,
+  ].join('\n')
 }
 
 /**

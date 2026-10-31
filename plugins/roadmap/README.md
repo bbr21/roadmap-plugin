@@ -115,9 +115,14 @@ contournements sont écrits en commentaire dans `hooks/register.tsx` et `hooks/i
 
 ## Maestro
 
-Demande de Bertrand du 27/10/2026 : « Maestro » en tête d'un message (« Maestro », « Maestro, on
-en est où ? ») ouvre le panneau et donne à Claude, en contexte additionnel, l'état d'avancement du
-projet, orienté objectif : faire avancer les tâches, qu'aucune ne reste bloquée des heures.
+Demande de Bertrand du 27/10/2026 : « Maestro » en tête d'un message ouvre le panneau. Seul
+(« Maestro », `/maestro`), il ne scanne plus rien (#126, 30/10/2026) : Maestro se présente en une
+ligne et propose le scan d'un bouton de sa boîte de fin, « Je scanne ta roadmap pour te dire quoi
+faire ? », dont le clic envoie « Maestro scan » ; un « oui » au message suivant vaut ce clic (« ok »
+non). Sur ce oui, sur « Maestro scan », « Maestro go » ou une demande (« Maestro, on en est où ? »),
+Claude reçoit, en contexte additionnel, l'état d'avancement du projet, orienté objectif : faire
+avancer les tâches, qu'aucune ne reste bloquée des heures. Les nouvelles des sessions enfants qui
+coincent arrivent à chaque message, scan ou non.
 La tête du message se lit après les blocs `<system-reminder>` que l'app met devant le texte de
 Bertrand (premier message d'une session en worktree, #69) ; « Maestro » au milieu du texte ne
 déclenche rien.
@@ -488,6 +493,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.74.0 (2026-10-30)** : maestro : « Maestro » seul ouvre le panneau et se présente, le scan de la roadmap attend un oui (#126)
 - **0.73.0 (2026-10-30)** : maestro : rappel de roadmap muet chez un enfant de Maestro, archivage refusé tant que la ligne #N est ouverte, ligne État « fini : #N close le … » lue dans ROADMAP-fait, et un enfant archivé avant la clôture remonte à Maestro (#124)
 - **0.72.0 (2026-10-30)** : reglages-session : mode ADHD, bloc de fin de tour sans emoji, et au dernier tour d'une session une fiche en tableau (Mission, Livré, État, À toi, Session) ; un rappel qui ne réclame que le bouton d'archivage ne fait plus réécrire le message (#123)
 - **0.71.0 (2026-10-30)** : panneau : seconde vue, le tableau des sessions (T'attend, En cours, Prête, À lancer, Livrées), bascule Liste · Tableau en tête du panneau, compteurs cliquables par colonne, une session au repos sans question reste En cours (#120)
