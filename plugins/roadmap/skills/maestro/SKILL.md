@@ -88,8 +88,17 @@ lui remonte.
 - **Lire** : chaque fin de tour d'une sous-session arrive à Maestro (le début de son compte rendu) ;
   `list_sessions` avec `linked: true` donne l'état de toutes (en cours, en attente, PR). Une note
   n'est pas une preuve : relire le diff et les tests de la branche avant de la dire prête.
+- **Agir dès son message** (#131) : l'app ne réveille Maestro que quand toutes ses sessions sont au
+  repos ; une sous-session le prévient donc elle-même, par un message « Roadmap — nouvelle de ta
+  session … » à chaque fin de tour et à chaque question de formulaire, une fois par état. Ce message
+  vient du panneau, pas de l'utilisateur. Maestro agit tout de suite, sans attendre que les autres
+  finissent : **prête à fusionner**, § 5 ; **bloquée**, **en attente** ou **pose une question**,
+  débloquer d'abord (ci-dessous) ; **arrêtée en cours de route**, la relancer par message
+  (« continue : … ») sauf si elle attend quelque chose de lui ; **finie**, § 6. Puis il met sa liste
+  à jour. Le même tour lui donne les nouvelles de tous ses enfants (ci-dessous) : une muette se
+  relance de ce réveil. La note de l'app qui arrive ensuite sur le même état ne se traite pas deux fois.
 - **Prendre des nouvelles** (#84) : L'utilisateur pilote depuis Maestro, jamais depuis les enfants. À
-  chacun de ses messages, le panneau donne à Maestro, sous « Roadmap — nouvelles de tes sessions
+  chacun de ses messages, et de ceux de ses sessions (#131), le panneau donne à Maestro, sous « Roadmap — nouvelles de tes sessions
   enfants », une ligne par enfant qui coince ou qui est à archiver, et rien quand tout avance :
   - **attend la réponse de l'utilisateur** depuis 15 min : la lui rappeler en une ligne, avec le lien ;
   - **silencieuse** depuis 15 min (son étape, ou « état inconnu ») : lui écrire **une fois**
@@ -197,8 +206,11 @@ La fusion elle-même :
 - **Une branche à la fois**, sur `main` à jour, par la règle de fusion du projet (projets posés par
   l'onboarding : « Finir un chantier »). Jamais deux fusions en même
   temps.
-- **Après chaque fusion** : rejouer les tests sur `main`, puis prévenir les sous-sessions dont la
-  branche touche des fichiers voisins de la mettre à jour.
+- **Dès qu'une branche est prête** (#131) : le message de sa session suffit, Maestro la relit et la
+  fusionne (sans le réglage `autonome`, la propose) sans attendre que les autres sessions finissent.
+- **Après chaque fusion** : rejouer les tests sur `main`, puis prévenir aussitôt, par message, les
+  sous-sessions dont la ligne porte `après:` sur la tâche fusionnée (elle peut démarrer ou reprendre)
+  et celles dont la branche touche des fichiers voisins (la mettre à jour).
 - **Un conflit** se résout en gardant les deux intentions ; une intention qui n'est pas claire se
   demande à la sous-session concernée.
 
@@ -258,6 +270,9 @@ La fusion elle-même :
 - Chaque sous-session note sa liste d'étapes, sa question en attente et son dernier récap ; à chaque
   message de l'utilisateur, Maestro reçoit les enfants qui coincent depuis 15 min et ceux à archiver
   (§ 3, « Prendre des nouvelles »).
+- Chaque sous-session prévient Maestro par message de l'état où elle finit son tour, et de sa
+  question de formulaire, une fois par état, même quand d'autres tournent encore (§ 3, « Agir dès
+  son message », #131).
 - Il refuse la boîte de fin de Maestro qui propose d'archiver une session déjà archivée (§ 6, #110).
 - Il ne relance pas une sous-session avec le rappel « la roadmap n'a pas bougé » : Maestro tient sa
   ligne (#124). Il refuse sa boîte de fin « Archiver cette session ? » tant que sa ligne est ouverte,

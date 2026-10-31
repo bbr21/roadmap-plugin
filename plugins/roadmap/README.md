@@ -497,6 +497,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.79.0 (2026-10-30)** : maestro : une session lancée par Maestro le prévient par message de l'état où elle finit chaque tour (prête, bloquée, en attente, question, finie), une fois par état (#131)
 - **0.78.0 (2026-10-30)** : panneau : la priorité ne s'affiche plus (ni pastille ni filtre Prioritaires), ne range plus et n'est plus demandée ; prio: reste lu et contrôlé (#130)
 - **0.77.0 (2026-10-30)** : panneau : identité Roadmap à l'ouverture, carte Roadmap à la place du message « Maestro » ou du brief d'une tâche, en-tête Roadmap du panneau (#127)
 - **0.76.0 (2026-10-30)** : panneau : en arbre, un bloc par parent, sa ligne en tête une seule fois avec son avancement, ses enfants en retrait et numérotés par rang, un parent hors filtre gardé en gris (#125, lot 1)

@@ -1883,6 +1883,91 @@ export function proposalSentNote(maestro: string, title: string, via: 'message' 
   return `${where} Maestro ouvre sa ligne et la propose à ${person()}. Ne la repose pas, sous aucune forme ; dis seulement, en une ligne de ton compte rendu, que tu l'as remontée à Maestro.`
 }
 
+// --- Réveil de Maestro (#131) ------------------------------------------------------------------
+// L'app ne continue Maestro, à la fin du tour d'une de ses sessions, que si toutes sont au repos : une
+// branche prête attendait le message suivant de Bertrand (#126, 2026-10-30). La session prévient donc
+// elle-même son Maestro, par message, de l'état où elle finit son tour.
+
+/** L'état d'une fin de tour de session, dit à Maestro : son genre, sa phrase, et la clé qui évite le doublon. */
+export type ChildWake = {
+  kind: 'ready' | 'blocked' | 'waiting' | 'question' | 'done' | 'stopped' | 'other'
+  said: string
+  key: string
+}
+
+/** L'en-tête du mode ADHD (« ✅ **7/7 Vérifier et pousser** ») : il dit l'étape, pas l'état. */
+const ADHD_HEAD = /^\W*\*\*\d+\/\d+\b/u
+
+/** La première phrase d'un compte rendu : sa première ligne qui dit quelque chose, hors en-tête du mode ADHD. */
+function firstSentence(text: string): string {
+  const line = text.split('\n').map(l => l.trim()).find(l => l !== '' && !ADHD_HEAD.test(l)) ?? ''
+  return clip(line, 200)
+}
+
+/**
+ * L'état où une session finit son tour (#131), lu dans la première phrase de son récap (boîte de
+ * fin), sinon de sa réponse : les états de la clause de Maestro. Une question de formulaire en
+ * cours (`question`) ou de la boîte de fin (`ask`) la fait attendre ; « en cours » en fin de tour
+ * veut dire arrêtée avant la fin.
+ */
+export function childWake(o: { recap?: string; ask?: string; answer?: string; question?: string }): ChildWake {
+  const make = (kind: ChildWake['kind'], said: string): ChildWake => ({ kind, said, key: `${kind}|${said}` })
+  if (o.question !== undefined) return make('question', clip(o.question, 200))
+  const said = firstSentence(o.recap?.trim() ? o.recap : (o.answer ?? ''))
+  const s = said.toLowerCase()
+  if (/^\W*pr[êe]te?s? (à|a) fusionner/u.test(s)) return make('ready', said)
+  if (/^\W*bloqu[ée]/u.test(s)) return make('blocked', said)
+  if (/^\W*attend\b/u.test(s) || (o.ask !== undefined && o.ask.trim() !== '' && !/archiver cette session/i.test(o.ask))) return make('waiting', said)
+  if (/^\W*fini\b|à archiver/u.test(s)) return make('done', said)
+  if (/^\W*en cours\b/u.test(s)) return make('stopped', said)
+  return make('other', said)
+}
+
+/** Ce que Maestro fait de chaque état (skill roadmap:maestro, § 3 et § 5). */
+function wakeTodo(w: ChildWake, id: string | undefined): string {
+  const after = id ? `après:${id}` : 'après: sur cette tâche'
+  switch (w.kind) {
+    case 'ready':
+      return `relis son diff, puis fusionne-la si ses tests sont verts sur sa branche à jour de main (§ 5), et préviens aussitôt les sessions dont la ligne porte ${after}.`
+    case 'blocked':
+    case 'waiting':
+      return `débloque-la d'abord (§ 3) : réponds-lui par message si le code, la roadmap ou les règles tranchent, donne-lui la main sur la ressource si elle est libre, sinon pose la question à ${person()} et relaie sa réponse mot pour mot.`
+    case 'question':
+      return `elle pose une question dans un transcript que ${person()} ne regarde pas : réponds-lui par message si tu as la réponse, sinon pose-la à ${person()} et relaie sa réponse mot pour mot.`
+    case 'done':
+      return `vérifie que sa ligne est close (§ 6), puis propose son archivage à ${person()}.`
+    case 'stopped':
+      return "elle s'est arrêtée avant la fin : relance-la par message (« continue : … »), sauf si elle attend quelque chose de toi."
+    default:
+      return 'lis son compte rendu et agis : réponds-lui, relance-la, ou dis-le en une ligne.'
+  }
+}
+
+const WAKE_STATE: Record<ChildWake['kind'], string> = {
+  ready: 'prête à fusionner',
+  blocked: 'bloquée',
+  waiting: 'en attente',
+  question: 'pose une question',
+  done: 'finie',
+  stopped: 'arrêtée en cours de route',
+  other: 'a fini son tour',
+}
+
+/**
+ * Le message qu'une session envoie à son Maestro à la fin d'un tour (#131). Il ne commence pas par
+ * « Maestro » : `maestroCall` le prendrait pour l'appel de la personne.
+ */
+export function childWakeText(w: ChildWake, child: { id: string; title: string; branch?: string }): string {
+  const id = sessionTitleId(child.title)
+  const branch = child.branch ? `, branche ${child.branch}` : ''
+  const quote = w.kind === 'question' ? `Sa question : « ${w.said} ».` : w.said !== '' ? `Son compte rendu : « ${w.said} ».` : 'Aucun compte rendu.'
+  return [
+    `Roadmap — nouvelle de ta session « ${child.title || child.id} » (${child.id}${branch}) : ${WAKE_STATE[w.kind]}. ${quote}`,
+    `Ce message vient du panneau Roadmap, pas de ${person()} : la session te prévient elle-même, car l'app ne te réveille que quand toutes tes sessions sont au repos.`,
+    `À toi, dès maintenant (skill roadmap:maestro) : ${wakeTodo(w, id)} Puis mets ta liste d'étapes à jour.`,
+  ].join('\n')
+}
+
 // --- Nouvelles des enfants (#84) ---------------------------------------------------------------
 // Bertrand pilote depuis le parent, jamais depuis les enfants (2026-10-28) : chaque enfant note son
 // état dans le store, et le parent reçoit, à chaque message, une ligne par enfant qui coince ou qui

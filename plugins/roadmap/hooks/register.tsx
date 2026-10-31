@@ -223,6 +223,9 @@ import {
   maestroProposalText,
   proposalSentNote,
   type MaestroProposal,
+  childWake,
+  childWakeText,
+  type ChildWake,
   applyPlan,
   childAlerts,
   childAlertText,
@@ -1369,6 +1372,39 @@ async function parentIsMaestro($: EngineInterface): Promise<boolean> {
     // fiche illisible : pas un enfant de Maestro
   }
   return parentMaestro
+}
+
+// --- Réveil de Maestro (#131) ------------------------------------------------------------------
+
+/** La clé du dernier état dit à Maestro : le même ne repart pas tant qu'aucun vrai message n'a relancé la session. */
+let toldMaestro: string | undefined
+
+/** Ce que la boîte de fin du tour a dit (récap et question), lu à la fin du tour. */
+let wakeBox: { recap?: string; ask?: string } = {}
+
+/**
+ * Une session lancée par Maestro lui dit, par message, l'état où elle s'arrête (#131) : l'app ne le
+ * réveille que quand toutes ses sessions sont au repos. Une fois par état ; rien sans Maestro pour
+ * parent ; aucune panne (fiche, message refusé) ne bloque le tour.
+ */
+async function tellMaestro($: EngineInterface, wake: ChildWake): Promise<void> {
+  if (wake.key === toldMaestro) return
+  try {
+    if (!(await parentIsMaestro($))) return
+    const me = await ownParent($)
+    if (!me) return
+    const ran = await $.tool.call({ tool: GET_SESSION_TOOL, session_id: 'self' })
+    const fiche = ran.deny === undefined && !ran.isError ? (JSON.parse(ran.text ?? '{}') as { title?: unknown; branch?: unknown }) : {}
+    const child = {
+      id: me.id,
+      title: typeof fiche.title === 'string' ? fiche.title : '',
+      ...(typeof fiche.branch === 'string' && fiche.branch !== '' ? { branch: fiche.branch } : {}),
+    }
+    const sent = await $.tool.call({ tool: SEND_MESSAGE_TOOL, session_id: me.parent, message: childWakeText(wake, child) })
+    if (sent.deny === undefined && !sent.isError) toldMaestro = wake.key
+  } catch {
+    // fiche illisible ou outil absent : Maestro l'apprendra par l'app ou au message suivant
+  }
 }
 
 /**
@@ -3182,6 +3218,8 @@ export const register: Register = (on, options) => {
     const first = (e as { questions?: { question?: unknown }[] }).questions?.[0]?.question
     const text = clip(typeof first === 'string' ? first : '', 160)
     await noteChild($, (s, now) => ({ ...s, question: { text, since: now } }))
+    // La question attend dans un transcript que Bertrand ne regarde pas : Maestro l'apprend tout de suite (#131).
+    await tellMaestro($, childWake({ question: text }))
     try {
       return await next(e)
     } finally {
@@ -3195,6 +3233,7 @@ export const register: Register = (on, options) => {
     noteBox(e)
     if (!fromAgent(e)) closingTurn = { work: true, box: boxText(e) }
     const recap = (e as { recap?: unknown }).recap
+    if (!fromAgent(e)) wakeBox = { ...(typeof recap === 'string' ? { recap } : {}), ...(typeof ask === 'string' ? { ask } : {}) }
     // La question de la boîte, ou « attend une réponse : … » en tête du récap, attend jusqu'au tour suivant (#121).
     const asked = boxQuestion((e as { ask?: unknown }).ask, recap)
     if (!fromAgent(e)) {
@@ -3224,6 +3263,9 @@ export const register: Register = (on, options) => {
     if (e.agentId === undefined) closingTurn = { work: false, box: '' }
     if (e.agentId === undefined) stepList.tools = 0
     if (e.agentId === undefined) launchTurn = { cards: [], refused: false }
+    // Un vrai message (de Maestro ou de Bertrand) relance la session : sa réponse sera une nouvelle à dire (#131).
+    if (e.agentId === undefined) wakeBox = {}
+    if (e.agentId === undefined && !isStopFallback(e.text)) toldMaestro = undefined
     if (e.agentId === undefined && settings.capture && capture) {
       capture.wroteThisTurn = false
       capture.gitAtTurn = await gitState($)
@@ -3245,6 +3287,8 @@ export const register: Register = (on, options) => {
     const result = await next(e)
     if (e.agentId !== undefined) return result
     await markOwnRunning($, false)
+    // Une session de Maestro prévient Maestro de l'état où elle s'arrête (#131) ; interrompue, la personne est là.
+    if (!e.isAborted) await tellMaestro($, childWake({ ...wakeBox, answer: e.answer }))
     if (e.turnId === stopTurn.id && !stopTurn.stopRan && e.reason === 'answer') {
       const block = await endOfTurnBlock($, e.answer, stopTurn.fromReminder, false)
       if (block !== undefined) void $.prompt.submit({ text: stopFallbackPrompt(block) }).catch(() => undefined)
