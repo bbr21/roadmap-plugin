@@ -106,6 +106,7 @@ import {
   dueLabel,
   findSelected,
   ficheCards,
+  missionCut,
   missionFrame,
   parseEndFiche,
   recapKey,
@@ -4605,6 +4606,9 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     const ficheSource = inSession && ownBrand ? ownBrand.data.source : source
     const docs = await readFicheDocs($, ficheSource, current, now)
     const frame = missionFrame(current.label, current.id ? recapOf(await $.store.get(recapKey(ficheSource.name, current.id)).catch(() => undefined)) : undefined)
+    // Sans récap, une ligne longue tient en trois lignes, le reste derrière « Tout voir » (#146, maquette B).
+    const cut = frame.recap ? undefined : missionCut(frame.text)
+    const missionShown = missionOpen === current.key
     const s = short(current)
     const days = age(current)
     const line = Number(current.key.split(':').pop())
@@ -5325,7 +5329,18 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
             ) : (
               <Text size="caption" weight="medium" color={palette.text2}>Mission</Text>
             )}
-            <Text wrap="wrap">{frame.text}</Text>
+            <Text wrap="wrap">{cut?.cut && !missionShown ? cut.text : frame.text}</Text>
+            {cut?.cut && (
+              <Box flexDirection="row">
+                <Button
+                  key="mission-line"
+                  plain
+                  dimColor
+                  label={missionShown ? 'Replier' : 'Tout voir'}
+                  onPress={() => void setView($, v => ({ missionOpen: v.missionOpen === current.key ? '' : current.key }))}
+                />
+              </Box>
+            )}
             {frame.recap &&
               frame.rows.map(([name, value]) => (
                 <Box key={`recap:${name}`} flexDirection="row" gap={SPACE.row}>
@@ -5352,7 +5367,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
               </Box>
             )}
             {frame.recap && missionOpen === current.key && <Text size="caption" wrap="wrap">{current.label}</Text>}
-            {current.note && (!frame.recap || missionOpen === current.key) && <Text color={palette.text2} wrap="wrap">{current.note}</Text>}
+            {current.note && (cut ? !cut.cut || missionShown : missionShown) && <Text color={palette.text2} wrap="wrap">{current.note}</Text>}
           </Box>
         </Box>
         {ficheSteps($, e, palette, await readSteps($, inSession ? ownBrand?.data.own.id : liveOf(current)?.entry.sessionId), now)}

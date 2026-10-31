@@ -940,6 +940,17 @@ export function missionFrame(
   return { recap: true, text: recap.mission, when, rows }
 }
 
+/**
+ * Le cadre de la mission sans récap (#146, maquette B) : une ligne de 280 signes au plus, entière ;
+ * plus longue, ses 160 premiers signes coupés au dernier mot, sans ponctuation pendante, et « … ».
+ */
+export function missionCut(label: string): { text: string; cut: boolean } {
+  if (label.length <= 280) return { text: label, cut: false }
+  const head = label.slice(0, 160)
+  const word = label.charAt(160) === ' ' ? head : head.replace(/\s+\S*$/, '')
+  return { text: `${(word || head).replace(/[\s,;:—-]+$/, '')}…`, cut: true }
+}
+
 export function parseSources(text: string): Source[] {
   const data: unknown = JSON.parse(text)
   const list = (data as { sources?: unknown }).sources
@@ -4399,11 +4410,16 @@ export function brandText(
     foot: '',
     states: [],
     meta: brand.due ? [dueWords(brand.due, today)] : [],
-    stations: {
-      ...(brand.before ? { before: { text: brand.before.done ? `#${brand.before.id} faite` : `après #${brand.before.id}`, done: brand.before.done } } : {}),
-      here: `#${brand.id}, ici`,
-      ...(brand.next ? { next: `débloque #${brand.next}` } : {}),
-    },
+    // Ni prérequise ni suite (#146) : pas de voie, plutôt qu'un point seul.
+    ...(brand.before || brand.next
+      ? {
+          stations: {
+            ...(brand.before ? { before: { text: brand.before.done ? `#${brand.before.id} faite` : `après #${brand.before.id}`, done: brand.before.done } } : {}),
+            here: `#${brand.id}, ici`,
+            ...(brand.next ? { next: `débloque #${brand.next}` } : {}),
+          },
+        }
+      : {}),
   }
 }
 
