@@ -355,17 +355,6 @@ export function spinnerIcon(hex: string, size = 14, title?: string, still = fals
   )
 }
 
-/** L'arc des titres en cours de calcul : trois quarts de cercle qui tournent (1,1 s par tour, Svg interactif). */
-export function pendingIcon(hex: string, size = 16): string {
-  return svg(
-    size,
-    24,
-    `<path d="M12 3.5a8.5 8.5 0 1 1-8.5 8.5" fill="none" stroke="${hex}" stroke-width="${STROKE.base}" stroke-linecap="round">` +
-      '<animateTransform attributeName="transform" type="rotate" from="0 12 12" to="360 12 12" dur="1.1s" repeatCount="indefinite"/>' +
-      '</path>',
-  )
-}
-
 export type Corner = 'tl' | 'tr' | 'bl' | 'br'
 
 /**

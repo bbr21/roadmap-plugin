@@ -5877,3 +5877,25 @@ export function versionNote(v: { session: string; app?: string; published?: stri
   }
   return { state: 'ok', text: `roadmap ${v.session}, à jour`, foot: `roadmap ${v.session} · à jour` }
 }
+
+/** Une note d'attente du panneau (#169, maquette A) : la bande bleue, un titre en gras et son explication. */
+export type WaitNote = { title: string; detail: string }
+
+const WAIT_NOTES: Record<'titles' | 'launched', WaitNote> = {
+  titles: { title: 'Titres courts en préparation…', detail: 'En attendant, les tâches sont rangées par axe.' },
+  launched: { title: 'Carte de session posée', detail: 'Elle attend ton clic dans la conversation.' },
+}
+
+/** Les textes d'une note d'attente : les titres courts en calcul, ou la carte de session posée après Lancer. */
+export function waitNote(kind: 'titles' | 'launched'): WaitNote {
+  return WAIT_NOTES[kind]
+}
+
+/**
+ * La note des titres en cours : tant qu'aucune tâche ouverte n'a son titre court (`pending`), et
+ * seulement rangée par sujet, que l'axe remplace en attendant. L'arbre range déjà par axe (#168) ;
+ * par jour, échéance ou responsable, rien ne change.
+ */
+export function titlesNote(pending: boolean, by: Grouping): WaitNote | undefined {
+  return pending && by === 'subject' ? WAIT_NOTES.titles : undefined
+}

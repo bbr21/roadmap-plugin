@@ -35,7 +35,6 @@ import {
   handIcon,
   folderIcon,
   alertIcon,
-  pendingIcon,
   playIcon,
   externalIcon,
   documentIcon,
@@ -364,6 +363,9 @@ import {
   RELOAD_COMMAND,
   reloadOutcome,
   versionNote,
+  titlesNote,
+  waitNote,
+  type WaitNote,
 } from './parse'
 
 const PANE = PANE_ID
@@ -5193,6 +5195,19 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   // Sur l'app de bureau (et VS Code, mobile), les couleurs et icônes sont des SVG ; le terminal
   // garde des glyphes. Un bouton impose sa couleur : rien de coloré n'y entre.
   const Svg = e.surface === 'terminal' ? undefined : $.ui.resolve(e).Svg
+  // Une note d'attente (#169, maquette A) : une bande bleue aux coins arrondis, la roue, le titre en
+  // gras et son explication dessous ; `after` à droite (« Relancer »). Au terminal, le texte seul.
+  const waitBand = (key: string, note: WaitNote, after?: RenderElement) => (
+    <Box key={key} flexDirection="row" alignItems="center" gap={SPACE.row} paddingX={SPACE.indent} paddingY="xs" backgroundColor={Svg ? palette.liveTint : undefined}>
+      {corners(RADIUS.control, palette.bg)}
+      {Svg && <Svg source={spinnerIcon(palette.liveOn, 16, undefined, false, now)} alt="en cours" width={SIZE.icon.md} height={SIZE.icon.md} isInteractive />}
+      <Box flexDirection="column" flexGrow={1} flexShrink={1}>
+        <Text weight="semibold" color={palette.liveOn}>{note.title}</Text>
+        <Text size="caption" color={palette.liveOn} wrap="wrap">{note.detail}</Text>
+      </Box>
+      {after}
+    </Box>
+  )
   const elements = $.ui.resolve(e)
   const Client = 'Client' in elements ? elements.Client : undefined
   // Le markdown de la carte Fin (#150) : rendu comme une réponse, code et puces compris.
@@ -5831,16 +5846,16 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
                 </Box>
               )}
               {!current.done && !live && launched.includes(taskKey(current)) && (
-                <Box flexDirection="row" alignItems="center" gap={SPACE.row} paddingX={SPACE.indent}>
-                  <Text size="caption" color={palette.text2}>La session est demandée : sa carte attend dans la conversation.</Text>
+                waitBand(
+                  'launched-note',
+                  waitNote('launched'),
                   <Button
                     key="launch-again"
                     plain
-                    dimColor
                     label="Relancer"
                     onPress={() => void setView($, v => ({ launched: v.launched.filter(k => k !== taskKey(current)) }))}
-                  />
-                </Box>
+                  />,
+                )
               )}
               {/* La session tourne : le bloc « Session en cours » dit tout, la note de lancement se tait. */}
               {live ? null : launchNote === LAUNCHED ? (
@@ -6273,6 +6288,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   // échéance ou par responsable (#76). La vue que le projet déclare l'emporte ; sans elle, l'arbre,
   // dans les deux modes, mères ou pas (#168).
   const by = groupingOf(groupBy, showDone, source.vue, mode)
+  const titlesNow = titlesNote(pending, by)
   // Seules les ouvertes rangées par sujet ont des sections de sujet.
   const subjects: [string, number][] = by === 'subject' ? countBy(unsorted, groupOf) : []
   // L'arbre : ses sections, et la profondeur de chaque ligne, marquée devant son titre.
@@ -7198,12 +7214,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     <Box flexDirection="column" gap={SPACE.root} {...bodyPad}>
       {head}
 
-      {pending && by !== 'tree' && (
-        <Box flexDirection="row" alignItems="center" gap={SPACE.row} paddingX={SPACE.indent}>
-          {Svg && <Svg source={pendingIcon(palette.text2)} alt="en cours" width={SIZE.icon.md} height={SIZE.icon.md} isInteractive />}
-          <Text size="caption" color={palette.text2}>Titres en cours de calcul : rangées par axe en attendant</Text>
-        </Box>
-      )}
+      {titlesNow && <Box paddingX={SPACE.indent}>{waitBand('titles-note', titlesNow)}</Box>}
 
       {/* Les axes toujours dépliés (#160) ; les faites s'ouvrent par « N faites » de l'en-tête (#152). */}
       <Box flexDirection="column">
