@@ -19,6 +19,8 @@ declare module 'claude-code' {
       liveVersion: number
       /** Génération des zones de clic (suffixe `-g<N>` de leurs clés) : monte quand leur cadre n'a pas dit « prêt ». */
       zoneGen: number
+      /** Monte à la fin du mouvement d'une case cochée ou rouverte (#182) : la case redevient fixe, la cochée quitte les ouvertes. */
+      checkMove: number
       /** Pourquoi les autres sessions manquent (liste refusée ou illisible) ; vide quand la liste se lit. */
       scanNote: string
       /** Monte après chaque écriture des réglages de session (par le volet Réglages ou ailleurs) : le volet se redessine. */

@@ -25,6 +25,7 @@ import {
   progressIcon,
   bubbleIcon,
   squareCheckRowIcon,
+  squareCheckMoveIcon,
   squareRowIcon,
   cornerIcon,
   memo,
@@ -309,6 +310,9 @@ import {
   armAsk,
   armShown,
   checkArm,
+  checkMoveAt,
+  checkLingers,
+  CHECK_HOLD_MS,
   pressDisarms,
   treeNumberBox,
   treeSteps,
@@ -387,6 +391,7 @@ import {
   waitNote,
   type WaitNote,
   type Armed,
+  type CheckMove,
 } from './parse'
 
 const PANE = PANE_ID
@@ -541,6 +546,7 @@ const themeStampAtom = atom({ plugin: 'roadmap', key: 'themeStamp' } as const, 0
 const liveVersionAtom = atom({ plugin: 'roadmap', key: 'liveVersion' } as const, 0)
 const retryAtom = atom({ plugin: 'roadmap', key: 'retry' } as const, 0)
 const zoneGenAtom = atom({ plugin: 'roadmap', key: 'zoneGen' } as const, 0)
+const checkMoveAtom = atom({ plugin: 'roadmap', key: 'checkMove' } as const, 0)
 /** Pourquoi les autres sessions manquent (liste refusée ou illisible) ; vide quand elle se lit. */
 const scanNoteAtom = atom({ plugin: 'roadmap', key: 'scanNote' } as const, '')
 const versionNoteAtom = atom({ plugin: 'roadmap', key: 'versionNote' } as const, { state: 'none', text: '', foot: '' } as VersionCheck)
@@ -3290,6 +3296,31 @@ const DISARMED = { armed: '', armedAt: 0 } as const
  */
 let armedNow = ''
 
+/**
+ * Les mouvements de case demandés (#182), par `taskKey` : posés à la confirmation, joués par la ligne
+ * au premier dessin où elle a changé (`checkMoveAt`), puis oubliés. En mémoire : un rechargement les perd.
+ */
+const checkMoves = new Map<string, CheckMove>()
+
+/**
+ * Le temps passé du mouvement de cette ligne au dessin de `now`, s'il joue (#182). À son départ, une
+ * minuterie redessine le panneau une fois, `CHECK_HOLD_MS` plus tard : la case redevient fixe, et une
+ * tâche cochée quitte les ouvertes.
+ */
+function checkMoveOf($: EngineInterface, key: string, done: boolean, now: number): number | undefined {
+  const out = checkMoveAt(checkMoves.get(key), done, now)
+  if (out.move) checkMoves.set(key, out.move)
+  else checkMoves.delete(key)
+  if (out.elapsed === 0 && typeof setTimeout === 'function') {
+    setTimeout(() => {
+      void update($, checkMoveAtom, v => v + 1).catch(() => {
+        // le panneau a pu se fermer : rien à redessiner
+      })
+    }, CHECK_HOLD_MS)
+  }
+  return out.elapsed
+}
+
 /** Un clic ailleurs (#179) : la ligne armée se désarme ; sans ligne armée, aucune écriture. */
 async function disarm($: EngineInterface): Promise<void> {
   if (armedNow === '') return
@@ -3334,6 +3365,7 @@ async function checkTask($: EngineInterface, source: Source, task: Task, openKid
     }
     return
   }
+  checkMoves.set(taskKey(task), { done: !task.done, at: await $.clock.now() })
   if (!task.done && openKids > 0) return closeFamily($, source, task)
   if (checking) return
   checking = true
@@ -3358,7 +3390,11 @@ async function closeFamily($: EngineInterface, source: Source, mother: Task): Pr
   checking = true
   try {
     const listed = await load($, files(source).open, 'ROADMAP.md')
-    const open = typeof listed === 'string' ? 0 : listed.filter(t => !t.done && t.parent === mother.id && t.id !== mother.id).length
+    const openKids = typeof listed === 'string' ? [] : listed.filter(t => !t.done && t.parent === mother.id && t.id !== mother.id)
+    const open = openKids.length
+    // Chaque fille cochée joue son mouvement (#182), à son premier dessin faite.
+    const at = await $.clock.now()
+    for (const kid of openKids) checkMoves.set(taskKey(kid), { done: true, at })
     if (await checkByClaude($, source, mother, 'family', open)) return
     const fresh = async (id: string | undefined) => {
       const tasks = await load($, files(source).open, 'ROADMAP.md')
@@ -5275,6 +5311,8 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   const [stamp, titlesVersion, themeStamp, retry, liveVersion, view, search, titleNote, zoneGen, now, scanNote] = await Promise.all([
     read($, stampAtom), read($, titlesVersionAtom), read($, themeStampAtom), read($, retryAtom), read($, liveVersionAtom),
     read($, viewAtom), read($, searchAtom), read($, titleNoteAtom), read($, zoneGenAtom), $.clock.now(), read($, scanNoteAtom),
+    // Lu pour être redessiné à la fin d'un mouvement de case (#182), sans relire les fichiers.
+    read($, checkMoveAtom),
   ])
   const {
     axis: axisRaw, attend: attendRaw, who: whoRaw = 'all', moreFilters = false, showDone, groupBy, selected, openGroups, closedGroups, moreGroups,
@@ -6411,6 +6449,10 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   const blockKeys = new Set(blockRows.map(r => taskKey(r.task)))
   const inBlock = (t: Task) => blockKeys.has(taskKey(t))
   const blockTasks = blockRows.map(r => r.task)
+  // Une tâche qu'on vient de cocher reste à sa place le temps de son mouvement (#182, maquette A), puis
+  // part dans les Done ; une fille d'une mère ouverte y reste de toute façon, sous sa mère.
+  const openIds = new Set(openTasks.map(t => t.id))
+  const lingering = showDone ? [] : doneTasks.filter(t => checkLingers(checkMoves.get(taskKey(t)), now) && !(t.parent !== undefined && openIds.has(t.parent)))
   const blockSteps = new Map<string, ChildStatus>()
   await Promise.all(
     [...blockOf.values()].map(async bt => {
@@ -6448,7 +6490,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
           ? liveAll
           : attend === 'feedback'
             ? feedbackAll
-            : openTasks.filter(t => matches(t, axis, attend, me) && matchesWho(t, who, me))
+            : [...openTasks, ...lingering].filter(t => matches(t, axis, attend, me) && matchesWho(t, who, me))
   ).filter(t => !inBlock(t))
   const filtered = axis !== 'all' || attend !== 'all' || who !== 'all' || showDone || searching
   const unsorted = shown.filter(t => attend === 'late' || !isOverdue(t, today))
@@ -6634,7 +6676,15 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     // Une faite (#180, maquette C) : le carré de son axe, à pleine couleur, coché de blanc ; on le
     // reclique pour la rouvrir (`doneCheck`). Une mère faite garde sa flèche et son rond.
     const checkedMark = t.done && !head && Svg !== undefined
-    const markSource = checkedMark ? squareCheckRowIcon(axisHex(t.axis), palette.onAxis) : squareRowIcon(axisHex(t.axis))
+    // La case qui vient d'être cochée ou rouverte joue son mouvement (#182, maquette A), une fois, dans
+    // le cadre interactif qui seul joue le SMIL ; ensuite, le dessin fixe.
+    const moving = Svg !== undefined && !head && !ghost ? checkMoveOf($, taskKey(t), t.done, now) : undefined
+    const markSource =
+      moving !== undefined
+        ? squareCheckMoveIcon(axisHex(t.axis), palette.onAxis, t.done, moving)
+        : checkedMark
+          ? squareCheckRowIcon(axisHex(t.axis), palette.onAxis)
+          : squareRowIcon(axisHex(t.axis))
     // L'arbre par axe (#168) : la mère porte sa flèche dans son carré, une fille son coude.
     const drawn = head
       ? treeMotherRowIcon(axisHex(t.axis), head.open, palette.onAxis)
@@ -6645,7 +6695,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
           : markSource
     const markAlt = `${isAbandoned(t) ? 'annulée' : t.done ? 'faite' : t.axis}${chain ? `, étape ${chain.step}` : ''}${head ? (head.open ? ', replier' : ', déplier') : ''}`
     const mark = Svg ? (
-      <Svg source={ghost || (t.done && !checkedMark) ? fade(drawn, true) : drawn} alt={markAlt} width={chain || child ? 32 : 16} height={24} />
+      <Svg source={ghost || (t.done && !checkedMark) ? fade(drawn, true) : drawn} alt={markAlt} width={chain || child ? 32 : 16} height={24} {...(moving !== undefined ? { isInteractive: true } : {})} />
     ) : head ? (
       <Text color={axisTheme(t.axis)}>{head.open ? '⌄' : '›'}</Text>
     ) : (

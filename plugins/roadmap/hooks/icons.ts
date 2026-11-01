@@ -561,6 +561,25 @@ export function squareCheckRowIcon(hex: string, inkHex: string): string {
 }
 
 /**
+ * La case qui bouge (#182, maquette A) : le carré coché de `squareCheckRowIcon`, animé en SMIL, figé
+ * à la fin sur le dessin fixe. Cocher (`done`) : le carré passe de 10 à 12 avec un petit rebond, puis
+ * la coche se trace ; rouvrir : la coche s'efface, puis le carré revient au carré de 10 d'une ouverte.
+ * `elapsedMs` recule le début : un redessin reprend le mouvement où il en est.
+ */
+export function squareCheckMoveIcon(hex: string, inkHex: string, done: boolean, elapsedMs: number): string {
+  const begin = `begin="-${(elapsedMs / 1000).toFixed(3)}s" fill="freeze"`
+  const ease = 'calcMode="spline" keySplines="0.2 0.8 0.3 1;0.2 0.8 0.3 1"'
+  // Le carré se dessine autour de son centre (8, 12) : l'échelle le garde centré sur la ligne.
+  const square = done
+    ? `<rect x="-6" y="-6" width="12" height="12" rx="${RADIUS.square}" fill="${hex}"><animateTransform attributeName="transform" type="scale" values="0.833;1.12;1" keyTimes="0;0.5;1" ${ease} dur="0.28s" ${begin}/></rect>`
+    : `<rect x="-6" y="-6" width="12" height="12" rx="3" fill="${hex}" transform="scale(0.833)"><animateTransform attributeName="transform" type="scale" values="1;1;0.833" keyTimes="0;0.4;1" ${ease} dur="0.25s" ${begin}/></rect>`
+  const trace = done
+    ? `<animate attributeName="stroke-dashoffset" values="9;9;0" keyTimes="0;0.333;1" calcMode="spline" keySplines="0 0 1 1;0.3 0 0.2 1" dur="0.36s" ${begin}/>`
+    : `<animate attributeName="stroke-dashoffset" values="0;9" dur="0.15s" ${begin}/>`
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="24" viewBox="0 0 16 24"><g transform="translate(8 12)">${square}</g><path d="M5.2 12.2l1.9 1.9 3.7-3.9" fill="none" stroke="${inkHex}" stroke-width="${STROKE.check}" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="9" stroke-dashoffset="${done ? 0 : 9}">${trace}</path></svg>`
+}
+
+/**
  * Une marque de ligne (le carré d'axe ou la coche, 16 × 24) précédée du trait de sa chaîne
  * (`après:`) et de son étape, en un seul dessin de 32 × 24 : un Svg par ligne, comme une ligne
  * hors chaîne (le poids d'un dessin est compté). Le trait descend de la première tâche, traverse

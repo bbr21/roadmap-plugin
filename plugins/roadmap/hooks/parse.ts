@@ -4264,6 +4264,43 @@ export function armShown(armed: Armed | undefined, key: string, now: number): bo
   return armed !== undefined && armed.key === key && now - armed.at < ARM_MS
 }
 
+/** La durée du mouvement de la case (#182, maquette A) : le rebond du carré et le trait de sa coche. */
+export const CHECK_MOVE_MS = 400
+/** Le délai dans lequel une case cochée doit paraître changée pour jouer son mouvement (une écriture par Claude comprise). */
+export const CHECK_WAIT_MS = 120_000
+/** Le temps qu'une tâche qu'on vient de cocher reste à sa place, mouvement compris, avant de partir dans les Done (#182). */
+export const CHECK_HOLD_MS = 1_200
+
+/** Un mouvement de case demandé (#182) : vers faite (`done`) ou ouverte, depuis `at` ; `shownAt`, le dessin où il a commencé. */
+export type CheckMove = { done: boolean; at: number; shownAt?: number }
+
+/**
+ * Le mouvement de la case d'une ligne au dessin de `now` (#182) : il attend le premier dessin où la
+ * ligne a changé, puis joue une fois ; un redessin le continue (`elapsed`) sans le relancer. Joué, il
+ * se garde jusqu'à `CHECK_HOLD_MS` (`checkLingers`) ; sans `move` en retour, il s'oublie : fini, ou
+ * jamais vu dans `CHECK_WAIT_MS`.
+ */
+export function checkMoveAt(move: CheckMove | undefined, done: boolean, now: number): { move?: CheckMove; elapsed?: number } {
+  if (move === undefined) return {}
+  if (move.shownAt === undefined) {
+    if (now - move.at >= CHECK_WAIT_MS) return {}
+    if (move.done !== done) return { move }
+    return { move: { ...move, shownAt: now }, elapsed: 0 }
+  }
+  const elapsed = now - move.shownAt
+  if (elapsed >= CHECK_HOLD_MS) return {}
+  return elapsed < CHECK_MOVE_MS ? { move, elapsed } : { move }
+}
+
+/**
+ * Une tâche qu'on vient de cocher reste-t-elle dans la vue des ouvertes (#182) : le temps que sa
+ * case paraisse faite et joue son mouvement, puis `CHECK_HOLD_MS` après son premier dessin.
+ */
+export function checkLingers(move: CheckMove | undefined, now: number): boolean {
+  if (move === undefined || !move.done) return false
+  return move.shownAt === undefined ? now - move.at < CHECK_WAIT_MS : now - move.shownAt < CHECK_HOLD_MS
+}
+
 /**
  * Un clic ailleurs désarme (#179) : tout bouton ou zone du panneau, sauf un rond (`check:…`, qui
  * arme ou désarme lui-même) et les boutons de l'encart (`arm-…`).
