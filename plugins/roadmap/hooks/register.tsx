@@ -129,15 +129,16 @@ import {
   type EditSpec,
   type TaskEdit,
   taskBrandOf,
-  byDay,
   doneByDay,
   groupingOf,
   nextGrouping,
   groupingLabel,
-  byDeadline,
-  byOwner,
   byTree,
   axisTree,
+  dayTree,
+  deadlineTree,
+  ownerTree,
+  type AxisItem,
   parentLeftAlone,
   blockerOf,
   closeCaption,
@@ -388,7 +389,6 @@ import {
   LOCAL_UPDATE_REQUEST,
   localAppVersion,
   updateLocalOutcome,
-  titlesNote,
   waitNote,
   type WaitNote,
   type Armed,
@@ -6514,31 +6514,17 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
             : [...openTasks, ...lingering].filter(t => matches(t, axis, attend, me) && matchesWho(t, who, me))
   ).filter(t => !inBlock(t))
   const filtered = axis !== 'all' || attend !== 'all' || who !== 'all' || showDone || searching
-  const unsorted = shown.filter(t => attend === 'late' || !isOverdue(t, today))
-  const late = sortTasks(shown.filter(t => isOverdue(t, today)), sortOrder)
-  // Titres en cours : tant qu'aucune tâche ouverte n'a son titre court (premier calcul), les
-  // sections se rangent par axe ; ensuite une tâche nouvelle attend son titre dans « À classer ».
+  // Un titre court pas encore calculé : la ligne garde son titre provisoire, estompé.
   const titled = (t: Task) => titles[hashLabel(t.label)] !== undefined
-  const pending = openTasks.length > 0 && !openTasks.some(titled)
-  const subjectOf = (t: Task) => (pending ? t.axis : short(t).sujet === '…' ? 'À classer' : short(t).sujet)
-  // Une chaîne (`après:`) reste d'un bloc, dans l'ordre d'exécution : rangée sous le sujet (ou le
-  // jour) de sa tête, même quand les tâches suivantes ont un autre sujet (Bertrand, 2026-10-27).
-  const unsortedSet = new Set(unsorted)
-  const headOf = (t: Task) => chainHead(t, prereqFor, unsortedSet)
-  const groupOf = (t: Task) => subjectOf(headOf(t))
-  // En arbre, par jour ou par sujet, le même choix dans toutes les vues ; en mode Projet, aussi par
-  // échéance ou par responsable (#76). La vue que le projet déclare l'emporte ; sans elle, l'arbre,
-  // mères ou pas (#168). L'échéance et le responsable seulement si la roadmap en a (#176).
+  // Par sujet, par jour, par échéance ou par responsable (#76, #176, #189) : le même choix dans
+  // toutes les vues. La vue que le projet déclare l'emporte ; sans elle, par sujet. Le jour et
+  // l'échéance seulement si la roadmap a des `due:`, le responsable des `resp:` (#176).
   const rangeable = groupingData(openTasks)
   const by = groupingOf(groupBy, showDone, source.vue, rangeable)
-  const titlesNow = titlesNote(pending, by)
-  // Seules les ouvertes rangées par sujet ont des sections de sujet.
-  const subjects: [string, number][] = by === 'subject' ? countBy(unsorted, groupOf) : []
-  // L'arbre : ses sections, et la profondeur de chaque ligne, marquée devant son titre.
-  // L'arbre garde les tâches en retard à leur place (une mère en retard garde ses filles) : pas de
-  // section « En retard » à part, la pastille de retard reste sur la ligne. Sous une recherche, pas
-  // d'arbre : ses résultats n'ont pas de « ↳ » (#86).
-  const tree = by === 'tree' && !showDone && !searching ? byTree(sortTasks(shown, sortOrder), allTasks, t => short(t).titre, prereqsFor, today) : []
+  // Les ouvertes sont toujours en arbre (#189) : le rangement trie des arbres entiers. L'arbre
+  // garde les tâches en retard à leur place (une mère en retard garde ses filles) : la pastille de
+  // retard reste sur la ligne. Sous une recherche, pas d'arbre : ses résultats n'ont pas de « ↳ » (#86).
+  const tree = !showDone && !searching ? byTree(sortTasks(shown, sortOrder), allTasks, t => short(t).titre, prereqsFor, today) : []
 
   const setAxis = (a: string) => () => pressAxis($, a)
   const toggleDone = () => pressDone($)
@@ -6801,7 +6787,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
         : allPills
     const number = t.id ? taskNumber(t.id, rowSession ? () => void openSession($, rowSession.entry) : undefined, check !== null) : undefined
     // Jamais dans « En cours » (#177) : le bloc de Maestro ou le filtre ; le carré d'axe suffit.
-    const department = ghost ? undefined : axisPillText(t, { enabled: settings.axisPill, axisFilter: axis, live: block !== undefined || attend === 'live', groupedByAxis: (pending && by === 'subject') || (tree !== undefined && !rangerPar), clesVisibles })
+    const department = ghost ? undefined : axisPillText(t, { enabled: settings.axisPill, axisFilter: axis, live: block !== undefined || attend === 'live', groupedByAxis: tree !== undefined && !rangerPar && (by === 'subject' || attend === 'today'), clesVisibles })
     const line = (
       <Box
         key={`hit:${t.key}`}
@@ -6924,7 +6910,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   // Une section repliable : chevron, nom, et à droite le compte (et le disque rouge d'« En retard »).
   // `shownRows` : les lignes que le budget du dessin lui laisse ; au-delà, « Voir les N autres ».
   // `id` tient l'état de la section (dépliée, repliée, « Voir les N autres ») ; `name` est son libellé.
-  const section = (id: string, name: string, tasks: Task[], shownRows: number, lead?: RenderElement, mark?: RenderElement, block?: TreeBlock, bare = false) => {
+  const section = (id: string, name: string, tasks: Task[], shownRows: number, lead?: RenderElement, mark?: RenderElement, block?: TreeBlock, bare = false, focus?: Task) => {
     const isOpen = bare || isOpenGroup(id)
     const rest = tasks.length - shownRows
     // Une suite de tâches seules d'une section d'axe (#168) : sans en-tête, toujours dépliée.
@@ -6953,11 +6939,24 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     if (block?.head) {
       const mother = block.head
       const shown = tasks.slice(0, shownRows)
+      // Par jour, la mère repliée garde sous elle son étape du jour (#189, maquette B) ; « + N étapes »,
+      // ses autres étapes ouvertes, la déplie.
+      const others = focus ? block.tasks.filter(t => t !== focus).length : 0
       return (
         <Box key={`section:${id}`} flexDirection="column" paddingTop="xs">
           <Box key={`hit:group:${id}`} flexDirection="column">
             {row(mother, undefined, { kind: 'head', id, open: isOpen, ghost: block.ghost, block })}
           </Box>
+          {!isOpen && focus && (
+            <Box flexDirection="column" paddingBottom="sm">
+              {row(focus, undefined, { kind: 'child', last: true, parent: mother })}
+              {others > 0 && (
+                <Box key={`unfold-row:${id}`} flexDirection="row" paddingX={SPACE.indent} paddingLeft={SPACE.nest}>
+                  <Button key={`unfold:${keyPart(id)}`} plain dimColor label={`+ ${others} étape${others > 1 ? 's' : ''}`} onPress={toggleGroup(id)} />
+                </Box>
+              )}
+            </Box>
+          )}
           {isOpen && (
             <Box flexDirection="column" paddingBottom="sm">
               {shown.map((t, i) => row(t, undefined, { kind: 'child', last: i === shown.length - 1 && rest <= 0, parent: mother }))}
@@ -7016,7 +7015,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
           <Box flexDirection="column" paddingBottom="sm">
             {(() => {
               // En arbre, la profondeur tient la place du trait des chaînes.
-              const chains = by === 'tree' ? new Map<Task, ChainStep>() : chainSteps(tasks, prereqFor)
+              const chains = block ? new Map<Task, ChainStep>() : chainSteps(tasks, prereqFor)
               // Les tâches seules de l'arbre (#163) : la ligne « Le fil », sa case et son seul département.
               return tasks.slice(0, shownRows).map(t => (block ? row(t, undefined, { kind: 'alone' }) : row(t, chains.get(t))))
             })()}
@@ -7058,33 +7057,39 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
 
   // L'arbre, rangé en bandes par la valeur de `ranger_par` (#125) : une bande par valeur, les blocs
   // sous la valeur de leur tête, les tâches seules coupées par bande. Une bande se replie à part.
-  // Sans `ranger_par`, l'arbre se range par axe (#168) : une bande par axe, dans l'ordre de la
-  // légende, la flèche dans son carré ; dedans, les mères et les suites de tâches seules, triées
-  // en C (`axisTree`) ; une suite de seules est un groupe sans en-tête (`bare`).
-  type ListGroup = { key?: string; name: string; tasks: Task[]; lead?: RenderElement; mark?: RenderElement; block?: TreeBlock; band?: { count: number; lead?: RenderElement; axis?: string }; under?: string; bare?: boolean }
+  // Sans `ranger_par`, par sujet, l'arbre se range par axe (#168) : une bande par axe, dans l'ordre de
+  // la légende, la flèche dans son carré ; par jour, par échéance ou par responsable (#189), une
+  // bande par section. Dedans, les arbres entiers : les mères en blocs, chaque suite de tâches seules
+  // en groupe sans en-tête (`bare`). Par jour, une mère porte la tâche du jour de son arbre (`focus`).
+  type ListGroup = { key?: string; name: string; tasks: Task[]; lead?: RenderElement; mark?: RenderElement; block?: TreeBlock; focus?: Task; band?: { count: number; lead?: RenderElement; axis?: string }; under?: string; bare?: boolean }
   const bandValue = (t: Task) => (rangerPar ? t.extra?.[rangerPar]?.[0] : undefined)
   const aloneBlock = (key: string, tasks: Task[]): TreeBlock => ({ key, label: '', ghost: false, tasks, rank: new Map(), done: 0, total: 0, doneTasks: [], closed: false })
-  const treeGroups: ListGroup[] = !rangerPar
-    ? axisTree(tree, order, isLive).flatMap(sec => {
-        const id = `axe:${sec.axis}`
-        const out: ListGroup[] = [{ key: id, name: axisLabel(sec.axis), tasks: [], band: { count: sec.count, axis: sec.axis } }]
-        let run: Task[] = []
-        const flush = () => {
-          if (run.length === 0) return
-          const key = `${id}:seules:${out.length}`
-          out.push({ key, name: '', tasks: run, block: aloneBlock(key, run), under: id, bare: true })
-          run = []
-        }
-        for (const it of sec.items) {
-          if (it.kind === 'alone') run.push(it.task)
-          else {
-            flush()
-            out.push({ key: it.block.key, name: it.block.label, tasks: treeSteps(it.block), block: it.block, under: id })
-          }
-        }
+  const lateLead = () => icon(discIcon(palette.late), 'en retard', 16, '●', 'error')
+  // Une section de l'arbre en groupes : sa bande, puis ses mères et ses suites de tâches seules.
+  const sectionGroups = (id: string, name: string, count: number, items: readonly AxisItem[], band: { lead?: RenderElement; axis?: string } = {}): ListGroup[] => {
+    const out: ListGroup[] = [{ key: id, name, tasks: [], band: { count, ...band } }]
+    let run: Task[] = []
+    const flush = () => {
+      if (run.length === 0) return
+      const key = `${id}:seules:${out.length}`
+      out.push({ key, name: '', tasks: run, block: aloneBlock(key, run), under: id, bare: true })
+      run = []
+    }
+    for (const it of items) {
+      if (it.kind === 'alone') run.push(it.task)
+      else {
         flush()
-        return out
-      })
+        out.push({ key: it.block.key, name: it.block.label, tasks: treeSteps(it.block), block: it.block, ...(it.focus ? { focus: it.focus } : {}), under: id })
+      }
+    }
+    flush()
+    return out
+  }
+  const rangedSections = by === 'day' ? dayTree(tree, today, isLive) : by === 'deadline' ? deadlineTree(tree, today, isLive) : by === 'owner' ? ownerTree(tree, me, isLive) : undefined
+  const treeGroups: ListGroup[] = rangedSections
+    ? rangedSections.flatMap(sec => sectionGroups(sec.key, sec.label, sec.count, sec.items, sec.late ? { lead: lateLead() } : {}))
+    : !rangerPar
+    ? axisTree(tree, order, isLive).flatMap(sec => sectionGroups(`axe:${sec.axis}`, axisLabel(sec.axis), sec.count, sec.items, { axis: sec.axis }))
     : bandsOf(
         tree.flatMap(g =>
           g.head
@@ -7142,68 +7147,47 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     : attend === 'relaunch'
     ? // À relancer (#99) : les attentes les plus vieilles en haut.
       [{ name: 'À relancer', tasks: [...shown].sort((x, y) => (waitDays(y, today, me) ?? 0) - (waitDays(x, today, me) ?? 0)) }]
-    : attend === 'today' && by === 'tree'
-    ? // Ma journée en arbre (#125) : ses sections en bandes, et dans chacune les blocs de ses tâches,
+    : attend === 'today'
+    ? // Ma journée (#99, #125) : ses sections en bandes, et dans chacune les blocs de ses tâches,
       // leur parent en gris ; la clé d'un bloc porte sa section (un parent peut être dans deux).
       todaySections(sortTasks(shown, sortOrder), today, me).flatMap(g => {
         const id = `jour:${g.label}`
-        const lead = g.label === 'En retard' ? icon(discIcon(palette.late), 'en retard', 16, '●', 'error') : undefined
+        const lead = g.label === 'En retard' ? lateLead() : undefined
         return [
           { key: id, name: g.label, tasks: [], band: { count: g.tasks.length, ...(lead ? { lead } : {}) } },
           ...byTree(g.tasks, allTasks, t => short(t).titre, prereqsFor).map(b => ({ key: `${id}:${b.key}`, name: b.label, tasks: b.tasks, block: b, under: id })),
         ]
       })
-    : attend === 'today'
-    ? // Ma journée (#99) : ses quatre sections, dans l'ordre, chaque tâche une fois.
-      todaySections(sortTasks(shown, sortOrder), today, me).map(g => ({
-        name: g.label,
-        tasks: g.tasks,
-        ...(g.label === 'En retard' ? { lead: icon(discIcon(palette.late), 'en retard', 16, '●', 'error') } : {}),
-      }))
-    : [
-        ...(attend !== 'late' && by !== 'tree' && late.length > 0
-          ? [{ name: 'En retard', tasks: late, lead: icon(discIcon(palette.late), 'en retard', 16, '●', 'error') }]
-          : []),
-        // Par jour d'ouverture ; dans un jour, l'ordre de la vue.
-        ...(by === 'day' ? byDay(sortTasks(unsorted, sortOrder), today, t => headOf(t).ouvert).map(day => ({ name: day.label, tasks: day.tasks })) : []),
-        ...(by === 'deadline' ? byDeadline(sortTasks(unsorted, sortOrder), today).map(g => ({ name: g.label, tasks: g.tasks })) : []),
-        ...(by === 'owner' ? byOwner(sortTasks(unsorted, sortOrder), me).map(g => ({ name: g.label, tasks: g.tasks })) : []),
-        ...treeGroups,
-        ...subjects.map(([name]) => {
-          const tasks = sortTasks(unsorted.filter(t => groupOf(t) === name), sortOrder)
-          return {
-          name,
-          tasks,
-          // Pas de roue en tête de section : seules les tâches en session en portent une.
-          // Rangées par axe : le carré de l'axe devant son nom.
-          ...(pending ? { mark: icon(squareIcon(axisHex(name)), name, 16, '■', axisTheme(name)) } : {}),
-          }
-        }),
-      ]
+    : treeGroups
   // Le budget de lignes du dessin : les sections ouvertes, dans l'ordre, en prennent tant qu'il en
   // reste ; une section dépliée en entier (« Voir les N autres ») prend toutes les siennes. Sans
   // lui, une vue filtrée ou « Tout déplier » posait ~2 000 éléments et ~330 Svg par clic (260 Ko),
   // au seuil où le panneau gèle (2026-10-23).
   // Les groupes d'une bande repliée ne se dessinent pas, et ne prennent rien au budget.
   const groups = allGroups.filter(g => g.under === undefined || bandOpen(g.under))
-  // Dans l'arbre par axe, la bande tait la pastille d'axe : le budget plein (#168).
-  let budget = settings.axisPill && attend !== 'live' && !showDone && !clesVisibles?.length && axis === 'all' && (by !== 'tree' || rangerPar) ? ROW_BUDGET_AXIS_PILL : ROW_BUDGET
+  // Par sujet, la bande d'axe tait la pastille d'axe : le budget plein (#168).
+  let budget = settings.axisPill && attend !== 'live' && !showDone && !clesVisibles?.length && axis === 'all' && (by !== 'subject' || rangerPar) ? ROW_BUDGET_AXIS_PILL : ROW_BUDGET
   const rowsOf = new Map<string, number>()
   const idOf = (g: { key?: string; name: string }) => g.key ?? g.name
   for (const g of groups) {
+    // Une mère repliée qui montre son étape du jour (#189) : une ligne.
+    if (!g.bare && !isOpenGroup(idOf(g)) && g.focus) budget -= 1
     if (!g.bare && !isOpenGroup(idOf(g))) continue
     const n = moreGroups.includes(idOf(g)) ? g.tasks.length : Math.min(g.tasks.length, Math.max(budget, 0))
     rowsOf.set(idOf(g), n)
     budget -= n
   }
   // La tête d'un bloc de l'arbre est une ligne de tâche dessinée, comme ses enfants (#125).
-  const drawnTasks = groups.flatMap(g => [...(g.block?.head ? [g.block.head] : []), ...g.tasks.slice(0, rowsOf.get(idOf(g)) ?? 0)])
+  const drawnTasks = groups.flatMap(g => [
+    ...(g.block?.head ? [g.block.head] : []),
+    ...(rowsOf.has(idOf(g)) ? g.tasks.slice(0, rowsOf.get(idOf(g))) : g.focus ? [g.focus] : []),
+  ])
   // Les sections qui se déplient, celles des bandes repliées comprises. Un arbre sans mère (#168) :
   // « Tout replier » replie ses bandes d'axe ; avec des mères, il ne replie qu'elles (#163).
   const names = allGroups.filter(g => !g.band && !g.bare).map(idOf)
-  const bandIds = by === 'tree' && !searching && !showDone && names.length === 0 ? allGroups.filter(g => g.band).map(idOf) : []
+  const bandIds = !searching && !showDone && names.length === 0 ? allGroups.filter(g => g.band).map(idOf) : []
   // Les mères de l'arbre (#163) : « Tout replier » les ferme toutes, « Tout déplier » les rouvre.
-  const motherKeys = by === 'tree' && !searching && !showDone ? groups.filter(g => g.block?.head !== undefined).map(idOf) : []
+  const motherKeys = !searching && !showDone ? groups.filter(g => g.block?.head !== undefined).map(idOf) : []
   const mothersOpen = motherKeys.some(isOpenGroup)
   const allOpen = bandIds.length > 0 ? bandIds.every(b => !closedGroups.includes(b)) : names.length > 0 && names.every(n => openGroups.includes(n))
   const action = searching
@@ -7482,7 +7466,6 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     <Box flexDirection="column" gap={SPACE.root} {...bodyPad}>
       {head}
 
-      {titlesNow && <Box paddingX={SPACE.indent}>{waitBand('titles-note', titlesNow)}</Box>}
 
       {/* Les axes toujours dépliés (#160) ; les faites s'ouvrent par « N faites » de l'en-tête (#152). */}
       <Box flexDirection="column">
@@ -7582,7 +7565,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
         <Text color={palette.text2}>{attend === 'today' ? "Rien d'urgent aujourd'hui." : 'Aucune tâche ouverte pour ce filtre.'}</Text>
       )}
 
-      <Box flexDirection="column">{groups.map(g => (g.band ? bandRow(idOf(g), g.name, g.band.count, g.band.lead, g.band.axis) : section(idOf(g), g.name, g.tasks, rowsOf.get(idOf(g)) ?? 0, g.lead, g.mark, g.block, g.bare)))}</Box>
+      <Box flexDirection="column">{groups.map(g => (g.band ? bandRow(idOf(g), g.name, g.band.count, g.band.lead, g.band.axis) : section(idOf(g), g.name, g.tasks, rowsOf.get(idOf(g)) ?? 0, g.lead, g.mark, g.block, g.bare, g.focus)))}</Box>
 
       {/* Le pied (#138, puis #162, maquette B) : la roue des réglages, la version de cette session, et à droite
           « Rafraîchir », qui relit tout et la compare à la publiée, « Recharger » quand seule la session retarde, ou « Mettre à jour » quand l'app retarde sur le catalogue local (#178). */}

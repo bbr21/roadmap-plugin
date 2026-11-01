@@ -55,7 +55,7 @@ les sessions toutes les 3 s (le dossier de la roadmap toutes les 15 s), et montr
   tient sur toutes les lignes) ; chez Maestro, une tâche en session n'y porte que la pastille
   « en session », sa barre et son étape sont dans l'arbre ;
 - toutes les faites, rangées par jour de clôture ou par sujet ;
-- dans toutes les vues, le menu « Ranger » (En arbre, Par sujet, Par jour ; Par échéance et Par responsable quand une ouverte a `due:` ou `resp:`, #176 ; un bouton sur mobile) : un seul choix pour toutes les vues ;
+- dans toutes les vues, le menu « Ranger » (Par sujet, le défaut ; Par jour et Par échéance quand une ouverte a `due:`, Par responsable quand une a `resp:`, #176 ; un bouton sur mobile) : un seul choix pour toutes les vues ; les ouvertes sont toujours en arbre, que le rangement trie sans le couper, et par jour chaque arbre se range à sa prochaine échéance, l'étape du jour sous sa mère repliée (#189) ;
   par jour, une ouverte se range au jour de son `ouvert:` (« En retard » reste en tête), une faite
   au jour de son `fait:` ; sans choix ni `vue` déclarée par le projet, les ouvertes vont en arbre
   (#168) et les faites par jour ;
@@ -645,6 +645,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.123.0 (2026-11-01)** : panneau : les ouvertes toujours en arbre, que « Ranger » (par sujet, par jour, par échéance, par responsable) trie sans le couper ; par jour, chaque arbre à sa prochaine échéance, l'étape du jour sous sa mère (#189)
 - **0.122.1 (2026-11-01)** : panneau : le titre de la fiche d'une tâche en texte de 22 px (un bouton natif ignorait sa taille), le crayon en petit bouton gris de 24 px (#193)
 - **0.122.0 (2026-11-01)** : contrôle, tasks, onboarding : une sous-tâche prend l'axe de sa tâche parente, un autre axe est refusé ; changer l'axe d'une mère emmène ses sous-tâches (#190)
 - **0.121.0 (2026-11-01)** : panneau : s'ouvre sur toutes les tâches, en arbre, « Plus › » replié, chez Maestro comme ailleurs (#188)
