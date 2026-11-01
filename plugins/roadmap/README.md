@@ -25,7 +25,7 @@ tâche, `[axe | attend:… | ouvert:… | due:… | src:… | fiche:… | après
 les sessions toutes les 3 s (le dossier de la roadmap toutes les 15 s), et montre :
 
 - la part faite, une barre par axe (cliquable), la légende des axes repliée derrière elle en une
-  ligne « › 7 axes · … » qu'un clic déplie (#149), et à droite du pourcentage « N faites sur M » (#162) ;
+  ligne « › 7 axes · … » qu'un clic déplie (#149), et à droite du pourcentage « N Done sur M » (#162, #174) ;
 - en pied, la roue qui ouvre les Réglages, la version du plugin et « Rafraîchir » (#138, #162) : un clic relit
   tout et compare la version de la session, celle de l'app et la dernière publiée (dépôt public, par `curl` ou
   `gh`) ; si l'app retarde, un lien vers claude.ai › Plugins et le reste du geste ; si seule la session
@@ -207,7 +207,16 @@ un verbe et son objet chacune, jamais recopiée dans le message, à jour à chaq
 Chez Maestro, la bande au-dessus de la saisie porte l'arbre de ses sessions (#147) : une ligne par
 tâche lancée, son état en couleur, son étape en cours, sa jauge, le nom qui ouvre la session. Elle
 reste visible quand le fil défile, cède à un sondage, et s'efface tant que la boîte de fin pose une
-question ; la liste native reste dans le fil.
+question ; la liste native reste dans le fil. Une session close et à l'arrêt, encore ouverte, porte au
+bout de sa ligne l'icône d'archivage : un clic l'archive (#174). L'en-tête dit « Contexte 40 % » pour
+Maestro seul, sans tokens ni jauge ; les lignes n'ont plus de contexte (#174). La jauge, le compte et
+l'état se serrent au bord droit, chacun à la largeur de son plus long texte, alignés d'une ligne à
+l'autre (#174).
+
+**Les mots d'état du panneau** (#174) : « Completed » pour une tâche close (bande de Maestro, voies,
+pastille violette de sa fiche) et « Done » pour ce qui est fait (« 7/7 Done », « N Done » de l'en-tête,
+« Done » d'une tâche de la chaîne). Seuls les mots affichés changent : les textes envoyés à Claude, la
+roadmap et les docs restent en français.
 
 **Le réglage autonome** (#77, #105, réglage de session `autonome`, éteint par défaut) :
 Maestro ne pose plus le menu « Je lance lesquelles ? ». Il pose les cartes des trois premières
@@ -612,6 +621,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.115.0 (2026-11-01)** : panneau : bande Maestro serrée et collée à droite, icône pour archiver une session close, Completed et Done à la place de close et faites, le contexte de Maestro seul (#174)
 - **0.114.4 (2026-11-01)** : panneau : le brief d'une session lancée et le contrôle d'une ligne neuve rappellent ROADMAP-REGLES.md (#171)
 - **0.114.3 (2026-11-01)** : panneau : le Livré de la carte Fin s'affiche en blocs, sans puce devant (#173)
 - **0.114.2 (2026-11-01)** : panneau : les notes d'attente (titres courts en préparation, carte de session posée) deviennent une bande bleue avec titre et explication (#169)

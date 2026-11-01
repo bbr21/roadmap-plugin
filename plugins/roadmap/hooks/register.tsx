@@ -55,7 +55,6 @@ import {
   spinnerIcon,
   stepIcon,
   stepsBarIcon,
-  contextBarIcon,
   squareIcon,
   STROKE,
   type Palette,
@@ -69,6 +68,7 @@ import {
   branchText,
   brandText,
   briefTaskOf,
+  bandColumns,
   maestroBand,
   type MaestroBand,
   type StepsView,
@@ -2118,6 +2118,8 @@ const lastActivityBySession = new Map<string, number>()
 const startedBySession = new Map<string, string>()
 /** Les sessions ouvertes (non archivées) de la dernière relecture : le parent d'une session suivie est-il encore là (#121) ? */
 let openSessionIds = new Set<string>()
+// Les sessions archivées par le panneau ou la bande (#174) : fermées avant la relecture suivante des sessions.
+const archivedSessionIds = new Set<string>()
 /** Les rangées de la dernière relecture, fiche de cette session comprise : les filles de Maestro s'y lisent (#137). */
 let sessionRows: unknown[] = []
 let listDenied = false
@@ -2919,16 +2921,18 @@ async function openSession($: EngineInterface, entry: LiveEntry): Promise<void> 
  * Archive la session d'une tâche faite. L'archivage se défait depuis la barre latérale ; la tâche
  * cesse aussitôt de pointer vers la session.
  */
-async function archiveSession($: EngineInterface, key: string, entry: LiveEntry): Promise<void> {
+async function archiveSession($: EngineInterface, key: string, entry: LiveEntry): Promise<boolean> {
   await setView($, () => ({ openNote: '' }))
-  if (!entry.sessionId) return
+  if (!entry.sessionId) return false
   try {
     const ran = await $.tool.call({ tool: ARCHIVE_SESSION_TOOL, session_id: entry.sessionId })
     if (ran.deny !== undefined || ran.isError) {
       await setView($, () => ({ openNote: `Archivage refusé : ${ran.deny ?? ran.text ?? 'sans motif'}` }))
-      return
+      return false
     }
-    // La session est archivée : le panneau cesse d'y pointer tout de suite, puis oublie son suivi.
+    // La session est archivée : le panneau cesse d'y pointer tout de suite, puis oublie son suivi ; la
+    // bande de Maestro la compte archivée avant la relecture des sessions (#174).
+    archivedSessionIds.add(entry.sessionId)
     liveStatus.set(key, 'closed')
     for (const [k, v] of sessionMatches) if (v.sessionId === entry.sessionId) sessionMatches.delete(k)
     await setView($, () => ({ openNote: `Session « ${entry.title} » archivée.` }))
@@ -2941,9 +2945,19 @@ async function archiveSession($: EngineInterface, key: string, entry: LiveEntry)
     } catch {
       // stockage indisponible : l'entrée reste, marquée close ; le sondage suivant la retire
     }
+    return true
   } catch (err) {
     await setView($, () => ({ openNote: `Archivage impossible : ${err instanceof Error ? err.message : String(err)}` }))
+    return false
   }
+}
+
+/** L'icône d'archivage d'une ligne de la bande de Maestro (#174) : la session de sa tâche, par son suivi s'il y en a un. */
+async function archiveBandSession($: EngineInterface, t: BrandTask, now: number): Promise<void> {
+  if (!t.sessionId) return
+  const live = await loadLive($).catch(() => ({}) as Record<string, LiveEntry>)
+  const key = Object.keys(live).find(k => live[k]?.sessionId === t.sessionId)
+  await archiveSession($, key ?? `session:${t.sessionId}`, (key ? live[key] : undefined) ?? { sessionId: t.sessionId, startedAt: now, title: t.label })
 }
 
 /** La clôture en cours, au bouton de confirmation : un second clic n'écrit pas deux fois. */
@@ -4305,11 +4319,12 @@ export const register: Register = (on, options) => {
       const statuses = await Promise.all(band.tasks.map(t => readSteps($, t.sessionId)))
       const views = statuses.map((status, i) => (status ? stepsView(status.steps, { now, at: status.at, closed: band.tasks[i]?.closed === true }) : undefined))
       // Le contexte de Maestro (#157) : la mesure du dernier tour, ou celle du moment avant la première.
+      // Celui des sessions ne se montre plus (#174).
       const mine = (await read($, bandContextAtom)) ?? contextUseOf((await $.session.usage().catch(() => undefined))?.context)
-      const contexts = { mine: contextView(mine ?? undefined), rows: statuses.map(status => contextView(status?.context)) }
-      return maestroBandTree($, e, band, found.data.palette, views, t =>
-        void (t.sessionId ? openSession($, { sessionId: t.sessionId, startedAt: now, title: t.label }) : undefined),
-      now, contexts)
+      return maestroBandTree($, e, band, found.data.palette, views, {
+        open: t => void (t.sessionId ? openSession($, { sessionId: t.sessionId, startedAt: now, title: t.label }) : undefined),
+        archive: t => void archiveBandSession($, t, now),
+      }, now, contextView(mine ?? undefined), await read($, zoneGenAtom))
     } catch {
       return next(e)
     }
@@ -4395,7 +4410,7 @@ async function maestroTasksOf(
       label: short(t),
       running: runningBySession.get(sid) ?? false,
       // Avant la première relecture des sessions, une session suivie compte pour ouverte.
-      open: openSessionIds.size === 0 || openSessionIds.has(sid),
+      open: !archivedSessionIds.has(sid) && (openSessionIds.size === 0 || openSessionIds.has(sid)),
       done: t.done,
       sessionId: sid,
       createdAt: createdBySession.get(sid) ?? Number.NaN,
@@ -4701,7 +4716,8 @@ function brandTree(
         <Box flexGrow={1} flexShrink={1} minWidth={0}>
           <Text size="footnote" color={palette.text2} wrap="truncate-end">{words.sub}</Text>
         </Box>
-        {state && pill(BRAND_STATE_WORDS[state], ...tone(state))}
+        {/* Une tâche close : « Completed » en violet, comme dans la bande de Maestro (#174). */}
+        {state && pill(BRAND_STATE_WORDS[state], ...tone(state, state === 'done'))}
       </Box>
       {titleEnd ? (
         <Box key="title-row" flexDirection="row" alignItems="flex-start" gap={SPACE.row}>
@@ -4723,7 +4739,7 @@ function brandTree(
 }
 
 /** Les mots d'état d'une tâche lancée, ceux des pastilles de Maestro. */
-const BRAND_STATE_WORDS: Record<BrandTask['state'], string> = { wait: "t'attend", live: 'en session', done: 'close' }
+const BRAND_STATE_WORDS: Record<BrandTask['state'], string> = { wait: "t'attend", live: 'en session', done: 'Completed' }
 
 /**
  * La marque de cette session : chez Maestro (son titre ou sa marque), Maestro et ses tâches ; chez une
@@ -4757,39 +4773,59 @@ function maestroBandTree(
   band: MaestroBand,
   palette: Palette,
   views: readonly (StepsView | undefined)[],
-  open: (t: BrandTask) => void,
+  act: { open: (t: BrandTask) => void; archive: (t: BrandTask) => void },
   now: number,
-  contexts: { mine?: ContextView; rows: readonly (ContextView | undefined)[] } = { rows: [] },
+  mine?: ContextView,
+  zoneGen = 0,
 ): RenderElement {
   const resolved = $.ui.resolve(e)
   const { Box, Text, Button } = resolved
   const Svg = 'Svg' in resolved && e.surface !== 'terminal' ? resolved.Svg : undefined
+  const Client = 'Client' in resolved && Svg ? resolved.Client : undefined
   const words = brandText(band.brand)
   // Les couleurs de #145 : t'attend en orange, toute finie en violet.
   const hue = (t: BrandTask): [string, string] =>
     t.finished ? [palette.finished, palette.finishedOn] : t.state === 'wait' ? [palette.block, palette.blockOn] : t.state === 'live' ? [palette.live, palette.liveOn] : [palette.done, palette.text2]
   const strut = Svg && <Svg source={`<svg xmlns="http://www.w3.org/2000/svg" width="1" height="${SIZE.strut.row}"/>`} alt="espace" width={1} height={SIZE.strut.row} />
-  // Le contexte (#157, maquette C) : celui de Maestro dans l'en-tête, celui de chaque session sous sa jauge d'étapes.
-  const mine = contexts.mine
-  const mineBar = mine && Svg ? contextBarIcon(palette, mine, { width: BAND_GAUGE.context, height: 4 }) : undefined
+  // L'icône d'archivage d'une session close (#174) : un dessin et sa zone de clic ; au terminal ou sans
+  // zone, un bouton de texte. Archiver garde le clic de Bertrand : l'icône est ce clic.
+  const archiveButton = (t: BrandTask) => {
+    const id = `band-archive:${keyPart(t.id)}`
+    if (!Svg || !Client) return <Button key={id} plain dimColor label="Archiver" onPress={() => act.archive(t)} />
+    pressHandlers.set(id, () => act.archive(t))
+    zoneDrawn(zones, 'press-hit', now)
+    return (
+      <Box key={id} flexDirection="row" alignItems="center">
+        <Svg source={archiveIcon(palette.text2, 14)} alt="Archiver la session" width={SIZE.icon.sm} height={SIZE.icon.sm} />
+        {/* Une ligne de haut : sous une icône, une zone sans hauteur ne reçoit aucun clic (2026-10-23). */}
+        <Box position="absolute" top={0} left={0} right={0}>
+          <Client key={`${pressKey(id)}-g${zoneGen}`} module="./press-hit.tsx" props={{ id }} width="100%" height={1} />
+        </Box>
+      </Box>
+    )
+  }
+  // La roue pour une session qui tourne, le mot pour les autres.
+  const spins = (t: BrandTask) => Boolean(Svg) && t.state === 'live' && !t.finished
+  const cols = bandColumns({
+    counts: views.map(v => v?.count ?? ''),
+    states: band.tasks.map((t, i) => (spins(t) ? 'spinner' : (words.states[i] ?? ''))),
+    archive: band.tasks.some(t => t.archivable && t.sessionId),
+  })
   return (
     <Box flexDirection="column" gap={SPACE.tight} backgroundColor={palette.bg} padding="sm">
       <Box flexDirection="row" alignItems="center" gap={SPACE.row}>
         <Text size="footnote" weight="semibold">{words.title}</Text>
         {words.foot !== '' && <Text size="caption" color={palette.text3}>{`· ${words.foot}`}</Text>}
+        {/* Le contexte de Maestro, seul : « Contexte 40 % », sans tokens ni jauge (#174). */}
         {mine && <Box flexGrow={1} />}
         {mine && <Text size="caption" color={palette.text3}>Contexte</Text>}
         {mine && <Text size="caption" tabular color={palette.text2}>{`${mine.percent} %`}</Text>}
-        {mine && <Text size="caption" tabular color={palette.text3}>{mine.text.slice(mine.text.indexOf('·'))}</Text>}
-        {mineBar && Svg && <Svg source={mineBar.source} alt={`contexte de Maestro ${mine?.text ?? ''}`} width={mineBar.width} height={mineBar.height} />}
       </Box>
       <Box flexDirection="column">
         {band.tasks.map((t, i) => {
           const view = views[i]
           const [dot, word] = hue(t)
           const bar = view && Svg ? stepsBarIcon(palette, view.segments, { width: BAND_GAUGE.row, height: 4, waiting: t.state === 'wait', finished: t.finished === true }) : undefined
-          const ctx = contexts.rows[i]
-          const ctxBar = ctx && Svg ? contextBarIcon(palette, ctx, { width: bar?.width ?? BAND_GAUGE.row, height: 2 }) : undefined
           const name = <Text size="footnote" wrap="truncate-end">{t.label}</Text>
           return (
             <Box key={`band-row:${keyPart(t.id)}`} flexDirection="row" alignItems="center" gap={SPACE.row} paddingX={1} hover={{ backgroundColor: palette.hover }}>
@@ -4800,7 +4836,7 @@ function maestroBandTree(
               </Box>
               <Box flexShrink={1} minWidth={0}>
                 {t.sessionId ? (
-                  <Button key={`band-open:${keyPart(t.id)}`} plain hover={{ underline: true }} onPress={() => open(t)}>
+                  <Button key={`band-open:${keyPart(t.id)}`} plain hover={{ underline: true }} onPress={() => act.open(t)}>
                     {name}
                   </Button>
                 ) : (
@@ -4811,23 +4847,32 @@ function maestroBandTree(
                 {view?.current && !t.finished && <Text size="caption" color={palette.text3} wrap="truncate-end">{`· ${view.current}`}</Text>}
               </Box>
               {/* Jauge, compte et état à largeur fixe, sur chaque ligne (#172) : les barres partent de la même
-                  colonne, quels que soient le titre, l'étape ou le compte (« 5/7 », « 7/7 faites »). */}
+                  colonne, quels que soient le titre, l'étape ou le compte (« 5/7 », « 7/7 Done »). */}
               {Svg && (
                 <Box key={`band-gauge:${keyPart(t.id)}`} width={BAND_COLUMNS.gauge} flexShrink={0} flexDirection="column" gap={SPACE.tight}>
                   {bar && <Svg source={bar.source} alt={`étapes ${view?.count ?? ''}`} width={bar.width} height={bar.height} />}
-                  {ctxBar && ctx && <Svg source={ctxBar.source} alt={`contexte ${ctx.text}`} width={ctxBar.width} height={ctxBar.height} />}
                 </Box>
               )}
-              <Box key={`band-count:${keyPart(t.id)}`} width={BAND_COLUMNS.count} flexShrink={0} alignItems="flex-end">
-                {view && <Text size="caption" tabular color={palette.text3}>{view.count}</Text>}
-              </Box>
-              <Box key={`band-state:${keyPart(t.id)}`} width={BAND_COLUMNS.state} flexShrink={0} alignItems="flex-end">
-                {Svg && t.state === 'live' && !t.finished ? (
+              {/* Compte, état et archivage serrés à la largeur de leur plus long texte (#174). */}
+              {cols.count > 0 && (
+                <Box key={`band-count:${keyPart(t.id)}`} width={cols.count} flexShrink={0} alignItems="flex-end">
+                  {view && <Text size="caption" tabular color={palette.text3}>{view.count}</Text>}
+                </Box>
+              )}
+              <Box key={`band-state:${keyPart(t.id)}`} width={cols.state} flexShrink={0} alignItems="flex-end">
+                {Svg && spins(t) ? (
                   <Svg source={spinnerIcon(palette.live, 14, words.states[i], false, now)} alt={words.states[i] ?? ''} width={SIZE.icon.sm} height={SIZE.icon.sm} isInteractive />
                 ) : (
                   <Text size="caption" color={word}>{words.states[i] ?? ''}</Text>
                 )}
               </Box>
+              {/* La case de l'archivage, sur chaque ligne pour garder les colonnes, dès qu'une ligne en a besoin ;
+                  l'icône sur une session close à l'arrêt (#174). Au terminal, le bouton prend sa largeur. */}
+              {cols.archive > 0 && (
+                <Box key={`band-archive-slot:${keyPart(t.id)}`} width={Svg ? cols.archive : undefined} flexShrink={0} alignItems="flex-end">
+                  {t.archivable && t.sessionId && archiveButton(t)}
+                </Box>
+              )}
             </Box>
           )
         })}
@@ -4837,14 +4882,14 @@ function maestroBandTree(
   )
 }
 
-/** Les largeurs des jauges de la bande de Maestro, en px : celle d'une ligne (#147), celle du contexte de Maestro (#157). */
-const BAND_GAUGE = { row: 64, context: 120 }
+/** La largeur de la jauge d'une ligne de la bande de Maestro, en px (#147) ; celle du contexte de Maestro est partie (#174). */
+const BAND_GAUGE = { row: 64 }
 
 /**
- * Les cases de la bande de Maestro, en cellules de l'app (~7,8 px, #172) : la jauge (64 px tiennent dans
- * 9 cellules), le compte (« 7/7 faites », « 10/12 ») et l'état.
+ * La case de la jauge de la bande de Maestro, en cellules de l'app (~7,8 px, #172) : 64 px tiennent dans
+ * 9 cellules. Celles du compte, de l'état et de l'archivage suivent le texte réel (`bandColumns`, #174).
  */
-const BAND_COLUMNS = { gauge: 9, count: 10, state: 9 }
+const BAND_COLUMNS = { gauge: 9 }
 
 /**
  * L'en-tête du panneau, au-dessus de la roadmap : Maestro et ses voies ; chez une tâche dont on a demandé
@@ -5387,7 +5432,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
           {x.done ? (
             <Box flexDirection="row" alignItems="center" gap={SPACE.row}>
               {icon(checkIcon(palette.ok, 12, STROKE.pill), 'faite', 12, '✓', 'success')}
-              <Text size="caption" weight="medium" color={palette.ok}>faite</Text>
+              <Text size="caption" weight="medium" color={palette.ok}>Done</Text>
             </Box>
           ) : isLive(x) ? (
             drawnPill({ text: 'en session', bg: palette.liveTint, fg: palette.liveOn, mark: 'spinner', height: SIZE.pill.detail })
@@ -5985,7 +6030,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
                 'État',
                 <Box flexDirection="row" alignItems="center" gap={SPACE.row}>
                   {abandoned ? <Text color={palette.text2}>⊘</Text> : icon(checkIcon(palette.ok, 14), 'faite', 14, '✓', 'success')}
-                  <Text color={abandoned ? palette.text2 : palette.ok}>{abandoned ? 'annulée' : 'faite'}</Text>
+                  <Text color={abandoned ? palette.text2 : palette.ok}>{abandoned ? 'annulée' : 'Done'}</Text>
                 </Box>,
               )}
             {s.sujet !== '…' && field('Sujet', plain(s.sujet))}
@@ -6837,7 +6882,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   const allGroups: ListGroup[] = searching
     ? [
         ...(foundShown.length > 0 ? [{ name: 'Ouvertes', tasks: foundShown }] : []),
-        ...(foundDoneShown.length > 0 ? [{ name: 'Faites', tasks: foundDoneShown }] : []),
+        ...(foundDoneShown.length > 0 ? [{ name: 'Done', tasks: foundDoneShown }] : []),
       ]
     : showDone
     ? by === 'subject'
@@ -7170,7 +7215,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   const tight = ((e.props as { bodyColumns?: number }).bodyColumns ?? 76) < 40
   const head = (
       <Box flexDirection="column">
-      {/* Deux éléments : le pourcentage à gauche, « N faites sur M » à droite (#162, la roue est descendue dans le pied). */}
+      {/* Deux éléments : le pourcentage à gauche, « N Done » à droite (#174) (#162, la roue est descendue dans le pied). */}
       <Box key="pane-head" flexDirection="row" justifyContent="space-between" alignItems="flex-end" paddingX={SPACE.indent}>
         {Svg ? (
           (() => {
@@ -7181,16 +7226,16 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
           <Text size="title" weight="semibold" tabular>{`${pct(doneTasks.length, total)} %`}</Text>
         )}
         {/* Toujours sur une ligne, sans l'heure de lecture (retirée, 2026-10-22) ; forme courte si très étroit. */}
-        {/* « N faites » est le lien vers les faites (#152, maquette C) : souligné, en gras une fois choisi. */}
+        {/* « N Done » (#174) est le lien vers les faites (#152, maquette C) : souligné, en gras une fois choisi. */}
         <Box key="hit:done-count" flexDirection="row" flexShrink={1} minWidth={0} marginLeft={1} hover={{ backgroundColor: palette.hover }}>
           {graphic && (
             <Text size="caption" tabular underline color={showDone ? palette.text : palette.text2} weight={showDone ? 'semibold' : undefined} wrap="truncate-end">
-              {tight ? `${doneTasks.length}` : `${doneTasks.length} faites`}
+              {tight ? `${doneTasks.length}` : `${doneTasks.length} Done`}
             </Text>
           )}
           {graphic && <Text size="caption" tabular color={palette.text2} wrap="truncate-end">{tight ? `/${total}` : ` sur ${total}`}</Text>}
           {!graphic && (
-            <Button key="done-count" plain dimColor={!showDone} label={tight ? `${doneTasks.length}/${total}` : `${doneTasks.length} faites sur ${total}`} onPress={toggleDone} />
+            <Button key="done-count" plain dimColor={!showDone} label={tight ? `${doneTasks.length}/${total}` : `${doneTasks.length} Done sur ${total}`} onPress={toggleDone} />
           )}
           {hit('done-count', toggleDone)}
         </Box>

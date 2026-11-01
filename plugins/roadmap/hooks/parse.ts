@@ -1846,7 +1846,7 @@ export function axisTree(blocks: readonly TreeBlock[], order: readonly string[],
 /** Le résumé de la ligne de filtre : « Mcp · attend Martial · 4 tâches », ou le total sans filtre. */
 export function filterSummary(view: { axis: string; attend: string; showDone: boolean; shown: number; doneShown: number; groupBy?: string; who?: string }): string {
   const by = groupingOf(view.groupBy, view.showDone)
-  if (view.showDone) return `${view.doneShown} faite${view.doneShown > 1 ? 's' : ''}, par ${by === 'subject' ? 'sujet' : 'jour'}`
+  if (view.showDone) return `${view.doneShown} Done, par ${by === 'subject' ? 'sujet' : 'jour'}`
   // Les ouvertes se rangent en arbre d'ordinaire (#168) : seuls les autres rangements se disent.
   const byDayNote = by === 'tree' || view.attend === 'today' ? '' : `, ${GROUPING_LABELS[by].toLowerCase()}`
   const who = view.who ?? 'all'
@@ -2738,8 +2738,8 @@ export type StepsView = { segments: StepSegment[]; total: number; done: number; 
 
 /**
  * La liste d'étapes d'une session, pour le panneau (#143) : un segment par étape, « 3/7 » (ou « 7/7
- * faites »), l'étape en cours (la première à faire quand aucune n'est en cours), les rangées de la carte
- * (au-delà de `fold` faites, 3 par défaut, elles se replient en « N étapes faites ») et l'âge de la note.
+ * Done » depuis #174), l'étape en cours (la première à faire quand aucune n'est en cours), les rangées de la carte
+ * (au-delà de `fold` faites, 3 par défaut, elles se replient en « N Done ») et l'âge de la note.
  * Rien sans liste, ni pour une note d'un autre format (#90). `closed` : la ligne de la tâche est close,
  * toutes ses étapes comptent faites (#145) ; la boîte de fin de l'app coche la dernière sans passer par
  * `update_plan`, et la note la garde en cours.
@@ -2757,13 +2757,13 @@ export function stepsView(steps: readonly ChildStep[], opts: { now: number; at: 
   const segments: StepSegment[] = steps.map((s, i) => (s.status === 'completed' ? 'done' : i === at ? 'now' : 'todo'))
   const all: StepsRow[] = steps.map((s, i) => ({ kind: 'step', status: segments[i] as StepSegment, content: s.content }))
   const fold = opts.fold ?? 3
-  const rows: StepsRow[] = done > fold ? [{ kind: 'folded', text: `${done} étapes faites` }, ...all.filter(r => r.kind === 'step' && r.status !== 'done')] : all
+  const rows: StepsRow[] = done > fold ? [{ kind: 'folded', text: `${done} Done` }, ...all.filter(r => r.kind === 'step' && r.status !== 'done')] : all
   const ms = Math.max(0, opts.now - opts.at)
   return {
     segments,
     total: steps.length,
     done,
-    count: at < 0 ? `${steps.length}/${steps.length} faites` : `${at + 1}/${steps.length}`,
+    count: at < 0 ? `${steps.length}/${steps.length} Done` : `${at + 1}/${steps.length}`,
     ...(at >= 0 ? { current: (steps[at] as ChildStep).content } : {}),
     rows,
     age: ms < 60_000 ? "à l'instant" : `il y a ${durationLabel(ms)}`,
@@ -5074,7 +5074,7 @@ export function maestroRelaunchContext(o: { source: Source; tasks: readonly Task
  * Une tâche lancée par Maestro. `closed` : sa ligne est close ; `finished` : close et sa session ne tourne
  * plus (finie ou archivée), la tâche est toute finie (#145).
  */
-export type BrandTask = { id: string; label: string; state: 'wait' | 'live' | 'done'; sessionId?: string; closed?: true; finished?: true }
+export type BrandTask = { id: string; label: string; state: 'wait' | 'live' | 'done'; sessionId?: string; closed?: true; finished?: true; archivable?: true }
 
 /**
  * Les tâches du bloc « En cours » de Maestro (#160) : celles dont la session tourne ou t'attend, ni closes
@@ -5155,6 +5155,21 @@ export function maestroBand(o: { brand: Brand | undefined; hasSurvey: boolean; s
   return { brand: o.brand, tasks, more: o.brand.tasks.length - tasks.length }
 }
 
+/**
+ * Les cases du compte, de l'état et de l'archivage de la bande de Maestro, en cellules (#174) : chacune
+ * à la largeur du plus long texte réel de la bande (un signe par cellule, le corps `caption` est plus
+ * étroit), la roue en 2, l'icône d'archivage en 2, et pas de case d'archivage quand aucune ligne n'en a.
+ * Serrées, le groupe se colle au bord droit ; la même largeur sur chaque ligne garde les colonnes (#172).
+ */
+export function bandColumns(o: { counts: readonly string[]; states: readonly string[]; archive: boolean }): { count: number; state: number; archive: number } {
+  const widest = (xs: readonly number[]) => xs.reduce((a, b) => Math.max(a, b), 0)
+  return {
+    count: widest(o.counts.map(c => [...c].length)),
+    state: widest(o.states.map(s => (s === 'spinner' ? 2 : [...s].length))),
+    archive: o.archive ? 2 : 0,
+  }
+}
+
 /** Les tâches des sessions lancées par Maestro, par création de leur session, par numéro en secours (#143). */
 export function maestroBrandTasks(
   entries: readonly { id: string; label: string; running: boolean; open: boolean; done: boolean; sessionId?: string; createdAt?: number }[],
@@ -5172,10 +5187,13 @@ export function maestroBrandTasks(
       ...(e.sessionId ? { sessionId: e.sessionId } : {}),
       ...(e.done ? { closed: true as const } : {}),
       ...(e.done && !(e.open && e.running) ? { finished: true as const } : {}),
+      // Close, sa session encore ouverte et à l'arrêt : l'icône d'archivage de la bande (#174).
+      ...(e.done && e.open && !e.running ? { archivable: true as const } : {}),
     }))
 }
 
-const BRAND_STATE_WORD: Record<BrandTask['state'], string> = { wait: "t'attend", live: 'en session', done: 'close' }
+// « Completed » et « Done » (#174, Bertrand) : les mots d'état affichés dans le panneau ; les textes pour Claude restent en français.
+const BRAND_STATE_WORD: Record<BrandTask['state'], string> = { wait: "t'attend", live: 'en session', done: 'Completed' }
 
 const FR_MONTHS = ['janv.', 'févr.', 'mars', 'avr.', 'mai', 'juin', 'juil.', 'août', 'sept.', 'oct.', 'nov.', 'déc.']
 
@@ -5238,7 +5256,7 @@ export function brandText(
     ...(brand.before || brand.next
       ? {
           stations: {
-            ...(brand.before ? { before: { text: brand.before.done ? `#${brand.before.id} faite` : `après #${brand.before.id}`, done: brand.before.done } } : {}),
+            ...(brand.before ? { before: { text: brand.before.done ? `#${brand.before.id} Done` : `après #${brand.before.id}`, done: brand.before.done } } : {}),
             here: `#${brand.id}, ici`,
             ...(brand.next ? { next: `débloque #${brand.next}` } : {}),
           },
