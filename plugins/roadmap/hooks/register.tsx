@@ -2193,11 +2193,13 @@ const LIST_RETRY_TICKS = 20
 let listDeniedTick = 0
 
 /**
- * La liste des autres sessions de l'app. Refusée : vide, jusqu'au nouvel essai d'une minute plus
- * tard ; en panne ou illisible : la dernière lue. Un outil absent (terminal, autre hôte) ne dit rien.
+ * La liste des autres sessions de l'app. Refusée par les réglages : vide, jusqu'au nouvel essai d'une
+ * minute plus tard ; refusée par le contrôle du mode auto, en panne ou illisible : la dernière lue (#185 :
+ * vidée, Maestro perdait ses sessions et son bloc « En cours »). Un outil absent ne dit rien.
  */
 async function readListRows($: EngineInterface): Promise<{ rows: unknown[]; note: string }> {
-  if (listDenied && pollTick - listDeniedTick < LIST_RETRY_TICKS) return { rows: [], note: sessionScanNote('denied') }
+  const kept = () => ({ rows: lastListRows, note: lastListRows.length > 0 ? '' : sessionScanNote('denied') })
+  if (listDenied && pollTick - listDeniedTick < LIST_RETRY_TICKS) return kept()
   let ran: ToolCallResult
   try {
     toolCalls++
@@ -2208,8 +2210,8 @@ async function readListRows($: EngineInterface): Promise<{ rows: unknown[]; note
   if (ran.deny !== undefined) {
     listDenied = true
     listDeniedTick = pollTick
-    lastListRows = []
-    return { rows: [], note: sessionScanNote('denied') }
+    if (!isAutoModeRefusal(ran.deny)) lastListRows = []
+    return kept()
   }
   listDenied = false
   if (ran.isError) return { rows: lastListRows, note: sessionScanNote('error', ran.text ?? '') }

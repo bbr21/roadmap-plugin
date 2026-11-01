@@ -645,6 +645,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.118.4 (2026-11-01)** : panneau : un refus du mode auto sur la liste des sessions garde le bloc « En cours » de Maestro (#185)
 - **0.118.3 (2026-11-01)** : panneau : l'encart de confirmation du rond devient une carte au filet orange, sans aplat (#184)
 - **0.118.2 (2026-11-01)** : panneau : le titre de la fiche d'une tâche à la hauteur de son crayon (#181)
 - **0.118.1 (2026-11-01)** : panneau : la carte Fin aligne ses valeurs sur la carte Détails (#183)
