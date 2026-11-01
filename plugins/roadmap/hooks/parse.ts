@@ -880,7 +880,15 @@ export type StoredRecap = EndFiche & { at: number }
 const END_FICHE_FIELDS: Record<string, keyof Omit<EndFiche, 'id'>> = { mission: 'mission', livre: 'livre', etat: 'etat', 'a toi': 'atoi' }
 /** Une ligne de tableau markdown : « | étiquette | valeur | ». */
 const TABLE_ROW = /^\s*\|\s*([^|]*?)\s*\|\s*(.*?)\s*\|\s*$/
-const cellText = (cell: string) => cell.replace(/<br\s*\/?>/gi, ' ').replace(/\*\*|__/g, '').replace(/\s+/g, ' ').trim()
+// Une cellule sans gras ; ses `<br>` en sauts de ligne (#150), ou en espaces pour la Mission, qui tient en une phrase.
+const cellText = (cell: string, lines = false) =>
+  cell
+    .replace(/<br\s*\/?>/gi, lines ? '\n' : ' ')
+    .replace(/\*\*|__/g, '')
+    .split('\n')
+    .map(l => l.replace(/\s+/g, ' ').trim())
+    .filter(l => l !== '')
+    .join('\n')
 
 /**
  * La dernière fiche de fin d'une réponse (#144) : la ligne `| Fin | #<id> · … |`, puis les lignes du
@@ -903,7 +911,7 @@ export function parseEndFiche(text: string): EndFiche | undefined {
     const m = TABLE_ROW.exec(line)
     if (!m) break
     const field = END_FICHE_FIELDS[label(line)!]
-    const value = cellText(m[2]!)
+    const value = cellText(m[2]!, field !== 'mission')
     if (field && value !== '') fiche[field] = value
   }
   return fiche.mission ? (fiche as EndFiche) : undefined
@@ -924,20 +932,11 @@ export function recapOf(value: unknown): StoredRecap | undefined {
 }
 
 /**
- * Le cadre de la mission de la fiche de tâche (#144, maquette B) : sans récap, le libellé de la ligne ;
- * avec, la mission écrite par la session, l'heure de sa fin et ses lignes Livré, État, À toi non vides.
+ * Le cadre de la mission de la fiche de tâche (#150, maquette C) : la mission seule, celle qu'a écrite la
+ * session dans sa fiche de fin (#144), sinon le libellé de la ligne. Le reste du récap va dans la carte Fin.
  */
-export function missionFrame(
-  label: string,
-  recap?: StoredRecap,
-): { recap: false; text: string } | { recap: true; text: string; when: string; rows: [string, string][] } {
-  if (!recap) return { recap: false, text: label }
-  const d = new Date(recap.at)
-  const two = (n: number) => String(n).padStart(2, '0')
-  const when = `fin de session · ${two(d.getDate())}/${two(d.getMonth() + 1)} ${two(d.getHours())}:${two(d.getMinutes())}`
-  const rows: [string, string][] = []
-  for (const [name, value] of [['Livré', recap.livre], ['État', recap.etat], ['À toi', recap.atoi]] as const) if (value) rows.push([name, value])
-  return { recap: true, text: recap.mission, when, rows }
+export function missionFrame(label: string, recap?: StoredRecap): { recap: boolean; text: string } {
+  return recap ? { recap: true, text: recap.mission } : { recap: false, text: label }
 }
 
 /**
@@ -949,6 +948,134 @@ export function missionCut(label: string): { text: string; cut: boolean } {
   const head = label.slice(0, 160)
   const word = label.charAt(160) === ' ' ? head : head.replace(/\s+\S*$/, '')
   return { text: `${(word || head).replace(/[\s,;:—-]+$/, '')}…`, cut: true }
+}
+
+/**
+ * Le Livré d'une ligne close, lu dans sa note de ROADMAP-fait (#150) : le texte après « livré » (« livré : »,
+ * « livré en cinq lots : »), ce qui le précède restant la note ; une note qui commence par la version livrée
+ * (« roadmap 0.44.3 : … ») est le Livré entier. Sans l'un ni l'autre : la note seule, rien d'inventé.
+ */
+export function livreOfNote(note: string | undefined): { livre?: string; rest?: string } {
+  const n = (note ?? '').trim().replace(/^[;,—-]\s*/, '')
+  if (n === '') return {}
+  const m = /(^|;\s*)livré(?=[\s:])\s*:?\s*/i.exec(n)
+  if (m) {
+    const rest = n.slice(0, m.index).replace(/[\s;,]+$/, '')
+    const livre = n.slice(m.index + m[0].length).trim()
+    return { ...(livre !== '' ? { livre } : {}), ...(rest !== '' ? { rest } : {}) }
+  }
+  return /^roadmap \d+\.\d+/i.test(n) ? { livre: n } : { rest: n }
+}
+
+/** Un Livré fait de morceaux séparés par « ; » (hors parenthèses), en puces markdown (#150, choix de BBR). */
+export function livreMarkdown(text: string): string {
+  const parts: string[] = []
+  let depth = 0
+  let from = 0
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i]
+    if (ch === '(') depth++
+    else if (ch === ')') depth = Math.max(0, depth - 1)
+    else if (ch === ';' && depth === 0) {
+      parts.push(text.slice(from, i))
+      from = i + 1
+    }
+  }
+  parts.push(text.slice(from))
+  const items = parts.map(p => p.trim()).filter(p => p !== '')
+  return items.length < 2 ? text.trim() : items.map(p => `- ${p}`).join('\n')
+}
+
+/** Une cellule de fiche de fin en markdown (#150) : ses lignes à puce (•, -, *) en liste, les autres à saut dur. */
+export function cellMarkdown(text: string): string {
+  const lines = text.split('\n').map(l => l.trim()).filter(l => l !== '')
+  const bullet = /^[•*-]\s+/
+  return lines
+    .map((l, i) => {
+      const md = bullet.test(l) ? l.replace(bullet, '- ') : l
+      const next = lines[i + 1]
+      if (next === undefined) return md
+      return !bullet.test(l) && !bullet.test(next) ? `${md}  \n` : `${md}\n`
+    })
+    .join('')
+}
+
+/**
+ * Une valeur de la carte Fin repliée (#150) : `max` signes au plus ; une liste garde ses puces entières,
+ * sinon la coupe tombe au dernier mot, sans ponctuation pendante, un `code` ouvert refermé, puis « … ».
+ */
+export function foldCell(md: string, max = 240): { md: string; cut: boolean } {
+  if (md.length <= max) return { md, cut: false }
+  const lines = md.split('\n')
+  if (lines.length > 1 && lines.every(l => l.startsWith('- '))) {
+    const kept: string[] = []
+    let size = 0
+    for (const l of lines) {
+      size += (kept.length > 0 ? 1 : 0) + l.length
+      if (size > max) break
+      kept.push(l)
+    }
+    if (kept.length > 0) return { md: `${kept.join('\n')}…`, cut: true }
+  }
+  const head = md.slice(0, max)
+  const word = /\s/.test(md.charAt(max)) ? head : head.replace(/\s+\S*$/, '')
+  let text = (word || head).replace(/[\s,;:—-]+$/, '')
+  if ((text.match(/`/g) ?? []).length % 2 === 1) text += '`'
+  return { md: `${text}…`, cut: true }
+}
+
+/** Une ligne de la carte Fin : son étiquette, sa valeur en markdown, et sa teinte (souci : vert s'il a tout roulé). */
+export type FinRow = { name: string; md: string; tone?: 'ok' | 'dim' }
+/**
+ * La carte Fin d'une tâche (#150, maquette C) : la Conclusion (#264) et le récap de fin (#144) fondus.
+ * `when` : l'heure de la fiche de fin, ou « tiré de la roadmap » ; `missing` : close, bilan dû et absent.
+ */
+export type FinCard = { emoji?: string; ressenti?: string; missing: boolean; when: string; rows: FinRow[]; more: FinRow[] }
+
+/**
+ * La carte Fin (#150) : Fait, Livré, Souci, État, À toi, puis, dépliées, Cause, Corrections et Note.
+ * Avec la fiche de fin gardée, Livré, État et À toi viennent d'elle ; sans, de la roadmap : le Livré de la
+ * note de ROADMAP-fait, « fini : #N close le … », la note du bilan. Une ligne sans source ne paraît pas.
+ * Rien pour une tâche ouverte sans fiche de fin.
+ */
+export function finCard(o: { recap?: StoredRecap; task: Task; bilan?: Bilan; due: boolean }): FinCard | undefined {
+  const { recap, task, bilan } = o
+  if (!task.done && !recap) return undefined
+  const abandoned = isAbandoned(task)
+  const c = bilan ? conclusionOf(bilan, abandoned) : undefined
+  const fromNote = livreOfNote(task.note)
+  const day = (task.fait ?? '').slice(0, 10)
+  const closed = task.done ? `${abandoned ? 'annulée' : 'fini'} : ${task.id ? `#${task.id} ` : ''}close${day ? ` le ${day}` : ''}` : undefined
+  const livre = recap?.livre !== undefined ? cellMarkdown(recap.livre) : fromNote.livre !== undefined ? livreMarkdown(fromNote.livre) : undefined
+  const etat = recap?.etat !== undefined ? cellMarkdown(recap.etat) : closed
+  const note = bilan && bilan.note !== '' ? bilan.note : undefined
+  const atoi = recap?.atoi !== undefined ? cellMarkdown(recap.atoi) : note
+  const rows: FinRow[] = []
+  const push = (to: FinRow[], name: string, md: string | undefined, tone?: FinRow['tone']) => {
+    if (md !== undefined && md !== '') to.push({ name, md, ...(tone ? { tone } : {}) })
+  }
+  push(rows, 'Fait', c?.fait)
+  push(rows, 'Livré', livre)
+  push(rows, 'Souci', c?.souci, c ? (c.smooth ? 'ok' : 'dim') : undefined)
+  push(rows, 'État', etat)
+  push(rows, 'À toi', atoi)
+  const more: FinRow[] = []
+  if (bilan) {
+    if (bilan.cause !== '' && bilan.cause !== 'aucune') push(more, 'Cause', bilan.cause)
+    const n = Number(bilan.corrections)
+    if (bilan.corrections !== '' && n !== 0) push(more, 'Corrections', Number.isNaN(n) ? bilan.corrections : `${n} correction${n > 1 ? 's' : ''}`)
+    if (recap?.atoi !== undefined) push(more, 'Note', note)
+  }
+  const two = (n: number) => String(n).padStart(2, '0')
+  const d = recap ? new Date(recap.at) : undefined
+  return {
+    ...(c ? { emoji: c.emoji } : {}),
+    ...(bilan && bilan.ressenti !== '' ? { ressenti: bilan.ressenti } : {}),
+    missing: task.done && !bilan && o.due,
+    when: d ? `${two(d.getDate())}/${two(d.getMonth() + 1)} ${two(d.getHours())}:${two(d.getMinutes())}` : 'tiré de la roadmap',
+    rows,
+    more,
+  }
 }
 
 export function parseSources(text: string): Source[] {
@@ -4535,8 +4662,7 @@ export type FicheCard = 'avancement' | 'lancer' | 'chaine' | 'details'
 
 /**
  * Ce que montre la fiche d'une tâche selon où on la lit (`session` : la session lancée pour elle ;
- * `roadmap` : au clic dans la roadmap) et son état : la conclusion devant la mission quand elle est
- * faite, puis les cartes qui ont quelque chose à dire. Avancement : dans sa session, le dossier, la
+ * `roadmap` : au clic dans la roadmap) et son état : les cartes qui ont quelque chose à dire. Avancement : dans sa session, le dossier, la
  * branche et l'attente ; dans la roadmap, l'attente, le blocage, la session qui y travaille ou celle,
  * encore ouverte, d'une faite, et le dossier (Spec, Plan, Maquettes : #144). Lancer : dans la roadmap, une ouverte sans session.
  */
@@ -4551,14 +4677,14 @@ export function ficheCards(o: {
   branch: number
   links: number
   details: number
-}): { conclusion: boolean; cards: FicheCard[] } {
+}): { cards: FicheCard[] } {
   const session = o.context === 'session'
   const cards: FicheCard[] = []
   if (session ? o.docs > 0 || o.branch > 0 || o.attend : o.attend || o.blocked || o.live || o.kept || o.docs > 0) cards.push('avancement')
   if (!session && !o.done && !o.live) cards.push('lancer')
   if (o.links > 0) cards.push('chaine')
   if (o.details > 0) cards.push('details')
-  return { conclusion: o.done, cards }
+  return { cards }
 }
 
 /**

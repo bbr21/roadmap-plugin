@@ -112,6 +112,9 @@ import {
   findSelected,
   ficheCards,
   missionCut,
+  finCard,
+  foldCell,
+  livreOfNote,
   missionFrame,
   parseEndFiche,
   recapKey,
@@ -4787,6 +4790,8 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   const Svg = e.surface === 'terminal' ? undefined : $.ui.resolve(e).Svg
   const elements = $.ui.resolve(e)
   const Client = 'Client' in elements ? elements.Client : undefined
+  // Le markdown de la carte Fin (#150) : rendu comme une réponse, code et puces compris.
+  const Markdown = elements.Markdown
   // Une zone de clic posée sur une ligne, en dernier enfant (peinte par-dessus) : toute la ligne se
   // clique, et son texte prend sa vraie couleur (un bouton impose la sienne). La légende et les
   // états en ont ; les en-têtes de section aussi, si le total tient sous ZONE_LIMIT (décidé plus
@@ -4903,7 +4908,10 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     // Son dossier (Spec, Plan, Maquettes) et le récap de fin de sa session (#144), dans les deux contextes.
     const ficheSource = inSession && ownBrand ? ownBrand.data.source : source
     const docs = await readFicheDocs($, ficheSource, current, now)
-    const frame = missionFrame(current.label, current.id ? recapOf(await $.store.get(recapKey(ficheSource.name, current.id)).catch(() => undefined)) : undefined)
+    const storedRecap = current.id ? recapOf(await $.store.get(recapKey(ficheSource.name, current.id)).catch(() => undefined)) : undefined
+    const frame = missionFrame(current.label, storedRecap)
+    // Le morceau « livré : … » de la note d'une close va dans la carte Fin (#150) ; le reste de la note reste.
+    const noteShown = current.done ? livreOfNote(current.note).rest : current.note
     // Sans récap, une ligne longue tient en trois lignes, le reste derrière « Tout voir » (#146, maquette B).
     const cut = frame.recap ? undefined : missionCut(frame.text)
     const missionShown = missionOpen === current.key
@@ -4964,69 +4972,59 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
       ) : null
     const plain = (text: string | undefined) => text !== undefined && text !== '' && <Text wrap="truncate-end">{text}</Text>
     const strong = (text: string) => <Text weight="semibold" tabular>{text}</Text>
-    // Le bilan d'une task faite, déplié dans sa conclusion : ressenti en pastille, cause, corrections.
+    // La carte Fin (#150, maquette C) : la Conclusion (#264) et le récap de fin de sa session (#144) fondus,
+    // tirés de la roadmap et du bilan quand la session n'a pas gardé sa fiche de fin.
     const bilan = current.done && current.id ? bilanData.bilans.get(current.id) : undefined
-    const bilanView = (): RenderElement | false => {
-      if (bilan) {
-        const tone =
-          bilan.ressenti === 'fluide'
-            ? { bg: mixOver(palette.ok, palette.bg, MIX.smooth), fg: palette.ok }
-            : bilan.ressenti === 'bloqué'
-              ? { bg: palette.lateTint, fg: palette.lateOn }
-              : { bg: palette.sel, fg: palette.text }
-        const n = Number(bilan.corrections)
-        return (
-          <Box flexDirection="row" alignItems="center" gap={SPACE.row}>
-            {drawnPill({ text: bilan.ressenti, ...tone, height: SIZE.pill.detail, weight: TEXT.weight.soft })}
-            {bilan.cause !== '' && bilan.cause !== 'aucune' && <Text>{bilan.cause}</Text>}
-            {bilan.corrections !== '' && (
-              <Text color={palette.text2}>{`· ${n} correction${n > 1 ? 's' : ''}`}</Text>
-            )}
-          </Box>
-        )
-      }
-      return false
-    }
-    // La boîte « Conclusion » d'une faite (#264) : ce qui a été fait, le souci ou une phrase sympa ;
-    // « Tout voir », un bouton de l'app (aucune zone de clic de plus), ajoute ressenti, cause,
-    // corrections et la note entière. Sans bilan alors qu'il est dû : « Conclusion manquante ».
     const conclusionDue = current.done && current.id !== undefined && (current.fait ?? '').slice(0, 10) >= bilanData.config.depuis
-    const conclusionBox = (): RenderElement | null => {
-      if (!current.done || (!bilan && !conclusionDue)) return null
-      if (!bilan) {
-        return (
-          <Box key="conclusion-box" paddingX={SPACE.indent}>
-            <Box flexDirection="row" alignItems="center" gap={SPACE.row} paddingX={SPACE.indent} flexGrow={1} backgroundColor={palette.lateTint}>
-              {corners(RADIUS.control, palette.bg)}
-              {strut(SIZE.strut.control)}
-              <Text weight="semibold" color={palette.lateOn}>Conclusion manquante</Text>
-            </Box>
-          </Box>
-        )
-      }
-      const c = conclusionOf(bilan, isAbandoned(current))
+    const fin = finCard({ ...(storedRecap ? { recap: storedRecap } : {}), task: current, ...(bilan ? { bilan } : {}), due: conclusionDue })
+    const finBox = (): RenderElement | null => {
+      if (!fin) return null
       const opened = conclusionOpen === current.key
+      const shown = [...fin.rows, ...(opened ? fin.more : [])].map(r => ({ ...r, fold: opened ? { md: r.md, cut: false } : foldCell(r.md) }))
+      const canOpen = fin.more.length > 0 || shown.some(r => r.fold.cut)
+      const tone =
+        fin.ressenti === 'fluide'
+          ? { bg: mixOver(palette.ok, palette.bg, MIX.smooth), fg: palette.ok }
+          : fin.ressenti === 'bloqué'
+            ? { bg: palette.lateTint, fg: palette.lateOn }
+            : { bg: palette.sel, fg: palette.text }
       return (
-        <Box key="conclusion-box" paddingX={SPACE.indent}>
-          <Box flexDirection="column" gap={SPACE.tight} paddingX={SPACE.indent} paddingY="sm" flexGrow={1} backgroundColor={palette.note}>
-            {corners(RADIUS.control, palette.bg)}
-            <Box flexDirection="row" justifyContent="space-between" alignItems="center">
+        <Box key="fin-box" paddingX={SPACE.indent}>
+          <Box flexDirection="column" gap={SPACE.tight} paddingX={SPACE.indent} paddingY="sm" flexGrow={1} borderStyle="round" borderColor={palette.border}>
+            <Box flexDirection="row" justifyContent="space-between" alignItems="center" gap={SPACE.row}>
               <Box flexDirection="row" alignItems="center" gap={SPACE.row}>
-                <Text>{c.emoji}</Text>
-                <Text weight="semibold">Conclusion</Text>
+                {fin.emoji && <Text>{fin.emoji}</Text>}
+                <Text weight="semibold">Fin</Text>
+                {fin.ressenti && drawnPill({ text: fin.ressenti, ...tone, height: SIZE.pill.detail, weight: TEXT.weight.soft })}
+                {fin.missing && drawnPill({ text: 'conclusion manquante', bg: palette.lateTint, fg: palette.lateOn, height: SIZE.pill.detail, weight: TEXT.weight.soft })}
               </Box>
-              <Button
-                key="conclusion"
-                plain
-                dimColor
-                label={opened ? 'Replier' : 'Tout voir'}
-                onPress={() => void setView($, v => ({ conclusionOpen: v.conclusionOpen === current.key ? '' : current.key }))}
-              />
+              <Text size="caption" color={palette.text2}>{fin.when}</Text>
             </Box>
-            <Text wrap="wrap">{c.fait}</Text>
-            <Text wrap="wrap" color={c.smooth ? palette.ok : palette.text2}>{c.souci}</Text>
-            {opened && bilanView()}
-            {opened && bilan.note !== '' && <Text wrap="wrap" color={palette.text2}>{bilan.note}</Text>}
+            {/* Le tableau : une colonne d'étiquettes étroite, un trait entre les lignes, les valeurs en markdown. */}
+            {shown.map((r, i) => (
+              <Box key={`fin:${r.name}`} flexDirection="column" gap={SPACE.tight}>
+                {i > 0 && Svg && <Svg source={ruleIcon(palette.border, fullWidth((e.props as { bodyColumns?: number }).bodyColumns ?? 48))} alt="séparateur" height={1} />}
+                <Box flexDirection="row" gap={SPACE.row}>
+                  <Box width={10} flexShrink={0}>
+                    <Text color={palette.text2}>{r.name}</Text>
+                  </Box>
+                  <Box flexShrink={1} minWidth={0} flexGrow={1}>
+                    {r.tone === 'ok' ? <Text wrap="wrap" color={palette.ok}>{r.fold.md}</Text> : <Markdown text={r.fold.md} {...(r.tone === 'dim' ? { dimColor: true } : {})} />}
+                  </Box>
+                </Box>
+              </Box>
+            ))}
+            {canOpen && (
+              <Box flexDirection="row">
+                <Button
+                  key="fin"
+                  plain
+                  dimColor
+                  label={opened ? 'Replier' : 'Tout voir'}
+                  onPress={() => void setView($, v => ({ conclusionOpen: v.conclusionOpen === current.key ? '' : current.key }))}
+                />
+              </Box>
+            )}
           </Box>
         </Box>
       )
@@ -5612,62 +5610,29 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
             press: () => void openFile($, current.done ? paths.done : paths.open, line),
           })}
         </Box>
-        {layout.conclusion && conclusionBox()}
-        {/* La mission dans son cadre : fond `note`, légende, texte en taille courante. Avec le récap de fin
-            de sa session (#144, maquette B) : sa mission, l'heure de sa fin, Livré, État, À toi, puis la
-            ligne de la roadmap repliée derrière « Tout voir ». */}
+        {/* La mission seule dans son cadre (#150, maquette C) : celle de la fiche de fin de sa session, sa
+            ligne de la roadmap derrière « La ligne de la roadmap » ; sans, la ligne, longue coupée (#146). */}
         <Box paddingX={SPACE.indent}>
           <Box flexDirection="column" gap={SPACE.tight} paddingX={SPACE.indent} paddingY="sm" flexGrow={1} backgroundColor={palette.note}>
             {corners(RADIUS.control, palette.bg)}
-            {frame.recap ? (
-              <Box flexDirection="row" justifyContent="space-between" alignItems="center" gap={SPACE.row}>
-                <Text size="caption" weight="medium" color={palette.text2}>Mission</Text>
-                <Text size="caption" color={palette.text2}>{frame.when}</Text>
-              </Box>
-            ) : (
-              <Text size="caption" weight="medium" color={palette.text2}>Mission</Text>
-            )}
+            <Text size="caption" weight="medium" color={palette.text2}>Mission</Text>
             <Text wrap="wrap">{cut?.cut && !missionShown ? cut.text : frame.text}</Text>
-            {cut?.cut && (
+            {(frame.recap || cut?.cut) && (
               <Box flexDirection="row">
                 <Button
                   key="mission-line"
                   plain
                   dimColor
-                  label={missionShown ? 'Replier' : 'Tout voir'}
+                  label={missionShown ? 'Replier' : frame.recap ? 'La ligne de la roadmap' : 'Tout voir'}
                   onPress={() => void setView($, v => ({ missionOpen: v.missionOpen === current.key ? '' : current.key }))}
                 />
               </Box>
             )}
-            {frame.recap &&
-              frame.rows.map(([name, value]) => (
-                <Box key={`recap:${name}`} flexDirection="row" gap={SPACE.row}>
-                  <Box width={10} flexShrink={0}>
-                    <Text color={palette.text2}>{name}</Text>
-                  </Box>
-                  <Box flexShrink={1} minWidth={0}>
-                    <Text wrap="wrap">{value}</Text>
-                  </Box>
-                </Box>
-              ))}
-            {frame.recap && (
-              <Box flexDirection="row" alignItems="center" gap={SPACE.row}>
-                <Box flexShrink={1} minWidth={0}>
-                  <Text size="caption" color={palette.text2} wrap="truncate-end">{`La ligne de la roadmap : « ${s.titre} »`}</Text>
-                </Box>
-                <Button
-                  key="mission-line"
-                  plain
-                  dimColor
-                  label={missionOpen === current.key ? 'Replier' : 'Tout voir'}
-                  onPress={() => void setView($, v => ({ missionOpen: v.missionOpen === current.key ? '' : current.key }))}
-                />
-              </Box>
-            )}
-            {frame.recap && missionOpen === current.key && <Text size="caption" wrap="wrap">{current.label}</Text>}
-            {current.note && (cut ? !cut.cut || missionShown : missionShown) && <Text color={palette.text2} wrap="wrap">{current.note}</Text>}
+            {frame.recap && missionShown && <Text size="caption" wrap="wrap">{current.label}</Text>}
+            {noteShown && (cut ? !cut.cut || missionShown : missionShown) && <Text color={palette.text2} wrap="wrap">{noteShown}</Text>}
           </Box>
         </Box>
+        {finBox()}
         {ficheSteps($, e, palette, await readSteps($, inSession ? ownBrand?.data.own.id : liveOf(current)?.entry.sessionId), now, current.done)}
         {layout.cards.map(c => cards[c]())}
         <Box flexDirection="column" gap={SPACE.block} paddingX={SPACE.indent}>

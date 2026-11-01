@@ -549,6 +549,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.101.0 (2026-10-31)** : panneau : la fiche montre la mission seule, puis une carte Fin en tableau mis en forme (Fait, Livré, Souci, État, À toi) ; toute tâche close a son récap, gardé ou tiré de la roadmap et du bilan (#150)
 - **0.100.1 (2026-10-31)** : panneau : « Marquer faite » et « Annuler la tâche » acceptent les clés déclarées par le projet (cles), comme « projet: » (#155)
 - **0.100.0 (2026-10-31)** : panneau : « En cours » répond au clic (zones de clic remontées après une démolition par l'app), « N faites » devient le lien vers les faites, bande de Maestro à une jauge par ligne avec la roue (#152)
 - **0.99.0 (2026-10-31)** : maestro : là où l'app ne dessine pas la carte d'accueil (compte Team), Claude dit l'accueil et pose ses boutons ; le plugin note ce que la carte a vu sur la machine (#153)
