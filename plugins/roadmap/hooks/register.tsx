@@ -16,7 +16,6 @@ import {
   percentIcon,
   pillIcon,
   filterPillIcon,
-  laneDotsIcon,
   type PillMark,
   checkIcon,
   checkRowIcon,
@@ -232,8 +231,8 @@ import {
   withSelfRow,
   sessionScanNote,
   maestroTasksNote,
+  liveBlockIds,
   openingFilter,
-  axesSummary,
   otherTaskNote,
   problemsText,
   sourceFor,
@@ -4614,36 +4613,6 @@ async function paneBrand(
   })
 }
 
-/**
- * L'arbre des sessions de Maestro, ses voies seules, que montre le filtre « En cours » à la place de la
- * liste (#149) : la barre d'étapes sous chaque voie, la carte au survol, épinglée au clic (#143).
- */
-async function maestroTree(
-  $: EngineInterface,
-  e: RenderInput<'Pane'>,
-  found: NonNullable<Awaited<ReturnType<typeof sessionBrandOf>>>,
-  today: string,
-  pin: string,
-  now: number,
-): Promise<RenderElement> {
-  const of: Record<string, ChildStatus> = {}
-  const tasks = found.brand.kind === 'maestro' ? found.brand.tasks : []
-  await Promise.all(
-    tasks.map(async t => {
-      const status = await readSteps($, t.sessionId)
-      if (status) of[t.id] = status
-    }),
-  )
-  const steps: BrandSteps = {
-    of,
-    now,
-    pin,
-    setPin: id => void setView($, () => ({ stepsPin: id })),
-    open: t => void (t.sessionId ? openSession($, { sessionId: t.sessionId, startedAt: now, title: t.label }) : undefined),
-  }
-  return brandTree($, e, found.brand, found.data.palette, 'header', today, undefined, undefined, steps, true)
-}
-
 /** Ce que la vue de tâche lit hors de la roadmap, dans sa session : l'écart de la branche ; relu au plus toutes les 30 s. */
 let focusFacts: { key: string; at: number; branch: string[]; base: string } | undefined
 const FOCUS_FACTS_MS = 30_000
@@ -5996,17 +5965,33 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   // Par défaut, les tâches en cours ; aucune en cours, toutes. Chez Maestro (#149) : « En cours » si une
   // session t'attend, sinon Ma journée, sinon les récentes.
   const maestroBrand = ownBrand?.brand.kind === 'maestro' ? ownBrand.brand : undefined
+  // Le bloc « En cours » de Maestro (#160) : ses sessions qui tournent ou t'attendent, en lignes ; la
+  // liste de la roadmap dessous ne les redit pas.
+  const blockIds = maestroBrand ? liveBlockIds(maestroBrand.tasks) : []
+  const blockOf = new Map((maestroBrand?.tasks ?? []).filter(bt => blockIds.includes(bt.id)).map(bt => [bt.id, bt]))
+  const inBlock = (t: Task) => t.id !== undefined && blockOf.has(t.id)
+  const blockTasks = blockIds.flatMap(id => openTasks.filter(t => t.id === id))
+  const blockSteps = new Map<string, ChildStatus>()
+  await Promise.all(
+    [...blockOf.values()].map(async bt => {
+      const found = await readSteps($, bt.sessionId)
+      if (found) blockSteps.set(bt.id, found)
+    }),
+  )
   const attend =
-    attendRaw !== 'auto'
+    // Chez Maestro, « En cours » n'est plus un filtre (#160) : une vue gardée dessus montre toutes les tâches.
+    attendRaw === 'live' && maestroBrand
+      ? 'all'
+      : attendRaw !== 'auto'
       ? attendRaw
       : maestroBrand
-        ? openingFilter({ waiting: maestroBrand.tasks.filter(t => t.state === 'wait').length, today: todayAll.length, recent: recentAll.length, mode })
+        ? openingFilter({ today: todayAll.length, recent: recentAll.length, mode })
         : projet
           ? 'today'
           : liveAll.length > 0
             ? 'live'
             : 'all'
-  // La ligne « En cours » de Maestro (#149) : dès qu'il a lancé une tâche, elle remplace le filtre « En cours ».
+  // Le bloc « En cours » de Maestro (#149, #160) : dès qu'il a lancé une tâche, il remplace le filtre « En cours ».
   const maestroLine = maestroBrand !== undefined && maestroBrand.tasks.length > 0
   const mineCount = inAxis.filter(t => isMine(t, me)).length
   const thirdParties = countBy(inAxis.filter(t => !isMine(t, me)), t => (t.attend === undefined ? undefined : attendWho(t.attend)))
@@ -6014,7 +5999,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   // En mode Projet, « Qui » remplace la liste des tiers.
   const showThirdParties = !projet && !showDone && (attend === 'others' || tierChosen)
 
-  const shown =
+  const shown = (
     attend === 'late'
       ? lateAll
       : attend === 'today'
@@ -6030,6 +6015,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
           : attend === 'feedback'
             ? feedbackAll
             : openTasks.filter(t => matches(t, axis, attend, me) && matchesWho(t, who, me))
+  ).filter(t => !inBlock(t))
   const filtered = axis !== 'all' || attend !== 'all' || who !== 'all' || showDone || searching
   const unsorted = shown.filter(t => attend === 'late' || !isOverdue(t, today))
   const late = sortTasks(shown.filter(t => isOverdue(t, today)), sortOrder)
@@ -6171,14 +6157,16 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   // colonne de largeur fixe (#145) : d'une ligne à l'autre, la roue et la barre gardent leur place et leur
   // taille, quels que soient le titre, le compte (« 2/7 », « 8/11 ») ou l'absence de note ; seule la
   // découpe de la barre change. Pas de carte au survol (#145) : la ligne la coupait ; la fiche montre les étapes.
-  const sessionColumn = (t: Task) => {
-    const status = rowSteps.get(taskKey(t))
+  // Une ligne du bloc « En cours » de Maestro (#160) lit les étapes et l'attente de sa session à lui.
+  const sessionColumn = (t: Task, block?: BrandTask) => {
+    const status = block ? blockSteps.get(block.id) : rowSteps.get(taskKey(t))
+    const waiting = block ? block.state === 'wait' : waitingOn(t)
     const view = status ? stepsView(status.steps, { now, at: status.at, closed: t.done }) : undefined
-    const bar = status && view ? stepsBarIcon(palette, view.segments, { width: ROW_STEPS.bar, height: 4, waiting: status.question !== undefined }) : undefined
+    const bar = status && view ? stepsBarIcon(palette, view.segments, { width: ROW_STEPS.bar, height: 4, waiting: waiting || status.question !== undefined }) : undefined
     return (
       <Box key={`steps:${t.key}`} flexDirection="row" alignItems="center" gap={SPACE.row} flexShrink={0} {...(Svg ? { width: ROW_STEPS.columns } : {})}>
         <Box width={ROW_STEPS.icon} flexShrink={0} flexDirection="row" justifyContent="center">
-          {waitingOn(t) ? hand() : spinner()}
+          {waiting ? hand() : spinner()}
         </Box>
         {Svg &&
           (bar && view ? (
@@ -6195,7 +6183,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
 
   // Une tâche, toujours sur une ligne : carré d'axe, pastilles, titre tronqué, âge, ▶ (#149).
   // Une tâche faite : la coche, le titre et son axe à droite.
-  const row = (t: Task, chain?: ChainStep, tree?: TreeMark) => {
+  const row = (t: Task, chain?: ChainStep, tree?: TreeMark, block?: BrandTask) => {
     const s = short(t)
     const days = age(t)
     const head = tree?.kind === 'head' ? tree : undefined
@@ -6224,9 +6212,10 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     const right = t.done ? axisLabel(t.axis) : days === undefined ? '' : ageLabel(days)
     // Une tâche faite dont la session reste ouverte : y retourner, ou l'archiver, d'un clic.
     const kept = sessionRows.has(taskKey(t)) ? doneSessionOf(t) : undefined
-    const inSession = isLive(t)
-    // La session de la tâche, ouverte ou faite : son numéro y mène.
-    const rowSession = liveOf(t) ?? doneSessionOf(t)
+    const inSession = isLive(t) || block !== undefined
+    // La session de la tâche, ouverte ou faite : son numéro y mène ; dans le bloc, celle de Maestro.
+    const blockEntry = block?.sessionId ? { sessionId: block.sessionId, startedAt: now, title: block.label } : undefined
+    const rowSession = liveOf(t) ?? doneSessionOf(t) ?? (blockEntry ? { entry: blockEntry } : undefined)
     // La roue l'emporte sur le cadenas : une tâche en session n'attend plus sa prérequise.
     const blocker = inSession ? undefined : blockerFor(t)
     const locked = blocker !== undefined
@@ -6291,9 +6280,9 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
             {drawnPill({ text: department, bg: palette.sel, fg: palette.text2, weight: 600 })}
           </Box>
         )}
-        {/* En session : chez Maestro (#149), la pastille seule, sa barre, son étape et la main qui t'attend
-            vivent dans l'arbre ; ailleurs, sans arbre, la roue ou la main, la barre et le compte (#143, #145). */}
-        {inSession && (maestroLine ? drawnPill({ text: 'en session', bg: palette.liveTint, fg: palette.liveOn, weight: TEXT.weight.soft }) : sessionColumn(t))}
+        {/* En session : la roue ou la main qui t'attend, la barre et le compte (#143, #145), chez Maestro
+            aussi, dans son bloc « En cours », sans arbre (#160). */}
+        {inSession && sessionColumn(t, block)}
         {/* Le cadenas dit ce qu'il attend (#125) : « après » et le numéro de sa prérequise, ou « parent après » celui qu'attend son parent. */}
         {locked && pre && (
           <Box key={`lock:${t.key}`} flexDirection="row" alignItems="center" gap={SPACE.row} flexShrink={0}>
@@ -6442,7 +6431,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     }))
   // La recherche : ouvertes puis faites, toutes, quels que soient les filtres.
   const titleOf = (t: Task) => titles[hashLabel(t.label)]?.titre
-  const foundOpen = searching ? sortTasks(searchTasks(openTasks, search, titleOf), sortOrder) : []
+  const foundOpen = searching ? sortTasks(searchTasks(openTasks.filter(t => !inBlock(t)), search, titleOf), sortOrder) : []
   const foundDone = searching
     ? searchTasks(doneTasks, search, titleOf).sort((a, b) => (b.fait ?? '').localeCompare(a.fait ?? ''))
     : []
@@ -6637,6 +6626,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   // « À traiter » (#115, maquette C) : quatre lignes (trois en mode Code, #130) du gabarit des axes,
   // une icône de trait dans la couleur de la ligne ; la choisie prend sa teinte, son encre et une pastille pleine. Au terminal, des boutons.
   const countOf: Record<string, number> = {
+    all: inAxis.filter(t => !inBlock(t)).length,
     today: todayAll.length,
     late: lateAll.length,
     soon: soonAll.length,
@@ -6652,6 +6642,8 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     late: { hex: palette.late, tint: palette.lateTint, on: palette.lateOn },
     block: { hex: palette.block, tint: palette.blockTint, on: palette.blockOn },
     wait: { hex: palette.wait, tint: palette.waitTint, on: palette.waitOn },
+    // « Toutes » (#160) : choisie, le gris de la sélection et l'encre du texte.
+    neutral: { hex: palette.text2, tint: palette.sel, on: palette.text },
   }
   // Sous les faites, les pastilles restent, estompées : un clic revient aux ouvertes, filtrées (#152).
   const todo = todoCounters(mode, maestroLine)
@@ -6759,52 +6751,44 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   // Les zones de clic de ce dessin : légende, roue et « À traiter », puis les en-têtes de section s'il reste de la place.
   if (graphic) sessionRows = new Set(doneTasks.filter(t => doneSessionOf(t) !== undefined).slice(0, SESSION_ROWS).map(taskKey))
   // Seules les lignes cliquables de « À traiter » ont une zone ; les filtres repliés sont des boutons de l'app (#115).
-  // Les axes repliés sous la barre (#149), dépliés au clic ou dès qu'un axe ou « Faites » est choisi.
-  // Les faites, choisies par le lien de l'en-tête (#152), ne les déplient pas.
-  const axesShown = (view.axesOpen ?? false) || axis !== 'all'
-  const axesLine = axesSummary(axes.map(a => ({ name: axisLabel(a), n: axisCount(openTasks, a) })))
-  const toggleAxes = () => void setView($, v => ({ axesOpen: !(v.axesOpen ?? false) }))
-  // Les zones fixes : axes et Faites, la roue, les lignes cliquables de « À traiter » et « Plus de filtres » (#115).
-  const fixedZones = 2 + (axesShown ? axes.length + 1 : 0) + (maestroLine ? 1 : 0) + 1 + todo.filter(todoClickable).length + (todoBlock && (secondary.length > 0 || people.length > 0 || showThirdParties) ? 1 : 0) + 2 * sessionRows.size
+  // Les axes toujours dépliés (#160) : plus de ligne repliée (#149) ; les faites s'ouvrent par le lien de l'en-tête (#152).
+  // Les zones fixes : le compte des faites, les axes, le chevron du bloc « En cours », la roue, les
+  // pastilles cliquables et « Plus › » (#115), les boutons de session des faites.
+  const liveOpen = !(view.liveFolded ?? false)
+  const fixedZones = 1 + axes.length + (blockTasks.length > 0 ? 1 : 0) + 1 + todo.filter(todoClickable).length + (todoBlock && (secondary.length > 0 || people.length > 0 || showThirdParties) ? 1 : 0) + 2 * sessionRows.size
   if (graphic) {
-    const shownWithSession = drawnTasks.filter(t => t.id && (liveOf(t) ?? doneSessionOf(t)))
+    // Les lignes du bloc « En cours » de Maestro d'abord (#160) : leur numéro ouvre leur session.
+    const shownWithSession = [...(liveOpen ? blockTasks : []), ...drawnTasks.filter(t => t.id && (liveOf(t) ?? doneSessionOf(t)))]
     numberZones = new Set(shownWithSession.slice(0, Math.max(0, ZONE_LIMIT - fixedZones)).map(t => t.id as string))
   }
   headZones = graphic && fixedZones + numberZones.size + groups.filter(g => !g.band).length <= ZONE_LIMIT
 
-  // « En cours » chez Maestro (#149, maquette C′) : une ligne encadrée, son compte de sessions et un point
-  // par voie ; choisie, elle se teinte et l'arbre prend la place de la liste. Une recherche montre la liste.
-  const liveOn = attend === 'live' && !showDone
-  const treeShown = maestroLine && liveOn && !searching && !treeInBand()
-  const liveLine =
-    maestroLine && maestroBrand ? (
-      <Box
-        key="hit:attend:live"
-        flexDirection="row"
-        alignItems="center"
-        gap={SPACE.row}
-        paddingX={SPACE.indent}
-        borderStyle="round"
-        borderColor={liveOn ? palette.live : palette.border}
-        backgroundColor={liveOn ? palette.liveTint : undefined}
-        hover={{ backgroundColor: liveOn ? palette.liveTint : palette.hover }}
-      >
-        <Box flexDirection="row" alignItems="center" flexShrink={0}>
-          {Svg && <Svg source={rowMark(chevronIcon(palette.text3, liveOn))} alt={liveOn ? 'replier' : 'déplier'} width={16} height={24} />}
+  // Le bloc « En cours » de Maestro (#160, maquette A) : encadré, en tête des filtres, ses sessions en
+  // lignes de la liste (roue ou main, barre, compte) ; toujours là, quels que soient filtre, axe ou recherche.
+  // Son chevron, centré sur le titre, le replie.
+  const toggleLive = () => void setView($, v => ({ liveFolded: !(v.liveFolded ?? false) }))
+  const liveBlock =
+    blockTasks.length > 0 ? (
+      <Box flexDirection="column" borderStyle="round" borderColor={palette.border} paddingY="xs">
+        <Box key="hit:live-fold" flexDirection="row" alignItems="center" gap={SPACE.row} paddingX={SPACE.indent} hover={{ backgroundColor: palette.hover }}>
+          {graphic && Svg ? (
+            <Box flexDirection="row" alignItems="center" flexShrink={0}>
+              <Svg source={rowMark(chevronIcon(palette.text3, liveOpen))} alt={liveOpen ? 'replier' : 'déplier'} width={16} height={24} />
+            </Box>
+          ) : (
+            <Button key="live-fold" plain dimColor label={liveOpen ? '⌄' : '›'} onPress={toggleLive} />
+          )}
+          <Box flexGrow={1} flexShrink={1} minWidth={0}>
+            <Text weight="semibold">En cours</Text>
+          </Box>
+          <Box flexShrink={0}>
+            {drawnPill({ text: `${blockTasks.length} session${blockTasks.length > 1 ? 's' : ''}`, bg: palette.liveTint, fg: palette.liveOn, weight: TEXT.weight.soft })}
+          </Box>
+          {graphic && hit('live-fold', toggleLive)}
         </Box>
-        <Text weight="semibold" color={liveOn ? palette.liveOn : palette.text}>En cours</Text>
-        <Box flexGrow={1} flexShrink={1} minWidth={0}>
-          <Text size="footnote" color={palette.text2} wrap="truncate-end">{brandText(maestroBrand, today).foot}</Text>
-        </Box>
-        {Svg &&
-          (() => {
-            const dots = laneDotsIcon(palette, maestroBrand.tasks.map(t => (t.finished ? 'finished' : t.state)))
-            return <Svg source={dots.source} alt={`voies : ${maestroBrand.tasks.length}`} width={dots.width} height={dots.height} />
-          })()}
-        {graphic ? hit('attend:live', setAttend('live')) : <Button key="attend:live" plain dimColor label="En cours" onPress={setAttend('live')} />}
+        {liveOpen && blockTasks.map(t => row(t, undefined, undefined, blockOf.get(t.id as string)))}
       </Box>
     ) : null
-  const sessionsTree = treeShown && ownBrand ? await maestroTree($, e, ownBrand, today, view.stepsPin ?? '', now) : null
 
   // L'en-tête Roadmap de la session (#127), au-dessus de l'avancement.
   const brandHead = await paneBrand($, e, ownBrand, today, view.stepsPin ?? '', now)
@@ -6893,20 +6877,8 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
         </Box>
       )}
 
-      {/* Les axes repliés derrière la barre (#149) : une ligne qui les résume ; un clic les déplie. Un axe
-          choisi par la barre ou « Faites » les déplie de force, pour qu'on voie le filtre posé. */}
-      <Box key="hit:axes-fold" flexDirection="row" alignItems="center" gap={SPACE.row} paddingX={SPACE.indent} hover={{ backgroundColor: palette.hover }}>
-          {graphic ? (
-            <Box flexShrink={1} minWidth={0}>
-              <Text size="caption" color={palette.text2} wrap="truncate-end">{`${axesShown ? '⌄' : '›'} ${axesLine}`}</Text>
-            </Box>
-          ) : (
-            <Button key="axes-fold" plain dimColor label={`${axesShown ? '⌄' : '›'} ${axesLine}`} onPress={toggleAxes} />
-          )}
-          {hit('axes-fold', toggleAxes)}
-      </Box>
-
-      {axesShown && <Box flexDirection="column">
+      {/* Les axes toujours dépliés (#160) ; les faites s'ouvrent par « N faites » de l'en-tête (#152). */}
+      <Box flexDirection="column">
         {axes.map(a => {
           const n = axisCount(openTasks, a)
           const dim = anyAxis && !axisOn(a)
@@ -6920,18 +6892,9 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
             onPress: setAxis(a),
           })
         })}
-        {legend({
-          key: 'toggle-done',
-          mark: d => tallIcon(fade(squareIcon(palette.done), d), 'faites', 16, '■', 'inactive'),
-          name: 'Faites',
-          n: doneTasks.length,
-          share: `${pct(doneTasks.length, total)} %`,
-          dim: anyAxis && !showDone,
-          onPress: toggleDone,
-        })}
-      </Box>}
+      </Box>
 
-      {liveLine}
+      {liveBlock}
 
       {todoBlock}
 
@@ -6993,13 +6956,11 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
       {titleNote !== '' && <Text color={palette.text2}>{titleNote}</Text>}
       {scanNote !== '' && <Text color={palette.text2}>{scanNote}</Text>}
       {searching && foundCount === 0 && <Text color={palette.text2}>Aucune tâche ne correspond.</Text>}
-      {!sessionsTree && !searching && !showDone && shown.length === 0 && (
+      {!searching && !showDone && shown.length === 0 && (
         <Text color={palette.text2}>{attend === 'today' ? "Rien d'urgent aujourd'hui." : 'Aucune tâche ouverte pour ce filtre.'}</Text>
       )}
 
-      {sessionsTree}
-
-      {!sessionsTree && <Box flexDirection="column">{groups.map(g => (g.band ? bandRow(idOf(g), g.name, g.band.count, g.band.lead) : section(idOf(g), g.name, g.tasks, rowsOf.get(idOf(g)) ?? 0, g.lead, g.mark, g.block)))}</Box>}
+      <Box flexDirection="column">{groups.map(g => (g.band ? bandRow(idOf(g), g.name, g.band.count, g.band.lead) : section(idOf(g), g.name, g.tasks, rowsOf.get(idOf(g)) ?? 0, g.lead, g.mark, g.block)))}</Box>
 
       {/* Le pied (#138, maquette B) : la version de cette session, et « Rafraîchir », qui relit tout et la compare à la publiée. */}
       <Box flexDirection="column" gap="xs">
@@ -7026,13 +6987,4 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
       </Box>
     </Box>,
   )
-}
-
-/**
- * Le panneau laisse-t-il l'arbre de Maestro à la bande au-dessus de la saisie (#147) ? Non : la bande
- * disparaît tant que la boîte de fin pose une question, et l'arbre sous « En cours » reste alors le seul
- * visible. `true` donnerait « roadmap seule » (#149), à la demande de Bertrand.
- */
-function treeInBand(): boolean {
-  return false
 }

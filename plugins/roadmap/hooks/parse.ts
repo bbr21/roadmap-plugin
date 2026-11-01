@@ -1418,27 +1418,30 @@ export function nextGrouping(by: Grouping, mode: Mode, showDone: boolean): Group
 }
 
 /** L'icône d'une ligne de « À traiter » (#115), dessinée au trait dans icons.ts. */
-export type TodoIcon = 'sun' | 'clock' | 'calendar' | 'bell' | 'spin' | 'bubble'
+export type TodoIcon = 'sun' | 'clock' | 'calendar' | 'bell' | 'spin' | 'bubble' | 'list'
 /** La couleur d'une ligne de « À traiter » : un ton de la palette, avec sa teinte (`<ton>Tint`) et son encre (`<ton>On`). */
-export type TodoTone = 'live' | 'late' | 'block' | 'wait'
+export type TodoTone = 'live' | 'late' | 'block' | 'wait' | 'neutral'
 export type TodoCounter = { key: string; name: string; icon: TodoIcon; tone: TodoTone }
 
 /**
- * Les quatre lignes de « À traiter » sous les axes (#115, maquette C) : en mode Projet les urgences
- * d'échéance (#99), en mode Code ce qu'une session travaille, ce qui dépasse et les retours (trois
- * lignes depuis que « Prioritaires » est parti, #130).
+ * Les filtres en pastilles sous les axes (#115, maquette C ; #149) : « Toutes » d'abord (#160), qui lève le
+ * filtre d'état et garde l'axe ; puis en mode Projet les urgences d'échéance (#99), en mode Code ce qu'une
+ * session travaille, ce qui dépasse et les retours (« Prioritaires » parti, #130).
  */
 export function todoCounters(mode: Mode, maestro = false): TodoCounter[] {
-  // Chez Maestro (#149), « En cours » est sa propre ligne, au-dessus des filtres : elle ne se répète pas ici.
+  // Chez Maestro (#149, #160), « En cours » est son bloc, au-dessus des filtres : elle ne se répète pas ici.
   if (maestro) return todoCounters(mode).filter(c => c.key !== 'live')
+  const all: TodoCounter = { key: 'all', name: 'Toutes', icon: 'list', tone: 'neutral' }
   return mode === 'projet'
     ? [
+        all,
         { key: 'today', name: 'Ma journée', icon: 'sun', tone: 'live' },
         { key: 'late', name: 'En retard', icon: 'clock', tone: 'late' },
         { key: 'soon', name: 'Cette semaine', icon: 'calendar', tone: 'block' },
         { key: 'relaunch', name: 'À relancer', icon: 'bell', tone: 'wait' },
       ]
     : [
+        all,
         { key: 'live', name: 'En cours', icon: 'spin', tone: 'live' },
         { key: 'late', name: 'En retard', icon: 'clock', tone: 'late' },
         { key: 'feedback', name: 'Retours', icon: 'bubble', tone: 'wait' },
@@ -1446,21 +1449,11 @@ export function todoCounters(mode: Mode, maestro = false): TodoCounter[] {
 }
 
 /**
- * La ligne des axes repliés sous la barre (#149) : « 7 axes · Merch-promo 39, Reporting 25, Automatisation 24… »,
- * les `max` premiers avec leur nombre de tâches, des points de suite s'il en reste.
- */
-export function axesSummary(axes: readonly { name: string; n: number }[], max = 3): string {
-  const head = axes.slice(0, max).map(a => `${a.name} ${a.n}`).join(', ')
-  return `${axes.length} axe${axes.length > 1 ? 's' : ''} · ${head}${axes.length > max ? '…' : ''}`
-}
-
-/**
  * Le filtre que prend le panneau de Maestro à son ouverture (#149, décidé par Bertrand le 2026-10-31) :
- * « En cours » si une session t'attend, sinon « Ma journée » (mode Projet) si elle a des tâches, sinon
- * les récentes, sinon tout.
+ * « Ma journée » (mode Projet) si elle a des tâches, sinon les récentes, sinon tout. Une session qui
+ * t'attend ne l'ouvre plus sur « En cours » : son bloc est toujours là (#160).
  */
-export function openingFilter(o: { waiting: number; today: number; recent: number; mode: Mode }): 'live' | 'today' | 'recent' | 'all' {
-  if (o.waiting > 0) return 'live'
+export function openingFilter(o: { today: number; recent: number; mode: Mode }): 'today' | 'recent' | 'all' {
   if (o.mode === 'projet' && o.today > 0) return 'today'
   return o.recent > 0 ? 'recent' : 'all'
 }
@@ -4680,6 +4673,14 @@ export function maestroRelaunchContext(o: { source: Source; tasks: readonly Task
  * plus (finie ou archivée), la tâche est toute finie (#145).
  */
 export type BrandTask = { id: string; label: string; state: 'wait' | 'live' | 'done'; sessionId?: string; closed?: true; finished?: true }
+
+/**
+ * Les tâches du bloc « En cours » de Maestro (#160) : celles dont la session tourne ou t'attend, ni closes
+ * ni finies, dans l'ordre de ses sessions. La liste de la roadmap dessous ne les redit pas.
+ */
+export function liveBlockIds(tasks: readonly BrandTask[]): string[] {
+  return tasks.filter(t => t.state !== 'done' && !t.closed && !t.finished).map(t => t.id)
+}
 
 export type Brand =
   | { kind: 'maestro'; project: string; tasks: BrandTask[]; welcome?: Welcome }

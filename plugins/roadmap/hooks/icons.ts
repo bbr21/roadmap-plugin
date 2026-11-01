@@ -124,6 +124,11 @@ export function bubbleLineIcon(hex: string, size = 16, width: number = STROKE.ba
   return line(hex, size, width, '<path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/>')
 }
 
+/** Trois lignes à puces : le filtre « Toutes » (#160). */
+export function listLineIcon(hex: string, size = 16, width: number = STROKE.base): string {
+  return line(hex, size, width, '<path d="M3 6h.01M3 12h.01M3 18h.01M8 6h13M8 12h13M8 18h13"/>')
+}
+
 /** La roue des réglages, en haut à droite du panneau. */
 export function gearIcon(hex: string, size = 16, width: number = STROKE.base): string {
   return line(
@@ -153,6 +158,8 @@ export function todoIcon(icon: TodoIcon, hex: string): string {
       return spinnerIcon(hex, 16, undefined, true)
     case 'bubble':
       return bubbleLineIcon(hex)
+    case 'list':
+      return listLineIcon(hex)
   }
 }
 
@@ -170,23 +177,6 @@ export function brandMarkIcon(palette: Palette, size = 20): string {
       lane(8.8, 8.5, axisColor(palette, 1)) +
       lane(12.6, 5, axisColor(palette, 2)),
   )
-}
-
-/**
- * Les voies de Maestro en points (#149) : un point par tâche lancée, à la couleur de sa voie, sur la ligne
- * « En cours » repliée.
- */
-export function laneDotsIcon(
-  palette: Palette,
-  states: readonly ('wait' | 'live' | 'done' | 'finished')[],
-): { source: string; width: number; height: number } {
-  const r = 3.5
-  const step = 10
-  const height = 12
-  const width = states.length * step
-  const hex = { wait: palette.block, live: palette.live, done: palette.done, finished: palette.finished }
-  const dots = states.map((state, i) => `<circle cx="${i * step + step / 2}" cy="${height / 2}" r="${r}" fill="${hex[state]}"/>`).join('')
-  return { source: `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">${dots}</svg>`, width, height }
 }
 
 /**
