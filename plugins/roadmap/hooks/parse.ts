@@ -5863,6 +5863,38 @@ export function reloadOutcome(r: { filled: boolean; copied: boolean }): string {
   return `Tape ${RELOAD_COMMAND} dans la saisie, puis Entrée.`
 }
 
+/**
+ * Le catalogue local de Claude Code (#178) : sur le Mac de Bertrand, l'app charge roadmap par
+ * `~/.claude/plugins/installed_plugins.json` (entrée `roadmap@roadmap`), pas par le magasin du compte ;
+ * « Check for updates » sur claude.ai n'y fait rien. Les deux commandes sont celles de `tools/release.py` (#175).
+ */
+export const LOCAL_UPDATE_COMMANDS = ['claude plugin marketplace update roadmap', 'claude plugin update roadmap@roadmap'] as const
+
+/** Ce que « Mettre à jour » pose dans la saisie : une demande à Claude, qui lance les deux commandes. */
+export const LOCAL_UPDATE_REQUEST = `Mets à jour le plugin roadmap : lance \`${LOCAL_UPDATE_COMMANDS[0]}\` puis \`${LOCAL_UPDATE_COMMANDS[1]}\`.`
+
+/** La version de `roadmap@roadmap` dans `installed_plugins.json` : l'installation de l'utilisateur, sinon la plus récente. */
+export function localAppVersion(json: string): string | undefined {
+  type Entry = { scope?: unknown; version?: unknown; lastUpdated?: unknown }
+  let entries: unknown
+  try {
+    entries = (JSON.parse(json) as { plugins?: Record<string, unknown> }).plugins?.['roadmap@roadmap']
+  } catch {
+    return undefined
+  }
+  const list = (Array.isArray(entries) ? entries : [entries]).filter((e): e is Entry => !!e && typeof e === 'object')
+  const rank = (e: Entry) => `${e.scope === 'user' ? 1 : 0}${String(e.lastUpdated ?? '')}`
+  const best = list.sort((a, b) => (rank(a) < rank(b) ? 1 : rank(a) > rank(b) ? -1 : 0))[0]
+  return best && typeof best.version === 'string' && best.version !== '' ? best.version : undefined
+}
+
+/** Ce qu'a fait « Mettre à jour » : la demande dans la saisie, sinon copiée, sinon les commandes à lancer. */
+export function updateLocalOutcome(r: { filled: boolean; copied: boolean }): string {
+  if (r.filled) return `La demande est dans la saisie : tape Entrée, puis Rafraîchir et ${RELOAD_COMMAND}.`
+  if (r.copied) return `La demande est copiée : colle-la dans la saisie, puis Entrée.`
+  return `Lance ${LOCAL_UPDATE_COMMANDS.join(' puis ')}, puis ${RELOAD_COMMAND}.`
+}
+
 /** -1, 0 ou 1 selon l'ordre des numéros (`0.100.0` après `0.95.0`) ; sans ordre (non numérique, différentes) : undefined. */
 export function compareVersions(a: string, b: string): -1 | 0 | 1 | undefined {
   const parts = (v: string) => v.split('.').map(n => (/^\d+$/.test(n) ? Number(n) : NaN))
@@ -5885,22 +5917,35 @@ export function publishedVersionOf(json: string): string | undefined {
   }
 }
 
-/** `action` : le geste que porte le panneau, ouvrir claude.ai (`open-plugins`) ou recharger la session (`reload`). */
-export type VersionNote = { state: 'ok' | 'late' | 'unknown'; text: string; gesture?: string; action?: 'reload' | 'open-plugins'; foot: string }
+/**
+ * `action` : le geste que porte le panneau, ouvrir claude.ai (`open-plugins`), demander à Claude la mise à jour
+ * du catalogue local (`update-local`, #178) ou recharger la session (`reload`).
+ */
+export type VersionNote = { state: 'ok' | 'late' | 'unknown'; text: string; gesture?: string; action?: 'reload' | 'open-plugins' | 'update-local'; foot: string }
 
 /**
  * Les trois versions du plugin : celle que tourne cette session, celle du magasin de l'app (la prochaine
  * session ; absente sous `--plugin-dir`), la dernière publiée. Dit la seule qui retarde et le geste ;
  * `foot` est la ligne courte du pied du panneau (maquette B). Une version locale en avance (pas encore
- * publiée) compte à jour.
+ * publiée) compte à jour. `source` : d'où l'app tient sa version, le magasin du compte (`store`, défaut) ou le
+ * catalogue local de Claude Code (`local`, #178), qui change le geste quand l'app retarde.
  */
-export function versionNote(v: { session: string; app?: string; published?: string; publishedError?: string }): VersionNote {
+export function versionNote(v: { session: string; app?: string; published?: string; publishedError?: string; source?: 'store' | 'local' }): VersionNote {
   const behind = (a: string, b: string) => compareVersions(a, b) === -1 || compareVersions(a, b) === undefined
   if (!v.published) {
     return {
       state: 'unknown',
       text: `roadmap ${v.session} ; dernière version publiée non vérifiée (${v.publishedError ?? 'illisible'})`,
       foot: `roadmap ${v.session} · non vérifiée`,
+    }
+  }
+  if (v.app && behind(v.app, v.published) && v.source === 'local') {
+    return {
+      state: 'late',
+      text: `L'app charge ${v.app}, la dernière est ${v.published}.`,
+      gesture: `« Mettre à jour » demande à Claude de lancer ${LOCAL_UPDATE_COMMANDS.join(' puis ')}, puis ${RELOAD_COMMAND}.`,
+      action: 'update-local',
+      foot: `${v.app} → ${v.published} · app`,
     }
   }
   if (v.app && behind(v.app, v.published)) {

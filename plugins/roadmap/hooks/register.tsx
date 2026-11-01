@@ -365,6 +365,9 @@ import {
   RELOAD_COMMAND,
   reloadOutcome,
   versionNote,
+  LOCAL_UPDATE_REQUEST,
+  localAppVersion,
+  updateLocalOutcome,
   titlesNote,
   waitNote,
   type WaitNote,
@@ -2408,19 +2411,23 @@ async function loadSessionVersion($: EngineInterface): Promise<string> {
 }
 
 /**
- * La version du magasin de l'app, que prendra la prochaine session : le `manifest.json` du dossier `rpm`
- * qui contient ce plugin dit le dossier de l'entrée roadmap. Sans magasin (`--plugin-dir`, terminal) : rien.
+ * La version de l'app, que prendra la prochaine session, et d'où elle la tient. D'abord le magasin du compte :
+ * le `manifest.json` du dossier `rpm` qui contient ce plugin dit le dossier de l'entrée roadmap. Sinon le
+ * catalogue local de Claude Code (#178) : l'entrée `roadmap@roadmap` de `installed_plugins.json`.
+ * Ni l'un ni l'autre (`--plugin-dir`, terminal) : rien.
  */
-async function appVersion($: EngineInterface): Promise<string | undefined> {
+async function appVersion($: EngineInterface): Promise<{ version?: string; source?: 'store' | 'local' }> {
   const rpm = $.plugin.root.replace(/\/[^/]+\/?$/, '')
-  let manifest: { plugins?: { id?: unknown; name?: unknown; marketplaceName?: unknown }[] }
   try {
-    manifest = JSON.parse(await $.fs.read(`${rpm}/manifest.json`)) as typeof manifest
+    const manifest = JSON.parse(await $.fs.read(`${rpm}/manifest.json`)) as { plugins?: { id?: unknown; name?: unknown; marketplaceName?: unknown }[] }
+    const entry = (manifest.plugins ?? []).find(p => p.name === 'roadmap' && p.marketplaceName === 'roadmap')
+    if (entry && typeof entry.id === 'string') return { version: await pluginVersionAt($, `${rpm}/${entry.id}`), source: 'store' }
   } catch {
-    return undefined
+    // pas de magasin : le catalogue local
   }
-  const entry = (manifest.plugins ?? []).find(p => p.name === 'roadmap' && p.marketplaceName === 'roadmap')
-  return entry && typeof entry.id === 'string' ? pluginVersionAt($, `${rpm}/${entry.id}`) : undefined
+  const config = ((await $.env.get('CLAUDE_CONFIG_DIR')) || `${(await $.env.get('HOME')) ?? ''}/.claude`).replace(/\/+$/, '')
+  const version = localAppVersion((await readOr($, `${config}/plugins/installed_plugins.json`)) ?? '')
+  return version ? { version, source: 'local' } : {}
 }
 
 /** La dernière version publiée, ou pourquoi elle ne se lit pas (la raison de la dernière lecture qui a démarré). */
@@ -2467,6 +2474,29 @@ async function reloadPlugin($: EngineInterface): Promise<void> {
   await update($, versionNoteAtom, note => ({ ...note, action: undefined, gesture: reloadOutcome({ filled, copied }) }))
 }
 
+/**
+ * « Mettre à jour » (#178, maquette A) : le catalogue local se met à jour par deux commandes que le panneau ne
+ * peut pas lancer ; le bouton pose dans la saisie la demande à Claude (sinon la copie), puis redevient
+ * « Rafraîchir » et l'encart dit ce qui s'est passé.
+ */
+async function updateLocal($: EngineInterface): Promise<void> {
+  let filled = false
+  let copied = false
+  try {
+    filled = (await $.prompt.fill({ text: LOCAL_UPDATE_REQUEST })).isFilled
+  } catch {
+    // pas de saisie : la copie
+  }
+  if (!filled) {
+    try {
+      copied = (await $.ui.copy({ text: LOCAL_UPDATE_REQUEST })).isCopied
+    } catch {
+      // ni saisie ni presse-papiers : le texte seul
+    }
+  }
+  await update($, versionNoteAtom, note => ({ ...note, action: undefined, gesture: updateLocalOutcome({ filled, copied }) }))
+}
+
 let refreshing = false
 
 /** Le bouton Rafraîchir : tout se relit (fichiers, titres, sessions), puis les versions se comparent. */
@@ -2480,7 +2510,7 @@ async function refreshAll($: EngineInterface): Promise<void> {
     await update($, retryAtom, v => v + 1)
     await refresh($)
     const [app, published] = await Promise.all([appVersion($), publishedVersion($)])
-    const note = versionNote({ session, app, published: published.version, publishedError: published.error })
+    const note = versionNote({ session, app: app.version, source: app.source, published: published.version, publishedError: published.error })
     await update($, versionNoteAtom, () => note)
   } catch {
     const session = await loadSessionVersion($)
@@ -7369,7 +7399,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
       <Box flexDirection="column">{groups.map(g => (g.band ? bandRow(idOf(g), g.name, g.band.count, g.band.lead, g.band.axis) : section(idOf(g), g.name, g.tasks, rowsOf.get(idOf(g)) ?? 0, g.lead, g.mark, g.block, g.bare)))}</Box>
 
       {/* Le pied (#138, puis #162, maquette B) : la roue des réglages, la version de cette session, et à droite
-          « Rafraîchir », qui relit tout et la compare à la publiée, ou « Recharger » quand seule la session retarde. */}
+          « Rafraîchir », qui relit tout et la compare à la publiée, « Recharger » quand seule la session retarde, ou « Mettre à jour » quand l'app retarde sur le catalogue local (#178). */}
       <Box flexDirection="column" gap="xs">
         {Svg && <Svg source={ruleIcon(palette.border, wide)} alt="séparateur" height={1} />}
         <Box key="pane-foot" flexDirection="row" justifyContent="space-between" alignItems="center" paddingX={SPACE.indent}>
@@ -7395,6 +7425,10 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
           {versionCheck.action === 'reload' ? (
             <Box flexShrink={0} marginLeft={1}>
               <Button key="version-reload" variant="primary" label="Recharger" onPress={() => void reloadPlugin($)} />
+            </Box>
+          ) : versionCheck.action === 'update-local' ? (
+            <Box flexShrink={0} marginLeft={1}>
+              <Button key="version-update" variant="primary" label="Mettre à jour" onPress={() => void updateLocal($)} />
             </Box>
           ) : (
             <Box key="version-refresh-row" flexShrink={0} marginLeft={1} paddingX={SPACE.indent} alignItems="center" backgroundColor={palette.btn} hover={{ backgroundColor: palette.btnHover }}>
