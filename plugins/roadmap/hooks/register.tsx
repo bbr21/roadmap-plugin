@@ -6720,8 +6720,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
         alignItems="center"
         gap={SPACE.row}
         paddingX={SPACE.indent}
-        {...(ask ? { backgroundColor: palette.blockTint } : {})}
-        hover={{ backgroundColor: ask ? palette.blockTint : palette.hover }}
+        hover={{ backgroundColor: palette.hover }}
       >
         {/* Une tâche d'une chaîne, au terminal : le trait en glyphe et son étape (1 pour la tête). */}
         {(chain || child) && !Svg && (
@@ -6815,14 +6814,14 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     )
     if (ask === undefined) return line
     // L'encart de la ligne armée (#179, maquette A, celui de « Tout clore ») : la question, ce qui va
-    // s'écrire, puis le bouton qui le fait et « Annuler ».
+    // s'écrire, puis le bouton qui le fait et « Annuler ». Une carte au filet orange sur le fond du
+    // panneau, sans aplat ; la ligne armée n'a plus de fond, seul son rond dit l'armement (#184, maquette C).
     return (
       <Box key={`armed:${t.key}`} flexDirection="column">
         {line}
-        <Box key={`ask:${t.key}`} flexDirection="column" gap="xs" marginLeft={SPACE.nest} paddingX={SPACE.indent} paddingY="xs" backgroundColor={palette.blockTint}>
-          {corners(RADIUS.control, palette.bg)}
+        <Box key={`ask:${t.key}`} flexDirection="column" gap="xs" marginLeft={SPACE.nest} paddingX={SPACE.indent} paddingY="xs" borderStyle="round" borderColor={palette.block}>
           <Text size="footnote" weight="semibold" color={palette.blockOn} wrap="wrap">{ask.question}</Text>
-          <Text size="caption" color={palette.blockOn} wrap="wrap">{ask.detail}</Text>
+          <Text size="caption" color={palette.text2} wrap="wrap">{ask.detail}</Text>
           <Box flexDirection="row" gap={SPACE.row}>
             <Button key="arm-confirm" variant="primary" label={ask.button} onPress={() => void checkTask($, source, t, openKids)} />
             <Button key="arm-cancel" label="Annuler" onPress={() => void disarm($)} />
