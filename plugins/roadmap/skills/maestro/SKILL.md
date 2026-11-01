@@ -44,7 +44,8 @@ full on 26/10/2026; a single name, Maestro, since 29/10/2026 (#112).
   « Lot … » is still recognised (alias of the sessions opened before #112). It never marks it
   « en cours » on a task.
 - **The lines**: one line per task in `ROADMAP.md` (with its `id:`), in order; a prerequisite is
-  written `après:N`.
+  written `après:N`. Before opening one, read the project's `ROADMAP-REGLES.md`, next to
+  `ROADMAP.md` (#167): what becomes a task and what never does; the `tasks` skill writes it.
 - **The split**: list the files each task will touch. Two tasks that share a file do not run at the
   same time: the second one carries `après:` and starts from `main` once the first is merged.
 

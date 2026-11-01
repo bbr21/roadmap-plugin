@@ -136,8 +136,10 @@ are taken from the request as above; `qui` is the name of the person who leads (
    roadmap its own way (#158). Skipped if the request says nothing about it and the folder has
    neither a rules file nor a writing tool.
    - « Les règles du plugin suffisent » (recommended for a new project): nothing declared; the
-     `tasks` skill writes by itself and looks for the proof in the conversation
-   - « Déclarer les règles du projet »: `regles` (the file of its rules, which win), `ecriture`
+     `tasks` skill writes by itself, following `ROADMAP-REGLES.md` as set up from the template
+     (to fill with the person later), and looks for the proof in the conversation
+   - « Déclarer les règles du projet »: `regles` (only if its rules file lives elsewhere than
+     `ROADMAP-REGLES.md` next to `ROADMAP.md`, which is always set up, #167), `ecriture`
      (`{"outil": "<script>", "consigne": "<comment l'appeler>"}` when the project writes its
      roadmap through its own tool) and `preuves` (the places to look for proof that a task is
      done, or `"#Preuves"`, a section of the rules file); the values are asked next in free text
@@ -158,7 +160,7 @@ Written in the session's scratchpad, then passed to `init --reponses`. The full 
 | `migrations` | migrations folder, or `""` |
 | `env` | `true` if the project has a `.env` (not versioned, linked in each worktree) |
 | `secrets` | file patterns in addition to `.env`, `*.pem`, `*.key`, `*.p8`, `*.p12` |
-| `regles`, `ecriture`, `preuves` | what the project declares about its roadmap (#158): the path of its rules file; `{"outil": "…", "consigne": "…"}`; a list of places (paths, or `source:requête` such as `gmail:in:sent`) or `"#<titre>"`. Absent: nothing declared. Written into `.claude/roadmap.json`, in both modes; whether they exist on disk is the doctor's job |
+| `regles`, `ecriture`, `preuves` | what the project declares about its roadmap (#158): the path of its rules file when it is not `ROADMAP-REGLES.md` next to `ROADMAP.md` (#167: the template then goes there); `{"outil": "…", "consigne": "…"}`; a list of places (paths, or `source:requête` such as `gmail:in:sent`) or `"#<titre>"`. Absent: nothing declared. Written into `.claude/roadmap.json`, in both modes; whether they exist on disk is the doctor's job |
 | `design` | list of `{"chemin": "design/", "pour": "…"}` (a string stands for its path; relative to the project, absolute or `https://`), or `"aucun"`; absent: nothing declared. Written into `.claude/roadmap.json`, in both modes |
 | `fin_en_plus` | steps in addition to « Finir un chantier », one sentence each |
 | `github` | `<compte>/<nom>` or `""` |

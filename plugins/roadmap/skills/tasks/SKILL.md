@@ -12,8 +12,11 @@ French, as the roadmap does. Only this skill is in English.
 
 - **One subject, one task.** Before writing, every action is matched against the open and closed
   tasks on the same subject; an action already covered never creates another task.
-- **The project's rules win.** What `.claude/roadmap.json` declares (`regles`, `ecriture`,
-  `preuves`, `requis`, `cles`) is read, never copied here.
+- **Three places, three jobs** (#167): this skill says *how* to write a task; the project's
+  `ROADMAP-REGLES.md`, next to `ROADMAP.md`, says *what* becomes a task and what never does; the
+  roadmap says *where* each task stands.
+- **The project's rules win.** `ROADMAP-REGLES.md` and what `.claude/roadmap.json` declares
+  (`regles`, `ecriture`, `preuves`, `requis`, `cles`) are read on every pass, never copied here.
 - **All or nothing.** The script prepares in memory, checks, shows (dry run), then writes in one go
   after a backup, or hands the lines to the project's tool.
 - **A task is marked done on proof**, at the date of the proof, with its bilan row.
@@ -41,9 +44,16 @@ It returns (French keys, shared with the audit): `prochain_id`, `requis`, `cles`
 `cles_valeurs`, `axes`, `sections`, the open tasks (`taches`, with `parent` and `enfants`), the
 closed ones (`closes`), `parents` (each one's date) and `declarations`:
 
-- **`regles`** set: read that file **in full** before anything else. Its rules win over this
-  skill's (a filter on what becomes a task, key prefixes, a call day). Missing (`existe: false`):
-  stop and say so; writing without them would go against the project.
+- **`regles`**: the project's rules file, always there (#167): `ROADMAP-REGLES.md` next to
+  `ROADMAP.md` (`defaut: true`), or the file the `regles` key declares. Read it **in full**, on
+  every pass, before anything else: what becomes a task, what never does, the project's rules.
+  They win over this skill's (a filter on what becomes a task, key prefixes, a call day). An
+  action it says never becomes a task is not written; say so in one line.
+  Missing with `defaut: true`: set it from the template with
+  `python3 "<skill folder>/../onboarding/scripts/onboarding.py" regles <project folder>`, say so
+  in one line (to fill with the person, committed with the roadmap), read it, go on. Missing with
+  `defaut: false` (a declared path): stop and say so; writing without them would go against the
+  project.
 - **`ecriture`** set: you will not write yourself (step 4). `ecriture_illisible`: nothing gets
   written; ask to fix `.claude/roadmap.json` (the `doctor` skill names the problem).
 - **`preuves`**: where to look for proof that a task is done (step 3).

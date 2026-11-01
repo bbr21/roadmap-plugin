@@ -252,9 +252,12 @@ Premiers usages : la roadmap de Caro et le dossier AAFES Cowork, depuis l'onglet
   l'arbre en bandes repliables, une par valeur de la clé (les déclarées dans leur ordre, puis les
   autres, puis « Sans projet »), les blocs sous la valeur de leur parent. Une clé non déclarée
   dans `cles` est ignorée, et le doctor le dit.
-- **Les règles du projet** (#158), dans les deux modes : `"regles": "ROADMAP-REGLES.md"` (le
-  fichier des règles propres au projet, que lisent les skills `tasks` et `audit` avant d'écrire, et
-  qui l'emportent sur leurs défauts), `"ecriture": {"outil": "50-tools/dossier/patch.py",
+- **Les règles du projet** (#158), dans les deux modes. Tout projet a son fichier de règles,
+  `ROADMAP-REGLES.md`, à côté de `ROADMAP.md` (#167) : ce qui devient une tâche, ce qui n'en
+  devient jamais une, les règles du projet et ses preuves. L'onboarding le pose depuis un modèle
+  (`onboarding.py regles <dossier>` pour un projet déjà onboardé), le doctor est KO s'il manque, et
+  les skills `tasks`, `audit` et Maestro le lisent à chaque passage ; ses règles l'emportent sur
+  leurs défauts. `"regles": "<chemin>"` le range ailleurs, `"ecriture": {"outil": "50-tools/dossier/patch.py",
   "consigne": "essai à blanc, puis --apply"}` (le projet écrit sa roadmap par son propre outil :
   `tasks` lui passe les lignes au lieu d'écrire) et `"preuves": ["_inbox/_traite/",
   "gmail:in:sent"]` (où chercher qu'une tâche est faite : des chemins, des sources
@@ -599,6 +602,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.113.0 (2026-11-01)** : skills : tout projet a son ROADMAP-REGLES.md à côté de ROADMAP.md, posé par l'onboarding, exigé par le doctor, lu par tasks, audit et Maestro (#167)
 - **0.112.1 (2026-11-01)** : panneau : le panneau ne remonte plus tout seul pendant qu'on fait défiler la liste (#154)
 - **0.112.0 (2026-10-31)** : panneau : N faites à droite de l'en-tête, la roue des réglages dans le pied à côté de Rafraîchir ; quand l'app retarde, l'encart ouvre la page Plugins de claude.ai et Recharger pose /reload-plugins dans la saisie (#162)
 - **0.111.0 (2026-10-31)** : panneau : la fiche d'une tâche a une flèche retour en tête, à la place de la marque, qui ramène à la roadmap ; plus de bouton Toute la roadmap ni de Retour à la liste en bas (#165)

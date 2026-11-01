@@ -6,6 +6,7 @@ reconstitue au besoin la roadmap depuis l'historique du dépôt, et vérifie le 
   python3 onboarding.py init DOSSIER --reponses R.json     écrit la structure dans DOSSIER
           [--manquants]                                    n'écrit que les fichiers absents (projet existant)
   python3 onboarding.py verifier DOSSIER                   dit ce qui manque ou s'écarte du format
+  python3 onboarding.py regles DOSSIER                     pose ROADMAP-REGLES.md depuis le modèle, s'il manque
   python3 onboarding.py historique DOSSIER [--mois 6]      relève l'historique (PR, sinon fusions, sinon
           [--sans-gh] [--par auto|commit|jour]             commits), en JSON, à compléter
   python3 onboarding.py historique-ecrire DOSSIER --lignes H.json
@@ -14,7 +15,8 @@ reconstitue au besoin la roadmap depuis l'historique du dépôt, et vérifie le 
           [--dossier D] [--qui NOM] [--requis a,b]         Notion, tableau Markdown) : correspondance en JSON
   python3 onboarding.py importer DOSSIER --analyse A.json  l'importe : sauvegarde, numéros, bilan avant/après
 
-La roadmap d'un nouveau projet vit dans `roadmap/` (ROADMAP.md, ROADMAP-fait.md, ROADMAP-bilans.csv),
+La roadmap d'un nouveau projet vit dans `roadmap/` (ROADMAP.md, ROADMAP-fait.md, ROADMAP-bilans.csv et
+ROADMAP-REGLES.md, ses règles),
 que `.claude/roadmap.json` désigne au panneau. Un projet qui la tient déjà à sa racine la garde là.
 
 `init` refuse d'écraser un fichier : sans --manquants, il refuse tout dossier qui contient déjà un
@@ -56,6 +58,8 @@ VERROU = re.compile(r"^[a-z0-9-]+$")
 SECRETS_DE_BASE = [".env", ".env.*", "*.pem", "*.key", "*.p8", "*.p12"]
 DOSSIER_ROADMAP = "roadmap"
 BILANS = "ROADMAP-bilans.csv"
+# Le fichier des règles de la roadmap (#167) : toujours à côté de ROADMAP.md, sauf `regles` déclaré ailleurs.
+REGLES = "ROADMAP-REGLES.md"
 ENTETE_BILANS = ["date", "id", "fait", "souci", "ressenti", "cause", "corrections", "note"]
 CONCLUSION_MAX = 140
 SOUCI_HISTORIQUE = "Reconstituée depuis l'historique du dépôt, sans bilan"
@@ -313,12 +317,14 @@ def variables(r, aujourdhui=None):
         v["CARTE_ROADMAP"] = (
             "roadmap/           ROADMAP.md : tâches ouvertes (cap, en cours, prochain, plus tard, attend %s)\n"
             "                   ROADMAP-fait.md : tâches closes, récentes en tête (grep, ne pas lire en entier)\n"
-            "                   ROADMAP-bilans.csv : le bilan de chaque tâche close\n" % qui)
+            "                   ROADMAP-bilans.csv : le bilan de chaque tâche close\n"
+            "                   ROADMAP-REGLES.md : quoi relever comme tâche, quoi jamais (lu par toute skill qui l'écrit)\n" % qui)
     else:
         v["CARTE_ROADMAP"] = (
             "ROADMAP.md         tâches ouvertes : cap, en cours (qui, branche, verrous), prochain, plus tard, attend %s\n"
             "ROADMAP-fait.md    tâches closes, récentes en tête (chercher avec grep, ne pas lire en entier)\n"
-            "ROADMAP-bilans.csv le bilan de chaque tâche close\n" % qui)
+            "ROADMAP-bilans.csv le bilan de chaque tâche close\n"
+            "ROADMAP-REGLES.md  quoi relever comme tâche, quoi jamais (lu par toute skill qui l'écrit)\n" % qui)
 
     # Finir un chantier
     etapes = []
@@ -473,8 +479,10 @@ def variables_projet(r, aujourdhui=None):
             "\n- **%s** : %s ; plusieurs valeurs séparées par des virgules." % (
                 k, ("valeurs admises : " + ", ".join("`%s`" % x for x in v)) if v else "valeur libre")
             for k, v in cles.items()),
-        "CARTE_ROADMAP": ("roadmap/           ROADMAP.md (tâches ouvertes), ROADMAP-fait.md (closes), ROADMAP-bilans.csv (bilans)"
-                          if rm else "ROADMAP.md         tâches ouvertes ; ROADMAP-fait.md : closes ; ROADMAP-bilans.csv : bilans"),
+        "CARTE_ROADMAP": ("roadmap/           ROADMAP.md (tâches ouvertes), ROADMAP-fait.md (closes), ROADMAP-bilans.csv (bilans),\n"
+                          "                   ROADMAP-REGLES.md (quoi relever comme tâche, quoi jamais)"
+                          if rm else "ROADMAP.md         tâches ouvertes ; ROADMAP-fait.md : closes ; ROADMAP-bilans.csv : bilans\n"
+                          "ROADMAP-REGLES.md  quoi relever comme tâche, quoi jamais"),
         "GITIGNORE_EN_PLUS": "\n".join(r.get("gitignore") or []),
     }
 
@@ -498,6 +506,7 @@ def fichiers_projet(r, aujourdhui=None):
     if r.get("design"):
         cfg["design"] = r["design"]
     _poser_declarations(cfg, r)
+    _regles_declarees(out, r)
     out[".claude/roadmap.json"] = json.dumps(cfg, ensure_ascii=False, indent=2) + "\n"
     return out
 
@@ -521,8 +530,22 @@ def fichiers(r, aujourdhui=None):
     if r.get("design"):
         cfg["design"] = r["design"]
     _poser_declarations(cfg, r)
+    _regles_declarees(out, r)
     out[".claude/roadmap.json"] = json.dumps(cfg, ensure_ascii=False, indent=2) + "\n"
     return out
+
+
+def _regles_declarees(out, r):
+    """Le modèle des règles (#167) va là où `regles` le déclare (un chemin relatif), au lieu de son nom fixe."""
+    cible = r.get("regles")
+    if not cible or os.path.isabs(os.path.expanduser(cible.strip())):
+        return
+    cible = os.path.normpath(cible.strip())
+    if cible == ".." or cible.startswith(".." + os.sep):
+        return
+    fixe = next((k for k in out if os.path.basename(k) == REGLES and os.path.dirname(k) in ("", DOSSIER_ROADMAP)), None)
+    if fixe and cible != fixe:
+        out[cible] = out.pop(fixe)
 
 
 # ---------------------------------------------------------------- init et vérification
@@ -591,6 +614,14 @@ def mode_du_dossier(dossier):
         return "code"
 
 
+def _ecart_regles(dossier, en_plus=""):
+    """Le fichier des règles de la roadmap (#167) absent : son écart, sinon rien."""
+    r = chemin_regles(dossier)
+    if r is None or os.path.isfile(r["absolu"]):
+        return []
+    return ["absent : %s%s" % (r["chemin"], en_plus if r["defaut"] else "")]
+
+
 def verifier_projet(dossier):
     """Les écarts d'un dossier du mode Projet : ses règles, sa roadmap et ses numéros, sans git."""
     ecarts = []
@@ -607,6 +638,7 @@ def verifier_projet(dossier):
 
     if not os.path.isfile(os.path.join(rdir, "ROADMAP-fait.md")):
         ecarts.append("absent : ROADMAP-fait.md, à côté de ROADMAP.md")
+    ecarts += _ecart_regles(dossier, ", à côté de ROADMAP.md")
     claude = lire(os.path.join(dossier, "CLAUDE.md"))
     if claude is None:
         ecarts.append("absent : CLAUDE.md")
@@ -639,7 +671,7 @@ def verifier(dossier):
     racine = rdir is not None and os.path.normpath(rdir) == os.path.normpath(dossier)
     rel_rm = "" if (rdir is None or racine) else os.path.relpath(rdir, dossier).replace(os.sep, "/") + "/"
     for _, rel in modeles("." if racine else DOSSIER_ROADMAP):
-        if rel in FACULTATIFS or rel.endswith(BILANS) or rel == ".env.example":
+        if rel in FACULTATIFS or rel.endswith(BILANS) or rel.endswith(REGLES) or rel == ".env.example":
             continue
         if rel.startswith(DOSSIER_ROADMAP + "/") and rdir is not None and not racine:
             rel = rel_rm + rel[len(DOSSIER_ROADMAP) + 1:]
@@ -648,6 +680,8 @@ def verifier(dossier):
                 ecarts.append("absent : roadmap/ROADMAP.md (ou ROADMAP.md à la racine) : pas de roadmap")
             else:
                 ecarts.append("absent : %s" % rel)
+    if rdir is not None:
+        ecarts += _ecart_regles(dossier)
     if rdir is not None and not racine and not os.path.isfile(os.path.join(dossier, ".claude", "roadmap.json")):
         ecarts.append("absent : .claude/roadmap.json (le panneau ne trouve pas une roadmap rangée hors de la racine)")
 
@@ -1039,6 +1073,63 @@ def _absolu(dossier, chemin):
     return chemin if os.path.isabs(chemin) else os.path.join(dossier, chemin)
 
 
+def chemin_regles(dossier, cfg=None):
+    """Le fichier des règles de la roadmap (#167) : `regles` de `.claude/roadmap.json` s'il est déclaré,
+    sinon `ROADMAP-REGLES.md` à côté de `ROADMAP.md` (`defaut`). None : ni l'un ni roadmap."""
+    dossier = os.path.abspath(os.path.expanduser(dossier))
+    if cfg is None:
+        try:
+            with open(os.path.join(dossier, ".claude", "roadmap.json"), encoding="utf-8") as f:
+                cfg = json.load(f)
+        except (OSError, ValueError):
+            cfg = {}
+    v = cfg.get("regles") if isinstance(cfg, dict) else None
+    if _chemin_lisible(v):
+        return {"chemin": v.strip(), "absolu": _absolu(dossier, v), "defaut": False}
+    rdir = trouver_roadmap(dossier)
+    if rdir is None:
+        return None
+    absolu = os.path.join(rdir, REGLES)
+    return {"chemin": os.path.relpath(absolu, dossier).replace(os.sep, "/"), "absolu": absolu, "defaut": True}
+
+
+def _dans(dossier, chemin):
+    """Vrai si `chemin`, liens résolus, reste dans `dossier` : rien ne se pose hors du projet."""
+    racine = os.path.realpath(dossier)
+    return os.path.realpath(chemin).startswith(racine + os.sep)
+
+
+def poser_regles(dossier):
+    """Pose le fichier des règles de la roadmap depuis le modèle du mode, s'il manque (#167) ; jamais
+    d'écrasement. Rend son chemin absolu, ou None s'il était déjà là."""
+    dossier = os.path.abspath(os.path.expanduser(dossier))
+    r = chemin_regles(dossier)
+    if r is None:
+        raise Erreur("pas de roadmap dans %s : lancer d'abord l'onboarding" % dossier)
+    if not _dans(dossier, r["absolu"]):
+        raise Erreur("regles « %s » sort du projet : rien n'est posé hors de %s" % (r["chemin"], dossier))
+    if os.path.exists(r["absolu"]):
+        print("Gardé tel quel : %s" % r["chemin"])
+        return None
+    try:
+        with open(os.path.join(dossier, ".claude", "roadmap.json"), encoding="utf-8") as f:
+            cfg = json.load(f)
+    except (OSError, ValueError):
+        cfg = {}
+    cfg = cfg if isinstance(cfg, dict) else {}
+    nom = cfg.get("name") if isinstance(cfg.get("name"), str) and cfg["name"].strip() else os.path.basename(dossier)
+    me = cfg.get("me")
+    qui = me[0] if isinstance(me, list) and me and isinstance(me[0], str) else (me if isinstance(me, str) and me else "l'équipe")
+    racine = MODELES_PROJET if mode_du_dossier(dossier) == "projet" else MODELES
+    with open(os.path.join(racine, DOSSIER_ROADMAP, REGLES), encoding="utf-8") as f:
+        texte = rendre(f.read(), {"NOM": _aplatir(nom), "QUI": _aplatir(qui)})
+    os.makedirs(os.path.dirname(r["absolu"]), exist_ok=True)
+    with open(r["absolu"], "w", encoding="utf-8") as f:
+        f.write(texte)
+    print("Posé : %s, à remplir avec les règles du projet." % r["chemin"])
+    return r["absolu"]
+
+
 def declarations(dossier, cfg=None):
     """Ce que le projet déclare sur sa roadmap dans `.claude/roadmap.json` (#158) : son fichier de
     règles (`regles`), son outil d'écriture (`ecriture`, un objet `{outil, consigne}`) et où chercher
@@ -1056,15 +1147,14 @@ def declarations(dossier, cfg=None):
     out = {"regles": None, "ecriture": None, "ecriture_illisible": False, "preuves": [], "soucis": []}
     soucis = out["soucis"]
 
-    if "regles" in cfg:
-        v = cfg["regles"]
-        if not _chemin_lisible(v):
-            soucis.append("regles n'est pas un chemin lisible, ignoré")
-        else:
-            absolu = _absolu(dossier, v)
-            out["regles"] = {"chemin": v.strip(), "absolu": absolu, "existe": os.path.isfile(absolu)}
-            if not out["regles"]["existe"]:
-                soucis.append("regles « %s » introuvable" % v.strip())
+    if "regles" in cfg and not _chemin_lisible(cfg["regles"]):
+        soucis.append("regles n'est pas un chemin lisible, ignoré")
+    regles = chemin_regles(dossier, cfg)
+    if regles:
+        out["regles"] = dict(regles, existe=os.path.isfile(regles["absolu"]))
+        if not out["regles"]["existe"]:
+            soucis.append(("%s absent : onboarding.py regles le pose depuis le modèle" if regles["defaut"]
+                           else "regles « %s » introuvable") % regles["chemin"])
 
     if "ecriture" in cfg:
         e = cfg["ecriture"]
@@ -1219,6 +1309,8 @@ def main(argv=None):
     pi.add_argument("--manquants", action="store_true")
     pv = sub.add_parser("verifier")
     pv.add_argument("dossier")
+    pr = sub.add_parser("regles")
+    pr.add_argument("dossier")
     ph = sub.add_parser("historique")
     ph.add_argument("dossier")
     ph.add_argument("--mois", type=int, default=6)
@@ -1255,6 +1347,8 @@ def main(argv=None):
             print(json.dumps(importer.analyser(a.fichier, a.fait, a.qui or qui, requis), ensure_ascii=False, indent=2))
         elif a.cmd == "importer":
             importer.importer(a.dossier, a.analyse)
+        elif a.cmd == "regles":
+            poser_regles(a.dossier)
         elif a.cmd == "design":
             if a.poser is None:
                 print(json.dumps(design(a.dossier), ensure_ascii=False, indent=2))

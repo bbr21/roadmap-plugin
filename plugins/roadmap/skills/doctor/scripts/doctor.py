@@ -661,19 +661,26 @@ def design_system(main):
 
 
 def regles_du_projet(main):
-    """Ce que le projet déclare sur sa roadmap (#158) : `regles`, `ecriture`, `preuves`, dans les deux
-    modes ; rien de déclaré, pas de ligne. Une écriture illisible bloque la skill tasks : KO."""
+    """Les règles de la roadmap (#167) et ce que le projet déclare sur elle (#158 : `regles`,
+    `ecriture`, `preuves`), dans les deux modes. Le fichier des règles manque, ou une écriture
+    illisible bloque la skill tasks : KO. Ni roadmap ni rien de déclaré : pas de ligne."""
     d = ob.declarations(main)
     if d["regles"] is None and d["ecriture"] is None and not d["ecriture_illisible"] and not d["preuves"] and not d["soucis"]:
         return None
     correction = "corriger .claude/roadmap.json (regles, ecriture {outil, consigne}, preuves), ou poser le fichier qui manque"
+    regles = d["regles"]
+    if regles and not regles["existe"]:
+        pose = "python3 %s regles %s" % (os.path.abspath(ob.__file__), main)
+        correction = (pose if regles["defaut"]
+                      else "corriger « regles » de .claude/roadmap.json, ou y poser le fichier : " + pose)
+        return ligne(KO, "Règles du projet", " ; ".join(d["soucis"]), correction)
     if d["ecriture_illisible"]:
         return ligne(KO, "Règles du projet", " ; ".join(d["soucis"]), correction)
     if d["soucis"]:
         return ligne(VOIR, "Règles du projet", " ; ".join(d["soucis"]), correction)
     parties = []
-    if d["regles"]:
-        parties.append("règles %s" % d["regles"]["chemin"])
+    if regles:
+        parties.append("règles %s" % regles["chemin"])
     if d["ecriture"]:
         parties.append("écriture par %s" % d["ecriture"]["outil"])
     if d["preuves"]:

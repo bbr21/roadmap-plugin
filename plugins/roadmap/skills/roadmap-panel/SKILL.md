@@ -18,8 +18,9 @@ the skill only serves a further request (wiring, changing subjects, troubleshoot
 
 The `roadmap` plugin is a Claude Code mod: a panel next to the chat, in the Code tab of the desktop
 app, that shows the roadmap of the session's project. It only reads; the roadmap is kept through
-this plugin's `tasks` skill (add, update, reschedule, mark done, drop), which follows the rules the
-project declares (`regles`, `ecriture`, `preuves`).
+this plugin's `tasks` skill (add, update, reschedule, mark done, drop), which follows the
+project's `ROADMAP-REGLES.md`, next to `ROADMAP.md`, and what it declares (`regles`, `ecriture`,
+`preuves`).
 
 ## Where the panel looks for the roadmap
 

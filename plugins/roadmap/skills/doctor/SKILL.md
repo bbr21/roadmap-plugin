@@ -21,6 +21,7 @@ changes nothing: neither the project nor the machine.
 | Roadmap | the panel finds it (`.claude/roadmap.json`, otherwise `ROADMAP.md` at the root), in the repo and therefore on GitHub |
 | Structure | the onboarding layout is complete (CLAUDE.md, roadmap, start hook, scripts) |
 | Project check | the project's `node scripts/check.mjs` passes |
+| Rules of the roadmap | `ROADMAP-REGLES.md` next to `ROADMAP.md` (or the file `regles` declares) is there (#167); missing: KO, with the `onboarding.py regles` command that sets it from the template. Also lists `ecriture` and `preuves` when declared; an unreadable `ecriture` is KO, a missing place « À voir » |
 | Required fields | every launched task (`qui:` or `branche:`) carries `ouvert`, `due`, `qui` and `après`, or the fields of `requis` in `.claude/roadmap.json` (`[]`: no line); otherwise « À voir », with the count |
 | Roadmap plugin | installed and enabled, in the version the app loads |
 | Superpowers | installed and enabled |
@@ -40,7 +41,8 @@ GitHub, no `check.mjs`, no `swiftui-pro`.
 |---|---|
 | Tools | `python3`; `git` only if the folder is a repo |
 | Roadmap | the panel finds it |
-| Structure | a `CLAUDE.md` with Projet rules, the roadmap and `ROADMAP-fait.md`, `id:` on every line |
+| Structure | a `CLAUDE.md` with Projet rules, the roadmap, `ROADMAP-fait.md` and `ROADMAP-REGLES.md`, `id:` on every line |
+| Rules of the roadmap | `ROADMAP-REGLES.md` next to `ROADMAP.md` (or the file `regles` declares) is there (#167); missing: KO, with the `onboarding.py regles` command that sets it from the template. Also lists `ecriture` and `preuves` when declared; an unreadable `ecriture` is KO, a missing place « À voir » |
 | Settings | `vue`, `cles`, `requis`, `cles_visibles` and `ranger_par` in `.claude/roadmap.json` understood by the panel; otherwise « À voir » |
 | Required fields | every open task carries the fields of `requis`; otherwise « À voir », with the count (a line written outside Claude Code is flagged only here) |
 | Roadmap plugin | as in Code mode |

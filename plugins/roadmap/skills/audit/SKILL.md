@@ -19,9 +19,10 @@ subject, every delay settled by a question, every task done on proof marked done
   for word (stop words aside), in the task that receives it or in its parent.
 - **All or nothing, with a backup.** Files are prepared in memory, checked, backed up, then written
   in one go.
-- **The project's rules win.** What `.claude/roadmap.json` declares (`regles`, `ecriture`,
-  `preuves`, `requis`, `cles`) is read, never copied here. `regles` set: read that file **in full**
-  before proposing anything.
+- **The project's rules win.** `ROADMAP-REGLES.md` (#167, next to `ROADMAP.md`, or the file the
+  `regles` key declares) and what `.claude/roadmap.json` declares (`ecriture`, `preuves`,
+  `requis`, `cles`) are read on every pass, never copied here. Read the rules file **in full**
+  before proposing anything: a task it says should never exist is proposed for dropping.
 
 **The model** (#125): a task is **standalone**, **parent** (a subject: other tasks name it in
 `parent:`) or **child** (it carries `parent:`), two levels at most. A parent carries a subject
@@ -44,6 +45,11 @@ python3 "<skill folder>/scripts/audit.py" survey <project folder> > <scratchpad>
 
 A roadmap where a task has no `id:` is refused: run the import first (`onboarding` skill,
 « Importer une roadmap existante »).
+
+Then read the project's rules file in full (`tasks.py context` gives its path under
+`declarations.regles`). Missing: as in the `tasks` skill, set it from the template
+(`onboarding.py regles <project folder>`) and say so, unless a declared `regles` path is missing:
+then stop.
 
 It returns (French keys, shared with `tasks`): each open task with its `fragments` (the label cut
 at « ; » outside parentheses), `paquets` (two fragments or more), `trous` by type (a parent with

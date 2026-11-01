@@ -23,8 +23,11 @@ deployment, locks, axes, language, secrets) comes from the answers to the questi
 them.
 
 The roadmap lives in the repository, hence on GitHub: a `roadmap/` folder at the root, with
-`ROADMAP.md` (open tasks), `ROADMAP-fait.md` (closed tasks) and `ROADMAP-bilans.csv` (the bilan of
-each closed task), which `.claude/roadmap.json` points the panel to. A project that already keeps
+`ROADMAP.md` (open tasks), `ROADMAP-fait.md` (closed tasks), `ROADMAP-bilans.csv` (the bilan of
+each closed task) and `ROADMAP-REGLES.md` (#167: what becomes a task, what never does, the
+project's rules, where to find proof; set from the template, in both modes, then filled with the
+person), which `.claude/roadmap.json` points the panel to. A project onboarded before #167 gets
+its rules file with `onboarding.py regles <dossier>`. A project that already keeps
 its roadmap at its root keeps it there: the script sees it and does not set up a second one.
 
 The templates are in `references/modeles/`, the questions and the answer format in
@@ -176,8 +179,8 @@ itself.
 8. **Report**: what was set up, then how to use it: open the folder in the Code tab, the panel by
    due date (the button switches to owner and to tree), ▶ on a task, « Maestro » for what can be
    launched; task `id:1` lists the tasks in progress; day to day, the `tasks` skill adds, updates,
-   reschedules, marks done and drops a task (it reads `regles`, `ecriture` and `preuves`, set by
-   the « Règles » answer).
+   reschedules, marks done and drops a task (it reads `ROADMAP-REGLES.md` on every pass, and
+   `ecriture` and `preuves`, set by the « Règles » answer).
 
 ## Import an existing roadmap (« Importer une roadmap existante »)
 
