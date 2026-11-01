@@ -197,6 +197,8 @@ import {
   panelSubmit,
   checkBrief,
   briefPaths,
+  reglesNote,
+  reglesPath,
   type BriefFound,
   mainCheckout,
   baseName,
@@ -1049,8 +1051,13 @@ async function checkRoadmap($: EngineInterface, c: Capture, before?: { open?: st
     const problems = [...newProblems(c.seen[key], after, done, { requis, requiredOn, cles }), ...ids[key].filter(p => !old.has(p.text))]
     if (problems.length > 0) notes.push(problemsText(file, problems))
     if (!done) {
-      const step = await markWorking($, c.source, addedOpenTasks((before ?? c.seen).open, after))
+      const added = addedOpenTasks((before ?? c.seen).open, after)
+      const step = await markWorking($, c.source, added)
       if (step) notes.push(step)
+      // #171 : une ligne neuve rappelle le fichier des règles, s'il existe ; jamais un refus.
+      const regles = reglesPath(c.source)
+      const rule = added.length > 0 && (await $.fs.exists(regles).catch(() => false)) ? reglesNote(regles, added) : undefined
+      if (rule) notes.push(rule)
     }
   }
   const bilan = await bilanNote($, c.source, c.seen.done, now.done)

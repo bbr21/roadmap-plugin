@@ -3333,7 +3333,29 @@ function pathCandidates(source: Source, path: string): string[] {
 
 /** Les chemins que le panneau vérifie avant d'écrire le brief : seuls ceux qui existent y sont donnés à lire. */
 export function briefPaths(source: Source, task: Task): string[] {
-  return [...new Set([task.fiche, task.src, task.spec].flatMap(p => (p ? pathCandidates(source, p) : [])))]
+  return [...new Set([...[task.fiche, task.src, task.spec].flatMap(p => (p ? pathCandidates(source, p) : [])), reglesPath(source)])]
+}
+
+/**
+ * Le fichier des règles de la roadmap (#167, #171) : `regles` de `.claude/roadmap.json`, depuis la
+ * racine du projet comme `onboarding.chemin_regles`, sinon `ROADMAP-REGLES.md` à côté de `ROADMAP.md`.
+ */
+export function reglesPath(source: Source): string {
+  const r = source.regles
+  if (!r) return `${source.dir}/ROADMAP-REGLES.md`
+  return r.startsWith('/') ? r : `${source.root ?? source.dir}/${r.replace(/^\.\//, '')}`
+}
+
+/** La phrase du brief qui fait lire les règles avant d'écrire une ligne (#171) ; rien s'il n'existe pas. */
+function reglesClause(source: Source, found: BriefFound): string[] {
+  const path = reglesPath(source)
+  return found[path] === 'file' ? [`Avant d'écrire une ligne de roadmap, lis ses règles : \`${path}\`.`] : []
+}
+
+/** Le rappel du contrôle des lignes quand une écriture ajoute une tâche ouverte (#171), sans refus. */
+export function reglesNote(path: string, added: readonly Task[]): string | undefined {
+  if (added.length === 0) return undefined
+  return `Ligne neuve dans la roadmap : relis ses règles, \`${path}\` (ce qui devient une tâche, ce qui n'en devient jamais une), avant d'en ajouter d'autres.`
 }
 
 /**
@@ -3476,6 +3498,7 @@ export function launchBrief(
     ...notes,
     '',
     'Relis la ligne dans le fichier avant de commencer : elle a pu bouger depuis ce lancement.',
+    ...reglesClause(source, found),
     ...taking,
     "Si des captures d'écran ou des fichiers sont joints à ce message, ils viennent de la conversation d'où la session a été lancée et ne concernent pas cette task : ignore-les.",
     'Commence par me dire ce que tu comprends de la task et ton plan, puis fais-la.',
@@ -3522,6 +3545,7 @@ export function checkBrief(
     `- les tâches voisines dans \`${source.dir}/ROADMAP.md\` et \`${source.dir}/ROADMAP-fait.md\`, et le journal du dossier s'il en a un ;`,
     ...history,
     ...notes,
+    ...reglesClause(source, found),
     '',
     `Conclus par un verdict, avec ses preuves (${projet ? 'lignes, bilans, fichiers' : 'commits, PR, fichiers'}) :`,
     '- **déjà faite** : tout est livré ;',

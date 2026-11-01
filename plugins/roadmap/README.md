@@ -265,7 +265,9 @@ Premiers usages : la roadmap de Caro et le dossier AAFES Cowork, depuis l'onglet
   devient jamais une, les règles du projet et ses preuves. L'onboarding le pose depuis un modèle
   (`onboarding.py regles <dossier>` pour un projet déjà onboardé), le doctor est KO s'il manque, et
   les skills `tasks`, `audit` et Maestro le lisent à chaque passage ; ses règles l'emportent sur
-  leurs défauts. `"regles": "<chemin>"` le range ailleurs, `"ecriture": {"outil": "50-tools/dossier/patch.py",
+  leurs défauts. Le panneau le rappelle (#171) : le brief d'une session lancée par ▶ ou « Vérifier »
+  dit de le lire avant d'écrire une ligne, et une écriture qui ajoute une ligne à `ROADMAP.md` reçoit
+  une phrase qui le nomme, sans refus. `"regles": "<chemin>"` le range ailleurs, `"ecriture": {"outil": "50-tools/dossier/patch.py",
   "consigne": "essai à blanc, puis --apply"}` (le projet écrit sa roadmap par son propre outil :
   `tasks` lui passe les lignes au lieu d'écrire) et `"preuves": ["_inbox/_traite/",
   "gmail:in:sent"]` (où chercher qu'une tâche est faite : des chemins, des sources
@@ -610,6 +612,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.114.4 (2026-11-01)** : panneau : le brief d'une session lancée et le contrôle d'une ligne neuve rappellent ROADMAP-REGLES.md (#171)
 - **0.114.3 (2026-11-01)** : panneau : le Livré de la carte Fin s'affiche en blocs, sans puce devant (#173)
 - **0.114.2 (2026-11-01)** : panneau : les notes d'attente (titres courts en préparation, carte de session posée) deviennent une bande bleue avec titre et explication (#169)
 - **0.114.1 (2026-11-01)** : panneau : la fiche d'une tâche close tient dans la largeur ; la Chaîne ne déborde plus, Tout voir est aligné, Livré s'affiche sans puce isolée ni code coupé à son tiret (#173)
