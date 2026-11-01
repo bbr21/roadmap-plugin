@@ -215,6 +215,10 @@ class _Tenue(audit._Preparation):
         elif "parent" in self.requis:
             champs["parent"] = "-"
         axe = audit._propre(op.get("axis")) or (mere.axe if mere else "")
+        # Un enfant n'a pas d'axe à lui (#190) : il prend celui de son parent.
+        if mere is not None and axe != mere.axe:
+            raise Erreur("%s : axe « %s » différent de celui du parent #%s (« %s ») : un enfant prend l'axe de son parent, omets axis"
+                         % (quoi, axe, mere.id, mere.axe))
         if not im.AXE.match(axe) or (self.axes and axe not in self.axes):
             raise Erreur("%s : axe « %s » inconnu (axes : %s)" % (quoi, axe, ", ".join(self.axes) or "minuscules, chiffres, tirets"))
         self.completer(champs, mere, quoi)
@@ -282,6 +286,8 @@ class _Tenue(audit._Preparation):
                 if self.enfants_ouverts(t):
                     raise Erreur("%s : #%s a des enfants, elle ne devient pas enfant (deux niveaux au plus)" % (quoi, t.id))
                 t.set("parent", mere.id)
+                # Rattachée, elle prend l'axe de son parent (#190).
+                t.axe = mere.axe
         if apres is not None:
             self.poser_apres(t, apres, quoi)
         self.refuser_prio_enfant(t, quoi)

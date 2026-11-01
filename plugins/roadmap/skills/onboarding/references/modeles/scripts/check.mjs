@@ -150,6 +150,8 @@ check('Grammaire de ROADMAP.md et ROADMAP-fait.md', (err) => {
   const ids = new Map();
   const nextId = 1 + Math.max(0, ...[OPEN, DONE]
     .flatMap((f) => [...read(f).matchAll(/[[|]\s*id:(\d+)\s*[|\]]/g)].map((m) => Number(m[1]))));
+  // Les lignes ouvertes, pour comparer une sous-tâche à sa mère (#190).
+  const open = [];
 
   for (const file of [OPEN, DONE]) {
     const inDone = file === DONE;
@@ -226,12 +228,22 @@ check('Grammaire de ROADMAP.md et ROADMAP-fait.md', (err) => {
           if (!existsSync(join(root, value.split('#')[0]))) err(at, `${key}:${value} : chemin absent`);
         }
       }
+      if (!inDone && axeAt === 0) open.push({ at, axis: fields[0], id: found.get('id'), parent: (found.get('parent') ?? '').replace(/^#/, '') });
       if (!found.has('id')) err(at, `champ id: absent : une ligne neuve prend id:${nextId}, juste après l'axe`);
       if (inDone && !found.has('fait')) err(at, 'champ fait:AAAA-MM-JJ absent');
       if (!inDone && found.has('fait')) err(at, 'champ fait: dans ROADMAP.md : la ligne part dans ROADMAP-fait');
       if (!inDone && found.has('qui') && found.has('branche') && section !== 'En cours') {
         err(at, `ligne prise (qui: et branche:) hors de « En cours » (section « ${section} »)`);
       }
+    }
+  }
+  // Une sous-tâche n'a pas d'axe à elle : elle prend celui de sa mère ouverte (#190).
+  const openById = new Map();
+  for (const row of open) if (row.id && !openById.has(row.id)) openById.set(row.id, row);
+  for (const row of open) {
+    const mother = openById.get(row.parent);
+    if (mother && mother.axis !== row.axis) {
+      err(row.at, `axe « ${row.axis} » différent de celui de sa mère #${row.parent} (« ${mother.axis} ») : une sous-tâche prend l'axe de sa tâche parente`);
     }
   }
 });

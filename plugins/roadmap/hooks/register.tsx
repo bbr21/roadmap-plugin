@@ -3465,12 +3465,15 @@ async function saveEdit(
     const out = editInTexts(await $.fs.read(open), task, edit, rules)
     if ('error' in out) return out
     if (!out.changed) return { ...(task.id ? { id: task.id } : {}), warnings: [] }
-    const run = await runPython(
-      $,
-      [`${source.dir}/_cowork/cowork.py`, 'roadmap', 'update', source.dir, '--match-b64', utf8Base64(task.label), '--line-b64', utf8Base64(out.line)],
-      source.dir,
-    )
+    const writeLine = (label: string, line: string) =>
+      runPython($, [`${source.dir}/_cowork/cowork.py`, 'roadmap', 'update', source.dir, '--match-b64', utf8Base64(label), '--line-b64', utf8Base64(line)], source.dir)
+    const run = await writeLine(task.label, out.line)
     if (run.exitCode !== 0) return { error: `cowork.py a refusé, rien n'a été écrit : ${lastLine(run.stderr || run.stdout)}` }
+    // Les sous-tâches emmenées par le nouvel axe de leur mère (#190), une ligne à la fois.
+    for (const child of out.cascade ?? []) {
+      const sub = await writeLine(child.label, child.line)
+      if (sub.exitCode !== 0) return { error: `Axe changé, mais cowork.py a refusé la sous-tâche « ${clip(child.label, 60)} » : ${lastLine(sub.stderr || sub.stdout)}` }
+    }
     return { ...(task.id ? { id: task.id } : {}), warnings: out.warnings }
   }
   const git = (...args: string[]) => $.process.run(['git', '-C', source.dir, ...args], { timeoutMs: 60_000 })

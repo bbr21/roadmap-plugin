@@ -27,7 +27,9 @@ siblings, or two tasks without a parent; never the child of one subject to the c
 A parent's date is the date of its next open child: the panel computes it, never write it (a
 `due:` set on a parent stays the subject's final deadline). Priority goes on the parent or the
 standalone task, never on a child. Marking the last open child done closes its parent too, except
-a recurring parent (`tous:`), which stays open for the next period's steps.
+a recurring parent (`tous:`), which stays open for the next period's steps. A child has no axis
+of its own (#190): it takes its parent's, and the roadmap check refuses a child whose axis differs
+from its parent's; a parent whose axis changes in the panel takes its open children with it.
 
 The script is `scripts/tasks.py`, run from this skill's folder (the path given when the skill
 loads). It inherits the `audit` skill's writing engine and reads the grammar through the
@@ -118,12 +120,13 @@ Write `<scratchpad>/operations.json`:
 ```
 
 - **add**: `key` (unique, not a number), `label` (in French: an infinitive verb and its object; a
-  parent carries a subject name), `axis` (inherited from the parent for a child), `parent` (an `id`
+  parent carries a subject name), `axis` (a child's is its parent's: leave it out, another one is
+  refused), `parent` (an `id`
   or a `key`), `section` (default « Prochain », else the first open section), `note`, `fields`.
   The id is the next free one. A child is written under its parent, after its other children, and
   takes the required fields it lacks (`après:-` otherwise) and the parent's category keys.
 - **update**: `fields` (never `id`, `qui`, `branche`, `verrou`, `fait`); `parent` and `après` are
-  allowed, and checked. `null` removes an optional key (a `prio:` set on a child); a required key
+  allowed, and checked; a task given a `parent` takes that parent's axis. `null` removes an optional key (a `prio:` set on a child); a required key
   is never removed.
 - **reschedule**: `due`.
 - **done**: `date` (the date of the proof), `proof` (what proves it, and where). The line moves to
@@ -144,7 +147,7 @@ python3 "<skill folder>/scripts/tasks.py" write <project folder> --operations <s
 
 It shows the rendered lines and writes nothing. A refusal (« Refusé : … ») leaves nothing written
 and names the problem: missing required field, undeclared key or value outside its list, unknown
-axis or section, wrong date, third level, `prio:` on a child, `après:` to another parent's child
+axis or section, a child's axis other than its parent's, wrong date, third level, `prio:` on a child, `après:` to another parent's child
 or in a loop, a line taken by a session (`qui:` and `branche:`, which can only be rescheduled or
 marked done), a parent with an open child, the roadmap changed since the context (run `context`
 again). Fix the operations, or ask the missing question, and run it again.

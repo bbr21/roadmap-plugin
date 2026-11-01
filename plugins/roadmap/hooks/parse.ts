@@ -266,8 +266,11 @@ const AXIS_RE = /^[a-z0-9][a-z0-9-]*$/
 // « Axes en usage : `revlon`, `mcp` » (dossiers Cowork) ou « - **axe** (…) : `classement`, `plaid` » (Splitmybill).
 const AXES_LINE_RE = /^(?:Axes en usage|- \*\*axe\*\*)/i
 
-/** `soft` : une règle du modèle (#125), signalée, jamais refusée : l'édition depuis la fiche (#161) écrit quand même. */
-export type LineProblem = { line: number; text: string; why: string; soft?: true }
+/**
+ * `soft` : une règle du modèle (#125), signalée, jamais refusée : l'édition depuis la fiche (#161) écrit quand même.
+ * `parentText` : la ligne de la mère que le problème compare (#190), pour le signaler aussi quand c'est elle qui change.
+ */
+export type LineProblem = { line: number; text: string; why: string; soft?: true; parentText?: string }
 
 /** Les axes que le fichier déclare dans son en-tête ; aucun déclaré : tout axe bien écrit passe. */
 export function declaredAxes(text: string): string[] {
@@ -310,6 +313,7 @@ export function lintRoadmap(text: string, done: boolean, rules: Partial<LintRule
   // Les tâches ouvertes par numéro (#125) : les règles du modèle comparent une ligne à son parent et à ses prérequises.
   const openById = new Map<string, Task>()
   if (!done) for (const t of parseRoadmap(text, 'ROADMAP.md')) if (!t.done && t.id !== undefined && !openById.has(t.id)) openById.set(t.id, t)
+  const lines = text.split('\n')
   // Les numéros des parents (#125) : leur date se calcule sur leurs enfants, `due:` ne s'y exige pas.
   const parents = new Set([...text.matchAll(/^- \[ \].*\|\s*parent:\s*#?([1-9]\d*)\s*[|\]]/gm)].map(m => m[1] as string))
   let inFence = false
@@ -320,7 +324,8 @@ export function lintRoadmap(text: string, done: boolean, rules: Partial<LintRule
       return
     }
     if (inFence || !line.startsWith('- [')) return
-    const say = (why: string, soft = false) => problems.push({ line: i + 1, text: line, why, ...(soft ? { soft: true as const } : {}) })
+    const say = (why: string, soft = false, parentText?: string) =>
+      problems.push({ line: i + 1, text: line, why, ...(soft ? { soft: true as const } : {}), ...(parentText !== undefined ? { parentText } : {}) })
     const m = LINE_RE.exec(line)
     if (!m) return say("ligne hors grammaire : - [ ] Libellé `[axe | clé:valeur | …]`, le bloc entre accents graves")
     const checked = (m[1] ?? ' ') !== ' '
@@ -367,6 +372,11 @@ export function lintRoadmap(text: string, done: boolean, rules: Partial<LintRule
     if (!done && !checked) {
       const parentId = PARENT_RE.exec(keys.get('parent') ?? '')?.[1]
       const parent = parentId === undefined ? undefined : openById.get(parentId)
+      // Une sous-tâche n'a pas d'axe à elle (#190) : elle prend celui de sa mère ouverte, ou se refuse.
+      if (parent !== undefined && AXIS_RE.test(axis) && parent.axis !== axis) {
+        const parentText = (lines[Number(parent.key.slice(parent.key.lastIndexOf(':') + 1)) - 1] ?? '').replace(/\r$/, '')
+        say(`axe « ${axis} » différent de celui de sa mère #${parentId} (« ${parent.axis} ») : une sous-tâche prend l'axe de sa tâche parente`, false, parentText)
+      }
       if (parent?.parent !== undefined) say(`parent:${parentId} : #${parentId} est déjà l'enfant de #${parent.parent} ; deux niveaux au plus (parent › enfants)`, true)
       for (const n of prereqNumbers(keys.get('après') ?? '') ?? []) {
         const pre = openById.get(n)
@@ -386,7 +396,8 @@ export function lintRoadmap(text: string, done: boolean, rules: Partial<LintRule
 /** Les problèmes des lignes nouvelles ou changées depuis `before` : une ligne ancienne hors grammaire ne revient pas à chaque écriture. */
 export function newProblems(before: string | undefined, after: string, done: boolean, rules: Partial<LintRules> = {}): LineProblem[] {
   const old = new Set((before ?? '').split('\n').map(l => l.replace(/\r$/, '')))
-  return lintRoadmap(after, done, rules).filter(p => !old.has(p.text))
+  // Une sous-tâche se signale aussi quand c'est sa mère qui change d'axe (#190).
+  return lintRoadmap(after, done, rules).filter(p => !old.has(p.text) || (p.parentText !== undefined && !old.has(p.parentText)))
 }
 
 /** Le plus grand numéro `id:` des deux fichiers, plus un. */
@@ -4131,14 +4142,15 @@ function isCalendarDate(v: string): boolean {
  * retire le champ ; les autres champs, connus ou non, et la note restent tels quels. La ligne doit être
  * encore celle affichée (`task.key`). Contrôlée par `lintRoadmap` avec les règles du projet (#155) :
  * seuls refusent les problèmes nouveaux de cette ligne (un défaut ancien ne bloque pas) ; une règle du
- * modèle (`soft`, #125) avertit sans bloquer. Le refus nomme le champ quand il le peut.
+ * modèle (`soft`, #125) avertit sans bloquer. Le refus nomme le champ quand il le peut. Une mère qui
+ * change d'axe emmène ses sous-tâches ouvertes (#190) : `cascade` les donne à qui écrit ligne à ligne.
  */
 export function editInTexts(
   open: string,
   task: Task,
   edit: TaskEdit,
   rules: Partial<LintRules> = {},
-): { open: string; line: string; changed: boolean; warnings: string[] } | { error: string; field?: EditField } {
+): { open: string; line: string; changed: boolean; warnings: string[]; cascade?: { label: string; line: string }[] } | { error: string; field?: EditField } {
   const lines = open.split('\n')
   const at = Number(task.key.slice(task.key.lastIndexOf(':') + 1)) - 1
   const raw = (lines[at] ?? '').replace(/\r$/, '')
@@ -4150,6 +4162,7 @@ export function editInTexts(
   const fields = (m[3] ?? '').split('|').map(f => f.trim()).filter(f => f !== '')
   let label = m[2] ?? ''
   let changed = false
+  const axisBefore = fields[0]
   for (const [name, given] of Object.entries(edit) as [EditField, string | undefined][]) {
     if (given === undefined) continue
     if (name === 'label') {
@@ -4189,6 +4202,21 @@ export function editInTexts(
   const note = (m[4] ?? '').trim()
   const line = `- [ ] ${label} \`[${fields.join(' | ')}]\`${note !== '' ? ` ${note}` : ''}`
   lines[at] = line
+  // Une mère qui change d'axe emmène ses sous-tâches ouvertes (#190) : elles n'en ont pas à elles.
+  const cascade: { label: string; line: string }[] = []
+  if (task.id !== undefined && fields[0] !== axisBefore) {
+    for (const t of parseRoadmap(open, 'ROADMAP.md')) {
+      if (t.done || t.parent !== task.id || t.axis === fields[0]) continue
+      const j = Number(t.key.slice(t.key.lastIndexOf(':') + 1)) - 1
+      const cm = LINE_RE.exec((lines[j] ?? '').replace(/\r$/, ''))
+      if (!cm) continue
+      const cf = (cm[3] ?? '').split('|').map(f => f.trim()).filter(f => f !== '')
+      cf[0] = fields[0] ?? ''
+      const cnote = (cm[4] ?? '').trim()
+      lines[j] = `- [ ] ${cm[2] ?? ''} \`[${cf.join(' | ')}]\`${cnote !== '' ? ` ${cnote}` : ''}`
+      cascade.push({ label: t.label, line: lines[j] })
+    }
+  }
   const after = lines.join('\n')
   const axes = rules.axes ?? declaredAxes(open)
   const ofLine = (text: string) => lintRoadmap(text, false, { ...rules, axes }).filter(p => p.line === at + 1)
@@ -4199,7 +4227,7 @@ export function editInTexts(
     const field = fieldOfProblem(hard.why, cles)
     return { error: hard.why, ...(field ? { field } : {}) }
   }
-  return { open: after, line, changed: true, warnings: fresh.map(p => p.why) }
+  return { open: after, line, changed: true, warnings: fresh.map(p => p.why), ...(cascade.length > 0 ? { cascade } : {}) }
 }
 
 /**
