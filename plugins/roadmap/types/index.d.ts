@@ -99,6 +99,8 @@ export type View = {
   stepsPin?: string
   /** Le bloc « En cours » de Maestro replié par son chevron (#160) ; absent, déplié. */
   liveFolded?: boolean
+  /** La mère de l'arbre (son numéro) dont la case attend « Tout clore » (#163) ; vide ou absente : aucune. */
+  askFamily?: string
 }
 
 /** Une session lancée depuis le panneau, gardée dans `$.store` par empreinte du libellé de sa task. */

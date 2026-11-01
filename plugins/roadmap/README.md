@@ -242,9 +242,9 @@ Premiers usages : la roadmap de Caro et le dossier AAFES Cowork, depuis l'onglet
   ouverte, jamais refusés ; le doctor compte les lignes incomplètes.
 - **Les tags d'un projet** : des clés déclarées dans `cles`, avec leurs valeurs admises ; le
   détail les montre, la recherche les lit. `"cles_visibles": ["dept", "statut"]` les montre en
-  pastilles pleines sur la ligne (#125) : en arbre, sur chaque parent et chaque tâche seule, et sur
-  un enfant seulement quand sa valeur diffère de celle de son parent ; `statut` tait sa première
-  valeur (Todo) et une attente dont le tiers est déjà en pastille. `"ranger_par": "projet"` range
+  pastilles pleines sur la ligne (#125) ; `statut` tait sa première valeur (Todo) et une attente
+  dont le tiers est déjà en pastille. En arbre (#163), une seule pastille par ligne : le
+  département, la première clé montrée hors du statut (sans `cles_visibles`, l'axe). `"ranger_par": "projet"` range
   l'arbre en bandes repliables, une par valeur de la clé (les déclarées dans leur ordre, puis les
   autres, puis « Sans projet »), les blocs sous la valeur de leur parent. Une clé non déclarée
   dans `cles` est ignorée, et le doctor le dit.
@@ -295,11 +295,27 @@ Premiers usages : la roadmap de Caro et le dossier AAFES Cowork, depuis l'onglet
   à cocher.
 - **La vue** : hors de Ma journée, les tâches se rangent par échéance (en retard, cette semaine, plus tard, sans
   échéance) ; le menu « Ranger » propose aussi le responsable, l'arbre des tâches, le sujet, le jour.
-  L'arbre (#125) : une tâche est seule, parent ou enfant ; un bloc par parent, sa ligne en tête une
-  seule fois avec son avancement (`1/3`) et son ▶, ses enfants dessous, reliés par un trait qui porte
-  leur rang (1, 2 : en séquence par `après:` ; 1, 1 : en parallèle) ; un parent hors du filtre reste
-  en tête, en gris ; les tâches sans parent ni enfant sous « Tâches seules ». Une pastille dit le responsable quand ce n'est
-  pas « moi » ; « À moi » compte `resp:` ; le détail montre responsable, parent, sous-tâches,
+  Une roadmap qui a des mères s'ouvre en arbre (#163) quand le projet ne déclare pas de `vue` ; un
+  choix dans « Ranger » reste.
+  L'arbre « Le fil » (#125, redessiné par #163, maquette A) : une tâche est seule, mère ou étape ; un
+  bloc par mère, sa ligne en tête une seule fois, en gras, avec sa case, son département, sa barre
+  d'avancement (`1/3`), la date de sa prochaine étape et son ▶ ; ses étapes dessous, en retrait sur
+  un fil fin qui porte leur rang (1, 2 : en séquence par `après:` ; 1, 1 : en parallèle), avec leur
+  case, leur département, puis « Rodney · 29/10 » (responsable et date en texte, rouge en retard,
+  orange dans les 7 jours) ou le cadenas « après #437 ». Lignes de 30 px, plus d'âge sur la ligne.
+  **Cocher** : la case (☐) d'une étape la clôt comme « Marquer faite » ; l'étape cochée (☑) reste à
+  sa place, barrée, et un second clic la rouvre (sa ligne revient dans ROADMAP.md, son bilan est
+  retiré) ; la dernière étape cochée coche sa mère, rouvrir une étape rouvre sa mère. La case d'une
+  mère qui a des étapes ouvertes demande « Clore Mocap et ses 3 étapes ouvertes ? » (Tout clore,
+  Annuler). Un projet qui déclare `ecriture` (#164) : la case n'écrit pas, elle le demande à
+  Claude (« Coche #N par la skill tasks », « Rouvre #N … »). Une mère cochée aujourd'hui garde son
+  bloc jusqu'au lendemain. Un dossier Cowork ne
+  rouvre pas : `cowork.py` ne le sait pas, le toast le dit. « Tout replier » / « Tout déplier »,
+  à droite au-dessus de la liste (sous un filtre, à côté de « Tout afficher »), replie ou déplie
+  toutes les mères. Une mère bloquée dit « après #12 » à la place de sa date ; les tâches seules
+  ont la même ligne, sans fil. Une mère hors du filtre reste
+  en tête, en gris, sans case ; les tâches sans mère ni étape sous « Tâches seules ». Hors de
+  l'arbre, une pastille dit le responsable quand ce n'est pas « moi » ; « À moi » compte `resp:` ; le détail montre responsable, parent, sous-tâches,
   prérequises et clés déclarées. Une tâche est bloquée tant qu'une de ses prérequises est ouverte,
   ou que son parent attend la sienne (#125) ; le cadenas dit quoi : « après #601 », « parent après
   #12 ». Les titres courts gardent la langue du libellé.
@@ -579,6 +595,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.110.0 (2026-10-31)** : panneau : la roadmap s'ouvre en arbre dès qu'elle a une tâche mère ; arbre redessiné « Le fil » (une case par ligne pour cocher ou rouvrir, mère nette, étapes légères), « Tout replier » et « Tout clore » (#163)
 - **0.109.0 (2026-10-31)** : audit : seul audit de la roadmap, en anglais : structure, puis retards, tâches sans date et priorités (une question par tâche), clôtures sur preuve là où le projet le dit (preuves), écriture par la skill tasks ; en tâche planifiée, ses questions restent en attente et comptées (#159)
 - **0.108.0 (2026-10-31)** : panneau : quand le projet déclare ecriture, Marquer faite, Annuler la tâche et Enregistrer de la fiche sont confiés à Claude (Coche #N par la skill tasks), l'encart dit Confié à Claude par <outil> (#164)
 - **0.107.0 (2026-10-31)** : panneau : chez Maestro, le bloc En cours montre ses tâches en lignes de la liste, toujours ouvert, la roadmap visible dessous ; pastille Toutes qui garde l'axe ; axes toujours dépliés (#160)

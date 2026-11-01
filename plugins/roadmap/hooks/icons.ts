@@ -588,6 +588,27 @@ export function treeHeadRowIcon(mark: string, open: boolean, chevronHex: string)
   return `<svg xmlns="http://www.w3.org/2000/svg" width="32" height="24" viewBox="0 0 32 24">${chevron}${inner}</svg>`
 }
 
+// L'arbre « Le fil » (#163, maquette A choisie par Bertrand le 2026-10-31) : lignes de 30 px. La
+// case à cocher est un bouton du kit à côté (un bouton ne porte pas de dessin) ; la marque garde le
+// fil et le rang, un seul dessin par étape.
+
+/** La marque d'une étape de l'arbre (#163), 22 × 30 : le fil de sa mère (arrêté à mi-hauteur sur la dernière) et son rang. */
+export function treeStepIcon(o: { rank: number; last: boolean; lineHex: string; textHex: string }): string {
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="22" height="30" viewBox="0 0 22 30"><path d="M4 0V${o.last ? 15 : 30}" fill="none" stroke="${o.lineHex}" stroke-width="1"/><text x="15" y="18.5" text-anchor="middle" font-family="${FONT}" font-size="${TEXT.chainStep}" font-weight="${TEXT.weight.soft}" fill="${o.textHex}">${o.rank}</text></svg>`
+}
+
+/** La marque d'une mère de l'arbre (#163), 16 × 30 : son chevron, déplié ou replié. */
+export function treeHeadIcon(o: { open: boolean; chevronHex: string }): string {
+  const chevron = chevronIcon(o.chevronHex, o.open, 14).replace(/^<svg /, '<svg x="1" y="8" ')
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="30" viewBox="0 0 16 30">${chevron}</svg>`
+}
+
+/** La barre d'avancement d'une mère de l'arbre (#163), 34 × 4 : le fond `trackHex`, la part faite en `okHex`. */
+export function progressIcon(done: number, total: number, okHex: string, trackHex: string): string {
+  const w = total === 0 ? 0 : Math.round((34 * done * 10) / total) / 10
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="34" height="4" viewBox="0 0 34 4"><rect width="34" height="4" rx="2" fill="${trackHex}"/>${w > 0 ? `<rect width="${w}" height="4" rx="2" fill="${okHex}"/>` : ''}</svg>`
+}
+
 /** Les tâches nées d'un retour de l'app (`feedback:`) : une bulle de parole, pleine, sur 16 px. */
 export function bubbleIcon(hex: string, size = 16): string {
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 16 16"><path d="M3.5 3h9a1.5 1.5 0 0 1 1.5 1.5v5a1.5 1.5 0 0 1-1.5 1.5H8l-3 2.5V11H3.5A1.5 1.5 0 0 1 2 9.5v-5A1.5 1.5 0 0 1 3.5 3z" fill="${hex}"/></svg>`

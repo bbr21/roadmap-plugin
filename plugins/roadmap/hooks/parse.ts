@@ -1399,11 +1399,19 @@ const GROUPING_LABELS: Record<Grouping, string> = {
  * ouvertes selon la vue du projet (par sujet sans vue). Les faites ne se rangent que par jour ou par
  * sujet ; un rangement du mode Projet resté en mémoire ne s'impose pas à un projet de code.
  */
-export function groupingOf(groupBy: string | undefined, showDone: boolean, vue?: Vue, mode?: Mode): Grouping {
+export function groupingOf(groupBy: string | undefined, showDone: boolean, vue?: Vue, mode?: Mode, parents = false): Grouping {
   if (groupBy === 'day' || groupBy === 'subject') return groupBy
   if ((PROJECT_GROUPINGS as readonly string[]).includes(groupBy ?? '') && mode !== 'code') return showDone ? 'day' : (groupBy as Grouping)
   if (showDone) return 'day'
-  return vue ? VUE_GROUPING[vue] : 'subject'
+  if (vue) return VUE_GROUPING[vue]
+  // Sans choix ni vue du projet, une roadmap qui a des mères s'ouvre en arbre (#163), là où l'arbre est offert.
+  return parents && mode === 'projet' ? 'tree' : 'subject'
+}
+
+/** Une ouverte au moins a sa mère ouverte (`parent:N`) : la roadmap a un arbre (#163). */
+export function hasOpenParent(tasks: readonly Task[]): boolean {
+  const open = new Set(tasks.filter(t => !t.done && t.id !== undefined).map(t => t.id))
+  return tasks.some(t => !t.done && t.parent !== undefined && t.parent !== t.id && open.has(t.parent))
 }
 
 /** Les rangements du menu « Ranger » (#115) : en mode Projet, échéance, responsable, arbre, sujet, jour ; sinon, et pour les faites, sujet et jour. */
@@ -1554,6 +1562,20 @@ export function axisPillText(task: Task, o: { enabled: boolean; axisFilter: stri
 }
 
 /**
+ * La seule pastille d'une ligne de l'arbre « Le fil » (#163, choix de Bertrand) : son département.
+ * Dans un projet qui montre ses clés (`cles_visibles`), la première montrée hors du statut ; sinon
+ * l'axe, aux conditions de la pastille de #156. Une étape faite garde la sienne.
+ */
+export function treeDepartment(task: Task, o: { enabled: boolean; axisFilter: string; clesVisibles?: readonly string[] }): string | undefined {
+  if ((o.clesVisibles?.length ?? 0) > 0) {
+    const key = o.clesVisibles?.find(k => k !== 'statut' && (task.extra?.[k]?.[0] ?? '') !== '')
+    return key === undefined ? undefined : task.extra?.[key]?.[0]
+  }
+  if (!o.enabled || task.axis === '' || o.axisFilter !== 'all') return undefined
+  return axisLabel(task.axis)
+}
+
+/**
  * Les bandes d'un rangement par clé (#125) : les valeurs déclarées dans leur ordre, puis les autres
  * par ordre alphabétique, puis `none` pour les éléments sans valeur ; une bande vide n'apparaît pas.
  */
@@ -1579,6 +1601,21 @@ export type TreeBlock = {
   rank: Map<Task, number>
   done: number
   total: number
+  /** Les filles faites de la mère, gardées barrées dans son bloc (#163). */
+  doneTasks: Task[]
+  /** La fille ouverte à l'échéance la plus proche : la date de la mère (#163). */
+  next?: Task
+  /** La mère est faite (aujourd'hui) : son bloc reste, barré, le temps de la décocher (#163). */
+  closed: boolean
+}
+
+/**
+ * Les étapes d'un bloc, ouvertes et faites, par rang puis par numéro (#163) : cocher ou décocher ne
+ * déplace aucune ligne.
+ */
+export function treeSteps(block: TreeBlock, rankOf: (t: Task) => number = t => block.rank.get(t) ?? 1): Task[] {
+  const num = (t: Task) => (t.id === undefined ? Number.MAX_SAFE_INTEGER : Number(t.id))
+  return [...block.tasks, ...block.doneTasks].sort((a, b) => rankOf(a) - rankOf(b) || num(a) - num(b))
 }
 
 /**
@@ -1604,6 +1641,12 @@ export function siblingRanks(sisters: readonly Task[], prereqsOf: (t: Task) => r
   return rank
 }
 
+/** La fille ouverte à l'échéance la plus proche (#163), en champ facultatif. */
+function nextOf(rows: readonly Task[]): { next?: Task } {
+  const dated = rows.filter(t => t.due !== undefined).sort((a, b) => (a.due as string).localeCompare(b.due as string))
+  return dated[0] ? { next: dated[0] } : {}
+}
+
 const ALONE_KEY = 'Seules'
 const ALONE_LABEL = 'Tâches seules'
 
@@ -1620,6 +1663,7 @@ export function byTree(
   all: readonly Task[],
   titleOf: (t: Task) => string,
   prereqsOf: (t: Task) => readonly Task[] = () => [],
+  today?: string,
 ): TreeBlock[] {
   const listed = new Set(tasks)
   // Une table par numéro, la première tâche ouverte qui le porte : les parents possibles.
@@ -1667,6 +1711,9 @@ export function byTree(
         rank: siblingRanks(direct, prereqsOf),
         done: direct.filter(x => x.done).length,
         total: direct.length,
+        doneTasks: direct.filter(x => x.done),
+        ...nextOf(rows),
+        closed: false,
       })
     }
     for (const c of children) if (isParent(c)) grow(c)
@@ -1692,8 +1739,28 @@ export function byTree(
   }
   // Ce qui reste n'a été atteint par aucune racine : un cycle de parents.
   for (const t of tasks) if (!seen.has(t)) grow(t)
+  // Une mère faite aujourd'hui avec ses filles garde son bloc, barré : on la décoche encore (#163).
+  if (today !== undefined) {
+    for (const m of all) {
+      const kids = m.id === undefined ? [] : (directOf.get(m.id) ?? []).filter(x => x !== m)
+      if (!m.done || !m.fait?.startsWith(today) || kids.length === 0 || kids.some(x => !x.done)) continue
+      if (blocks.some(b => b.head?.id === m.id)) continue
+      blocks.push({
+        key: `arbre:#${m.id}`,
+        label: `#${m.id} ${titleOf(m)} · ${kids.length}/${kids.length}`,
+        head: m,
+        ghost: false,
+        tasks: [],
+        rank: siblingRanks(kids, prereqsOf),
+        done: kids.length,
+        total: kids.length,
+        doneTasks: kids,
+        closed: true,
+      })
+    }
+  }
   return alone.length > 0
-    ? [...blocks, { key: ALONE_KEY, label: ALONE_LABEL, ghost: false, tasks: alone, rank: new Map(), done: 0, total: 0 }]
+    ? [...blocks, { key: ALONE_KEY, label: ALONE_LABEL, ghost: false, tasks: alone, rank: new Map(), done: 0, total: 0, doneTasks: [], closed: false }]
     : blocks
 }
 
@@ -3664,6 +3731,96 @@ export function closeInTexts(
   return { open: lines.join('\n'), done: `${done.slice(0, cut)}\n\n${line}\n${rest}`, line, id }
 }
 
+/** Une ligne faite (ou annulée) redevenue ouverte : ni `fait:`, ni « (abandonné) », ni la note de clôture (#163). */
+function reopenedLine(raw: string): string | undefined {
+  const m = LINE_RE.exec(raw.replace(/\r$/, ''))
+  if (!m || m[1] === ' ') return undefined
+  const label = (m[2] ?? '').replace(/ \(abandonnée?\)$/, '')
+  const fields = (m[3] ?? '').split('|').map(f => f.trim()).filter(f => f !== '' && !f.startsWith('fait:'))
+  const note = (m[4] ?? '')
+    .trim()
+    .replace(new RegExp(`(?:^| ; )${DONE_NOTE}$`), '')
+    .replace(/(?:^| ; )abandonné le \d{4}-\d{2}-\d{2}(?: : .*)?$/, '')
+  return `- [ ] ${label} \`[${fields.join(' | ')}]\`${note !== '' ? ` ${note}` : ''}`
+}
+
+/**
+ * Rouvre une tâche faite ou annulée (#163, la case décochée dans l'arbre) : sa ligne quitte
+ * ROADMAP-fait et revient ouverte dans ROADMAP.md, juste après sa prérequise ouverte, sinon après sa
+ * famille (sa mère et ses sœurs), sinon après la dernière ouverte. Sa mère faite revient avec elle,
+ * dans la même écriture (une mère faite n'a pas de fille ouverte) : `parent` dit son numéro.
+ */
+export function reopenInTexts(
+  open: string,
+  done: string,
+  task: Task,
+  cles: LintRules['cles'] = {},
+): { open: string; done: string; id: string; parent?: string } | { error: string } {
+  const doneLines = done.split('\n')
+  const at = Number(task.key.slice(task.key.lastIndexOf(':') + 1)) - 1
+  const m = LINE_RE.exec((doneLines[at] ?? '').replace(/\r$/, ''))
+  const line = m && m[1] !== ' ' && (m[2] ?? '') === task.label ? reopenedLine(doneLines[at] ?? '') : undefined
+  if (line === undefined) return { error: `« ${clip(task.label, 60)} » a bougé dans ROADMAP-fait.md depuis l'affichage : rien n'a été écrit, réessaie.` }
+  const rules = { axes: declaredAxes(open), cles }
+  if (lintRoadmap(line, false, rules).length > 0) return { error: "La ligne rouverte serait hors grammaire : rien n'a été écrit." }
+  doneLines.splice(at, 1)
+  const lines = open.split('\n')
+  const openTasks = () => parseRoadmap(lines.join('\n'), 'ROADMAP.md').filter(t => !t.done)
+  const lineOf = (t: Task) => Number(t.key.slice(t.key.lastIndexOf(':') + 1)) - 1
+  const lastOpen = () => Math.max(-1, ...openTasks().map(lineOf))
+  let parent: string | undefined
+  // Sa mère faite revient d'abord, après la dernière ouverte.
+  if (task.parent !== undefined && !openTasks().some(t => t.id === task.parent)) {
+    const mother = parseRoadmap(doneLines.join('\n'), 'ROADMAP-fait.md').find(t => t.done && t.id === task.parent)
+    const motherLine = mother === undefined ? undefined : reopenedLine(doneLines[lineOf(mother)] ?? '')
+    if (mother !== undefined && motherLine !== undefined && lintRoadmap(motherLine, false, rules).length === 0) {
+      doneLines.splice(lineOf(mother), 1)
+      lines.splice(lastOpen() + 1, 0, motherLine)
+      parent = mother.id
+    }
+  }
+  const now = openTasks()
+  const pre = new Set(task.apres === undefined ? [] : (prereqNumbers(task.apres) ?? []))
+  const after = now.filter(t => t.id !== undefined && pre.has(t.id))
+  const family = task.parent === undefined ? [] : now.filter(t => t.id === task.parent || t.parent === task.parent)
+  const anchor = after.length > 0 ? after : family.length > 0 ? family : now
+  lines.splice(Math.max(-1, ...anchor.map(lineOf)) + 1, 0, line)
+  return { open: lines.join('\n'), done: doneLines.join('\n'), id: task.id ?? '', ...(parent ? { parent } : {}) }
+}
+
+/**
+ * « Tout replier » / « Tout déplier » les mères de l'arbre (#163) : la part de la vue qui change.
+ * Sans filtre, un bloc est ouvert s'il est dans `openGroups` ; sous un filtre, tant qu'il n'est pas
+ * dans `closedGroups` (comme `isOpenGroup` du panneau).
+ */
+export function foldAllView(
+  view: { openGroups: readonly string[]; closedGroups: readonly string[] },
+  filtered: boolean,
+  keys: readonly string[],
+  open: boolean,
+): { openGroups: string[] } | { closedGroups: string[] } {
+  const add = (list: readonly string[]) => [...list, ...keys.filter(k => !list.includes(k))]
+  const drop = (list: readonly string[]) => list.filter(k => !keys.includes(k))
+  return filtered ? { closedGroups: open ? drop(view.closedGroups) : add(view.closedGroups) } : { openGroups: open ? add(view.openGroups) : drop(view.openGroups) }
+}
+
+/** La case d'une ligne de l'arbre (#163) : un glyphe, le libellé d'un bouton du kit, cliquable sur chaque ligne sans zone de clic. */
+export function treeCheck(checked: boolean): string {
+  return checked ? '☑' : '☐'
+}
+
+/** Le journal des bilans sans la dernière ligne de cette tâche à cette date (#163, une tâche rouverte). */
+export function dropBilanCsv(existing: string | undefined, id: string, date: string): string {
+  const lines = (existing ?? '').split('\n')
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if ((lines[i] ?? '').startsWith(`${date},${id},`)) {
+      lines.splice(i, 1)
+      break
+    }
+  }
+  return lines.join('\n')
+}
+
 /**
  * Le numéro du parent ouvert dont `task`, faite, serait le dernier enfant ouvert (#125) ; rien pour
  * une tâche récurrente (elle se reconduit et reste ouverte), sans parent, ou qui a des sœurs ouvertes.
@@ -3855,6 +4012,20 @@ export function closeRoute(o: { ecriture?: Ecriture; cowork: boolean; task: { id
     if (o.kind === 'done') return `Coche ${taskRef(o.task)} par la skill tasks`
     const reason = clip(o.reason.replace(/\s+/g, ' ').trim(), 300)
     return `Abandonne ${taskRef(o.task)}${reason !== '' ? ` : ${reason}` : ''}`
+  })
+}
+
+/**
+ * La case d'une ligne de l'arbre (#163) prend la voie de « Marquer faite » (#164) : le panneau écrit,
+ * `cowork.py` écrit, ou, avec `ecriture`, Claude par la skill tasks : cocher, rouvrir (décocher), ou
+ * « Tout clore » une mère et ses `open` étapes ouvertes.
+ */
+export function checkRoute(o: { ecriture?: Ecriture; cowork: boolean; task: { id?: string; label: string }; action: 'done' | 'reopen' | 'family'; open?: number }): WriteRoute {
+  return writeRoute(o, () => {
+    const ref = taskRef(o.task)
+    if (o.action === 'reopen') return `Rouvre ${ref} par la skill tasks`
+    if (o.action === 'family') return `Coche ${ref} et ses ${o.open ?? 0} étape${(o.open ?? 0) > 1 ? 's' : ''} ouverte${(o.open ?? 0) > 1 ? 's' : ''} par la skill tasks`
+    return `Coche ${ref} par la skill tasks`
   })
 }
 

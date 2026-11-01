@@ -21,6 +21,9 @@ import {
   checkRowIcon,
   chainRowIcon,
   treeHeadRowIcon,
+  treeHeadIcon,
+  treeStepIcon,
+  progressIcon,
   bubbleIcon,
   squareRowIcon,
   cornerIcon,
@@ -128,6 +131,7 @@ import {
   byDay,
   doneByDay,
   groupingOf,
+  hasOpenParent,
   nextGrouping,
   groupingLabel,
   byDeadline,
@@ -137,6 +141,7 @@ import {
   blockerOf,
   closeCaption,
   closeRoute,
+  checkRoute,
   closeWithParentInTexts,
   editInTexts,
   editRoute,
@@ -281,6 +286,13 @@ import {
   closingBlockReminder,
   isAbandoned,
   closeInTexts,
+  dropBilanCsv,
+  reopenInTexts,
+  treeCheck,
+  treeDepartment,
+  treeSteps,
+  foldAllView,
+  duePill,
   abandonBilan,
   doneBilan,
   type CloseKind,
@@ -3038,6 +3050,150 @@ async function confirmClose($: EngineInterface, source: Source, task: Task, kind
     }
   } finally {
     cancelling = false
+  }
+}
+
+/**
+ * Rouvre une tâche faite ou annulée (#163, sa case décochée dans l'arbre) : `reopenInTexts`, sa
+ * mère faite comprise, et son bilan (et celui de sa mère) retiré du journal. Mêmes gardes que
+ * `closeTask` : sur main, sans modification en attente, committé seul et poussé. Un dossier Cowork
+ * n'a pas de réouverture dans `cowork.py` : rien ne s'écrit, la note le dit.
+ */
+async function reopenTask($: EngineInterface, source: Source, task: Task): Promise<{ id?: string; note?: string } | { error: string }> {
+  if (await $.fs.exists(`${source.dir}/_cowork/cowork.py`).catch(() => false)) {
+    return { error: `cowork.py ne sait pas rouvrir une tâche : demande-le à Claude (« rouvre #${task.id ?? ''} »). Rien n'a été écrit.` }
+  }
+  const day = (task.fait ?? '').slice(0, 10)
+  const config = bilanConfigFor(await readOr($, `${source.dir}/cowork.json`))
+  if (!isInsideRelative(config.log)) return { error: `Le journal des bilans « ${config.log} » sort du dossier de la roadmap : rien n'a été écrit.` }
+  const written = ['ROADMAP.md', 'ROADMAP-fait.md', config.log]
+  const git = (...args: string[]) => $.process.run(['git', '-C', source.dir, ...args], { timeoutMs: 60_000 })
+  // Les gardes de `closeTask` : sur main, rien en attente, à jour de l'amont.
+  const head = await git('rev-parse', '--abbrev-ref', 'HEAD')
+  const inGit = head.exitCode === 0
+  let upstream = false
+  if (inGit) {
+    const branch = head.stdout.trim()
+    if (branch !== 'main' && branch !== 'master') return { error: `${source.name} est sur « ${branch} », pas sur main : sa roadmap ne s'écrit que sur main. Rien n'a été écrit.` }
+    const status = await git('status', '--porcelain', '--', ...written)
+    if (status.stdout.trim() !== '') return { error: `La roadmap a des modifications non committées (${lastLine(status.stdout)}) : une session l'écrit peut-être. Rien n'a été écrit.` }
+    upstream = (await git('rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}')).exitCode === 0
+    if (upstream) {
+      const pull = await git('pull', '--ff-only', '-q')
+      if (pull.exitCode !== 0) return { error: `git pull a échoué, rien n'a été écrit : ${lastLine(pull.stderr || pull.stdout)}` }
+    }
+  }
+  const { open, done } = files(source)
+  const doneText = await readOr($, done)
+  if (doneText === undefined) return { error: "ROADMAP-fait.md est introuvable : rien n'a été écrit." }
+  const out = reopenInTexts(await $.fs.read(open), doneText, task, projectSettings(source).cles)
+  if ('error' in out) return out
+  // L'ouverte d'abord : une ligne perdue entre les deux écritures ne se retrouverait pas.
+  await $.fs.write(open, out.open)
+  await $.fs.write(done, out.done)
+  const log = `${source.dir}/${config.log}`
+  const before = await readOr($, log)
+  if (before !== undefined && day !== '') {
+    const after = [out.id, ...(out.parent ? [out.parent] : [])].reduce((text, id) => dropBilanCsv(text, id, day), before)
+    if (after !== before) await $.fs.write(log, after)
+  }
+  const note = out.parent ? `sa mère #${out.parent} rouverte aussi` : undefined
+  const result = { id: out.id, ...(note ? { note } : {}) }
+  if (!inGit) return result
+  await git('add', '--', config.log)
+  const commit = await git('commit', '-q', '-m', `roadmap: reopen #${out.id}${out.parent ? `, #${out.parent}` : ''}`, '--', ...written)
+  if (commit.exitCode !== 0) return { id: out.id, note: `rouverte, mais pas committée : ${lastLine(commit.stderr || commit.stdout)}` }
+  if (!upstream || (await git('push', '-q')).exitCode === 0) return result
+  const rebase = await git('pull', '--rebase', '-q')
+  const push = rebase.exitCode === 0 ? await git('push', '-q') : rebase
+  return push.exitCode === 0 ? result : { id: out.id, note: `rouverte et committée, mais pas poussée : ${lastLine(push.stderr || push.stdout)}` }
+}
+
+let checking = false
+
+/**
+ * Un projet qui écrit sa roadmap par son propre outil (`ecriture`, #164) : la case ne l'écrit pas,
+ * elle le demande à Claude par la boîte d'envoi, comme « Marquer faite ». Rend `true` si c'est fait.
+ */
+async function checkByClaude($: EngineInterface, source: Source, task: Task, action: 'done' | 'reopen' | 'family', open = 0): Promise<boolean> {
+  const cowork = await $.fs.exists(`${source.dir}/_cowork/cowork.py`).catch(() => false)
+  const route = checkRoute({ ecriture: source.ecriture, cowork, task, action, open })
+  if (route.via !== 'claude') return false
+  queueSubmit($, route.text)
+  try {
+    $.ui.toast(`Demandé à Claude : ${route.text}`)
+  } catch {
+    // pas de toast sur cette surface
+  }
+  return true
+}
+
+/** Ce qu'a donné une case de l'arbre, en toast ; l'arbre se relit. */
+async function afterCheck($: EngineInterface, out: { id?: string; note?: string } | { error: string }, said: string): Promise<void> {
+  const text = 'error' in out ? out.error : `${out.id ? `#${out.id} ` : ''}${said}${out.note ? ` : ${out.note}` : ''}`
+  await update($, retryAtom, v => v + 1)
+  try {
+    $.ui.toast(text)
+  } catch {
+    // pas de toast sur cette surface
+  }
+}
+
+/**
+ * La case d'une ligne de l'arbre (#163) : une faite se rouvre, une ouverte se clôt (comme « Marquer
+ * faite ») ; une mère qui a des filles ouvertes demande d'abord « Tout clore » (`askFamily`). Une
+ * écriture à la fois.
+ */
+async function checkTask($: EngineInterface, source: Source, task: Task, openKids: number): Promise<void> {
+  if (!task.done && openKids > 0) {
+    await setView($, v => ({ askFamily: v.askFamily === task.id ? '' : (task.id ?? '') }))
+    return
+  }
+  if (checking) return
+  checking = true
+  try {
+    if (await checkByClaude($, source, task, task.done ? 'reopen' : 'done')) return
+    const out = task.done
+      ? await reopenTask($, source, task).catch((err: unknown) => ({ error: `Réouverture impossible : ${err instanceof Error ? err.message : String(err)}` }))
+      : await closeTask($, source, task, 'done', '').catch((err: unknown) => ({ error: `Clôture impossible : ${err instanceof Error ? err.message : String(err)}` }))
+    await afterCheck($, out, task.done ? 'rouverte' : 'faite')
+  } finally {
+    checking = false
+  }
+}
+
+/**
+ * « Tout clore » (#163, règle choisie par Bertrand) : les filles ouvertes d'abord, une par une par
+ * `closeTask` (qui ferme la mère avec la dernière), puis la mère si elle reste ouverte (un dossier
+ * Cowork ne la ferme pas). Chaque tâche est relue avant sa clôture : les lignes bougent.
+ */
+async function closeFamily($: EngineInterface, source: Source, mother: Task): Promise<void> {
+  if (checking) return
+  checking = true
+  try {
+    await setView($, () => ({ askFamily: '' }))
+    const listed = await load($, files(source).open, 'ROADMAP.md')
+    const open = typeof listed === 'string' ? 0 : listed.filter(t => !t.done && t.parent === mother.id && t.id !== mother.id).length
+    if (await checkByClaude($, source, mother, 'family', open)) return
+    const fresh = async (id: string | undefined) => {
+      const tasks = await load($, files(source).open, 'ROADMAP.md')
+      return typeof tasks === 'string' ? undefined : withParentDates(tasks).find(t => !t.done && t.id === id)
+    }
+    const all = await load($, files(source).open, 'ROADMAP.md')
+    const kids = typeof all === 'string' ? [] : all.filter(t => !t.done && t.parent === mother.id && t.id !== undefined && t.id !== mother.id).map(t => t.id)
+    let out: { id?: string; note?: string } | { error: string } = { id: mother.id }
+    for (const id of kids) {
+      const kid = await fresh(id)
+      if (kid === undefined) continue
+      out = await closeTask($, source, kid, 'done', '').catch((err: unknown) => ({ error: `Clôture impossible : ${err instanceof Error ? err.message : String(err)}` }))
+      if ('error' in out) return void (await afterCheck($, out, ''))
+    }
+    const head = await fresh(mother.id)
+    if (head !== undefined) out = await closeTask($, source, head, 'done', '').catch((err: unknown) => ({ error: `Clôture impossible : ${err instanceof Error ? err.message : String(err)}` }))
+    if ('error' in out) return void (await afterCheck($, out, ''))
+    await afterCheck($, { id: mother.id }, `faite, avec ses ${kids.length} étape${kids.length > 1 ? 's' : ''} ouverte${kids.length > 1 ? 's' : ''}`)
+  } finally {
+    checking = false
   }
 }
 
@@ -6056,14 +6212,17 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   const groupOf = (t: Task) => subjectOf(headOf(t))
   // Par jour ou par sujet, le même choix dans toutes les vues ; en mode Projet, aussi par échéance,
   // par responsable ou en arbre, et la vue du projet à l'ouverture (#76).
-  const by = groupingOf(groupBy, showDone, vue, mode)
+  // La vue que le projet déclare l'emporte ; sans elle, l'arbre quand la roadmap a des mères (#163),
+  // sinon le défaut du mode (l'échéance en mode Projet, que `projectSettings` remplit).
+  const parents = hasOpenParent(openTasks)
+  const by = groupingOf(groupBy, showDone, source.vue ?? (parents ? undefined : vue), mode, parents)
   // Seules les ouvertes rangées par sujet ont des sections de sujet.
   const subjects: [string, number][] = by === 'subject' ? countBy(unsorted, groupOf) : []
   // L'arbre : ses sections, et la profondeur de chaque ligne, marquée devant son titre.
   // L'arbre garde les tâches en retard à leur place (une mère en retard garde ses filles) : pas de
   // section « En retard » à part, la pastille de retard reste sur la ligne. Sous une recherche, pas
   // d'arbre : ses résultats n'ont pas de « ↳ » (#86).
-  const tree = by === 'tree' && !showDone && !searching ? byTree(sortTasks(shown, sortOrder), allTasks, t => short(t).titre, prereqsFor) : []
+  const tree = by === 'tree' && !showDone && !searching ? byTree(sortTasks(shown, sortOrder), allTasks, t => short(t).titre, prereqsFor, today) : []
 
   const setAxis = (a: string) => () => pressAxis($, a)
   const toggleDone = () => pressDone($)
@@ -6351,25 +6510,143 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     )
   }
 
+  // Une ligne de l'arbre « Le fil » (#163, maquette A choisie par Bertrand) : 30 px ; la marque (le
+  // chevron de la mère, le fil et le rang d'une étape), sa case (un bouton du kit en glyphe, sans
+  // zone de clic : toutes les lignes se cochent), le titre et son numéro, la seule pastille (le
+  // département), puis l'avancement de la mère ou ce qu'attend l'étape en texte, et le ▶.
+  type TreePlace = { kind: 'head'; id: string; open: boolean; block: TreeBlock } | { kind: 'step'; rank: number; last: boolean; parent: Task } | { kind: 'alone' }
+  const treeRow = (t: Task, place: TreePlace) => {
+    const s = short(t)
+    const head = place.kind === 'head' ? place : undefined
+    const step = place.kind === 'step' ? place : undefined
+    const ghost = head?.block.ghost === true
+    const inSession = !t.done && isLive(t)
+    const blocker = t.done || inSession ? undefined : blockerFor(t)
+    const locked = blocker !== undefined
+    const playable = !t.done && !ghost && !inSession && !locked && !launched.includes(taskKey(t))
+    const markAlt = head ? (head.open ? 'replier' : 'déplier') : `rang ${step?.rank ?? 1}`
+    // Une tâche seule (#163) : ni chevron ni fil, sa case d'abord.
+    const mark = place.kind === 'alone' ? null : Svg ? (
+      <Svg
+        source={head ? treeHeadIcon({ open: head.open, chevronHex: palette.text3 }) : treeStepIcon({ rank: step?.rank ?? 1, last: step?.last ?? false, lineHex: palette.border, textHex: palette.text3 })}
+        alt={markAlt}
+        width={head ? 16 : 22}
+        height={30}
+      />
+    ) : (
+      <Text color={palette.text3}>{head ? (head.open ? '⌄' : '›') : `${step?.last ? '└' : '├'}${step?.rank ?? 1}`}</Text>
+    )
+    const openKids = head ? head.block.tasks.length : 0
+    const check = ghost ? null : (
+      <Button key={`check:${t.id ?? keyPart(t.key)}`} plain onPress={() => void checkTask($, source, t, openKids)}>
+        <Text color={t.done ? palette.ok : head ? axisHex(t.axis) : palette.text3}>{treeCheck(t.done)}</Text>
+      </Button>
+    )
+    const department = ghost ? undefined : treeDepartment(t, { enabled: settings.axisPill, axisFilter: axis, ...(clesVisibles ? { clesVisibles } : {}) })
+    const due = t.due === undefined ? undefined : duePill(t.due, today)
+    const dueInk = (p: ReturnType<typeof duePill> | undefined) => (p?.kind === 'late' ? palette.lateOn : p?.kind === 'soon' ? palette.blockOn : palette.text2)
+    const who = t.resp === undefined ? undefined : shortAttend(t.resp)
+    const next = head?.block.next?.due === undefined ? undefined : duePill(head.block.next.due, today)
+    return (
+      <Box key={`hit:${t.key}`} flexDirection="row" alignItems="center" gap={SPACE.row} paddingX={SPACE.indent} hover={{ backgroundColor: palette.hover }}>
+        {mark !== null && <Box flexShrink={0}>
+          {head && !(Svg && headZones) ? (
+            <Button key={`group:${keyPart(head.id)}`} plain dimColor onPress={toggleGroup(head.id)}>
+              {head.open ? '⌄' : '›'}
+            </Button>
+          ) : (
+            mark
+          )}
+          {head && Svg && headZones && hit(`group:${head.id}`, toggleGroup(head.id), 1)}
+        </Box>}
+        {check && <Box key={`c:${t.key}`} flexShrink={0}>{check}</Box>}
+        <Box key={`lead:${t.key}`} flexDirection="row" alignItems="center" gap={graphic ? 0 : SPACE.row} flexGrow={1} flexShrink={1} minWidth={0}>
+          <Button key={t.key} plain dimColor={ghost} onPress={select(selectionOf(t))}>
+            <Text
+              wrap="truncate-end"
+              {...(head && !ghost ? { weight: 'semibold' as const } : {})}
+              {...(t.done ? { strikethrough: true, color: palette.text3 } : locked ? { color: palette.text2 } : {})}
+            >
+              {s.titre}
+            </Text>
+          </Button>
+          {t.id && <Text size="caption" tabular color={palette.text3}>{` #${t.id}`}</Text>}
+        </Box>
+        {department !== undefined && <Box key={`axis:${t.key}`} flexShrink={0}>{drawnPill({ text: department, bg: palette.sel, fg: t.done ? palette.text3 : palette.text2, weight: 600 })}</Box>}
+        {head ? (
+          <Box flexDirection="row" alignItems="center" gap={SPACE.row} flexShrink={0}>
+            {Svg ? <Svg source={progressIcon(head.block.done, head.block.total, palette.ok, palette.sel)} alt={`${head.block.done}/${head.block.total}`} width={34} height={4} /> : null}
+            <Text size="caption" tabular color={palette.text2}>{`${head.block.done}/${head.block.total}`}</Text>
+            {/* Une mère bloquée dit ce qu'elle attend à la place de sa date. */}
+            {t.done ? (
+              <Text size="caption" color={palette.text3}>fait</Text>
+            ) : locked && blocker?.pre ? (
+              <Box key={`lock:${t.key}`} flexDirection="row" alignItems="center" gap={SPACE.row} flexShrink={0}>
+                {lock(`Bloquée : ${short(blocker.pre).titre} n'est pas encore faite`)}
+                <Text size="caption" color={palette.text3} wrap="end">{`${blocker.parent ? 'parent ' : ''}après ${blocker.pre.id ? `#${blocker.pre.id}` : short(blocker.pre).titre}`}</Text>
+              </Box>
+            ) : next ? (
+              <Text size="caption" tabular color={dueInk(next)}>{next.kind === 'late' ? (next.text.split(' · ')[0] ?? next.text) : next.text}</Text>
+            ) : null}
+          </Box>
+        ) : t.done ? (
+          <Text size="caption" color={palette.text3}>fait</Text>
+        ) : inSession ? (
+          maestroLine ? drawnPill({ text: 'en session', bg: palette.liveTint, fg: palette.liveOn, weight: TEXT.weight.soft }) : sessionColumn(t)
+        ) : locked && blocker?.pre ? (
+          <Box key={`lock:${t.key}`} flexDirection="row" alignItems="center" gap={SPACE.row} flexShrink={0}>
+            {lock(blocker.parent ? `Bloquée : son parent attend ${short(blocker.pre).titre}` : `Bloquée : ${short(blocker.pre).titre} n'est pas encore faite`)}
+            <Text size="caption" color={palette.text3} wrap="end">{`${blocker.parent ? 'parent ' : ''}après ${blocker.pre.id ? `#${blocker.pre.id}` : short(blocker.pre).titre}`}</Text>
+          </Box>
+        ) : who !== undefined || due !== undefined ? (
+          <Box flexShrink={0}>
+            <Text size="caption" tabular color={dueInk(due)} wrap="end">{[who, due?.text].filter((x): x is string => x !== undefined).join(' · ')}</Text>
+          </Box>
+        ) : null}
+        {!t.done && (
+          <Box key={`p:${t.key}`} width={3} flexShrink={0} flexDirection="row" justifyContent="center">
+            {playable && (
+              <Button key={`play:${t.key}`} plain dimColor onPress={() => void launchSession($, source, t, s.titre)}>
+                ▶
+              </Button>
+            )}
+          </Box>
+        )}
+      </Box>
+    )
+  }
+
   // Une section repliable : chevron, nom, et à droite le compte (et le disque rouge d'« En retard »).
   // `shownRows` : les lignes que le budget du dessin lui laisse ; au-delà, « Voir les N autres ».
   // `id` tient l'état de la section (dépliée, repliée, « Voir les N autres ») ; `name` est son libellé.
   const section = (id: string, name: string, tasks: Task[], shownRows: number, lead?: RenderElement, mark?: RenderElement, block?: TreeBlock) => {
     const isOpen = isOpenGroup(id)
     const rest = tasks.length - shownRows
-    // Un bloc de l'arbre (#125) : la tête est la ligne du parent, une seule fois ; ses enfants
-    // dessous, reliés par le trait qui porte leur rang.
+    // Un bloc de l'arbre « Le fil » (#163, maquette A) : la mère en tête, une seule fois, sa case et
+    // son avancement ; « Tout clore » dessous quand sa case le demande ; ses étapes, ouvertes et
+    // faites, par rang, sur le fil de la mère.
     if (block?.head) {
-      const progress = `${block.done}/${block.total}`
+      const mother = block.head
       const shown = tasks.slice(0, shownRows)
+      const asking = !mother.done && view.askFamily !== undefined && view.askFamily !== '' && view.askFamily === mother.id
       return (
         <Box key={`section:${id}`} flexDirection="column" paddingTop="xs">
           <Box key={`hit:group:${id}`} flexDirection="column">
-            {row(block.head, undefined, { kind: 'head', id, open: isOpen, ghost: block.ghost, progress })}
+            {treeRow(mother, { kind: 'head', id, open: isOpen, block })}
           </Box>
+          {asking && (
+            <Box key={`ask:${id}`} flexDirection="column" gap="xs" marginLeft={SPACE.nest} paddingX={SPACE.indent} paddingY="xs" backgroundColor={palette.blockTint}>
+              {corners(RADIUS.control, palette.bg)}
+              <Text size="footnote" color={palette.blockOn} wrap="wrap">{`Clore ${short(mother).titre} et ses ${block.tasks.length} étape${block.tasks.length > 1 ? 's' : ''} ouverte${block.tasks.length > 1 ? 's' : ''} ?`}</Text>
+              <Box flexDirection="row" gap={SPACE.row}>
+                <Button key="family-confirm" variant="primary" label="Tout clore" onPress={() => void closeFamily($, source, mother)} />
+                <Button key="family-cancel" label="Annuler" onPress={() => void setView($, () => ({ askFamily: '' }))} />
+              </Box>
+            </Box>
+          )}
           {isOpen && (
             <Box flexDirection="column" paddingBottom="sm">
-              {shown.map((t, i) => row(t, undefined, { kind: 'child', rank: block.rank.get(t) ?? 1, last: i === shown.length - 1 && rest <= 0, parent: block.head }))}
+              {shown.map((t, i) => treeRow(t, { kind: 'step', rank: block.rank.get(t) ?? 1, last: i === shown.length - 1 && rest <= 0, parent: mother }))}
               {rest > 0 && (
                 <Box key={`more-row:${id}`} flexDirection="row" paddingX={SPACE.indent} paddingLeft={SPACE.nest}>
                   <Button
@@ -6426,7 +6703,8 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
             {(() => {
               // En arbre, la profondeur tient la place du trait des chaînes.
               const chains = by === 'tree' ? new Map<Task, ChainStep>() : chainSteps(tasks, prereqFor)
-              return tasks.slice(0, shownRows).map(t => row(t, chains.get(t)))
+              // Les tâches seules de l'arbre (#163) : la ligne « Le fil », sa case et son seul département.
+              return tasks.slice(0, shownRows).map(t => (block ? treeRow(t, { kind: 'alone' }) : row(t, chains.get(t))))
             })()}
             {rest > 0 && (
               <Box key={`more-row:${id}`} flexDirection="row" paddingX={SPACE.indent} paddingLeft={SPACE.nest}>
@@ -6469,7 +6747,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   type ListGroup = { key?: string; name: string; tasks: Task[]; lead?: RenderElement; mark?: RenderElement; block?: TreeBlock; band?: { count: number; lead?: RenderElement }; under?: string }
   const bandValue = (t: Task) => (rangerPar ? t.extra?.[rangerPar]?.[0] : undefined)
   const treeGroups: ListGroup[] = !rangerPar
-    ? tree.map(g => ({ key: g.key, name: g.label, tasks: g.tasks, block: g }))
+    ? tree.map(g => ({ key: g.key, name: g.label, tasks: g.head ? treeSteps(g) : g.tasks, block: g }))
     : bandsOf(
         tree.flatMap(g =>
           g.head
@@ -6487,7 +6765,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
         const count = band.items.reduce((n, u) => n + (u.block.head && !u.block.ghost ? 1 : 0) + u.block.tasks.length, 0)
         return [
           { key: id, name: band.label, tasks: [], band: { count } },
-          ...band.items.map(u => ({ key: u.block.key, name: u.block.label, tasks: u.block.tasks, block: u.block, under: id })),
+          ...band.items.map(u => ({ key: u.block.key, name: u.block.label, tasks: u.block.head ? treeSteps(u.block) : u.block.tasks, block: u.block, under: id })),
         ]
       })
   const bandOpen = (id: string) => !closedGroups.includes(id)
@@ -6572,6 +6850,9 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   // La tête d'un bloc de l'arbre est une ligne de tâche dessinée, comme ses enfants (#125).
   const drawnTasks = groups.flatMap(g => [...(g.block?.head ? [g.block.head] : []), ...g.tasks.slice(0, rowsOf.get(idOf(g)) ?? 0)])
   const names = groups.filter(g => !g.band).map(idOf)
+  // Les mères de l'arbre (#163) : « Tout replier » les ferme toutes, « Tout déplier » les rouvre.
+  const motherKeys = by === 'tree' && !searching && !showDone ? groups.filter(g => g.block?.head !== undefined).map(idOf) : []
+  const mothersOpen = motherKeys.some(isOpenGroup)
   const allOpen = names.length > 0 && names.every(n => openGroups.includes(n))
   const action = searching
     ? { label: 'Effacer', run: () => void update($, searchAtom, () => '') }
@@ -6972,9 +7253,24 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
               ? `${foundCount} résultat${foundCount > 1 ? 's' : ''}${foundCount > SEARCH_MAX ? ` (${SEARCH_MAX} affichés)` : ''}`
               : filterSummary({ axis, attend, showDone, shown: shown.length, doneShown: doneShown.length, groupBy: by, who })}
           </Text>
-          <Box flexShrink={0}>
-            <Button key="list-action" plain dimColor label={action.label} onPress={action.run} />
-          </Box>
+          {/* En arbre sous un filtre (#163, choix de Bertrand) : replier ou déplier d'un coup toutes les
+              mères, à côté de « Tout afficher » ; hors filtre, l'action de la liste le fait déjà. */}
+          {motherKeys.length > 0 && filtered ? (
+            <Box flexDirection="row" gap={SPACE.row} flexShrink={0}>
+              <Button
+                key="tree-fold"
+                plain
+                dimColor
+                label={mothersOpen ? 'Tout replier' : 'Tout déplier'}
+                onPress={() => void setView($, v => foldAllView(v, filtered, motherKeys, !mothersOpen))}
+              />
+              <Button key="list-action" plain dimColor label={action.label} onPress={action.run} />
+            </Box>
+          ) : (
+            <Box flexShrink={0}>
+              <Button key="list-action" plain dimColor label={action.label} onPress={action.run} />
+            </Box>
+          )}
         </Box>
       </Box>
 
