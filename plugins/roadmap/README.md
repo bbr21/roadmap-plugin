@@ -47,7 +47,9 @@ les sessions toutes les 3 s (le dossier de la roadmap toutes les 15 s), et montr
   l'ordre de la légende, la flèche dans le carré de l'axe ; dedans, ce qui est en session d'abord,
   puis ce qui attend quelqu'un, puis la plus récente ; une mère au niveau des tâches seules, sa
   flèche dans son carré, ses filles un cran à droite, reliées par des coudes ; un rond devant le
-  numéro coche la tâche, qui se barre et reste à sa place ;
+  numéro (qui le suit, à l'écart fixe de la ligne, #179) coche la tâche, qui se barre et reste à sa
+  place ; un premier clic sur le rond arme la ligne, un second, sur le bouton de son encart, le fait
+  (#179) ;
 - les tâches par sujet (au menu « Ranger ») en sections repliables, une ligne par tâche (pastilles échéance, tiers,
   « à revoir », âge), triées : en session, puis par échéance, puis de la plus récente à la plus
   ancienne ; une tâche se range sous sa prérequise ; au bout de chaque tâche ouverte (ni en session,
@@ -329,12 +331,18 @@ Premiers usages : la roadmap de Caro et le dossier AAFES Cowork, depuis l'onglet
   un fil fin qui porte leur rang (1, 2 : en séquence par `après:` ; 1, 1 : en parallèle), avec leur
   case, leur département, puis « Rodney · 29/10 » (responsable et date en texte, rouge en retard,
   orange dans les 7 jours) ou le cadenas « après #437 ». Lignes de 30 px, plus d'âge sur la ligne.
-  **Cocher** : la case (☐) d'une étape la clôt comme « Marquer faite » ; l'étape cochée (☑) reste à
-  sa place, barrée, et un second clic la rouvre (sa ligne revient dans ROADMAP.md, son bilan est
-  retiré) ; la dernière étape cochée coche sa mère, rouvrir une étape rouvre sa mère. La case d'une
-  mère qui a des étapes ouvertes demande « Clore Mocap et ses 3 étapes ouvertes ? » (Tout clore,
-  Annuler). Un projet qui déclare `ecriture` (#164) : la case n'écrit pas, elle le demande à
-  Claude (« Coche #N par la skill tasks », « Rouvre #N … »). Une mère cochée aujourd'hui garde son
+  **Cocher** : la case (○) d'une étape la clôt comme « Marquer faite » ; l'étape cochée (●) reste à
+  sa place, barrée, et sa case la rouvre (sa ligne revient dans ROADMAP.md, son bilan est
+  retiré) ; la dernière étape cochée coche sa mère, rouvrir une étape rouvre sa mère. **Double
+  confirmation** (#179, maquette A) : le premier clic sur la case n'écrit rien, il arme la ligne
+  (fond orangé) et pose sous elle un encart qui dit ce qui va se passer (« Rouvrir #267 Licences ? »,
+  « Cocher #437 … ? », et ce qui s'écrira) avec « Rouvrir », « Cocher » ou « Tout clore », et
+  « Annuler » ; seul ce bouton écrit. Un second clic sur la case, un clic ailleurs dans le panneau
+  ou 8 s sans rien désarment ; une seule ligne armée. La case d'une mère qui a des étapes ouvertes
+  arme « Clore #12 Mocap et ses 3 étapes ouvertes ? » (Tout clore, Annuler). La liste « N faites »
+  porte le même rond ●, devant le numéro, qui rouvre de la même façon. Un projet qui déclare
+  `ecriture` (#164) : la case n'écrit pas, après la confirmation elle le demande à Claude (« Coche
+  #N par la skill tasks », « Rouvre #N … »). Une mère cochée aujourd'hui garde son
   bloc jusqu'au lendemain. Un dossier Cowork ne
   rouvre pas : `cowork.py` ne le sait pas, le toast le dit. « Tout replier » / « Tout déplier »,
   à droite au-dessus de la liste (sous un filtre, à côté de « Tout afficher »), replie ou déplie
@@ -623,6 +631,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.116.0 (2026-11-01)** : panneau : le rond d'une tâche se confirme en deux temps (cocher, rouvrir une faite, tout clore), et le numéro suit le rond à écart fixe (#179)
 - **0.115.2 (2026-11-01)** : panneau : plus de pastille d'axe dans « En cours », où le compte d'étapes n'est plus coupé ; la pastille d'axe de la liste devient un réglage, éteint par défaut (#177)
 - **0.115.1 (2026-11-01)** : panneau : le pied lit le catalogue local de Claude Code et propose « Mettre à jour » quand l'app retarde (#178)
 - **0.115.0 (2026-11-01)** : panneau : bande Maestro serrée et collée à droite, icône pour archiver une session close, Completed et Done à la place de close et faites, le contexte de Maestro seul (#174)

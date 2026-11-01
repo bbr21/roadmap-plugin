@@ -4191,6 +4191,72 @@ export function checkRoute(o: { ecriture?: Ecriture; cowork: boolean; task: { id
   })
 }
 
+/** Le temps qu'une ligne reste armée (#179) : passé ce délai, son encart part et son bouton ne fait plus rien. */
+export const ARM_MS = 8000
+
+/** La ligne dont le rond est armé (#179) : sa clé, et le moment du clic. */
+export type Armed = { key: string; at: number }
+
+/** Ce qui arrive à l'armement : un clic sur un rond, le bouton de l'encart, « Annuler », un clic ailleurs. */
+export type ArmEvent = { kind: 'round'; key: string } | { kind: 'confirm'; key: string } | { kind: 'cancel' } | { kind: 'elsewhere' }
+
+/**
+ * La double confirmation du rond de l'arbre (#179, maquette A) : un premier clic arme sa ligne, le
+ * bouton de l'encart l'exécute (`run`) ; un second clic sur le même rond, « Annuler », un clic
+ * ailleurs ou `ARM_MS` sans rien désarment. Une seule ligne armée à la fois.
+ */
+export function checkArm(armed: Armed | undefined, e: ArmEvent, now: number): { armed?: Armed; run?: string } {
+  const live = armed !== undefined && now - armed.at < ARM_MS ? armed : undefined
+  if (e.kind === 'round') return live?.key === e.key ? {} : { armed: { key: e.key, at: now } }
+  if (e.kind === 'confirm') return live?.key === e.key ? { run: e.key } : {}
+  return {}
+}
+
+/** L'encart de cette ligne se montre-t-il (#179) : elle est armée, et le délai court encore. */
+export function armShown(armed: Armed | undefined, key: string, now: number): boolean {
+  return armed !== undefined && armed.key === key && now - armed.at < ARM_MS
+}
+
+/**
+ * Un clic ailleurs désarme (#179) : tout bouton ou zone du panneau, sauf un rond (`check:…`, qui
+ * arme ou désarme lui-même) et les boutons de l'encart (`arm-…`).
+ */
+export function pressDisarms(element: string): boolean {
+  return !/(^|[^a-z-])(check:|arm-)/.test(element)
+}
+
+/**
+ * L'encart d'une ligne armée (#179) : la question, ce qui va s'écrire (ou que Claude le fera, avec
+ * `ecriture`), et le libellé du bouton qui le fait. `title` : le titre court de la tâche.
+ */
+export function armAsk(o: { task: { id?: string; label: string }; title: string; action: 'done' | 'reopen' | 'family'; open?: number; ecriture?: Ecriture; cowork: boolean }): { question: string; detail: string; button: string } {
+  const named = o.task.id !== undefined ? `#${o.task.id} ${o.title}` : taskRef(o.task)
+  if (o.action === 'reopen') {
+    const detail = o.cowork
+      ? `cowork.py ne sait pas rouvrir une tâche : demande-le à Claude (« rouvre ${taskRef(o.task)} »).`
+      : o.ecriture !== undefined
+        ? `Claude la rouvre par la skill tasks. ${entrustedNote(o.ecriture)}.`
+        : 'Elle repart dans les ouvertes, à sa place. Dans git : commit et push sur main.'
+    return { question: `Rouvrir ${named} ?`, detail, button: 'Rouvrir' }
+  }
+  const detail = closeCaption('done', o)
+  if (o.action === 'done') return { question: `Cocher ${named} ?`, detail, button: 'Cocher' }
+  const open = o.open ?? 0
+  const steps = open > 1 ? `ses ${open} étapes ouvertes` : 'son étape ouverte'
+  return { question: `Clore ${named} et ${steps} ?`, detail, button: 'Tout clore' }
+}
+
+/**
+ * La boîte du numéro devant le titre (#179) : dans l'arbre, il suit le rond, à l'écart fixe de la
+ * ligne (le même qu'entre le carré d'axe et le rond) ; ailleurs, sa colonne de 6 calée à droite,
+ * pour aligner les titres des lignes sans rond.
+ */
+export function treeNumberBox(inTree: boolean): { width?: number; flexDirection: 'row'; justifyContent?: 'flex-end'; alignItems: 'center'; flexShrink: 0 } {
+  return inTree
+    ? { flexDirection: 'row', alignItems: 'center', flexShrink: 0 }
+    : { width: 6, flexDirection: 'row', justifyContent: 'flex-end', alignItems: 'center', flexShrink: 0 }
+}
+
 /** La légende de l'encart de clôture : ce qui va se passer, et, avec `ecriture` (#164), à qui c'est confié. */
 export function closeCaption(kind: CloseKind, o: { ecriture?: Ecriture; cowork: boolean }): string {
   if (o.cowork || o.ecriture === undefined) {

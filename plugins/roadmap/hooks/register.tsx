@@ -18,7 +18,6 @@ import {
   filterPillIcon,
   type PillMark,
   checkIcon,
-  checkRowIcon,
   chainRowIcon,
   treeMotherRowIcon,
   treeChildRowIcon,
@@ -300,6 +299,12 @@ import {
   dropBilanCsv,
   reopenInTexts,
   treeCheck,
+  ARM_MS,
+  armAsk,
+  armShown,
+  checkArm,
+  pressDisarms,
+  treeNumberBox,
   treeSteps,
   treeDepartment,
   foldAllView,
@@ -375,6 +380,7 @@ import {
   titlesNote,
   waitNote,
   type WaitNote,
+  type Armed,
 } from './parse'
 
 const PANE = PANE_ID
@@ -3235,16 +3241,61 @@ async function afterCheck($: EngineInterface, out: { id?: string; note?: string 
   }
 }
 
+/** L'armement de la vue (#179), lu pour `checkArm`. */
+const armedOf = (v: View): Armed | undefined => (v.armed ? { key: v.armed, at: v.armedAt ?? 0 } : undefined)
+const DISARMED = { armed: '', armedAt: 0 } as const
+
 /**
- * La case d'une ligne de l'arbre (#163) : une faite se rouvre, une ouverte se clôt (comme « Marquer
- * faite ») ; une mère qui a des filles ouvertes demande d'abord « Tout clore » (`askFamily`). Une
- * écriture à la fois.
+ * La ligne armée, gardée aussi en mémoire (#179) : un clic ailleurs ne lit la vue que si une ligne
+ * l'est ; sans elle, chaque bouton du panneau payait une lecture d'état avant son geste.
+ */
+let armedNow = ''
+
+/** Un clic ailleurs (#179) : la ligne armée se désarme ; sans ligne armée, aucune écriture. */
+async function disarm($: EngineInterface): Promise<void> {
+  if (armedNow === '') return
+  armedNow = ''
+  await setView($, v => (v.armed ? DISARMED : {}))
+}
+
+/**
+ * Le rond d'une ligne (#179, maquette A) : un premier clic arme sa ligne et pose son encart, un
+ * second sur le même rond la désarme ; rien ne s'écrit. Passé `ARM_MS`, une minuterie retire
+ * l'encart (et `checkArm` refuse de toute façon un bouton trop tardif).
+ */
+async function armCheck($: EngineInterface, task: Task): Promise<void> {
+  const now = await $.clock.now()
+  const out = checkArm(armedOf(await read($, viewAtom)), { kind: 'round', key: taskKey(task) }, now)
+  await setView($, () => (out.armed ? { armed: out.armed.key, armedAt: out.armed.at } : DISARMED))
+  armedNow = out.armed?.key ?? ''
+  const armed = out.armed
+  if (armed === undefined || typeof setTimeout !== 'function') return
+  setTimeout(() => {
+    if (armedNow === armed.key) armedNow = ''
+    void setView($, v => (v.armed === armed.key && v.armedAt === armed.at ? DISARMED : {})).catch(() => {
+      // le panneau a pu se fermer : rien à retirer
+    })
+  }, ARM_MS)
+}
+
+/**
+ * Le bouton de l'encart (#179) : la ligne encore armée s'exécute, comme la case de #163 : une faite
+ * se rouvre, une ouverte se clôt (comme « Marquer faite »), une mère à étapes ouvertes passe par
+ * « Tout clore » ; avec `ecriture` (#164), la demande part à Claude. Une écriture à la fois.
  */
 async function checkTask($: EngineInterface, source: Source, task: Task, openKids: number): Promise<void> {
-  if (!task.done && openKids > 0) {
-    await setView($, v => ({ askFamily: v.askFamily === task.id ? '' : (task.id ?? '') }))
+  const out0 = checkArm(armedOf(await read($, viewAtom)), { kind: 'confirm', key: taskKey(task) }, await $.clock.now())
+  armedNow = ''
+  await setView($, () => DISARMED)
+  if (out0.run === undefined) {
+    try {
+      $.ui.toast('Délai passé : reclique sur le rond.')
+    } catch {
+      // pas de toast sur cette surface
+    }
     return
   }
+  if (!task.done && openKids > 0) return closeFamily($, source, task)
   if (checking) return
   checking = true
   try {
@@ -3267,7 +3318,6 @@ async function closeFamily($: EngineInterface, source: Source, mother: Task): Pr
   if (checking) return
   checking = true
   try {
-    await setView($, () => ({ askFamily: '' }))
     const listed = await load($, files(source).open, 'ROADMAP.md')
     const open = typeof listed === 'string' ? 0 : listed.filter(t => !t.done && t.parent === mother.id && t.id !== mother.id).length
     if (await checkByClaude($, source, mother, 'family', open)) return
@@ -4244,6 +4294,7 @@ export const register: Register = (on, options) => {
       const id = (e.data as { press?: unknown } | null)?.press
       if (typeof id === 'string') {
         notePress(id)
+        if (pressDisarms(id)) await disarm($)
         pressHandlers.get(id)?.()
       }
       return {}
@@ -4251,6 +4302,7 @@ export const register: Register = (on, options) => {
     if (!e.element.startsWith(BAR_HIT)) return next(e)
     const segment = (e.data as { segment?: unknown } | null)?.segment
     if (typeof segment === 'string') notePress(`bar:${segment}`)
+    await disarm($)
     if (segment === DONE_SEGMENT) pressDone($)
     else if (typeof segment === 'string' && segment !== '') pressAxis($, segment)
     return {}
@@ -4258,7 +4310,11 @@ export const register: Register = (on, options) => {
 
   // Un bouton de l'app : noté pour la mesure du délai jusqu'au dessin suivant.
   on('ui.press', async ($, e, next) => {
-    if (e.plugin === 'roadmap') notePress(e.element)
+    if (e.plugin === 'roadmap') {
+      notePress(e.element)
+      // Un clic ailleurs désarme le rond armé (#179).
+      if (pressDisarms(e.element)) await disarm($)
+    }
     return next(e)
   })
 
@@ -5322,11 +5378,12 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   // Le numéro d'une tâche devant son titre : petit, discret, suivi d'un point de séparation. Hors du
   // bouton, qui imposerait sa couleur au texte.
   // `open` : la tâche a une session ouverte, et un clic sur son numéro y mène.
-  const taskNumber = (id: string, open?: () => void) => (
+  const taskNumber = (id: string, open?: () => void, afterCheck = false) => (
     // Une colonne de 6 de large (un numéro cliquable est un bouton, dont la marge intérieure
     // tronquait « #133 » dans 4), calée à droite : le point colle au numéro et les titres restent
-    // alignés ; l'écart des numéros courts passe à gauche, contre le carré (2026-10-23).
-    <Box key={`n:${id}`} width={6} flexDirection="row" justifyContent="flex-end" alignItems="center" flexShrink={0}>
+    // alignés ; l'écart des numéros courts passe à gauche, contre le carré (2026-10-23). Derrière un
+    // rond (#179), le numéro le suit, à l'écart fixe de la ligne (`treeNumberBox`).
+    <Box key={`n:${id}`} {...treeNumberBox(afterCheck)}>
       {open && !graphic ? (
         <Button key={`num:${id}`} plain dimColor onPress={open}>{`#${id}`}</Button>
       ) : open && numberZones.has(id) ? (
@@ -6534,8 +6591,9 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     // Une marque de 16 × 24 tient la hauteur de la ligne : ni cale ni coins arrondis par ligne de
     // tâche (sur une roadmap de 120 tâches dépliées, 870 dessins figeaient le panneau).
     // Une tâche d'une chaîne : le trait et son étape font partie de la marque, un seul dessin.
-    // Dans l'arbre (#168), le carré de l'axe reste sur une ligne faite : c'est son rond qui se coche.
-    const markSource = t.done && !tree ? checkRowIcon(palette.ok) : squareRowIcon(axisHex(t.axis))
+    // Dans l'arbre (#168), et dans la liste des faites depuis #179, le carré de l'axe reste sur une
+    // ligne faite, estompé : c'est son rond qui se coche.
+    const markSource = squareRowIcon(axisHex(t.axis))
     // L'arbre par axe (#168) : la mère porte sa flèche dans son carré, une fille son coude.
     const drawn = head
       ? treeMotherRowIcon(axisHex(t.axis), head.open, palette.onAxis)
@@ -6546,21 +6604,26 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
           : markSource
     const markAlt = `${isAbandoned(t) ? 'annulée' : t.done ? 'faite' : t.axis}${chain ? `, étape ${chain.step}` : ''}${head ? (head.open ? ', replier' : ', déplier') : ''}`
     const mark = Svg ? (
-      <Svg source={ghost || (tree && t.done) ? fade(drawn, true) : drawn} alt={markAlt} width={chain || child ? 32 : 16} height={24} />
+      <Svg source={ghost || t.done ? fade(drawn, true) : drawn} alt={markAlt} width={chain || child ? 32 : 16} height={24} />
     ) : head ? (
       <Text color={axisTheme(t.axis)}>{head.open ? '⌄' : '›'}</Text>
-    ) : t.done && !tree ? (
-      <Text color="success">✓</Text>
     ) : (
       <Text color={axisTheme(t.axis)}>■</Text>
     )
-    // Le rond de l'arbre (#168, système A) : devant le numéro ; la case d'une mère à filles ouvertes
-    // demande « Tout clore » (#163). Un bouton du kit en glyphe : aucune zone de clic de plus.
-    const check = tree && !ghost ? (
-      <Button key={`check:${t.id ?? keyPart(t.key)}`} plain onPress={() => void checkTask($, source, t, head ? head.block.tasks.length : 0)}>
-        <Text color={t.done ? palette.ok : palette.text3}>{treeCheck(t.done)}</Text>
+    // Le rond de l'arbre (#168, système A), et d'une faite de la liste (#179) : devant le numéro. Un
+    // premier clic arme la ligne et pose son encart sous elle (#179, maquette A), dont le bouton
+    // rouvre, coche ou, pour une mère à filles ouvertes, « Tout clore » (#163). Un bouton du kit en
+    // glyphe : aucune zone de clic de plus.
+    const openKids = head ? head.block.tasks.length : 0
+    const armedHere = armShown(armedOf(view), taskKey(t), now)
+    const check = (tree || t.done) && !ghost && block === undefined ? (
+      <Button key={`check:${t.id ?? keyPart(t.key)}`} plain onPress={() => void armCheck($, t)}>
+        <Text color={armedHere ? palette.blockOn : t.done ? palette.ok : palette.text3} {...(armedHere ? { weight: 'semibold' as const } : {})}>{treeCheck(t.done)}</Text>
       </Button>
     ) : null
+    const ask = check && armedHere
+      ? armAsk({ task: t, title: s.titre, action: t.done ? 'reopen' : openKids > 0 ? 'family' : 'done', open: openKids, ...(source.ecriture ? { ecriture: source.ecriture } : {}), cowork: bilanData.viaCowork })
+      : undefined
     const right = tree ? (t.done ? 'fait' : days === undefined ? '' : ageLabel(days)) : t.done ? axisLabel(t.axis) : days === undefined ? '' : ageLabel(days)
     // Une tâche faite dont la session reste ouverte : y retourner, ou l'archiver, d'un clic.
     const kept = sessionRows.has(taskKey(t)) ? doneSessionOf(t) : undefined
@@ -6613,17 +6676,18 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
             }).kept,
           )
         : allPills
-    const number = t.id ? taskNumber(t.id, rowSession ? () => void openSession($, rowSession.entry) : undefined) : undefined
+    const number = t.id ? taskNumber(t.id, rowSession ? () => void openSession($, rowSession.entry) : undefined, check !== null) : undefined
     // Jamais dans « En cours » (#177) : le bloc de Maestro ou le filtre ; le carré d'axe suffit.
     const department = ghost ? undefined : axisPillText(t, { enabled: settings.axisPill, axisFilter: axis, live: block !== undefined || attend === 'live', groupedByAxis: (pending && by === 'subject') || (tree !== undefined && !rangerPar), clesVisibles })
-    return (
+    const line = (
       <Box
         key={`hit:${t.key}`}
         flexDirection="row"
         alignItems="center"
         gap={SPACE.row}
         paddingX={SPACE.indent}
-        hover={{ backgroundColor: palette.hover }}
+        {...(ask ? { backgroundColor: palette.blockTint } : {})}
+        hover={{ backgroundColor: ask ? palette.blockTint : palette.hover }}
       >
         {/* Une tâche d'une chaîne, au terminal : le trait en glyphe et son étape (1 pour la tête). */}
         {(chain || child) && !Svg && (
@@ -6715,6 +6779,23 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
         )}
       </Box>
     )
+    if (ask === undefined) return line
+    // L'encart de la ligne armée (#179, maquette A, celui de « Tout clore ») : la question, ce qui va
+    // s'écrire, puis le bouton qui le fait et « Annuler ».
+    return (
+      <Box key={`armed:${t.key}`} flexDirection="column">
+        {line}
+        <Box key={`ask:${t.key}`} flexDirection="column" gap="xs" marginLeft={SPACE.nest} paddingX={SPACE.indent} paddingY="xs" backgroundColor={palette.blockTint}>
+          {corners(RADIUS.control, palette.bg)}
+          <Text size="footnote" weight="semibold" color={palette.blockOn} wrap="wrap">{ask.question}</Text>
+          <Text size="caption" color={palette.blockOn} wrap="wrap">{ask.detail}</Text>
+          <Box flexDirection="row" gap={SPACE.row}>
+            <Button key="arm-confirm" variant="primary" label={ask.button} onPress={() => void checkTask($, source, t, openKids)} />
+            <Button key="arm-cancel" label="Annuler" onPress={() => void disarm($)} />
+          </Box>
+        </Box>
+      </Box>
+    )
   }
 
   // Une section repliable : chevron, nom, et à droite le compte (et le disque rouge d'« En retard »).
@@ -6744,27 +6825,16 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     }
     // Un bloc de l'arbre (#163 ; #168, maquettes de Bertrand) : la mère en tête, une seule fois, au
     // niveau des tâches seules, sa flèche dans son carré, son rond et son avancement ; « Tout clore »
-    // dessous quand son rond le demande ; ses filles, ouvertes et faites, par rang, un cran à droite,
+    // dessous quand son rond est armé (l'encart de la ligne, #179) ; ses filles, ouvertes et faites, par rang, un cran à droite,
     // reliées par leur coude.
     if (block?.head) {
       const mother = block.head
       const shown = tasks.slice(0, shownRows)
-      const asking = !mother.done && view.askFamily !== undefined && view.askFamily !== '' && view.askFamily === mother.id
       return (
         <Box key={`section:${id}`} flexDirection="column" paddingTop="xs">
           <Box key={`hit:group:${id}`} flexDirection="column">
             {row(mother, undefined, { kind: 'head', id, open: isOpen, ghost: block.ghost, block })}
           </Box>
-          {asking && (
-            <Box key={`ask:${id}`} flexDirection="column" gap="xs" marginLeft={SPACE.nest} paddingX={SPACE.indent} paddingY="xs" backgroundColor={palette.blockTint}>
-              {corners(RADIUS.control, palette.bg)}
-              <Text size="footnote" color={palette.blockOn} wrap="wrap">{`Clore ${short(mother).titre} et ses ${block.tasks.length} étape${block.tasks.length > 1 ? 's' : ''} ouverte${block.tasks.length > 1 ? 's' : ''} ?`}</Text>
-              <Box flexDirection="row" gap={SPACE.row}>
-                <Button key="family-confirm" variant="primary" label="Tout clore" onPress={() => void closeFamily($, source, mother)} />
-                <Button key="family-cancel" label="Annuler" onPress={() => void setView($, () => ({ askFamily: '' }))} />
-              </Box>
-            </Box>
-          )}
           {isOpen && (
             <Box flexDirection="column" paddingBottom="sm">
               {shown.map((t, i) => row(t, undefined, { kind: 'child', last: i === shown.length - 1 && rest <= 0, parent: mother }))}
