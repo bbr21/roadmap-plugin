@@ -53,6 +53,15 @@ les sessions toutes les 3 s (le dossier de la roadmap toutes les 15 s), et montr
 - dans toutes les vues, le menu « Ranger » (Par sujet, Par jour ; un bouton sur mobile) : un seul choix pour toutes les vues ;
   par jour, une ouverte se range au jour de son `ouvert:` (« En retard » reste en tête), une faite
   au jour de son `fait:` ; sans choix, les ouvertes vont par sujet et les faites par jour ;
+- la modification d'une tâche ouverte depuis sa fiche (#161) : le crayon à droite du titre met la
+  fiche en édition, champs en place dans ses cartes, préremplis de la ligne (libellé dans la Mission,
+  Attend, Après et Parent, Axe, Responsable (`resp:` en mode Projet, `qui:` en mode Code), les clés
+  que le projet déclare dans `cles`, Échéance en `AAAA-MM-JJ`) ; un menu sur bureau quand le projet
+  liste les valeurs admises ; « N changements », puis « Enregistrer » réécrit la seule ligne, les
+  autres champs et la note gardés à leur place, contrôlée par les règles du projet : un refus nomme
+  le champ, rien n'est écrit, la saisie reste ; « Annuler » ne touche à rien. L'écriture suit celle
+  de « Marquer faite » : `cowork.py roadmap update` dans un dossier Cowork, sinon le panneau écrit
+  ROADMAP.md, sur main seulement dans git, puis `roadmap: edit #N`, commit et push ;
 - le détail d'une tâche (voir la ligne, ouvrir la fiche ou la source, la lancer dans une nouvelle
   session ou la faire vérifier, au premier clic, avec un « Message additionnel » facultatif ajouté
   au brief, la marquer faite ou l'annuler) ; « Marquer faite » (#73) et « Annuler la tâche » (#267)
@@ -563,6 +572,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.105.0 (2026-10-31)** : panneau : éditer une tâche depuis sa fiche : le crayon ouvre ses champs en place (libellé, attente, prérequises, parent, axe, responsable, clés du projet, échéance), Enregistrer réécrit la ligne contrôlée par les règles du projet (#161)
 - **0.104.0 (2026-10-31)** : tasks : nouvelle skill qui tient la roadmap au quotidien (ajouter, compléter, redater, cocher sur preuve, abandonner, rapprocher par sujet) ; .claude/roadmap.json déclare regles, ecriture et preuves ; skills du plugin en anglais (#158)
 - **0.103.0 (2026-10-31)** : bande de Maestro : le contexte utilisé de Maestro dans l'en-tête (13 % · 132,5k / 1M, jauge orange à 70 %, rouge à 85 %), et celui de chaque session en jauge fine sous ses étapes (#157)
 - **0.102.0 (2026-10-31)** : panneau : chaque tâche ouverte porte son département en pastille à droite du titre (réglage Département en pastille, allumé), et « #N · » se colle au titre (#156)

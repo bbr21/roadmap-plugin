@@ -38,6 +38,7 @@ import {
   externalIcon,
   documentIcon,
   archiveIcon,
+  pencilIcon,
   clockIcon,
   gearIcon,
   todoIcon,
@@ -121,6 +122,9 @@ import {
   recapKey,
   recapOf,
   type FicheCard,
+  type EditField,
+  type EditSpec,
+  type TaskEdit,
   taskBrandOf,
   byDay,
   doneByDay,
@@ -133,6 +137,10 @@ import {
   parentLeftAlone,
   blockerOf,
   closeWithParentInTexts,
+  editInTexts,
+  editableFields,
+  editDiff,
+  declaredAxes,
   withParentDates,
   bandsOf,
   keyPills,
@@ -3015,6 +3023,117 @@ async function confirmClose($: EngineInterface, source: Source, task: Task, kind
   }
 }
 
+/** Les valeurs tapées dans la fiche en édition (#161), par `<taskKey>|<champ>` : un redessin ne les perd pas. */
+const editDrafts = new Map<string, string>()
+const SAVE_BUSY = '…'
+let saving = false
+
+/** Les brouillons d'une tâche, par champ. */
+function draftsOf(key: string): Record<string, string> {
+  const out: Record<string, string> = {}
+  for (const [k, v] of editDrafts) if (k.startsWith(`${key}|`)) out[k.slice(key.length + 1)] = v
+  return out
+}
+
+function clearDrafts(key: string): void {
+  for (const k of [...editDrafts.keys()]) if (k.startsWith(`${key}|`)) editDrafts.delete(k)
+}
+
+/**
+ * Réécrit la ligne d'une tâche ouverte depuis sa fiche (#161), par le chemin de « Marquer faite »
+ * (`closeTask`) : `cowork.py roadmap update` dans un dossier Cowork ; sinon le panneau écrit
+ * ROADMAP.md, dans git seulement sur main, sans modification en attente, puis commit et push. La
+ * ligne se contrôle d'abord (`editInTexts`, règles du projet) : refusée, rien ne s'écrit.
+ */
+async function saveEdit(
+  $: EngineInterface,
+  source: Source,
+  task: Task,
+  edit: TaskEdit,
+): Promise<{ id?: string; warnings: string[]; note?: string } | { error: string; field?: EditField }> {
+  const settings = projectSettings(source)
+  const rules = { requis: settings.requis, requiredOn: settings.requiredOn, cles: settings.cles }
+  const { open } = files(source)
+  if (await $.fs.exists(`${source.dir}/_cowork/cowork.py`).catch(() => false)) {
+    const out = editInTexts(await $.fs.read(open), task, edit, rules)
+    if ('error' in out) return out
+    if (!out.changed) return { ...(task.id ? { id: task.id } : {}), warnings: [] }
+    const run = await runPython(
+      $,
+      [`${source.dir}/_cowork/cowork.py`, 'roadmap', 'update', source.dir, '--match-b64', utf8Base64(task.label), '--line-b64', utf8Base64(out.line)],
+      source.dir,
+    )
+    if (run.exitCode !== 0) return { error: `cowork.py a refusé, rien n'a été écrit : ${lastLine(run.stderr || run.stdout)}` }
+    return { ...(task.id ? { id: task.id } : {}), warnings: out.warnings }
+  }
+  const git = (...args: string[]) => $.process.run(['git', '-C', source.dir, ...args], { timeoutMs: 60_000 })
+  const head = await git('rev-parse', '--abbrev-ref', 'HEAD')
+  const inGit = head.exitCode === 0
+  let upstream = false
+  if (inGit) {
+    const branch = head.stdout.trim()
+    if (branch !== 'main' && branch !== 'master') {
+      return { error: `${source.name} est sur « ${branch} », pas sur main : sa roadmap ne s'écrit que sur main. Rien n'a été écrit.` }
+    }
+    const status = await git('status', '--porcelain', '--', 'ROADMAP.md')
+    if (status.stdout.trim() !== '') {
+      return { error: `La roadmap a des modifications non committées (${lastLine(status.stdout)}) : une session l'écrit peut-être. Rien n'a été écrit.` }
+    }
+    upstream = (await git('rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}')).exitCode === 0
+    if (upstream) {
+      const pull = await git('pull', '--ff-only', '-q')
+      if (pull.exitCode !== 0) return { error: `git pull a échoué, rien n'a été écrit : ${lastLine(pull.stderr || pull.stdout)}` }
+    }
+  }
+  const out = editInTexts(await $.fs.read(open), task, edit, rules)
+  if ('error' in out) return out
+  const done = { ...(task.id ? { id: task.id } : {}), warnings: out.warnings }
+  if (!out.changed) return done
+  await $.fs.write(open, out.open)
+  if (!inGit) return done
+  const commit = await git('commit', '-q', '-m', `roadmap: edit ${task.id ? `#${task.id}` : clip(task.label, 40)}`, '--', 'ROADMAP.md')
+  if (commit.exitCode !== 0) return { ...done, note: `Enregistrée, mais pas committée : ${lastLine(commit.stderr || commit.stdout)}` }
+  if (!upstream || (await git('push', '-q')).exitCode === 0) return done
+  // Un autre clone a avancé : on se remet dessus, puis un seul nouvel essai.
+  const rebase = await git('pull', '--rebase', '-q')
+  const push = rebase.exitCode === 0 ? await git('push', '-q') : rebase
+  return push.exitCode === 0 ? done : { ...done, note: `Enregistrée et committée, mais pas poussée : ${lastLine(push.stderr || push.stdout)}` }
+}
+
+/** Le clic sur « Enregistrer » (#161) : une écriture à la fois ; rien de changé, la fiche se referme. */
+async function confirmEdit($: EngineInterface, source: Source, task: Task, specs: readonly EditSpec[]): Promise<void> {
+  if (saving) return
+  saving = true
+  const key = taskKey(task)
+  try {
+    const { edit, count } = editDiff(specs, draftsOf(key))
+    if (count === 0) {
+      clearDrafts(key)
+      await setView($, () => ({ editing: '', editNote: '', editField: '' }))
+      return
+    }
+    await setView($, () => ({ editNote: SAVE_BUSY, editField: '' }))
+    const out = await saveEdit($, source, task, edit).catch((err: unknown) => ({
+      error: `Enregistrement impossible : ${err instanceof Error ? err.message : String(err)}`,
+    }))
+    if ('error' in out) {
+      await setView($, () => ({ editNote: out.error, editField: 'field' in out && out.field ? out.field : '' }))
+      return
+    }
+    clearDrafts(key)
+    const note = [...out.warnings, ...(out.note ? [out.note] : [])].join(' ; ')
+    await setView($, () => ({ editing: '', editNote: note, editField: '', ...(out.id ? { selected: `id:${out.id}` } : {}) }))
+    await update($, retryAtom, v => v + 1)
+    try {
+      $.ui.toast(`${out.id ? `#${out.id} ` : 'Tâche '}enregistrée${out.note ? ` : ${out.note}` : ''}`)
+    } catch {
+      // pas de toast sur cette surface : la fiche le montre
+    }
+  } finally {
+    saving = false
+  }
+}
+
 /**
  * Ouvre un fichier dans le panneau Fichiers de Claude Code, à la ligne voulue. Ce panneau n'ouvre
  * que les dossiers de la session : hors de ceux-là, le fichier part dans l'app par défaut du Mac.
@@ -4165,6 +4284,8 @@ function brandTree(
   steps?: BrandSteps,
   // Les voies seules, sans la ligne « Maestro … » : l'arbre que montre le filtre « En cours » (#149).
   bare = false,
+  // Au bout du titre d'une tâche, dans sa fiche : le crayon qui la fait passer en édition (#161).
+  titleEnd?: RenderElement,
 ): RenderElement {
   const { Box, Text, Button } = $.ui.resolve(e)
   const resolved = $.ui.resolve(e)
@@ -4312,6 +4433,22 @@ function brandTree(
     variant !== 'header' && Svg && words.stations && numbered
       ? brandStationsIcon(palette, accent, words.stations, surfaceWidth(e, variant === 'focus' ? 4 : 6, card ? 520 : Infinity))
       : undefined
+  const title = onTitle ? (
+    // Un bouton de l'app ne tient que du texte : le numéro et le titre, deux Text dedans.
+    <Box key={`title:${onTitle.key}`} flexDirection="row" flexShrink={1} minWidth={0}>
+      <Button key={onTitle.key} plain hover={{ underline: true }} onPress={onTitle.press}>
+        {numbered && <Text size={card ? 'title' : 'heading'} weight="semibold" color={accent}>{`#${brand.id} `}</Text>}
+        <Text size={card ? 'title' : 'heading'} weight="semibold" wrap="wrap">{brand.label}</Text>
+      </Button>
+    </Box>
+  ) : (
+    <Box flexDirection="row" gap={SPACE.row}>
+      {numbered && <Text size={card ? 'title' : 'heading'} weight="semibold" color={accent}>{`#${brand.id}`}</Text>}
+      <Box flexShrink={1} minWidth={0}>
+        <Text size={card ? 'title' : 'heading'} weight="semibold" wrap="wrap">{brand.label}</Text>
+      </Box>
+    </Box>
+  )
   return (
     <Box flexDirection="column" gap={SPACE.tight} paddingY={card ? 'xs' : undefined}>
       <Box flexDirection="row" alignItems="center" gap={SPACE.row}>
@@ -4321,21 +4458,15 @@ function brandTree(
         </Box>
         {state && pill(BRAND_STATE_WORDS[state], ...tone(state))}
       </Box>
-      {onTitle ? (
-        // Un bouton de l'app ne tient que du texte : le numéro et le titre, deux Text dedans.
-        <Box key={`title:${onTitle.key}`} flexDirection="row" flexShrink={1} minWidth={0}>
-          <Button key={onTitle.key} plain hover={{ underline: true }} onPress={onTitle.press}>
-            {numbered && <Text size={card ? 'title' : 'heading'} weight="semibold" color={accent}>{`#${brand.id} `}</Text>}
-            <Text size={card ? 'title' : 'heading'} weight="semibold" wrap="wrap">{brand.label}</Text>
-          </Button>
+      {titleEnd ? (
+        <Box key="title-row" flexDirection="row" alignItems="flex-start" gap={SPACE.row}>
+          <Box flexGrow={1} flexShrink={1} minWidth={0}>
+            {title}
+          </Box>
+          {titleEnd}
         </Box>
       ) : (
-        <Box flexDirection="row" gap={SPACE.row}>
-          {numbered && <Text size={card ? 'title' : 'heading'} weight="semibold" color={accent}>{`#${brand.id}`}</Text>}
-          <Box flexShrink={1} minWidth={0}>
-            <Text size={card ? 'title' : 'heading'} weight="semibold" wrap="wrap">{brand.label}</Text>
-          </Box>
-        </Box>
+        title
       )}
       <Box flexDirection="row" alignItems="center" gap={SPACE.row}>
         {axis}
@@ -4752,6 +4883,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   const {
     axis: axisRaw, attend: attendRaw, who: whoRaw = 'all', moreFilters = false, showDone, groupBy, selected, openGroups, closedGroups, moreGroups,
     launchNote, launched, openNote, conclusionOpen, missionOpen = '', cancelAsk = '', closeKind = 'abandon', cancelNote = '',
+    editing: editingKey = '', editNote = '', editField = '', editCount = 0,
   } = view
   const data = await paneData($, source, [stamp, titlesVersion, themeStamp, retry, liveVersion].join('|'))
   const { palette, bilan: bilanData, titles, live: liveEntries, ignored } = data
@@ -4840,7 +4972,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   const sortOrder = { isLive, prereqOf: prereqFor }
   const select = (key: string) => () => {
     launchExtra = ''
-    void setView($, () => ({ selected: key, launchNote: '', openNote: '', cancelAsk: '', cancelNote: '' }))
+    void setView($, () => ({ selected: key, launchNote: '', openNote: '', cancelAsk: '', cancelNote: '', editing: '', editNote: '', editField: '' }))
   }
 
   // Dessins et couleurs, partagés par la liste et le détail.
@@ -4987,7 +5119,15 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     const pre = prereqFor(current)
     // Ce qui la bloque : sa prérequise, ou celle de son parent (#125).
     const holder = blockerFor(current)
-    const { cles } = projectSettings(source)
+    const { cles, mode: ficheMode } = projectSettings(source)
+    // En édition (#161, maquette C) : les champs en place dans les cartes, préremplis de la ligne brute,
+    // les valeurs tapées gardées hors de l'état (`editDrafts`) pour qu'un redessin ne les perde pas.
+    const editKey = taskKey(current)
+    const editing = !current.done && editingKey === editKey
+    const editText = editing ? (await readOr($, paths.open)) ?? '' : ''
+    const editSpecs = editing
+      ? editableFields(current, editText.split('\n')[line - 1] ?? '', { mode: ficheMode, axes: declaredAxes(editText), cles })
+      : []
     const unlocks = allTasks.filter(t => prereqsFor(t).includes(current))
     // Sa place dans sa chaîne d'ouvertes : « étape 2 sur 4 ».
     const openSet = new Set(openTasks)
@@ -5218,6 +5358,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
       branch: facts?.branch.length ?? 0,
       links,
       details: detailCount,
+      editing,
     })
     // L'état en pastille : celui que Maestro voit dans sa session, celui de la session qui y travaille ailleurs.
     const ownRunning = focusBrand && ownBrand?.data.own.id !== undefined ? runningBySession.get(ownBrand.data.own.id) : undefined
@@ -5654,6 +5795,112 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
           </Box>,
         ),
     }
+    // L'édition (#161, maquette C) : un champ par ligne éditable, à côté de son étiquette ; un menu sur
+    // bureau quand le projet liste ses valeurs (`—` : vide). Le refus rougit l'étiquette et se dit dessous.
+    const saveBusy = editNote === SAVE_BUSY
+    const editInput = (spec: EditSpec) => {
+      const draftKey = `${editKey}|${spec.field}`
+      const value = editDrafts.get(draftKey) ?? spec.value
+      const key = `edit:${keyPart(editKey)}:${keyPart(spec.field)}`
+      const onValue = (v: string) => {
+        editDrafts.set(draftKey, v)
+        // Le compte ne redessine qu'à son changement : la frappe ne redessine pas à chaque lettre.
+        const count = editDiff(editSpecs, draftsOf(editKey)).count
+        if (count !== editCount) void setView($, () => ({ editCount: count }))
+      }
+      if (Select && spec.options) {
+        const none = '—'
+        const options = [...(value === '' ? [none] : []), ...(spec.options.includes(value) || value === '' ? [] : [value]), ...spec.options]
+        return (
+          <Select key={key} label={spec.name} options={options.map(o => ({ value: o }))} value={value === '' ? none : value} onSelect={(v: string) => onValue(v === none ? '' : v)} />
+        )
+      }
+      if (!Input) return <Text wrap="wrap">{value}</Text>
+      return (
+        <Input
+          key={key}
+          {...(spec.field === 'label' ? { rows: 3 } : {})}
+          placeholder={spec.field === 'due' ? 'AAAA-MM-JJ' : spec.options ? spec.options.join(', ') : spec.field === 'apres' || spec.field === 'parent' ? 'N, ou -' : ''}
+          value={value}
+          submitLabel="enregistrer"
+          onInput={onValue}
+          onSubmit={(v: string) => {
+            onValue(v)
+            void confirmEdit($, source, current, editSpecs)
+          }}
+        />
+      )
+    }
+    const editBad = (spec: EditSpec) => !saveBusy && editNote !== '' && editField === spec.field
+    const editRows = (where: EditSpec['card']) => (
+      <Box flexDirection="column" gap={SPACE.tight}>
+        {editSpecs
+          .filter(spec => spec.card === where)
+          .map(spec => (
+            <Box key={`edit-row:${keyPart(spec.field)}`} flexDirection="column" gap={SPACE.tight}>
+              <Box flexDirection="row" alignItems="center">
+                <Box width={10} flexShrink={0} flexDirection="row" alignItems="center">
+                  {strut(SIZE.strut.field)}
+                  <Text color={editBad(spec) ? palette.lateOn : palette.text2}>{spec.name}</Text>
+                </Box>
+                <Box flexGrow={1} flexShrink={1} minWidth={0}>
+                  {editInput(spec)}
+                </Box>
+              </Box>
+              {editBad(spec) && <Text size="caption" color={palette.lateOn} wrap="wrap">{editNote}</Text>}
+            </Box>
+          ))}
+      </Box>
+    )
+    const editCards: Partial<Record<FicheCard, () => RenderElement>> = editing
+      ? {
+          avancement: () => card('Avancement', editRows('avancement')),
+          chaine: () => card('Chaîne', editRows('chaine')),
+          details: () => card('Détails', editRows('details')),
+        }
+      : {}
+    const stopEditing = () => {
+      clearDrafts(editKey)
+      void setView($, () => ({ editing: '', editNote: '', editField: '', editCount: 0 }))
+    }
+    // Sous l'en-tête : « N changements » (ou le refus), Annuler, Enregistrer.
+    const editBar = () => {
+      const named = editSpecs.find(spec => spec.field === editField)
+      const said = saveBusy
+        ? 'Enregistrement…'
+        : editNote !== ''
+          ? named
+            ? `Pas enregistré : voir ${named.name}`
+            : `Pas enregistré : ${editNote}`
+          : editCount === 0
+            ? 'Aucun changement'
+            : `${editCount} changement${editCount > 1 ? 's' : ''}`
+      return (
+        <Box key="edit-bar" paddingX={SPACE.indent}>
+          <Box flexDirection="column" gap={SPACE.tight} paddingX={SPACE.indent} paddingY="xs" flexGrow={1} borderStyle="round" borderColor={palette.border}>
+            <Box flexDirection="row" alignItems="center" gap={SPACE.row}>
+              <Box flexGrow={1} flexShrink={1} minWidth={0}>
+                <Text size="caption" color={editNote !== '' && !saveBusy ? palette.lateOn : palette.text2} wrap="wrap">{said}</Text>
+              </Box>
+              <Button key="edit-cancel" plain dimColor label="Annuler" onPress={stopEditing} />
+              <Button key="edit-save" variant="primary" label={saveBusy ? 'Enregistrement…' : 'Enregistrer'} onPress={() => void confirmEdit($, source, current, editSpecs)} />
+            </Box>
+            {(live || launched.includes(editKey)) && (
+              <Text size="caption" color={palette.lateOn} wrap="wrap">Une session tient cette tâche : elle peut encore l'écrire.</Text>
+            )}
+          </Box>
+        </Box>
+      )
+    }
+    // Le crayon, à droite du titre d'une ouverte (#161) : « Modifier » ferme l'encart de clôture.
+    const pencil =
+      !current.done && !editing
+        ? action('edit-task', pencilIcon(palette.text), 'Modifier', () => {
+            clearDrafts(editKey)
+            void setView($, () => ({ editing: editKey, editNote: '', editField: '', editCount: 0, cancelAsk: '', cancelNote: '' }))
+          })
+        : undefined
+    const labelSpec = editSpecs.find(spec => spec.field === 'label')
     return (
       <Box flexDirection="column" gap={SPACE.root} paddingX={SPACE.indent}>
         {!inSession && (
@@ -5664,19 +5911,34 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
         )}
         {/* L'en-tête Voies (#137) ; son titre ouvre la ligne dans la roadmap. */}
         <Box paddingX={SPACE.indent}>
-          {brandTree($, e, headBrand, palette, 'focus', today, headState, {
-            key: 'open-line',
-            press: () => void openFile($, current.done ? paths.done : paths.open, line),
-          })}
+          {brandTree(
+            $,
+            e,
+            headBrand,
+            palette,
+            'focus',
+            today,
+            headState,
+            {
+              key: 'open-line',
+              press: () => void openFile($, current.done ? paths.done : paths.open, line),
+            },
+            undefined,
+            false,
+            pencil,
+          )}
         </Box>
+        {/* En édition (#161) : la barre sous l'en-tête, à la place du crayon. */}
+        {editing && editBar()}
         {/* La mission seule dans son cadre (#150, maquette C) : celle de la fiche de fin de sa session, sa
             ligne de la roadmap derrière « La ligne de la roadmap » ; sans, la ligne, longue coupée (#146). */}
         <Box paddingX={SPACE.indent}>
           <Box flexDirection="column" gap={SPACE.tight} paddingX={SPACE.indent} paddingY="sm" flexGrow={1} backgroundColor={palette.note}>
             {corners(RADIUS.control, palette.bg)}
-            <Text size="caption" weight="medium" color={palette.text2}>Mission</Text>
-            <Text wrap="wrap">{cut?.cut && !missionShown ? cut.text : frame.text}</Text>
-            {(frame.recap || cut?.cut) && (
+            <Text size="caption" weight="medium" color={labelSpec && editBad(labelSpec) ? palette.lateOn : palette.text2}>Mission</Text>
+            {labelSpec ? editInput(labelSpec) : <Text wrap="wrap">{cut?.cut && !missionShown ? cut.text : frame.text}</Text>}
+            {labelSpec && editBad(labelSpec) && <Text size="caption" color={palette.lateOn} wrap="wrap">{editNote}</Text>}
+            {!editing && (frame.recap || cut?.cut) && (
               <Box flexDirection="row">
                 <Button
                   key="mission-line"
@@ -5687,15 +5949,17 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
                 />
               </Box>
             )}
-            {frame.recap && missionShown && <Text size="caption" wrap="wrap">{current.label}</Text>}
-            {noteShown && (cut ? !cut.cut || missionShown : missionShown) && <Text color={palette.text2} wrap="wrap">{noteShown}</Text>}
+            {!editing && frame.recap && missionShown && <Text size="caption" wrap="wrap">{current.label}</Text>}
+            {!editing && noteShown && (cut ? !cut.cut || missionShown : missionShown) && <Text color={palette.text2} wrap="wrap">{noteShown}</Text>}
           </Box>
         </Box>
         {finBox()}
         {ficheSteps($, e, palette, await readSteps($, inSession ? ownBrand?.data.own.id : liveOf(current)?.entry.sessionId), now, current.done)}
-        {layout.cards.map(c => cards[c]())}
+        {layout.cards.map(c => (editCards[c] ?? cards[c])())}
         <Box flexDirection="column" gap={SPACE.block} paddingX={SPACE.indent}>
           {openNote !== '' && <Text size="caption" color={palette.text2}>{openNote}</Text>}
+          {/* Après l'enregistrement : les avertissements du modèle (#125), ou ce qui n'est pas allé au bout. */}
+          {!editing && editNote !== '' && !saveBusy && <Text size="caption" color={palette.lateOn} wrap="wrap">{editNote}</Text>}
         </Box>
         {inSession && (
           <Box flexDirection="row" paddingX={SPACE.indent}>

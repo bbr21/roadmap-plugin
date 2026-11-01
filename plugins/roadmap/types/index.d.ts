@@ -87,6 +87,14 @@ export type View = {
   closeKind: 'done' | 'abandon'
   /** La clôture en cours (`…`), ou ce qu'elle a donné quand ce n'est pas un succès net ; vide sinon. */
   cancelNote: string
+  /** La tâche dont la fiche est en édition (#161, clé `taskKey`) ; vide ou absente : en lecture. */
+  editing?: string
+  /** L'enregistrement en cours (`…`), son refus, ou ses avertissements ; vide ou absente sinon. */
+  editNote?: string
+  /** Le champ que nomme le refus (`EditField`), son étiquette en rouge ; vide ou absente sinon. */
+  editField?: string
+  /** Le nombre de champs changés de la fiche en édition, « N changements » ; absent : 0. */
+  editCount?: number
   /** La tâche (son numéro) dont la carte d'étapes est épinglée dans l'arbre de Maestro (#143) ; vide ou absente : aucune. */
   stepsPin?: string
   /** La légende des axes dépliée sous la barre (#149) ; absente, repliée en une ligne. */

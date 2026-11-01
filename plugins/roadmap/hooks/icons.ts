@@ -293,6 +293,11 @@ export function externalIcon(hex: string, size = 16, width: number = STROKE.base
   return line(hex, size, width, '<path d="M14 4.5h5.5V10M19.5 4.5L11 13"/><path d="M18 14v5.5H4.5V6H10"/>')
 }
 
+/** Crayon : modifier la tâche depuis sa fiche (#161). */
+export function pencilIcon(hex: string, size = 16, width: number = STROKE.base): string {
+  return line(hex, size, width, '<path d="M15.5 4.5l4 4L8.5 19.5H4.5v-4z"/><path d="M13 7l4 4"/>')
+}
+
 /** Boîte d'archive : archiver la session d'une tâche faite. */
 export function archiveIcon(hex: string, size = 16, width: number = STROKE.base): string {
   return line(hex, size, width, '<rect x="3.5" y="4.5" width="17" height="4" rx="1"/><path d="M5.5 8.5v10a1 1 0 0 0 1 1h11a1 1 0 0 0 1-1v-10M10 12.5h4"/>')

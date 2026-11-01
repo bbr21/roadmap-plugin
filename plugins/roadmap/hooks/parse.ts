@@ -244,7 +244,8 @@ const AXIS_RE = /^[a-z0-9][a-z0-9-]*$/
 // « Axes en usage : `revlon`, `mcp` » (dossiers Cowork) ou « - **axe** (…) : `classement`, `plaid` » (Splitmybill).
 const AXES_LINE_RE = /^(?:Axes en usage|- \*\*axe\*\*)/i
 
-export type LineProblem = { line: number; text: string; why: string }
+/** `soft` : une règle du modèle (#125), signalée, jamais refusée : l'édition depuis la fiche (#161) écrit quand même. */
+export type LineProblem = { line: number; text: string; why: string; soft?: true }
 
 /** Les axes que le fichier déclare dans son en-tête ; aucun déclaré : tout axe bien écrit passe. */
 export function declaredAxes(text: string): string[] {
@@ -297,7 +298,7 @@ export function lintRoadmap(text: string, done: boolean, rules: Partial<LintRule
       return
     }
     if (inFence || !line.startsWith('- [')) return
-    const say = (why: string) => problems.push({ line: i + 1, text: line, why })
+    const say = (why: string, soft = false) => problems.push({ line: i + 1, text: line, why, ...(soft ? { soft: true as const } : {}) })
     const m = LINE_RE.exec(line)
     if (!m) return say("ligne hors grammaire : - [ ] Libellé `[axe | clé:valeur | …]`, le bloc entre accents graves")
     const checked = (m[1] ?? ' ') !== ' '
@@ -344,13 +345,13 @@ export function lintRoadmap(text: string, done: boolean, rules: Partial<LintRule
     if (!done && !checked) {
       const parentId = PARENT_RE.exec(keys.get('parent') ?? '')?.[1]
       const parent = parentId === undefined ? undefined : openById.get(parentId)
-      if (parent?.parent !== undefined) say(`parent:${parentId} : #${parentId} est déjà l'enfant de #${parent.parent} ; deux niveaux au plus (parent › enfants)`)
+      if (parent?.parent !== undefined) say(`parent:${parentId} : #${parentId} est déjà l'enfant de #${parent.parent} ; deux niveaux au plus (parent › enfants)`, true)
       for (const n of prereqNumbers(keys.get('après') ?? '') ?? []) {
         const pre = openById.get(n)
-        if (pre !== undefined && pre.parent !== parentId) say(`après:${n} : #${n} n'a pas le même parent ; après: relie deux enfants d'un même parent, ou deux parents`)
+        if (pre !== undefined && pre.parent !== parentId) say(`après:${n} : #${n} n'a pas le même parent ; après: relie deux enfants d'un même parent, ou deux parents`, true)
       }
       const due = keys.get('due') ?? ''
-      if (parent?.due !== undefined && DATE_RE.test(due) && due > parent.due) say(`due: après l'échéance de son parent #${parentId} (${parent.due})`)
+      if (parent?.due !== undefined && DATE_RE.test(due) && due > parent.due) say(`due: après l'échéance de son parent #${parentId} (${parent.due})`, true)
     }
     if (checked && !keys.has('fait')) say('task cochée sans fait:AAAA-MM-JJ HH:MM')
     if (!checked && keys.has('fait')) say('fait: sur une task non cochée')
@@ -3709,6 +3710,175 @@ export function closeWithParentInTexts(
   return { open: closed.open, done: closed.done, line: out.line, id: out.id, parent: { id: task.parent, ...(next ? { next } : {}) } }
 }
 
+/**
+ * Un champ que la fiche d'une tâche modifie (#161) : le libellé, l'axe, une clé de la grammaire, ou
+ * `cle:<k>`, une clé que le projet déclare dans `cles`.
+ */
+export type EditField = 'label' | 'axis' | 'due' | 'resp' | 'qui' | 'attend' | 'apres' | 'parent' | `cle:${string}`
+/** Les changements d'une tâche (#161) : un champ absent ne change pas, une valeur vide retire le champ. */
+export type TaskEdit = Partial<Record<EditField, string>>
+
+/** La clé de la grammaire d'un champ de la fiche. */
+function editKey(field: EditField): string {
+  return field === 'apres' ? 'après' : field.startsWith('cle:') ? field.slice(4) : field
+}
+
+/** Le champ de la fiche d'une clé de la grammaire, ou d'une clé déclarée ; rien pour une clé que la fiche ne montre pas. */
+function fieldOfKey(k: string, cles: Readonly<Record<string, readonly string[]>>): EditField | undefined {
+  if (k === 'après') return 'apres'
+  if (['due', 'resp', 'qui', 'attend', 'parent'].includes(k)) return k as EditField
+  return Object.prototype.hasOwnProperty.call(cles, k) && !KEYS.includes(k) ? `cle:${k}` : undefined
+}
+
+/** Le champ que nomme un problème de `lintRoadmap` : l'axe, un champ exigé, une clé inconnue, ou la clé en tête. */
+function fieldOfProblem(why: string, cles: Readonly<Record<string, readonly string[]>>): EditField | undefined {
+  if (why.startsWith('axe ')) return 'axis'
+  if (why.startsWith('tous:')) return 'due'
+  const k = /^champ exigé absent : ([^:]+):/.exec(why)?.[1] ?? /^clé inconnue « ([^»]+) »/.exec(why)?.[1] ?? /^([^\s:]+):/.exec(why)?.[1]
+  if (k === undefined) return undefined
+  return fieldOfKey(k, cles) ?? (/^clé inconnue/.test(why) ? `cle:${k}` : undefined)
+}
+
+/**
+ * L'ordre de la grammaire, où se place un champ que la ligne n'avait pas (#161) ; `*` : les clés
+ * déclarées par le projet, et toute clé inconnue.
+ */
+const EDIT_ORDER = ['id', 'resp', 'qui', 'attend', 'branche', 'verrou', 'ouvert', 'due', 'parent', 'après', 'prio', 'tous', 'relance', 'feedback', '*', 'spec', 'fiche', 'src']
+function editRank(field: string): number {
+  const k = field.slice(0, Math.max(0, field.indexOf(':')))
+  const at = EDIT_ORDER.indexOf(k)
+  return at >= 0 ? at : EDIT_ORDER.indexOf('*')
+}
+
+/** Une vraie date du calendrier : `2026-02-30` a la forme, pas le jour. */
+function isCalendarDate(v: string): boolean {
+  const [y, m, d] = v.split('-').map(Number) as [number, number, number]
+  return new Date(Date.UTC(y, m - 1, d)).toISOString().slice(0, 10) === v
+}
+
+/**
+ * Réécrit la ligne d'une tâche ouverte depuis sa fiche (#161), sur le texte de ROADMAP.md. Un champ
+ * changé reste à sa place, un champ nouveau se place dans l'ordre de la grammaire, une valeur vide
+ * retire le champ ; les autres champs, connus ou non, et la note restent tels quels. La ligne doit être
+ * encore celle affichée (`task.key`). Contrôlée par `lintRoadmap` avec les règles du projet (#155) :
+ * seuls refusent les problèmes nouveaux de cette ligne (un défaut ancien ne bloque pas) ; une règle du
+ * modèle (`soft`, #125) avertit sans bloquer. Le refus nomme le champ quand il le peut.
+ */
+export function editInTexts(
+  open: string,
+  task: Task,
+  edit: TaskEdit,
+  rules: Partial<LintRules> = {},
+): { open: string; line: string; changed: boolean; warnings: string[] } | { error: string; field?: EditField } {
+  const lines = open.split('\n')
+  const at = Number(task.key.slice(task.key.lastIndexOf(':') + 1)) - 1
+  const raw = (lines[at] ?? '').replace(/\r$/, '')
+  const m = LINE_RE.exec(raw)
+  if (!m || m[1] !== ' ' || (m[2] ?? '') !== task.label) {
+    return { error: `« ${clip(task.label, 60)} » a bougé dans ROADMAP.md depuis l'affichage : rien n'a été écrit, réessaie.` }
+  }
+  const cles = rules.cles ?? {}
+  const fields = (m[3] ?? '').split('|').map(f => f.trim()).filter(f => f !== '')
+  let label = m[2] ?? ''
+  let changed = false
+  for (const [name, given] of Object.entries(edit) as [EditField, string | undefined][]) {
+    if (given === undefined) continue
+    if (name === 'label') {
+      const v = given.replace(/\s*[\r\n]+\s*/g, ' ').trim()
+      if (v === '') return { error: 'le libellé ne peut pas être vide', field: 'label' }
+      if (v !== label) [label, changed] = [v, true]
+      continue
+    }
+    const v = given.trim()
+    if (v.includes('|')) return { error: `« ${v} » contient « | », qui couperait le bloc de la ligne`, field: name }
+    if (v.includes('`')) return { error: `« ${v} » contient un accent grave, qui fermerait le bloc de la ligne`, field: name }
+    if (/[\r\n]/.test(v)) return { error: 'une valeur tient sur une ligne', field: name }
+    if (name === 'axis') {
+      if (v !== fields[0]) [fields[0], changed] = [v, true]
+      continue
+    }
+    const k = editKey(name)
+    if (name.startsWith('cle:') && (KEYS.includes(k) || !Object.prototype.hasOwnProperty.call(cles, k))) {
+      return { error: `clé « ${k} » non déclarée par le projet (cles de .claude/roadmap.json)`, field: name }
+    }
+    if (name === 'due' && DATE_RE.test(v) && !isCalendarDate(v)) return { error: `due: « ${v} » n'est pas une date du calendrier (AAAA-MM-JJ)`, field: 'due' }
+    if (task.id !== undefined && name === 'parent' && v.replace(/^#/, '') === task.id) return { error: `parent:${v} : la tâche elle-même`, field: 'parent' }
+    if (task.id !== undefined && name === 'apres' && (prereqNumbers(v) ?? []).includes(task.id)) return { error: `après:${v} : la tâche elle-même`, field: 'apres' }
+    const i = fields.findIndex((f, j) => j > 0 && f.startsWith(`${k}:`))
+    const now = i >= 0 ? (fields[i] ?? '').slice(k.length + 1).trim() : undefined
+    if (v === (now ?? '')) continue
+    changed = true
+    if (v === '') fields.splice(i, 1)
+    else if (i >= 0) fields[i] = `${k}:${v}`
+    else {
+      const rank = editRank(`${k}:`)
+      const before = fields.findIndex((f, j) => j > 0 && editRank(f) > rank)
+      fields.splice(before >= 0 ? before : fields.length, 0, `${k}:${v}`)
+    }
+  }
+  if (!changed) return { open, line: raw, changed: false, warnings: [] }
+  const note = (m[4] ?? '').trim()
+  const line = `- [ ] ${label} \`[${fields.join(' | ')}]\`${note !== '' ? ` ${note}` : ''}`
+  lines[at] = line
+  const after = lines.join('\n')
+  const axes = rules.axes ?? declaredAxes(open)
+  const ofLine = (text: string) => lintRoadmap(text, false, { ...rules, axes }).filter(p => p.line === at + 1)
+  const old = new Set(ofLine(open).map(p => p.why))
+  const fresh = ofLine(after).filter(p => !old.has(p.why))
+  const hard = fresh.find(p => !p.soft)
+  if (hard) {
+    const field = fieldOfProblem(hard.why, cles)
+    return { error: hard.why, ...(field ? { field } : {}) }
+  }
+  return { open: after, line, changed: true, warnings: fresh.map(p => p.why) }
+}
+
+/** Un champ de la fiche en édition (#161) : son nom, sa carte, la valeur de la ligne, les valeurs admises (un menu). */
+export type EditSpec = { field: EditField; name: string; card: 'mission' | 'avancement' | 'chaine' | 'details'; value: string; options?: string[] }
+
+/**
+ * Les champs de la fiche en édition (#161, maquette C), dans l'ordre des cartes : la mission (le
+ * libellé), l'attente, les prérequises et le parent, l'axe, le responsable (`resp:` en mode Projet,
+ * `qui:` en mode Code), les clés déclarées, l'échéance. Préremplis de la ligne brute (`après:-` reste
+ * `-`, un parent montre son `due:` écrit, pas sa date calculée).
+ */
+export function editableFields(
+  task: Task,
+  raw: string,
+  o: { mode: Mode; axes: readonly string[]; cles: Readonly<Record<string, readonly string[]>> },
+): EditSpec[] {
+  const m = LINE_RE.exec(raw.replace(/\r$/, ''))
+  const fields = (m?.[3] ?? '').split('|').map(f => f.trim())
+  const value = (k: string) => {
+    const f = fields.find((x, j) => j > 0 && x.startsWith(`${k}:`))
+    return f === undefined ? '' : f.slice(k.length + 1).trim()
+  }
+  const options = (list: readonly string[]) => (list.length > 0 ? { options: [...list] } : {})
+  const resp = o.mode === 'projet' ? 'resp' : 'qui'
+  return [
+    { field: 'label', name: 'Mission', card: 'mission', value: m?.[2] ?? task.label },
+    { field: 'attend', name: 'Attend', card: 'avancement', value: value('attend') },
+    { field: 'apres', name: 'Après', card: 'chaine', value: value('après') },
+    { field: 'parent', name: 'Parent', card: 'chaine', value: value('parent') },
+    { field: 'axis', name: 'Axe', card: 'details', value: fields[0] ?? task.axis, ...options(o.axes) },
+    { field: resp, name: 'Responsable', card: 'details', value: value(resp) },
+    ...Object.keys(o.cles)
+      .filter(k => !KEYS.includes(k))
+      .map((k): EditSpec => ({ field: `cle:${k}`, name: `${k.charAt(0).toUpperCase()}${k.slice(1)}`, card: 'details', value: value(k), ...options(o.cles[k] ?? []) })),
+    { field: 'due', name: 'Échéance', card: 'details', value: value('due') },
+  ]
+}
+
+/** Les champs tapés qui changent la ligne (#161), et leur nombre : « N changements ». */
+export function editDiff(specs: readonly EditSpec[], drafts: Readonly<Record<string, string>>): { edit: TaskEdit; count: number } {
+  const edit: TaskEdit = {}
+  for (const s of specs) {
+    const d = drafts[s.field]
+    if (d !== undefined && d.trim() !== s.value.trim()) edit[s.field] = d
+  }
+  return { edit, count: Object.keys(edit).length }
+}
+
 /** Un chemin relatif qui reste dans son dossier (le journal nommé par cowork.json) : ni absolu, ni `..`, ni `~`, ni barre inverse. */
 export function isInsideRelative(path: string): boolean {
   return path !== '' && !/^[/~]/.test(path) && !path.includes('\\') && !path.split('/').includes('..')
@@ -4752,7 +4922,10 @@ export function ficheCards(o: {
   branch: number
   links: number
   details: number
+  /** En édition (#161, maquette C) : les cartes qui portent un champ, sans « Lancer ». */
+  editing?: boolean
 }): { cards: FicheCard[] } {
+  if (o.editing) return { cards: ['avancement', 'chaine', 'details'] }
   const session = o.context === 'session'
   const cards: FicheCard[] = []
   if (session ? o.docs > 0 || o.branch > 0 || o.attend : o.attend || o.blocked || o.live || o.kept || o.docs > 0) cards.push('avancement')
