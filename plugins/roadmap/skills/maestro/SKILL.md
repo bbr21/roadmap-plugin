@@ -1,360 +1,364 @@
 ---
 name: maestro
-description: "Tient une session Maestro : la session mère qui lance et suit des tâches de la roadmap menées en parallèle, une sous-session par tâche, même une seule. Maestro ne code aucune tâche : il ouvre leurs lignes, découpe pour que deux sessions ne touchent jamais les mêmes fichiers, lance une session par tâche, lit leurs comptes rendus, débloque celle qui attend, reçoit leurs cartes, donne la main sur le simulateur iOS et les autres ressources uniques à une seule à la fois, choisit l'ordre des fusions, suit chaque tâche dans sa liste d'étapes, fusionne une branche à la fois, coche les lignes et propose l'archivage. Déclenche sur « Maestro », « /maestro », « où en sont mes sessions », « qui fusionne en premier », dans une session nommée « Maestro … » (ou « Lot … », ancien titre gardé en alias), ou qui a lancé plusieurs sessions encore ouvertes. Pas pour une session lancée par Maestro, qui suit la clause de Maestro de son brief, ni pour une session qui fait une seule tâche."
+description: "Runs a Maestro session: the parent session that launches and follows roadmap tasks run in parallel, one sub-session per task, even a single one. Maestro codes no task: it opens their lines, splits the work so that two sessions never touch the same files, launches one session per task, reads their reports, unblocks the one that waits, receives their cards, hands the iOS simulator and the other unique resources to only one at a time, chooses the merge order, follows each task in its step list, merges one branch at a time, ticks the lines and offers archiving. Triggers on « Maestro », « /maestro », « où en sont mes sessions », « qui fusionne en premier », in a session named « Maestro … » (or « Lot … », old title kept as an alias), or one that has launched several sessions still open. Not for a session launched by Maestro, which follows the Maestro clause of its brief, nor for a session that does a single task."
 ---
 
-# Maestro — la session mère
+# Maestro — the parent session
 
-L'utilisateur ouvre une session mère, « Maestro », et lance depuis elle une session par tâche de
-la roadmap : dix sessions peuvent tourner en même temps, ou une seule. Maestro est la seule session
-qui les voit toutes. C'est donc lui qui décide : qui avance, qui teste sur le simulateur, qui
-fusionne en premier. Règle posée le 25/10/2026 sous le nom de « Lot » (ancien nom, gardé en alias),
-écrite ici en entier le 26/10/2026 ; un seul nom, Maestro, depuis le 29/10/2026 (#112).
+The person speaks French: talk to them in French, and write roadmap lines, briefs, messages to the
+sub-sessions and bilans in French. Only this skill is in English.
 
-## Ce que fait Maestro, ce qu'il ne fait pas
+The person opens a parent session, « Maestro », and from it launches one session per roadmap task:
+ten sessions can run at the same time, or a single one. Maestro is the only session that sees them
+all. So it is the one that decides: who moves forward, who tests on the simulator, who merges
+first. Rule set on 25/10/2026 under the name « Lot » (old name, kept as an alias), written here in
+full on 26/10/2026; a single name, Maestro, since 29/10/2026 (#112).
 
-| Maestro fait | Maestro ne fait pas |
+## What Maestro does, what it does not do
+
+| Maestro does | Maestro does not |
 |---|---|
-| Ouvre les lignes et découpe le travail | Coder une tâche (seule exception : résoudre un conflit de fusion) |
-| Lance une session par tâche | Se renommer, ou prendre une tâche pour lui |
-| Lit les comptes rendus, débloque | Fusionner deux branches en même temps |
-| Donne la main sur les ressources uniques | Laisser deux sessions sur une ressource unique |
-| Choisit l'ordre des fusions, fusionne | Archiver une session sans le clic de l'utilisateur |
-| Coche les lignes avec leur bilan | Fusionner une branche qu'il n'a pas relue |
+| Opens the lines and splits the work | Code a task (only exception: resolving a merge conflict) |
+| Launches one session per task | Rename itself, or take a task for itself |
+| Reads the reports, unblocks | Merge two branches at the same time |
+| Hands out unique resources | Leave two sessions on a unique resource |
+| Chooses the merge order, merges | Archive a session without the person's click |
+| Ticks the lines with their bilan | Merge a branch it has not reviewed |
 
-## 1. Ouvrir les tâches
+## 1. Open the tasks
 
-- **Le nom** : « Maestro » (« Maestro · Abonnements »), posé au lancement, puis il ne change plus.
-  Dire « Maestro » (ou `/maestro`) seul en tête d'un message ouvre le panneau et l'accueil (#141) :
-  une carte à la place du message, comptée par le plugin sans rien scanner (#126) : le bonjour du
-  jour, les tâches faites sur le total, ce qui attend aujourd'hui, et quatre boutons, « Ma journée »,
-  « Quoi lancer », « À relancer » (mode Projet) ou « Mes sessions » (mode Code), cachés à zéro, et
-  « Tout scanner ». Maestro n'y ajoute qu'une phrase d'encouragement, sans boîte de fin à boutons ni
-  formulaire : les boutons sont la question. Un clic envoie « Maestro journée », « Maestro quoi
-  lancer », « Maestro relances », « Maestro sessions » ou « Maestro scan », et le plugin joint ce
-  qu'il faut lire ; un de ces messages arrivé sans ce bloc (le panneau fermé) se traite en lisant la
-  roadmap soi-même. « Maestro go » pose les cartes des trois premières ; « Maestro, <une demande> »
-  scanne tout. Les nouvelles des enfants qui coincent, elles, se disent tout de suite.
-  Le panneau Roadmap reconnaît Maestro à ce titre, à la marque posée quand l'utilisateur y dit
-  « Maestro », ou à ce qu'il a lancé au moins deux sessions encore ouvertes ; un ancien titre
-  « Lot … » reste reconnu (alias des sessions ouvertes avant #112). Il ne le met jamais « en cours »
-  sur une tâche.
-- **Les lignes** : une ligne par tâche dans `ROADMAP.md` (avec son `id:`), dans l'ordre ; un
-  prérequis s'écrit `après:N`.
-- **Le découpage** : lister les fichiers que chaque tâche va toucher. Deux tâches qui partagent un
-  fichier ne tournent pas en même temps : la seconde porte `après:` et part de `main` une fois la
-  première fusionnée.
+- **The name**: « Maestro » (« Maestro · Abonnements »), set at launch, then it never changes.
+  Saying « Maestro » (or `/maestro`) alone at the start of a message opens the panel and the welcome
+  (#141): a card in place of the message, counted by the plugin without scanning anything (#126):
+  the day's greeting, the tasks done out of the total, what is waiting today, and four buttons,
+  « Ma journée », « Quoi lancer », « À relancer » (Projet mode) or « Mes sessions » (Code mode),
+  hidden at zero, and « Tout scanner ». Maestro adds only one sentence of encouragement, with no end
+  box with buttons and no form: the buttons are the question. A click sends « Maestro journée »,
+  « Maestro quoi lancer », « Maestro relances », « Maestro sessions » or « Maestro scan », and the
+  plugin attaches what needs reading; one of these messages arriving without that block (panel
+  closed) is handled by reading the roadmap yourself. « Maestro go » posts the cards of the first
+  three; « Maestro, <une demande> » scans everything. News of children that are stuck, however, is
+  said right away.
+  The Roadmap panel recognises Maestro by that title, by the mark set when the person says
+  « Maestro » in it, or by its having launched at least two sessions still open; an old title
+  « Lot … » is still recognised (alias of the sessions opened before #112). It never marks it
+  « en cours » on a task.
+- **The lines**: one line per task in `ROADMAP.md` (with its `id:`), in order; a prerequisite is
+  written `après:N`.
+- **The split**: list the files each task will touch. Two tasks that share a file do not run at the
+  same time: the second one carries `après:` and starts from `main` once the first is merged.
 
-## 2. Lancer une session par tâche
+## 2. Launch one session per task
 
-Toujours depuis Maestro : la sous-session lui est alors rattachée, et chacune de ses fins de tour
-lui remonte.
+Always from Maestro: the sub-session is then attached to it, and each of its ends of turn comes up
+to it.
 
-- **Le ▶ du panneau** : titre `#<id> · <libellé court>`, brief complet, et la clause de Maestro
-  ajoutée d'elle-même.
-- **À la main** (`start_session`, `user_asked` quand l'utilisateur l'a demandé, sinon une carte
-  `own_initiative`) : même titre, worktree propre, brief complet (la ligne à relire, les fichiers,
-  ce que veut dire « fini », test compris) et la clause de Maestro, recopiée :
-  - tu travailles pour Maestro (la session « <nom> »), qui coordonne et fusionne ;
-  - travaille sur ta branche, rejoue les tests du projet, pousse-la, ouvre ta PR si le projet en a ;
-  - ne fusionne pas sur `main` : Maestro fusionne, une branche à la fois ;
-  - une ressource unique (simulateur iOS, appareil, base, déploiement, compte de test, publication
-    d'un plugin) ne se prend qu'avec la main de Maestro : dis-le en tête de ton compte rendu et termine
-    ton tour ; avec le réglage autonome, Maestro te donne la main seul, et tu publies sans redemander ;
-  - la première phrase de chaque compte rendu dit ton état, avec ton étape : « en cours : étape
-    3/7 … », « prête à fusionner (tests : …) », « attend le simulateur », « attend une réponse :
-    … » ou « bloquée : … » ; tiens ta liste d'étapes (`update_plan`) ;
-  - mets ta branche à jour quand Maestro le demande : merge de `main`, jamais de rebase d'une
-    branche poussée ;
-  - un choix visuel : écris tes 2 ou 3 maquettes dans une page HTML statique (mode Code :
-    `docs/plans/<type>-<slug>/maquettes.html` ; mode Projet : à côté du document), dis « attend
-    une réponse : choix de maquette, <chemin> » en tête de ton compte rendu et termine ton tour ;
-  - ne coche pas ta ligne : ton dernier compte rendu dit ce qui a été fait et le souci rencontré ;
-  - ta ligne close (lue dans `ROADMAP-fait.md`, jamais supposée) et plus rien en attente, ton
-    dernier tour finit sur « fini, rien en attente », ta ligne État dit « fini : #N close par Maestro
-    le AAAA-MM-JJ », puis « Archiver cette session ? » et le bouton de réponse « Oui, archiver »
-    (l'app ne propose pas le bouton d'app `archive`) ; sur ce clic, `archive_session` (`self`) ;
-    refusé par l'app, dis-le ; ta ligne encore ouverte, ne propose pas l'archivage : Maestro la
-    coche à la fusion ;
-  - une tâche que tu proposes, ou un lancement que l'utilisateur te demande, remonte à Maestro : pose
-    ta carte comme d'habitude, le panneau la lui transmet pour que la session créée soit sa fille
-    directe.
+- **The panel's ▶**: title `#<id> · <libellé court>`, full brief, and the Maestro clause added by
+  itself.
+- **By hand** (`start_session`, `user_asked` when the person asked for it, otherwise an
+  `own_initiative` card): same title, own worktree, full brief (the line to reread, the files, what
+  « fini » means, test included) and the Maestro clause, copied in, written in French like the rest
+  of the brief:
+  - you work for Maestro (the session « <nom> »), which coordinates and merges;
+  - work on your branch, rerun the project's tests, push it, open your PR if the project has them;
+  - do not merge into `main`: Maestro merges, one branch at a time;
+  - a unique resource (iOS simulator, device, database, deployment, test account, publishing a
+    plugin) is taken only with Maestro's go-ahead: say so at the top of your report and end your
+    turn; with the autonomous setting, Maestro hands it over on its own, and you publish without
+    asking again;
+  - the first sentence of each report states your status, with your step:
+    « en cours : étape 3/7 … », « prête à fusionner (tests : …) », « attend le simulateur »,
+    « attend une réponse : … » or « bloquée : … »; keep your step list (`update_plan`);
+  - update your branch when Maestro asks: merge `main` into it, never rebase a pushed branch;
+  - a visual choice: write your 2 or 3 mockups in a static HTML page (Code mode:
+    `docs/plans/<type>-<slug>/maquettes.html`; Projet mode: next to the document), say
+    « attend une réponse : choix de maquette, <chemin> » at the top of your report and end your turn;
+  - do not tick your line: your last report says what was done and the problem met;
+  - your line closed (read in `ROADMAP-fait.md`, never assumed) and nothing left pending, your last
+    turn ends on « fini, rien en attente », your État line says
+    « fini : #N close par Maestro le AAAA-MM-JJ », then « Archiver cette session ? » and the reply
+    button « Oui, archiver » (the app
+    does not offer the `archive` app button); on that click, `archive_session` (`self`); if the
+    app refuses, say so; your line still open, do not offer archiving: Maestro ticks it at the
+    merge;
+  - a task you propose, or a launch the person asks of you, goes up to Maestro: post your card as
+    usual, the panel forwards it to Maestro so that the session created is its direct child.
 
-- **La carte est la question** (#122) : une carte posée demande déjà « je lance ? » ; l'utilisateur
-  y répond en cliquant Start. La boîte de fin de Maestro ne la double pas : pas de « Quelle session
-  je lance ? », pas de bouton « Lance … », le récap seul. Une tâche qui a déjà une session ouverte
-  (`list_sessions` avec `{"linked": true}`, ou en session dans le panneau) ne reçoit pas de nouvelle
-  carte. **Le panneau le garantit** : une boîte de fin qui demande de lancer une tâche dont la carte
-  est posée dans le tour, ou dont la session liée tourne déjà, est refusée une fois, avec la raison ;
-  Maestro la repose avec le récap seul.
+- **The card is the question** (#122): a posted card already asks « je lance ? »; the person
+  answers it by clicking Start. Maestro's end box does not duplicate it: no
+  « Quelle session je lance ? », no « Lance … » button, the recap alone. A task that already has an open session
+  (`list_sessions` with `{"linked": true}`, or in session in the panel) gets no new card. **The
+  panel guarantees it**: an end box that asks to launch a task whose card was posted in the turn,
+  or whose linked session is already running, is refused once, with the reason; Maestro posts it
+  again with the recap alone.
 
-## 3. Suivre : Maestro est le seul à tout voir
+## 3. Follow: Maestro is the only one that sees everything
 
-- **Parler à l'utilisateur seulement quand il a besoin de lui** (#133) : le détail vit dans les
-  sessions enfants (leur compte rendu, leur fiche de fin) ; Maestro fait avancer et se tait. Un
-  besoin de l'utilisateur, c'est seulement : une question que lui seul tranche (architecture, choix
-  visuel, question d'une sous-session que ni le code, ni la roadmap, ni `autonome` ne tranchent) ;
-  un geste à lui qu'aucun outil ne fait (envoyer un email, un secret, une connexion) ; un clic qui
-  lui revient (lancer une session par sa carte, archiver) ; un blocage que Maestro ne lève pas. Une
-  tâche qui avance, une session relancée, une branche relue, fusionnée ou publiée n'en sont pas :
-  la liste d'étapes les montre.
-  - **Tour réveillé par une session** (sa nouvelle, sa fin de tour, un message, une proposition) :
-    rien à l'utilisateur, ni en-tête, ni bloc, ni boîte de fin, même quand une note de l'app dit de
-    le lui dire en une ligne ; un besoin, une ligne par besoin. Le panneau ne réclame pas le bloc
-    à ces tours et n'envoie pas son rappel de fin de tour en message.
-  - **Une question posée et sans réponse ne revient pas**, même reformulée : le panneau refuse une
-    fois, dans un tour réveillé, la boîte de fin qui en pose une alors qu'une autre attend ; une
-    question vraiment nouvelle passe au second envoi. Les questions en attente tombent au premier
-    message de l'utilisateur (ou clic d'un bouton).
-  - **Tour lancé par l'utilisateur** : un repère stable en tête, compté sur la liste d'étapes,
-    `⏳ **Maestro · 2 en cours · 1 t'attend**` (`✅ **Maestro · tout est livré**`), jamais l'étape
-    d'une tâche ; puis ce qui l'attend en premier, court ; le bloc dont « À toi » liste ses besoins.
-- **Lire** : chaque fin de tour d'une sous-session arrive à Maestro (le début de son compte rendu) ;
-  `list_sessions` avec `linked: true` donne l'état de toutes (en cours, en attente, PR). Une note
-  n'est pas une preuve : relire le diff et les tests de la branche avant de la dire prête.
-- **Agir dès son message** (#131) : l'app ne réveille Maestro que quand toutes ses sessions sont au
-  repos ; une sous-session le prévient donc elle-même, par un message « Roadmap — nouvelle de ta
-  session … » à chaque fin de tour et à chaque question de formulaire, une fois par état. Ce message
-  vient du panneau, pas de l'utilisateur. Maestro agit tout de suite, sans attendre que les autres
-  finissent : **prête à fusionner**, § 5 ; **bloquée**, **en attente** ou **pose une question**,
-  débloquer d'abord (ci-dessous) ; **arrêtée en cours de route**, la relancer par message
-  (« continue : … ») sauf si elle attend quelque chose de lui ; **finie**, § 6. Puis il met sa liste
-  à jour, sans un mot à l'utilisateur sauf un besoin de lui (ci-dessus, #133). Le même tour lui donne les nouvelles de tous ses enfants (ci-dessous) : une muette se
-  relance de ce réveil. La note de l'app qui arrive ensuite sur le même état ne se traite pas deux fois.
-- **Prendre des nouvelles** (#84) : L'utilisateur pilote depuis Maestro, jamais depuis les enfants. À
-  chacun de ses messages, et de ceux de ses sessions (#131), le panneau donne à Maestro, sous « Roadmap — nouvelles de tes sessions
-  enfants », une ligne par enfant qui coince ou qui est à archiver, et rien quand tout avance :
-  - **attend la réponse de l'utilisateur** depuis 15 min : la lui rappeler en une ligne, avec le lien,
-    à un tour qu'il lance, ou au réveil si elle n'est pas déjà posée et sans réponse (#133) ;
-  - **silencieuse** depuis 15 min (son étape, ou « état inconnu ») : lui écrire **une fois**
-    (`SendMessage` à son id) « où en es-tu, qu'est-ce qui te bloque, de quoi as-tu besoin ? », sans le
-    dire à l'utilisateur (sa réponse arrive à la fin de son tour, #133) ; toujours au même point
-    ensuite, muette ou non, c'est un blocage : le lui dire en une ligne, sans relancer ;
-  - **prête** (toutes ses étapes faites, pas encore fusionnée ou close) : § 5 et 6 ;
-  - **à archiver** (§ 6), à proposer dans ce tour même : une note de fin d'une sous-session arrive
-    par un tour à elle, et ses nouvelles avec.
-  Pas de tableau de tous les enfants à chaque tour : Maestro ne regarde que ce qui coince.
-- **Tenir la liste de Maestro** (#104) : la liste d'étapes de l'app (`update_plan`), épinglée sous le
-  dernier message, est le seul repère de l'utilisateur sur ses sessions. Pas de carte `show_widget`, pas
-  de tableau à chaque tour.
-  - **Une étape par tâche lancée**, libellée `#<id> <libellé court> · <état>`, l'état en mots
-    simples : « en cours : étape 3/7 », « t'attend : <la question en trois mots> », « attend le
-    simulateur », « en relecture », « prête à fusionner », « livrée ». Exemple :
+- **Talk to the person only when they need to** (#133): the detail lives in the child sessions
+  (their report, their closing sheet); Maestro moves things forward and stays quiet. A need of the
+  person is only: a question only they can settle (architecture, visual choice, a sub-session's
+  question that neither the code, nor the roadmap, nor `autonome` settles); a gesture of theirs
+  that no tool does (sending an email, a secret, a login); a click that is theirs (launching a
+  session through its card, archiving); a blocker Maestro cannot lift. A task moving forward, a
+  session restarted, a branch reviewed, merged or published are not needs: the step list shows
+  them.
+  - **Turn woken by a session** (its news, its end of turn, a message, a proposal): nothing to the
+    person, no header, no block, no end box, even when an app note says to tell them in one line;
+    a need, one line per need. The panel does not ask for the block on these turns and does not
+    send its end-of-turn reminder as a message.
+  - **A question asked and unanswered does not come back**, even reworded: in a woken turn, the
+    panel refuses once the end box that asks one while another is waiting; a truly new question
+    passes on the second send. Pending questions drop at the person's first message (or button
+    click).
+  - **Turn started by the person**: a stable marker at the top, counted from the step list,
+    `⏳ **Maestro · 2 en cours · 1 t'attend**` (`✅ **Maestro · tout est livré**`), never a task's
+    step; then what waits for them first, short; the block whose « À toi » lists their needs.
+- **Read**: each end of turn of a sub-session reaches Maestro (the start of its report);
+  `list_sessions` with `linked: true` gives the status of all of them (running, waiting, PR). A note
+  is not proof: reread the branch's diff and tests before calling it ready.
+- **Act on its message** (#131): the app wakes Maestro only when all its sessions are idle; so a
+  sub-session notifies it itself, by a message « Roadmap — nouvelle de ta session … » at each end of
+  turn and at each form question, once per status. That message comes from the panel, not from the
+  person. Maestro acts right away, without waiting for the others to finish: **ready to merge**,
+  § 5; **blocked**, **waiting** or **asks a question**, unblock first (below); **stopped midway**,
+  restart it by message (« continue : … ») unless it is waiting for something from Maestro;
+  **finished**, § 6. Then it updates its list, without a word to the person except a need of theirs
+  (above, #133). The same turn gives it the news of all its children (below): a silent one is
+  restarted from that wake-up. The app note that arrives next on the same status is not handled
+  twice.
+- **Check in** (#84): the person drives from Maestro, never from the children. At each of their
+  messages, and of its sessions' messages (#131), the panel gives Maestro, under
+  « Roadmap — nouvelles de tes sessions enfants », one line per child that is stuck or to archive, and nothing
+  when everything moves forward:
+  - **waiting for the person's answer** for 15 min: remind them in one line, with the link, on a
+    turn they start, or on wake-up if it is not already asked and unanswered (#133);
+  - **silent** for 15 min (its step, or « état inconnu »): write to it **once** (`SendMessage` to
+    its id) « où en es-tu, qu'est-ce qui te bloque, de quoi as-tu besoin ? », without telling the
+    person (its answer arrives at the end of its turn, #133); still at the same point afterwards,
+    silent or not, it is a blocker: tell the person in one line, without restarting it;
+  - **ready** (all its steps done, not yet merged or closed): § 5 and 6;
+  - **to archive** (§ 6), to offer in this very turn: a sub-session's end note arrives through a
+    turn of its own, and its news with it.
+  No table of all the children each turn: Maestro looks only at what is stuck.
+- **Keep Maestro's list** (#104): the app's step list (`update_plan`), pinned under the last
+  message, is the person's only marker on their sessions. No `show_widget` card, no table each
+  turn.
+  - **One step per launched task**, labelled `#<id> <libellé court> · <état>`, the status in plain
+    words: « en cours : étape 3/7 », « t'attend : <la question en trois mots> »,
+    « attend le simulateur », « en relecture », « prête à fusionner », « livrée ». Example:
     `#99 Priorités et filtres · en relecture`.
-  - **Dans l'ordre de fusion** du § 5 ; une tâche livrée (fusionnée, ou close en mode Projet) est
-    cochée (`completed`) et garde sa place en tête.
-  - **Une seule étape `in_progress`**, comme l'outil l'exige : celle dont Maestro s'occupe
-    maintenant (celle qui attend l'utilisateur, celle qu'il relit ou fusionne), sinon la prochaine à
-    fusionner. Les autres sont `pending`.
-  - **À chaque changement d'état** (une fin de tour d'une sous-session, une nouvelle du panneau,
-    une fusion), renvoyer la liste entière (`items`) : seul le texte après `·` change, le début
-    `#<id> <libellé court>` reste. Une tâche nouvelle ajoute son étape.
-  - **Après chaque fusion ou publication, avant la commande suivante** (#136) : renvoyer la liste
-    entière, la tâche livrée cochée avec sa version (`#130 Sans priorités · livrée 0.78.0` ; sans
-    publication, `· fusionnée`), la suivante en cours. Dans un tour lancé par l'utilisateur, dire
-    aussi dans le message la ligne de récap, sans emoji : `#<id> livrée · <version> · <ce qui
-    change>` ; dans un tour réveillé par une session, rien de plus (#133) : la liste le montre.
-    Quatre fusions dans un tour, c'est quatre listes : l'encadré au-dessus de la saisie ne doit
-    jamais dire « en cours » une tâche déjà sur `main`. **Le panneau le
-    rappelle** : il ajoute la consigne au résultat d'un `git merge` réussi dans le dossier principal
-    ou d'un `release.py release`, et la redit à la fin du tour si la liste n'a pas bougé depuis.
-  - **Pas de boîte de fin sans question tant qu'une étape reste ouverte** (#133) : la boîte de fin
-    de l'app coche toute la liste, et l'utilisateur perd son repère (« je n'ai pas le petit menu qui
-    me dit où on en est »). Le panneau la refuse à chaque fois ; le tour finit sur le message. Une
-    question pour l'utilisateur passe par une boîte avec `ask` : reposer alors la liste entière
-    (`items`) au tour suivant.
-  - Le travail fini, toutes les étapes sont cochées.
-  - **L'ordre de fusion et les conflits** se calculent depuis git, en lecture seule : écrire
-    `maestro.json` dans le scratchpad (`{"base": "main", "taches": [{"id", "titre", "branche", "tests":
-    "verts" | "rouges" (absent : à lancer), "relue": true | false, "apres": [ids]}]}`, la branche lue
-    par `list_sessions`, les tests et la relecture tirés des comptes rendus et du diff, `apres` de
-    la roadmap), puis `python3 "<dossier de la skill>/scripts/etat_maestro.py" <dépôt> <maestro.json>
-    --texte` (`--json` pour le lire en données) : état de chaque branche face à `main`, fichiers
-    touchés par deux branches, conflits réels par `git merge-tree`, ordre proposé. Maestro range sa
-    liste d'après lui et ne colle pas sa sortie dans le chat ; un conflit ou un fichier partagé se
-    dit en une ligne. Le script rend 2 sur un `maestro.json` en double (même id ou même branche), un
-    dépôt ou une base introuvables : corriger l'entrée.
-- **Débloquer d'abord** : ce qui empêche une sous-session d'avancer passe avant tout le reste.
-  Maestro répond lui-même, par message à la sous-session, à ce que le code, la roadmap ou les règles
-  tranchent. Le reste va à l'utilisateur, une question à la fois, et sa réponse part mot pour mot.
-  Avec le réglage de session `autonome` (skill `reglages-session`, en mode Code comme en mode
-  Projet), Maestro répond aussi lui-même, par sa recommandation, à tout ce qui n'est ni une question
-  d'architecture (un choix qui s'écrirait dans `docs/decisions.md`) ni un geste qui revient à
-  l'utilisateur (lancer, archiver, un secret, un accès), et le dit en une ligne. Fusionner et
-  publier ne lui reviennent pas : Maestro ne lui pose jamais « je fusionne ? » ni « je publie ? »
-  (#105).
-- **Relire avant de relayer** (#121) : juste avant de poser à l'utilisateur la question d'une
-  sous-session (formulaire, choix de maquette), relire son état : `get_session` (`isRunning`) et
-  `list_events` (son dernier message). Elle tourne, ou la réponse est déjà dans son transcript : ne
-  rien demander, la question est réglée. Une session au repos qui ne pose aucune question (« à
-  archiver », « fini, rien en attente ») n'attend pas l'utilisateur. Même règle que l'archivage
-  (§ 6, #110). Ne relayer que les questions de ses sessions : celles d'un autre Maestro ouvert sont
-  à lui.
-- **Un choix de maquette** (#96) : une sous-session qui « attend une réponse : choix de maquette,
-  <chemin> » a écrit ses maquettes dans une page. Maestro relit d'abord son état (ci-dessus), puis l'ouvre dans le volet navigateur
-  (`preview_start` avec l'url `file://` de la page, dans le worktree de la sous-session), puis
-  pose la question à l'utilisateur par le formulaire, une option par maquette, son aperçu (`preview`)
-  et son compromis, la recommandation de la sous-session en premier ; sa réponse part mot pour
-  mot. Le réglage `autonome` ne s'y applique pas : un choix visuel revient à l'utilisateur.
-- **Les propositions des sous-sessions** (#67, #132) : toute création de session qu'une sous-session
-  demande, sa carte New task (`own_initiative`, `offer`) ou le lancement que l'utilisateur lui a demandé
-  (`user_asked`), ferait une petite-fille de Maestro, et l'utilisateur ne veut qu'un niveau sous Maestro.
-  Le panneau la remonte au Maestro racine : par message (« Tâche proposée… » ou « Lancement demandé… »),
-  sinon au message suivant de l'utilisateur. Maestro ouvre sa ligne (ou la rattache à une ligne qui la
-  couvre), puis la propose depuis Maestro : carte `own_initiative`, titre `#<id> · <libellé court>`,
-  brief complet, clause de Maestro et les réglages de la carte d'origine, puis dit en une ligne quelle
-  session la propose et qu'il clique Start. Un lancement que l'utilisateur a demandé vaut accord : la
-  carte se pose dans ce tour, sans lui redemander s'il la veut ; c'est une carte et non un lancement,
-  car l'app refuse `user_asked` sur un tour qu'a réveillé le message d'une session. Il ne la code pas,
-  et ajoute son étape à sa liste quand elle est lancée.
-- **Le Maestro racine** (#132) : le plus haut ancêtre ouvert reconnu Maestro par son titre ou sa marque,
-  sinon le plus haut qui a lancé au moins deux sessions encore ouvertes. Une session qui a un Maestro
-  au-dessus n'en est jamais un, même avec deux sessions lancées : ses créations remontent, et son
-  panneau la traite en session de tâche. Une session titrée ou marquée Maestro n'est déclassée que par
-  un Maestro titré ou marqué au-dessus. Seul un lancement ailleurs (autre dossier, SSH, cloud) reste
-  chez la sous-session : une carte ne le porte pas. Les petites-filles déjà nées restent où elles sont.
+  - **In the merge order** of § 5; a delivered task (merged, or closed in Projet mode) is ticked
+    (`completed`) and keeps its place at the top.
+  - **A single `in_progress` step**, as the tool requires: the one Maestro is dealing with now (the
+    one waiting for the person, the one it is reviewing or merging), otherwise the next to merge.
+    The others are `pending`.
+  - **At each status change** (a sub-session's end of turn, news from the panel, a merge), send the
+    whole list again (`items`): only the text after `·` changes, the start `#<id> <libellé court>`
+    stays. A new task adds its step.
+  - **After each merge or publication, before the next command** (#136): send the whole list
+    again, the delivered task ticked with its version (`#130 Sans priorités · livrée 0.78.0`;
+    without publication, `· fusionnée`), the next one in progress. In a turn started by the person,
+    also say the recap line in the message, without emoji: `#<id> livrée · <version> · <ce qui
+    change>`; in a turn woken by a session, nothing more (#133): the list shows it.
+    Four merges in a turn means four lists: the box above the input must never call « en cours » a
+    task already on `main`. **The panel reminds of it**: it adds the instruction to the result of a
+    successful `git merge` in the main folder or of a `release.py release`, and repeats it at the
+    end of the turn if the list has not moved since.
+  - **No end box without a question while a step remains open** (#133): the app's end box ticks the
+    whole list, and the person loses their marker
+    (« je n'ai pas le petit menu qui me dit où on en est »). The panel refuses it every time; the turn ends on the message. A question for the
+    person goes through a box with `ask`: then post the whole list again (`items`) on the next turn.
+  - Once the work is done, all the steps are ticked.
+  - **The merge order and the conflicts** are computed from git, read-only: write `maestro.json` in
+    the scratchpad (`{"base": "main", "taches": [{"id", "titre", "branche", "tests":
+    "verts" | "rouges" (absent: to run), "relue": true | false, "apres": [ids]}]}`, the branch read
+    from `list_sessions`, the tests and the review taken from the reports and the diff, `apres` from
+    the roadmap), then `python3 "<dossier de la skill>/scripts/etat_maestro.py" <dépôt> <maestro.json>
+    --texte` (`--json` to read it as data): status of each branch against `main`, files touched by
+    two branches, real conflicts through `git merge-tree`, proposed order. Maestro orders its list
+    from it and does not paste its output into the chat; a conflict or a shared file is said in one
+    line. The script returns 2 on a `maestro.json` with a duplicate (same id or same branch), or a
+    repository or base not found: fix the input.
+- **Unblock first**: whatever keeps a sub-session from moving forward comes before everything else.
+  Maestro answers itself, by message to the sub-session, what the code, the roadmap or the rules
+  settle. The rest goes to the person, one question at a time, and their answer is passed on word
+  for word. With the session setting `autonome` (skill `reglages-session`, in Code mode as in Projet
+  mode), Maestro also answers itself, with its recommendation, everything that is neither an
+  architecture question (a choice that would be written in `docs/decisions.md`) nor a gesture that
+  belongs to the person (launching, archiving, a secret, an access), and says so in one line.
+  Merging and publishing are not the person's to decide: Maestro never asks them « je fusionne ? »
+  or « je publie ? » (#105).
+- **Reread before relaying** (#121): right before putting a sub-session's question to the person
+  (form, mockup choice), reread its status: `get_session` (`isRunning`) and `list_events` (its last
+  message). If it is running, or the answer is already in its transcript: ask nothing, the question
+  is settled. An idle session that asks no question (« à archiver », « fini, rien en attente ») is
+  not waiting for the person. Same rule as archiving (§ 6, #110). Relay only the questions of its
+  own sessions: those of another open Maestro belong to that one.
+- **A mockup choice** (#96): a sub-session that is
+  « attend une réponse : choix de maquette, <chemin> » has written its mockups in a page. Maestro first rereads its status (above), then opens
+  it in the browser pane (`preview_start` with the page's `file://` url, in the sub-session's
+  worktree), then puts the question to the person through the form, one option per mockup, its
+  preview (`preview`) and its trade-off, the sub-session's recommendation first; their answer is
+  passed on word for word. The `autonome` setting does not apply: a visual choice belongs to the
+  person.
+- **The sub-sessions' proposals** (#67, #132): any session creation a sub-session asks for, its New
+  task card (`own_initiative`, `offer`) or the launch the person asked of it (`user_asked`), would
+  make a grandchild of Maestro, and the person wants only one level under Maestro. The panel sends
+  it up to the root Maestro: by message (« Tâche proposée… » or « Lancement demandé… »), otherwise
+  at the person's next message. Maestro opens its line (or attaches it to a line that covers it),
+  then proposes it from Maestro: an `own_initiative` card, title `#<id> · <libellé court>`, full
+  brief, Maestro clause and the settings of the original card, then says in one line which session
+  proposes it and that the person clicks Start. A launch the person asked for counts as consent:
+  the card is posted in this turn, without asking them again whether they want it; it is a card and
+  not a launch, because the app refuses `user_asked` on a turn woken by a session's message. Maestro
+  does not code it, and adds its step to its list once it is launched.
+- **The root Maestro** (#132): the highest open ancestor recognised as Maestro by its title or its
+  mark, otherwise the highest one that has launched at least two sessions still open. A session
+  that has a Maestro above it is never one, even with two sessions launched: its creations go up,
+  and its panel treats it as a task session. A session titled or marked Maestro is demoted only by
+  a Maestro titled or marked above it. Only a launch elsewhere (another folder, SSH, cloud) stays
+  with the sub-session: a card cannot carry it. Grandchildren already born stay where they are.
 
-## 4. Les ressources uniques, le simulateur iOS d'abord
+## 4. Unique resources, the iOS simulator first
 
-Simulateur iOS, appareil, base de données, déploiement, publication d'un plugin, compte de test :
-une seule sous-session à la fois, et c'est Maestro qui donne la main. Avec le réglage `autonome`, il
-la donne seul, sans demander à l'utilisateur, la publication comprise, et la sous-session publie
-sans redemander (#105) ; sans le réglage, rien ne change.
+iOS simulator, device, database, deployment, publishing a plugin, test account: only one
+sub-session at a time, and Maestro is the one that hands it over. With the `autonome` setting, it
+hands it over on its own, without asking the person, publishing included, and the sub-session
+publishes without asking again (#105); without the setting, nothing changes.
 
-1. La sous-session qui en a besoin le dit en tête de son compte rendu et termine son tour.
-2. Maestro donne la main à une seule, par message (« À toi le simulateur ; rends-le quand tu as
-   fini »), dans l'ordre des priorités du § 5, et le dit dans l'étape de la tâche (« · a le simulateur »).
-3. La sous-session teste sa branche, corrige elle-même ce que le test trouve, puis rend la main.
-4. Maestro la donne à la suivante.
+1. The sub-session that needs it says so at the top of its report and ends its turn.
+2. Maestro hands it to only one, by message
+   (« À toi le simulateur ; rends-le quand tu as fini »), in the priority order of § 5, and says so in the task's step (« · a le simulateur »).
+3. The sub-session tests its branch, fixes by itself what the test finds, then hands it back.
+4. Maestro hands it to the next one.
 
-Dans un projet à verrous (`verrou:` posé par l'onboarding), c'est Maestro qui pose le verrou sur la
-ligne de la sous-session désignée, et le retire quand elle rend la main. Une sous-session ne prend
-jamais une ressource sans la main de Maestro, même si elle est libre.
+In a project with locks (`verrou:` set by onboarding), Maestro is the one that sets the lock on the
+designated sub-session's line, and removes it when the sub-session hands back. A sub-session never
+takes a resource without Maestro's go-ahead, even if it is free.
 
-## 5. Prioriser et fusionner
+## 5. Prioritise and merge
 
-L'ordre des fusions, du premier critère au dernier :
+The merge order, from the first criterion to the last:
 
-1. **Prête** : tests verts sur sa branche, diff relu par Maestro, à jour de `main`.
-2. **Prérequis d'abord** : ce qui débloque d'autres tâches (`après:`) passe devant.
-3. **Ce qui libère** une ressource unique ou un fichier qu'une autre tâche attend.
-4. **À égalité**, la plus petite, la moins exposée aux conflits.
+1. **Ready**: tests green on its branch, diff reviewed by Maestro, up to date with `main`.
+2. **Prerequisites first**: what unblocks other tasks (`après:`) goes ahead.
+3. **What frees** a unique resource or a file another task is waiting for.
+4. **When tied**, the smallest, the least exposed to conflicts.
 
-La fusion elle-même :
+The merge itself:
 
-- **Qui décide** : sans le réglage `autonome`, la fusion attend le clic de l'utilisateur. Maestro la lui
-  propose, une branche à la fois, par la boîte de fin (`wrap_up`, bouton « Fusionner #N »), qui
-  vaut ce clic. Maestro revérifie la branche avant de fusionner. Résoudre un conflit de fusion est le
-  cas où Maestro code (tableau du haut) : il résout dans la branche en gardant les deux intentions,
-  rejoue ses tests, puis met sa liste à jour. Avec le
-  réglage, Maestro fusionne seul une branche prête, et publie seul ce qui doit l'être (release d'un
-  plugin, déploiement, push de `main`), sans attendre ni demander : le réglage est l'autorisation
-  durable de l'utilisateur de fusionner et de publier. Il dit ensuite en une ligne ce qu'il a fait. « Relue » veut dire le diff lu par Maestro, qui ne l'a pas
-  écrit. Lancer une session et archiver gardent toujours son clic.
-- **Une branche à la fois**, sur `main` à jour, par la règle de fusion du projet (projets posés par
-  l'onboarding : « Finir un chantier »). Jamais deux fusions en même
-  temps.
-- **Dès qu'une branche est prête** (#131) : le message de sa session suffit, Maestro la relit et la
-  fusionne (sans le réglage `autonome`, la propose) sans attendre que les autres sessions finissent.
-- **Vite mais bien, plusieurs prêtes en même temps** (#136) : les fusionner à la suite, dans l'ordre
-  ci-dessus, sans attendre d'avoir tout fini, mais une à la fois et chacune en entier : la mettre à
-  jour de `main` (après la fusion de la précédente), relire son diff, rejouer ses tests sur cette
-  branche à jour, fusionner, publier, renvoyer la liste et dire la ligne de récap, puis seulement la
-  suivante. **Une publication par fusion** (choix de l'utilisateur, 2026-10-30, règle « Finir un
-  chantier » des projets posés par l'onboarding) : chaque tâche a sa version, que disent sa ligne de
-  récap et la fiche finale, et une erreur se défait tâche par tâche. Une branche rouge sur `main` à
-  jour sort de la série : elle repart à sa session, les autres continuent.
-- **Après chaque fusion** : rejouer les tests sur `main`, puis prévenir aussitôt, par message, les
-  sous-sessions dont la ligne porte `après:` sur la tâche fusionnée (elle peut démarrer ou reprendre)
-  et celles dont la branche touche des fichiers voisins (la mettre à jour).
-- **Un conflit** se résout en gardant les deux intentions ; une intention qui n'est pas claire se
-  demande à la sous-session concernée.
+- **Who decides**: without the `autonome` setting, the merge waits for the person's click. Maestro
+  proposes it to them, one branch at a time, through the end box (`wrap_up`, button
+  « Fusionner #N »), which counts as that click. Maestro checks the branch again before merging.
+  Resolving a merge conflict is the case where Maestro codes (table at the top): it resolves in the
+  branch keeping both intentions, reruns its tests, then updates its list. With the setting,
+  Maestro merges a ready branch on its own, and publishes on its own what needs publishing (a
+  plugin release, a deployment, a push of `main`), without waiting or asking: the setting is the
+  person's standing authorisation to merge and publish. It then says in one line what it did.
+  « Relue » means the diff read by Maestro, which did not write it. Launching a session and
+  archiving always keep the person's click.
+- **One branch at a time**, on an up-to-date `main`, by the project's merge rule (projects set up
+  by onboarding: « Finir un chantier »). Never two merges at the same time.
+- **As soon as a branch is ready** (#131): its session's message is enough, Maestro reviews it and
+  merges it (without the `autonome` setting, proposes it) without waiting for the other sessions to
+  finish.
+- **Fast but right, several ready at the same time** (#136): merge them one after the other, in the
+  order above, without waiting to have finished everything, but one at a time and each one in
+  full: update it from `main` (after the previous one's merge), review its diff, rerun its tests on
+  that updated branch, merge, publish, send the list again and say the recap line, and only then
+  the next one. **One publication per merge** (the person's choice, 2026-10-30, rule
+  « Finir un chantier » of the projects set up by onboarding): each task has its version, which its recap line
+  and the final sheet state, and a mistake is undone task by task. A branch that is red on an
+  up-to-date `main` leaves the series: it goes back to its session, the others continue.
+- **After each merge**: rerun the tests on `main`, then notify right away, by message, the
+  sub-sessions whose line carries `après:` on the merged task (it can start or resume) and those
+  whose branch touches neighbouring files (update it).
+- **A conflict** is resolved keeping both intentions; an intention that is not clear is asked of
+  the sub-session concerned.
 
-## 6. Clore une tâche, puis Maestro
+## 6. Close a task, then Maestro
 
-- **Après la fusion**, Maestro coche la ligne (`fait:`, ce qui a été livré, la PR), la descend en
-  tête de `ROADMAP-fait.md` et écrit son bilan à partir du dernier compte rendu de la sous-session.
-- **La sous-session finie** : le panneau la vérifie (sa ligne close et ses commits dans sa branche
-  de base, `main` sans elle, ou poussés, ou, sans ligne, sa branche fusionnée et sa liste d'étapes
-  faite ; rien de non commité dans son worktree ; aucune question ; aucune session à elle ouverte ;
-  en mode Projet, la ligne seule ; une session distante ne se vérifie pas d'ici) et la dit « à
-  archiver ». Une session épinglée n'y paraît pas : `archive_session` la refuse. Maestro propose de les archiver toutes d'un seul clic :
-  boîte de fin avec « Archiver #A et #B ? » et un bouton de réponse « Archive-les » ; au clic,
-  `archive_session` pour chacune, puis une ligne sur ce qui est archivé ou refusé. Seul le clic de
-  l'utilisateur archive.
-- **Archiver des deux côtés, sans doublon** (#110) : la sous-session finie propose aussi son propre
-  archivage (« Archiver cette session ? »), et l'utilisateur peut cliquer là. Donc :
-  - **sans retard** : Maestro pose « Archiver #A ? » dans le tour même où la session est dite à
-    archiver, pas au message suivant ; cette question passe avant toute autre de sa boîte de fin
-    (une autre décision va dans un formulaire `AskUserQuestion`) ;
-  - **vérifier avant de demander** : juste avant, relire `list_sessions` avec `{"linked": true}` ;
-    une session archivée n'y figure plus, et Maestro ne propose que celles qui y sont encore, aucune
-    question s'il n'en reste pas ;
-  - **le panneau le garantit** : une boîte de fin de Maestro qui nomme encore une session déjà archivée
-    est refusée, avec les numéros à retirer ; Maestro la repose sans elles.
-- **Archiver ne clôt rien, et ne fait rien perdre** (#124) : la ligne d'une tâche ne se coche que par
-  Maestro, après la fusion. Une sous-session dont la ligne est encore ouverte ne propose pas son
-  archivage (le panneau refuse sa boîte de fin), et sa fiche de fin dit « #N close par Maestro le
-  AAAA-MM-JJ » une fois la ligne close. Archivée quand même (barre latérale, clic trop tôt), elle
-  paraît dans les nouvelles de Maestro pendant 7 jours : « archivée avant la clôture de sa ligne »,
-  avec sa branche fusionnée ou non. Fusionnée, Maestro coche la ligne avec son bilan (le dernier
-  compte rendu reste lisible par `search_session_transcripts`) ; pas fusionnée, sa branche reste :
-  Maestro la relit et la fusionne (§ 5), ou la désarchive (`unarchive_session`) s'il lui reste du
-  travail.
-- **La fiche finale de Maestro** (#136, maquette B) : au tour où il propose son archivage, en mode
-  ADHD, sa réponse finit sur la fiche de fin de #123 (`| Fin | Maestro · <le lot> |`, Mission, Livré,
-  État, À toi, Session), puis le tableau de ses tâches, une ligne par tâche qu'il a lancée :
+- **After the merge**, Maestro ticks the line (`fait:`, what was delivered, the PR), moves it to the
+  top of `ROADMAP-fait.md` and writes its bilan from the sub-session's last report.
+- **The finished sub-session**: the panel checks it (its line closed and its commits in its base
+  branch, `main` without it, or pushed, or, without a line, its branch merged and its step list
+  done; nothing uncommitted in its worktree; no question; no open session of its own; in Projet
+  mode, the line alone; a remote session cannot be checked from here) and calls it « à archiver ».
+  A pinned session does not appear there: `archive_session` refuses it. Maestro offers to archive
+  them all in a single click: end box with « Archiver #A et #B ? » and a reply button
+  « Archive-les »; on the click, `archive_session` for each, then one line on what is archived or
+  refused. Only the person's click archives.
+- **Archive on both sides, without duplicates** (#110): the finished sub-session also offers its
+  own archiving (« Archiver cette session ? »), and the person can click there. So:
+  - **without delay**: Maestro asks « Archiver #A ? » in the very turn where the session is called
+    to archive, not at the next message; this question comes before any other in its end box
+    (another decision goes into an `AskUserQuestion` form);
+  - **check before asking**: right before, reread `list_sessions` with `{"linked": true}`; an
+    archived session no longer appears there, and Maestro offers only those still there, no
+    question if none remain;
+  - **the panel guarantees it**: a Maestro end box that still names an already archived session is
+    refused, with the numbers to remove; Maestro posts it again without them.
+- **Archiving closes nothing, and loses nothing** (#124): a task's line is ticked only by Maestro,
+  after the merge. A sub-session whose line is still open does not offer its archiving (the panel
+  refuses its end box), and its closing sheet says « #N close par Maestro le AAAA-MM-JJ » once the
+  line is closed. Archived anyway (sidebar, click too early), it appears in Maestro's news for 7
+  days: « archivée avant la clôture de sa ligne », with its branch merged or not. Merged, Maestro
+  ticks the line with its bilan (the last report stays readable through
+  `search_session_transcripts`); not merged, its branch stays: Maestro reviews it and merges it
+  (§ 5), or unarchives it (`unarchive_session`) if it has work left.
+- **Maestro's final sheet** (#136, mockup B): on the turn where it offers its archiving, in ADHD
+  mode, its answer ends on the closing sheet of #123 (`| Fin | Maestro · <le lot> |`, Mission,
+  Livré, État, À toi, Session), then the table of its tasks, one row per task it launched:
   `| Tâche | Livré | Version | État |` (`| #130 Sans priorités | plus de pastille P1/P2/P3 | 0.78.0 |
-  close |`). Le panneau refuse la fin de tour de Maestro « à archiver » sans ce tableau. Une tâche
-  encore ouverte n'y est pas « close » : la fiche n'est posée qu'une fois toutes ses lignes cochées.
-- **Maestro finit** quand toutes ses lignes sont cochées : boîte de fin (`wrap_up`) avec la question
-  « Archiver cette session ? » et le bouton de réponse « Oui, archiver » en premier
-  (`actions: [{"label": "Oui, archiver", "message": "Oui, archive cette session."}]` : l'app ne
-  propose pas le bouton d'app `archive`). Sur ce clic, et sur lui seul, `archive_session` avec
+  close |`). The panel refuses Maestro's « à archiver » end of turn without that table. A task still
+  open is not « close » in it: the sheet is posted only once all its lines are ticked.
+- **Maestro finishes** when all its lines are ticked: end box (`wrap_up`) with the question
+  « Archiver cette session ? » and the reply button « Oui, archiver » first
+  (`actions: [{"label": "Oui, archiver", "message": "Oui, archive cette session."}]`: the app does
+  not offer the `archive` app button). On that click, and on it alone, `archive_session` with
   `session_id: "self"`.
 
-## Ce que le panneau Roadmap fait pour Maestro
+## What the Roadmap panel does for Maestro
 
-- Il reconnaît Maestro à son titre « Maestro … » (ou à l'alias « Lot … » des anciens titres), à la
-  marque posée quand l'utilisateur y dit « Maestro », ou à ses sessions lancées encore ouvertes (au
-  moins deux).
-- Son brief (« Maestro ») ne compte que ses sessions : celles d'un autre Maestro ouvert tiennent en
-  une ligne à part, sans question à relayer. « Attendent la réponse » veut dire au repos avec une
-  question ouverte (formulaire, question de la boîte de fin, « attend une réponse : … » en tête du
-  récap), citée en clair ; au repos sans question, la session est « au repos, aucune question »
-  (#121).
-- Il ne le met jamais « en cours » sur une tâche, et ne lui propose pas d'archiver quand le numéro
-  de son titre se coche.
-- Une ligne ouverte par Maestro lui rappelle de lancer sa session au lieu de la coder.
-- Le ▶ lancé depuis Maestro met la clause de Maestro dans le brief de la sous-session.
-- Toute création de session demandée dans une sous-session ou plus bas (carte New task, `offer`,
-  lancement `user_asked`) ne reste pas chez elle : elle remonte au Maestro racine (§ 3) ; une `offer`
-  sans brief ou une carte `fork` revient à la sous-session, à reposer en `own_initiative` `fresh`.
-- Chaque sous-session note sa liste d'étapes, sa question en attente et son dernier récap ; à chaque
-  message de l'utilisateur, Maestro reçoit les enfants qui coincent depuis 15 min et ceux à archiver
-  (§ 3, « Prendre des nouvelles »).
-- Chaque sous-session prévient Maestro par message de l'état où elle finit son tour, et de sa
-  question de formulaire, une fois par état, même quand d'autres tournent encore (§ 3, « Agir dès
-  son message », #131).
-- Il reconnaît un tour de Maestro réveillé par une session (§ 3, #133) : il lui rappelle de ne rien
-  écrire sauf un besoin de l'utilisateur, ne réclame pas le bloc, n'envoie pas son rappel de fin de
-  tour en message, et refuse une fois la boîte qui repose une question en attente. Il refuse aussi
-  la boîte de fin sans question tant que la liste d'étapes de Maestro a une étape ouverte (elle la
-  cocherait toute). Aux tours de
-  l'utilisateur, son rappel du mode ADHD demande le repère stable « Maestro · N en cours · N
-  t'attend ».
-- Il refuse la boîte de fin de Maestro qui propose d'archiver une session déjà archivée (§ 6, #110).
-- Il ne relance pas une sous-session avec le rappel « la roadmap n'a pas bougé » : Maestro tient sa
-  ligne (#124). Il refuse sa boîte de fin « Archiver cette session ? » tant que sa ligne est ouverte,
-  et lui donne la phrase de l'État une fois close ; il signale à Maestro une sous-session archivée
-  avant la clôture de sa ligne (§ 6).
-- Il refuse une fois la boîte de fin qui redemande de lancer une carte posée dans le tour ou une
-  session liée qui tourne déjà (§ 2, #122).
-- Le brief de Maestro et les nouvelles des enfants lui rappellent de tenir sa liste d'étapes
-  (§ 3) ; il ne demande plus de carte (#97 retirée par #104).
-- Après une fusion sur `main` ou une publication, il rappelle à Maestro de renvoyer sa liste
-  d'étapes et de dire sa ligne de récap (dans le résultat de la commande), puis le redit à la fin du
-  tour si la liste n'a pas bougé (§ 3, #136) ; il refuse sa fin « à archiver » sans le tableau de ses
-  tâches (§ 6).
-- Toute session, Maestro compris, qui travaille (au moins deux outils dans le tour) sans avoir posé de
-  liste d'étapes reçoit un rappel en fin de tour, en mode Code comme en mode Projet (#98, #104).
+- It recognises Maestro by its title « Maestro … » (or by the alias « Lot … » of old titles), by
+  the mark set when the person says « Maestro » in it, or by its launched sessions still open (at
+  least two).
+- Its brief (« Maestro ») counts only its own sessions: those of another open Maestro fit on a
+  separate line, with no question to relay. « Attendent la réponse » means idle with an open
+  question (form, end-box question, « attend une réponse : … » at the top of the recap), quoted in
+  full; idle without a question, the session is « au repos, aucune question » (#121).
+- It never marks it « en cours » on a task, and does not offer it archiving when the number in its
+  title gets ticked.
+- A line opened by Maestro reminds it to launch its session instead of coding it.
+- The ▶ launched from Maestro puts the Maestro clause into the sub-session's brief.
+- Any session creation asked for in a sub-session or further down (New task card, `offer`,
+  `user_asked` launch) does not stay there: it goes up to the root Maestro (§ 3); an `offer`
+  without a brief or a `fork` card goes back to the sub-session, to be posted again as
+  `own_initiative` `fresh`.
+- Each sub-session records its step list, its pending question and its last recap; at each of the
+  person's messages, Maestro receives the children stuck for 15 min and those to archive (§ 3,
+  "Check in").
+- Each sub-session notifies Maestro by message of the status in which it ends its turn, and of its
+  form question, once per status, even while others are still running (§ 3,
+  "Act on its message", #131).
+- It recognises a Maestro turn woken by a session (§ 3, #133): it reminds it to write nothing
+  except a need of the person, does not ask for the block, does not send its end-of-turn reminder
+  as a message, and refuses once the box that asks a pending question again. It also refuses the
+  end box without a question while Maestro's step list has an open step (it would tick all of it).
+  On the person's turns, its ADHD-mode reminder asks for the stable marker
+  « Maestro · N en cours · N t'attend ».
+- It refuses Maestro's end box that offers to archive an already archived session (§ 6, #110).
+- It does not restart a sub-session with the reminder « la roadmap n'a pas bougé »: Maestro keeps
+  its line (#124). It refuses its end box « Archiver cette session ? » while its line is open, and
+  gives it the État sentence once closed; it flags to Maestro a sub-session archived before its
+  line was closed (§ 6).
+- It refuses once the end box that asks again to launch a card posted in the turn or a linked
+  session already running (§ 2, #122).
+- Maestro's brief and the children's news remind it to keep its step list (§ 3); it no longer asks
+  for a card (#97 removed by #104).
+- After a merge into `main` or a publication, it reminds Maestro to send its step list again and
+  say its recap line (in the command's result), then says it again at the end of the turn if the
+  list has not moved (§ 3, #136); it refuses its « à archiver » end without the table of its tasks
+  (§ 6).
+- Any session, Maestro included, that works (at least two tools in the turn) without having posted
+  a step list gets a reminder at the end of the turn, in Code mode as in Projet mode (#98, #104).

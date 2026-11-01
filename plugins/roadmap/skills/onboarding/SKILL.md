@@ -1,213 +1,217 @@
 ---
 name: onboarding
-description: "Onboarde un projet dans le système roadmap, en mode Code ou Projet. Code, un dépôt : CLAUDE.md de règles, roadmap numérotée avec ses bilans, docs, check.mjs, hook de démarrage, worktree par session ; reconstitue au choix la roadmap depuis l'historique (PR, fusions ou commits) ; crée le dépôt GitHub privé après accord. Projet, de la gestion de projet sans code : dossier simple, git en option, tâches complètes, sans worktree, verrou ni fusion. Vérifie, passe le doctor ; remet un projet existant au format sans rien écraser. Importe une roadmap existante (Markdown, CSV, Notion) sans perdre de ligne. Déclenche sur « onboarding », « onboarde ce projet », « importe ma roadmap », « nouveau projet de code », « initialise ce repo », « mets ce projet au format », « reconstitue la roadmap depuis les PR », « onboarde ce dossier sans code », « Maestro dit qu'il n'y a pas de roadmap ». Pas pour le panneau seul (roadmap-panel), ni pour tenir la roadmap au quotidien, ni pour une roadmap tenue dans Cowork même."
+description: "Onboards a project into the roadmap system, in Code or Projet mode. Code, a repository: CLAUDE.md of rules, numbered roadmap with its bilans, docs, check.mjs, start hook, a worktree per session; optionally rebuilds the roadmap from history (PRs, merges or commits); creates the private GitHub repository once approved. Projet, project management with no code: plain folder, git optional, complete tasks, no worktree, lock or merge. Checks, runs the doctor; brings an existing project to the format, overwriting nothing. Imports an existing roadmap (Markdown, CSV, Notion), losing no line. Triggers on « onboarding », « onboarde ce projet », « importe ma roadmap », « nouveau projet de code », « initialise ce repo », « mets ce projet au format », « reconstitue la roadmap depuis les PR », « onboarde ce dossier sans code », « Maestro dit qu'il n'y a pas de roadmap ». Not for the panel alone (roadmap-panel), nor day-to-day roadmap upkeep, nor a roadmap kept in Cowork itself."
 ---
 
-# Onboarder un projet
+# Onboard a project
 
-Deux modes, choisis par projet dans `.claude/roadmap.json` : **Code** (un dépôt de code, tout ce
-qui suit jusqu'à « Le mode Projet ») et **Projet** (de la gestion de projet sans code, section
-« Le mode Projet » en fin de fichier). Le premier envoi de `references/questions.md` le demande,
-sauf si la demande ou le dossier le disent.
+The person speaks French: talk to them in French, ask the questions in French, and write the
+roadmap and task labels in French; the files set up keep the language of their templates and of
+the « Langue » answer. Only this skill is in English.
 
-## Ce que la skill garantit
+Two modes, chosen per project in `.claude/roadmap.json`: **Code** (a code repository, everything
+that follows up to "Projet mode") and **Projet** (project management without code, section
+"Projet mode" at the end of the file). The first round of `references/questions.md` asks for it,
+unless the request or the folder says it.
 
-Tous les projets de code partagent la même structure : les mêmes règles
-de session, la même roadmap que lisent le panneau Roadmap et Maestro, les mêmes contrôles. Une
-session qui ouvre l'un d'eux sait où tout se trouve sans le connaître d'avance. Ce qui est propre à
-un projet (commandes de test, déploiement, verrous, axes, langue, secrets) vient des réponses aux
-questions, et seulement d'elles.
+## What the skill guarantees
 
-La roadmap vit dans le dépôt, donc sur GitHub : un dossier `roadmap/` à la racine, avec
-`ROADMAP.md` (tâches ouvertes), `ROADMAP-fait.md` (tâches closes) et `ROADMAP-bilans.csv` (le bilan
-de chaque tâche close), que `.claude/roadmap.json` désigne au panneau. Un projet qui tient déjà sa
-roadmap à sa racine la garde là : le script le voit et n'en pose pas une seconde.
+All code projects share the same structure: the same session rules, the same roadmap read by the
+Roadmap panel and Maestro, the same checks. A session that opens one of them knows where
+everything is without knowing it beforehand. What is specific to a project (test commands,
+deployment, locks, axes, language, secrets) comes from the answers to the questions, and only from
+them.
 
-Les modèles sont dans `references/modeles/`, les questions et le format des réponses dans
-`references/questions.md`, et `scripts/onboarding.py` écrit, reconstitue et vérifie. Le script se
-lance depuis le dossier de cette skill (le chemin donné au chargement de la skill) :
+The roadmap lives in the repository, hence on GitHub: a `roadmap/` folder at the root, with
+`ROADMAP.md` (open tasks), `ROADMAP-fait.md` (closed tasks) and `ROADMAP-bilans.csv` (the bilan of
+each closed task), which `.claude/roadmap.json` points the panel to. A project that already keeps
+its roadmap at its root keeps it there: the script sees it and does not set up a second one.
+
+The templates are in `references/modeles/`, the questions and the answer format in
+`references/questions.md`, and `scripts/onboarding.py` writes, rebuilds and checks. The script is
+run from this skill's folder (the path given when the skill loads):
 
 ```bash
 python3 "<dossier de la skill>/scripts/onboarding.py" init ~/Projects/Clipping --reponses <réponses.json>
 ```
 
-Trois garanties, qu'on ne contourne pas :
+Three guarantees, never bypassed:
 
-- **Rien n'est écrasé.** `init` refuse un dossier qui contient déjà un fichier de la structure ;
-  `--manquants` n'écrit que les absents.
-- **Rien ne s'écrit avant la validation du plan**, une seule fois.
-- **Le projet sort vert** de `node scripts/check.mjs`, de `verifier` et du doctor, ou la skill
-  n'a pas fini.
+- **Nothing is overwritten.** `init` refuses a folder that already contains a file of the
+  structure; `--manquants` writes only the missing ones.
+- **Nothing is written before the plan is approved**, once.
+- **The project comes out green** from `node scripts/check.mjs`, from `verifier` and from the
+  doctor, or the skill is not done.
 
-## Le nom de l'utilisateur, d'abord
+## The user's name, first
 
-Dans l'un ou l'autre mode : lis `~/.claude/roadmap-perso.json`. Sans nom dans `me`, demande-le en
-texte libre (« Quel nom veux-tu dans tes roadmaps ? »), puis écris-le dans `me` en gardant le reste
-du fichier (`{"me": ["Alex"]}` s'il n'existe pas). C'est le nom que Claude emploie avec
-l'utilisateur, la valeur de `qui` et celui que le panneau compte « À moi ». Le réglage « Tes noms
-dans les roadmaps » du plugin, rempli, l'emporte.
+In either mode: read `~/.claude/roadmap-perso.json`. Without a name in `me`, ask for it in free
+text (« Quel nom veux-tu dans tes roadmaps ? »), then write it into `me`, keeping the rest of the
+file (`{"me": ["Alex"]}` if it does not exist). It is the name Claude uses with the user, the
+value of `qui` and the one the panel counts as « À moi ». The plugin setting
+« Tes noms dans les roadmaps », when filled in, wins.
 
-## 1. Situer le projet
+## 1. Place the project
 
-- Dossier absent ou vide : **nouveau projet**.
-- Dossier qui a déjà du code ou des commits : **projet existant**. Commence par
-  `verifier <dossier>` : « Conforme au format. » veut dire qu'il n'y a rien à poser, passe
-  directement au doctor (étape 7).
+- Folder missing or empty: **new project**.
+- Folder that already has code or commits: **existing project**. Start with
+  `verifier <dossier>`: « Conforme au format. » means there is nothing to set up, go straight to
+  the doctor (step 7).
 
-## 2. Cadrer
+## 2. Scope
 
-Lis `references/questions.md` en entier. Prends dans la demande ce qu'elle dit (nom, dossier,
-résumé, cap) et, pour un projet existant, dans le dépôt (README, `package.json`, dossiers,
-`.gitignore`) : ne demande que le reste. Pose les envois de questions à choix de ce fichier, chacun
-bâti sur les réponses du précédent. Pour un projet existant dont la roadmap naît maintenant, l'envoi
-« Historique » en fait partie.
+Read `references/questions.md` in full. Take from the request what it says (name, folder, summary,
+cap) and, for an existing project, from the repository (README, `package.json`, folders,
+`.gitignore`): ask only for the rest. Send the multiple-choice question rounds of that file, each
+built on the answers to the previous one. For an existing project whose roadmap is born now, the
+« Historique » round is one of them.
 
-## 3. Montrer le plan, une fois
+## 3. Show the plan, once
 
-En un message : le dossier, la liste des fichiers posés (et, pour un projet existant, ce qui manque
-aux fichiers déjà là), l'emplacement de la roadmap, les axes, les verrous, les commandes de test, le
-déploiement, la règle de langue, GitHub, et l'historique retenu. Une question à choix : « Je pose
-cette structure ? » (Oui (recommandé) / Changer quelque chose). Changement : refaire le plan, pas
-tout le cadrage.
+In one message: the folder, the list of files set up (and, for an existing project, what the
+files already there are missing), the roadmap location, the axes, the locks, the test commands,
+the deployment, the language rule, GitHub, and the history chosen. One multiple-choice question:
+« Je pose cette structure ? » (« Oui (recommandé) » / « Changer quelque chose »). A change: redo
+the plan, not the whole scoping.
 
-## 4. Écrire
+## 4. Write
 
-1. Les réponses en JSON dans le scratchpad (format : `references/questions.md`, modèle complet par
+1. The answers as JSON in the scratchpad (format: `references/questions.md`, full template from
    `python3 scripts/onboarding.py exemple`).
-2. Nouveau projet : `init <dossier> --reponses <fichier>` crée le dépôt git sur `main` s'il manque
-   et écrit tout. Projet existant : `init <dossier> --reponses <fichier> --manquants`, dans un
-   worktree du projet si d'autres sessions y travaillent, sinon sur `main`. Les fichiers présents
-   ne se remplacent jamais : une section qui leur manque s'ajoute à la main depuis le modèle rendu
-   (pose-le dans un dossier vide du scratchpad avec `init`, puis recopie les sections), en gardant
-   tout ce que le projet avait. `CLAUDE.md` reste sous 150 lignes : le détail part dans `docs/`.
-3. Une roadmap existante (celle du projet sans `id:`, ou un autre fichier : checklist, CSV, export
-   Notion, tableau Markdown) s'importe par le script, jamais à la main : voir « Importer une roadmap
-   existante » plus bas.
-4. Un `check.mjs` propre au projet se garde : compare-le au modèle et ajoute seulement ce qui lui
-   manque (clés du panneau, `id:` uniques, secrets).
+2. New project: `init <dossier> --reponses <fichier>` creates the git repository on `main` if it
+   is missing and writes everything. Existing project: `init <dossier> --reponses <fichier> --manquants`,
+   in a worktree of the project if other sessions work in it, otherwise on `main`. Files already
+   present are never replaced: a section they lack is added by hand from the rendered template
+   (render it into an empty scratchpad folder with `init`, then copy the sections over), keeping
+   everything the project had. `CLAUDE.md` stays under 150 lines: the detail goes into `docs/`.
+3. An existing roadmap (the project's one without `id:`, or another file: checklist, CSV, Notion
+   export, Markdown table) is imported by the script, never by hand: see "Import an existing
+   roadmap" below.
+4. A project-specific `check.mjs` is kept: compare it with the template and add only what it
+   lacks (panel keys, unique `id:`, secrets).
 
-## 5. Reconstituer l'historique, si la réponse est oui
+## 5. Rebuild the history, if the answer is yes
 
-1. `historique <dossier> --mois 6` (sans `--mois` pour 6, un grand nombre pour tout) écrit en JSON
-   ce que le dépôt raconte : les PR fusionnées et ouvertes si GitHub en a, sinon les fusions de la
-   branche, sinon les commits groupés par jour. Range-le dans le scratchpad.
-2. Complète chaque item, comme le dit sa `consigne` : `libelle` (verbe à l'infinitif + objet, court,
-   tiré du titre et du résumé), `axe` (un des axes déclarés), `conclusion` (une ligne sur ce qui a
-   été livré). Retire un item sans intérêt (montée de version, coquille). Un jour de commits qui
-   mélange plusieurs sujets garde un libellé sur le principal.
-   Sans PR ni fusion, il prend une tâche par commit (jusqu'à 200 sur la période, par jour au-delà ;
-   `--par commit` ou `--par jour` l'impose) : un dépôt qui publie une version par commit garde une
-   tâche par version.
-3. `historique-ecrire <dossier> --lignes <fichier>` numérote les tâches de la plus ancienne à la
-   plus récente, écrit les faites en tête de `ROADMAP-fait.md` (`src:` vers la PR ou le commit), leur
-   bilan dans `ROADMAP-bilans.csv` (souci : reconstituée, sans bilan), et les PR ouvertes en tête de
-   « Prochain » avec leur branche. Il refuse une roadmap qui porte déjà des tâches closes.
+1. `historique <dossier> --mois 6` (without `--mois` for 6, a large number for everything) writes
+   as JSON what the repository tells: the merged and open PRs if GitHub has any, otherwise the
+   merges of the branch, otherwise the commits grouped by day. Store it in the scratchpad.
+2. Complete each item, as its `consigne` says: `libelle` (French verb in the infinitive + object,
+   short, taken from the title and summary), `axe` (one of the declared axes), `conclusion` (one
+   line on what was delivered). Remove an item of no interest (version bump, typo). A day of
+   commits that mixes several subjects keeps a label on the main one.
+   Without PRs or merges, it takes one task per commit (up to 200 over the period, per day beyond
+   that; `--par commit` or `--par jour` forces it): a repository that publishes one version per
+   commit keeps one task per version.
+3. `historique-ecrire <dossier> --lignes <fichier>` numbers the tasks from oldest to newest,
+   writes the done ones at the top of `ROADMAP-fait.md` (`src:` to the PR or the commit), their
+   bilan in `ROADMAP-bilans.csv` (souci: « reconstituée, sans bilan »), and the open PRs at the top
+   of « Prochain » with their branch. It refuses a roadmap that already holds closed tasks.
 
-## 6. Vérifier et committer
+## 6. Check and commit
 
-1. Dans le dossier : `node scripts/check.mjs` (doit finir par « Tout est en ordre. »), puis
-   `sh scripts/session-start.sh` (le hook affiche le prochain `id:`), puis
+1. In the folder: `node scripts/check.mjs` (must end with « Tout est en ordre. »), then
+   `sh scripts/session-start.sh` (the hook shows the next `id:`), then
    `python3 "<dossier de la skill>/scripts/onboarding.py" verifier <dossier>` (« Conforme au
-   format. »). Un échec se corrige avant d'aller plus loin.
-2. Nouveau projet, premier commit : `git add -A && git commit -m "chore: project structure (onboarding)"`
-   (message en français si la langue l'a voulu). C'est le seul moment où `git add -A` est permis
-   dans le dossier principal : il n'y a encore aucune autre session. Projet existant : un commit qui
-   ne prend que les fichiers posés ou touchés.
+   format. »). A failure is fixed before going further.
+2. New project, first commit: `git add -A && git commit -m "chore: project structure (onboarding)"`
+   (message in French if the language answer asked for it). It is the only time `git add -A` is
+   allowed in the main checkout: there is no other session yet. Existing project: a commit that
+   takes only the files set up or touched.
 
-## 7. GitHub et doctor
+## 7. GitHub and doctor
 
-1. Si les réponses ont un dépôt GitHub qui n'existe pas encore : une question à choix, « Je crée le
-   dépôt privé `<compte>/<nom>` et j'y pousse `main` ? ». Sur le oui seulement :
-   `gh repo create <compte>/<nom> --private --source <dossier> --push`. Sans `gh` connecté, donne la
-   commande. Un dépôt déjà existant sous ce nom : ne pousse rien, demande. Projet existant déjà sur
-   GitHub : pousse le commit de l'onboarding sur `main`, comme ses règles le disent.
-2. Une roadmap importée ou déjà remplie : l'audit (étape 7 de « Importer une roadmap existante »)
-   passe avant le doctor.
-3. **Design system** (#129) : toute maquette du projet s'appuie sur celui que déclare `design` de
-   `.claude/roadmap.json`. La réponse « Design » de l'envoi 1 l'a posé à `init`. Pour un projet déjà
-   onboardé, `python3 "<dossier de la skill>/scripts/onboarding.py" design <dossier>` dit la
-   déclaration et les candidats (un `design/`, un `.design-sync/config.json`, un modèle de document) ;
-   `design <dossier> --poser '<JSON>'` écrit le champ sans toucher au reste du fichier. Ni
-   déclaré ni refusé (`"aucun"`) : propose d'en poser un, par une question à choix (« Je
-   déclare `design/` ? », « J'ouvre la tâche « Poser le design system » ? », « S'en passer »).
-4. Lance le doctor (skill `doctor` de ce plugin) sur le dossier. Un KO qui tient à la machine
-   (Superpowers absent, `gh` non connecté) se dit avec sa commande ; un KO qui tient au projet se
-   corrige ici. En mode Projet, Superpowers absent n'est qu'À voir : il y est facultatif.
+1. If the answers have a GitHub repository that does not exist yet: one multiple-choice question,
+   « Je crée le dépôt privé `<compte>/<nom>` et j'y pousse `main` ? ». On yes only:
+   `gh repo create <compte>/<nom> --private --source <dossier> --push`. Without `gh` signed in,
+   give the command. A repository that already exists under that name: push nothing, ask. An
+   existing project already on GitHub: push the onboarding commit to `main`, as its rules say.
+2. An imported or already filled roadmap: the audit (step 7 of "Import an existing roadmap") comes
+   before the doctor.
+3. **Design system** (#129): every mockup of the project relies on the one declared by `design` in
+   `.claude/roadmap.json`. The « Design » answer of round 1 set it at `init`. For a project already
+   onboarded, `python3 "<dossier de la skill>/scripts/onboarding.py" design <dossier>` gives the
+   declaration and the candidates (a `design/`, a `.design-sync/config.json`, a document template);
+   `design <dossier> --poser '<JSON>'` writes the field without touching the rest of the file.
+   Neither declared nor refused (`"aucun"`): offer to set one, with a multiple-choice question
+   (« Je déclare `design/` ? », « J'ouvre la tâche « Poser le design system » ? », « S'en passer »).
+4. Run the doctor (this plugin's `doctor` skill) on the folder. A KO due to the machine
+   (Superpowers missing, `gh` not signed in) is reported with its command; a KO due to the project
+   is fixed here. In Projet mode, Superpowers missing is only « À voir »: it is optional there.
 
-## 8. Rendre compte
+## 8. Report
 
-Ce qui a été posé (dossier, emplacement de la roadmap, nombre de fichiers, tâches reconstituées,
-GitHub, verdict du doctor), puis comment s'en servir :
+What was set up (folder, roadmap location, number of files, rebuilt tasks, GitHub, doctor
+verdict), then how to use it:
 
-- ouvrir le dossier dans Claude Code : le hook affiche les chantiers, les verrous et le prochain
-  `id:` ; le panneau Roadmap trouve la roadmap et s'ouvre seul ;
-- dire « Maestro » dans une session du projet : l'état d'avancement et ce qu'on peut lancer ;
-- la première tâche ouverte, `id:1`, est d'écrire `docs/vision.md` avec l'utilisateur ;
-- chaque chantier : sa ligne dans « En cours » sur `main`, puis `./scripts/new-session.sh feat/<slug> "<titre>"`
-  (ou `--here` dans un worktree de l'app), `--plan` pour une spec.
+- open the folder in Claude Code: the hook shows the chantiers, the locks and the next `id:`; the
+  Roadmap panel finds the roadmap and opens by itself;
+- say « Maestro » in a session of the project: the progress status and what can be launched;
+- the first open task, `id:1`, is to write `docs/vision.md` with the user;
+- each chantier: its line in « En cours » on `main`, then `./scripts/new-session.sh feat/<slug> "<titre>"`
+  (or `--here` in an app worktree), `--plan` for a spec.
 
-## Le mode Projet
+## Projet mode
 
-Pour un projet sans code : les tâches passent par les connecteurs de la session (messagerie,
-agenda, documents), et ni worktree, ni verrou, ni fusion n'ont de sens. Le panneau s'y ouvre par
-échéance, chaque tâche porte ses champs exigés, et une session lancée par ▶ travaille dans le
-dossier même.
+For a project without code: tasks go through the session's connectors (mail, calendar,
+documents), and neither worktree, nor lock, nor merge makes sense. The panel opens there by due
+date, each task carries its required fields, and a session launched by ▶ works in the folder
+itself.
 
-1. **Cadrer** : l'envoi « Mode », puis l'envoi « Projet » de `references/questions.md`. Le dossier
-   peut contenir des espaces ; `qui` est le nom de la personne qui pilote.
-2. **Montrer le plan**, une fois : le dossier, les fichiers posés (`CLAUDE.md`, la roadmap et ses
-   bilans, `.claude/roadmap.json`, `.gitignore` avec git), les axes, les champs exigés, les clés
-   déclarées, git ou non.
-3. **Écrire** : les réponses (modèle : `python3 scripts/onboarding.py exemple --mode projet`), puis
-   `init <dossier> --reponses <fichier>`, ou `--manquants` pour un dossier existant (il ne pose que
-   ce qui manque, `.claude/roadmap.json` compris, et garde une roadmap tenue à la racine). Une
-   roadmap déjà tenue (dans le dossier ou ailleurs) s'importe : « Importer une roadmap existante ».
-4. **Pas d'historique** : `historique` refuse un dossier en mode Projet.
-5. **Vérifier** : `verifier <dossier>` (« Conforme au format. »). Avec git, un premier commit des
-   seuls fichiers posés. Pas de `check.mjs` : le panneau contrôle chaque ligne écrite.
-6. **Modèles** (#129) : la réponse « Modèles » déclare les modèles de document ou de deck, un par
-   type de tâche, dans `design` ; ensuite, `onboarding.py design <dossier> [--poser …]` comme en
-   mode Code (étape 7.3).
-7. **Doctor** (skill `doctor`) : il lit le mode et passe la checklist du mode Projet.
-8. **Rendre compte** : ce qui a été posé, puis comment s'en servir : ouvrir le dossier dans
-   l'onglet Code, le panneau par échéance (le bouton passe au responsable et à l'arbre), ▶ sur une
-   tâche, « Maestro » pour ce qu'on peut lancer ; la tâche `id:1` liste les tâches en cours ; au
-   quotidien, la skill `tasks` ajoute, complète, redate, coche et abandonne une tâche (elle lit
-   `regles`, `ecriture` et `preuves`, posés par la réponse « Règles »).
+1. **Scope**: the « Mode » round, then the « Projet » round of `references/questions.md`. The
+   folder may contain spaces; `qui` is the name of the person who leads.
+2. **Show the plan**, once: the folder, the files set up (`CLAUDE.md`, the roadmap and its bilans,
+   `.claude/roadmap.json`, `.gitignore` with git), the axes, the required fields, the declared
+   keys, git or not.
+3. **Write**: the answers (template: `python3 scripts/onboarding.py exemple --mode projet`), then
+   `init <dossier> --reponses <fichier>`, or `--manquants` for an existing folder (it sets up only
+   what is missing, `.claude/roadmap.json` included, and keeps a roadmap kept at the root). A
+   roadmap already kept (in the folder or elsewhere) is imported: "Import an existing roadmap".
+4. **No history**: `historique` refuses a folder in Projet mode.
+5. **Check**: `verifier <dossier>` (« Conforme au format. »). With git, a first commit of only the
+   files set up. No `check.mjs`: the panel checks each line written.
+6. **Templates** (#129): the « Modèles » answer declares the document or deck templates, one per
+   task type, in `design`; then `onboarding.py design <dossier> [--poser …]` as in Code mode
+   (step 7.3).
+7. **Doctor** (`doctor` skill): it reads the mode and runs the Projet mode checklist.
+8. **Report**: what was set up, then how to use it: open the folder in the Code tab, the panel by
+   due date (the button switches to owner and to tree), ▶ on a task, « Maestro » for what can be
+   launched; task `id:1` lists the tasks in progress; day to day, the `tasks` skill adds, updates,
+   reschedules, marks done and drops a task (it reads `regles`, `ecriture` and `preuves`, set by
+   the « Règles » answer).
 
-## Importer une roadmap existante
+## Import an existing roadmap (« Importer une roadmap existante »)
 
-Quand la personne a déjà une roadmap : le `ROADMAP.md` du dossier, ou un autre fichier (checklist
-Markdown, CSV, export Notion en CSV ou en Markdown, tableau Markdown). On repart d'elle, sans perdre
-une ligne. L'original n'est jamais modifié sans sa copie de sauvegarde.
+When the person already has a roadmap: the folder's `ROADMAP.md`, or another file (Markdown
+checklist, CSV, Notion export as CSV or Markdown, Markdown table). We start from it, without
+losing a line. The original is never modified without its backup copy.
 
-1. **Poser la structure** d'abord (`init … --manquants`) : `.claude/roadmap.json` porte le mode, `me`
-   et les champs exigés que l'analyse lit.
-2. **Analyser** : `analyser <fichier> --dossier <dossier> [--fait <ROADMAP-fait.md>] > <scratchpad>/analyse.json`.
-3. **Montrer l'analyse** en un message, puis un formulaire à choix sur ce qui se décide : le format
-   reconnu, les comptes (ouvertes, closes, à numéroter), la correspondance (colonne → champ, statut →
-   section ou close, tags → axe ou clé déclarée, `prio` en mots → 1, 2, 3, sous-titres → `projet` et
-   `dept`), les valeurs non reconnues, les champs exigés qui manquent et les valeurs par défaut
-   proposées pour eux. Une ligne illisible se corrige dans la source avant d'aller plus loin. Un choix
-   qui se voit (la mise en page de la roadmap) passe par des maquettes.
-4. **Corriger** la `correspondance` du JSON selon les réponses (une valeur par défaut refusée s'en
-   retire : la ligne restera signalée par le panneau).
-5. **Importer** : `importer <dossier> --analyse <scratchpad>/analyse.json`. Le script refuse, sans rien
-   écrire, si une ligne se perd, si un libellé change ou si deux tâches partagent un `id:`. Sinon il
-   copie les originaux dans `sauvegarde-import-…/` à côté de la roadmap, écrit, et affiche le bilan
-   avant/après : le montrer tel quel.
-6. **Vérifier** : `verifier <dossier>` (« Conforme au format. »). La sauvegarde ne se committe pas ;
-   la proposer à la suppression une fois la roadmap relue.
-7. **Auditer** : l'import ne touche pas aux libellés. Une question à choix, « Je lance l'audit de la
-   roadmap ? » (Oui (recommandé) / Plus tard) ; oui → skill `audit` de ce plugin, qui propose de
-   découper les paquets en sous-tâches, les dépendances, les doublons et les trous, et n'écrit
-   qu'après validation.
+1. **Set up the structure** first (`init … --manquants`): `.claude/roadmap.json` carries the mode,
+   `me` and the required fields the analysis reads.
+2. **Analyse**: `analyser <fichier> --dossier <dossier> [--fait <ROADMAP-fait.md>] > <scratchpad>/analyse.json`.
+3. **Show the analysis** in one message, then a multiple-choice form on what needs deciding: the
+   format recognised, the counts (open, closed, to number), the mapping (column → field, status →
+   section or closed, tags → axis or declared key, `prio` in words → 1, 2, 3, subheadings →
+   `projet` and `dept`), the unrecognised values, the missing required fields and the default
+   values proposed for them. An unreadable line is fixed in the source before going further. A
+   visible choice (the roadmap's layout) goes through mockups.
+4. **Correct** the JSON's `correspondance` according to the answers (a refused default value is
+   removed from it: the line will stay flagged by the panel).
+5. **Import**: `importer <dossier> --analyse <scratchpad>/analyse.json`. The script refuses,
+   writing nothing, if a line gets lost, if a label changes or if two tasks share an `id:`.
+   Otherwise it copies the originals into `sauvegarde-import-…/` next to the roadmap, writes, and
+   prints the before/after summary: show it as is.
+6. **Check**: `verifier <dossier>` (« Conforme au format. »). The backup is not committed; offer
+   to delete it once the roadmap has been reread.
+7. **Audit**: the import does not touch labels. One multiple-choice question, « Je lance l'audit
+   de la roadmap ? » (« Oui (recommandé) » / « Plus tard »); yes → this plugin's `audit` skill,
+   which proposes splitting bundles into subtasks, dependencies, duplicates and gaps, and writes
+   only after approval.
 
-## Ce que la skill ne fait pas
+## What the skill does not do
 
-- Elle ne remplace pas les règles du projet : une fois posé, le projet vit par son `CLAUDE.md`.
-- Elle ne touche pas à une roadmap déclarée dans `~/.claude/roadmap-perso.json` (`roadmap-panel`).
-- Elle ne découpe aucun libellé : c'est l'audit (skill `audit`), proposé en fin d'import.
-- Elle ne tient pas la roadmap au quotidien (ajouter, cocher une tâche) : c'est la skill `tasks`.
-- Elle n'écrit aucun secret : `.env.example` ne porte que des noms de variables.
-- Elle n'installe aucun plugin : le doctor dit ce qui manque et la commande pour l'ajouter.
+- It does not replace the project's rules: once set up, the project lives by its `CLAUDE.md`.
+- It does not touch a roadmap declared in `~/.claude/roadmap-perso.json` (`roadmap-panel`).
+- It splits no label: that is the audit (`audit` skill), offered at the end of an import.
+- It does not keep the roadmap day to day (adding, marking a task done): that is the `tasks` skill.
+- It writes no secret: `.env.example` carries only variable names.
+- It installs no plugin: the doctor says what is missing and the command to add it.

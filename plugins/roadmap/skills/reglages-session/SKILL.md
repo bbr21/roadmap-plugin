@@ -1,43 +1,47 @@
 ---
 name: reglages-session
-description: "Lit et change les réglages de session que le plugin roadmap injecte au démarrage de chaque session : questions par le formulaire AskUserQuestion, mode ADHD (une ligne d'étape en tête de chaque message, réponses courtes), réponses en français, et mode autonome (éteint par défaut, dans les deux modes : Claude suit sa recommandation sauf question d'architecture, fusionne et publie seul). Les allume ou les éteint pour le projet de la session, chacun les siens, dans ~/.claude/reglages-session.json, et répare ce fichier s'il est illisible. Ouvre aussi le volet Réglages (/reglages). Déclenche sur « mes réglages de session », « coupe le mode ADHD », « arrête les questions en formulaire », « réponds en anglais », « mets Maestro en autonome », « coupe l'autonomie », « quels réglages sont allumés », « mes réglages sont illisibles ». Pas pour les options du panneau (me, autoOpen, theme, launchBypass…), changées dans ce volet ou le menu du plugin, ni pour les règles d'un projet, qui vivent dans son CLAUDE.md."
+description: "Reads and changes the session settings the roadmap plugin injects at each session start: questions through the AskUserQuestion form, ADHD mode (a step line at the top of every message, short answers), answers in French, and autonomous mode (off by default, in both modes: Claude follows its own recommendation except on architecture questions, merges and publishes on its own). Turns them on or off for the session's project, each project its own, in ~/.claude/reglages-session.json, and repairs that file when unreadable. Also opens the Réglages pane (/reglages). Triggers on « mes réglages de session », « coupe le mode ADHD », « arrête les questions en formulaire », « réponds en anglais », « mets Maestro en autonome », « coupe l'autonomie », « quels réglages sont allumés », « mes réglages sont illisibles ». Not for the panel options (me, autoOpen, theme, launchBypass…), changed in that pane or the plugin menu, nor for a project's rules, which live in its CLAUDE.md."
 ---
 
-# Réglages de session
+# Session settings
 
-Le plugin `roadmap` lit `~/.claude/reglages-session.json` et en donne le texte au modèle au
-démarrage de chaque session, après `/clear` et après une compaction. Sur un compte Team ou
-Enterprise, où son démarrage est sauté (#116), le texte part avec le premier message, et avec le
-message qui suit une compaction, que le plugin voit au contexte qui fond (#119). Un réglage changé
-en cours de session (le volet, cette skill, une autre session du projet) revient au message suivant
-de chaque session ouverte du projet : le bloc redonné remplace le précédent (#119). Une ligne de
-rappel du mode ADHD accompagne chaque message. Quatre réglages : les trois premiers sont allumés quand le
-fichier n'existe pas, `autonome` est éteint.
+The person speaks French: talk to them in French, and keep the setting names and the pane's
+labels in French, as the plugin shows them. Only this skill is in English.
 
-| Clé | Ce qu'elle demande |
+The `roadmap` plugin reads `~/.claude/reglages-session.json` and gives its text to the model at
+the start of every session, after `/clear` and after a compaction. On a Team or Enterprise
+account, where its start hook is skipped (#116), the text goes with the first message, and with
+the message that follows a compaction, which the plugin detects from the shrinking context (#119).
+A setting changed during a session (the pane, this skill, another session of the project) comes
+back at the next message of every open session of the project: the block given again replaces the
+previous one (#119). A reminder line for ADHD mode comes with every message. Four settings: the
+first three are on when the file does not exist, `autonome` is off.
+
+| Key | What it asks for |
 |---|---|
-| `questions` | Toute question à l'utilisateur par l'outil AskUserQuestion, jamais en texte libre : deux à quatre options qui s'excluent, chacune avec son compromis, la recommandation en premier marquée « (recommandé) », quatre questions au plus par envoi. Sauf quand la demande vient de l'utilisateur (une question, « je ne comprends pas », « explique-moi ») : l'explication s'écrit en texte, le tour s'arrête sans formulaire, et la question ne revient qu'après sa réponse. Jamais de question pour un geste qu'un outil fait : un volet de l'app fermé ou masqué (navigateur, fichier, diff, terminal) s'ouvre par la session elle-même (`preview_start`, `mcp__ccd_view__show_pane`). Éteint, le menu de Maestro (« Je lance lesquelles ? ») se pose aussi en texte (#119). |
-| `adhd` | Chaque message commence par une ligne en gras : emoji d'état, étape sur le total, nom (en cours `⏳ **2/4 Écrire le plan**` ; finie `✅ **2/4 Écrire le plan**` ; détour `⚠️ **3/4 Coder et tester** ↳ test rouge` ; fin `✅ **4/4 Publier la version**`) ; les étapes sont celles de la liste d'étapes native, même ordre et même nom, un verbe et son objet, jamais renommées ; pas de ligne pour une réponse courte hors tâche (#107) ; puis une phrase de constat et, s'il en reste une, la seule action ou décision qui revient à l'utilisateur (jamais un geste qu'un outil fait) ; réponses très courtes, listes et gras, pas de pavé. Un tour de travail finit par le bloc de fin de tour (#85), trois lignes sans emoji depuis #123 : `**État**`, `**À toi**`, `**Session**` ; au dernier tour d'une session (à archiver), une fiche en tableau les remplace : Mission, Livré, État, À toi, Session (#123) ; son État dit, lu dans ROADMAP-fait, « fini : #N close le AAAA-MM-JJ » (« par Maestro » pour un enfant), et une ligne #N encore ouverte empêche de proposer l'archivage (#124). Une ligne de rappel l'accompagne à chaque message de l'utilisateur, et la fin de tour renvoie Claude une fois quand le bloc manque. Éteint, Maestro ne demande plus que des réponses courtes (#119). Chez Maestro (#133), le repère est stable, `⏳ **Maestro · 2 en cours · 1 t'attend**`, jamais l'étape d'une tâche ; et un tour réveillé par une de ses sessions n'écrit rien à l'utilisateur, ni ligne, ni bloc, ni boîte, sauf un besoin de lui, en une ligne, que le mode ADHD soit allumé ou non. |
-| `francais` | Réponses en français, récaps et boîte de fin compris. |
-| `autonome` | En mode Code comme en mode Projet, éteint par défaut (#77, #105). Claude suit sa recommandation au lieu de poser la question et dit en une ligne ce qu'il a choisi. Il ne pose plus que les questions d'architecture : un choix qui s'écrirait dans `docs/decisions.md` (contrat entre composants, nouvelle dépendance ou service, vision ou non-objectif touché). Le réglage est l'autorisation durable de fusionner et de publier (release d'un plugin, déploiement, push de `main`) : aucune session ne demande « je fusionne ? » ni « je publie ? », elle le fait puis le dit en une ligne ; une skill de publication qui demande de valider le fond le tient pour validé par la tâche. Maestro fusionne seul la branche prête d'une de ses sessions (tests verts, à jour de `main`, diff relu par lui), une à la fois, tests rejoués après chaque fusion, et donne seul la main sur une ressource unique, publication comprise. Éteint, la fusion et la publication attendent le clic de l'utilisateur. Lancer une session et archiver gardent son clic ; un message envoyé en son nom ou un paiement se demandent toujours. |
+| `questions` | Every question to the user through the AskUserQuestion tool, never in free text: two to four mutually exclusive options, each with its trade-off, the recommendation first, marked « (recommandé) », four questions at most per send. Except when the request comes from the user (a question, « je ne comprends pas », « explique-moi »): the explanation is written as text, the turn stops without a form, and the question comes back only after their answer. Never a question for a gesture a tool does: an app pane that is closed or hidden (browser, file, diff, terminal) is opened by the session itself (`preview_start`, `mcp__ccd_view__show_pane`). When off, Maestro's menu (« Je lance lesquelles ? ») is also asked in text (#119). |
+| `adhd` | Every message starts with a bold line: status emoji, step over the total, name (in progress `⏳ **2/4 Écrire le plan**`; done `✅ **2/4 Écrire le plan**`; detour `⚠️ **3/4 Coder et tester** ↳ test rouge`; end `✅ **4/4 Publier la version**`); the steps are those of the native step list, same order and same name, a verb and its object, never renamed; no line for a short answer outside a task (#107); then one sentence stating where things stand and, if one remains, the only action or decision that is up to the user (never a gesture a tool does); very short answers, lists and bold, no wall of text. A work turn ends with the end-of-turn block (#85), three lines without emoji since #123: `**État**`, `**À toi**`, `**Session**`; on the last turn of a session (to be archived), a card in a table replaces them: Mission, Livré, État, À toi, Session (#123); its État says, as read in ROADMAP-fait, « fini : #N close le AAAA-MM-JJ » (« par Maestro » for a child), and a #N line still open prevents offering to archive (#124). A reminder line comes with every message of the user, and the end of turn sends Claude back once when the block is missing. When off, Maestro only asks for short answers (#119). For Maestro (#133), the marker is stable, `⏳ **Maestro · 2 en cours · 1 t'attend**`, never the step of a task; and a turn woken up by one of its sessions writes nothing to the user, no line, no block, no box, except a need for them, in one line, whether ADHD mode is on or not. |
+| `francais` | Answers in French, recaps and end box included. |
+| `autonome` | In Code mode as in Projet mode, off by default (#77, #105). Claude follows its own recommendation instead of asking the question and says in one line what it chose. It only asks architecture questions: a choice that would be written in `docs/decisions.md` (a contract between components, a new dependency or service, the vision or a non-goal touched). The setting is the standing permission to merge and publish (a plugin release, a deployment, a push of `main`): no session asks « je fusionne ? » or « je publie ? », it does it and then says so in one line; a publishing skill that asks to validate the substance treats it as validated by the task. Maestro merges on its own the ready branch of one of its sessions (tests green, up to date with `main`, diff reviewed by it), one at a time, tests rerun after each merge, and hands over a unique resource on its own, publishing included. When off, merging and publishing wait for the user's click. Launching a session and archiving still need their click; a message sent on their behalf or a payment is always asked for. |
 
-Le plugin dit aussi, dans toute session, la règle des **gestes hors du code** (#82) : un geste
-qu'une tâche demande hors du dépôt (tâche planifiée, réglage d'un service, formulaire) se fait par
-la session, d'abord par un connecteur MCP ou une API, sinon dans le volet navigateur, jamais par un
-texte à coller. Ce n'est pas un réglage : elle ne s'éteint pas. Seule sa confirmation suit
-`autonome`, en mode Code comme en mode Projet : allumé, aucune ; éteint, un oui avant d'écrire.
+The plugin also states, in every session, the rule of **gestures outside the code** (#82): a
+gesture a task requires outside the repo (scheduled task, setting of a service, form) is done by
+the session, first through an MCP connector or an API, otherwise in the browser pane, never as a
+text to paste. It is not a setting: it cannot be turned off. Only its confirmation follows
+`autonome`, in Code mode as in Projet mode: on, none; off, a yes before writing.
 
-## Le volet Réglages
+## The Réglages pane
 
-`/reglages`, le bouton « Réglages » du panneau Roadmap, et cette skill quand elle est lancée
-ouvrent le volet du plugin : la section « Claude et toi » porte les réglages de session du projet
-où l'on est (sa portée le nomme : « ce projet (Roadmap) · au prochain message »), On et Off côte à
-côte ; puis les options du plugin, en trois sections (Sessions lancées, Roadmap, Panneau). Le ⓘ
-d'une ligne ouvre son explication sous elle (#118). L'utilisateur y change un réglage d'un clic ;
-le volet suit aussi le fichier quand cette skill l'écrit. Après un changement fait ici, dis-lui que le volet le montre. Tapée seule,
-`/roadmap:reglages-session` ouvre le volet, d'une ligne, sans dérouler la skill.
+`/reglages`, the « Réglages » button of the Roadmap panel, and this skill when it is launched open
+the plugin's pane: the « Claude et toi » section holds the session settings of the current
+project (its scope names it: « ce projet (Roadmap) · au prochain message »), On and Off side by
+side; then the plugin's options, in three sections (« Sessions lancées », « Roadmap »,
+« Panneau »). A line's ⓘ opens its explanation below it (#118). The user changes a setting there
+with one click; the pane also follows the file when this skill writes it. After a change made
+here, tell them the pane shows it. Typed alone, `/roadmap:reglages-session` opens the pane, in one
+line, without running through the skill.
 
-## Le fichier
+## The file
 
 ```json
 {
@@ -49,35 +53,37 @@ le volet suit aussi le fichier quand cette skill l'écrit. Après un changement 
 }
 ```
 
-- Chaque projet a ses réglages (#102, 2026-10-29) : son bloc sous `projets`, de clé le dossier
-  principal du dépôt en `~/` (un worktree compte pour son projet : prends le premier `worktree` de
-  `git worktree list --porcelain`). Un bloc ne porte que les réglages changés dans ce projet.
-- Un réglage absent du bloc prend la clé du haut du fichier, sinon son défaut : `true`, sauf
-  `autonome`, qui vaut `false`. Une valeur qui n'est pas `true` ou `false` est ignorée.
-- Hors dépôt git, le projet est le dossier de la session. Le dossier personnel ou `/` n'est pas
-  un projet : seules les clés du haut comptent, et elles valent aussi pour les projets sans bloc.
-- Deux blocs du même dossier (`~/…` et absolu) : le dernier l'emporte ; n'en crée pas un second.
-- Fichier illisible (JSON cassé) : les valeurs par défaut s'appliquent (`autonome` éteint) et la
-  session le dit.
+- Each project has its own settings (#102, 2026-10-29): its block under `projets`, keyed by the
+  repo's main checkout written with `~/` (a worktree counts for its project: take the first
+  `worktree` of `git worktree list --porcelain`). A block only holds the settings changed in that
+  project.
+- A setting missing from the block takes the key at the top of the file, otherwise its default:
+  `true`, except `autonome`, which is `false`. A value that is not `true` or `false` is ignored.
+- Outside a git repo, the project is the session's folder. The home folder or `/` is not a
+  project: only the top keys count, and they also apply to projects without a block.
+- Two blocks for the same folder (`~/…` and absolute): the last one wins; do not create a second.
+- Unreadable file (broken JSON): the defaults apply (`autonome` off) and the session says so.
 
-## Lire
+## Read
 
-Lis le fichier (`cat ~/.claude/reglages-session.json`) ; absent, tout est allumé sauf `autonome`.
-Montre l'état du projet de la session en quatre lignes, une par réglage, son nom en tête.
+Read the file (`cat ~/.claude/reglages-session.json`); if it is missing, everything is on except
+`autonome`. Show the state of the session's project in four lines, one per setting, its name
+first.
 
-## Changer
+## Change
 
-1. Ce qu'il faut changer est clair (« coupe le mode ADHD ») : fais-le sans demander. Sinon,
-   pose la question par AskUserQuestion, selon le réglage `questions` ci-dessus : une question à
-   choix multiples « Quels réglages garder allumés ? ». Le changement vaut pour le projet de
-   la session ; une demande pour un autre projet : son bloc ; « partout » : la clé du haut et la même clé dans chaque bloc qui la porte.
-2. Écris le fichier en JSON valide, dans le bloc du projet, en gardant ce qui n'est pas touché.
-3. Relis-le : `python3 -c "import json,os;print(json.load(open(os.path.expanduser('~/.claude/reglages-session.json'))))"`.
-4. Dis que le changement vaut dès le message suivant, dans chaque session ouverte du projet (le
-   plugin y redonne le bloc), et dans les sessions ouvertes ensuite. Applique-le tout de suite dans
-   la conversation en cours.
+1. What to change is clear (« coupe le mode ADHD »): do it without asking. Otherwise, ask through
+   AskUserQuestion, following the `questions` setting above: a multiple-choice question
+   « Quels réglages garder allumés ? ». The change applies to the session's project; a request
+   for another project: its block; « partout »: the top key and the same key in every block that
+   holds it.
+2. Write the file as valid JSON, in the project's block, keeping what is not touched.
+3. Read it back: `python3 -c "import json,os;print(json.load(open(os.path.expanduser('~/.claude/reglages-session.json'))))"`.
+4. Say that the change applies from the next message, in every open session of the project (the
+   plugin gives the block again there), and in sessions opened afterwards. Apply it right away in
+   the current conversation.
 
-## Réparer
+## Repair
 
-Le démarrage a dit « illisible » : montre la ligne fautive, réécris le fichier valide avec les
-valeurs qu'il portait, relis-le.
+The start said « illisible »: show the faulty line, rewrite the file as valid JSON with the values
+it held, read it back.

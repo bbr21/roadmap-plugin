@@ -1,93 +1,95 @@
 ---
 name: doctor
-description: "Checklist d'un projet branché sur le système roadmap, en lecture seule. Mode Code : outils (git, node, python3, gh connecté), dépôt sur main et poussé sur GitHub, roadmap trouvée et conforme, node scripts/check.mjs, plugin roadmap actif, Superpowers et chaque skill de méthode que citent les sessions lancées, sa mise à jour, swiftui-pro sur un projet iOS. Mode Projet (sans code) : python3, roadmap, réglages de .claude/roadmap.json, champs exigés des tâches ouvertes, plugin roadmap, et Superpowers en À voir s'il manque : il y est facultatif. Une ligne OK, KO ou À voir par point, avec la commande qui corrige. Lancé en fin d'onboarding. Déclenche sur « doctor », « lance le doctor sur ce projet », « tout est branché ? », « checklist du projet », « le projet est prêt pour Maestro ? », « Superpowers est bien installé ? », « pourquoi Maestro ne voit rien ». Pas pour un dossier Cowork (son propre doctor), ni pour corriger : le doctor dit quoi faire, ni pour le contenu des tâches (skill audit)."
+description: "Read-only checklist of a project wired to the roadmap system. Code mode: tools (git, node, python3, gh logged in), repo on main and pushed to GitHub, roadmap found and valid, node scripts/check.mjs, roadmap plugin enabled, Superpowers and every method skill the launched sessions cite, its updates, swiftui-pro on an iOS project. Projet mode (no code): python3, roadmap, settings of .claude/roadmap.json, required fields of open tasks, roadmap plugin, and Superpowers as « À voir » if missing: it is optional there. One OK, KO or « À voir » line per item, with the command that fixes it. Run at the end of onboarding. Triggers on « doctor », « lance le doctor sur ce projet », « tout est branché ? », « checklist du projet », « le projet est prêt pour Maestro ? », « Superpowers est bien installé ? », « pourquoi Maestro ne voit rien ». Not for a Cowork folder (it has its own doctor), nor for fixing: the doctor says what to do, nor for the content of tasks (audit skill)."
 ---
 
-# Doctor d'un projet
+# Doctor of a project
 
-## Ce qu'il vérifie
+The person speaks French: talk to them in French, and report the checklist in French, with the
+script's labels (OK, KO, « À voir ») as they come. Only this skill is in English.
 
-Tout ce dont la roadmap, le panneau et Maestro ont besoin pour marcher dans un projet, et rien de
-plus. Il ne change rien : ni au projet, ni à la machine.
+## What it checks
 
-| Point | OK quand |
+Everything the roadmap, the panel and Maestro need to work in a project, and nothing more. It
+changes nothing: neither the project nor the machine.
+
+| Item | OK when |
 |---|---|
-| Outils | `git`, `node`, `python3` et `gh` sont là, et `gh` est connecté à un compte |
-| Dépôt git | le dossier principal est sur `main` |
-| GitHub | `origin` pointe sur GitHub, et `main` n'a rien de plus ni de moins qu'`origin/main` (d'après le dernier fetch) |
-| Roadmap | le panneau la trouve (`.claude/roadmap.json`, sinon `ROADMAP.md` à la racine), dans le dépôt donc sur GitHub |
-| Structure | le format de l'onboarding est complet (CLAUDE.md, roadmap, hook de démarrage, scripts) |
-| Contrôle du projet | `node scripts/check.mjs` du projet passe |
-| Champs exigés | chaque tâche lancée (`qui:` ou `branche:`) porte `ouvert`, `due`, `qui` et `après`, ou les champs de `requis` de `.claude/roadmap.json` (`[]` : pas de ligne) ; sinon À voir, avec le compte |
-| Plugin roadmap | installé et allumé, dans la version que l'app charge |
-| Superpowers | installé et allumé |
-| Skills de méthode | chaque skill que citent les sessions lancées existe dans la version installée : une skill renommée par Superpowers se voit ici |
-| Mise à jour de Superpowers | installé par l'app : suivie par l'app, avec la date de la dernière ; installé par le terminal : automatique, sinon la date de la dernière et comment l'allumer |
-| Skill swiftui-pro | seulement dans un projet Swift : installée |
-| Hooks du plugin | pas de `cc-plugin-sec-default`, ou le plugin posé par l'admin en `appendPlugins` ; sur un compte Team ou Enterprise, ou des réglages gérés, À voir (le plugin passe par ses secours) |
-| Nom de l'utilisateur | `me` de `~/.claude/roadmap-perso.json` porte un nom (sinon À voir : Claude dit « l'utilisateur ») |
-| Design system | `design` de `.claude/roadmap.json` déclare celui sur lequel s'appuie toute maquette (#129), chaque chemin local présent, ou `"aucun"` ; pas déclaré : À voir, avec ce qui est déjà là (un `design/`, un modèle de deck) ou la proposition d'en poser un, et la commande `onboarding.py design` qui le déclare |
+| Tools | `git`, `node`, `python3` and `gh` are there, and `gh` is logged in to an account |
+| Git repo | the main checkout is on `main` |
+| GitHub | `origin` points to GitHub, and `main` has nothing more and nothing less than `origin/main` (as of the last fetch) |
+| Roadmap | the panel finds it (`.claude/roadmap.json`, otherwise `ROADMAP.md` at the root), in the repo and therefore on GitHub |
+| Structure | the onboarding layout is complete (CLAUDE.md, roadmap, start hook, scripts) |
+| Project check | the project's `node scripts/check.mjs` passes |
+| Required fields | every launched task (`qui:` or `branche:`) carries `ouvert`, `due`, `qui` and `après`, or the fields of `requis` in `.claude/roadmap.json` (`[]`: no line); otherwise « À voir », with the count |
+| Roadmap plugin | installed and enabled, in the version the app loads |
+| Superpowers | installed and enabled |
+| Method skills | every skill the launched sessions cite exists in the installed version: a skill renamed by Superpowers shows up here |
+| Superpowers updates | installed by the app: tracked by the app, with the date of the last one; installed from the terminal: automatic, otherwise the date of the last one and how to turn it on |
+| swiftui-pro skill | only in a Swift project: installed |
+| Plugin hooks | no `cc-plugin-sec-default`, or the plugin set by the admin in `appendPlugins`; on a Team or Enterprise account, or with managed settings, « À voir » (the plugin goes through its fallbacks) |
+| User name | `me` in `~/.claude/roadmap-perso.json` holds a name (otherwise « À voir »: Claude says « l'utilisateur ») |
+| Design system | `design` in `.claude/roadmap.json` declares the one every mockup relies on (#129), each local path present, or `"aucun"`; not declared: « À voir », with what is already there (a `design/`, a deck template) or the proposal to set one up, and the `onboarding.py design` command that declares it |
 
-### En mode Projet
+### In Projet mode
 
-Quand `.claude/roadmap.json` dit `"mode": "projet"` (#76), la checklist change : ni dépôt git, ni
-GitHub, ni `check.mjs`, ni `swiftui-pro`.
+When `.claude/roadmap.json` says `"mode": "projet"` (#76), the checklist changes: no git repo, no
+GitHub, no `check.mjs`, no `swiftui-pro`.
 
-| Point | OK quand |
+| Item | OK when |
 |---|---|
-| Outils | `python3` ; `git` seulement si le dossier est un dépôt |
-| Roadmap | le panneau la trouve |
-| Structure | `CLAUDE.md` de règles Projet, la roadmap et `ROADMAP-fait.md`, des `id:` sur chaque ligne |
-| Réglages | `vue`, `cles`, `requis`, `cles_visibles` et `ranger_par` de `.claude/roadmap.json` compris par le panneau ; sinon À voir |
-| Champs exigés | chaque tâche ouverte porte les champs de `requis` ; sinon À voir, avec le compte (une ligne écrite hors de Claude Code n'est signalée qu'ici) |
-| Plugin roadmap | comme en mode Code |
-| Superpowers, sa mise à jour | facultatif (#94) : absent ou éteint, À voir avec la commande, jamais KO |
-| Hooks du plugin | comme en mode Code |
-| Nom de l'utilisateur | comme en mode Code |
-| Design system | comme en mode Code : ses modèles de document ou de deck, un par type de tâche |
-| Skills de méthode | celles que le brief Projet propose sans les exiger : `brainstorming`, `writing-plans` ; une qui manque est À voir |
+| Tools | `python3`; `git` only if the folder is a repo |
+| Roadmap | the panel finds it |
+| Structure | a `CLAUDE.md` with Projet rules, the roadmap and `ROADMAP-fait.md`, `id:` on every line |
+| Settings | `vue`, `cles`, `requis`, `cles_visibles` and `ranger_par` in `.claude/roadmap.json` understood by the panel; otherwise « À voir » |
+| Required fields | every open task carries the fields of `requis`; otherwise « À voir », with the count (a line written outside Claude Code is flagged only here) |
+| Roadmap plugin | as in Code mode |
+| Superpowers, its updates | optional (#94): missing or disabled, « À voir » with the command, never KO |
+| Plugin hooks | as in Code mode |
+| User name | as in Code mode |
+| Design system | as in Code mode: its document or deck templates, one per task type |
+| Method skills | those the Projet brief suggests without requiring them: `brainstorming`, `writing-plans`; a missing one is « À voir » |
 
-La liste de ce qui est exigé est dans `references/requis.json` (`projet` pour le mode Projet). Les skills de méthode y suivent
-celles que le plugin cite dans le brief des sessions (`hooks/parse.ts` du plugin) : un test du
-plugin refuse la publication si les deux listes divergent.
+The list of what is required is in `references/requis.json` (`projet` for Projet mode). The method
+skills there follow those the plugin cites in the sessions' brief (`hooks/parse.ts` of the
+plugin): a plugin test refuses the release if the two lists diverge.
 
-## Le lancer
+## Running it
 
-Depuis le dossier de cette skill (le chemin donné au chargement de la skill) :
+From this skill's folder (the path given when the skill loads):
 
 ```bash
 python3 "<dossier de la skill>/scripts/doctor.py" <dossier du projet>
 ```
 
-Sans dossier, il prend le dossier courant ; d'un worktree, il remonte au dossier principal.
-`--json` rend le même diagnostic en JSON. Code de retour 1 s'il y a un KO. Le script est dans
-`scripts/doctor.py` ; il se lance sur la machine de l'utilisateur (terminal, Claude Code, ou l'outil
-« Control your Mac »), pas dans un conteneur.
+Without a folder, it takes the current folder; from a worktree, it goes up to the main checkout.
+`--json` gives the same diagnosis in JSON. Exit code 1 if there is a KO. The script is in
+`scripts/doctor.py`; it runs on the user's machine (terminal, Claude Code, or the
+« Control your Mac » tool), not in a container.
 
-Les plugins qu'il juge sont ceux que l'app charge : d'abord son magasin
-(`~/Library/Application Support/Claude/local-agent-mode-sessions/<compte>/<org>/rpm/`, celui du
-compte de la session, sinon le plus récent), puis `claude plugin list --json` pour les plugins
-installés par le terminal. La copie `synced` du terminal n'est lue que sans magasin : elle n'est
-rafraîchie qu'au démarrage de `claude` dans un terminal et peut retarder sur l'app.
+The plugins it judges are those the app loads: first its store
+(`~/Library/Application Support/Claude/local-agent-mode-sessions/<compte>/<org>/rpm/`, the one of
+the session's account, otherwise the most recent), then `claude plugin list --json` for the
+plugins installed from the terminal. The terminal's `synced` copy is read only when there is no
+store: it is refreshed only when `claude` starts in a terminal and can lag behind the app.
 
-## Rendre compte
+## Reporting
 
-Un tableau court : une ligne par point, l'emoji et le détail ; sous chaque KO ou À voir, la
-commande qui corrige, telle que le script la donne. Puis le verdict en une phrase.
+A short table: one line per item, the emoji and the detail; under each KO or « À voir », the
+command that fixes it, as the script gives it. Then the verdict in one sentence.
 
-- Un KO qui tient au projet (roadmap absente, structure incomplète, `check.mjs` en erreur) :
-  propose la skill `onboarding`, qui complète sans rien écraser.
-- Un KO qui tient à la machine (Superpowers absent, `gh` non connecté) : la commande, que l'utilisateur
-  lance lui-même ; une installation de plugin ne se fait pas sans lui.
-- Une skill de méthode introuvable : Superpowers l'a peut-être renommée. Après
-  `claude plugin update`, si elle reste introuvable, la liste du plugin roadmap est à mettre à
-  jour, dans `hooks/parse.ts` et dans `references/requis.json`, par la mise à jour du dépôt du
-  plugin.
-- Hooks du plugin À voir : le compte (Team ou Enterprise) ou la machine (réglages gérés) a
-  `cc-plugin-sec-default`, qui saute les hooks classiques du plugin. Rien n'est cassé : le plugin
-  passe par ses secours, et seuls les réglages complets après une compaction manquent. Pour tout
-  retrouver, la correction est un geste de l'admin de l'organisation, pas de l'utilisateur ; ne
-  propose jamais de poser `appendPlugins` dans les réglages de l'utilisateur.
-- Tout est vert : dis-le en une phrase, et que « Maestro » marche dans ce projet.
-- Le doctor ne lit pas le contenu des tâches. Des tâches en paquets, en double ou sans échéance :
-  propose la skill `audit`, qui découpe, fusionne et complète après validation.
+- A KO due to the project (roadmap missing, incomplete structure, `check.mjs` failing): offer the
+  `onboarding` skill, which completes without overwriting anything.
+- A KO due to the machine (Superpowers missing, `gh` not logged in): the command, which the user
+  runs themselves; a plugin is never installed without them.
+- A method skill not found: Superpowers may have renamed it. After `claude plugin update`, if it
+  is still not found, the roadmap plugin's list needs updating, in `hooks/parse.ts` and in
+  `references/requis.json`, through an update of the plugin's repo.
+- Plugin hooks « À voir »: the account (Team or Enterprise) or the machine (managed settings) has
+  `cc-plugin-sec-default`, which skips the plugin's classic hooks. Nothing is broken: the plugin
+  goes through its fallbacks, and only the full settings after a compaction are missing. To get
+  everything back, the fix is a gesture of the organisation's admin, not of the user; never
+  suggest setting `appendPlugins` in the user's settings.
+- Everything green: say so in one sentence, and that « Maestro » works in this project.
+- The doctor does not read the content of tasks. Tasks bundled together, duplicated or without a
+  deadline: offer the `audit` skill, which splits, merges and completes after validation.

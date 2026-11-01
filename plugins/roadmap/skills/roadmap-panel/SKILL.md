@@ -1,41 +1,46 @@
 ---
 name: roadmap-panel
-description: "Branche un projet sur le panneau Roadmap de Claude Code (plugin roadmap) et le dépanne : où le panneau cherche la roadmap, le fichier .claude/roadmap.json à écrire, ses réglages. Déclenche sur « ajoute ce projet au panneau roadmap », « le panneau roadmap ne s'ouvre pas », « /roadmap dit qu'il n'y a pas de roadmap », « change les sujets du panneau », « le panneau doit lire une autre roadmap ». Pas pour tenir la roadmap elle-même (ajouter, compléter ou cocher une tâche), qui relève de la skill tasks, ni pour une roadmap tenue dans Cowork même, ni pour poser la structure et la roadmap d'un projet, de code ou en mode Projet (onboarding), ni pour vérifier qu'un projet est branché (doctor)."
+description: "Wires a project to the Roadmap panel of Claude Code (roadmap plugin) and troubleshoots it: where the panel looks for the roadmap, the .claude/roadmap.json file to write, its settings. Triggers on « ajoute ce projet au panneau roadmap », « le panneau roadmap ne s'ouvre pas », « /roadmap dit qu'il n'y a pas de roadmap », « change les sujets du panneau », « le panneau doit lire une autre roadmap ». Not for keeping the roadmap itself (adding, updating or marking a task done), which belongs to the tasks skill, nor for a roadmap kept in Cowork itself, nor for setting up the structure and roadmap of a project, code or Projet mode (onboarding), nor for checking that a project is wired (doctor)."
 ---
 
-# Brancher un projet sur le panneau Roadmap
+# Wire a project to the Roadmap panel
 
-## Lancée seule : ouvrir le panneau
+The person speaks French: talk to them in French, and write `.claude/roadmap.json` values (names,
+subjects) in French when they are theirs. Only this skill is in English.
 
-L'utilisateur tape `/roadmap:roadmap-panel` sans rien d'autre quand le panneau ne s'est pas ouvert
-seul : il faut le montrer, pas un diagnostic. Le mod répond lui-même, comme `/roadmap`, sans passer par le
-modèle. Si ce texte arrive quand même, une ligne en tête dit que le panneau vient de s'ouvrir :
-réponds d'une seule ligne, « Panneau de la roadmap <nom> ouvert. », sans rien vérifier. Le reste de
-la skill ne sert qu'à une demande de plus (brancher, changer les sujets, dépanner).
+## Run on its own: open the panel
 
-Le plugin `roadmap` est un mod Claude Code : un panneau à côté du chat, dans l'onglet Code de
-l'app de bureau, qui montre la roadmap du projet de la session. Il ne fait que lire ; la roadmap
-se tient par la skill `tasks` de ce plugin (ajouter, compléter, redater, cocher, abandonner),
-qui suit les règles que le projet déclare (`regles`, `ecriture`, `preuves`).
+The user types `/roadmap:roadmap-panel` with nothing else when the panel did not open by itself:
+it must be shown, not diagnosed. The mod answers by itself, like `/roadmap`, without going through
+the model. If this text arrives anyway, a line at the top says the panel has just opened: answer
+in a single line, « Panneau de la roadmap <nom> ouvert. », without checking anything. The rest of
+the skill only serves a further request (wiring, changing subjects, troubleshooting).
 
-## Où le panneau cherche la roadmap
+The `roadmap` plugin is a Claude Code mod: a panel next to the chat, in the Code tab of the desktop
+app, that shows the roadmap of the session's project. It only reads; the roadmap is kept through
+this plugin's `tasks` skill (add, update, reschedule, mark done, drop), which follows the rules the
+project declares (`regles`, `ecriture`, `preuves`).
 
-Pour le projet de la session, un worktree remontant toujours à son dossier principal :
+## Where the panel looks for the roadmap
 
-1. `.claude/roadmap.json` dans le projet ;
-2. les sources déclarées dans le fichier local de l'utilisateur, `~/.claude/roadmap-perso.json`
-   (une roadmap que montrent plusieurs dossiers, reconnus au début de leur chemin) ;
-3. un `ROADMAP.md` à la racine du projet.
+For the session's project, a worktree always going back up to its main folder:
 
-Rien des trois : pas de panneau, et `/roadmap` le dit.
+1. `.claude/roadmap.json` in the project;
+2. the sources declared in the user's local file, `~/.claude/roadmap-perso.json`
+   (a roadmap shown by several folders, recognised by the start of their path);
+3. a `ROADMAP.md` at the root of the project.
 
-## Brancher un projet
+None of the three: no panel, and `/roadmap` says so.
 
-La roadmap est à la racine du projet, sous le nom `ROADMAP.md` : rien à faire, le panneau la
-trouve. Un projet de code la reçoit avec toute sa structure par la skill `onboarding`, dans un dossier `roadmap/` que désigne `.claude/roadmap.json`. Ses tâches closes vont dans `ROADMAP-fait.md`, à côté. La skill `doctor` dit si tout est branché.
+## Wire a project
 
-Elle est ailleurs, ou il faut un nom, des sujets ou d'autres noms pour « À moi » : écrire
-`.claude/roadmap.json` à la racine du projet, tous les champs facultatifs.
+The roadmap is at the root of the project, named `ROADMAP.md`: nothing to do, the panel finds it.
+A code project gets it with its whole structure through the `onboarding` skill, in a `roadmap/`
+folder that `.claude/roadmap.json` points to. Its closed tasks go into `ROADMAP-fait.md`, next to
+it. The `doctor` skill says whether everything is wired.
+
+It is elsewhere, or it needs a name, subjects or other names for « À moi »: write
+`.claude/roadmap.json` at the root of the project, all fields optional.
 
 ```json
 {
@@ -46,13 +51,14 @@ Elle est ailleurs, ou il faut un nom, des sujets ou d'autres noms pour « À moi
 }
 ```
 
-- `dir` : le dossier qui contient `ROADMAP.md`, relatif au projet ou absolu (un dossier Cowork,
-  par exemple). Absent : la racine du projet.
-- `subjects` : la liste fermée des sujets qui rangent les tâches. Absent : le modèle choisit des
-  sujets courts lui-même.
-- `me` : les valeurs d'« attend » (et de `resp:`) qui veulent dire l'utilisateur. Absent : le réglage `me` du plugin, sinon `me` du fichier local.
+- `dir`: the folder that contains `ROADMAP.md`, relative to the project or absolute (a Cowork
+  folder, for example). Absent: the root of the project.
+- `subjects`: the closed list of subjects that sort the tasks. Absent: the model picks short
+  subjects itself.
+- `me`: the values of « attend » (and of `resp:`) that mean the user. Absent: the plugin's `me`
+  setting, otherwise `me` from the local file.
 
-Le mode et ses réglages (#76), facultatifs aussi :
+The mode and its settings (#76), optional too:
 
 ```json
 {
@@ -63,72 +69,73 @@ Le mode et ses réglages (#76), facultatifs aussi :
 }
 ```
 
-- `mode` : `code` (défaut, un projet de code) ou `projet` (gestion de projet sans code : sessions
-  lancées sans worktree, brief sans méthode de code, pas de rappel « commit sans test », Maestro
-  qui ne propose que les tâches de la personne).
-- `requis` : les champs exigés sur chaque tâche ouverte ; le panneau signale une ligne écrite sans
-  eux, sans la refuser. Défaut : aucun en mode Code, les six ci-dessus en mode Projet.
-- `cles` : des clés en plus de la grammaire (les tags d'un Notion), chacune avec ses valeurs
-  admises (liste vide : libre) ; le détail d'une tâche les montre, la recherche les lit.
-- `vue` : le rangement des tâches : `echeance`, `responsable`, `arbre`, `sujet` ou `jour`.
-  Défaut : `echeance` en mode Projet, par sujet en mode Code. Le bouton du panneau passe aux autres.
-  En mode Projet, le panneau s'ouvre sur « Ma journée » ; `vue` vaut dès « Tout afficher ».
-- `relance` : en mode Projet, le nombre de jours sans nouvelle d'un tiers attendu au-delà duquel
-  sa tâche est « À relancer » (entier ; défaut 14). Le compte part de `relance:` sur la ligne,
-  sinon de `ouvert:`.
+- `mode`: `code` (default, a code project) or `projet` (project management without code: sessions
+  launched without a worktree, brief without a coding method, no « commit sans test » reminder,
+  Maestro that only proposes the person's tasks).
+- `requis`: the fields required on every open task; the panel flags a line written without them,
+  without refusing it. Default: none in Code mode, the six above in Projet mode.
+- `cles`: keys on top of the grammar (the tags of a Notion), each with its allowed values (empty
+  list: free); a task's detail shows them, the search reads them.
+- `vue`: how tasks are sorted: `echeance`, `responsable`, `arbre`, `sujet` or `jour`.
+  Default: `echeance` in Projet mode, by subject in Code mode. The panel's button switches to the
+  others. In Projet mode, the panel opens on « Ma journée »; `vue` applies from « Tout afficher ».
+- `relance`: in Projet mode, the number of days without news from an awaited third party beyond
+  which its task is « À relancer » (integer; default 14). The count starts from `relance:` on the
+  line, otherwise from `ouvert:`.
 
-Le rangement avant l'archivage (#101), facultatif : un projet qui range sa mémoire en fin de
-sujet (AAFES, skill `aafes-memory`) le dit, et la fin de tour ne propose l'archivage de la session,
-sa tâche cochée, qu'une fois la ligne de rangement écrite dans une réponse de la session.
+Tidying up before archiving (#101), optional: a project that tidies its memory away at the end of
+a subject (AAFES, skill `aafes-memory`) says so, and the end of turn only proposes archiving the
+session, its task marked done, once the tidy-up line is written in one of the session's answers.
 
 ```json
 { "rangement": { "skill": "aafes-memory", "ligne": "Rangé dans" } }
 ```
 
-- `skill` : la skill qui range la mémoire, nommée dans le rappel. Sans elle, pas de réglage.
-- `ligne` : le début de la ligne qui dit le rangement, en début de ligne d'une réponse ou de la
-  boîte de fin (sans casse, accents, gras ni puce). Défaut : « Rangé dans ». « Rien à ranger »
-  vaut toujours, pour un sujet sans rien de durable.
+- `skill`: the skill that tidies the memory away, named in the reminder. Without it, no setting.
+- `ligne`: the start of the line that reports the tidy-up, at the start of a line of an answer or
+  of the end box (ignoring case, accents, bold and bullet). Default: « Rangé dans ».
+  « Rien à ranger » always counts, for a subject with nothing durable.
+- Line absent: the end of turn reminds the tidy-up rule instead of proposing archiving, then
+  proposes it as soon as the line is written. Without this setting, nothing changes.
 
-Le design system (#129), facultatif : celui sur lequel s'appuie toute maquette du projet, en mode
-Code (composants, variables) comme en mode Projet (modèles de document ou de deck, un par type de
-tâche). Les réglages de session le citent dans la règle « Maquettes avant un choix visuel » ; sans
-lui, la règle propose d'en poser un, sauf pour une maquette de démo.
+The design system (#129), optional: the one every mockup of the project relies on, in Code mode
+(components, variables) as in Projet mode (document or deck templates, one per task type). The
+session settings cite it in the rule « Maquettes avant un choix visuel »; without it, the rule
+proposes setting one up, except for a demo mockup.
 
 ```json
 { "design": [{ "chemin": "design/", "pour": "le panneau et ses composants" }] }
 ```
 
-- `chemin` : relatif au projet, absolu, ou une adresse `https://` ; une simple chaîne vaut son
-  chemin. `pour` : ce que l'entrée couvre. Une entrée sans chemin est ignorée.
-- `"design": "aucun"` : le projet s'en passe, la règle ne propose plus d'en poser un.
-- `onboarding.py design <dossier> --poser '<JSON>'` (skill `onboarding`) l'écrit ; le doctor le vérifie.
-- Ligne absente : la fin de tour rappelle la règle de rangement au lieu de proposer l'archivage,
-  puis le propose dès que la ligne est écrite. Sans ce réglage, rien ne change.
+- `chemin`: relative to the project, absolute, or an `https://` address; a plain string counts as
+  its path. `pour`: what the entry covers. An entry without a path is ignored.
+- `"design": "aucun"`: the project does without one, the rule no longer proposes setting one up.
+- `onboarding.py design <dossier> --poser '<JSON>'` (skill `onboarding`) writes it; the doctor
+  checks it.
 
-Un réglage inconnu ou d'un mauvais type est ignoré, et la skill `doctor` le signale.
+An unknown setting or one of the wrong type is ignored, and the `doctor` skill flags it.
 
-Une ligne se lit si elle suit la grammaire des roadmaps du plugin, l'axe en premier :
+A line is read if it follows the grammar of the plugin's roadmaps, the axis first:
 
 ```
 - [ ] Libellé à l'infinitif `[axe | attend:Qui | ouvert:AAAA-MM-JJ | due:AAAA-MM-JJ | src:… | fiche:…]`
 ```
 
-En mode Projet s'y ajoutent `resp:Nom` (la personne qui porte la tâche, jamais `-`), `parent:N` ou
-`parent:#N` (la tâche mère, `-` sans) et `après:N,M` (les prérequises, `-` sans).
+In Projet mode, add `resp:Nom` (the person who carries the task, never `-`), `parent:N` or
+`parent:#N` (the parent task, `-` without one) and `après:N,M` (the prerequisites, `-` without).
 
-Montrer à l'utilisateur le fichier avant de l'écrire dans un dépôt qui n'est pas le sien.
+Show the user the file before writing it into a repository that is not theirs.
 
-## Réglages du plugin
+## Plugin settings
 
-Dans le menu de configuration de Claude Code : `me` (vide par défaut : les noms du fichier local), `autoOpen`
-(ouvrir le panneau au démarrage, défaut oui), `titleModel` (modèle des titres courts, défaut
-sonnet). Un changement recharge le panneau.
+In the Claude Code configuration menu: `me` (empty by default: the names from the local file),
+`autoOpen` (open the panel at startup, default yes), `titleModel` (model for the short titles,
+default sonnet). A change reloads the panel.
 
-## Le fichier local de l'utilisateur
+## The user's local file
 
-`~/.claude/roadmap-perso.json`, hors de tout dépôt, propre à la machine (#79) ; l'onboarding y
-écrit `me` s'il manque. Les deux clés sont facultatives.
+`~/.claude/roadmap-perso.json`, outside any repository, specific to the machine (#79); onboarding
+writes `me` into it if missing. Both keys are optional.
 
 ```json
 {
@@ -140,40 +147,39 @@ sonnet). Un changement recharge le panneau.
 }
 ```
 
-- `me` : les noms de l'utilisateur ; le premier est celui que Claude emploie avec lui, les autres
-  comptent aussi « À moi ». Le réglage `me` du plugin, rempli, l'emporte. Sans nom, Claude dit
+- `me`: the user's names; the first is the one Claude uses with them, the others also count for
+  « À moi ». The plugin's `me` setting, when filled, wins. Without a name, Claude says
   « l'utilisateur ».
-- `sources` : une roadmap que montrent plusieurs dossiers sans `.claude/roadmap.json` (les
-  worktrees d'un dépôt, par exemple) : `match`, les débuts de chemin reconnus (le plus long
-  l'emporte) ; `dir`, le dossier de `ROADMAP.md` ; `name`, `subjects` et `me` comme dans
-  `.claude/roadmap.json`.
+- `sources`: a roadmap shown by several folders without `.claude/roadmap.json` (the worktrees of a
+  repository, for example): `match`, the recognised path starts (the longest wins); `dir`, the
+  folder of `ROADMAP.md`; `name`, `subjects` and `me` as in `.claude/roadmap.json`.
 
-## Dépanner
+## Troubleshoot
 
-- Le panneau ne s'ouvre pas : la session n'est dans aucun des trois cas ci-dessus, ou `autoOpen`
-  est coupé ; `/roadmap` l'ouvre et dit ce qui manque.
-- Le panneau est vide (« Nothing to show yet ») : l'app a refusé un dessin ; la raison est sur une
-  ligne grise de la conversation, ou dans le journal de débogage (`claude --debug`).
-- Les tâches sont toutes « À classer » : les titres courts sont en cours d'écriture ; ils arrivent
-  au fil des réponses du modèle et ne se redemandent que pour une tâche nouvelle ou modifiée.
-- Une tâche ne passe pas « en cours » alors qu'une session écrit sa ligne : la session est un Maestro,
-  nommée « Maestro … » (ou d'un ancien titre « Lot … », gardé en alias), marquée Maestro, ou qui a
-  lancé au moins deux sessions encore ouvertes (elle coordonne des features, jamais rattachée à une
-  tâche ; skill `maestro`), ou elle porte déjà un autre
-  numéro « #N · … ». Le panneau ne renomme aucune session : le titre « #N · titre court » se pose
-  au lancement (▶ de la liste, « Lancer » ou « Vérifier » du détail).
-- « Ouvrir la fiche » ouvre l'app par défaut du Mac : le fichier n'est pas dans un dossier de la
-  session, que le panneau Fichiers de Claude Code n'affiche pas.
-- « Annuler la tâche » refuse et le dit sous la confirmation, sans rien écrire : `cowork.py` a
-  refusé (libellé contenu dans celui d'une autre tâche ouverte, bilan invalide), le dépôt n'est pas
-  sur main, ROADMAP y a des modifications non committées, `git pull` a échoué, ou la ligne a bougé
-  depuis l'affichage. « Annulée, mais pas committée » ou « pas poussée » : la ligne est déjà
-  descendue, il reste le commit ou le push à faire à la main.
-- Les clics sont lents : chaque session note ses 40 derniers dessins sous la clé `perf` du store du
-  plugin (`~/.claude/plugins/store/roadmap_inline-*.json`, 120 relevés en tout, `mod` dit quelle
-  session) : `clickMs` (du clic à la fin du dessin),
-  `ms` et `loadMs` (durée du dessin, dont la lecture des données), `cached` (données en mémoire),
-  `elements`, `svg`, `clients`, `kb`. Au-delà d'environ 250 Svg ou 200 Ko par dessin, l'app gèle.
-  Deux autres sortes de relevés : `kind: 'open'` (clic sur `#N` ou « Ouvrir la session » : `openMs`
-  du clic au retour de l'outil, `via` = `focus` | `link` | `note`) et `kind: 'refresh'` (relecture
-  des sessions : `listMs`, `probeMs`, `calls` = appels d'outil, `fast` = relecture rapprochée).
+- The panel does not open: the session is in none of the three cases above, or `autoOpen` is off;
+  `/roadmap` opens it and says what is missing.
+- The panel is empty (« Nothing to show yet »): the app refused a render; the reason is on a grey
+  line of the conversation, or in the debug log (`claude --debug`).
+- The tasks are all « À classer »: the short titles are being written; they arrive as the model
+  answers and are only requested again for a new or modified task.
+- A task does not switch to « en cours » although a session writes its line: the session is a
+  Maestro, named « Maestro … » (or with an old title « Lot … », kept as an alias), marked Maestro,
+  or that has launched at least two sessions still open (it coordinates features, never attached
+  to a task; skill `maestro`), or it already carries another number « #N · … ». The panel renames
+  no session: the title « #N · titre court » is set at launch (▶ of the list, « Lancer » or
+  « Vérifier » of the detail).
+- « Ouvrir la fiche » opens the Mac's default app: the file is not in a folder of the session,
+  which the Files panel of Claude Code does not display.
+- « Annuler la tâche » refuses and says so under the confirmation, without writing anything:
+  `cowork.py` refused (label contained in that of another open task, invalid bilan), the
+  repository is not on main, ROADMAP has uncommitted changes there, `git pull` failed, or the line
+  moved since it was displayed. « Annulée, mais pas committée » or « pas poussée »: the line has
+  already gone down, the commit or the push remains to be done by hand.
+- Clicks are slow: each session records its last 40 renders under the `perf` key of the plugin's
+  store (`~/.claude/plugins/store/roadmap_inline-*.json`, 120 records in all, `mod` says which
+  session): `clickMs` (from the click to the end of the render), `ms` and `loadMs` (render
+  duration, including reading the data), `cached` (data in memory), `elements`, `svg`, `clients`,
+  `kb`. Beyond about 250 Svg or 200 KB per render, the app freezes. Two other kinds of records:
+  `kind: 'open'` (click on `#N` or « Ouvrir la session »: `openMs` from the click to the tool's
+  return, `via` = `focus` | `link` | `note`) and `kind: 'refresh'` (re-reading the sessions:
+  `listMs`, `probeMs`, `calls` = tool calls, `fast` = close-together re-read).

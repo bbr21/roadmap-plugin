@@ -1,176 +1,178 @@
-# Les questions de l'onboarding
+# The onboarding questions
 
-Posées par l'outil de questions à choix (AskUserQuestion), selon ces règles :
+Convention: text in « » is shown to the person as is, in French (question headers, option labels, questions); everything else is guidance for Claude, including what each option's description says, which Claude writes in French in the form. A « (recommandé) » inside a label is always shown; a condition in English after the label, like (recommended when …), means Claude adds « (recommandé) » to that label when the condition holds.
 
-- quatre questions au plus par envoi, chacune bâtie sur les réponses de l'envoi précédent ;
-- deux à quatre options qui s'excluent vraiment ; choix multiple seulement quand elles se cumulent ;
-- chaque option dit ce qu'elle fait et ce qu'elle laisse de côté, le compromis dans sa description ;
-- la recommandation en premier, marquée « (recommandé) », sa raison dans la description ;
-- jamais de simple « tu valides ? » ni d'option « Autre » : l'outil laisse toujours écrire une
-  réponse libre, et une réponse écrite fait foi telle qu'elle est écrite ;
-- quand la personne pose une question ou dit qu'elle ne comprend pas : l'explication s'écrit en
-  texte dans le message, le tour s'arrête sans formulaire, la question revient après sa réponse.
+Asked with the multiple-choice question tool (AskUserQuestion), under these rules:
 
-Ne pas poser une question dont la réponse est déjà dans la conversation ou dans le dépôt.
+- four questions at most per round, each built on the answers of the previous round;
+- two to four options that truly exclude each other; multiple choice only when they add up;
+- each option says what it does and what it leaves aside, the trade-off in its description;
+- the recommendation first, marked « (recommandé) », its reason in the description;
+- never a mere « tu valides ? » nor an « Autre » option: the tool always lets the person write a
+  free answer, and a written answer counts exactly as written;
+- when the person asks a question or says they do not understand: the explanation is written as
+  text in the message, the turn stops without a form, the question comes back after their answer.
 
-## Envoi 0 : le mode
+Do not ask a question whose answer is already in the conversation or in the repository.
 
-Une seule question, sauf si la demande le dit (« projet de code », « gestion de projet », « sans
-code ») ou si le dossier le montre (du code, des commits : Code ; des notes, des documents, une
-roadmap d'un dossier Cowork : Projet).
+## Round 0: the mode
+
+A single question, unless the request says it (« projet de code », « gestion de projet », « sans
+code ») or the folder shows it (code, commits: Code; notes, documents, the roadmap of a Cowork
+folder: Projet).
 
 1. **Mode** (« Mode »)
-   - Code (recommandé pour un dépôt de code) : la structure ci-dessous, worktree par session,
-     fusion, `check.mjs`, GitHub
-   - Projet (recommandé pour de la gestion de projet sans code) : un dossier simple, git en option,
-     des tâches complètes (échéance, responsable, parent, dépendances) ; puis l'envoi « Projet »
-     à la fin de ce fichier, et rien d'autre
+   - « Code » (recommended for a code repository): the structure below, one worktree per session,
+     merge, `check.mjs`, GitHub
+   - « Projet » (recommended for project management without code): a plain folder, git optional,
+     complete tasks (due date, owner, parent, dependencies); then the « Projet » round at the end
+     of this file, and nothing else
 
-## Ce qui se prend dans la demande, sans question
+## What is taken from the request, without a question
 
-- **nom** : le titre du projet (« Clipping »). À défaut, une question en texte libre.
-- **dossier** : `~/Projects/<Nom>`, sans espace. Un autre emplacement seulement s'il est dit.
-- **resume** : une phrase qui dit ce que fait le projet, tirée de la demande ; montrée dans le plan.
-- **qui** : le premier nom de `me` dans `~/.claude/roadmap-perso.json` (celui que le panneau Roadmap
-  compte « À moi ») ; sans lui, une question en texte libre : « Quel nom veux-tu dans tes roadmaps ? ».
-- **cap** : une phrase si la demande la donne ; sinon le modèle laisse « à écrire », et la tâche
-  `id:1` (écrire la vision) le rappelle.
+- **nom**: the project's title (« Clipping »). Failing that, a free-text question.
+- **dossier**: `~/Projects/<Nom>`, without spaces. Another location only if it is said.
+- **resume**: one sentence that says what the project does, taken from the request; shown in the
+  plan.
+- **qui**: the first name in `me` in `~/.claude/roadmap-perso.json` (the one the Roadmap panel
+  counts as « À moi »); without it, a free-text question: « Quel nom veux-tu dans tes roadmaps ? ».
+- **cap**: one sentence if the request gives it; otherwise the template leaves « à écrire », and
+  task `id:1` (write the vision) reminds of it.
 
-## Envoi 1 : la forme du projet
+## Round 1: the shape of the project
 
-1. **Type** (« Type ») : sert à proposer axes, tests et verrous à l'envoi 2.
-   - App iOS et son service (recommandé quand la demande parle d'iPhone)
-   - Service ou API web
-   - App web
-   - Outil ou script local
-2. **Déploiement** (« Déploiement »)
-   - Chaque push sur `main` déploie (Coolify) : `deploiement.mode = push`, `outil = Coolify`
-   - Par une commande : `mode = commande`, la commande demandée ensuite en texte libre
-   - Aucun pour l'instant : `mode = aucun` (recommandé pour un outil local)
+1. **Type** (« Type »): used to propose axes, tests and locks in round 2.
+   - « App iOS et son service » (recommended when the request talks about iPhone)
+   - « Service ou API web »
+   - « App web »
+   - « Outil ou script local »
+2. **Deployment** (« Déploiement »)
+   - « Chaque push sur `main` déploie (Coolify) »: `deploiement.mode = push`, `outil = Coolify`
+   - « Par une commande »: `mode = commande`, the command asked next in free text
+   - « Aucun pour l'instant »: `mode = aucun` (recommended for a local tool)
 3. **GitHub** (« GitHub »)
-   - Dépôt privé `<compte>/<nom-en-minuscules>` (recommandé) : créé après accord, à la fin ; `<compte>`
-     est celui que `gh api user --jq .login` renvoie
-   - Local seulement : `github = ""` ; pas de push dans les règles
-4. **Langue** (« Langue »)
-   - Docs en français, code et commits en anglais (recommandé) : `langue_code = anglais`
-   - Tout en français, sauf les identifiants : `langue_code = français`
-5. **Design system** (« Design ») : celui sur lequel s'appuiera toute maquette (#129). Pour un
-   projet existant, lancer d'abord `onboarding.py design <dossier>` : ses `candidats` (un
-   `design/`, le dossier d'un `.design-sync/config.json`, un modèle de document) font les options.
-   - Déclarer celui qui est là (recommandé quand un candidat existe) : `design = [{"chemin": "design/", "pour": "…"}]`
-   - En poser un (recommandé pour une app sans design system) : une tâche `id:2` « Poser le design
-     system » s'ajoute à la roadmap après l'init, et `design` se déclare quand il existe
-   - S'en passer (un outil sans interface) : `design = "aucun"`, les maquettes ne le proposent plus
+   - « Dépôt privé `<compte>/<nom-en-minuscules>` (recommandé) »: created after approval, at the
+     end; `<compte>` is what `gh api user --jq .login` returns
+   - « Local seulement »: `github = ""`; no push in the rules
+4. **Language** (« Langue »)
+   - « Docs en français, code et commits en anglais (recommandé) »: `langue_code = anglais`
+   - « Tout en français, sauf les identifiants »: `langue_code = français`
+5. **Design system** (« Design »): the one every mockup will rely on (#129). For an existing
+   project, first run `onboarding.py design <dossier>`: its `candidats` (a `design/`, the folder of
+   a `.design-sync/config.json`, a document template) make the options.
+   - « Déclarer celui qui est là » (recommended when a candidate exists): `design = [{"chemin": "design/", "pour": "…"}]`
+   - « En poser un » (recommended for an app without a design system): a task `id:2` « Poser le
+     design system » is added to the roadmap after the init, and `design` is declared once it exists
+   - « S'en passer » (a tool without an interface): `design = "aucun"`, mockups no longer propose it
 
-## Envoi 2 : ce qui dépend du type
+## Round 2: what depends on the type
 
-Proposer les valeurs du type en premier (recommandé), les autres en options.
+Propose the type's values first (recommended), the others as options.
 
-| Type | Axes | Tests | Verrous | Secrets en plus | Fin de chantier en plus |
+| Type | Axes | Tests | Locks | Extra secrets | Extra end-of-chantier steps |
 |---|---|---|---|---|---|
-| App iOS et son service | `produit`, `app-ios`, `service`, `dossier` | `ios/test.sh`, `cd service && npm test` | `deploiement`, `base`, `donnees-test`, `iphone-bbr` | `Secrets.swift`, `*.mobileprovision` | Build TestFlight à chaque fois que l'app change |
-| Service ou API web | `produit`, `service`, `donnees`, `dossier` | `npm test` | `deploiement`, `base`, `donnees-test` | aucun | aucune |
-| App web | `produit`, `app`, `service`, `dossier` | `npm test` | `deploiement`, `base` | aucun | aucune |
-| Outil ou script local | `outil`, `dossier` | `npm test` ou `python3 -m pytest` | aucun | aucun | aucune |
+| « App iOS et son service » | `produit`, `app-ios`, `service`, `dossier` | `ios/test.sh`, `cd service && npm test` | `deploiement`, `base`, `donnees-test`, `iphone-bbr` | `Secrets.swift`, `*.mobileprovision` | « Build TestFlight à chaque fois que l'app change » |
+| « Service ou API web » | `produit`, `service`, `donnees`, `dossier` | `npm test` | `deploiement`, `base`, `donnees-test` | none | none |
+| « App web » | `produit`, `app`, `service`, `dossier` | `npm test` | `deploiement`, `base` | none | none |
+| « Outil ou script local » | `outil`, `dossier` | `npm test` or `python3 -m pytest` | none | none | none |
 
-1. **Axes** (« Axes », choix multiple) : les axes du type cochés d'avance en options ; `dossier`
-   s'ajoute toujours (le script l'impose), pour ce qui touche le dépôt lui-même.
-2. **Verrous** (« Verrous », choix multiple) : les ressources uniques à réserver avant d'y toucher.
-   Ce que couvre chacun :
-   - `deploiement` : réglages du déploiement (app, variables, domaine, sauvegardes) ;
-   - `base` : une migration du schéma de la base ;
-   - `donnees-test` : tout envoi de données de test sur l'environnement partagé, et leur nettoyage ;
-   - `iphone-bbr` : ce qui s'installe sur l'iPhone de BBR (raccourcis, app de développement) ;
-   - `secret` : un changement de secret partagé.
-3. **Tests** (« Tests ») : la commande du type (recommandé), une autre, ou « pas encore » (la
-   ligne de commande s'ajoutera avec le premier test).
-4. **Migrations** (« Migrations »), seulement si `base` est retenu : le dossier des migrations
-   (`service/migrations`), que le hook de démarrage surveille.
+1. **Axes** (« Axes », multiple choice): the type's axes pre-checked as options; `dossier` is
+   always added (the script enforces it), for what touches the repository itself.
+2. **Locks** (« Verrous », multiple choice): the unique resources to reserve before touching them.
+   What each one covers:
+   - `deploiement`: « réglages du déploiement (app, variables, domaine, sauvegardes) »;
+   - `base`: « une migration du schéma de la base »;
+   - `donnees-test`: « tout envoi de données de test sur l'environnement partagé, et leur nettoyage »;
+   - `iphone-bbr`: « ce qui s'installe sur l'iPhone de BBR (raccourcis, app de développement) »;
+   - `secret`: « un changement de secret partagé ».
+3. **Tests** (« Tests »): the type's command (recommended), another one, or « pas encore » (the
+   command line will be added with the first test).
+4. **Migrations** (« Migrations »), only if `base` is chosen: the migrations folder
+   (`service/migrations`), which the start hook watches.
 
-## Envoi 3 : l'historique (projet existant seulement)
+## Round 3: the history (existing project only)
 
-Posé quand le dépôt a déjà des commits et que sa roadmap naît avec l'onboarding (aucune tâche
-close dans `ROADMAP-fait.md`). Une roadmap déjà tenue ne se reconstitue pas.
+Asked when the repository already has commits and its roadmap is born with the onboarding (no
+closed task in `ROADMAP-fait.md`). A roadmap already kept is not rebuilt.
 
-1. **Historique** (« Historique ») : « Reconstituer la roadmap depuis l'historique du dépôt ? »
-   - Oui, les 6 derniers mois (recommandé) : une tâche faite par PR fusionnée (ou, sans PR, par
-     fusion, puis par jour de commits), une tâche ouverte par PR ouverte, chacune numérotée et
-     avec son bilan ; c'est ce qui donne tout de suite de quoi lire au panneau et à Maestro
-   - Oui, tout l'historique : complet, mais un gros dépôt donne des centaines de lignes
-   - Non, partir de zéro : seule la tâche `id:1` (écrire la vision)
+1. **History** (« Historique »): « Reconstituer la roadmap depuis l'historique du dépôt ? »
+   - « Oui, les 6 derniers mois (recommandé) »: one done task per merged PR (or, without PRs, per
+     merge, then per day of commits), one open task per open PR, each numbered and with its
+     bilan; this is what immediately gives the panel and Maestro something to read
+   - « Oui, tout l'historique »: complete, but a big repository gives hundreds of lines
+   - « Non, partir de zéro »: only task `id:1` (write the vision)
 
-## Envoi « Projet » (mode Projet seulement)
+## « Projet » round (Projet mode only)
 
-À la place des envois 1 à 3. Le nom, le dossier (les espaces y sont permis), le résumé et le cap
-se prennent dans la demande comme plus haut ; `qui` est le nom de la personne qui pilote (le
-premier nom de `me` dans `~/.claude/roadmap-perso.json`, sinon demandé), celui que le panneau compte
-« À moi ».
+Instead of rounds 1 to 3. The name, the folder (spaces are allowed in it), the summary and the cap
+are taken from the request as above; `qui` is the name of the person who leads (the first name in
+`me` in `~/.claude/roadmap-perso.json`, otherwise asked), the one the panel counts as « À moi ».
 
-1. **Axes** (« Axes », choix multiple) : les grands domaines du projet (client, interne,
-   reporting…) ; `dossier` s'ajoute toujours.
-2. **Champs exigés** (« Champs ») : sur chaque tâche ouverte.
-   - Tous (recommandé) : `id`, `ouvert`, `due`, `resp`, `parent`, `après` ; une tâche naît
-     complète, le panneau signale une ligne écrite sans eux
-   - Sans hiérarchie : `id`, `ouvert`, `due`, `resp` ; plus léger, mais ni arbre ni dépendances
-     garantis
-3. **Clés** (« Clés ») : les tags du projet (ceux d'un Notion, d'un tableur) deviennent des clés
-   déclarées, chacune avec ses valeurs admises ; la liste se demande ensuite en texte libre.
-   - Aucune pour l'instant (recommandé quand on ne les connaît pas) : elles s'ajoutent plus tard
-     dans `.claude/roadmap.json`
-   - Déclarer des clés maintenant
+1. **Axes** (« Axes », multiple choice): the project's main areas (« client », « interne »,
+   « reporting »…); `dossier` is always added.
+2. **Required fields** (« Champs »): on every open task.
+   - « Tous (recommandé) »: `id`, `ouvert`, `due`, `resp`, `parent`, `après`; a task is born
+     complete, the panel flags a line written without them
+   - « Sans hiérarchie »: `id`, `ouvert`, `due`, `resp`; lighter, but neither tree nor dependencies
+     guaranteed
+3. **Keys** (« Clés »): the project's tags (those of a Notion, of a spreadsheet) become declared
+   keys, each with its allowed values; the list is asked next in free text.
+   - « Aucune pour l'instant » (recommended when they are not known): they are added later in
+     `.claude/roadmap.json`
+   - « Déclarer des clés maintenant »
 4. **Git** (« Git »)
-   - Sans git (recommandé pour un dossier local tenu par une personne) : rien à installer en plus
-     de python3
-   - Avec git : l'historique de la roadmap, et un dépôt GitHub possible ; le panneau committe
-     les clôtures sur `main`
-5. **Modèles** (« Modèles ») : le design system du mode Projet, ce sur quoi s'appuie toute
-   maquette d'un document, d'un tableau ou d'un deck (#129). `onboarding.py design <dossier>`
-   donne les modèles déjà là (`.potx`, `.dotx`, un deck rangé dans `modeles/` ou `templates/`).
-   - Déclarer ces modèles (recommandé quand il y en a) : `design = [{"chemin": "modeles/deck-qbr.pptx", "pour": "les decks de QBR"}]`,
-     une entrée par type de tâche
-   - En poser plus tard : rien de déclaré ; la première maquette proposera d'en poser
-   - S'en passer : `design = "aucun"`
-6. **Règles du projet** (« Règles ») : ce que le projet déclare pour que les skills du plugin
-   tiennent sa roadmap à sa façon (#158). Sautée si la demande n'en dit rien et que le dossier n'a
-   ni fichier de règles ni outil d'écriture.
-   - Les règles du plugin suffisent (recommandé pour un projet neuf) : rien de déclaré ; la skill
-     `tasks` écrit elle-même et cherche la preuve dans la conversation
-   - Déclarer les règles du projet : `regles` (le fichier de ses règles, qui l'emportent), `ecriture`
-     (`{"outil": "<script>", "consigne": "<comment l'appeler>"}` quand le projet écrit sa roadmap
-     par son propre outil) et `preuves` (les lieux où chercher qu'une tâche est faite, ou
-     `"#Preuves"`, une section du fichier de règles) ; les valeurs se demandent ensuite en texte libre
+   - « Sans git » (recommended for a local folder kept by one person): nothing to install beyond
+     python3
+   - « Avec git »: the roadmap's history, and a possible GitHub repository; the panel commits
+     closures on `main`
+5. **Templates** (« Modèles »): the design system of Projet mode, what every mockup of a document,
+   a table or a deck relies on (#129). `onboarding.py design <dossier>` gives the templates already
+   there (`.potx`, `.dotx`, a deck stored in `modeles/` or `templates/`).
+   - « Déclarer ces modèles » (recommended when there are some): `design = [{"chemin": "modeles/deck-qbr.pptx", "pour": "les decks de QBR"}]`,
+     one entry per task type
+   - « En poser plus tard »: nothing declared; the first mockup will offer to set some
+   - « S'en passer »: `design = "aucun"`
+6. **Project rules** (« Règles »): what the project declares so that the plugin's skills keep its
+   roadmap its own way (#158). Skipped if the request says nothing about it and the folder has
+   neither a rules file nor a writing tool.
+   - « Les règles du plugin suffisent » (recommended for a new project): nothing declared; the
+     `tasks` skill writes by itself and looks for the proof in the conversation
+   - « Déclarer les règles du projet »: `regles` (the file of its rules, which win), `ecriture`
+     (`{"outil": "<script>", "consigne": "<comment l'appeler>"}` when the project writes its
+     roadmap through its own tool) and `preuves` (the places to look for proof that a task is
+     done, or `"#Preuves"`, a section of the rules file); the values are asked next in free text
 
-## Les réponses, en JSON
+## The answers, as JSON
 
-Écrites dans le scratchpad de la session, puis passées à `init --reponses`. Le modèle complet :
-`python3 scripts/onboarding.py exemple` depuis le dossier de la skill.
+Written in the session's scratchpad, then passed to `init --reponses`. The full template:
+`python3 scripts/onboarding.py exemple` from the skill's folder.
 
-| Clé | Valeur |
+| Key | Value |
 |---|---|
-| `nom`, `dossier`, `resume`, `cap`, `qui` | textes ; `dossier` sans espace |
-| `axes` | liste de noms en minuscules |
-| `langue_code` | `anglais` ou `français` |
-| `tests` | liste de `{"commande": "npm test", "quoi": "tests unitaires"}` |
-| `deploiement` | `{"mode": "push", "outil": "Coolify", "verifier": "<commande>"}` ; `mode` vaut `push`, `commande` (avec `"commande"`) ou `aucun` |
-| `verrous` | liste de `{"nom": "base", "couvre": "…"}` |
-| `migrations` | dossier des migrations, ou `""` |
-| `env` | `true` si le projet a un `.env` (non versionné, relié dans chaque worktree) |
-| `secrets` | motifs de fichiers en plus de `.env`, `*.pem`, `*.key`, `*.p8`, `*.p12` |
-| `regles`, `ecriture`, `preuves` | ce que le projet déclare sur sa roadmap (#158) : le chemin de son fichier de règles ; `{"outil": "…", "consigne": "…"}` ; une liste de lieux (chemins, ou `source:requête` comme `gmail:in:sent`) ou `"#<titre>"`. Absents : rien de déclaré. Écrits dans `.claude/roadmap.json`, dans les deux modes ; leur présence sur le disque, c'est le doctor |
-| `design` | liste de `{"chemin": "design/", "pour": "…"}` (une chaîne vaut son chemin ; relatif au projet, absolu ou `https://`), ou `"aucun"` ; absent : rien de déclaré. Écrit dans `.claude/roadmap.json`, dans les deux modes |
-| `fin_en_plus` | étapes en plus de « Finir un chantier », une phrase chacune |
-| `github` | `<compte>/<nom>` ou `""` |
-| `ignorer` | dossiers dont `check.mjs` ne contrôle pas les liens : des modèles Markdown, comme ceux d'un plugin (`[]` par défaut) |
-| `gitignore` | lignes en plus dans `.gitignore`, pour ce que l'outillage du projet produit (`[]` par défaut) |
-| `roadmap` | `roadmap` (dossier `roadmap/`, par défaut) ; `--manquants` garde la racine d'un projet qui y tient déjà la sienne |
-| `mode` | `code` (par défaut) ou `projet` |
+| `nom`, `dossier`, `resume`, `cap`, `qui` | text; `dossier` without spaces |
+| `axes` | list of lowercase names |
+| `langue_code` | `anglais` or `français` |
+| `tests` | list of `{"commande": "npm test", "quoi": "tests unitaires"}` |
+| `deploiement` | `{"mode": "push", "outil": "Coolify", "verifier": "<commande>"}`; `mode` is `push`, `commande` (with `"commande"`) or `aucun` |
+| `verrous` | list of `{"nom": "base", "couvre": "…"}` |
+| `migrations` | migrations folder, or `""` |
+| `env` | `true` if the project has a `.env` (not versioned, linked in each worktree) |
+| `secrets` | file patterns in addition to `.env`, `*.pem`, `*.key`, `*.p8`, `*.p12` |
+| `regles`, `ecriture`, `preuves` | what the project declares about its roadmap (#158): the path of its rules file; `{"outil": "…", "consigne": "…"}`; a list of places (paths, or `source:requête` such as `gmail:in:sent`) or `"#<titre>"`. Absent: nothing declared. Written into `.claude/roadmap.json`, in both modes; whether they exist on disk is the doctor's job |
+| `design` | list of `{"chemin": "design/", "pour": "…"}` (a string stands for its path; relative to the project, absolute or `https://`), or `"aucun"`; absent: nothing declared. Written into `.claude/roadmap.json`, in both modes |
+| `fin_en_plus` | steps in addition to « Finir un chantier », one sentence each |
+| `github` | `<compte>/<nom>` or `""` |
+| `ignorer` | folders whose links `check.mjs` does not check: Markdown templates, like those of a plugin (`[]` by default) |
+| `gitignore` | extra lines in `.gitignore`, for what the project's tooling produces (`[]` by default) |
+| `roadmap` | `roadmap` (`roadmap/` folder, by default); `--manquants` keeps the root of a project that already keeps its own there |
+| `mode` | `code` (by default) or `projet` |
 
-En mode Projet (`python3 scripts/onboarding.py exemple --mode projet`) : `mode`, `nom`, `dossier`,
-`resume`, `cap`, `qui`, `axes`, `roadmap`, et :
+In Projet mode (`python3 scripts/onboarding.py exemple --mode projet`): `mode`, `nom`, `dossier`,
+`resume`, `cap`, `qui`, `axes`, `roadmap`, and:
 
-| Clé | Valeur |
+| Key | Value |
 |---|---|
-| `requis` | les clés exigées sur chaque tâche ouverte (défaut : `id`, `ouvert`, `due`, `resp`, `parent`, `après`) |
-| `cles` | `{"type": ["Réunion", "Email"], "client": []}` : clés déclarées et leurs valeurs admises (liste vide : libre) |
-| `git` | `true` pour un dépôt git (et `.gitignore`) ; `false` par défaut |
-| `github` | `<compte>/<nom>`, seulement avec `git` |
+| `requis` | the keys required on every open task (default: `id`, `ouvert`, `due`, `resp`, `parent`, `après`) |
+| `cles` | `{"type": ["Réunion", "Email"], "client": []}`: declared keys and their allowed values (empty list: free) |
+| `git` | `true` for a git repository (and `.gitignore`); `false` by default |
+| `github` | `<compte>/<nom>`, only with `git` |

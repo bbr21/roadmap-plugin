@@ -572,6 +572,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.106.0 (2026-10-31)** : skills : doctor, maestro, onboarding, reglages-session et roadmap-panel passent en anglais, comportement inchangé ; elles parlent et écrivent la roadmap en français ; contrôle de langue tools/test_langue.py (#166)
 - **0.105.0 (2026-10-31)** : panneau : éditer une tâche depuis sa fiche : le crayon ouvre ses champs en place (libellé, attente, prérequises, parent, axe, responsable, clés du projet, échéance), Enregistrer réécrit la ligne contrôlée par les règles du projet (#161)
 - **0.104.0 (2026-10-31)** : tasks : nouvelle skill qui tient la roadmap au quotidien (ajouter, compléter, redater, cocher sur preuve, abandonner, rapprocher par sujet) ; .claude/roadmap.json déclare regles, ecriture et preuves ; skills du plugin en anglais (#158)
 - **0.103.0 (2026-10-31)** : bande de Maestro : le contexte utilisé de Maestro dans l'en-tête (13 % · 132,5k / 1M, jauge orange à 70 %, rouge à 85 %), et celui de chaque session en jauge fine sous ses étapes (#157)
