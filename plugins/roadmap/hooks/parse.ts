@@ -2636,6 +2636,16 @@ export function applyPlan(steps: readonly ChildStep[], input: { items?: unknown;
   return out
 }
 
+/**
+ * La liste d'étapes après la boîte de fin acceptée (#145, #172) : l'app ne coche la sienne que si plus
+ * rien n'est à faire (sa dernière étape en cours) ; une boîte posée en cours de tâche la laisse telle
+ * quelle, et l'`advance` suivant repart de l'étape en cours (#168 : boîte à 4/7, puis « step 5 of 7 »).
+ */
+export function boxSteps(steps: readonly ChildStep[]): ChildStep[] {
+  if (steps.some(s => s.status === 'pending')) return steps.map(s => ({ ...s }))
+  return steps.map(s => ({ ...s, status: 'completed' as const }))
+}
+
 /** L'étape d'une liste, pour le parent : « étape 5/7 Coder », « 7/7 faites », rien sans liste. */
 export function stepLabel(steps: readonly ChildStep[]): string | undefined {
   if (steps.length === 0) return undefined

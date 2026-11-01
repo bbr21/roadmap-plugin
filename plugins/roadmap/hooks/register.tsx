@@ -319,6 +319,7 @@ import {
   childWakeText,
   type ChildWake,
   applyPlan,
+  boxSteps,
   childAlerts,
   stepsStamp,
   stepsView,
@@ -4031,7 +4032,7 @@ export const register: Register = (on, options) => {
     if (refusal !== undefined) return { deny: refusal }
     // Chez Maestro, la boîte sans question cocherait sa liste ouverte : refusée à chaque fois (#133).
     if (!fromAgent(e) && closingTurn.maestro && openListBox(ownSteps, ask)) return { deny: openListRefusal() }
-    if (!fromAgent(e)) ownSteps = ownSteps.map(st => ({ ...st, status: 'completed' as const }))
+    if (!fromAgent(e)) ownSteps = boxSteps(ownSteps)
     noteBox(e)
     if (!fromAgent(e)) closingTurn = { ...closingTurn, work: true, box: boxText(e) }
     // La question de Maestro attend la personne : un réveil ne la reposera pas (#133).
@@ -4050,10 +4051,10 @@ export const register: Register = (on, options) => {
       }))
     }
     const ran = await next(e)
-    // Acceptée, la boîte coche toute la liste de l'app sans passer par update_plan : la note aussi (#145),
-    // sinon la fiche et l'arbre gardent la dernière étape en cours. Refusée, l'app ne coche rien.
+    // Acceptée sur sa dernière étape, la boîte coche la liste de l'app sans passer par update_plan : la note
+    // aussi (#145). En cours de tâche, l'app garde sa liste, la note aussi (#172). Refusée, rien ne change.
     if (!fromAgent(e) && ran.deny === undefined && ran.isError !== true) {
-      await noteChild($, s => ({ ...s, steps: s.steps.map(st => ({ ...st, status: 'completed' as const })) }))
+      await noteChild($, s => ({ ...s, steps: boxSteps(s.steps) }))
     }
     return ran
   })
@@ -4796,16 +4797,18 @@ function maestroBandTree(
               <Box flexGrow={1} flexShrink={1} minWidth={0}>
                 {view?.current && !t.finished && <Text size="caption" color={palette.text3} wrap="truncate-end">{`· ${view.current}`}</Text>}
               </Box>
-              {Svg && (bar || ctxBar) && (
-                <Box flexDirection="column" gap={SPACE.tight}>
+              {/* Jauge, compte et état à largeur fixe, sur chaque ligne (#172) : les barres partent de la même
+                  colonne, quels que soient le titre, l'étape ou le compte (« 5/7 », « 7/7 faites »). */}
+              {Svg && (
+                <Box key={`band-gauge:${keyPart(t.id)}`} width={BAND_COLUMNS.gauge} flexShrink={0} flexDirection="column" gap={SPACE.tight}>
                   {bar && <Svg source={bar.source} alt={`étapes ${view?.count ?? ''}`} width={bar.width} height={bar.height} />}
                   {ctxBar && ctx && <Svg source={ctxBar.source} alt={`contexte ${ctx.text}`} width={ctxBar.width} height={ctxBar.height} />}
                 </Box>
               )}
-              <Box minWidth={4} alignItems="flex-end">
+              <Box key={`band-count:${keyPart(t.id)}`} width={BAND_COLUMNS.count} flexShrink={0} alignItems="flex-end">
                 {view && <Text size="caption" tabular color={palette.text3}>{view.count}</Text>}
               </Box>
-              <Box width={9} alignItems="flex-end">
+              <Box key={`band-state:${keyPart(t.id)}`} width={BAND_COLUMNS.state} flexShrink={0} alignItems="flex-end">
                 {Svg && t.state === 'live' && !t.finished ? (
                   <Svg source={spinnerIcon(palette.live, 14, words.states[i], false, now)} alt={words.states[i] ?? ''} width={SIZE.icon.sm} height={SIZE.icon.sm} isInteractive />
                 ) : (
@@ -4823,6 +4826,12 @@ function maestroBandTree(
 
 /** Les largeurs des jauges de la bande de Maestro, en px : celle d'une ligne (#147), celle du contexte de Maestro (#157). */
 const BAND_GAUGE = { row: 64, context: 120 }
+
+/**
+ * Les cases de la bande de Maestro, en cellules de l'app (~7,8 px, #172) : la jauge (64 px tiennent dans
+ * 9 cellules), le compte (« 7/7 faites », « 10/12 ») et l'état.
+ */
+const BAND_COLUMNS = { gauge: 9, count: 10, state: 9 }
 
 /**
  * L'en-tête du panneau, au-dessus de la roadmap : Maestro et ses voies ; chez une tâche dont on a demandé

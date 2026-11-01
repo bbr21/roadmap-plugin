@@ -602,6 +602,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.113.2 (2026-11-01)** : panneau : les étapes d'une session suivent la conversation après une boîte de fin en cours de tâche, et les barres du bloc Maestro partent toutes de la même colonne (#172)
 - **0.113.1 (2026-11-01)** : panneau : un lancement par ▶ part au nom de la personne, sans l'habillage « The roadmap plugin sent a message » (#170)
 - **0.113.0 (2026-11-01)** : skills : tout projet a son ROADMAP-REGLES.md à côté de ROADMAP.md, posé par l'onboarding, exigé par le doctor, lu par tasks, audit et Maestro (#167)
 - **0.112.1 (2026-11-01)** : panneau : le panneau ne remonte plus tout seul pendant qu'on fait défiler la liste (#154)
