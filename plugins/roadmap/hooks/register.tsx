@@ -251,7 +251,7 @@ import {
   withSelfRow,
   sessionScanNote,
   maestroTasksNote,
-  liveBlockIds,
+  liveBlockRows,
   openingFilter,
   otherTaskNote,
   problemsText,
@@ -6404,12 +6404,13 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   // Par défaut (#176) : les tâches en cours, sinon Ma journée, sinon toutes. Chez Maestro (#149) : Ma
   // journée, sinon les récentes.
   const maestroBrand = ownBrand?.brand.kind === 'maestro' ? ownBrand.brand : undefined
-  // Le bloc « En cours » de Maestro (#160) : ses sessions qui tournent ou t'attendent, en lignes ; la
-  // liste de la roadmap dessous ne les redit pas.
-  const blockIds = maestroBrand ? liveBlockIds(maestroBrand.tasks) : []
-  const blockOf = new Map((maestroBrand?.tasks ?? []).filter(bt => blockIds.includes(bt.id)).map(bt => [bt.id, bt]))
-  const inBlock = (t: Task) => t.id !== undefined && blockOf.has(t.id)
-  const blockTasks = blockIds.flatMap(id => openTasks.filter(t => t.id === id))
+  // Le bloc « En cours » de Maestro (#160) : ses sessions qui tournent ou t'attendent, puis les tâches
+  // qu'une autre session travaille (#187), en lignes ; la liste de la roadmap dessous ne les redit pas.
+  const blockRows = maestroBrand ? liveBlockRows(maestroBrand.tasks, openTasks, isLive) : []
+  const blockOf = new Map(blockRows.flatMap(r => (r.brand ? [[r.brand.id, r.brand] as const] : [])))
+  const blockKeys = new Set(blockRows.map(r => taskKey(r.task)))
+  const inBlock = (t: Task) => blockKeys.has(taskKey(t))
+  const blockTasks = blockRows.map(r => r.task)
   const blockSteps = new Map<string, ChildStatus>()
   await Promise.all(
     [...blockOf.values()].map(async bt => {
@@ -6425,8 +6426,9 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
       ? attendRaw
       : // Les tâches qu'une session travaille, sans les bloquées : une chaîne `après:` n'ouvre pas sur « En cours ».
         openingFilter({ today: todayAll.length, live: inAxis.filter(isLive).length, recent: recentAll.length, maestro: maestroBrand !== undefined })
-  // Le bloc « En cours » de Maestro (#149, #160) : dès qu'il a lancé une tâche, il remplace le filtre « En cours ».
-  const maestroLine = maestroBrand !== undefined && maestroBrand.tasks.length > 0
+  // Le bloc « En cours » de Maestro (#149, #160) remplace le filtre « En cours », même avant sa première
+  // tâche lancée (#187) : un Maestro neuf y voit ce qui tourne ailleurs, et rien quand rien ne tourne.
+  const maestroLine = maestroBrand !== undefined
   const mineCount = inAxis.filter(t => isMine(t, me)).length
   const thirdParties = countBy(inAxis.filter(t => !isMine(t, me)), t => (t.attend === undefined ? undefined : attendWho(t.attend)))
   const tierChosen = thirdParties.some(([who]) => who === attend)

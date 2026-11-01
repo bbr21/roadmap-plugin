@@ -5247,6 +5247,26 @@ export function liveBlockIds(tasks: readonly BrandTask[]): string[] {
   return tasks.filter(t => t.state !== 'done' && !t.closed && !t.finished).map(t => t.id)
 }
 
+/**
+ * Les lignes du bloc « En cours » de Maestro (#160, #187) : ses sessions qui tournent ou t'attendent
+ * (`liveBlockIds`), puis les tâches ouvertes qu'une autre session travaille (ligne prise, session
+ * vivante), chacune une fois. Un Maestro neuf, qui n'a rien lancé, montre ainsi ce qui tourne ailleurs.
+ */
+export function liveBlockRows<T extends { id?: string }>(
+  own: readonly BrandTask[],
+  open: readonly T[],
+  isLive: (t: T) => boolean,
+): { task: T; brand?: BrandTask }[] {
+  const ids = liveBlockIds(own)
+  const mine = ids.flatMap(id => {
+    const task = open.find(t => t.id === id)
+    const brand = own.find(bt => bt.id === id)
+    return task ? [{ task, brand }] : []
+  })
+  const others = open.filter(t => isLive(t) && !(t.id !== undefined && ids.includes(t.id))).map(task => ({ task }))
+  return [...mine, ...others]
+}
+
 export type Brand =
   | { kind: 'maestro'; project: string; tasks: BrandTask[]; welcome?: Welcome }
   | {
