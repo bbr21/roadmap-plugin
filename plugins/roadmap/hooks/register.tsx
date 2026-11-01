@@ -352,6 +352,10 @@ import {
   type TodoCounter,
   type Design,
   publishedVersionOf,
+  PLUGINS_LINK,
+  PLUGINS_URL,
+  RELOAD_COMMAND,
+  reloadOutcome,
   versionNote,
 } from './parse'
 
@@ -2415,6 +2419,29 @@ async function publishedVersion($: EngineInterface): Promise<{ version?: string;
     }
   }
   return { error }
+}
+
+/**
+ * « Recharger » (#162) : le moteur refuse /reload-plugins lancé par un plugin dans une session de l'app ;
+ * le bouton pose la commande dans la saisie (sinon la copie), puis redevient « Rafraîchir » et l'encart dit
+ * ce qui s'est passé.
+ */
+async function reloadPlugin($: EngineInterface): Promise<void> {
+  let filled = false
+  let copied = false
+  try {
+    filled = (await $.prompt.fill({ text: RELOAD_COMMAND })).isFilled
+  } catch {
+    // pas de saisie : la copie
+  }
+  if (!filled) {
+    try {
+      copied = (await $.ui.copy({ text: RELOAD_COMMAND })).isCopied
+    } catch {
+      // ni saisie ni presse-papiers : le texte seul
+    }
+  }
+  await update($, versionNoteAtom, note => ({ ...note, action: undefined, gesture: reloadOutcome({ filled, copied }) }))
 }
 
 let refreshing = false
@@ -4992,7 +5019,7 @@ const STEP_MARKS: Record<StepSegment, string> = { done: '✓', now: '›', todo:
 async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<RenderElement> {
   // Les gestionnaires de clic ne se vident pas ici : un rendu attend ses lectures, et un clic
   // arrivé pendant ce temps ne trouvait plus son bouton. Chaque rendu réécrit ceux qu'il dessine.
-  const { Box, Text, Button } = $.ui.resolve(e)
+  const { Box, Text, Button, Link } = $.ui.resolve(e)
   const resolved = $.ui.resolve(e)
   // Le champ de saisie n'existe pas sur toutes les surfaces : sans lui, pas de consigne.
   const Input = 'Input' in resolved ? resolved.Input : undefined
@@ -7119,7 +7146,8 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   const tight = ((e.props as { bodyColumns?: number }).bodyColumns ?? 76) < 40
   const head = (
       <Box flexDirection="column">
-      <Box flexDirection="row" justifyContent="space-between" alignItems="flex-end" paddingX={SPACE.indent}>
+      {/* Deux éléments : le pourcentage à gauche, « N faites sur M » à droite (#162, la roue est descendue dans le pied). */}
+      <Box key="pane-head" flexDirection="row" justifyContent="space-between" alignItems="flex-end" paddingX={SPACE.indent}>
         {Svg ? (
           (() => {
             const big = percentIcon(`${pct(doneTasks.length, total)} %`, palette.text)
@@ -7142,18 +7170,6 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
           )}
           {hit('done-count', toggleDone)}
         </Box>
-        {/* La roue des réglages, en haut à droite (#115) ; au terminal, le bouton « Réglages ». */}
-        {graphic && Svg ? (
-          <Box key="hit:open-settings" flexDirection="row" alignItems="center" flexShrink={0} marginLeft={1} hover={{ backgroundColor: palette.hover }}>
-            {strut(SIZE.strut.row)}
-            <Svg source={gearIcon(palette.text2)} alt="Réglages" width={SIZE.icon.md} height={SIZE.icon.md} />
-            {hit('open-settings', () => void openSettings($), 1)}
-          </Box>
-        ) : (
-          <Box flexShrink={0} marginLeft={1}>
-            <Button key="open-settings" plain label="Réglages" onPress={() => void openSettings($)} />
-          </Box>
-        )}
       </Box>
 
       <Box paddingX={SPACE.indent} paddingY="xs" justifyContent="center">
@@ -7288,25 +7304,51 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
 
       <Box flexDirection="column">{groups.map(g => (g.band ? bandRow(idOf(g), g.name, g.band.count, g.band.lead) : section(idOf(g), g.name, g.tasks, rowsOf.get(idOf(g)) ?? 0, g.lead, g.mark, g.block)))}</Box>
 
-      {/* Le pied (#138, maquette B) : la version de cette session, et « Rafraîchir », qui relit tout et la compare à la publiée. */}
+      {/* Le pied (#138, puis #162, maquette B) : la roue des réglages, la version de cette session, et à droite
+          « Rafraîchir », qui relit tout et la compare à la publiée, ou « Recharger » quand seule la session retarde. */}
       <Box flexDirection="column" gap="xs">
         {Svg && <Svg source={ruleIcon(palette.border, wide)} alt="séparateur" height={1} />}
-        <Box flexDirection="row" justifyContent="space-between" alignItems="center" paddingX={SPACE.indent}>
-          <Box flexShrink={1} minWidth={0}>
-            <Text size="caption" tabular color={versionCheck.state === 'late' ? palette.blockOn : palette.text3} wrap="truncate-end">
-              {versionCheck.state === 'none' ? `roadmap ${ownVersion}` : versionCheck.foot}
-            </Text>
+        <Box key="pane-foot" flexDirection="row" justifyContent="space-between" alignItems="center" paddingX={SPACE.indent}>
+          <Box flexDirection="row" alignItems="center" flexShrink={1} minWidth={0}>
+            {/* La roue (#115), au terminal le bouton « Réglages » : elle ouvre le volet Réglages. */}
+            {graphic && Svg ? (
+              <Box key="hit:open-settings" flexDirection="row" alignItems="center" flexShrink={0} hover={{ backgroundColor: palette.hover }}>
+                {strut(SIZE.strut.row)}
+                <Svg source={gearIcon(palette.text2)} alt="Réglages" width={SIZE.icon.md} height={SIZE.icon.md} />
+                {hit('open-settings', () => void openSettings($), 1)}
+              </Box>
+            ) : (
+              <Box flexShrink={0}>
+                <Button key="open-settings" plain label="Réglages" onPress={() => void openSettings($)} />
+              </Box>
+            )}
+            <Box flexShrink={1} minWidth={0} marginLeft={1}>
+              <Text size="caption" tabular color={versionCheck.state === 'late' ? palette.blockOn : palette.text3} wrap="truncate-end">
+                {versionCheck.state === 'none' ? `roadmap ${ownVersion}` : versionCheck.foot}
+              </Text>
+            </Box>
           </Box>
-          <Box key="version-refresh-row" flexShrink={0} marginLeft={1} paddingX={SPACE.indent} alignItems="center" backgroundColor={palette.btn} hover={{ backgroundColor: palette.btnHover }}>
-            {corners(RADIUS.control, palette.bg)}
-            <Button key="version-refresh" plain label={versionCheck.state === 'checking' ? 'Rafraîchir…' : '↻ Rafraîchir'} onPress={() => void refreshAll($)} />
-          </Box>
+          {versionCheck.action === 'reload' ? (
+            <Box flexShrink={0} marginLeft={1}>
+              <Button key="version-reload" variant="primary" label="Recharger" onPress={() => void reloadPlugin($)} />
+            </Box>
+          ) : (
+            <Box key="version-refresh-row" flexShrink={0} marginLeft={1} paddingX={SPACE.indent} alignItems="center" backgroundColor={palette.btn} hover={{ backgroundColor: palette.btnHover }}>
+              {corners(RADIUS.control, palette.bg)}
+              <Button key="version-refresh" plain label={versionCheck.state === 'checking' ? 'Rafraîchir…' : '↻ Rafraîchir'} onPress={() => void refreshAll($)} />
+            </Box>
+          )}
         </Box>
+        {/* L'encart (#162) : pourquoi, puis le geste ; quand l'app retarde, le lien vers la page Plugins de claude.ai. */}
         {versionCheck.state === 'late' && versionCheck.gesture && (
           <Box paddingX={SPACE.indent}>
-            <Box paddingX={SPACE.indent} paddingY="xs" backgroundColor={palette.blockTint}>
+            <Box key="version-callout" paddingX={SPACE.indent} paddingY="xs" backgroundColor={palette.blockTint}>
               {corners(RADIUS.control, palette.bg)}
-              <Text size="caption" color={palette.blockOn} wrap="wrap">{`${versionCheck.text} ${versionCheck.gesture}.`}</Text>
+              <Text size="caption" color={palette.blockOn} wrap="wrap">
+                {`${versionCheck.text} `}
+                {versionCheck.action === 'open-plugins' && <Link href={PLUGINS_URL} label={PLUGINS_LINK} />}
+                {versionCheck.action === 'open-plugins' ? ` ${versionCheck.gesture}.` : versionCheck.gesture}
+              </Text>
             </Box>
           </Box>
         )}

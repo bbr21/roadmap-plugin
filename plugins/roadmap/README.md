@@ -25,10 +25,11 @@ tâche, `[axe | attend:… | ouvert:… | due:… | src:… | fiche:… | après
 les sessions toutes les 3 s (le dossier de la roadmap toutes les 15 s), et montre :
 
 - la part faite, une barre par axe (cliquable), la légende des axes repliée derrière elle en une
-  ligne « › 7 axes · … » qu'un clic déplie (#149), et en haut à droite la roue qui ouvre les Réglages ;
-- en pied, la version du plugin et « Rafraîchir » (#138) : un clic relit tout et compare la version
-  de la session, celle de l'app et la dernière publiée (dépôt public, par `curl` ou `gh`) ; si l'une retarde, le geste pour
-  la charger ;
+  ligne « › 7 axes · … » qu'un clic déplie (#149), et à droite du pourcentage « N faites sur M » (#162) ;
+- en pied, la roue qui ouvre les Réglages, la version du plugin et « Rafraîchir » (#138, #162) : un clic relit
+  tout et compare la version de la session, celle de l'app et la dernière publiée (dépôt public, par `curl` ou
+  `gh`) ; si l'app retarde, un lien vers claude.ai › Plugins et le reste du geste ; si seule la session
+  retarde, « Recharger » pose `/reload-plugins` dans la saisie (le plugin ne peut pas le lancer lui-même) ;
 - chez Maestro, la ligne « En cours » (#149) : le compte de ses sessions et un point par voie ;
   la choisir montre l'arbre des sessions (barre et étape sous chaque voie) à la place de la liste.
   À l'ouverture, le panneau de Maestro la choisit si une session t'attend, sinon Ma journée, sinon
@@ -598,6 +599,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.112.0 (2026-10-31)** : panneau : N faites à droite de l'en-tête, la roue des réglages dans le pied à côté de Rafraîchir ; quand l'app retarde, l'encart ouvre la page Plugins de claude.ai et Recharger pose /reload-plugins dans la saisie (#162)
 - **0.111.0 (2026-10-31)** : panneau : la fiche d'une tâche a une flèche retour en tête, à la place de la marque, qui ramène à la roadmap ; plus de bouton Toute la roadmap ni de Retour à la liste en bas (#165)
 - **0.110.0 (2026-10-31)** : panneau : la roadmap s'ouvre en arbre dès qu'elle a une tâche mère ; arbre redessiné « Le fil » (une case par ligne pour cocher ou rouvrir, mère nette, étapes légères), « Tout replier » et « Tout clore » (#163)
 - **0.109.0 (2026-10-31)** : audit : seul audit de la roadmap, en anglais : structure, puis retards, tâches sans date et priorités (une question par tâche), clôtures sur preuve là où le projet le dit (preuves), écriture par la skill tasks ; en tâche planifiée, ses questions restent en attente et comptées (#159)

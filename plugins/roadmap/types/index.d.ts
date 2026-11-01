@@ -116,5 +116,5 @@ export type LiveEntry = {
 /** Le titre court et le sujet d'une task, gardés dans `$.store` par empreinte du libellé. */
 export type ShortTitle = { titre: string; sujet: string }
 
-/** Le résultat du bouton Rafraîchir (#138) : `foot` pour le pied du panneau, `text` et `gesture` pour l'encart quand une version retarde. */
-export type VersionCheck = { state: 'none' | 'checking' | 'ok' | 'late' | 'unknown'; text: string; gesture?: string; foot: string }
+/** Le résultat du bouton Rafraîchir (#138) : `foot` pour le pied du panneau, `text` et `gesture` pour l'encart quand une version retarde ; `action`, le geste que porte le panneau (#162). */
+export type VersionCheck = { state: 'none' | 'checking' | 'ok' | 'late' | 'unknown'; text: string; gesture?: string; action?: 'reload' | 'open-plugins'; foot: string }

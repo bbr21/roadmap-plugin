@@ -5650,9 +5650,27 @@ export function maestroContext(o: {
 
 // ── Version du plugin (#138) ──────────────────────────────────────────────
 
-/** Le geste qui fait charger à l'app la dernière version publiée (le catalogue se resynchronise, #88). */
-export const UPDATE_GESTURE =
-  'claude.ai › Customize › Plugins › Manage marketplaces › roadmap › Check for updates, puis une session neuve'
+/**
+ * Le geste qui fait charger à l'app la dernière version publiée (le catalogue se resynchronise, #88) : le
+ * panneau ouvre la page Plugins de claude.ai par un lien (`PLUGINS_LINK`), le reste du geste suit en texte.
+ * Le plugin ne peut pas le faire lui-même : le moteur n'a aucun appel de mise à jour (#138, revu par #162).
+ */
+export const PLUGINS_URL = 'https://claude.ai/customize/plugins'
+export const PLUGINS_LINK = 'claude.ai › Plugins ↗'
+export const UPDATE_GESTURE = '› Manage marketplaces › roadmap › Check for updates'
+
+/**
+ * La commande qui recharge les plugins de la session (#162). Le moteur la refuse quand un plugin la lance
+ * (« isn't available over a remote connection ») : le panneau la pose dans la saisie, Bertrand tape Entrée.
+ */
+export const RELOAD_COMMAND = '/reload-plugins'
+
+/** Ce qu'a fait « Recharger » : la commande dans la saisie, sinon copiée, sinon à taper. */
+export function reloadOutcome(r: { filled: boolean; copied: boolean }): string {
+  if (r.filled) return `${RELOAD_COMMAND} est dans la saisie : tape Entrée.`
+  if (r.copied) return `${RELOAD_COMMAND} est copiée : colle-la dans la saisie, puis Entrée.`
+  return `Tape ${RELOAD_COMMAND} dans la saisie, puis Entrée.`
+}
 
 /** -1, 0 ou 1 selon l'ordre des numéros (`0.100.0` après `0.95.0`) ; sans ordre (non numérique, différentes) : undefined. */
 export function compareVersions(a: string, b: string): -1 | 0 | 1 | undefined {
@@ -5676,7 +5694,8 @@ export function publishedVersionOf(json: string): string | undefined {
   }
 }
 
-export type VersionNote = { state: 'ok' | 'late' | 'unknown'; text: string; gesture?: string; foot: string }
+/** `action` : le geste que porte le panneau, ouvrir claude.ai (`open-plugins`) ou recharger la session (`reload`). */
+export type VersionNote = { state: 'ok' | 'late' | 'unknown'; text: string; gesture?: string; action?: 'reload' | 'open-plugins'; foot: string }
 
 /**
  * Les trois versions du plugin : celle que tourne cette session, celle du magasin de l'app (la prochaine
@@ -5698,15 +5717,17 @@ export function versionNote(v: { session: string; app?: string; published?: stri
       state: 'late',
       text: `L'app charge ${v.app}, la dernière est ${v.published}.`,
       gesture: UPDATE_GESTURE,
-      foot: `${v.app} → ${v.published} · l'app retarde`,
+      action: 'open-plugins',
+      foot: `${v.app} → ${v.published} · app`,
     }
   }
   if (v.app && behind(v.session, v.app)) {
     return {
       state: 'late',
       text: `Cette session tourne ${v.session}, l'app a ${v.app}.`,
-      gesture: 'Ouvre une session neuve',
-      foot: `${v.session} → ${v.app} · cette session retarde`,
+      gesture: `Recharger pose ${RELOAD_COMMAND} dans la saisie : tape Entrée.`,
+      action: 'reload',
+      foot: `${v.session} → ${v.app} · session`,
     }
   }
   if (!v.app && behind(v.session, v.published)) {
@@ -5714,7 +5735,8 @@ export function versionNote(v: { session: string; app?: string; published?: stri
       state: 'late',
       text: `Cette session tourne ${v.session}, la dernière est ${v.published}.`,
       gesture: UPDATE_GESTURE,
-      foot: `${v.session} → ${v.published} · cette session retarde`,
+      action: 'open-plugins',
+      foot: `${v.session} → ${v.published} · session`,
     }
   }
   return { state: 'ok', text: `roadmap ${v.session}, à jour`, foot: `roadmap ${v.session} · à jour` }
