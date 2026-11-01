@@ -60,8 +60,9 @@ les sessions toutes les 3 s (le dossier de la roadmap toutes les 15 s), et montr
   liste les valeurs admises ; « N changements », puis « Enregistrer » réécrit la seule ligne, les
   autres champs et la note gardés à leur place, contrôlée par les règles du projet : un refus nomme
   le champ, rien n'est écrit, la saisie reste ; « Annuler » ne touche à rien. L'écriture suit celle
-  de « Marquer faite » : `cowork.py roadmap update` dans un dossier Cowork, sinon le panneau écrit
-  ROADMAP.md, sur main seulement dans git, puis `roadmap: edit #N`, commit et push ;
+  de « Marquer faite » : `cowork.py roadmap update` dans un dossier Cowork, sinon, avec `ecriture`,
+  la demande à Claude (#164, voir « Les règles du projet »), sinon le panneau écrit ROADMAP.md, sur
+  main seulement dans git, puis `roadmap: edit #N`, commit et push ;
 - le détail d'une tâche (voir la ligne, ouvrir la fiche ou la source, la lancer dans une nouvelle
   session ou la faire vérifier, au premier clic, avec un « Message additionnel » facultatif ajouté
   au brief, la marquer faite ou l'annuler) ; « Marquer faite » (#73) et « Annuler la tâche » (#267)
@@ -254,8 +255,14 @@ Premiers usages : la roadmap de Caro et le dossier AAFES Cowork, depuis l'onglet
   `tasks` lui passe les lignes au lieu d'écrire) et `"preuves": ["_inbox/_traite/",
   "gmail:in:sent"]` (où chercher qu'une tâche est faite : des chemins, des sources
   `source:requête`, ou `"#Preuves"`, une section du fichier de règles). Le doctor contrôle les
-  chemins (ligne « Règles du projet »), l'onboarding les propose (réponse « Règles »). Le bouton
-  « Marquer faite » du panneau écrit encore lui-même, `ecriture` posé ou non.
+  chemins (ligne « Règles du projet »), l'onboarding les propose (réponse « Règles »). Avec
+  `ecriture` (#164), le panneau n'écrit plus la roadmap : « Marquer faite », « Annuler la tâche »
+  et « Enregistrer » gardent leur confirmation, puis envoient la demande dans la session
+  (« Coche #N par la skill tasks », « Abandonne #N : <raison> », « Modifie #N par la skill tasks :
+  due:…, sans attend »), et l'encart dit « Confié à Claude : ce projet écrit sa roadmap par
+  <outil> ». La skill `tasks` cherche la preuve, puis écrit par l'outil du projet. Une récurrente
+  seule (`tous:`) n'est alors plus reconduite par le panneau : `tasks` le dit. Dans un dossier
+  Cowork, `cowork.py` garde la main, `ecriture` posé ou non.
 - **Ma journée** (#99) : le panneau s'ouvre sur « Ma journée », les tâches à moi en retard, dues
   aujourd'hui ou demain, ou récurrentes qui tombent dans les 2 jours, rangées dans cet ordre (la
   priorité n'y entre plus, #130). Un parent n'y entre jamais en ligne propre : ses enfants dus y
@@ -572,6 +579,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.108.0 (2026-10-31)** : panneau : quand le projet déclare ecriture, Marquer faite, Annuler la tâche et Enregistrer de la fiche sont confiés à Claude (Coche #N par la skill tasks), l'encart dit Confié à Claude par <outil> (#164)
 - **0.107.0 (2026-10-31)** : panneau : chez Maestro, le bloc En cours montre ses tâches en lignes de la liste, toujours ouvert, la roadmap visible dessous ; pastille Toutes qui garde l'axe ; axes toujours dépliés (#160)
 - **0.106.0 (2026-10-31)** : skills : doctor, maestro, onboarding, reglages-session et roadmap-panel passent en anglais, comportement inchangé ; elles parlent et écrivent la roadmap en français ; contrôle de langue tools/test_langue.py (#166)
 - **0.105.0 (2026-10-31)** : panneau : éditer une tâche depuis sa fiche : le crayon ouvre ses champs en place (libellé, attente, prérequises, parent, axe, responsable, clés du projet, échéance), Enregistrer réécrit la ligne contrôlée par les règles du projet (#161)

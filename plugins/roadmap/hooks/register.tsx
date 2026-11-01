@@ -135,8 +135,12 @@ import {
   byTree,
   parentLeftAlone,
   blockerOf,
+  closeCaption,
+  closeRoute,
   closeWithParentInTexts,
   editInTexts,
+  editRoute,
+  entrustedNote,
   editableFields,
   editDiff,
   declaredAxes,
@@ -3000,6 +3004,21 @@ async function confirmClose($: EngineInterface, source: Source, task: Task, kind
   if (cancelling) return
   cancelling = true
   try {
+    // Un projet qui écrit sa roadmap par son propre outil (`ecriture`, #164) : le panneau n'écrit pas,
+    // il demande à Claude, par la boîte d'envoi (#140), pour passer par les hooks du plugin.
+    const cowork = await $.fs.exists(`${source.dir}/_cowork/cowork.py`).catch(() => false)
+    const route = closeRoute({ ecriture: source.ecriture, cowork, task, kind, reason: kind === 'abandon' ? cancelReason : '' })
+    if (route.via === 'claude') {
+      cancelReason = ''
+      queueSubmit($, route.text)
+      await setView($, () => ({ cancelAsk: '', cancelNote: `Demandé à Claude : ${route.text}` }))
+      try {
+        $.ui.toast(`Demandé à Claude : ${route.text}`)
+      } catch {
+        // pas de toast sur cette surface : le détail le montre
+      }
+      return
+    }
     await setView($, () => ({ cancelNote: CANCEL_BUSY }))
     // La raison ne vaut que pour une annulation : tapée puis abandonnée pour « Marquer faite », elle ne passe pas.
     const out = await closeTask($, source, task, kind, kind === 'abandon' ? cancelReason : '').catch((err: unknown) => ({
@@ -3042,18 +3061,29 @@ function clearDrafts(key: string): void {
  * Réécrit la ligne d'une tâche ouverte depuis sa fiche (#161), par le chemin de « Marquer faite »
  * (`closeTask`) : `cowork.py roadmap update` dans un dossier Cowork ; sinon le panneau écrit
  * ROADMAP.md, dans git seulement sur main, sans modification en attente, puis commit et push. La
- * ligne se contrôle d'abord (`editInTexts`, règles du projet) : refusée, rien ne s'écrit.
+ * ligne se contrôle d'abord (`editInTexts`, règles du projet) : refusée, rien ne s'écrit. Un projet
+ * qui déclare `ecriture` (#164) : la ligne contrôlée, la demande part à Claude (`asked`), rien ne s'écrit ici.
  */
 async function saveEdit(
   $: EngineInterface,
   source: Source,
   task: Task,
   edit: TaskEdit,
-): Promise<{ id?: string; warnings: string[]; note?: string } | { error: string; field?: EditField }> {
+): Promise<{ id?: string; warnings: string[]; note?: string; asked?: string } | { error: string; field?: EditField }> {
   const settings = projectSettings(source)
   const rules = { requis: settings.requis, requiredOn: settings.requiredOn, cles: settings.cles }
   const { open } = files(source)
-  if (await $.fs.exists(`${source.dir}/_cowork/cowork.py`).catch(() => false)) {
+  const cowork = await $.fs.exists(`${source.dir}/_cowork/cowork.py`).catch(() => false)
+  const route = editRoute({ ecriture: source.ecriture, cowork, task, edit })
+  if (route.via === 'claude') {
+    // `ecriture` (#164) : la ligne se contrôle ici, puis Claude l'écrit par l'outil du projet ; refusée, rien ne part.
+    const out = editInTexts(await $.fs.read(open), task, edit, rules)
+    if ('error' in out) return out
+    if (!out.changed) return { ...(task.id ? { id: task.id } : {}), warnings: [] }
+    queueSubmit($, route.text)
+    return { ...(task.id ? { id: task.id } : {}), warnings: out.warnings, asked: route.text }
+  }
+  if (route.via === 'cowork') {
     const out = editInTexts(await $.fs.read(open), task, edit, rules)
     if ('error' in out) return out
     if (!out.changed) return { ...(task.id ? { id: task.id } : {}), warnings: [] }
@@ -3120,11 +3150,11 @@ async function confirmEdit($: EngineInterface, source: Source, task: Task, specs
       return
     }
     clearDrafts(key)
-    const note = [...out.warnings, ...(out.note ? [out.note] : [])].join(' ; ')
+    const note = [...(out.asked ? [`Demandé à Claude : ${out.asked}`] : []), ...out.warnings, ...(out.note ? [out.note] : [])].join(' ; ')
     await setView($, () => ({ editing: '', editNote: note, editField: '', ...(out.id ? { selected: `id:${out.id}` } : {}) }))
     await update($, retryAtom, v => v + 1)
     try {
-      $.ui.toast(`${out.id ? `#${out.id} ` : 'Tâche '}enregistrée${out.note ? ` : ${out.note}` : ''}`)
+      $.ui.toast(out.asked ? `Demandé à Claude : ${out.asked}` : `${out.id ? `#${out.id} ` : 'Tâche '}enregistrée${out.note ? ` : ${out.note}` : ''}`)
     } catch {
       // pas de toast sur cette surface : la fiche le montre
     }
@@ -5485,11 +5515,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
                             : `Annuler${current.id ? ` #${current.id}` : ''} « ${s.titre} » ?`}
                         </Text>
                         <Text size="caption" color={palette.text2} wrap="wrap">
-                          {`${
-                            closeKind === 'done'
-                              ? 'Elle descend en tête des faites, avec le bilan « Marquée faite depuis le panneau Roadmap ».'
-                              : "Elle ne s'efface pas : cochée « (abandonné) », elle descend en tête des faites, avec son bilan."
-                          }${bilanData.viaCowork ? '' : ' Dans git : commit et push sur main.'}`}
+                          {closeCaption(closeKind, { ecriture: source.ecriture, cowork: bilanData.viaCowork })}
                         </Text>
                         {(live || launched.includes(taskKey(current))) && (
                           <Text size="caption" color={palette.lateOn} wrap="wrap">Une session tient cette tâche : elle peut encore l'écrire.</Text>
@@ -5631,11 +5657,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
                       : `Annuler${current.id ? ` #${current.id}` : ''} « ${s.titre} » ?`}
                   </Text>
                   <Text size="caption" color={palette.text2} wrap="wrap">
-                    {`${
-                      closeKind === 'done'
-                        ? 'Elle descend en tête des faites, avec le bilan « Marquée faite depuis le panneau Roadmap ».'
-                        : "Elle ne s'efface pas : cochée « (abandonné) », elle descend en tête des faites, avec son bilan."
-                    }${bilanData.viaCowork ? '' : ' Dans git : commit et push sur main.'}`}
+                    {closeCaption(closeKind, { ecriture: source.ecriture, cowork: bilanData.viaCowork })}
                   </Text>
                   {(live || launched.includes(taskKey(current))) && (
                     <Text size="caption" color={palette.lateOn} wrap="wrap">Une session tient cette tâche : elle peut encore l'écrire.</Text>
@@ -5856,6 +5878,9 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
             </Box>
             {(live || launched.includes(editKey)) && (
               <Text size="caption" color={palette.lateOn} wrap="wrap">Une session tient cette tâche : elle peut encore l'écrire.</Text>
+            )}
+            {source.ecriture && !bilanData.viaCowork && (
+              <Text size="caption" color={palette.text2} wrap="wrap">{entrustedNote(source.ecriture)}</Text>
             )}
           </Box>
         </Box>

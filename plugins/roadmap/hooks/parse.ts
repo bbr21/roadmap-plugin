@@ -3826,6 +3826,64 @@ export function editInTexts(
   return { open: after, line, changed: true, warnings: fresh.map(p => p.why) }
 }
 
+/**
+ * Qui écrit une clôture ou une édition demandée au panneau (#164) : `cowork.py` dans un dossier
+ * Cowork, sinon Claude quand le projet déclare `ecriture` (le panneau envoie `text` dans la session,
+ * la skill tasks écrit par l'outil du projet), sinon le panneau lui-même.
+ */
+export type WriteRoute = { via: 'cowork' } | { via: 'panel' } | { via: 'claude'; text: string; note: string }
+
+/** Ce que dit le panneau d'un projet qui écrit sa roadmap par son propre outil (#164). */
+export function entrustedNote(e: Ecriture): string {
+  return `Confié à Claude : ce projet écrit sa roadmap par ${e.outil}`
+}
+
+/** La tâche nommée dans la demande à Claude : « #N », ou son libellé sans `id:`. */
+function taskRef(task: { id?: string; label: string }): string {
+  return task.id !== undefined ? `#${task.id}` : `« ${clip(task.label, 80)} »`
+}
+
+function writeRoute(o: { ecriture?: Ecriture; cowork: boolean }, text: () => string): WriteRoute {
+  if (o.cowork) return { via: 'cowork' }
+  if (o.ecriture === undefined) return { via: 'panel' }
+  return { via: 'claude', text: text(), note: entrustedNote(o.ecriture) }
+}
+
+/** « Marquer faite » et « Annuler la tâche » (#164) : « Coche #N par la skill tasks », ou « Abandonne #N : <raison> ». */
+export function closeRoute(o: { ecriture?: Ecriture; cowork: boolean; task: { id?: string; label: string }; kind: CloseKind; reason: string }): WriteRoute {
+  return writeRoute(o, () => {
+    if (o.kind === 'done') return `Coche ${taskRef(o.task)} par la skill tasks`
+    const reason = clip(o.reason.replace(/\s+/g, ' ').trim(), 300)
+    return `Abandonne ${taskRef(o.task)}${reason !== '' ? ` : ${reason}` : ''}`
+  })
+}
+
+/** La légende de l'encart de clôture : ce qui va se passer, et, avec `ecriture` (#164), à qui c'est confié. */
+export function closeCaption(kind: CloseKind, o: { ecriture?: Ecriture; cowork: boolean }): string {
+  if (o.cowork || o.ecriture === undefined) {
+    return kind === 'done'
+      ? `Elle descend en tête des faites, avec le bilan « Marquée faite depuis le panneau Roadmap ».${o.cowork ? '' : ' Dans git : commit et push sur main.'}`
+      : `Elle ne s'efface pas : cochée « (abandonné) », elle descend en tête des faites, avec son bilan.${o.cowork ? '' : ' Dans git : commit et push sur main.'}`
+  }
+  const what = kind === 'done' ? 'Claude la coche par la skill tasks, sur preuve, avec son bilan.' : "Claude l'abandonne par la skill tasks : cochée « (abandonné) », avec son bilan."
+  return `${what} ${entrustedNote(o.ecriture)}.`
+}
+
+/** « Enregistrer » de la fiche (#164) : « Modifie #N par la skill tasks : due:…, sans attend », les seuls champs changés. */
+export function editRoute(o: { ecriture?: Ecriture; cowork: boolean; task: { id?: string; label: string }; edit: TaskEdit }): WriteRoute {
+  return writeRoute(o, () => {
+    const changes = (Object.entries(o.edit) as [EditField, string | undefined][])
+      .filter((c): c is [EditField, string] => c[1] !== undefined)
+      .map(([field, given]) => {
+        const v = given.replace(/\s+/g, ' ').trim()
+        if (field === 'label') return `libellé « ${v} »`
+        if (field === 'axis') return `axe ${v}`
+        return v === '' ? `sans ${editKey(field)}` : `${editKey(field)}:${v}`
+      })
+    return `Modifie ${taskRef(o.task)} par la skill tasks : ${changes.join(', ')}`
+  })
+}
+
 /** Un champ de la fiche en édition (#161) : son nom, sa carte, la valeur de la ligne, les valeurs admises (un menu). */
 export type EditSpec = { field: EditField; name: string; card: 'mission' | 'avancement' | 'chaine' | 'details'; value: string; options?: string[] }
 
