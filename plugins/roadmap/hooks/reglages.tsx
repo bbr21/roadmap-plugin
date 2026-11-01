@@ -226,7 +226,7 @@ export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
     title: 'Panneau',
     options: [
       { field: 'autoOpen', name: 'Toujours ouvert', def: 'On' },
-      { field: 'axisPill', name: 'Département en pastille', def: 'On' },
+      { field: 'axisPill', name: 'Axe en pastille', def: 'Off' },
       { field: 'theme', name: 'Thème', def: 'auto' },
     ],
   },

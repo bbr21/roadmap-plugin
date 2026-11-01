@@ -590,10 +590,12 @@ qui lance ; une carte refusée avec son effort est reposée sans lui ; « hérit
 que pose Claude, Maestro compris, demandent le mode bypass ; l'app ne l'accorde que depuis une session déjà en bypass, sinon
 la carte est reposée sans lui et la session lancée demande elle-même le bypass à son démarrage, par
 la carte d'approbation de l'app ; il faut d'abord activer le bypass dans Réglages → Claude Code).
-`axisPill` (« Département en pastille », défaut oui, #156) : chaque tâche ouverte de la liste porte son
-axe en pastille grise, à droite du titre, avant l'âge ; ni sous un axe choisi, ni quand les sections se
-rangent par axe en attendant les titres, ni dans un projet qui montre ses propres clés (`cles_visibles`).
-Allumée, le panneau dessine 20 lignes d'un coup au lieu de 40, puis « Voir les N autres ».
+`axisPill` (« Axe en pastille », défaut non depuis #177 ; #156) : allumé, chaque tâche ouverte de la
+liste porte son axe en pastille grise, à droite du titre, avant l'âge ; jamais dans « En cours » (le bloc
+de Maestro ou le filtre, où le carré d'axe suffit et le titre garde sa place), ni sous un axe choisi, ni
+quand les sections se rangent par axe en attendant les titres, ni dans un projet qui montre ses propres
+clés (`cles_visibles`). L'arbre suit le même réglage ; la fiche d'une tâche et l'en-tête de sa session
+gardent leur axe. Allumée, le panneau dessine 20 lignes d'un coup au lieu de 40, puis « Voir les N autres ».
 `capture` éteint coupe tous les contrôles et rappels de la roadmap : la grammaire, et en fin de tour
 le travail à inscrire, le bilan d'une tâche cochée, son rangement et l'archivage de la session,
 l'idée à coder sans ligne, et après un commit les tests, les skills de méthode et les maquettes ; la
@@ -621,6 +623,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.115.2 (2026-11-01)** : panneau : plus de pastille d'axe dans « En cours », où le compte d'étapes n'est plus coupé ; la pastille d'axe de la liste devient un réglage, éteint par défaut (#177)
 - **0.115.1 (2026-11-01)** : panneau : le pied lit le catalogue local de Claude Code et propose « Mettre à jour » quand l'app retarde (#178)
 - **0.115.0 (2026-11-01)** : panneau : bande Maestro serrée et collée à droite, icône pour archiver une session close, Completed et Done à la place de close et faites, le contexte de Maestro seul (#174)
 - **0.114.4 (2026-11-01)** : panneau : le brief d'une session lancée et le contrôle d'une ligne neuve rappellent ROADMAP-REGLES.md (#171)

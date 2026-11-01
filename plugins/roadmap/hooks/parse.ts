@@ -1590,14 +1590,62 @@ export function keyPills(task: Task, visible: readonly string[], cles: Record<st
 
 /**
  * La pastille de département d'une ligne (#156) : l'axe en toutes lettres, à droite du titre. Rien
- * quand le réglage est éteint, sur une tâche faite (son axe est déjà à droite), quand la liste dit
- * déjà l'axe (un axe choisi dans la barre, ou les sections rangées par axe en attendant les titres
- * courts), ni dans un projet qui montre ses propres clés (`cles_visibles`, comme le département de
- * Caroline).
+ * quand le réglage est éteint (son défaut depuis #177), sur une tâche faite (son axe est déjà à
+ * droite), dans « En cours » (#177 : le bloc de Maestro ou le filtre, où le carré d'axe suffit et le
+ * titre garde sa place), quand la liste dit déjà l'axe (un axe choisi dans la barre, ou les sections
+ * rangées par axe en attendant les titres courts), ni dans un projet qui montre ses propres clés
+ * (`cles_visibles`, comme le département de Caroline).
  */
-export function axisPillText(task: Task, o: { enabled: boolean; axisFilter: string; groupedByAxis?: boolean; clesVisibles?: readonly string[] }): string | undefined {
-  if (!o.enabled || task.done || task.axis === '' || o.axisFilter !== 'all' || o.groupedByAxis === true || (o.clesVisibles?.length ?? 0) > 0) return undefined
+export function axisPillText(task: Task, o: { enabled: boolean; axisFilter: string; live?: boolean; groupedByAxis?: boolean; clesVisibles?: readonly string[] }): string | undefined {
+  if (!o.enabled || o.live === true || task.done || task.axis === '' || o.axisFilter !== 'all' || o.groupedByAxis === true || (o.clesVisibles?.length ?? 0) > 0) return undefined
   return axisLabel(task.axis)
+}
+
+/** Une cellule du kit sur le bureau, en px (~7,8 ; #172) : un dessin en px s'y compte arrondi au-dessus. */
+export const CELL_PX = 7.8
+
+/** Une largeur en px, en cellules du kit, arrondie au-dessus : ce qui est compté entre toujours. */
+export function pxCells(px: number): number {
+  return Math.ceil(px / CELL_PX)
+}
+
+/** La colonne d'une ligne en session (#145), en cellules sauf la barre (px) : l'icône, la barre, le compte au moins. */
+export const ROW_STEPS = { icon: 2, bar: 56, count: 5 } as const
+
+/**
+ * La largeur de la colonne d'une ligne en session (#177) : l'icône, un écart, la barre, un écart et le
+ * compte, à la largeur du plus long des comptes montrés (« 7/7 Done »). La colonne tient tout son
+ * contenu : le compte n'est jamais coupé ni replié, et reste aligné d'une ligne à l'autre.
+ */
+export function rowStepsCells(counts: readonly string[]): { count: number; columns: number } {
+  const count = Math.max(ROW_STEPS.count, ...counts.map(c => c.length))
+  return { count, columns: ROW_STEPS.icon + 1 + pxCells(ROW_STEPS.bar) + 1 + count }
+}
+
+/** Le titre d'une ligne garde au moins ces cellules à côté de ses pastilles (#177). */
+export const ROW_TITLE_MIN = 6
+
+/**
+ * Ce qui tient sur une ligne en session (#177, #248 de Splitmybill : « [Feedback] [App-ios] » avaient
+ * chassé le titre et coupé « 3/5 » au bord). Ne rétrécissent pas : le retrait (`inset` : marges du
+ * panneau, du cadre et de la ligne), le carré (16 px), le numéro (6), les pastilles, la colonne de
+ * session (`steps`) et celle du ▶ (3), un écart entre chacun. Les pastilles gardées, dans leur ordre,
+ * sont celles qui laissent au titre au moins `ROW_TITLE_MIN` ; les autres partent, avant que le compte
+ * ne soit coupé. `fixed` : la largeur de ce qui ne rétrécit pas ; `title` : ce qui reste au titre.
+ */
+export function fitRowPills(o: { columns: number; inset: number; steps: number; pills: readonly number[] }): { kept: number; fixed: number; title: number } {
+  // Sans pastille, le numéro entre dans le bloc du titre, sans écart (#156) : carré, titre, session, ▶.
+  const base = o.inset + pxCells(16) + 6 + o.steps + 3 + 3
+  let fixed = base
+  let kept = 0
+  for (const w of o.pills) {
+    // Une pastille de plus : sa largeur et son écart ; la première sort aussi le numéro du bloc du titre.
+    const next = fixed + w + 1 + (kept === 0 ? 1 : 0)
+    if (o.columns - next < ROW_TITLE_MIN) break
+    fixed = next
+    kept++
+  }
+  return { kept, fixed, title: Math.max(0, o.columns - fixed) }
 }
 
 /**

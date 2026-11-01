@@ -153,6 +153,10 @@ import {
   bandsOf,
   keyPills,
   axisPillText,
+  fitRowPills,
+  pxCells,
+  ROW_STEPS,
+  rowStepsCells,
   filterSummary,
   fallbackTitle,
   openedLabel,
@@ -563,7 +567,7 @@ function axisCount(tasks: Task[], axis: string): number {
 }
 
 /** Les réglages du plugin (userConfig), relus à chaque chargement du module. */
-let settings = { me: [] as string[], autoOpen: true, titleModel: 'sonnet', capture: true, theme: 'auto', launchEffort: 'high', launchBypass: false, axisPill: true }
+let settings = { me: [] as string[], autoOpen: true, titleModel: 'sonnet', capture: true, theme: 'auto', launchEffort: 'high', launchBypass: false, axisPill: false }
 
 /**
  * La palette du panneau. Le mod ne reçoit pas l'apparence de l'app : il lit le thème de Claude
@@ -3827,7 +3831,7 @@ export const register: Register = (on, options) => {
     theme: typeof options.theme === 'string' && options.theme !== '' ? options.theme : 'auto',
     launchEffort: typeof options.launchEffort === 'string' && options.launchEffort !== '' ? options.launchEffort : 'high',
     launchBypass: options.launchBypass === true,
-    axisPill: typeof options.axisPill === 'boolean' ? options.axisPill : true,
+    axisPill: typeof options.axisPill === 'boolean' ? options.axisPill : false,
   }
 
   // Le thème de Claude Code a changé : le panneau se redessine dans l'autre palette.
@@ -5115,9 +5119,6 @@ function stepsCard(
     </Box>
   )
 }
-
-/** La colonne d'une ligne en session (#145), en cellules sauf la barre (px) : l'icône, la barre, le compte. */
-const ROW_STEPS = { icon: 2, bar: 56, count: 5, columns: 16 } as const
 
 /** Ce que dit la marque d'une étape, et sa marque au terminal (#143). */
 const STEP_WORDS: Record<StepSegment, string> = { done: 'faite', now: 'en cours', todo: 'à faire' }
@@ -6497,13 +6498,15 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   // taille, quels que soient le titre, le compte (« 2/7 », « 8/11 ») ou l'absence de note ; seule la
   // découpe de la barre change. Pas de carte au survol (#145) : la ligne la coupait ; la fiche montre les étapes.
   // Une ligne du bloc « En cours » de Maestro (#160) lit les étapes et l'attente de sa session à lui.
+  // La colonne tient tout son contenu, à la largeur du plus long compte montré (#177) : jamais coupé.
+  const stepsCells = rowStepsCells([...blockSteps.values(), ...rowSteps.values()].map(st => stepsView(st.steps, { now, at: st.at, closed: false }).count))
   const sessionColumn = (t: Task, block?: BrandTask) => {
     const status = block ? blockSteps.get(block.id) : rowSteps.get(taskKey(t))
     const waiting = block ? block.state === 'wait' : waitingOn(t)
     const view = status ? stepsView(status.steps, { now, at: status.at, closed: t.done }) : undefined
     const bar = status && view ? stepsBarIcon(palette, view.segments, { width: ROW_STEPS.bar, height: 4, waiting: waiting || status.question !== undefined }) : undefined
     return (
-      <Box key={`steps:${t.key}`} flexDirection="row" alignItems="center" gap={SPACE.row} flexShrink={0} {...(Svg ? { width: ROW_STEPS.columns } : {})}>
+      <Box key={`steps:${t.key}`} flexDirection="row" alignItems="center" gap={SPACE.row} flexShrink={0} {...(Svg ? { width: stepsCells.columns } : {})}>
         <Box width={ROW_STEPS.icon} flexShrink={0} flexDirection="row" justifyContent="center">
           {waiting ? hand() : spinner()}
         </Box>
@@ -6513,7 +6516,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
           ) : (
             <Svg source={`<svg xmlns="http://www.w3.org/2000/svg" width="${ROW_STEPS.bar}" height="4"/>`} alt="espace" width={ROW_STEPS.bar} height={4} />
           ))}
-        <Box width={ROW_STEPS.count} flexShrink={0} flexDirection="row" justifyContent="flex-end">
+        <Box width={stepsCells.count} flexShrink={0} flexDirection="row" justifyContent="flex-end">
           {view && <Text size="caption" tabular color={palette.text3}>{view.count}</Text>}
         </Box>
       </Box>
@@ -6577,17 +6580,42 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     // Les pastilles entre le numéro et le titre : retour, échéance, attente…, puis les clés montrées
     // (#125 : département, statut… en pastilles pleines, cadenas compris ; un enfant de l'arbre ne
     // reprend pas celles de son parent).
-    const pills = [
-      ...(!ghost && !t.done && t.feedback ? [feedbackPill()] : []),
-      ...(!ghost && !inSession && !locked ? listPills(t, today, me).map(rowPill) : []),
-      // Dans l'arbre, une seule pastille de clé, le département, sur chaque ligne, faite comprise (#163).
+    const feedback = !ghost && !t.done && t.feedback !== undefined
+    // Les pastilles de clé, dessinées : dans l'arbre, une seule, le département, sur chaque ligne, faite
+    // comprise (#163).
+    const keySpecs = [
       ...(!ghost && clesVisibles && tree
-        ? [treeDepartment(t, { enabled: settings.axisPill, axisFilter: axis, clesVisibles })].filter((x): x is string => x !== undefined).map(text => drawnPill({ text, bg: palette.sel, fg: t.done ? palette.text3 : palette.text2, weight: 600 }))
+        ? [treeDepartment(t, { enabled: settings.axisPill, axisFilter: axis, clesVisibles })].filter((x): x is string => x !== undefined).map(text => ({ text, bg: palette.sel, fg: t.done ? palette.text3 : palette.text2, weight: 600 as const }))
         : []),
-      ...(!ghost && !t.done && clesVisibles && !tree ? keyPills(t, clesVisibles, cles, child?.parent).map(p => drawnPill({ text: p.text, bg: palette.sel, fg: palette.text2, weight: 600 })) : []),
+      ...(!ghost && !t.done && clesVisibles && !tree ? keyPills(t, clesVisibles, cles, child?.parent).map(p => ({ text: p.text, bg: palette.sel, fg: palette.text2, weight: 600 as const })) : []),
     ]
+    const allPills = [
+      ...(feedback ? [feedbackPill()] : []),
+      ...(!ghost && !inSession && !locked ? listPills(t, today, me).map(rowPill) : []),
+      ...keySpecs.map(spec => drawnPill(spec)),
+    ]
+    // En session, la ligne tient dans la largeur (#177, #248 de Splitmybill) : une pastille qui ne laisse
+    // pas sa place au titre part, avant que la colonne de session ne soit poussée hors du panneau. Ses
+    // pastilles sont la Feedback et les clés (sans `listPills`), dans cet ordre. Le retrait compte les
+    // marges du panneau, du cadre du bloc et de la ligne.
+    const pills =
+      inSession && Svg
+        ? allPills.slice(
+            0,
+            fitRowPills({
+              columns: (e.props as { bodyColumns?: number }).bodyColumns ?? 56,
+              inset: 6,
+              steps: stepsCells.columns,
+              pills: [
+                ...(feedback ? [pillIcon({ text: 'Feedback', bg: palette.waitTint, fg: palette.waitOn, weight: TEXT.weight.soft }).width] : []),
+                ...keySpecs.map(spec => pillIcon(spec).width),
+              ].map(pxCells),
+            }).kept,
+          )
+        : allPills
     const number = t.id ? taskNumber(t.id, rowSession ? () => void openSession($, rowSession.entry) : undefined) : undefined
-    const department = ghost ? undefined : axisPillText(t, { enabled: settings.axisPill, axisFilter: axis, groupedByAxis: (pending && by === 'subject') || (tree !== undefined && !rangerPar), clesVisibles })
+    // Jamais dans « En cours » (#177) : le bloc de Maestro ou le filtre ; le carré d'axe suffit.
+    const department = ghost ? undefined : axisPillText(t, { enabled: settings.axisPill, axisFilter: axis, live: block !== undefined || attend === 'live', groupedByAxis: (pending && by === 'subject') || (tree !== undefined && !rangerPar), clesVisibles })
     return (
       <Box
         key={`hit:${t.key}`}
@@ -6966,7 +6994,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   // Les groupes d'une bande repliée ne se dessinent pas, et ne prennent rien au budget.
   const groups = allGroups.filter(g => g.under === undefined || bandOpen(g.under))
   // Dans l'arbre par axe, la bande tait la pastille d'axe : le budget plein (#168).
-  let budget = settings.axisPill && !showDone && !clesVisibles?.length && axis === 'all' && (by !== 'tree' || rangerPar) ? ROW_BUDGET_AXIS_PILL : ROW_BUDGET
+  let budget = settings.axisPill && attend !== 'live' && !showDone && !clesVisibles?.length && axis === 'all' && (by !== 'tree' || rangerPar) ? ROW_BUDGET_AXIS_PILL : ROW_BUDGET
   const rowsOf = new Map<string, number>()
   const idOf = (g: { key?: string; name: string }) => g.key ?? g.name
   for (const g of groups) {

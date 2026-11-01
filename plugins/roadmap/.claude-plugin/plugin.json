@@ -1,6 +1,6 @@
 {
   "name": "roadmap",
-  "version": "0.115.1",
+  "version": "0.115.2",
   "description": "Panneau Claude Code à côté du chat : la roadmap du projet de la session, filtrable, avec le détail d'une tâche et son lancement dans une nouvelle session",
   "author": {
     "name": "Bertrand Fargheon"
@@ -38,9 +38,9 @@
     },
     "axisPill": {
       "type": "boolean",
-      "title": "Département en pastille",
-      "description": "Chaque tâche ouverte de la liste porte son axe (le département) en pastille, à droite du titre, avant l'âge. Pas de pastille sous un axe choisi, ni dans un projet qui montre ses propres clés (cles_visibles). Éteint : l'axe ne se dit que par la couleur du carré.",
-      "default": true
+      "title": "Axe en pastille",
+      "description": "Allumé, chaque tâche ouverte de la liste porte son axe (le département) en pastille, à droite du titre, avant l'âge. Jamais dans « En cours » (le bloc de Maestro ou le filtre), ni sous un axe choisi, ni dans un projet qui montre ses propres clés (cles_visibles). Éteint par défaut : l'axe se dit par la couleur du carré.",
+      "default": false
     },
     "theme": {
       "type": "string",
