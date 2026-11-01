@@ -610,6 +610,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.114.3 (2026-11-01)** : panneau : le Livré de la carte Fin s'affiche en blocs, sans puce devant (#173)
 - **0.114.2 (2026-11-01)** : panneau : les notes d'attente (titres courts en préparation, carte de session posée) deviennent une bande bleue avec titre et explication (#169)
 - **0.114.1 (2026-11-01)** : panneau : la fiche d'une tâche close tient dans la largeur ; la Chaîne ne déborde plus, Tout voir est aligné, Livré s'affiche sans puce isolée ni code coupé à son tiret (#173)
 - **0.114.0 (2026-11-01)** : panneau : la roadmap s'ouvre en arbre par axe, en mode Code comme en mode Projet ; une section par axe dans l'ordre de la légende, les mères et leurs filles reliées par des coudes, un rond pour cocher (#168)

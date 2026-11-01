@@ -992,7 +992,10 @@ export function livreOfNote(note: string | undefined): { livre?: string; rest?: 
   return /^roadmap \d+\.\d+/i.test(n) ? { livre: n } : { rest: n }
 }
 
-/** Un Livré fait de morceaux séparés par « ; » (hors parenthèses), en puces markdown (#150, choix de BBR). */
+/**
+ * Un Livré fait de morceaux séparés par « ; » (hors parenthèses), un bloc par morceau (#150) : sans puce
+ * devant depuis #173 (BBR, 2026-11-01 : « garde les 2 blocs mais supprime le point devant chacun »).
+ */
 export function livreMarkdown(text: string): string {
   const parts: string[] = []
   let depth = 0
@@ -1008,7 +1011,17 @@ export function livreMarkdown(text: string): string {
   }
   parts.push(text.slice(from))
   const items = parts.map(p => p.trim()).filter(p => p !== '')
-  return items.length < 2 ? text.trim() : items.map(p => `- ${p}`).join('\n')
+  return items.length < 2 ? text.trim() : items.join('\n\n')
+}
+
+/** Une liste markdown en blocs sans puce (#173) : le Livré d'une fiche de fin, comme celui de la roadmap. */
+export function unbulleted(md: string): string {
+  const lines = md.split('\n')
+  if (!lines.some(l => l.startsWith('- '))) return md
+  return lines
+    .map(l => l.replace(/^- /, '').replace(/ {2}$/, ''))
+    .filter(l => l !== '')
+    .join('\n\n')
 }
 
 /** Une cellule de fiche de fin en markdown (#150) : ses lignes à puce (•, -, *) en liste, les autres à saut dur. */
@@ -1084,7 +1097,7 @@ export function finCard(o: { recap?: StoredRecap; task: Task; bilan?: Bilan; due
   const fromNote = livreOfNote(task.note)
   const day = (task.fait ?? '').slice(0, 10)
   const closed = task.done ? `${abandoned ? 'annulée' : 'fini'} : ${task.id ? `#${task.id} ` : ''}close${day ? ` le ${day}` : ''}` : undefined
-  const livre = recap?.livre !== undefined ? cellMarkdown(recap.livre) : fromNote.livre !== undefined ? livreMarkdown(fromNote.livre) : undefined
+  const livre = recap?.livre !== undefined ? unbulleted(cellMarkdown(recap.livre)) : fromNote.livre !== undefined ? livreMarkdown(fromNote.livre) : undefined
   const etat = recap?.etat !== undefined ? cellMarkdown(recap.etat) : closed
   const note = bilan && bilan.note !== '' ? bilan.note : undefined
   const atoi = recap?.atoi !== undefined ? cellMarkdown(recap.atoi) : note
