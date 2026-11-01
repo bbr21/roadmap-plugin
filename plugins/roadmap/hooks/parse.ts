@@ -2488,11 +2488,11 @@ const archiveThen = (): string =>
 const maestroClauseEnd = (): string => `Ta ligne close par Maestro (lue dans ROADMAP-fait, jamais supposée) et plus rien en attente (aucune question, aucune session à toi encore ouverte), ton dernier tour finit sur « fini, rien en attente », ta ligne État dit « fini : #<id> close par Maestro le AAAA-MM-JJ », avec ${ARCHIVE_BOX}. Ta ligne encore ouverte, ne propose pas l'archivage : Maestro la coche à la fusion. ${archiveThen()} Refusé, Maestro propose l'archivage à ${person()}.`
 
 /**
- * Un choix visuel sous un Maestro (#96) : Bertrand ne lit pas le transcript d'une sous-session, Maestro
- * lui montre la page et renvoie son choix.
+ * Un choix visuel sous un Maestro (#96) : la page des maquettes. Depuis #151 (Bertrand, 2026-10-31), la
+ * session pose elle-même le choix et Bertrand y répond chez elle : Maestro ne le relaie plus.
  */
 function maestroMockups(where: string): string {
-  return `Un choix visuel : écris tes 2 ou 3 maquettes dans une page HTML statique, ${where}, dis « attend une réponse : choix de maquette, <chemin> » en tête de ton compte rendu et termine ton tour ; ${person()} ne lit pas ton transcript : Maestro lui montre la page et te renvoie son choix.`
+  return `Un choix visuel : écris tes 2 ou 3 maquettes dans une page HTML statique, ${where}, ouvre-la dans ton volet navigateur (\`preview_start\` avec son url \`file://\`), puis pose le choix toi-même, par le formulaire (\`AskUserQuestion\`), une option par maquette, ta recommandation en premier (sans formulaire, par la question de ta boîte de fin) ; dis « attend une réponse : choix de maquette, <chemin> » en tête de ton compte rendu et termine ton tour. ${Person()} y répond dans ta session : Maestro ne relaie pas la question, il ne te la rappelle qu'après 15 min sans réponse.`
 }
 
 /**
@@ -2626,7 +2626,7 @@ export function proposalRetryNote(maestro: string, reason: 'offer' | 'fork', ini
 
 /** L'état d'une fin de tour de session, dit à Maestro : son genre, sa phrase, et la clé qui évite le doublon. */
 export type ChildWake = {
-  kind: 'ready' | 'blocked' | 'waiting' | 'question' | 'done' | 'stopped' | 'other'
+  kind: 'ready' | 'blocked' | 'waiting' | 'answer' | 'question' | 'done' | 'stopped' | 'other'
   said: string
   key: string
 }
@@ -2643,8 +2643,9 @@ function firstSentence(text: string): string {
 /**
  * L'état où une session finit son tour (#131), lu dans la première phrase de son récap (boîte de
  * fin), sinon de sa réponse : les états de la clause de Maestro. Une question de formulaire en
- * cours (`question`) ou de la boîte de fin (`ask`) la fait attendre ; « en cours » en fin de tour
- * veut dire arrêtée avant la fin.
+ * cours (`question`), de la boîte de fin (`ask`) ou « attend une réponse » attend la personne
+ * (`answer`, #151), toute autre attente une ressource ; « en cours » en fin de tour veut dire
+ * arrêtée avant la fin.
  */
 export function childWake(o: { recap?: string; ask?: string; answer?: string; question?: string }): ChildWake {
   const make = (kind: ChildWake['kind'], said: string): ChildWake => ({ kind, said, key: `${kind}|${said}` })
@@ -2653,7 +2654,8 @@ export function childWake(o: { recap?: string; ask?: string; answer?: string; qu
   const s = said.toLowerCase()
   if (/^\W*pr[êe]te?s? (à|a) fusionner/u.test(s)) return make('ready', said)
   if (/^\W*bloqu[ée]/u.test(s)) return make('blocked', said)
-  if (/^\W*attend\b/u.test(s) || (o.ask !== undefined && o.ask.trim() !== '' && !/archiver cette session/i.test(o.ask))) return make('waiting', said)
+  if (/^\W*attend (une|ta|sa) réponse\b/u.test(s) || (o.ask !== undefined && o.ask.trim() !== '' && !/archiver cette session/i.test(o.ask))) return make('answer', said)
+  if (/^\W*attend\b/u.test(s)) return make('waiting', said)
   if (/^\W*fini\b|à archiver/u.test(s)) return make('done', said)
   if (/^\W*en cours\b/u.test(s)) return make('stopped', said)
   return make('other', said)
@@ -2667,9 +2669,11 @@ function wakeTodo(w: ChildWake, id: string | undefined): string {
       return `relis son diff, puis fusionne-la si ses tests sont verts sur sa branche à jour de main (§ 5), et préviens aussitôt les sessions dont la ligne porte ${after}.`
     case 'blocked':
     case 'waiting':
-      return `débloque-la d'abord (§ 3) : réponds-lui par message si le code, la roadmap ou les règles tranchent, donne-lui la main sur la ressource si elle est libre, sinon pose la question à ${person()} et relaie sa réponse mot pour mot.`
+      return `débloque-la d'abord (§ 3) : donne-lui la main sur la ressource si elle est libre, réponds-lui par message si le code, la roadmap ou les règles tranchent ; ce qui ne revient qu'à ${person()} (un secret, un accès), dis-le-lui en une ligne, avec son lien.`
+    // #151 (Bertrand, 2026-10-31, « J'ai déjà répondu tu devrais savoir ») : il répond dans la session.
+    case 'answer':
     case 'question':
-      return `elle pose une question dans un transcript que ${person()} ne regarde pas : réponds-lui par message si tu as la réponse, sinon pose-la à ${person()} et relaie sa réponse mot pour mot.`
+      return `${Person()} y répond dans la session elle-même : ne lui relaie pas la question, ni par formulaire ni par une ligne, et ne lui dis rien dans ce tour : ta liste d'étapes le montre (« t'attend : <la question en trois mots> »). Réponds-lui par message seulement si le code, la roadmap ou les règles tranchent. Encore en attente dans 15 min, le panneau te la redonne : relis alors qu'elle attend toujours (get_session : isRunning ; list_events : son dernier message), puis rappelle-la-lui en une ligne, avec son lien.`
     case 'done':
       return `vérifie que sa ligne est close (§ 6), puis propose son archivage à ${person()}.`
     case 'stopped':
@@ -2679,15 +2683,16 @@ function wakeTodo(w: ChildWake, id: string | undefined): string {
   }
 }
 
-const WAKE_STATE: Record<ChildWake['kind'], string> = {
+const WAKE_STATE = (): Record<ChildWake['kind'], string> => ({
   ready: 'prête à fusionner',
   blocked: 'bloquée',
   waiting: 'en attente',
-  question: 'pose une question',
+  answer: `attend la réponse de ${person()}`,
+  question: `attend la réponse de ${person()}`,
   done: 'finie',
   stopped: 'arrêtée en cours de route',
   other: 'a fini son tour',
-}
+})
 
 /**
  * Le message qu'une session envoie à son Maestro à la fin d'un tour (#131). Il ne commence pas par
@@ -2698,7 +2703,7 @@ export function childWakeText(w: ChildWake, child: { id: string; title: string; 
   const branch = child.branch ? `, branche ${child.branch}` : ''
   const quote = w.kind === 'question' ? `Sa question : « ${w.said} ».` : w.said !== '' ? `Son compte rendu : « ${w.said} ».` : 'Aucun compte rendu.'
   return [
-    `Roadmap — nouvelle de ta session « ${child.title || child.id} » (${child.id}${branch}) : ${WAKE_STATE[w.kind]}. ${quote}`,
+    `Roadmap — nouvelle de ta session « ${child.title || child.id} » (${child.id}${branch}) : ${WAKE_STATE()[w.kind]}. ${quote}`,
     `Ce message vient du panneau Roadmap, pas de ${person()} : la session te prévient elle-même, car l'app ne te réveille que quand toutes tes sessions sont au repos.`,
     `À toi, dès maintenant (skill roadmap:maestro) : ${wakeTodo(w, id)} Puis mets ta liste d'étapes à jour.`,
   ].join('\n')
@@ -3086,7 +3091,8 @@ export function childAlertText(alerts: readonly ChildAlert[]): string | undefine
       `- Les finies : propose de les archiver d'un seul clic, dans ce tour même et pas au message suivant, par ta boîte de fin (wrap_up) avec la question « Archiver ${childShortList(archive.map(a => a.child))} ? » et un bouton de réponse « Archive-les ». Cette question passe avant toute autre question de ta boîte de fin : une autre décision va dans un formulaire (AskUserQuestion). Juste avant de la poser, relis list_sessions avec {"linked": true} : ${person()} a pu archiver une session depuis sa propre boîte de fin, et une session archivée n'y figure plus ; ne propose que celles qui y sont encore, et aucune question s'il n'en reste pas. Au clic de ${person()}, archive_session pour chacune (son identifiant entre parenthèses), puis dis en une ligne ce qui est archivé ou refusé. Sans son clic, n'archive rien.`,
     )
   }
-  if (rest.some(a => a.kind === 'question')) lines.push('- Une question attend ' + person() + ' : rappelle-la-lui en une ligne, avec le lien ; ne relance pas la session.')
+  // #151 : la réponse a pu arriver dans la session depuis la note ; un rappel, jamais la question reposée.
+  if (rest.some(a => a.kind === 'question')) lines.push('- Une question attend ' + person() + ', qui y répond dans la session elle-même : relis d\'abord qu\'elle attend encore (get_session : isRunning ; list_events : son dernier message) ; elle tourne, ou la réponse est déjà là : rien à dire. Sinon rappelle-la-lui en une ligne, avec le lien, sans reposer la question ; ne relance pas la session.')
   if (rest.some(a => a.kind === 'ready')) lines.push('- Prête : lis son dernier compte rendu, puis fusionne ou clos (skill roadmap:maestro, § 5 et 6).')
   if (rest.some(a => a.kind === 'silent' && !a.relaunched)) {
     lines.push(
@@ -5943,9 +5949,9 @@ export function maestroContext(o: {
     "Ce que tu fais, sans rien coder ni écrire dans la roadmap (sauf la ligne d'une tâche que propose une de tes sessions) :",
     `- Ouvre ta réponse par une phrase de verdict : ce qui avance, ce qui coince${stuck.length > 0 ? ` (${stuck.length} session${stuck.length > 1 ? 's' : ''} coincée${stuck.length > 1 ? 's' : ''} depuis plus de ${durationLabel(MAESTRO_STUCK_MS)} : dis lesquelles et ${o.autonome ? 'réponds d\'abord toi-même à celles qui ne reviennent pas à ' + person() + ' (plus bas) ; les autres, à ' + person() + ' d\'y répondre d\'abord' : 'qu\'il revient à ' + person() + ' d\'y répondre d\'abord'}, avec leur lien)` : ''}.`,
   ]
-  // Une réponse peut être arrivée dans la session depuis cette liste (#121) : relire avant de demander.
+  // Plus de relais (#151) : la personne répond dans la session ; une réponse a pu y arriver depuis cette liste (#121).
   lines.push(
-    `- Avant de relayer à ${person()} la question d'une de tes sessions (formulaire, choix de maquette), relis son état juste avant : get_session (isRunning) et list_events (son dernier message). Elle tourne, ou la réponse est déjà là : ne demande rien (skill roadmap:maestro, § 3).`,
+    `- Ne relaie pas à ${person()} la question d'une de tes sessions (formulaire, choix de maquette, boîte de fin) : ${person()} y répond dans la session elle-même. Celle qui attend depuis 15 min, relis d'abord son état : get_session (isRunning) et list_events (son dernier message) ; elle tourne, ou la réponse est déjà là : n'en dis rien. Sinon rappelle-la en une ligne, avec son lien, sans reposer la question (skill roadmap:maestro, § 3).`,
   )
   // Maestro suit ses sessions par sa liste d'étapes (#104), dans les deux modes.
   lines.push(MAESTRO_STEP_LIST)

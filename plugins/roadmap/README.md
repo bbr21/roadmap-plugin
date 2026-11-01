@@ -645,6 +645,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.118.0 (2026-11-01)** : maestro : ne relaie plus la question d'une de ses sessions, Bertrand y répond dans la session ; rappel après 15 min seulement (#151)
 - **0.117.0 (2026-11-01)** : panneau, skills : un seul mode ; tous les filtres et rangements partout, cachés quand vides ; le travail (worktree, fusion, rappel de méthode) déduit du dossier, git avec du code ou non ; l'onboarding ne demande plus de mode (#176)
 - **0.116.0 (2026-11-01)** : panneau : le rond d'une tâche se confirme en deux temps (cocher, rouvrir une faite, tout clore), et le numéro suit le rond à écart fixe (#179)
 - **0.115.2 (2026-11-01)** : panneau : plus de pastille d'axe dans « En cours », où le compte d'étapes n'est plus coupé ; la pastille d'axe de la liste devient un réglage, éteint par défaut (#177)

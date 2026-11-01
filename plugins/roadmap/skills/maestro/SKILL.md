@@ -72,8 +72,10 @@ to it.
     « attend une réponse : … » or « bloquée : … »; keep your step list (`update_plan`);
   - update your branch when Maestro asks: merge `main` into it, never rebase a pushed branch;
   - a visual choice: write your 2 or 3 mockups in a static HTML page (in a code project:
-    `docs/plans/<type>-<slug>/maquettes.html`; without code: next to the document), say
-    « attend une réponse : choix de maquette, <chemin> » at the top of your report and end your turn;
+    `docs/plans/<type>-<slug>/maquettes.html`; without code: next to the document), open it in
+    your browser pane, ask the choice yourself (form, one option per mockup), say
+    « attend une réponse : choix de maquette, <chemin> » at the top of your report and end your
+    turn: the person answers in the session itself, Maestro does not relay it (#151);
   - do not tick your line: your last report says what was done and the problem met;
   - your line closed (read in `ROADMAP-fait.md`, never assumed) and nothing left pending, your last
     turn ends on « fini, rien en attente », your État line says
@@ -97,8 +99,8 @@ to it.
 
 - **Talk to the person only when they need to** (#133): the detail lives in the child sessions
   (their report, their closing sheet); Maestro moves things forward and stays quiet. A need of the
-  person is only: a question only they can settle (architecture, visual choice, a sub-session's
-  question that neither the code, nor the roadmap, nor `autonome` settles); a gesture of theirs
+  person is only: a question only they can settle (architecture, visual choice), Maestro's own,
+  never a sub-session's question, which they answer in that session (#151); a gesture of theirs
   that no tool does (sending an email, a secret, a login); a click that is theirs (launching a
   session through its card, archiving); a blocker Maestro cannot lift. A task moving forward, a
   session restarted, a branch reviewed, merged or published are not needs: the step list shows
@@ -121,7 +123,9 @@ to it.
   sub-session notifies it itself, by a message « Roadmap — nouvelle de ta session … » at each end of
   turn and at each form question, once per status. That message comes from the panel, not from the
   person. Maestro acts right away, without waiting for the others to finish: **ready to merge**,
-  § 5; **blocked**, **waiting** or **asks a question**, unblock first (below); **stopped midway**,
+  § 5; **blocked** or **waiting** (a resource), unblock first (below); **waiting for the person's
+  answer** (a form, an end-box question, « attend une réponse : … »), no relay (below, #151);
+  **stopped midway**,
   restart it by message (« continue : … ») unless it is waiting for something from Maestro;
   **finished**, § 6. Then it updates its list, without a word to the person except a need of theirs
   (above, #133). The same turn gives it the news of all its children (below): a silent one is
@@ -131,8 +135,10 @@ to it.
   messages, and of its sessions' messages (#131), the panel gives Maestro, under
   « Roadmap — nouvelles de tes sessions enfants », one line per child that is stuck or to archive, and nothing
   when everything moves forward:
-  - **waiting for the person's answer** for 15 min: remind them in one line, with the link, on a
-    turn they start, or on wake-up if it is not already asked and unanswered (#133);
+  - **waiting for the person's answer** for 15 min: reread that it is still waiting (`get_session`,
+    `list_events`), then remind them in one line, with the link, without asking the question
+    again, on a turn they start, or on wake-up if it is not already asked and unanswered (#133,
+    #151);
   - **silent** for 15 min (its step, or « état inconnu »): write to it **once** (`SendMessage` to
     its id) « où en es-tu, qu'est-ce qui te bloque, de quoi as-tu besoin ? », without telling the
     person (its answer arrives at the end of its turn, #133); still at the same point afterwards,
@@ -182,26 +188,29 @@ to it.
     repository or base not found: fix the input.
 - **Unblock first**: whatever keeps a sub-session from moving forward comes before everything else.
   Maestro answers itself, by message to the sub-session, what the code, the roadmap or the rules
-  settle. The rest goes to the person, one question at a time, and their answer is passed on word
-  for word. With the session setting `autonome` (skill `reglages-session`, with or without
+  settle. What only the person can lift (a secret, an access) is told to them in one line, with the
+  session's link. With the session setting `autonome` (skill `reglages-session`, with or without
   code), Maestro also answers itself, with its recommendation, everything that is neither an
   architecture question (a choice that would be written in `docs/decisions.md`) nor a gesture that
   belongs to the person (launching, archiving, a secret, an access), and says so in one line.
   Merging and publishing are not the person's to decide: Maestro never asks them « je fusionne ? »
   or « je publie ? » (#105).
-- **Reread before relaying** (#121): right before putting a sub-session's question to the person
-  (form, mockup choice), reread its status: `get_session` (`isRunning`) and `list_events` (its last
-  message). If it is running, or the answer is already in its transcript: ask nothing, the question
-  is settled. An idle session that asks no question (« à archiver », « fini, rien en attente ») is
-  not waiting for the person. Same rule as archiving (§ 6, #110). Relay only the questions of its
-  own sessions: those of another open Maestro belong to that one.
+- **No relay** (#151, the person, 2026-10-31: « J'ai déjà répondu tu devrais savoir »): a
+  sub-session that asks the person a question (form, mockup choice, end-box question,
+  « attend une réponse : … ») is answered by the person in that session itself. Maestro does not
+  put it to them again, neither by a form nor by a line: it answers the sub-session by message only
+  what the code, the roadmap or the rules settle, sets its step to « t'attend : <la question en
+  trois mots> » and says nothing. Only after 15 min without an answer (the panel's news) does it
+  remind the person, in one line with the link, after rereading that the question is still
+  waiting: `get_session` (`isRunning`) and `list_events` (its last message). If it is running, or
+  the answer is already in its transcript, the question is settled (#121). An idle session that
+  asks no question (« à archiver », « fini, rien en attente ») is not waiting for the person. Same
+  rule as archiving (§ 6, #110). Remind only of the questions of its own sessions: those of
+  another open Maestro belong to that one.
 - **A mockup choice** (#96): a sub-session that is
-  « attend une réponse : choix de maquette, <chemin> » has written its mockups in a page. Maestro first rereads its status (above), then opens
-  it in the browser pane (`preview_start` with the page's `file://` url, in the sub-session's
-  worktree), then puts the question to the person through the form, one option per mockup, its
-  preview (`preview`) and its trade-off, the sub-session's recommendation first; their answer is
-  passed on word for word. The `autonome` setting does not apply: a visual choice belongs to the
-  person.
+  « attend une réponse : choix de maquette, <chemin> » has written its mockups in a page, opened
+  it in its own browser pane and asked the choice through its own form: the person picks there.
+  No relay (above). The `autonome` setting does not apply: a visual choice belongs to the person.
 - **The sub-sessions' proposals** (#67, #132): any session creation a sub-session asks for, its New
   task card (`own_initiative`, `offer`) or the launch the person asked of it (`user_asked`), would
   make a grandchild of Maestro, and the person wants only one level under Maestro. The panel sends
@@ -325,7 +334,7 @@ The merge itself:
   the mark set when the person says « Maestro » in it, or by its launched sessions still open (at
   least two).
 - Its brief (« Maestro ») counts only its own sessions: those of another open Maestro fit on a
-  separate line, with no question to relay. « Attendent la réponse » means idle with an open
+  separate line, with nothing to remind. « Attendent la réponse » means idle with an open
   question (form, end-box question, « attend une réponse : … » at the top of the recap), quoted in
   full; idle without a question, the session is « au repos, aucune question » (#121).
 - It never marks it « en cours » on a task, and does not offer it archiving when the number in its
