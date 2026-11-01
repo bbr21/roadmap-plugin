@@ -135,6 +135,7 @@ import {
   withParentDates,
   bandsOf,
   keyPills,
+  axisPillText,
   filterSummary,
   fallbackTitle,
   openedLabel,
@@ -344,6 +345,8 @@ const ZONE_LIMIT = 26
  * chaque section dit « Voir les N autres ». Une ligne pèse ~14 éléments et 1 à 3 Svg.
  */
 const ROW_BUDGET = 40
+/** Le même budget quand chaque ligne porte sa pastille de département (#156) : un Svg de plus par ligne ; 20, choix de Bertrand (2026-10-31). */
+const ROW_BUDGET_AXIS_PILL = 20
 /**
  * La clé d'une zone de clic : lettres, chiffres et tiret seulement. Un nom de section porte des
  * espaces, des accents ou des deux-points, et l'app de bureau a cessé de dessiner le panneau
@@ -510,7 +513,7 @@ function axisCount(tasks: Task[], axis: string): number {
 }
 
 /** Les réglages du plugin (userConfig), relus à chaque chargement du module. */
-let settings = { me: [] as string[], autoOpen: true, titleModel: 'sonnet', capture: true, theme: 'auto', launchEffort: 'high', launchBypass: false }
+let settings = { me: [] as string[], autoOpen: true, titleModel: 'sonnet', capture: true, theme: 'auto', launchEffort: 'high', launchBypass: false, axisPill: true }
 
 /**
  * La palette du panneau. Le mod ne reçoit pas l'apparence de l'app : il lit le thème de Claude
@@ -3412,6 +3415,7 @@ export const register: Register = (on, options) => {
     theme: typeof options.theme === 'string' && options.theme !== '' ? options.theme : 'auto',
     launchEffort: typeof options.launchEffort === 'string' && options.launchEffort !== '' ? options.launchEffort : 'high',
     launchBypass: options.launchBypass === true,
+    axisPill: typeof options.axisPill === 'boolean' ? options.axisPill : true,
   }
 
   // Le thème de Claude Code a changé : le panneau se redessine dans l'autre palette.
@@ -5913,6 +5917,16 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     // ZONE_LIMIT. Ni sur une tâche en session, bloquée ou déjà demandée ; sa colonne reste, vide,
     // pour garder les carrés alignés.
     const playable = !t.done && !ghost && !inSession && !locked && !launched.includes(taskKey(t))
+    // Les pastilles entre le numéro et le titre : retour, échéance, attente…, puis les clés montrées
+    // (#125 : département, statut… en pastilles pleines, cadenas compris ; un enfant de l'arbre ne
+    // reprend pas celles de son parent).
+    const pills = [
+      ...(!ghost && !t.done && t.feedback ? [feedbackPill()] : []),
+      ...(!ghost && !inSession && !locked ? listPills(t, today, me).map(rowPill) : []),
+      ...(!ghost && !t.done && clesVisibles ? keyPills(t, clesVisibles, cles, child?.parent).map(p => drawnPill({ text: p.text, bg: palette.sel, fg: palette.text2, weight: 600 })) : []),
+    ]
+    const number = t.id ? taskNumber(t.id, rowSession ? () => void openSession($, rowSession.entry) : undefined) : undefined
+    const department = ghost ? undefined : axisPillText(t, { enabled: settings.axisPill, axisFilter: axis, groupedByAxis: pending && by === 'subject', clesVisibles })
     return (
       <Box
         key={`hit:${t.key}`}
@@ -5940,18 +5954,24 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
           {mark}
           {head && Svg && headZones && hit(`group:${head.id}`, toggleGroup(head.id), 1)}
         </Box>
-        {/* Le numéro d'abord, à sa colonne : les pastilles suivent, les numéros restent alignés. */}
-        {t.id && taskNumber(t.id, rowSession ? () => void openSession($, rowSession.entry) : undefined)}
-        {!ghost && !t.done && t.feedback && feedbackPill()}
-        {!ghost && !inSession && !locked && listPills(t, today, me).map(rowPill)}
-        {/* Les clés montrées (#125) : département, statut… en pastilles pleines, cadenas compris ; un
-            enfant de l'arbre ne reprend pas celles de son parent. */}
-        {!ghost && !t.done && clesVisibles && keyPills(t, clesVisibles, cles, child?.parent).map(p => drawnPill({ text: p.text, bg: palette.sel, fg: palette.text2, weight: 600 }))}
-        <Box flexGrow={1} flexShrink={1} minWidth={0}>
+        {/* Le numéro d'abord, à sa colonne : les pastilles suivent, les numéros restent alignés. Sans
+            pastille, le numéro entre dans le bloc du titre, sans écart (#156) : sur le bureau, la marge
+            du bouton du titre fait l'espace d'un mot ; au terminal, sans marge, l'écart d'une cellule
+            reste. Aucun élément de plus par ligne. */}
+        {t.id && pills.length > 0 && number}
+        {pills}
+        <Box key={`lead:${t.key}`} flexDirection="row" alignItems="center" gap={graphic ? 0 : SPACE.row} flexGrow={1} flexShrink={1} minWidth={0}>
+          {t.id && pills.length === 0 && number}
           <Button key={t.key} plain dimColor={ghost || (!t.done && !titled(t))} onPress={select(selectionOf(t))}>
             <Text wrap="truncate-end" {...(head && !ghost ? { weight: 'semibold' as const } : {})}>{s.titre}</Text>
           </Button>
         </Box>
+        {/* Le département (#156, maquette A) : l'axe en pastille, à droite du titre, avant l'âge ; un réglage. */}
+        {department !== undefined && (
+          <Box key={`axis:${t.key}`} flexShrink={0}>
+            {drawnPill({ text: department, bg: palette.sel, fg: palette.text2, weight: 600 })}
+          </Box>
+        )}
         {/* En session : chez Maestro (#149), la pastille seule, sa barre, son étape et la main qui t'attend
             vivent dans l'arbre ; ailleurs, sans arbre, la roue ou la main, la barre et le compte (#143, #145). */}
         {inSession && (maestroLine ? drawnPill({ text: 'en session', bg: palette.liveTint, fg: palette.liveOn, weight: TEXT.weight.soft }) : sessionColumn(t))}
@@ -6207,7 +6227,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   // au seuil où le panneau gèle (2026-10-23).
   // Les groupes d'une bande repliée ne se dessinent pas, et ne prennent rien au budget.
   const groups = allGroups.filter(g => g.under === undefined || bandOpen(g.under))
-  let budget = ROW_BUDGET
+  let budget = settings.axisPill && !showDone && !clesVisibles?.length && axis === 'all' ? ROW_BUDGET_AXIS_PILL : ROW_BUDGET
   const rowsOf = new Map<string, number>()
   const idOf = (g: { key?: string; name: string }) => g.key ?? g.name
   for (const g of groups) {

@@ -1533,6 +1533,18 @@ export function keyPills(task: Task, visible: readonly string[], cles: Record<st
 }
 
 /**
+ * La pastille de département d'une ligne (#156) : l'axe en toutes lettres, à droite du titre. Rien
+ * quand le réglage est éteint, sur une tâche faite (son axe est déjà à droite), quand la liste dit
+ * déjà l'axe (un axe choisi dans la barre, ou les sections rangées par axe en attendant les titres
+ * courts), ni dans un projet qui montre ses propres clés (`cles_visibles`, comme le département de
+ * Caroline).
+ */
+export function axisPillText(task: Task, o: { enabled: boolean; axisFilter: string; groupedByAxis?: boolean; clesVisibles?: readonly string[] }): string | undefined {
+  if (!o.enabled || task.done || task.axis === '' || o.axisFilter !== 'all' || o.groupedByAxis === true || (o.clesVisibles?.length ?? 0) > 0) return undefined
+  return axisLabel(task.axis)
+}
+
+/**
  * Les bandes d'un rangement par clé (#125) : les valeurs déclarées dans leur ordre, puis les autres
  * par ordre alphabétique, puis `none` pour les éléments sans valeur ; une bande vide n'apparaît pas.
  */
