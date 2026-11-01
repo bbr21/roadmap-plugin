@@ -204,12 +204,37 @@ def valider_projet(r):
     return r
 
 
+DECLARATIONS = ("regles", "ecriture", "preuves")
+
+
+def valider_declarations(r):
+    """La forme de `regles`, `ecriture` et `preuves` reçus en réponses (#158) ; leur présence sur le
+    disque, c'est le doctor qui la contrôle (le fichier de règles s'écrit souvent après)."""
+    if "regles" in r and not _chemin_lisible(r["regles"]):
+        raise Erreur("regles : le chemin du fichier des règles du projet")
+    e = r.get("ecriture")
+    if "ecriture" in r and not (isinstance(e, dict) and set(e) == {"outil", "consigne"} and _chemin_lisible(e["outil"])
+                                and isinstance(e["consigne"], str) and e["consigne"].strip()):
+        raise Erreur("ecriture : un objet {outil, consigne}, le chemin de l'outil et comment l'appeler")
+    p = r.get("preuves")
+    if "preuves" in r and not (_titre_preuves(p)
+                               or (isinstance(p, list) and p and all(_chemin_lisible(x) for x in p))):
+        raise Erreur("preuves : une liste de lieux (chemins, ou « source:requête »), ou « #<titre> » d'une section des règles")
+
+
+def _poser_declarations(cfg, r):
+    for k in DECLARATIONS:
+        if k in r:
+            cfg[k] = r[k]
+
+
 def valider(r):
     if not isinstance(r, dict):
         raise Erreur("les réponses sont un objet JSON")
     if r.get("mode", "code") not in ("code", "projet"):
         raise Erreur("mode : code ou projet")
     r["design"] = normaliser_design(r.get("design"))
+    valider_declarations(r)
     if r.get("mode") == "projet":
         return valider_projet(r)
     for cle in ("nom", "dossier", "resume", "qui"):
@@ -472,6 +497,7 @@ def fichiers_projet(r, aujourdhui=None):
     cfg["vue"] = "echeance"
     if r.get("design"):
         cfg["design"] = r["design"]
+    _poser_declarations(cfg, r)
     out[".claude/roadmap.json"] = json.dumps(cfg, ensure_ascii=False, indent=2) + "\n"
     return out
 
@@ -494,6 +520,7 @@ def fichiers(r, aujourdhui=None):
         cfg["dir"] = DOSSIER_ROADMAP
     if r.get("design"):
         cfg["design"] = r["design"]
+    _poser_declarations(cfg, r)
     out[".claude/roadmap.json"] = json.dumps(cfg, ensure_ascii=False, indent=2) + "\n"
     return out
 
@@ -981,6 +1008,107 @@ def reglages_import(dossier):
     qui = me[0] if isinstance(me, list) and me else (me if isinstance(me, str) else "")
     requis = cfg.get("requis") or (REQUIS_PROJET if cfg.get("mode") == "projet" else ["id"])
     return qui, requis
+
+
+# ---------------------------------------------------------------- règles, écriture et preuves du projet (#158)
+
+# Une source hors du dossier : `gmail:in:sent`. Un chemin n'a pas de « : » avant son premier « / ».
+SOURCE_PREUVE = re.compile(r"^[a-z][a-z0-9-]*:")
+
+
+def _chemin_lisible(v):
+    """Un chemin déclaré : une chaîne non vide, sans retour à la ligne ni accent grave (ses valeurs
+    passent dans les consignes de Claude, comme `design`)."""
+    return isinstance(v, str) and v.strip() != "" and not re.search(r"[\r\n`]", v)
+
+
+def _aplatir(texte):
+    """Une consigne d'une ligne : retours à la ligne en espaces, accent grave en apostrophe."""
+    return re.sub(r"\s+", " ", texte.replace("`", "'")).strip()
+
+
+def _titre_preuves(p):
+    """Le titre de `"#<titre>"`, ou None : vide, ou à retour à la ligne ou accent grave."""
+    if isinstance(p, str) and p.startswith("#") and _chemin_lisible(p[1:]):
+        return p[1:].strip()
+    return None
+
+
+def _absolu(dossier, chemin):
+    chemin = os.path.expanduser(chemin.strip())
+    return chemin if os.path.isabs(chemin) else os.path.join(dossier, chemin)
+
+
+def declarations(dossier, cfg=None):
+    """Ce que le projet déclare sur sa roadmap dans `.claude/roadmap.json` (#158) : son fichier de
+    règles (`regles`), son outil d'écriture (`ecriture`, un objet `{outil, consigne}`) et où chercher
+    la preuve qu'une tâche est faite (`preuves`, une liste de lieux ou `"#<titre>"`, une section du
+    fichier de règles). Les valeurs normalisées et leurs `soucis` ; une valeur d'un mauvais type
+    s'ignore, et le souci le dit. Lu par le doctor, l'onboarding et les skills qui écrivent."""
+    dossier = os.path.abspath(os.path.expanduser(dossier))
+    if cfg is None:
+        try:
+            with open(os.path.join(dossier, ".claude", "roadmap.json"), encoding="utf-8") as f:
+                cfg = json.load(f)
+        except (OSError, ValueError):
+            cfg = {}
+    cfg = cfg if isinstance(cfg, dict) else {}
+    out = {"regles": None, "ecriture": None, "ecriture_illisible": False, "preuves": [], "soucis": []}
+    soucis = out["soucis"]
+
+    if "regles" in cfg:
+        v = cfg["regles"]
+        if not _chemin_lisible(v):
+            soucis.append("regles n'est pas un chemin lisible, ignoré")
+        else:
+            absolu = _absolu(dossier, v)
+            out["regles"] = {"chemin": v.strip(), "absolu": absolu, "existe": os.path.isfile(absolu)}
+            if not out["regles"]["existe"]:
+                soucis.append("regles « %s » introuvable" % v.strip())
+
+    if "ecriture" in cfg:
+        e = cfg["ecriture"]
+        consigne = e.get("consigne") if isinstance(e, dict) else None
+        if not (isinstance(e, dict) and _chemin_lisible(e.get("outil")) and isinstance(consigne, str) and consigne.strip()):
+            out["ecriture_illisible"] = True
+            soucis.append("ecriture n'est pas un objet {outil, consigne} : rien ne s'écrit tant qu'elle n'est pas corrigée")
+        else:
+            absolu = _absolu(dossier, e["outil"])
+            out["ecriture"] = {"outil": e["outil"].strip(), "outil_absolu": absolu,
+                               "outil_existe": os.path.isfile(absolu), "consigne": _aplatir(consigne)}
+            if not out["ecriture"]["outil_existe"]:
+                soucis.append("ecriture.outil « %s » introuvable" % e["outil"].strip())
+
+    if "preuves" in cfg:
+        p = cfg["preuves"]
+        titre = _titre_preuves(p)
+        if titre:
+            regles = out["regles"]
+            texte = ""
+            if regles and regles["existe"]:
+                with open(regles["absolu"], encoding="utf-8", errors="replace") as f:
+                    texte = f.read()
+            existe = bool(re.search(r"(?m)^#{2,6}\s+%s\s*$" % re.escape(titre), texte))
+            out["preuves"].append({"lieu": p, "type": "section", "existe": existe})
+            if not regles:
+                soucis.append("preuves « %s » : une section des règles, sans regles déclaré" % p)
+            elif not existe:
+                soucis.append("preuves : section « %s » absente de %s" % (titre, regles["chemin"]))
+        elif isinstance(p, list):
+            for lieu in p:
+                if not _chemin_lisible(lieu):
+                    soucis.append("preuves : %r n'est pas un lieu lisible, ignoré" % (lieu,))
+                elif SOURCE_PREUVE.match(lieu.strip()):
+                    out["preuves"].append({"lieu": lieu.strip(), "type": "source"})
+                else:
+                    absolu = _absolu(dossier, lieu)
+                    existe = os.path.exists(absolu)
+                    out["preuves"].append({"lieu": lieu.strip(), "type": "chemin", "absolu": absolu, "existe": existe})
+                    if not existe:
+                        soucis.append("preuves « %s » introuvable" % lieu.strip())
+        else:
+            soucis.append("preuves n'est ni une liste de lieux ni « #<titre> » d'une section des règles, ignoré")
+    return out
 
 
 # ---------------------------------------------------------------- design system (#129)

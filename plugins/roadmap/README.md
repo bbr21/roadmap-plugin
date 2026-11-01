@@ -2,13 +2,13 @@
 
 Panneau Claude Code à côté du chat : la roadmap du projet de la session, filtrable, avec le détail d'une tâche et son lancement dans une nouvelle session
 
-C'est un mod Claude Code (module de hooks, `hooks/register.tsx`), avec cinq skills, `roadmap-panel` pour y brancher un projet, `onboarding` pour poser dans un dépôt de code sa structure et sa roadmap, `doctor` pour vérifier qu'un projet est branché, `reglages-session` pour les réglages de session et `maestro` pour tenir une session Maestro : il
+C'est un mod Claude Code (module de hooks, `hooks/register.tsx`), avec sept skills, `roadmap-panel` pour y brancher un projet, `tasks` pour tenir sa roadmap au quotidien, `audit` pour en auditer le contenu, `onboarding` pour poser dans un dépôt de code sa structure et sa roadmap, `doctor` pour vérifier qu'un projet est branché, `reglages-session` pour les réglages de session et `maestro` pour tenir une session Maestro : il
 dessine un panneau dans l'onglet Code de l'app de bureau (et dans le terminal). Il ne sert à rien
 dans Cowork ni dans le chat de claude.ai.
 
 ## Contenu
 
-**6 skills**
+**7 skills**
 
 | Skill | Rôle |
 |---|---|
@@ -16,6 +16,7 @@ dans Cowork ni dans le chat de claude.ai.
 | `onboarding` | Mode Code : pose dans un dépôt de code la structure de Splitmybill (CLAUDE.md, roadmap numérotée dans `roadmap/` avec ses bilans, docs, `check.mjs`, hook de démarrage, worktree par session), propose de reconstituer la roadmap depuis l'historique du dépôt (PR, fusions ou commits des 6 derniers mois), ou remet un projet existant au format sans rien écraser. Mode Projet : un dossier simple, git en option, des tâches complètes. |
 | `doctor` | Checklist en lecture seule d'un projet (en mode Projet : python3, roadmap, réglages, champs exigés, sans GitHub, Superpowers facultatif) ; d'un projet de code : outils, GitHub, roadmap, structure, `check.mjs`, plugin roadmap, Superpowers et chacune de ses skills de méthode, sa mise à jour automatique, `swiftui-pro` sur un projet iOS ; une ligne OK, KO ou À voir avec la commande qui corrige. |
 | `audit` | Audite le contenu de la roadmap : propose de découper les paquets en tâche mère et sous-tâches datées, les dépendances, les fusions de doublons, les regroupements et les valeurs des trous ; la personne valide paquet par paquet, puis `scripts/audit.py` écrit tout ou rien, sauvegardé, avec un bilan qui retrouve chaque fragment du texte d'origine. Lancée en fin d'onboarding. |
+| `tasks` | Tient la roadmap au quotidien, en mode Code ou Projet (#158) : rapproche chaque action des tâches du même sujet (jamais de tâche neuve sur un sujet qui en a une), puis ajoute, complète, redate, coche sur preuve (`fait:` à la date de la preuve, ligne de bilan) ou abandonne, par `scripts/tasks.py` (`context`, `match`, `write`) : essai à blanc, puis écriture tout ou rien après sauvegarde, sur le moteur de l'audit. Lit `regles`, `ecriture` et `preuves` de `.claude/roadmap.json` ; avec `ecriture`, passe les lignes à l'outil du projet au lieu d'écrire. |
 | `reglages-session` | Lit et change les réglages de session (questions par formulaire, mode ADHD, français, mode autonome) de `~/.claude/reglages-session.json`, pour le projet de la session (#102). Lancée, elle ouvre aussi le volet Réglages ; tapée seule, `/roadmap:reglages-session` l'ouvre comme `/reglages`, d'une ligne. |
 | `maestro` | Tient une session Maestro (`/maestro`), la session mère qui lance et suit des tâches menées en parallèle, même une seule : lignes et découpage, une session par tâche, lecture de leurs comptes rendus, main donnée sur le simulateur iOS et les autres ressources uniques, ordre des fusions calculé depuis git (`scripts/etat_maestro.py`), chaque tâche suivie dans la liste d'étapes de Maestro (une étape par tâche, son état en mots), une fusion à la fois. |
 
@@ -237,6 +238,15 @@ Premiers usages : la roadmap de Caro et le dossier AAFES Cowork, depuis l'onglet
   l'arbre en bandes repliables, une par valeur de la clé (les déclarées dans leur ordre, puis les
   autres, puis « Sans projet »), les blocs sous la valeur de leur parent. Une clé non déclarée
   dans `cles` est ignorée, et le doctor le dit.
+- **Les règles du projet** (#158), dans les deux modes : `"regles": "ROADMAP-REGLES.md"` (le
+  fichier des règles propres au projet, que lisent les skills `tasks` et `audit` avant d'écrire, et
+  qui l'emportent sur leurs défauts), `"ecriture": {"outil": "50-tools/dossier/patch.py",
+  "consigne": "essai à blanc, puis --apply"}` (le projet écrit sa roadmap par son propre outil :
+  `tasks` lui passe les lignes au lieu d'écrire) et `"preuves": ["_inbox/_traite/",
+  "gmail:in:sent"]` (où chercher qu'une tâche est faite : des chemins, des sources
+  `source:requête`, ou `"#Preuves"`, une section du fichier de règles). Le doctor contrôle les
+  chemins (ligne « Règles du projet »), l'onboarding les propose (réponse « Règles »). Le bouton
+  « Marquer faite » du panneau écrit encore lui-même, `ecriture` posé ou non.
 - **Ma journée** (#99) : le panneau s'ouvre sur « Ma journée », les tâches à moi en retard, dues
   aujourd'hui ou demain, ou récurrentes qui tombent dans les 2 jours, rangées dans cet ordre (la
   priorité n'y entre plus, #130). Un parent n'y entre jamais en ligne propre : ses enfants dus y
@@ -553,6 +563,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.104.0 (2026-10-31)** : tasks : nouvelle skill qui tient la roadmap au quotidien (ajouter, compléter, redater, cocher sur preuve, abandonner, rapprocher par sujet) ; .claude/roadmap.json déclare regles, ecriture et preuves ; skills du plugin en anglais (#158)
 - **0.103.0 (2026-10-31)** : bande de Maestro : le contexte utilisé de Maestro dans l'en-tête (13 % · 132,5k / 1M, jauge orange à 70 %, rouge à 85 %), et celui de chaque session en jauge fine sous ses étapes (#157)
 - **0.102.0 (2026-10-31)** : panneau : chaque tâche ouverte porte son département en pastille à droite du titre (réglage Département en pastille, allumé), et « #N · » se colle au titre (#156)
 - **0.101.0 (2026-10-31)** : panneau : la fiche montre la mission seule, puis une carte Fin en tableau mis en forme (Fait, Livré, Souci, État, À toi) ; toute tâche close a son récap, gardé ou tiré de la roadmap et du bilan (#150)

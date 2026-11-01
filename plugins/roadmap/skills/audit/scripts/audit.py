@@ -756,8 +756,8 @@ def preparer(releve, props):
     return {p: t for p, t in fichiers.items() if _lire_fichier(p) != t}, prep.bilan
 
 
-def _sauvegarder(rdir, maintenant, chemins):
-    base = os.path.join(rdir, "sauvegarde-audit-" + maintenant.strftime("%Y-%m-%d-%H%M%S"))
+def _sauvegarder(rdir, maintenant, chemins, prefixe="sauvegarde-audit-"):
+    base = os.path.join(rdir, prefixe + maintenant.strftime("%Y-%m-%d-%H%M%S"))
     sauvegarde, n = base, 1
     while os.path.exists(sauvegarde):
         n += 1

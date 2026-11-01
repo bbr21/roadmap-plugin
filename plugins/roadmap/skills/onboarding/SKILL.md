@@ -171,7 +171,9 @@ dossier même.
 7. **Doctor** (skill `doctor`) : il lit le mode et passe la checklist du mode Projet.
 8. **Rendre compte** : ce qui a été posé, puis comment s'en servir : ouvrir le dossier dans
    l'onglet Code, le panneau par échéance (le bouton passe au responsable et à l'arbre), ▶ sur une
-   tâche, « Maestro » pour ce qu'on peut lancer ; la tâche `id:1` liste les tâches en cours.
+   tâche, « Maestro » pour ce qu'on peut lancer ; la tâche `id:1` liste les tâches en cours ; au
+   quotidien, la skill `tasks` ajoute, complète, redate, coche et abandonne une tâche (elle lit
+   `regles`, `ecriture` et `preuves`, posés par la réponse « Règles »).
 
 ## Importer une roadmap existante
 
@@ -206,5 +208,6 @@ une ligne. L'original n'est jamais modifié sans sa copie de sauvegarde.
 - Elle ne remplace pas les règles du projet : une fois posé, le projet vit par son `CLAUDE.md`.
 - Elle ne touche pas à une roadmap déclarée dans `~/.claude/roadmap-perso.json` (`roadmap-panel`).
 - Elle ne découpe aucun libellé : c'est l'audit (skill `audit`), proposé en fin d'import.
+- Elle ne tient pas la roadmap au quotidien (ajouter, cocher une tâche) : c'est la skill `tasks`.
 - Elle n'écrit aucun secret : `.env.example` ne porte que des noms de variables.
 - Elle n'installe aucun plugin : le doctor dit ce qui manque et la commande pour l'ajouter.

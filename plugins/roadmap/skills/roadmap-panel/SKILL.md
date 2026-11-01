@@ -1,6 +1,6 @@
 ---
 name: roadmap-panel
-description: "Branche un projet sur le panneau Roadmap de Claude Code (plugin roadmap) et le dépanne : où le panneau cherche la roadmap, le fichier .claude/roadmap.json à écrire, ses réglages. Déclenche sur « ajoute ce projet au panneau roadmap », « le panneau roadmap ne s'ouvre pas », « /roadmap dit qu'il n'y a pas de roadmap », « change les sujets du panneau », « le panneau doit lire une autre roadmap ». Pas pour tenir la roadmap elle-même (ajouter, compléter ou cocher une tâche), qui relève de cowork-roadmap, ni pour une roadmap tenue dans Cowork même, ni pour poser la structure et la roadmap d'un projet, de code ou en mode Projet (onboarding), ni pour vérifier qu'un projet est branché (doctor)."
+description: "Branche un projet sur le panneau Roadmap de Claude Code (plugin roadmap) et le dépanne : où le panneau cherche la roadmap, le fichier .claude/roadmap.json à écrire, ses réglages. Déclenche sur « ajoute ce projet au panneau roadmap », « le panneau roadmap ne s'ouvre pas », « /roadmap dit qu'il n'y a pas de roadmap », « change les sujets du panneau », « le panneau doit lire une autre roadmap ». Pas pour tenir la roadmap elle-même (ajouter, compléter ou cocher une tâche), qui relève de la skill tasks, ni pour une roadmap tenue dans Cowork même, ni pour poser la structure et la roadmap d'un projet, de code ou en mode Projet (onboarding), ni pour vérifier qu'un projet est branché (doctor)."
 ---
 
 # Brancher un projet sur le panneau Roadmap
@@ -15,7 +15,8 @@ la skill ne sert qu'à une demande de plus (brancher, changer les sujets, dépan
 
 Le plugin `roadmap` est un mod Claude Code : un panneau à côté du chat, dans l'onglet Code de
 l'app de bureau, qui montre la roadmap du projet de la session. Il ne fait que lire ; la roadmap
-se tient comme d'habitude (`cowork-roadmap`, ou les règles du dépôt).
+se tient par la skill `tasks` de ce plugin (ajouter, compléter, redater, cocher, abandonner),
+qui suit les règles que le projet déclare (`regles`, `ecriture`, `preuves`).
 
 ## Où le panneau cherche la roadmap
 

@@ -660,6 +660,27 @@ def design_system(main):
     return ligne(OK, "Design system", ", ".join(e["chemin"] for e in entrees))
 
 
+def regles_du_projet(main):
+    """Ce que le projet déclare sur sa roadmap (#158) : `regles`, `ecriture`, `preuves`, dans les deux
+    modes ; rien de déclaré, pas de ligne. Une écriture illisible bloque la skill tasks : KO."""
+    d = ob.declarations(main)
+    if d["regles"] is None and d["ecriture"] is None and not d["ecriture_illisible"] and not d["preuves"] and not d["soucis"]:
+        return None
+    correction = "corriger .claude/roadmap.json (regles, ecriture {outil, consigne}, preuves), ou poser le fichier qui manque"
+    if d["ecriture_illisible"]:
+        return ligne(KO, "Règles du projet", " ; ".join(d["soucis"]), correction)
+    if d["soucis"]:
+        return ligne(VOIR, "Règles du projet", " ; ".join(d["soucis"]), correction)
+    parties = []
+    if d["regles"]:
+        parties.append("règles %s" % d["regles"]["chemin"])
+    if d["ecriture"]:
+        parties.append("écriture par %s" % d["ecriture"]["outil"])
+    if d["preuves"]:
+        parties.append("preuves : %s" % ", ".join(p["lieu"] for p in d["preuves"]))
+    return ligne(OK, "Règles du projet", " ; ".join(parties))
+
+
 def diagnostiquer(dossier, plugins="lire", home=None, avec_outils=True, gere=None):
     dossier = os.path.abspath(os.path.expanduser(dossier))
     home = home or os.path.expanduser("~")
@@ -674,6 +695,7 @@ def diagnostiquer(dossier, plugins="lire", home=None, avec_outils=True, gere=Non
         if avec_outils:
             lignes += outils(requis, "projet", est_git)
         lignes += roadmap_projet(principal)
+        lignes += [l for l in [regles_du_projet(principal)] if l]
         lignes.append(design_system(principal))
         lignes += plugins_et_skills(requis, plugins, home, requis["projet"]["skills"], facultatif=True)
         lignes.append(sec_default(home, gere))
@@ -689,6 +711,7 @@ def diagnostiquer(dossier, plugins="lire", home=None, avec_outils=True, gere=Non
     lignes += faits
     if git(dossier, "rev-parse", "--git-dir").returncode == 0:
         lignes += roadmap(main)
+    lignes += [l for l in [regles_du_projet(main)] if l]
     lignes.append(design_system(main))
     lignes += plugins_et_skills(requis, plugins, home)
     lignes.append(sec_default(home, gere))

@@ -130,6 +130,15 @@ premier nom de `me` dans `~/.claude/roadmap-perso.json`, sinon demandé), celui 
      une entrée par type de tâche
    - En poser plus tard : rien de déclaré ; la première maquette proposera d'en poser
    - S'en passer : `design = "aucun"`
+6. **Règles du projet** (« Règles ») : ce que le projet déclare pour que les skills du plugin
+   tiennent sa roadmap à sa façon (#158). Sautée si la demande n'en dit rien et que le dossier n'a
+   ni fichier de règles ni outil d'écriture.
+   - Les règles du plugin suffisent (recommandé pour un projet neuf) : rien de déclaré ; la skill
+     `tasks` écrit elle-même et cherche la preuve dans la conversation
+   - Déclarer les règles du projet : `regles` (le fichier de ses règles, qui l'emportent), `ecriture`
+     (`{"outil": "<script>", "consigne": "<comment l'appeler>"}` quand le projet écrit sa roadmap
+     par son propre outil) et `preuves` (les lieux où chercher qu'une tâche est faite, ou
+     `"#Preuves"`, une section du fichier de règles) ; les valeurs se demandent ensuite en texte libre
 
 ## Les réponses, en JSON
 
@@ -147,6 +156,7 @@ premier nom de `me` dans `~/.claude/roadmap-perso.json`, sinon demandé), celui 
 | `migrations` | dossier des migrations, ou `""` |
 | `env` | `true` si le projet a un `.env` (non versionné, relié dans chaque worktree) |
 | `secrets` | motifs de fichiers en plus de `.env`, `*.pem`, `*.key`, `*.p8`, `*.p12` |
+| `regles`, `ecriture`, `preuves` | ce que le projet déclare sur sa roadmap (#158) : le chemin de son fichier de règles ; `{"outil": "…", "consigne": "…"}` ; une liste de lieux (chemins, ou `source:requête` comme `gmail:in:sent`) ou `"#<titre>"`. Absents : rien de déclaré. Écrits dans `.claude/roadmap.json`, dans les deux modes ; leur présence sur le disque, c'est le doctor |
 | `design` | liste de `{"chemin": "design/", "pour": "…"}` (une chaîne vaut son chemin ; relatif au projet, absolu ou `https://`), ou `"aucun"` ; absent : rien de déclaré. Écrit dans `.claude/roadmap.json`, dans les deux modes |
 | `fin_en_plus` | étapes en plus de « Finir un chantier », une phrase chacune |
 | `github` | `<compte>/<nom>` ou `""` |

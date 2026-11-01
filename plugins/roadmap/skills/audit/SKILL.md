@@ -1,6 +1,6 @@
 ---
 name: audit
-description: "Audite le contenu de la roadmap d'un projet du plugin roadmap, en mode Code ou Projet : Claude lit toutes les tâches et propose de découper les paquets en un parent et ses enfants datés (parent:, deux niveaux), les dépendances (après:), les regroupements et doublons, et de combler les trous (sans échéance, en retard, sans responsable, attente à relancer, parent aux enfants faits). La personne valide paquet par paquet ; un script écrit tout ou rien, après sauvegarde, avec un bilan qui retrouve chaque fragment du texte d'origine. Lancé en fin d'onboarding. Déclenche sur « audite ma roadmap », « fais le doctor de ma roadmap », « fais le ménage dans ma roadmap », « découpe mes tâches », « mes tâches sont des paquets », « cherche les doublons dans ma roadmap ». Pas pour la structure du projet (doctor), ni pour importer une roadmap (onboarding), ni pour ajouter ou cocher une tâche nommée, ni pour prouver qu'une tâche est faite par les traces d'un dossier."
+description: "Audite le contenu de la roadmap d'un projet du plugin roadmap, en mode Code ou Projet : Claude lit toutes les tâches et propose de découper les paquets en un parent et ses enfants datés (parent:, deux niveaux), les dépendances (après:), les regroupements et doublons, et de combler les trous (sans échéance, en retard, sans responsable, attente à relancer, parent aux enfants faits). La personne valide paquet par paquet ; un script écrit tout ou rien, après sauvegarde, avec un bilan qui retrouve chaque fragment du texte d'origine. Lancé en fin d'onboarding. Déclenche sur « audite ma roadmap », « fais le doctor de ma roadmap », « fais le ménage dans ma roadmap », « découpe mes tâches », « mes tâches sont des paquets », « cherche les doublons dans ma roadmap ». Pas pour la structure du projet (doctor), ni pour importer une roadmap (onboarding), ni pour ajouter ou cocher une tâche nommée (skill tasks), ni pour prouver qu'une tâche est faite par les traces d'un dossier."
 ---
 
 # Auditer la roadmap
@@ -22,6 +22,9 @@ script refuse d'en créer un troisième. Un parent porte un nom de sujet, pas un
 enfants sont des étapes de travail (2 à 6 par parent), pas des gestes. `après:` relie deux enfants
 d'un même parent, ou deux parents (un sujet après un autre), jamais l'enfant d'un sujet à celui
 d'un autre.
+
+Si `.claude/roadmap.json` déclare `regles` (#158), lis ce fichier en entier avant de proposer :
+ses règles l'emportent sur celles de cette skill.
 
 Le script est `scripts/audit.py`, lancé depuis le dossier de cette skill (le chemin donné au
 chargement de la skill). Il lit la grammaire avec l'import de la skill `onboarding`.

@@ -85,7 +85,16 @@ export type Source = {
   rangerPar?: string
   /** Le design system du projet (#129), sur lequel s'appuie toute maquette ; sans lui, pas déclaré. */
   design?: Design
+  /** `regles` (#158) : le fichier des règles propres au projet, qui l'emportent sur les défauts des skills. */
+  regles?: string
+  /** `ecriture` (#158) : l'outil par lequel le projet écrit sa roadmap, et comment l'appeler. */
+  ecriture?: Ecriture
+  /** `preuves` (#158) : où chercher qu'une tâche est faite ; une liste de lieux, ou `#<titre>` d'une section des règles. */
+  preuves?: string[] | string
 }
+
+/** `ecriture` de `.claude/roadmap.json` (#158) : sans elle, les skills du plugin écrivent elles-mêmes. */
+export type Ecriture = { outil: string; consigne: string }
 
 /**
  * Le design system d'un projet (#129) : ses entrées (un dossier, un fichier, une adresse ; `pour` dit
@@ -122,6 +131,9 @@ export type ProjectSettings = {
   relanceDays: number
   clesVisibles?: string[]
   rangerPar?: string
+  regles?: string
+  ecriture?: Ecriture
+  preuves?: string[] | string
 }
 
 /** Les champs exigés par défaut en mode Projet : `parent:` et `après:` renvoient à des numéros. */
@@ -143,6 +155,9 @@ export function projectSettings(source: Source): ProjectSettings {
     relanceDays: source.relance ?? RELAUNCH_DAYS,
     ...(source.clesVisibles ? { clesVisibles: source.clesVisibles } : {}),
     ...(source.rangerPar ? { rangerPar: source.rangerPar } : {}),
+    ...(source.regles ? { regles: source.regles } : {}),
+    ...(source.ecriture ? { ecriture: source.ecriture } : {}),
+    ...(source.preuves ? { preuves: source.preuves } : {}),
   }
 }
 
@@ -3376,7 +3391,7 @@ export function checkBrief(
 export function parseProjectConfig(text: string, base: string, defaults: { name: string; me: string[] }): Source | undefined {
   const data: unknown = JSON.parse(text)
   if (typeof data !== 'object' || data === null) return undefined
-  const c = data as { name?: unknown; dir?: unknown; me?: unknown; subjects?: unknown; mode?: unknown; requis?: unknown; cles?: unknown; vue?: unknown; rangement?: unknown; relance?: unknown; design?: unknown; cles_visibles?: unknown; ranger_par?: unknown }
+  const c = data as { name?: unknown; dir?: unknown; me?: unknown; subjects?: unknown; mode?: unknown; requis?: unknown; cles?: unknown; vue?: unknown; rangement?: unknown; relance?: unknown; design?: unknown; cles_visibles?: unknown; ranger_par?: unknown; regles?: unknown; ecriture?: unknown; preuves?: unknown }
   const dir = typeof c.dir === 'string' && c.dir !== '' ? (c.dir.startsWith('/') ? c.dir : `${base}/${c.dir}`) : base
   const strings = (v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : undefined)
   // Une valeur inconnue ou d'un mauvais type prend le défaut : le panneau s'ouvre quand même.
@@ -3398,6 +3413,17 @@ export function parseProjectConfig(text: string, base: string, defaults: { name:
   const declared = (k: string) => Object.prototype.hasOwnProperty.call(cles, k)
   const clesVisibles = strings(c.cles_visibles)?.filter(declared)
   const rangerPar = typeof c.ranger_par === 'string' && declared(c.ranger_par) ? c.ranger_par : undefined
+  // #158 : ces valeurs passent dans les consignes de Claude ; un chemin à retour à la ligne ou à accent
+  // grave s'ignore, la consigne s'aplatit, comme `design`.
+  const path = (v: unknown) => (typeof v === 'string' && v.trim() !== '' && !/[\r\n`]/.test(v) ? v.trim() : undefined)
+  const regles = path(c.regles)
+  const e = (typeof c.ecriture === 'object' && c.ecriture !== null ? c.ecriture : {}) as { outil?: unknown; consigne?: unknown }
+  const consigne = typeof e.consigne === 'string' ? e.consigne.replace(/`/g, "'").replace(/\s+/g, ' ').trim() : ''
+  const outil = path(e.outil)
+  const ecriture = outil && consigne !== '' ? { outil, consigne } : undefined
+  const lieux = Array.isArray(c.preuves) ? c.preuves.map(path).filter((x): x is string => x !== undefined) : []
+  const section = typeof c.preuves === 'string' && c.preuves.startsWith('#') ? path(c.preuves.slice(1)) : undefined
+  const preuves = section ? `#${section}` : lieux.length > 0 ? lieux : undefined
   return {
     name: typeof c.name === 'string' && c.name !== '' ? c.name : defaults.name,
     match: [base],
@@ -3414,6 +3440,9 @@ export function parseProjectConfig(text: string, base: string, defaults: { name:
     ...(design ? { design } : {}),
     ...(clesVisibles && clesVisibles.length > 0 ? { clesVisibles } : {}),
     ...(rangerPar ? { rangerPar } : {}),
+    ...(regles ? { regles } : {}),
+    ...(ecriture ? { ecriture } : {}),
+    ...(preuves ? { preuves } : {}),
   }
 }
 
