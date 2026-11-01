@@ -5076,7 +5076,7 @@ export function brandText(
 
 /**
  * Ce que montre le panneau d'une session (#137) : sa tâche, dans une session « #N · … », tant qu'aucune
- * tâche n'est ouverte en détail et que « Toute la roadmap » n'a pas été demandée ; sinon la roadmap.
+ * tâche n'est ouverte en détail et que la flèche retour de la fiche n'a pas été pressée (#165) ; sinon la roadmap.
  */
 export function paneFocus(brand: Brand | undefined, view: { selected: string; whole?: boolean }): 'task' | 'roadmap' {
   return brand?.kind === 'task' && view.selected === '' && view.whole !== true ? 'task' : 'roadmap'

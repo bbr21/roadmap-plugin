@@ -4471,6 +4471,8 @@ function brandTree(
   bare = false,
   // Au bout du titre d'une tâche, dans sa fiche : le crayon qui la fait passer en édition (#161).
   titleEnd?: RenderElement,
+  // En tête de la fiche, à la place de la marque : la flèche retour vers la roadmap (#165, maquette A).
+  onBack?: { key: string; press: () => void },
 ): RenderElement {
   const { Box, Text, Button } = $.ui.resolve(e)
   const resolved = $.ui.resolve(e)
@@ -4637,7 +4639,14 @@ function brandTree(
   return (
     <Box flexDirection="column" gap={SPACE.tight} paddingY={card ? 'xs' : undefined}>
       <Box flexDirection="row" alignItems="center" gap={SPACE.row}>
-        {mark(variant === 'focus' ? 16 : 18)}
+        {onBack ? (
+          // Un bouton de l'app, à texte seul : pas de zone de clic de plus (`ZONE_LIMIT`) ; au terminal, il dit où il mène.
+          <Button key={onBack.key} plain onPress={onBack.press}>
+            <Text size={Svg ? 'heading' : undefined}>{Svg ? '←' : '← Roadmap'}</Text>
+          </Button>
+        ) : (
+          mark(variant === 'focus' ? 16 : 18)
+        )}
         <Box flexGrow={1} flexShrink={1} minWidth={0}>
           <Text size="footnote" color={palette.text2} wrap="truncate-end">{words.sub}</Text>
         </Box>
@@ -6053,13 +6062,8 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     const labelSpec = editSpecs.find(spec => spec.field === 'label')
     return (
       <Box flexDirection="column" gap={SPACE.root} paddingX={SPACE.indent}>
-        {!inSession && (
-          <Box key="back-row" flexDirection="row" paddingX={SPACE.indent} alignItems="center">
-            {strut(SIZE.strut.row)}
-            <Button key="back" plain dimColor label="‹ Retour à la liste" onPress={select('')} />
-          </Box>
-        )}
-        {/* L'en-tête Voies (#137) ; son titre ouvre la ligne dans la roadmap. */}
+        {/* L'en-tête Voies (#137) ; son titre ouvre la ligne dans la roadmap, sa flèche ramène à la
+            roadmap entière (#165) : dans la session, la vue d'ensemble ; au clic, la liste d'où l'on vient. */}
         <Box paddingX={SPACE.indent}>
           {brandTree(
             $,
@@ -6076,6 +6080,12 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
             undefined,
             false,
             pencil,
+            {
+              key: 'back',
+              press: inSession
+                ? () => void setView($, () => ({ whole: true, editing: '', editNote: '', editField: '' }))
+                : select(''),
+            },
           )}
         </Box>
         {/* En édition (#161) : la barre sous l'en-tête, à la place du crayon. */}
@@ -6111,11 +6121,6 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
           {/* Après l'enregistrement : les avertissements du modèle (#125), ou ce qui n'est pas allé au bout. */}
           {!editing && editNote !== '' && !saveBusy && <Text size="caption" color={palette.lateOn} wrap="wrap">{editNote}</Text>}
         </Box>
-        {inSession && (
-          <Box flexDirection="row" paddingX={SPACE.indent}>
-            <Button key="whole-roadmap" label="Toute la roadmap" onPress={() => void setView($, () => ({ whole: true }))} />
-          </Box>
-        )}
       </Box>
     )
   }
