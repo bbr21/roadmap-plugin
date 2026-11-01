@@ -1,6 +1,6 @@
 ---
 name: tasks
-description: "Keeps the roadmap of a roadmap-plugin project up to date day to day, in Code or Projet mode: adds, updates, reschedules, marks done on proof or drops a task, after matching it against the tasks on the same subject (never a new task for a subject that already has one). Reads what the project declares in .claude/roadmap.json: its own rules (regles), which win, its writing tool (ecriture) and where to look for proof that a task is done (preuves). A script writes all or nothing, dry run first. Triggers on « ajoute ça à la roadmap », « rappelle-moi de… », « mets une tâche pour… », « coche », « c'est fait », « marque #12 faite », « redate », « décale à lundi », « abandonne cette tâche », add this to the roadmap, mark it done, and when a conversation produces a dated action not to lose. Not for auditing the whole roadmap (audit), setting up a project (onboarding), checking it is wired (doctor), nor a folder that keeps its roadmap through its own skill without .claude/roadmap.json."
+description: "Keeps the roadmap of a roadmap-plugin project up to date day to day, with or without code (#176: the folder says which): adds, updates, reschedules, marks done on proof or drops a task, after matching it against the tasks on the same subject (never a new task for a subject that already has one). Reads what the project declares in .claude/roadmap.json: its own rules (regles), which win, its writing tool (ecriture) and where to look for proof that a task is done (preuves). A script writes all or nothing, dry run first. Triggers on « ajoute ça à la roadmap », « rappelle-moi de… », « mets une tâche pour… », « coche », « c'est fait », « marque #12 faite », « redate », « décale à lundi », « abandonne cette tâche », add this to the roadmap, mark it done, and when a conversation produces a dated action not to lose. Not for auditing the whole roadmap (audit), setting up a project (onboarding), checking it is wired (doctor), nor a folder that keeps its roadmap through its own skill without .claude/roadmap.json."
 ---
 
 # Keep the roadmap
@@ -31,7 +31,7 @@ a recurring parent (`tous:`), which stays open for the next period's steps.
 
 The script is `scripts/tasks.py`, run from this skill's folder (the path given when the skill
 loads). It inherits the `audit` skill's writing engine and reads the grammar through the
-`onboarding` skill's importer. In Code mode it reads and writes the roadmap of the main checkout,
+`onboarding` skill's importer. With code it reads and writes the roadmap of the main checkout,
 on `main`.
 
 ## 1. Context
@@ -93,7 +93,7 @@ for it where `preuves` says:
 - a **source** `<source>:<query>` (`gmail:in:sent`): through the matching connector of the
   session; without a connector, say so and ask;
 - `#<title>`: the section of that name in the `regles` file, which says where to look;
-- nothing declared: the conversation and the action's source; in Code mode, `git log` and PRs.
+- nothing declared: the conversation and the action's source; with code, `git log` and PRs.
 
 The `date` is **the date of the proof**, not today. A partial proof is asked about.
 
@@ -162,7 +162,7 @@ Then:
 1. `python3 "<onboarding skill folder>/scripts/onboarding.py" verifier <folder>`
    (« Conforme au format. »).
 2. In a repository: a commit of the roadmap files only (`ROADMAP.md`, `ROADMAP-fait.md`,
-   `ROADMAP-bilans.csv`), on `main` in the main checkout in Code mode, then push. The backup is
+   `ROADMAP-bilans.csv`), on `main` in the main checkout with code, then push. The backup is
    not committed.
 3. A short report, in French: for each action, its case and what was written (`#N` ajoutée sous
    `#P`, cochée au …, rien : déjà couverte par `#M`); then the pending questions.

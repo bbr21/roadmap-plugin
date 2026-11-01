@@ -15,16 +15,17 @@ Asked with the multiple-choice question tool (AskUserQuestion), under these rule
 
 Do not ask a question whose answer is already in the conversation or in the repository.
 
-## Round 0: the mode
+## Round 0: code or not (empty folder only)
 
-A single question, unless the request says it (« projet de code », « gestion de projet », « sans
-code ») or the folder shows it (code, commits: Code; notes, documents, the roadmap of a Cowork
-folder: Projet).
+Since #176 there is no mode to choose: `onboarding.py` reads the folder (a git repository that sees
+code files: with code; anything else: without code). Ask only when the folder is empty or missing
+and the request does not say it (« projet de code », « initialise ce repo »: `code: true`;
+« gestion de projet », « sans code »: `code: false`).
 
-1. **Mode** (« Mode »)
-   - « Code » (recommended for a code repository): the structure below, one worktree per session,
-     merge, `check.mjs`, GitHub
-   - « Projet » (recommended for project management without code): a plain folder, git optional,
+1. **Code** (« Code »)
+   - « Oui, du code » (recommended for an app, a tool, a plugin): the structure below, one worktree
+     per session, merge, `check.mjs`, GitHub
+   - « Non, sans code » (recommended for project management): a plain folder, git optional,
      complete tasks (due date, owner, parent, dependencies); then the « Projet » round at the end
      of this file, and nothing else
 
@@ -102,7 +103,7 @@ closed task in `ROADMAP-fait.md`). A roadmap already kept is not rebuilt.
    - « Oui, tout l'historique »: complete, but a big repository gives hundreds of lines
    - « Non, partir de zéro »: only task `id:1` (write the vision)
 
-## « Projet » round (Projet mode only)
+## « Projet » round (without code only)
 
 Instead of rounds 1 to 3. The name, the folder (spaces are allowed in it), the summary and the cap
 are taken from the request as above; `qui` is the name of the person who leads (the first name in
@@ -125,7 +126,7 @@ are taken from the request as above; `qui` is the name of the person who leads (
      python3
    - « Avec git »: the roadmap's history, and a possible GitHub repository; the panel commits
      closures on `main`
-5. **Templates** (« Modèles »): the design system of Projet mode, what every mockup of a document,
+5. **Templates** (« Modèles »): the design system of a folder without code, what every mockup of a document,
    a table or a deck relies on (#129). `onboarding.py design <dossier>` gives the templates already
    there (`.potx`, `.dotx`, a deck stored in `modeles/` or `templates/`).
    - « Déclarer ces modèles » (recommended when there are some): `design = [{"chemin": "modeles/deck-qbr.pptx", "pour": "les decks de QBR"}]`,
@@ -167,14 +168,14 @@ Written in the session's scratchpad, then passed to `init --reponses`. The full 
 | `ignorer` | folders whose links `check.mjs` does not check: Markdown templates, like those of a plugin (`[]` by default) |
 | `gitignore` | extra lines in `.gitignore`, for what the project's tooling produces (`[]` by default) |
 | `roadmap` | `roadmap` (`roadmap/` folder, by default); `--manquants` keeps the root of a project that already keeps its own there |
-| `mode` | `code` (by default) or `projet` |
+| `code` | `true` or `false`; absent: read from the folder (refused for an empty folder). `mode` (`code`, `projet`) is still read, never written |
 
-In Projet mode (`python3 scripts/onboarding.py exemple --mode projet`): `mode`, `nom`, `dossier`,
+Without code (`python3 scripts/onboarding.py exemple --sans-code`): `code: false`, `nom`, `dossier`,
 `resume`, `cap`, `qui`, `axes`, `roadmap`, and:
 
 | Key | Value |
 |---|---|
-| `requis` | the keys required on every open task (default: `id`, `ouvert`, `due`, `resp`, `parent`, `après`) |
+| `requis` | the keys required on every open task (default: `id`, `ouvert`, `due`, `resp`, `parent`, `après`); written with `requis_sur: "ouvertes"` (#176) |
 | `cles` | `{"type": ["Réunion", "Email"], "client": []}`: declared keys and their allowed values (empty list: free) |
 | `git` | `true` for a git repository (and `.gitignore`); `false` by default |
 | `github` | `<compte>/<nom>`, only with `git` |

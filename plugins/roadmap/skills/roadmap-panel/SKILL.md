@@ -1,6 +1,6 @@
 ---
 name: roadmap-panel
-description: "Wires a project to the Roadmap panel of Claude Code (roadmap plugin) and troubleshoots it: where the panel looks for the roadmap, the .claude/roadmap.json file to write, its settings. Triggers on « ajoute ce projet au panneau roadmap », « le panneau roadmap ne s'ouvre pas », « /roadmap dit qu'il n'y a pas de roadmap », « change les sujets du panneau », « le panneau doit lire une autre roadmap ». Not for keeping the roadmap itself (adding, updating or marking a task done), which belongs to the tasks skill, nor for a roadmap kept in Cowork itself, nor for setting up the structure and roadmap of a project, code or Projet mode (onboarding), nor for checking that a project is wired (doctor)."
+description: "Wires a project to the Roadmap panel of Claude Code (roadmap plugin) and troubleshoots it: where the panel looks for the roadmap, the .claude/roadmap.json file to write, its settings. Triggers on « ajoute ce projet au panneau roadmap », « le panneau roadmap ne s'ouvre pas », « /roadmap dit qu'il n'y a pas de roadmap », « change les sujets du panneau », « le panneau doit lire une autre roadmap ». Not for keeping the roadmap itself (adding, updating or marking a task done), which belongs to the tasks skill, nor for a roadmap kept in Cowork itself, nor for setting up the structure and roadmap of a project, with or without code (onboarding), nor for checking that a project is wired (doctor)."
 ---
 
 # Wire a project to the Roadmap panel
@@ -59,30 +59,37 @@ It is elsewhere, or it needs a name, subjects or other names for « À moi »: w
 - `me`: the values of « attend » (and of `resp:`) that mean the user. Absent: the plugin's `me`
   setting, otherwise `me` from the local file.
 
-The mode and its settings (#76), optional too:
+How sessions work and the roadmap's settings (#76, #176), optional too:
 
 ```json
 {
-  "mode": "projet",
   "requis": ["id", "ouvert", "due", "resp", "parent", "après"],
+  "requis_sur": "ouvertes",
   "cles": { "type": ["Réunion", "Email"], "client": [] },
   "vue": "echeance"
 }
 ```
 
-- `mode`: `code` (default, a code project) or `projet` (project management without code: sessions
-  launched without a worktree, brief without a coding method, no « commit sans test » reminder,
-  Maestro that only proposes the person's tasks).
-- `requis`: the fields required on every open task; the panel flags a line written without them,
-  without refusing it. Default: none in Code mode, the six above in Projet mode.
+- `mode`: `auto` (default), `code` or `projet`. One mode since #176: the panel looks the same in
+  every project, and how sessions work comes from the session's folder. A git repository that sees
+  at least one code file (`git ls-files --cached --others --exclude-standard`) works with a
+  worktree, a branch and merges by Maestro; any other folder works in place (sessions launched
+  without a worktree, brief without a coding method, no « commit sans test » reminder, a task done
+  when its line is ticked). `code` or `projet` forces it, only to fix a wrong detection; the
+  `doctor` skill says what it saw.
+- `requis`: the required fields; the panel flags a line written without them, without refusing
+  it. `requis_sur`: on which tasks, `lancees` (default: those that carry `qui:` or `branche:`) or
+  `ouvertes` (every open task). Default: `ouvert`, `due`, `qui`, `après` on launched tasks; an old
+  `"mode": "projet"` keeps the six above on every open task. The detection never changes them.
 - `cles`: keys on top of the grammar (the tags of a Notion), each with its allowed values (empty
   list: free); a task's detail shows them, the search reads them.
-- `vue`: how tasks are sorted: `echeance`, `responsable`, `arbre`, `sujet` or `jour`.
-  Default: `echeance` in Projet mode, by subject in Code mode. The panel's button switches to the
-  others. In Projet mode, the panel opens on « Ma journée »; `vue` applies from « Tout afficher ».
-- `relance`: in Projet mode, the number of days without news from an awaited third party beyond
-  which its task is « À relancer » (integer; default 14). The count starts from `relance:` on the
-  line, otherwise from `ouvert:`.
+- `vue`: how open tasks are sorted at opening: `echeance`, `responsable`, `arbre`, `sujet` or
+  `jour`. Default: the tree (`echeance` for an old `"mode": "projet"`). « Par échéance » and « Par
+  responsable » are offered only when an open task has `due:` or `resp:`. The panel opens on « En
+  cours » when a session works a task, otherwise on « Ma journée », otherwise on everything.
+- `relance`: the number of days without news from an awaited third party beyond which its task is
+  « À relancer » (integer; default 14). The count starts from `relance:` on the line, otherwise
+  from `ouvert:`.
 
 Tidying up before archiving (#101), optional: a project that tidies its memory away at the end of
 a subject (AAFES, skill `aafes-memory`) says so, and the end of turn only proposes archiving the
@@ -99,8 +106,8 @@ session, its task marked done, once the tidy-up line is written in one of the se
 - Line absent: the end of turn reminds the tidy-up rule instead of proposing archiving, then
   proposes it as soon as the line is written. Without this setting, nothing changes.
 
-The design system (#129), optional: the one every mockup of the project relies on, in Code mode
-(components, variables) as in Projet mode (document or deck templates, one per task type). The
+The design system (#129), optional: the one every mockup of the project relies on, in a code project
+(components, variables) as without code (document or deck templates, one per task type). The
 session settings cite it in the rule « Maquettes avant un choix visuel »; without it, the rule
 proposes setting one up, except for a demo mockup.
 
@@ -122,8 +129,9 @@ A line is read if it follows the grammar of the plugin's roadmaps, the axis firs
 - [ ] Libellé à l'infinitif `[axe | attend:Qui | ouvert:AAAA-MM-JJ | due:AAAA-MM-JJ | src:… | fiche:…]`
 ```
 
-In Projet mode, add `resp:Nom` (the person who carries the task, never `-`), `parent:N` or
-`parent:#N` (the parent task, `-` without one) and `après:N,M` (the prerequisites, `-` without).
+In any project, `resp:Nom` names the person who carries the task (never `-`), `qui:` the session
+that holds it; `parent:N` or `parent:#N` (the parent task, `-` without one) and `après:N,M` (the
+prerequisites, `-` without).
 
 Show the user the file before writing it into a repository that is not theirs.
 

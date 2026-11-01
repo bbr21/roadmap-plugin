@@ -70,9 +70,13 @@ export type Source = {
   root?: string
   me: string[]
   subjects: string[]
-  /** Les réglages bruts de `.claude/roadmap.json` (#76) ; `projectSettings` les résout. */
+  /** Les réglages bruts de `.claude/roadmap.json` (#76) ; `projectSettings` les résout. `mode` force le travail (#176). */
   mode?: Mode
+  /** Le travail déduit du dossier de la session (#176, `workOf`), posé par le panneau ; `mode` l'emporte. */
+  travail?: Travail
   requis?: string[]
+  /** `requis_sur` (#176) : les champs exigés valent sur toute ouverte, ou sur une tâche lancée. */
+  requisSur?: RequiredOn
   cles?: Record<string, string[]>
   vue?: Vue
   /** Le rangement de la mémoire exigé avant de proposer l'archivage (#101) ; sans lui, rien n'est exigé. */
@@ -111,8 +115,15 @@ export type Rangement = { skill: string; ligne: string }
 const RANGEMENT_LIGNE = 'Rangé dans'
 const RIEN_A_RANGER = 'Rien à ranger'
 
-/** Code (projet de code, l'usage d'origine) ou Projet (gestion de projet sans code, #76). */
-export type Mode = 'code' | 'projet'
+/**
+ * Le travail d'une session (#176) : `code` (worktree, branche, fusion par Maestro, rappel de méthode)
+ * ou `projet` (le dossier partagé, la fin jugée sur la ligne). Il se déduit du dossier (`workOf`) ;
+ * `mode` de roadmap.json le force (`auto`, absent ou inconnu : le dossier décide). Un seul mode
+ * d'affichage : l'interface ne lit jamais le travail pour dessiner.
+ */
+export type Travail = 'code' | 'projet'
+/** Les valeurs de `mode` qui forcent le travail (#76, #176). */
+export type Mode = Travail
 /** Le rangement des tâches ouvertes à l'ouverture du panneau. */
 export type Vue = 'echeance' | 'responsable' | 'arbre' | 'sujet' | 'jour'
 const MODES: readonly Mode[] = ['code', 'projet']
@@ -121,9 +132,9 @@ const VUES: readonly Vue[] = ['echeance', 'responsable', 'arbre', 'sujet', 'jour
 /** Les tâches qui portent les champs exigés : toute tâche ouverte, ou seulement une tâche lancée (`qui:` ou `branche:`). */
 export type RequiredOn = 'open' | 'launched'
 
-/** Les réglages d'une roadmap, défauts compris : le mode est un préréglage, chaque réglage se change. */
+/** Les réglages d'une roadmap, défauts compris ; chaque réglage se change. */
 export type ProjectSettings = {
-  mode: Mode
+  travail: Travail
   requis: string[]
   requiredOn: RequiredOn
   cles: Record<string, string[]>
@@ -136,20 +147,31 @@ export type ProjectSettings = {
   preuves?: string[] | string
 }
 
-/** Les champs exigés par défaut en mode Projet : `parent:` et `après:` renvoient à des numéros. */
+/** Les champs exigés d'un ancien `mode: "projet"`, et de l'onboarding sans code : `parent:` et `après:` renvoient à des numéros. */
 export const PROJECT_REQUIRED: readonly string[] = ['id', 'ouvert', 'due', 'resp', 'parent', 'après']
 
-/** Les champs exigés par défaut en mode Code (#80), sur une tâche lancée : `qui:` dit qui la tient. */
+/** Les champs exigés par défaut (#80, #176), sur une tâche lancée : `qui:` dit qui la tient. */
 export const CODE_REQUIRED: readonly string[] = ['ouvert', 'due', 'qui', 'après']
 
+/**
+ * Le travail d'un dossier (#176) d'après `git ls-files --cached --others --exclude-standard` : un
+ * dépôt (sortie 0) qui voit au moins un fichier de code. La même liste qu'`onboarding.py` (un test
+ * Python les compare).
+ */
+export function workOf(exitCode: number, files: string): Travail {
+  return exitCode === 0 && files.split('\n').some(f => CODE_FILE.test(f.trim())) ? 'code' : 'projet'
+}
+
 export function projectSettings(source: Source): ProjectSettings {
-  const mode = source.mode ?? 'code'
-  const vue = source.vue ?? (mode === 'projet' ? 'echeance' : undefined)
+  // #176 : les champs exigés et la vue ne suivent pas le travail détecté ; un ancien `mode: "projet"`
+  // garde les siens, le reste se déclare.
+  const ancienProjet = source.mode === 'projet'
+  const vue = source.vue ?? (ancienProjet ? 'echeance' : undefined)
   return {
-    mode,
-    requis: source.requis ?? [...(mode === 'projet' ? PROJECT_REQUIRED : CODE_REQUIRED)],
-    // Mode Code (#80) : une idée du Prochain n'a ni échéance ni personne qui la tient.
-    requiredOn: mode === 'projet' ? 'open' : 'launched',
+    travail: source.mode ?? source.travail ?? 'code',
+    requis: source.requis ?? [...(ancienProjet ? PROJECT_REQUIRED : CODE_REQUIRED)],
+    // #80 : une idée du Prochain n'a ni échéance ni personne qui la tient.
+    requiredOn: source.requisSur ?? (ancienProjet ? 'open' : 'launched'),
     cles: source.cles ?? {},
     ...(vue ? { vue } : {}),
     relanceDays: source.relance ?? RELAUNCH_DAYS,
@@ -1236,6 +1258,11 @@ export function isMine(task: Task, me: readonly string[]): boolean {
   return mine(task.resp) && mine(task.attend)
 }
 
+/** Une autre personne porte la tâche (`resp:` qui ne me nomme pas, #76, #176) : elle se relance, ne se lance pas. */
+export function heldByOther(task: Task, me: readonly string[]): boolean {
+  return task.resp !== undefined && !me.includes(attendWho(task.resp))
+}
+
 /** Cette semaine (#99) : ouverte, pas en retard, l'échéance dans les 7 jours. */
 export function isDueSoon(task: Task, today: string): boolean {
   return !task.done && task.due !== undefined && !isOverdue(task, today) && daysBetween(today, task.due) <= 7
@@ -1417,10 +1444,22 @@ export function doneByDay(done: readonly Task[], today: string): { label: string
   return byDay(done, today, t => t.fait)
 }
 
-/** Le rangement d'une liste : en arbre, par jour, par sujet, et en mode Projet par échéance ou par responsable (#76, #168). */
+/** Le rangement d'une liste : en arbre, par jour, par sujet, par échéance ou par responsable (#76, #168, #176). */
 export type Grouping = 'day' | 'subject' | 'deadline' | 'owner' | 'tree'
 const VUE_GROUPING: Record<Vue, Grouping> = { jour: 'day', sujet: 'subject', echeance: 'deadline', responsable: 'owner', arbre: 'tree' }
-const PROJECT_GROUPINGS: readonly Grouping[] = ['deadline', 'owner']
+/** Ce qu'une roadmap a pour se ranger (#176) : une ouverte avec `due:`, une ouverte avec `resp:`. */
+export type GroupingData = { due: boolean; resp: boolean }
+const ALL_DATA: GroupingData = { due: true, resp: true }
+
+export function groupingData(tasks: readonly Task[]): GroupingData {
+  const open = tasks.filter(t => !t.done)
+  return { due: open.some(t => t.due !== undefined), resp: open.some(t => t.resp !== undefined) }
+}
+
+/** Un rangement par la donnée (#176) : l'échéance sans aucun `due:`, le responsable sans aucun `resp:`, ne rangent rien. */
+function hasData(by: Grouping, data: GroupingData): boolean {
+  return by === 'deadline' ? data.due : by === 'owner' ? data.resp : true
+}
 const GROUPING_LABELS: Record<Grouping, string> = {
   day: 'Par jour',
   subject: 'Par sujet',
@@ -1431,15 +1470,15 @@ const GROUPING_LABELS: Record<Grouping, string> = {
 
 /**
  * Le rangement d'une vue : un choix enregistré l'emporte ; sinon (`auto`) les faites par jour et les
- * ouvertes selon la vue que le projet déclare, en arbre sans elle, dans les deux modes et mères ou pas
- * (#168). Les faites ne se rangent que par jour ou par sujet ; l'échéance ou le responsable restés
- * en mémoire ne s'imposent pas à un projet de code.
+ * ouvertes selon la vue que le projet déclare, en arbre sans elle, mères ou pas (#168). Les faites ne
+ * se rangent que par jour ou par sujet ; l'échéance ou le responsable, restés en mémoire ou déclarés,
+ * ne s'imposent pas à une roadmap qui n'a plus leur donnée (#176).
  */
-export function groupingOf(groupBy: string | undefined, showDone: boolean, vue?: Vue, mode?: Mode): Grouping {
+export function groupingOf(groupBy: string | undefined, showDone: boolean, vue?: Vue, data: GroupingData = ALL_DATA): Grouping {
   if (groupBy === 'day' || groupBy === 'subject') return groupBy
-  if (groupBy === 'tree' || ((PROJECT_GROUPINGS as readonly string[]).includes(groupBy ?? '') && mode !== 'code')) return showDone ? 'day' : (groupBy as Grouping)
+  if (groupBy === 'tree' || ((groupBy === 'deadline' || groupBy === 'owner') && hasData(groupBy, data))) return showDone ? 'day' : (groupBy as Grouping)
   if (showDone) return 'day'
-  if (vue) return VUE_GROUPING[vue]
+  if (vue && hasData(VUE_GROUPING[vue], data)) return VUE_GROUPING[vue]
   return 'tree'
 }
 
@@ -1450,17 +1489,17 @@ export function hasOpenParent(tasks: readonly Task[]): boolean {
 }
 
 /**
- * Les rangements du menu « Ranger » (#115) : en mode Projet, échéance, responsable, arbre, sujet, jour ;
- * en mode Code, arbre, sujet, jour (#168) ; pour les faites, sujet et jour.
+ * Les rangements du menu « Ranger » (#115, #176) : échéance si une ouverte a `due:`, responsable si une
+ * ouverte a `resp:`, puis arbre, sujet, jour ; pour les faites, sujet et jour.
  */
-export function groupings(mode: Mode, showDone: boolean): Grouping[] {
+export function groupings(data: GroupingData, showDone: boolean): Grouping[] {
   if (showDone) return ['subject', 'day']
-  return mode === 'projet' ? ['deadline', 'owner', 'tree', 'subject', 'day'] : ['tree', 'subject', 'day']
+  return (['deadline', 'owner', 'tree', 'subject', 'day'] as const).filter(g => hasData(g, data))
 }
 
 /** Le rangement suivant, au bouton du mobile (sans menu) : le suivant de `groupings`, le premier après le dernier. */
-export function nextGrouping(by: Grouping, mode: Mode, showDone: boolean): Grouping {
-  const list = groupings(mode, showDone)
+export function nextGrouping(by: Grouping, data: GroupingData, showDone: boolean): Grouping {
+  const list = groupings(data, showDone)
   return list[(list.indexOf(by) + 1) % list.length] ?? 'subject'
 }
 
@@ -1472,43 +1511,36 @@ export type TodoCounter = { key: string; name: string; icon: TodoIcon; tone: Tod
 
 /**
  * Les filtres en pastilles sous les axes (#115, maquette C ; #149) : « Toutes » d'abord (#160), qui lève le
- * filtre d'état et garde l'axe ; puis en mode Projet les urgences d'échéance (#99), en mode Code ce qu'une
- * session travaille, ce qui dépasse et les retours (« Prioritaires » parti, #130).
+ * filtre d'état et garde l'axe ; puis, dans tout projet (#176, maquette A), Ma journée, ce qu'une session
+ * travaille, les urgences d'échéance (#99), les relances et les retours. Le panneau cache une pastille à 0.
  */
-export function todoCounters(mode: Mode, maestro = false): TodoCounter[] {
+export function todoCounters(maestro = false): TodoCounter[] {
   // Chez Maestro (#149, #160), « En cours » est son bloc, au-dessus des filtres : elle ne se répète pas ici.
-  if (maestro) return todoCounters(mode).filter(c => c.key !== 'live')
-  const all: TodoCounter = { key: 'all', name: 'Toutes', icon: 'list', tone: 'neutral' }
-  return mode === 'projet'
-    ? [
-        all,
-        { key: 'today', name: 'Ma journée', icon: 'sun', tone: 'live' },
-        { key: 'late', name: 'En retard', icon: 'clock', tone: 'late' },
-        { key: 'soon', name: 'Cette semaine', icon: 'calendar', tone: 'block' },
-        { key: 'relaunch', name: 'À relancer', icon: 'bell', tone: 'wait' },
-      ]
-    : [
-        all,
-        { key: 'live', name: 'En cours', icon: 'spin', tone: 'live' },
-        { key: 'late', name: 'En retard', icon: 'clock', tone: 'late' },
-        { key: 'feedback', name: 'Retours', icon: 'bubble', tone: 'wait' },
-      ]
+  if (maestro) return todoCounters().filter(c => c.key !== 'live')
+  return [
+    { key: 'all', name: 'Toutes', icon: 'list', tone: 'neutral' },
+    { key: 'today', name: 'Ma journée', icon: 'sun', tone: 'live' },
+    { key: 'live', name: 'En cours', icon: 'spin', tone: 'live' },
+    { key: 'late', name: 'En retard', icon: 'clock', tone: 'late' },
+    { key: 'soon', name: 'Cette semaine', icon: 'calendar', tone: 'block' },
+    { key: 'relaunch', name: 'À relancer', icon: 'bell', tone: 'wait' },
+    { key: 'feedback', name: 'Retours', icon: 'bubble', tone: 'wait' },
+  ]
 }
 
 /**
- * Le filtre que prend le panneau de Maestro à son ouverture (#149, décidé par Bertrand le 2026-10-31) :
- * « Ma journée » (mode Projet) si elle a des tâches, sinon les récentes, sinon tout. Une session qui
- * t'attend ne l'ouvre plus sur « En cours » : son bloc est toujours là (#160).
+ * Le filtre à l'ouverture (#149, #176) : ce qu'une session travaille s'il y en a, puis « Ma journée »,
+ * sinon tout. Chez Maestro, dont le bloc montre déjà ce qui tourne (#160) : Ma journée, sinon les
+ * récentes, sinon tout.
  */
-export function openingFilter(o: { today: number; recent: number; mode: Mode }): 'today' | 'recent' | 'all' {
-  if (o.mode === 'projet' && o.today > 0) return 'today'
-  return o.recent > 0 ? 'recent' : 'all'
+export function openingFilter(o: { today: number; live: number; recent: number; maestro?: boolean }): 'today' | 'live' | 'recent' | 'all' {
+  if (o.maestro) return o.today > 0 ? 'today' : o.recent > 0 ? 'recent' : 'all'
+  return o.live > 0 ? 'live' : o.today > 0 ? 'today' : 'all'
 }
 
-/** Les filtres repliés sous « Plus de filtres » (#115), dans l'ordre : ceux qui ne sont pas des lignes de « À traiter ». */
-export function secondaryFilters(mode: Mode, maestro = false): string[] {
-  if (maestro) return secondaryFilters(mode).filter(k => k !== 'live')
-  return mode === 'projet' ? ['mine', 'others', 'recent', 'live', 'feedback'] : ['recent', 'mine', 'others']
+/** Les filtres repliés sous « Plus de filtres » (#115) : ceux qui ne sont pas des pastilles ; le menu « Qui » s'y ajoute (#176). */
+export function secondaryFilters(_maestro = false): string[] {
+  return ['recent', 'mine', 'others']
 }
 
 /** Le nom d'un rangement sur le bouton : « Par échéance », « En arbre »… */
@@ -2470,9 +2502,9 @@ function maestroMockups(where: string): string {
 const maestroAutonome = (): string =>
   `Avec le réglage autonome, Maestro te donne la main seul, sans attendre ${person()} : une fois la main reçue, fais le geste (la publication comprise) et publie sans redemander, puis dis en une ligne ce que tu as publié.`
 
-export function maestroClause(maestro: string, mode: Mode = 'code'): string[] {
-  // Mode Projet (#76) : ni branche, ni PR, ni fusion ; la session se dit « prête à clore ».
-  if (mode === 'projet') {
+export function maestroClause(maestro: string, travail: Travail = 'code'): string[] {
+  // Sans code (#76, #176) : ni branche, ni PR, ni fusion ; la session se dit « prête à clore ».
+  if (travail === 'projet') {
     return [
       `Tu travailles pour Maestro : la session qui t'a lancée, « ${maestro} », coordonne ses tâches (skill \`roadmap:maestro\`).`,
       '- Travaille dans le dossier du projet.',
@@ -3522,18 +3554,18 @@ export function launchBrief(
   maestro?: string,
   found: BriefFound = {},
 ): { title: string; prompt: string; background: string } {
-  const { mode, requis } = projectSettings(source)
+  const { travail, requis, requiredOn } = projectSettings(source)
   const { files, notes } = briefFiles(source, task, found)
-  // Mode Code (#80) : les champs exigés d'une tâche lancée, posés à la prise de la ligne.
+  // #80 : les champs exigés d'une tâche lancée, posés à la prise de la ligne.
   const taking =
-    mode === 'code' && requis.length > 0
+    travail === 'code' && requiredOn === 'launched' && requis.length > 0
       ? [`En prenant la ligne, pose ${listFr(requis.map(k => `\`${k}:\``))}${requis.includes('après') ? ' (`après:-` si rien ne la précède)' : ''} : une tâche lancée est tracée.`]
       : []
   const ending = maestro
-    ? maestroClause(maestro, mode)
+    ? maestroClause(maestro, travail)
     : [
         'À la fin, mets à jour la ligne de la roadmap selon les règles du dossier : cochée et déplacée si elle est finie, réécrite si elle avance seulement.',
-        ...(mode === 'projet' ? ["Il n'y a ni branche ni worktree : la task se ferme par sa ligne cochée et son bilan."] : []),
+        ...(travail === 'projet' ? ["Il n'y a ni branche ni worktree : la task se ferme par sa ligne cochée et son bilan."] : []),
         `Une ligne cochée écrit son bilan dans \`${source.dir}/${bilanLog}\`, avant de proposer l'archivage : il fait la boîte « Conclusion » du panneau, \`fait\` (une ligne sur ce qui a été fait) et \`souci\` (une ligne sur le souci rencontré, vide si tout a roulé), puis ressenti, cause, corrections et une phrase de note.`,
       ]
   const prompt = [
@@ -3553,7 +3585,7 @@ export function launchBrief(
     '',
     ...goalClause(),
     '',
-    ...(mode === 'projet' ? PROJECT_METHOD : CODE_METHOD),
+    ...(travail === 'projet' ? PROJECT_METHOD : CODE_METHOD),
     '',
     ...ending,
   ].join('\n')
@@ -3571,8 +3603,8 @@ export function checkBrief(
   isGit = true,
   found: BriefFound = {},
 ): { title: string; prompt: string; background: string } {
-  // Mode Projet (#76) : pas de code ni de PR ; l'historique git seulement si le dossier est un dépôt.
-  const projet = projectSettings(source).mode === 'projet'
+  // Sans code (#76, #176) : ni code ni PR ; l'historique git seulement si le dossier est un dépôt.
+  const projet = projectSettings(source).travail === 'projet'
   const { files, notes } = briefFiles(source, task, found)
   const history = projet
     ? [
@@ -3613,11 +3645,13 @@ export function checkBrief(
 export function parseProjectConfig(text: string, base: string, defaults: { name: string; me: string[] }): Source | undefined {
   const data: unknown = JSON.parse(text)
   if (typeof data !== 'object' || data === null) return undefined
-  const c = data as { name?: unknown; dir?: unknown; me?: unknown; subjects?: unknown; mode?: unknown; requis?: unknown; cles?: unknown; vue?: unknown; rangement?: unknown; relance?: unknown; design?: unknown; cles_visibles?: unknown; ranger_par?: unknown; regles?: unknown; ecriture?: unknown; preuves?: unknown }
+  const c = data as { name?: unknown; dir?: unknown; me?: unknown; subjects?: unknown; mode?: unknown; requis?: unknown; requis_sur?: unknown; cles?: unknown; vue?: unknown; rangement?: unknown; relance?: unknown; design?: unknown; cles_visibles?: unknown; ranger_par?: unknown; regles?: unknown; ecriture?: unknown; preuves?: unknown }
   const dir = typeof c.dir === 'string' && c.dir !== '' ? (c.dir.startsWith('/') ? c.dir : `${base}/${c.dir}`) : base
   const strings = (v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : undefined)
-  // Une valeur inconnue ou d'un mauvais type prend le défaut : le panneau s'ouvre quand même.
+  // Une valeur inconnue ou d'un mauvais type prend le défaut : le panneau s'ouvre quand même. `auto`
+  // (#176) ou un mode inconnu : le dossier décide du travail.
   const mode = MODES.find(m => m === c.mode)
+  const requisSur = c.requis_sur === 'ouvertes' ? ('open' as const) : c.requis_sur === 'lancees' ? ('launched' as const) : undefined
   const vue = VUES.find(v => v === c.vue)
   const cles: Record<string, string[]> = {}
   if (typeof c.cles === 'object' && c.cles !== null && !Array.isArray(c.cles)) {
@@ -3655,6 +3689,7 @@ export function parseProjectConfig(text: string, base: string, defaults: { name:
     subjects: strings(c.subjects) ?? [],
     ...(mode ? { mode } : {}),
     ...(requis ? { requis } : {}),
+    ...(requisSur ? { requisSur } : {}),
     ...(Object.keys(cles).length > 0 ? { cles } : {}),
     ...(vue ? { vue } : {}),
     ...(rangement ? { rangement } : {}),
@@ -4295,7 +4330,7 @@ export type EditSpec = { field: EditField; name: string; card: 'mission' | 'avan
 export function editableFields(
   task: Task,
   raw: string,
-  o: { mode: Mode; axes: readonly string[]; cles: Readonly<Record<string, readonly string[]>> },
+  o: { axes: readonly string[]; cles: Readonly<Record<string, readonly string[]>> },
 ): EditSpec[] {
   const m = LINE_RE.exec(raw.replace(/\r$/, ''))
   const fields = (m?.[3] ?? '').split('|').map(f => f.trim())
@@ -4304,7 +4339,8 @@ export function editableFields(
     return f === undefined ? '' : f.slice(k.length + 1).trim()
   }
   const options = (list: readonly string[]) => (list.length > 0 ? { options: [...list] } : {})
-  const resp = o.mode === 'projet' ? 'resp' : 'qui'
+  // #176 : « Responsable » est la personne qui porte la tâche ; `qui:`, la session qui la prend l'écrit.
+  const resp = 'resp'
   return [
     { field: 'label', name: 'Mission', card: 'mission', value: m?.[2] ?? task.label },
     { field: 'attend', name: 'Attend', card: 'avancement', value: value('attend') },
@@ -4720,7 +4756,7 @@ function gesturesText(autonome: boolean): string {
   const confirm = autonome
     ? "Le réglage autonome est allumé : fais-le sans demander de confirmation, puis dis en une ligne ce que tu as fait."
     : "Le réglage autonome est éteint : lire, chercher et ouvrir une page se font sans demander ; avant d'écrire (créer, modifier, envoyer, supprimer), dis en une ligne ce que tu vas écrire et demande le oui de " + person() + ", une fois pour tout le geste."
-  return `- **Gestes hors du code** (en mode Code comme en mode Projet) : un geste qu'une tâche demande hors du dépôt (créer une tâche planifiée, régler un service, remplir un formulaire, publier) se fait par toi, jamais par un texte à coller ni des réglages que ${person()} recopie. D'abord par un connecteur MCP ou une API de la session (un outil différé se charge par ToolSearch ; une tâche planifiée : \`mcp__scheduled-tasks__create_scheduled_task\`) ; sinon dans le volet navigateur, ouvert par \`preview_start\` avec l'url, où tu remplis toi-même. Ne reste à ${person()} que ce qu'aucun outil ne fait, comme un secret ou la connexion à son compte : ouvre la page dans le volet au bon endroit, remplie autant que possible, et dis-lui le seul champ ou bouton qui lui revient. ${confirm} Tes règles de sécurité restent au-dessus : ce qu'elles gardent au oui de ${person()} dans le chat (envoyer un message en son nom, payer, valider un formulaire dans le navigateur quand son message ne le demandait pas), demande-le quand même.`
+  return `- **Gestes hors du code** (avec ou sans code) : un geste qu'une tâche demande hors du dépôt (créer une tâche planifiée, régler un service, remplir un formulaire, publier) se fait par toi, jamais par un texte à coller ni des réglages que ${person()} recopie. D'abord par un connecteur MCP ou une API de la session (un outil différé se charge par ToolSearch ; une tâche planifiée : \`mcp__scheduled-tasks__create_scheduled_task\`) ; sinon dans le volet navigateur, ouvert par \`preview_start\` avec l'url, où tu remplis toi-même. Ne reste à ${person()} que ce qu'aucun outil ne fait, comme un secret ou la connexion à son compte : ouvre la page dans le volet au bon endroit, remplie autant que possible, et dis-lui le seul champ ou bouton qui lui revient. ${confirm} Tes règles de sécurité restent au-dessus : ce qu'elles gardent au oui de ${person()} dans le chat (envoyer un message en son nom, payer, valider un formulaire dans le navigateur quand son message ne le demandait pas), demande-le quand même.`
 }
 
 // Les maquettes (#96, Bertrand, 2026-10-29) : le volet Réglages (#81) codé sans maquette, jugé
@@ -4728,13 +4764,13 @@ function gesturesText(autonome: boolean): string {
 // Toute maquette s'appuie sur le design system que le projet déclare (#129, après celui du plugin, #108),
 // ou propose d'en poser un : la cohérence d'un projet ne tient plus à la mémoire de la session.
 function mockupText(design?: Design): string {
-  return "- **Maquettes avant un choix visuel** (en mode Code comme en mode Projet) : tout choix dont le résultat se voit (en mode Code : un écran, une vue, un panneau, un volet, un composant, une mise en page, un graphique ; en mode Projet : la mise en page d'un document, d'un tableau ou d'une présentation) passe par 2 ou 3 maquettes simples, jamais par une description seule. Chacune a un parti net et son compromis, ta recommandation en premier ; " + person() + " choisit, et alors seulement tu codes ou tu décides. Prends le support le plus léger qui permet de décider : l'aperçu de chaque option du formulaire à choix (champ `preview`) pour un petit choix (une disposition, un ordre, un libellé) ; un widget de maquette (`mcp__visualize__show_widget`, module `mockup`, après `read_me`) pour un écran ou un panneau ; une page HTML statique ouverte dans le volet navigateur (`preview_start` avec son url `file://`) pour une interface riche ou qui se clique, posée dans le dossier du projet (hors de lui, le volet n'en montre qu'un instantané). " + designText(design) + " Le réglage autonome ne s'y applique pas : un choix visuel revient à " + person() + ". Sans personne pour répondre, garde les maquettes dans le dossier du chantier, suis ta recommandation et dis-le. Pas pour un choix sans rendu (une règle, un format, un correctif de logique), ni pour un rendu déjà choisi sur maquette."
+  return "- **Maquettes avant un choix visuel** (avec ou sans code) : tout choix dont le résultat se voit (dans un projet de code : un écran, une vue, un panneau, un volet, un composant, une mise en page, un graphique ; sans code : la mise en page d'un document, d'un tableau ou d'une présentation) passe par 2 ou 3 maquettes simples, jamais par une description seule. Chacune a un parti net et son compromis, ta recommandation en premier ; " + person() + " choisit, et alors seulement tu codes ou tu décides. Prends le support le plus léger qui permet de décider : l'aperçu de chaque option du formulaire à choix (champ `preview`) pour un petit choix (une disposition, un ordre, un libellé) ; un widget de maquette (`mcp__visualize__show_widget`, module `mockup`, après `read_me`) pour un écran ou un panneau ; une page HTML statique ouverte dans le volet navigateur (`preview_start` avec son url `file://`) pour une interface riche ou qui se clique, posée dans le dossier du projet (hors de lui, le volet n'en montre qu'un instantané). " + designText(design) + " Le réglage autonome ne s'y applique pas : un choix visuel revient à " + person() + ". Sans personne pour répondre, garde les maquettes dans le dossier du chantier, suis ta recommandation et dis-le. Pas pour un choix sans rendu (une règle, un format, un correctif de logique), ni pour un rendu déjà choisi sur maquette."
 }
 
 /** Le design system dans la règle des maquettes (#129) : celui que déclare le projet, son refus, ou la proposition d'en poser un. */
 function designText(design?: Design): string {
   if (design === 'aucun') return 'Ce projet a choisi de se passer de design system (`"design": "aucun"` dans `.claude/roadmap.json`) : ses maquettes suivent ce que le projet montre déjà.'
-  if (design === undefined) return "Ce projet ne déclare pas de design system (champ `design` de `.claude/roadmap.json`) : avant de dessiner la maquette d'une feature, propose d'en poser un (en mode Code : ses composants et ses variables, au besoin publiés dans claude.ai par `/design-sync` ; en mode Projet : les modèles de document ou de deck, un par type de tâche), car c'est lui qui tient la cohérence du projet ; la skill onboarding le déclare (`onboarding.py design`), le doctor le vérifie. Une maquette de démo s'en passe."
+  if (design === undefined) return "Ce projet ne déclare pas de design system (champ `design` de `.claude/roadmap.json`) : avant de dessiner la maquette d'une feature, propose d'en poser un (dans un projet de code : ses composants et ses variables, au besoin publiés dans claude.ai par `/design-sync` ; sans code : les modèles de document ou de deck, un par type de tâche), car c'est lui qui tient la cohérence du projet ; la skill onboarding le déclare (`onboarding.py design`), le doctor le vérifie. Une maquette de démo s'en passe."
   const entries = design.map(e => `\`${e.chemin}\`${e.pour ? ` (${e.pour})` : ''}`)
   return `Toute maquette de ce projet s'appuie sur son design system, déclaré dans \`.claude/roadmap.json\` (\`design\`) : ${listFr(entries)}. Lis-le avant de dessiner (son README, ses composants, ses variables, son modèle ; s'il est publié par \`/design-sync\`, le projet claude.ai que nomme sa configuration \`.design-sync/config.json\`), et n'invente ni couleur, ni police, ni composant qu'il a déjà ; ce qui lui manque se propose comme un ajout au design system.`
 }
@@ -4754,12 +4790,12 @@ export function sessionPrefsText(prefs: SessionPrefs, error?: string, project?: 
   if (prefs.francais) lines.push('- **Langue** : réponds en français, comptes rendus, récaps et boîte de fin compris.')
   if (prefs.autonome) {
     lines.push(
-      "- **Autonome** (en mode Code comme en mode Projet) : " + person() + " veut que le travail avance sans attendre ses réponses, quitte à corriger après. Quand ta recommandation est claire, suis-la au lieu de poser la question, et dis en une ligne ce que tu as choisi. Ne lui pose que les questions d'architecture : un choix qui s'écrirait dans `docs/decisions.md` (un contrat entre composants, comme le format d'un fichier, d'une donnée ou d'une API ; une nouvelle dépendance ou un service ; la vision ou un non-objectif touché). Ce réglage est son autorisation durable de fusionner et de publier : la fusion d'une branche prête, la publication (release d'un plugin, déploiement, push de `main`). Ne lui demande ni de fusionner ni de publier, ni par question ni par bouton : fais-le, par la règle du projet, puis dis en une ligne ce que tu as fusionné ou publié. Une skill de publication qui demande de valider le fond avec lui : la tâche qu'il a lancée vaut cette validation. Maestro fusionne seul la branche prête d'une de ses sessions (tests verts sur la branche à jour de main, diff relu par lui, qui ne l'a pas écrit), une branche à la fois, tests rejoués sur main après chaque fusion, et donne seul la main sur une ressource unique, publication comprise, à une session à la fois. Lancer une session et archiver gardent le clic de " + person() + " : pose la carte ou le bouton, ne lance ni n'archive toi-même. Tes règles de sécurité restent au-dessus : un message envoyé en son nom ou un paiement se demandent toujours.",
+      "- **Autonome** (avec ou sans code) : " + person() + " veut que le travail avance sans attendre ses réponses, quitte à corriger après. Quand ta recommandation est claire, suis-la au lieu de poser la question, et dis en une ligne ce que tu as choisi. Ne lui pose que les questions d'architecture : un choix qui s'écrirait dans `docs/decisions.md` (un contrat entre composants, comme le format d'un fichier, d'une donnée ou d'une API ; une nouvelle dépendance ou un service ; la vision ou un non-objectif touché). Ce réglage est son autorisation durable de fusionner et de publier : la fusion d'une branche prête, la publication (release d'un plugin, déploiement, push de `main`). Ne lui demande ni de fusionner ni de publier, ni par question ni par bouton : fais-le, par la règle du projet, puis dis en une ligne ce que tu as fusionné ou publié. Une skill de publication qui demande de valider le fond avec lui : la tâche qu'il a lancée vaut cette validation. Maestro fusionne seul la branche prête d'une de ses sessions (tests verts sur la branche à jour de main, diff relu par lui, qui ne l'a pas écrit), une branche à la fois, tests rejoués sur main après chaque fusion, et donne seul la main sur une ressource unique, publication comprise, à une session à la fois. Lancer une session et archiver gardent le clic de " + person() + " : pose la carte ou le bouton, ne lance ni n'archive toi-même. Tes règles de sécurité restent au-dessus : un message envoyé en son nom ou un paiement se demandent toujours.",
     )
   }
   // La liste d'étapes (#84) : dite à toute session, comme les gestes ; le parent la lit pour prendre des nouvelles.
   lines.push(
-    "- **Liste d'étapes** (en mode Code comme en mode Projet) : une tâche de plus d'un geste tient sa liste d'étapes (`update_plan` dans l'app), posée dès le premier geste. C'est le seul affichage des étapes : jamais recopiée dans le message, ni en liste ni en widget. Elle se lit d'un coup d'œil : trois à sept étapes, chacune nommée par un verbe et son objet, 2 à 4 mots qui disent le geste (« Écrire le plan », pas « Plan » ni une phrase), les mêmes noms que la ligne du mode ADHD quand il est allumé, jamais renommées (une étape nouvelle s'ajoute) ; mise à jour à chaque changement, une étape cochée dès qu'elle finit, une seule en cours. C'est par elle que la session qui t'a lancée voit où tu en es, sans ouvrir ta conversation. Maestro tient la sienne pour ses sessions : une étape par tâche lancée, son état en mots.",
+    "- **Liste d'étapes** (avec ou sans code) : une tâche de plus d'un geste tient sa liste d'étapes (`update_plan` dans l'app), posée dès le premier geste. C'est le seul affichage des étapes : jamais recopiée dans le message, ni en liste ni en widget. Elle se lit d'un coup d'œil : trois à sept étapes, chacune nommée par un verbe et son objet, 2 à 4 mots qui disent le geste (« Écrire le plan », pas « Plan » ni une phrase), les mêmes noms que la ligne du mode ADHD quand il est allumé, jamais renommées (une étape nouvelle s'ajoute) ; mise à jour à chaque changement, une étape cochée dès qu'elle finit, une seule en cours. C'est par elle que la session qui t'a lancée voit où tu en es, sans ouvrir ta conversation. Maestro tient la sienne pour ses sessions : une étape par tâche lancée, son état en mots.",
   )
   lines.push(gesturesText(prefs.autonome))
   lines.push(mockupText(design))
@@ -4988,7 +5024,7 @@ export type WelcomeFacts = {
   late: number
   soon: number
   day: number
-  /** La 4e action : les relances d'un tiers en mode Projet, les sessions de Maestro en mode Code ; absente à zéro. */
+  /** La 4e action : les relances d'un tiers s'il y en a, sinon les sessions de Maestro (#176) ; absente à zéro. */
   extra?: { kind: 'relances' | 'sessions'; n: number }
 }
 
@@ -5001,7 +5037,6 @@ export function welcomeFacts(o: {
   tasks: readonly Task[]
   today: string
   me: readonly string[]
-  mode: Mode
   relanceDays: number
   /** Les tâches de Maestro qui tournent ou attendent. */
   sessions: number
@@ -5017,7 +5052,9 @@ export function welcomeFacts(o: {
   }).length
   const sections = todaySections(tasks, o.today, o.me)
   const count = (label: string) => sections.find(g => g.label === label)?.tasks.length ?? 0
-  const n = o.mode === 'projet' ? tasks.filter(t => isToRelaunch(t, o.today, o.me, o.relanceDays)).length : o.sessions
+  // #176 : les relances d'abord, sinon les sessions de Maestro.
+  const relances = tasks.filter(t => isToRelaunch(t, o.today, o.me, o.relanceDays)).length
+  const n = relances > 0 ? relances : o.sessions
   return {
     total: tasks.length,
     done: done.length,
@@ -5026,7 +5063,7 @@ export function welcomeFacts(o: {
     late: count('En retard'),
     soon: count("Aujourd'hui et demain"),
     day: sections.reduce((sum, g) => sum + g.tasks.length, 0),
-    ...(n > 0 ? { extra: { kind: o.mode === 'projet' ? ('relances' as const) : ('sessions' as const), n } } : {}),
+    ...(n > 0 ? { extra: { kind: relances > 0 ? ('relances' as const) : ('sessions' as const), n } } : {}),
   }
 }
 
@@ -5564,11 +5601,11 @@ export type MaestroCandidate = { task: Task; title: string; unlocks: number; bri
  * La consigne d'une carte que Claude pose (Maestro, ou un lancement refusé au panneau) : l'effort si
  * l'outil l'accepte, et en mode Projet (#76) sans worktree, comme la carte du panneau.
  */
-export function cardTool(effort?: string, mode: Mode = 'code'): string {
+export function cardTool(effort?: string, travail: Travail = 'code'): string {
   return [
     'outil start_session, initiation own_initiative, contexte fresh',
     ...(effort ? [`effort ${effort} si l'outil l'accepte, sinon sans effort`] : []),
-    ...(mode === 'projet' ? ["use_worktree false (la session travaille dans le dossier du projet ; si l'outil refuse ce champ, sans lui)"] : []),
+    ...(travail === 'projet' ? ["use_worktree false (la session travaille dans le dossier du projet ; si l'outil refuse ce champ, sans lui)"] : []),
   ].join(', ')
 }
 
@@ -5912,7 +5949,7 @@ export function maestroContext(o: {
   )
   // Maestro suit ses sessions par sa liste d'étapes (#104), dans les deux modes.
   lines.push(MAESTRO_STEP_LIST)
-  const card = `pose sa carte de session (${cardTool(o.launchEffort, projectSettings(o.source).mode)}) avec le titre et le brief donnés ci-dessous, sans la lancer toi-même`
+  const card = `pose sa carte de session (${cardTool(o.launchEffort, projectSettings(o.source).travail)}) avec le titre et le brief donnés ci-dessous, sans la lancer toi-même`
   if (o.only === 'sessions') {
     lines.push(`- Puis dis où en est chacune et laquelle débloquer d'abord ; ne lance rien ici (« Maestro quoi lancer » pour ça).`)
   } else if (o.candidates.length === 0) {
@@ -5937,7 +5974,7 @@ export function maestroContext(o: {
           '- Réglage autonome allumé : fusionne seul, sans attendre le clic de ' + person() + ', la branche prête d\'une de tes sessions (tests verts sur la branche à jour de main, diff relu par toi), une à la fois, par la règle de fusion du projet, tests rejoués sur main après chaque fusion (skill roadmap:maestro, § 5). Tu publies seul aussi (release d\'un plugin, déploiement), et tu donnes seul la main sur une ressource unique à une session à la fois (§ 4), sans lui demander. Lancer et archiver restent à son clic.',
           "- Une session qui attend une réponse : lis son dernier compte rendu. Si ce n'est ni une question d'architecture (un choix qui s'écrirait dans docs/decisions.md) ni un geste qui revient à " + person() + " (lancer, archiver, un secret, un accès), réponds-lui toi-même par message avec ta recommandation, et dis-le en une ligne.",
         ]
-      : projectSettings(o.source).mode === 'projet'
+      : projectSettings(o.source).travail === 'projet'
         ? []
         : ['- La fusion de la branche prête d\'une de tes sessions attend le clic de ' + person() + ' : propose-la-lui, une branche à la fois (skill roadmap:maestro, § 5).']),
     "- Les nouvelles de tes sessions enfants (celles qui coincent ou sont à archiver) t'arrivent à chaque message de " + person() + ", sous « Roadmap — nouvelles de tes sessions enfants » : suis leurs consignes. Sans ce bloc, toutes avancent.",

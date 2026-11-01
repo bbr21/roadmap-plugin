@@ -1,6 +1,6 @@
 ---
 name: onboarding
-description: "Onboards a project into the roadmap system, in Code or Projet mode. Code, a repository: CLAUDE.md of rules, numbered roadmap with its bilans, docs, check.mjs, start hook, a worktree per session; optionally rebuilds the roadmap from history (PRs, merges or commits); creates the private GitHub repository once approved. Projet, project management with no code: plain folder, git optional, complete tasks, no worktree, lock or merge. Checks, runs the doctor; brings an existing project to the format, overwriting nothing. Imports an existing roadmap (Markdown, CSV, Notion), losing no line. Triggers on « onboarding », « onboarde ce projet », « importe ma roadmap », « nouveau projet de code », « initialise ce repo », « mets ce projet au format », « reconstitue la roadmap depuis les PR », « onboarde ce dossier sans code », « Maestro dit qu'il n'y a pas de roadmap ». Not for the panel alone (roadmap-panel), nor day-to-day roadmap upkeep, nor a roadmap kept in Cowork itself."
+description: "Onboards a project into the roadmap system, with or without code (one mode since #176: the folder says which). With code, a repository: CLAUDE.md of rules, numbered roadmap with its bilans, docs, check.mjs, start hook, a worktree per session; optionally rebuilds the roadmap from history (PRs, merges or commits); creates the private GitHub repository once approved. Without code, project management: plain folder, git optional, complete tasks, no worktree, lock or merge. Checks, runs the doctor; brings an existing project to the format, overwriting nothing. Imports an existing roadmap (Markdown, CSV, Notion), losing no line. Triggers on « onboarding », « onboarde ce projet », « importe ma roadmap », « nouveau projet de code », « initialise ce repo », « mets ce projet au format », « reconstitue la roadmap depuis les PR », « onboarde ce dossier sans code », « Maestro dit qu'il n'y a pas de roadmap ». Not for the panel alone (roadmap-panel), nor day-to-day roadmap upkeep, nor a roadmap kept in Cowork itself."
 ---
 
 # Onboard a project
@@ -9,10 +9,15 @@ The person speaks French: talk to them in French, ask the questions in French, a
 roadmap and task labels in French; the files set up keep the language of their templates and of
 the « Langue » answer. Only this skill is in English.
 
-Two modes, chosen per project in `.claude/roadmap.json`: **Code** (a code repository, everything
-that follows up to "Projet mode") and **Projet** (project management without code, section
-"Projet mode" at the end of the file). The first round of `references/questions.md` asks for it,
-unless the request or the folder says it.
+One mode since #176. What the project is comes from its folder, never from a question: a git
+repository that sees code files gets the code structure (everything that follows up to "Without
+code"); any other folder gets the structure of project management without code (section "Without
+code" at the end of the file). `onboarding.py` reads it itself (`code` of the answers, else the
+folder's content). Only an empty or missing folder needs the answer: take it from the request
+(« nouveau projet de code », « initialise ce repo »: `code: true`; « gestion de projet », « sans
+code »: `code: false`), else round 0 of `references/questions.md`. Nothing about it is written to
+`.claude/roadmap.json`: the panel and the other skills read the same folder. `mode` (`code` or
+`projet`) is written by hand only to force a wrong detection.
 
 ## What the skill guarantees
 
@@ -25,7 +30,7 @@ them.
 The roadmap lives in the repository, hence on GitHub: a `roadmap/` folder at the root, with
 `ROADMAP.md` (open tasks), `ROADMAP-fait.md` (closed tasks), `ROADMAP-bilans.csv` (the bilan of
 each closed task) and `ROADMAP-REGLES.md` (#167: what becomes a task, what never does, the
-project's rules, where to find proof; set from the template, in both modes, then filled with the
+project's rules, where to find proof; set from the template, with or without code, then filled with the
 person), which `.claude/roadmap.json` points the panel to. A project onboarded before #167 gets
 its rules file with `onboarding.py regles <dossier>`. A project that already keeps
 its roadmap at its root keeps it there: the script sees it and does not set up a second one.
@@ -48,7 +53,7 @@ Three guarantees, never bypassed:
 
 ## The user's name, first
 
-In either mode: read `~/.claude/roadmap-perso.json`. Without a name in `me`, ask for it in free
+In every project: read `~/.claude/roadmap-perso.json`. Without a name in `me`, ask for it in free
 text (« Quel nom veux-tu dans tes roadmaps ? »), then write it into `me`, keeping the rest of the
 file (`{"me": ["Alex"]}` if it does not exist). It is the name Claude uses with the user, the
 value of `qui` and the one the panel counts as « À moi ». The plugin setting
@@ -139,7 +144,7 @@ the plan, not the whole scoping.
    (« Je déclare `design/` ? », « J'ouvre la tâche « Poser le design system » ? », « S'en passer »).
 4. Run the doctor (this plugin's `doctor` skill) on the folder. A KO due to the machine
    (Superpowers missing, `gh` not signed in) is reported with its command; a KO due to the project
-   is fixed here. In Projet mode, Superpowers missing is only « À voir »: it is optional there.
+   is fixed here. Without code, Superpowers missing is only « À voir »: it is optional there.
 
 ## 8. Report
 
@@ -153,29 +158,29 @@ verdict), then how to use it:
 - each chantier: its line in « En cours » on `main`, then `./scripts/new-session.sh feat/<slug> "<titre>"`
   (or `--here` in an app worktree), `--plan` for a spec.
 
-## Projet mode
+## Without code
 
 For a project without code: tasks go through the session's connectors (mail, calendar,
 documents), and neither worktree, nor lock, nor merge makes sense. The panel opens there by due
 date, each task carries its required fields, and a session launched by ▶ works in the folder
 itself.
 
-1. **Scope**: the « Mode » round, then the « Projet » round of `references/questions.md`. The
+1. **Scope**: the « Projet » round of `references/questions.md` (round 0 only for an empty folder). The
    folder may contain spaces; `qui` is the name of the person who leads.
 2. **Show the plan**, once: the folder, the files set up (`CLAUDE.md`, the roadmap and its bilans,
    `.claude/roadmap.json`, `.gitignore` with git), the axes, the required fields, the declared
    keys, git or not.
-3. **Write**: the answers (template: `python3 scripts/onboarding.py exemple --mode projet`), then
+3. **Write**: the answers (template: `python3 scripts/onboarding.py exemple --sans-code`), then
    `init <dossier> --reponses <fichier>`, or `--manquants` for an existing folder (it sets up only
    what is missing, `.claude/roadmap.json` included, and keeps a roadmap kept at the root). A
    roadmap already kept (in the folder or elsewhere) is imported: "Import an existing roadmap".
-4. **No history**: `historique` refuses a folder in Projet mode.
+4. **No history**: `historique` refuses a folder without code.
 5. **Check**: `verifier <dossier>` (« Conforme au format. »). With git, a first commit of only the
    files set up. No `check.mjs`: the panel checks each line written.
 6. **Templates** (#129): the « Modèles » answer declares the document or deck templates, one per
-   task type, in `design`; then `onboarding.py design <dossier> [--poser …]` as in Code mode
+   task type, in `design`; then `onboarding.py design <dossier> [--poser …]` as with code
    (step 7.3).
-7. **Doctor** (`doctor` skill): it reads the mode and runs the Projet mode checklist.
+7. **Doctor** (`doctor` skill): it sees a folder without code and runs that checklist; its « Travail » line says what it saw.
 8. **Report**: what was set up, then how to use it: open the folder in the Code tab, the panel by
    due date (the button switches to owner and to tree), ▶ on a task, « Maestro » for what can be
    launched; task `id:1` lists the tasks in progress; day to day, the `tasks` skill adds, updates,
@@ -188,8 +193,8 @@ When the person already has a roadmap: the folder's `ROADMAP.md`, or another fil
 checklist, CSV, Notion export as CSV or Markdown, Markdown table). We start from it, without
 losing a line. The original is never modified without its backup copy.
 
-1. **Set up the structure** first (`init … --manquants`): `.claude/roadmap.json` carries the mode,
-   `me` and the required fields the analysis reads.
+1. **Set up the structure** first (`init … --manquants`): `.claude/roadmap.json` carries `me`
+   and the required fields (`requis`, `requis_sur`) the analysis reads.
 2. **Analyse**: `analyser <fichier> --dossier <dossier> [--fait <ROADMAP-fait.md>] > <scratchpad>/analyse.json`.
 3. **Show the analysis** in one message, then a multiple-choice form on what needs deciding: the
    format recognised, the counts (open, closed, to number), the mapping (column → field, status →

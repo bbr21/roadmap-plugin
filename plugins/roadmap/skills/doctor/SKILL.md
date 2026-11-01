@@ -1,6 +1,6 @@
 ---
 name: doctor
-description: "Read-only checklist of a project wired to the roadmap system. Code mode: tools (git, node, python3, gh logged in), repo on main and pushed to GitHub, roadmap found and valid, node scripts/check.mjs, roadmap plugin enabled, Superpowers and every method skill the launched sessions cite, its updates, swiftui-pro on an iOS project. Projet mode (no code): python3, roadmap, settings of .claude/roadmap.json, required fields of open tasks, roadmap plugin, and Superpowers as « À voir » if missing: it is optional there. One OK, KO or « À voir » line per item, with the command that fixes it. Run at the end of onboarding. Triggers on « doctor », « lance le doctor sur ce projet », « tout est branché ? », « checklist du projet », « le projet est prêt pour Maestro ? », « Superpowers est bien installé ? », « pourquoi Maestro ne voit rien ». Not for a Cowork folder (it has its own doctor), nor for fixing: the doctor says what to do, nor for the content of tasks (audit skill)."
+description: "Read-only checklist of a project wired to the roadmap system; says first if the folder has code (#176). With code: tools (git, node, python3, gh logged in), repo on main and pushed to GitHub, roadmap found and valid, node scripts/check.mjs, roadmap plugin enabled, Superpowers and every method skill the launched sessions cite, its updates, swiftui-pro on an iOS project. Without code: python3, roadmap, settings of .claude/roadmap.json, required fields of open tasks, roadmap plugin, and Superpowers as « À voir » if missing: it is optional there. One OK, KO or « À voir » line per item, with the command that fixes it. Run at the end of onboarding. Triggers on « doctor », « lance le doctor sur ce projet », « tout est branché ? », « checklist du projet », « le projet est prêt pour Maestro ? », « Superpowers est bien installé ? », « pourquoi Maestro ne voit rien ». Not for a Cowork folder (its own doctor), nor for fixing: it says what to do, nor for the content of tasks (audit)."
 ---
 
 # Doctor of a project
@@ -22,7 +22,9 @@ changes nothing: neither the project nor the machine.
 | Structure | the onboarding layout is complete (CLAUDE.md, roadmap, start hook, scripts) |
 | Project check | the project's `node scripts/check.mjs` passes |
 | Rules of the roadmap | `ROADMAP-REGLES.md` next to `ROADMAP.md` (or the file `regles` declares) is there (#167); missing: KO, with the `onboarding.py regles` command that sets it from the template. Also lists `ecriture` and `preuves` when declared; an unreadable `ecriture` is KO, a missing place « À voir » |
-| Required fields | every launched task (`qui:` or `branche:`) carries `ouvert`, `due`, `qui` and `après`, or the fields of `requis` in `.claude/roadmap.json` (`[]`: no line); otherwise « À voir », with the count |
+| Work | first line: « Code (dépôt git, N fichiers de code) », « Projet (pas de dépôt git) », « Projet (dépôt git sans fichier de code) », or « … (forcé par mode dans .claude/roadmap.json) » (#176). A wrong detection is fixed with `mode` |
+| Settings | an unknown `mode` (other than `auto`, `code`, `projet`) or `requis_sur` (other than `ouvertes`, `lancees`): « À voir » |
+| Required fields | every launched task (`qui:` or `branche:`) carries `ouvert`, `due`, `qui` and `après`, or the fields of `requis` in `.claude/roadmap.json` (`[]`: no line), on every open task when `requis_sur` is `ouvertes`; otherwise « À voir », with the count |
 | Roadmap plugin | installed and enabled, in the version the app loads |
 | Superpowers | installed and enabled |
 | Method skills | every skill the launched sessions cite exists in the installed version: a skill renamed by Superpowers shows up here |
@@ -32,27 +34,28 @@ changes nothing: neither the project nor the machine.
 | User name | `me` in `~/.claude/roadmap-perso.json` holds a name (otherwise « À voir »: Claude says « l'utilisateur ») |
 | Design system | `design` in `.claude/roadmap.json` declares the one every mockup relies on (#129), each local path present, or `"aucun"`; not declared: « À voir », with what is already there (a `design/`, a deck template) or the proposal to set one up, and the `onboarding.py design` command that declares it |
 
-### In Projet mode
+### Without code
 
-When `.claude/roadmap.json` says `"mode": "projet"` (#76), the checklist changes: no git repo, no
-GitHub, no `check.mjs`, no `swiftui-pro`.
+In a folder without code (#76, #176: no git repository, a repository without code files, or
+`"mode": "projet"`), the checklist changes: no git repo, no GitHub, no `check.mjs`, no `swiftui-pro`.
 
 | Item | OK when |
 |---|---|
 | Tools | `python3`; `git` only if the folder is a repo |
 | Roadmap | the panel finds it |
-| Structure | a `CLAUDE.md` with Projet rules, the roadmap, `ROADMAP-fait.md` and `ROADMAP-REGLES.md`, `id:` on every line |
+| Work | as with code |
+| Structure | a `CLAUDE.md` with the rules of a folder without code, the roadmap, `ROADMAP-fait.md` and `ROADMAP-REGLES.md`, `id:` on every line |
 | Rules of the roadmap | `ROADMAP-REGLES.md` next to `ROADMAP.md` (or the file `regles` declares) is there (#167); missing: KO, with the `onboarding.py regles` command that sets it from the template. Also lists `ecriture` and `preuves` when declared; an unreadable `ecriture` is KO, a missing place « À voir » |
-| Settings | `vue`, `cles`, `requis`, `cles_visibles` and `ranger_par` in `.claude/roadmap.json` understood by the panel; otherwise « À voir » |
-| Required fields | every open task carries the fields of `requis`; otherwise « À voir », with the count (a line written outside Claude Code is flagged only here) |
-| Roadmap plugin | as in Code mode |
+| Settings | `mode`, `requis_sur`, `vue`, `cles`, `requis`, `cles_visibles` and `ranger_par` in `.claude/roadmap.json` understood by the panel; otherwise « À voir » |
+| Required fields | the fields of `requis` on every open task (`requis_sur: "ouvertes"`, written by the onboarding; an old `mode: "projet"` too), else on every launched task; otherwise « À voir », with the count (a line written outside Claude Code is flagged only here) |
+| Roadmap plugin | as with code |
 | Superpowers, its updates | optional (#94): missing or disabled, « À voir » with the command, never KO |
-| Plugin hooks | as in Code mode |
-| User name | as in Code mode |
-| Design system | as in Code mode: its document or deck templates, one per task type |
+| Plugin hooks | as with code |
+| User name | as with code |
+| Design system | as with code: its document or deck templates, one per task type |
 | Method skills | those the Projet brief suggests without requiring them: `brainstorming`, `writing-plans`; a missing one is « À voir » |
 
-The list of what is required is in `references/requis.json` (`projet` for Projet mode). The method
+The list of what is required is in `references/requis.json` (`projet` for a folder without code). The method
 skills there follow those the plugin cites in the sessions' brief (`hooks/parse.ts` of the
 plugin): a plugin test refuses the release if the two lists diverge.
 

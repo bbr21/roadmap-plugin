@@ -2,7 +2,7 @@
 """Onboarding d'un projet de code : pose la structure commune (modèle : Splitmybill) et sa roadmap,
 reconstitue au besoin la roadmap depuis l'historique du dépôt, et vérifie le format.
 
-  python3 onboarding.py exemple                            réponses d'exemple, en JSON
+  python3 onboarding.py exemple [--sans-code]              réponses d'exemple, en JSON
   python3 onboarding.py init DOSSIER --reponses R.json     écrit la structure dans DOSSIER
           [--manquants]                                    n'écrit que les fichiers absents (projet existant)
   python3 onboarding.py verifier DOSSIER                   dit ce qui manque ou s'écarte du format
@@ -95,11 +95,12 @@ EXEMPLE = {
     "secrets": [],
     "fin_en_plus": [],
     "github": "bbr21/clipping",
+    "code": True,
 }
 
 
 EXEMPLE_PROJET = {
-    "mode": "projet",
+    "code": False,
     "nom": "Roadmap de Caro",
     "dossier": "~/Documents/Roadmap de Caro",
     "resume": "Les tâches de Caro, tirées de ses emails et de ses réunions, menées depuis Claude Code.",
@@ -168,7 +169,7 @@ def charger_reponses(chemin):
 
 
 def valider_projet(r):
-    """Les réponses du mode Projet : pas de tests, de déploiement ni de verrou ; un dossier peut
+    """Les réponses d'un dossier sans code : pas de tests, de déploiement ni de verrou ; un dossier peut
     contenir des espaces (ses règles ne citent aucune commande git)."""
     for cle in ("nom", "dossier", "resume", "qui"):
         if not str(r.get(cle, "")).strip():
@@ -232,14 +233,34 @@ def _poser_declarations(cfg, r):
             cfg[k] = r[k]
 
 
+def code_du_projet(r):
+    """Le projet aura-t-il du code (#176) ? La réponse `code`, sinon l'ancien `mode`, sinon le dossier
+    s'il a déjà du contenu (`detecter_travail`). Un dossier vide ou absent ne dit rien : la réponse
+    est exigée. Elle choisit les modèles ; rien de tout ça ne s'écrit dans `.claude/roadmap.json`."""
+    mode = r.get("mode")
+    if mode is not None and mode not in ("auto",) + MODES_FORCES:
+        raise Erreur("mode : auto, code ou projet (mieux : code, true ou false)")
+    code = r.get("code")
+    if code is None and mode in MODES_FORCES:
+        code = mode == "code"
+    if code is None:
+        dossier = os.path.abspath(os.path.expanduser(str(r.get("dossier") or "")))
+        contenu = [f for f in os.listdir(dossier) if f not in (".git", ".DS_Store")] if os.path.isdir(dossier) else []
+        if not r.get("dossier") or not contenu:
+            raise Erreur("code : true ou false. Le dossier %s est vide : rien ne dit s'il recevra du code" % dossier)
+        code = detecter_travail(dossier)[0] == "code"
+    if not isinstance(code, bool):
+        raise Erreur("code : true ou false")
+    return code
+
+
 def valider(r):
     if not isinstance(r, dict):
         raise Erreur("les réponses sont un objet JSON")
-    if r.get("mode", "code") not in ("code", "projet"):
-        raise Erreur("mode : code ou projet")
+    r["code"] = code_du_projet(r)
     r["design"] = normaliser_design(r.get("design"))
     valider_declarations(r)
-    if r.get("mode") == "projet":
+    if not r["code"]:
         return valider_projet(r)
     for cle in ("nom", "dossier", "resume", "qui"):
         if not str(r.get(cle, "")).strip():
@@ -488,7 +509,7 @@ def variables_projet(r, aujourdhui=None):
 
 
 def fichiers_projet(r, aujourdhui=None):
-    """{chemin dans le projet: contenu} pour un dossier du mode Projet."""
+    """{chemin dans le projet: contenu} pour un dossier sans code."""
     v = variables_projet(r, aujourdhui)
     out = {}
     for src, dest in modeles(r.get("roadmap", DOSSIER_ROADMAP), MODELES_PROJET):
@@ -499,7 +520,8 @@ def fichiers_projet(r, aujourdhui=None):
     cfg = {"name": v["NOM"], "me": [v["QUI"]]}
     if r.get("roadmap", DOSSIER_ROADMAP) != ".":
         cfg["dir"] = DOSSIER_ROADMAP
-    cfg.update({"mode": "projet", "requis": r["requis"]})
+    # #176 : pas de `mode` ; les champs exigés se déclarent, sur toute ouverte.
+    cfg.update({"requis": r["requis"], "requis_sur": "ouvertes"})
     if r.get("cles"):
         cfg["cles"] = r["cles"]
     cfg["vue"] = "echeance"
@@ -513,7 +535,7 @@ def fichiers_projet(r, aujourdhui=None):
 
 def fichiers(r, aujourdhui=None):
     """{chemin dans le projet: contenu} pour toute la structure."""
-    if r.get("mode") == "projet":
+    if not r.get("code", True):
         return fichiers_projet(r, aujourdhui)
     v = variables(r, aujourdhui)
     out = {}
@@ -564,8 +586,8 @@ def init(dossier, r, manquants=False, aujourdhui=None):
     if deja and not manquants:
         raise Erreur("déjà présents, rien n'a été écrit : %s. Pour un projet existant : --manquants, après verifier." % ", ".join(sorted(deja)))
     os.makedirs(dossier, exist_ok=True)
-    # En mode Projet, git seulement si on l'a voulu.
-    veut_git = r.get("mode") != "projet" or r.get("git")
+    # Sans code, git seulement si on l'a voulu.
+    veut_git = r.get("code", True) or r.get("git")
     if veut_git and not os.path.isdir(os.path.join(dossier, ".git")) and git(dossier, "rev-parse", "--git-dir").returncode != 0:
         res = git(dossier, "init", "-q", "-b", "main")
         if res.returncode != 0:
@@ -605,13 +627,62 @@ def lignes_de_taches(texte):
     return out
 
 
-def mode_du_dossier(dossier):
-    """Le mode que dit `.claude/roadmap.json` : « projet », sinon « code »."""
+# Les fichiers de code, la même liste que `CODE_FILE` de hooks/parse.ts (un test les compare, #176).
+CODE_FILE = re.compile(r"\.(ts|tsx|js|jsx|mjs|cjs|py|go|rs|java|kt|swift|rb|php|sh)$")
+MODES_FORCES = ("code", "projet")
+
+
+def mode_force(dossier):
+    """Le travail que force `mode` de `.claude/roadmap.json` (#176) : « code », « projet », sinon None
+    (`auto`, absent, ou une valeur inconnue : le dossier décide)."""
     try:
         with open(os.path.join(dossier, ".claude", "roadmap.json"), encoding="utf-8") as f:
-            return "projet" if (json.load(f) or {}).get("mode") == "projet" else "code"
+            mode = (json.load(f) or {}).get("mode")
     except (OSError, ValueError, AttributeError):
-        return "code"
+        return None
+    return mode if mode in MODES_FORCES else None
+
+
+def detecter_travail(dossier):
+    """(travail, raison) déduits du dossier (#176) : « code » si c'est un dépôt git qui voit au moins un
+    fichier de code, suivi ou pas encore ajouté (pas ignoré) ; « projet » sinon."""
+    res = git(dossier, "ls-files", "--cached", "--others", "--exclude-standard")
+    if res.returncode != 0:
+        return "projet", "pas de dépôt git"
+    n = sum(1 for l in set(res.stdout.splitlines()) if CODE_FILE.search(l.strip()))
+    if n == 0:
+        return "projet", "dépôt git sans fichier de code"
+    return "code", "dépôt git, %d fichier%s de code" % (n, "s" if n > 1 else "")
+
+
+REQUIS_SUR = ("ouvertes", "lancees")
+
+
+def requis_du_dossier(dossier, cfg=None):
+    """(champs exigés, sur quelles tâches) d'une roadmap (#176) : ils se déclarent (`requis`,
+    `requis_sur`) et ne suivent pas le travail détecté. Sans déclaration, la règle légère sur les
+    tâches lancées ; un ancien `mode: "projet"` garde celle du mode Projet, sur toute ouverte."""
+    if cfg is None:
+        try:
+            with open(os.path.join(dossier, ".claude", "roadmap.json"), encoding="utf-8") as f:
+                cfg = json.load(f)
+        except (OSError, ValueError):
+            cfg = {}
+    cfg = cfg if isinstance(cfg, dict) else {}
+    projet = cfg.get("mode") == "projet"
+    requis = cfg.get("requis")
+    if not isinstance(requis, list):
+        requis = list(REQUIS_PROJET if projet else REQUIS_CODE)
+    sur = cfg.get("requis_sur")
+    if sur not in REQUIS_SUR:
+        sur = "ouvertes" if projet else "lancees"
+    return requis, sur
+
+
+def travail_du_dossier(dossier):
+    """Le travail d'un dossier (#176) : forcé par `mode`, sinon déduit du dossier. « code » donne
+    worktree, branche et fusion ; « projet », le dossier partagé et la ligne seule."""
+    return mode_force(dossier) or detecter_travail(dossier)[0]
 
 
 def _ecart_regles(dossier, en_plus=""):
@@ -623,9 +694,12 @@ def _ecart_regles(dossier, en_plus=""):
 
 
 def verifier_projet(dossier):
-    """Les écarts d'un dossier du mode Projet : ses règles, sa roadmap et ses numéros, sans git."""
+    """Les écarts d'un dossier sans code : ses règles, sa roadmap et ses numéros, sans git."""
     ecarts = []
     rdir = trouver_roadmap(dossier)
+    if rdir is None and os.path.isfile(os.path.join(dossier, DOSSIER_ROADMAP, "ROADMAP.md")):
+        # Sans `.claude/roadmap.json`, le panneau ne trouve pas une roadmap rangée hors de la racine.
+        return ["absent : .claude/roadmap.json (le panneau ne trouve pas une roadmap rangée hors de la racine)"]
     if rdir is None or not os.path.isfile(os.path.join(rdir, "ROADMAP.md")):
         return ["absent : ROADMAP.md (dans roadmap/ ou à la racine) : pas de roadmap"]
 
@@ -661,7 +735,7 @@ def verifier_projet(dossier):
 def verifier(dossier):
     """Les écarts au format, une ligne chacun ; une liste vide veut dire conforme."""
     dossier = os.path.abspath(os.path.expanduser(dossier))
-    if mode_du_dossier(dossier) == "projet":
+    if travail_du_dossier(dossier) == "projet":
         return verifier_projet(dossier)
     ecarts = []
     rdir = trouver_roadmap(dossier)
@@ -878,7 +952,7 @@ def relever(dossier, mois=6, avec_gh=True, aujourdhui=None, par="auto"):
     if par not in ("auto", "commit", "jour"):
         raise Erreur("par : auto, commit ou jour")
     dossier = os.path.abspath(os.path.expanduser(dossier))
-    if mode_du_dossier(dossier) == "projet":
+    if travail_du_dossier(dossier) == "projet":
         raise Erreur("historique : un dossier en mode Projet n'a ni PR ni fusions ; ses tâches s'écrivent à la main")
     if git(dossier, "rev-parse", "--git-dir").returncode != 0:
         raise Erreur("pas de dépôt git dans %s" % dossier)
@@ -1120,7 +1194,7 @@ def poser_regles(dossier):
     nom = cfg.get("name") if isinstance(cfg.get("name"), str) and cfg["name"].strip() else os.path.basename(dossier)
     me = cfg.get("me")
     qui = me[0] if isinstance(me, list) and me and isinstance(me[0], str) else (me if isinstance(me, str) and me else "l'équipe")
-    racine = MODELES_PROJET if mode_du_dossier(dossier) == "projet" else MODELES
+    racine = MODELES_PROJET if travail_du_dossier(dossier) == "projet" else MODELES
     with open(os.path.join(racine, DOSSIER_ROADMAP, REGLES), encoding="utf-8") as f:
         texte = rendre(f.read(), {"NOM": _aplatir(nom), "QUI": _aplatir(qui)})
     os.makedirs(os.path.dirname(r["absolu"]), exist_ok=True)
@@ -1302,7 +1376,8 @@ def main(argv=None):
     p = argparse.ArgumentParser(description="Onboarding d'un projet de code.")
     sub = p.add_subparsers(dest="cmd", required=True)
     px = sub.add_parser("exemple")
-    px.add_argument("--mode", choices=("code", "projet"), default="code")
+    px.add_argument("--sans-code", action="store_true", help="les réponses d'un dossier sans code")
+    px.add_argument("--mode", choices=("code", "projet"), help=argparse.SUPPRESS)  # d'avant #176
     pi = sub.add_parser("init")
     pi.add_argument("dossier")
     pi.add_argument("--reponses", required=True)
@@ -1334,7 +1409,7 @@ def main(argv=None):
     a = p.parse_args(argv)
     try:
         if a.cmd == "exemple":
-            print(json.dumps(EXEMPLE_PROJET if a.mode == "projet" else EXEMPLE, ensure_ascii=False, indent=2))
+            print(json.dumps(EXEMPLE_PROJET if a.sans_code or a.mode == "projet" else EXEMPLE, ensure_ascii=False, indent=2))
         elif a.cmd == "init":
             init(a.dossier, charger_reponses(a.reponses), a.manquants)
         elif a.cmd == "historique":

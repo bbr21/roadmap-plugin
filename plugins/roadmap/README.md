@@ -13,10 +13,10 @@ dans Cowork ni dans le chat de claude.ai.
 | Skill | Rôle |
 |---|---|
 | `roadmap-panel` | Branche un projet sur le panneau (`.claude/roadmap.json`, `ROADMAP.md` à la racine) et le dépanne. Tapée seule, `/roadmap:roadmap-panel` ouvre le panneau comme `/roadmap`, d'une ligne. |
-| `onboarding` | Mode Code : pose dans un dépôt de code la structure de Splitmybill (CLAUDE.md, roadmap numérotée dans `roadmap/` avec ses bilans, docs, `check.mjs`, hook de démarrage, worktree par session), propose de reconstituer la roadmap depuis l'historique du dépôt (PR, fusions ou commits des 6 derniers mois), ou remet un projet existant au format sans rien écraser. Mode Projet : un dossier simple, git en option, des tâches complètes. |
-| `doctor` | Checklist en lecture seule d'un projet (en mode Projet : python3, roadmap, réglages, champs exigés, sans GitHub, Superpowers facultatif) ; d'un projet de code : outils, GitHub, roadmap, structure, `check.mjs`, plugin roadmap, Superpowers et chacune de ses skills de méthode, sa mise à jour automatique, `swiftui-pro` sur un projet iOS ; une ligne OK, KO ou À voir avec la commande qui corrige. |
+| `onboarding` | Un projet de code (le dossier le dit, #176) : pose dans un dépôt de code la structure de Splitmybill (CLAUDE.md, roadmap numérotée dans `roadmap/` avec ses bilans, docs, `check.mjs`, hook de démarrage, worktree par session), propose de reconstituer la roadmap depuis l'historique du dépôt (PR, fusions ou commits des 6 derniers mois), ou remet un projet existant au format sans rien écraser. Sans code : un dossier simple, git en option, des tâches complètes. |
+| `doctor` | Checklist en lecture seule d'un projet (d'abord la ligne « Travail », ce que le dossier est ; sans code : python3, roadmap, réglages, champs exigés, sans GitHub, Superpowers facultatif) ; d'un projet de code : outils, GitHub, roadmap, structure, `check.mjs`, plugin roadmap, Superpowers et chacune de ses skills de méthode, sa mise à jour automatique, `swiftui-pro` sur un projet iOS ; une ligne OK, KO ou À voir avec la commande qui corrige. |
 | `audit` | Le seul audit de la roadmap (#159) : la structure (paquets découpés en parent et enfants datés, dépendances, fusions de doublons, regroupements, trous), puis une question par tâche en retard ou sans date et par `prio:` posée sur un enfant, la recommandation en premier (redater, faite, en pause, abandonner), et les clôtures sur preuve là où le projet le dit (`preuves`). `scripts/audit.py` (`survey`, `apply`, `pending`) écrit la structure tout ou rien, sauvegardée, avec un bilan qui retrouve chaque fragment ; les réponses s'écrivent par la skill `tasks`, qui suit `ecriture`. En tâche planifiée, seule une clôture sur preuve nette s'écrit : le reste attend dans `ROADMAP-questions.json`, compté par priorité. Lancée en fin d'onboarding. |
-| `tasks` | Tient la roadmap au quotidien, en mode Code ou Projet (#158) : rapproche chaque action des tâches du même sujet (jamais de tâche neuve sur un sujet qui en a une), puis ajoute, complète, redate, coche sur preuve (`fait:` à la date de la preuve, ligne de bilan), abandonne ou met en pause (#159), par `scripts/tasks.py` (`context`, `match`, `write`) : essai à blanc, puis écriture tout ou rien après sauvegarde, sur le moteur de l'audit. Lit `regles`, `ecriture` et `preuves` de `.claude/roadmap.json` ; avec `ecriture`, passe les lignes à l'outil du projet au lieu d'écrire. |
+| `tasks` | Tient la roadmap au quotidien, avec ou sans code (#158) : rapproche chaque action des tâches du même sujet (jamais de tâche neuve sur un sujet qui en a une), puis ajoute, complète, redate, coche sur preuve (`fait:` à la date de la preuve, ligne de bilan), abandonne ou met en pause (#159), par `scripts/tasks.py` (`context`, `match`, `write`) : essai à blanc, puis écriture tout ou rien après sauvegarde, sur le moteur de l'audit. Lit `regles`, `ecriture` et `preuves` de `.claude/roadmap.json` ; avec `ecriture`, passe les lignes à l'outil du projet au lieu d'écrire. |
 | `reglages-session` | Lit et change les réglages de session (questions par formulaire, mode ADHD, français, mode autonome) de `~/.claude/reglages-session.json`, pour le projet de la session (#102). Lancée, elle ouvre aussi le volet Réglages ; tapée seule, `/roadmap:reglages-session` l'ouvre comme `/reglages`, d'une ligne. |
 | `maestro` | Tient une session Maestro (`/maestro`), la session mère qui lance et suit des tâches menées en parallèle, même une seule : lignes et découpage, une session par tâche, lecture de leurs comptes rendus, main donnée sur le simulateur iOS et les autres ressources uniques, ordre des fusions calculé depuis git (`scripts/etat_maestro.py`), chaque tâche suivie dans la liste d'étapes de Maestro (une étape par tâche, son état en mots), une fusion à la fois. |
 
@@ -35,15 +35,12 @@ les sessions toutes les 3 s (le dossier de la roadmap toutes les 15 s), et montr
   À l'ouverture, le panneau de Maestro la choisit si une session t'attend, sinon Ma journée, sinon
   les récentes ;
 - les filtres en une rangée de pastilles (#115, #149) : une icône de trait dans leur couleur, le
-  nom, le nombre ; la choisie prend sa teinte et un second clic la retire. En mode Code : En cours
-  (sauf chez Maestro), En retard, Retours (`feedback:`) ; en mode Projet : Ma journée, En retard,
-  Cette semaine, À relancer ;
+  nom, le nombre ; la choisie prend sa teinte et un second clic la retire. Ma journée, En cours (sauf chez Maestro), En retard, Cette semaine, À relancer, Retours (`feedback:`), dans tout projet, chacune cachée à 0 (#176) ;
 - « Plus › », au bout de la rangée : les autres états non vides (Récentes, ouvertes aujourd'hui ou hier ;
-  À moi ; Attend un tiers, avec la liste des tiers ; en mode Projet aussi En cours hors Maestro,
-  Retours et le menu « Qui ») ; il reste ouvert tant qu'un de ses filtres est choisi ;
+  À moi ; Attend un tiers ; et le menu « Qui » dès qu'une autre personne est nommée, #176) ; il reste ouvert tant qu'un de ses filtres est choisi ;
 - une recherche par mots ou par numéro (#47), dans les ouvertes et les faites, qui filtre à la frappe,
   et à côté le menu « Ranger » qui montre le rangement en cours ;
-- par défaut, l'arbre par axe (#168), en mode Code comme en mode Projet : une section par axe, dans
+- par défaut, l'arbre par axe (#168), dans tout projet : une section par axe, dans
   l'ordre de la légende, la flèche dans le carré de l'axe ; dedans, ce qui est en session d'abord,
   puis ce qui attend quelqu'un, puis la plus récente ; une mère au niveau des tâches seules, sa
   flèche dans son carré, ses filles un cran à droite, reliées par des coudes ; un rond devant le
@@ -58,14 +55,13 @@ les sessions toutes les 3 s (le dossier de la roadmap toutes les 15 s), et montr
   tient sur toutes les lignes) ; chez Maestro, une tâche en session n'y porte que la pastille
   « en session », sa barre et son étape sont dans l'arbre ;
 - toutes les faites, rangées par jour de clôture ou par sujet ;
-- dans toutes les vues, le menu « Ranger » (En arbre, Par sujet, Par jour ; en mode Projet aussi Par
-  échéance et Par responsable ; un bouton sur mobile) : un seul choix pour toutes les vues ;
+- dans toutes les vues, le menu « Ranger » (En arbre, Par sujet, Par jour ; Par échéance et Par responsable quand une ouverte a `due:` ou `resp:`, #176 ; un bouton sur mobile) : un seul choix pour toutes les vues ;
   par jour, une ouverte se range au jour de son `ouvert:` (« En retard » reste en tête), une faite
   au jour de son `fait:` ; sans choix ni `vue` déclarée par le projet, les ouvertes vont en arbre
   (#168) et les faites par jour ;
 - la modification d'une tâche ouverte depuis sa fiche (#161) : le crayon à droite du titre met la
   fiche en édition, champs en place dans ses cartes, préremplis de la ligne (libellé dans la Mission,
-  Attend, Après et Parent, Axe, Responsable (`resp:` en mode Projet, `qui:` en mode Code), les clés
+  Attend, Après et Parent, Axe, Responsable (`resp:`, la personne, #176), les clés
   que le projet déclare dans `cles`, Échéance en `AAAA-MM-JJ`) ; un menu sur bureau quand le projet
   liste les valeurs admises ; « N changements », puis « Enregistrer » réécrit la seule ligne, les
   autres champs et la note gardés à leur place, contrôlée par les règles du projet : un refus nomme
@@ -154,8 +150,7 @@ Demande de Bertrand du 27/10/2026 : « Maestro » en tête d'un message ouvre le
 (#141, 31/10/2026), comptée par le plugin sur la roadmap seule : le bonjour du jour (« Bonjour
 Bertrand, on est vendredi. »), les tâches faites sur le total avec leur barre, les closes de la
 semaine, les pastilles du jour (en retard, aujourd'hui ou demain, tiers à relancer ou sessions qui
-tournent), puis quatre boutons : « Ma journée », « Quoi lancer », « À relancer » en mode Projet ou
-« Mes sessions » en mode Code (cachés à zéro), « Tout scanner ». Maestro ne dit qu'une phrase
+tournent), puis quatre boutons : « Ma journée », « Quoi lancer », « À relancer » s'il y en a, sinon « Mes sessions » (cachés à zéro, #176), « Tout scanner ». Maestro ne dit qu'une phrase
 d'encouragement. Un clic envoie son message (« Maestro journée », « Maestro quoi lancer »,
 « Maestro relances », « Maestro sessions », « Maestro scan ») par la boîte d'envoi de #140, que vide
 le dessin du panneau : il passe ainsi par le hook `prompt.submit`, qui joint la part à lire (la
@@ -195,8 +190,7 @@ a lancé d'autres). Chaque enfant note dans le store du plugin sa liste d'étape
 chaque message de Bertrand, le parent reçoit, sous « Roadmap — nouvelles de tes sessions enfants »,
 une ligne par enfant qui coince depuis 15 min (attend Bertrand, silencieux avec son étape, ou prêt)
 et la liste des enfants à archiver, vérifiés finis (ligne close et commits arrivés, ou branche
-fusionnée et liste d'étapes faite ; rien de non commité, aucune question ni session ouverte ; en
-mode Projet, la ligne seule) ; rien quand tout avance. Une session épinglée n'est pas proposée à
+fusionnée et liste d'étapes faite ; rien de non commité, aucune question ni session ouverte ; dans un dossier sans code, la ligne seule) ; rien quand tout avance. Une session épinglée n'est pas proposée à
 l'archivage, une session distante n'est jamais dite finie d'ici, et la branche de base est celle de
 la session (`main` sans elle) ; les notes de plus de 30 jours sortent du store (#90). Il relance une fois un enfant silencieux
 (pas encore s'il a répondu sans changer d'étape), et propose d'archiver les finis d'un seul clic
@@ -243,19 +237,40 @@ task dans la session ; décider seule ce que les fichiers, le code ou un défaut
 tranchent ; ne poser à Bertrand que ce qui est à lui, en une fois ; écrire un blocage sur la ligne
 (`attend:`, `après:`) au lieu de l'attendre.
 
-## Tâche lancée tracée (mode Code)
+## Un seul mode (#176)
 
-Demande de Bertrand du 28/10/2026 (#80) : en mode Code, une tâche lancée (sa ligne porte `qui:` ou
-`branche:`) porte `ouvert:`, `due:`, `qui:` et `après:` (`après:-` si rien ne la précède). Comme
-les champs exigés du mode Projet : signalés au modèle à l'écriture, comptés par le doctor, jamais
-refusés ; `requis` de `.claude/roadmap.json` remplace la liste, `[]` l'éteint. Les idées du
+Décidé par Bertrand le 01/11/2026 : plus de mode Code ni de mode Projet. Le panneau, l'accueil et
+Maestro sont les mêmes dans tout projet : les sept filtres en pastilles (Toutes, Ma journée, En
+cours, En retard, Cette semaine, À relancer, Retours), chacun caché quand il vaut 0, « Qui » dès
+qu'une autre personne est nommée, « Par échéance » et « Par responsable » seulement si une tâche
+ouverte a `due:` ou `resp:`, et le filtre choisi qui tient quand on change d'axe. Le panneau s'ouvre
+sur « En cours » quand une session travaille une tâche, sinon sur « Ma journée », sinon sur tout.
+
+Ce qui change d'un projet à l'autre, c'est la façon de travailler, et c'est le dossier de la
+session qui la dit : un dépôt git qui voit au moins un fichier de code travaille en worktree, sur
+une branche que Maestro fusionne, avec le rappel de méthode ; tout autre dossier (Cowork, AAFES, la
+roadmap de Caro) travaille dans le dossier même, et une tâche y est finie quand sa ligne est cochée.
+`"mode"` de `.claude/roadmap.json` reste lu : `auto` (le défaut) laisse le dossier décider, `code`
+ou `projet` le force, pour corriger une détection fausse ; la ligne « Travail » du doctor dit ce
+qu'il a vu. `qui:` désigne la session qui tient une tâche, `resp:` la personne qui la porte, dans
+tout projet ; une tâche qu'une autre personne porte se relance au lieu de se lancer.
+
+## Tâche lancée tracée
+
+Demande de Bertrand du 28/10/2026 (#80) : une tâche lancée (sa ligne porte `qui:` ou
+`branche:`) porte `ouvert:`, `due:`, `qui:` et `après:` (`après:-` si rien ne la précède),
+signalés au modèle à l'écriture, comptés par le doctor, jamais refusés ; `requis` de
+`.claude/roadmap.json` remplace la liste, `[]` l'éteint, et `"requis_sur": "ouvertes"` l'exige de
+toute tâche ouverte (#176, ce qu'écrit l'onboarding d'un dossier sans code). La détection ne change
+jamais les champs exigés ; un ancien `"mode": "projet"` garde les siens. Les idées du
 Prochain et du Plus tard n'en ont pas besoin. Le brief d'une session lancée le rappelle.
 
-## Mode Projet
+## Dossier sans code
 
-Demande de Bertrand du 28/10/2026 (#76) : un même plugin pilote aussi des projets sans code, en
-mode Projet, choisi par projet dans `.claude/roadmap.json` (`"mode": "projet"` ; Code par défaut).
-Premiers usages : la roadmap de Caro et le dossier AAFES Cowork, depuis l'onglet Code.
+Demande de Bertrand du 28/10/2026 (#76) : un même plugin pilote aussi des projets sans code.
+Premiers usages : la roadmap de Caro et le dossier AAFES Cowork, depuis l'onglet Code. Depuis #176,
+ce n'est plus un mode choisi : le dossier le dit, et ce qui suit sur l'affichage (Ma journée, les
+filtres, « Qui », les rangements) vaut dans tout projet.
 
 - **Des tâches complètes** : `resp:` (la personne qui porte la tâche, collègue compris),
   `parent:N` ou `parent:#N` (la tâche mère), `après:N,M` (plusieurs prérequises), `-` pour
@@ -271,7 +286,7 @@ Premiers usages : la roadmap de Caro et le dossier AAFES Cowork, depuis l'onglet
   l'arbre en bandes repliables, une par valeur de la clé (les déclarées dans leur ordre, puis les
   autres, puis « Sans projet »), les blocs sous la valeur de leur parent. Une clé non déclarée
   dans `cles` est ignorée, et le doctor le dit.
-- **Les règles du projet** (#158), dans les deux modes. Tout projet a son fichier de règles,
+- **Les règles du projet** (#158), dans tout projet. Tout projet a son fichier de règles,
   `ROADMAP-REGLES.md`, à côté de `ROADMAP.md` (#167) : ce qui devient une tâche, ce qui n'en
   devient jamais une, les règles du projet et ses preuves. L'onboarding le pose depuis un modèle
   (`onboarding.py regles <dossier>` pour un projet déjà onboardé), le doctor est KO s'il manque, et
@@ -291,7 +306,7 @@ Premiers usages : la roadmap de Caro et le dossier AAFES Cowork, depuis l'onglet
   <outil> ». La skill `tasks` cherche la preuve, puis écrit par l'outil du projet. Une récurrente
   seule (`tous:`) n'est alors plus reconduite par le panneau : `tasks` le dit. Dans un dossier
   Cowork, `cowork.py` garde la main, `ecriture` posé ou non.
-- **Ma journée** (#99) : le panneau s'ouvre sur « Ma journée », les tâches à moi en retard, dues
+- **Ma journée** (#99) : quand aucune session ne travaille une tâche, le panneau s'ouvre sur « Ma journée », les tâches à moi en retard, dues
   aujourd'hui ou demain, ou récurrentes qui tombent dans les 2 jours, rangées dans cet ordre (la
   priorité n'y entre plus, #130). Un parent n'y entre jamais en ligne propre : ses enfants dus y
   entrent, et en arbre il les coiffe, en gris (#125).
@@ -304,8 +319,8 @@ Premiers usages : la roadmap de Caro et le dossier AAFES Cowork, depuis l'onglet
 - **La date d'un parent** (#125) : l'échéance la plus proche de ses enfants ouverts ; filtres, tri
   et pastilles la lisent. `due:` n'est plus exigé d'un parent (sauf `tous:`) ; posé, il reste
   l'échéance finale du sujet.
-  Sous les axes, quatre filtres en pastilles cliquables (#115, #149) : Ma journée (soleil, bleu), En
-  retard (horloge, rouge), Cette semaine (calendrier, orange, échéance dans les 7 jours) et À
+  Sous les axes, les filtres en pastilles cliquables (#115, #149, #176), cachés à 0 : Ma journée (soleil, bleu), En
+  cours, En retard (horloge, rouge), Cette semaine (calendrier, orange, échéance dans les 7 jours), Retours et À
   relancer (cloche, violet, une attente de tiers sans nouvelle depuis 14 jours, `"relance": N` dans
   `.claude/roadmap.json` pour un autre seuil). Les autres états et le menu « Qui » passent sous
   « Plus › » ; « Qui » se combine avec l'axe et la ligne choisie, et les nombres suivent. La date d'une ligne est rouge en retard (« 23/10 · 6 j »), orange dans
@@ -321,8 +336,9 @@ Premiers usages : la roadmap de Caro et le dossier AAFES Cowork, depuis l'onglet
   est reconduit à la place, depuis son `due:` écrit (« parent #411 reconduit au 10/11 »). Une
   annulation ou un enfant récurrent ne ferment rien d'autre ; par `cowork.py`, la note dit le parent
   à cocher.
-- **La vue** : hors de Ma journée, les tâches se rangent par échéance (en retard, cette semaine, plus tard, sans
-  échéance) ; le menu « Ranger » propose aussi le responsable, l'arbre des tâches, le sujet, le jour.
+- **La vue** : par échéance (en retard, cette semaine, plus tard, sans échéance) quand le projet
+  déclare `"vue": "echeance"` (l'onboarding sans code l'écrit) ; le menu « Ranger » propose aussi le
+  responsable (si une tâche a `resp:`), l'arbre des tâches, le sujet, le jour.
   Une roadmap qui a des mères s'ouvre en arbre (#163) quand le projet ne déclare pas de `vue` ; un
   choix dans « Ranger » reste.
   L'arbre « Le fil » (#125, redessiné par #163, maquette A) : une tâche est seule, mère ou étape ; un
@@ -353,11 +369,10 @@ Premiers usages : la roadmap de Caro et le dossier AAFES Cowork, depuis l'onglet
   prérequises et clés déclarées. Une tâche est bloquée tant qu'une de ses prérequises est ouverte,
   ou que son parent attend la sienne (#125) ; le cadenas dit quoi : « après #601 », « parent après
   #12 ». Les titres courts gardent la langue du libellé.
-- **Les sessions** : ▶ pose une carte sans worktree (reposée sans le champ si l'app le refuse) ; le
+- **Les sessions** (dossier sans code) : ▶ pose une carte sans worktree (reposée sans le champ si l'app le refuse) ; le
   brief ne cite ni TDD ni plan de code, dit que la tâche passe par les connecteurs MCP et que rien
   ne part chez un tiers sans accord ; la clause de Maestro n'a ni branche ni fusion ; le rappel
-  « commit sans test » se tait ; Maestro ne propose que les tâches « à moi », compte celles des
-  autres en retard, et garde son menu avec le réglage `autonome` ; la publication sans demander
+  « commit sans test » se tait ; Maestro garde son menu avec le réglage `autonome` ; la publication sans demander
   y vaut quand même, par le texte injecté (#105).
 - **L'onboarding** pose un dossier simple : `CLAUDE.md` court, la roadmap et ses bilans,
   `.claude/roadmap.json` ; git en option ; ni `check.mjs`, ni hook, ni historique. **Le doctor** y
@@ -493,7 +508,7 @@ remplaçant le précédent (#119) :
   Livré, État, À toi, Session. Éteint, Maestro ne demande plus
   que des réponses courtes (#119) ;
 - `francais` : réponses en français ;
-- `autonome` (#77, #105, en mode Code comme en mode Projet, éteint par défaut) : Claude suit sa
+- `autonome` (#77, #105, avec ou sans code, éteint par défaut) : Claude suit sa
   recommandation au lieu de poser la question, sauf pour une question d'architecture, c'est-à-dire
   un choix qui s'écrirait dans `docs/decisions.md`. Le réglage est l'autorisation durable de
   fusionner et de publier (release d'un plugin, déploiement, push de `main`) : aucune session ne
@@ -504,7 +519,7 @@ remplaçant le précédent (#119) :
   et archiver gardent le clic de Bertrand ; un message en son nom ou un paiement se demandent
   toujours.
 
-Toujours dite, réglages éteints compris, en mode Code comme en mode Projet : la règle des gestes
+Toujours dite, réglages éteints compris, avec ou sans code : la règle des gestes
 hors du code (#82, 28/10/2026). Un geste qu'une tâche demande hors du dépôt (tâche planifiée,
 réglage d'un service, formulaire) se fait par la session : d'abord par un connecteur MCP ou une
 API (une tâche planifiée : `mcp__scheduled-tasks__create_scheduled_task`), sinon dans le volet
@@ -514,9 +529,8 @@ fait sans confirmation ; éteint, la session demande son oui avant d'écrire. Le
 du modèle restent au-dessus (envoyer un message en son nom, payer, valider un formulaire dans le
 navigateur sans qu'il l'ait demandé).
 
-Toujours dite aussi, dans les deux modes : la règle des maquettes (#96, 29/10/2026). Tout choix
-dont le résultat se voit (en mode Code : écran, vue, panneau, volet, composant, mise en page,
-graphique ; en mode Projet : la mise en page d'un document, d'un tableau, d'une présentation)
+Toujours dite aussi, avec ou sans code : la règle des maquettes (#96, 29/10/2026). Tout choix
+dont le résultat se voit (dans un projet de code : écran, vue, panneau, volet, composant, mise en page, graphique ; sans code : la mise en page d'un document, d'un tableau, d'une présentation)
 passe par 2 ou 3 maquettes simples, chacune avec son parti et son compromis, la recommandation en
 premier ; Bertrand choisit, puis la session code ou décide. Le support est le plus léger qui
 permet de décider : l'aperçu (`preview`) des options d'un formulaire, un widget `mockup`
@@ -571,7 +585,7 @@ Dans cet ordre, pour le projet de la session (un worktree remonte à son dossier
 1. `.claude/roadmap.json` dans le projet, tout facultatif :
    `{ "name": "Clipping", "dir": "docs", "me": ["Alex"], "subjects": ["Montage", "Diffusion"] }`
    (`dir` relatif au projet ou absolu ; sans `subjects`, le modèle choisit ses sujets), et les
-   réglages du mode : `mode`, `requis`, `cles`, `vue` (voir « Mode Projet »), et `rangement`
+   réglages : `mode` (`auto` par défaut, voir « Un seul mode »), `requis`, `requis_sur`, `cles`, `vue` (voir « Dossier sans code »), et `rangement`
    (#101) : `{ "skill": "aafes-memory", "ligne": "Rangé dans" }`, la tâche de la session cochée,
    la fin de tour ne propose l'archivage qu'une fois la ligne de rangement (ou « Rien à ranger »)
    écrite dans une réponse de la session, et rappelle sinon la règle de rangement de la skill ;
@@ -631,6 +645,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.117.0 (2026-11-01)** : panneau, skills : un seul mode ; tous les filtres et rangements partout, cachés quand vides ; le travail (worktree, fusion, rappel de méthode) déduit du dossier, git avec du code ou non ; l'onboarding ne demande plus de mode (#176)
 - **0.116.0 (2026-11-01)** : panneau : le rond d'une tâche se confirme en deux temps (cocher, rouvrir une faite, tout clore), et le numéro suit le rond à écart fixe (#179)
 - **0.115.2 (2026-11-01)** : panneau : plus de pastille d'axe dans « En cours », où le compte d'étapes n'est plus coupé ; la pastille d'axe de la liste devient un réglage, éteint par défaut (#177)
 - **0.115.1 (2026-11-01)** : panneau : le pied lit le catalogue local de Claude Code et propose « Mettre à jour » quand l'app retarde (#178)

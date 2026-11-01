@@ -31,7 +31,7 @@ full on 26/10/2026; a single name, Maestro, since 29/10/2026 (#112).
   Saying « Maestro » (or `/maestro`) alone at the start of a message opens the panel and the welcome
   (#141): a card in place of the message, counted by the plugin without scanning anything (#126):
   the day's greeting, the tasks done out of the total, what is waiting today, and four buttons,
-  « Ma journée », « Quoi lancer », « À relancer » (Projet mode) or « Mes sessions » (Code mode),
+  « Ma journée », « Quoi lancer », « À relancer » when a third party is waited on, otherwise « Mes sessions » (#176),
   hidden at zero, and « Tout scanner ». Maestro adds only one sentence of encouragement, with no end
   box with buttons and no form: the buttons are the question. A click sends « Maestro journée »,
   « Maestro quoi lancer », « Maestro relances », « Maestro sessions » or « Maestro scan », and the
@@ -71,8 +71,8 @@ to it.
     « en cours : étape 3/7 … », « prête à fusionner (tests : …) », « attend le simulateur »,
     « attend une réponse : … » or « bloquée : … »; keep your step list (`update_plan`);
   - update your branch when Maestro asks: merge `main` into it, never rebase a pushed branch;
-  - a visual choice: write your 2 or 3 mockups in a static HTML page (Code mode:
-    `docs/plans/<type>-<slug>/maquettes.html`; Projet mode: next to the document), say
+  - a visual choice: write your 2 or 3 mockups in a static HTML page (in a code project:
+    `docs/plans/<type>-<slug>/maquettes.html`; without code: next to the document), say
     « attend une réponse : choix de maquette, <chemin> » at the top of your report and end your turn;
   - do not tick your line: your last report says what was done and the problem met;
   - your line closed (read in `ROADMAP-fait.md`, never assumed) and nothing left pending, your last
@@ -148,7 +148,7 @@ to it.
     words: « en cours : étape 3/7 », « t'attend : <la question en trois mots> »,
     « attend le simulateur », « en relecture », « prête à fusionner », « livrée ». Example:
     `#99 Priorités et filtres · en relecture`.
-  - **In the merge order** of § 5; a delivered task (merged, or closed in Projet mode) is ticked
+  - **In the merge order** of § 5; a delivered task (merged, or closed in a folder without code) is ticked
     (`completed`) and keeps its place at the top.
   - **A single `in_progress` step**, as the tool requires: the one Maestro is dealing with now (the
     one waiting for the person, the one it is reviewing or merging), otherwise the next to merge.
@@ -183,8 +183,8 @@ to it.
 - **Unblock first**: whatever keeps a sub-session from moving forward comes before everything else.
   Maestro answers itself, by message to the sub-session, what the code, the roadmap or the rules
   settle. The rest goes to the person, one question at a time, and their answer is passed on word
-  for word. With the session setting `autonome` (skill `reglages-session`, in Code mode as in Projet
-  mode), Maestro also answers itself, with its recommendation, everything that is neither an
+  for word. With the session setting `autonome` (skill `reglages-session`, with or without
+  code), Maestro also answers itself, with its recommendation, everything that is neither an
   architecture question (a choice that would be written in `docs/decisions.md`) nor a gesture that
   belongs to the person (launching, archiving, a secret, an access), and says so in one line.
   Merging and publishing are not the person's to decide: Maestro never asks them « je fusionne ? »
@@ -362,4 +362,4 @@ The merge itself:
   list has not moved (§ 3, #136); it refuses its « à archiver » end without the table of its tasks
   (§ 6).
 - Any session, Maestro included, that works (at least two tools in the turn) without having posted
-  a step list gets a reminder at the end of the turn, in Code mode as in Projet mode (#98, #104).
+  a step list gets a reminder at the end of the turn, with or without code (#98, #104).

@@ -172,6 +172,10 @@ import {
   type ChainStep,
   type TreeBlock,
   type Mode,
+  type Travail,
+  groupingData,
+  heldByOther,
+  workOf,
   unlockedBy,
   launchable,
   maestroCall,
@@ -505,7 +509,7 @@ const UNKNOWN_MAX_MS = 12 * 3_600_000
  */
 const VIEW: View = {
   axis: 'all',
-  // `auto` : en mode Projet, Ma journée (#99) ; sinon les tâches en cours s'il y en a, sinon toutes ; un clic sur un filtre le remplace.
+  // `auto` (#176) : les tâches en cours s'il y en a, sinon Ma journée, sinon toutes ; un clic sur un filtre le remplace.
   attend: 'auto',
   who: 'all',
   moreFilters: false,
@@ -689,7 +693,7 @@ async function gitState($: EngineInterface): Promise<string | undefined> {
   }
 }
 
-/** Le dossier est-il dans un dépôt git ? (« Vérifier » en mode Projet, #76.) */
+/** Le dossier est-il dans un dépôt git ? (« Vérifier » sans code, #76.) */
 async function isGitDir($: EngineInterface, dir: string): Promise<boolean> {
   try {
     return (await $.process.run(['git', '-C', dir, 'rev-parse', '--git-dir'])).exitCode === 0
@@ -715,8 +719,8 @@ async function gitHead($: EngineInterface): Promise<string | undefined> {
  * `swiftui-pro`. Une fois par HEAD.
  */
 async function methodNote($: EngineInterface, c: Capture): Promise<string | undefined> {
-  // Mode Projet (#76) : pas de code, pas de rappel de méthode de code.
-  if (projectSettings(c.source).mode === 'projet') return undefined
+  // Sans code (#76, #176) : pas de rappel de méthode de code.
+  if (projectSettings(c.source).travail === 'projet') return undefined
   const before = c.headAtTurn
   if (before === undefined) return undefined
   const now = await gitHead($)
@@ -1140,6 +1144,29 @@ async function guardBash($: EngineInterface, command: unknown): Promise<string |
   return undefined
 }
 
+/** Le travail d'un dossier gardé 5 minutes (#176) : un `git init` ou un premier fichier de code se voit au plus tard après. */
+const WORK_TTL_MS = 5 * 60_000
+const workSeen = new Map<string, { travail: Travail; at: number }>()
+
+/**
+ * Le travail d'un dossier (#176) : `git ls-files` voit-il un fichier de code (`workOf`) ? Mémorisé par
+ * dossier. Un git lent ou en échec garde la valeur gardée, sinon `code`, le défaut d'avant : un git
+ * qui tarde ne retire pas son worktree à une session de code.
+ */
+async function detectWork($: EngineInterface, dir: string): Promise<Travail> {
+  const seen = workSeen.get(dir)
+  try {
+    const now = await $.clock.now()
+    if (seen && now - seen.at < WORK_TTL_MS) return seen.travail
+    const ran = await $.process.run(['git', '--no-optional-locks', '-C', dir, 'ls-files', '--cached', '--others', '--exclude-standard'], { timeoutMs: GIT_TIMEOUT_MS })
+    const travail = workOf(ran.exitCode, ran.stdout)
+    workSeen.set(dir, { travail, at: now })
+    return travail
+  } catch {
+    return seen?.travail ?? 'code'
+  }
+}
+
 /**
  * Le dépôt de `dir` : son dossier principal (le premier de `git worktree list`), le haut de la copie
  * où se trouve `dir`, et s'il est partagé (au moins deux worktrees) ; hors dépôt, rien.
@@ -1176,20 +1203,28 @@ async function currentSource($: EngineInterface): Promise<Source | undefined> {
       const path = `${base}/.claude/roadmap.json`
       if (await $.fs.exists(path)) {
         const found = parseProjectConfig(await $.fs.read(path), base, defaults)
-        if (found) return found
+        if (found) return await withWork($, found, bases[0]!)
       }
     }
 
     const known = sourceFor(perso.sources, cwd) ?? sourceFor(perso.sources, root)
-    if (known) return known
+    if (known) return await withWork($, known, bases[0]!)
 
     for (const base of bases) {
-      if (await $.fs.exists(`${base}/ROADMAP.md`)) return { ...defaults, match: [base], dir: base, subjects: [] }
+      if (await $.fs.exists(`${base}/ROADMAP.md`)) return await withWork($, { ...defaults, match: [base], dir: base, subjects: [] }, bases[0]!)
     }
     return undefined
   } catch {
     return undefined
   }
+}
+
+/**
+ * La source, avec le travail du dossier de la session (#176) : son dossier principal, pas celui de la
+ * roadmap (adBricks : la roadmap dans Adbricks Cowork, le code dans Work/Adbricks). `mode` l'emporte.
+ */
+async function withWork($: EngineInterface, source: Source, dir: string): Promise<Source> {
+  return source.mode ? source : { ...source, travail: await detectWork($, dir) }
 }
 
 function files(source: Source): { open: string; done: string } {
@@ -1719,8 +1754,8 @@ function fromAgent(e: unknown): boolean {
   return (e as { agentId?: unknown }).agentId !== undefined
 }
 
-/** Ce que le parent lit de sa roadmap pour juger ses enfants : les numéros ouverts et clos, le mode, ses dossiers. */
-type ParentLines = { open: Set<string>; done: Set<string>; mode: Mode; match: string[] }
+/** Ce que le parent lit de sa roadmap pour juger ses enfants : les numéros ouverts et clos, le `mode` qui force, ses dossiers. */
+type ParentLines = { open: Set<string>; done: Set<string>; mode?: Mode; match: string[] }
 
 /** git lit le dossier d'un enfant en 5 s au plus : le message de Bertrand attend la réponse (#90). */
 const GIT_TIMEOUT_MS = 5_000
@@ -1765,7 +1800,7 @@ function parentDir(path: string): string {
  * travaille dans le projet du parent (deux roadmaps ont chacune leur #76) ; close, ses commits
  * doivent aussi être arrivés, dans sa base ou poussés sur leur branche distante. Sans ligne, sa
  * branche à lui (pas sa base) fusionnée, et sa liste d'étapes toute faite. Sa base est celle de sa
- * fiche (`sourceBranch`), sinon `main` (#90). En mode Projet, un enfant dans le dossier partagé du
+ * fiche (`sourceBranch`), sinon `main` (#90). Sans code (#176), un enfant dans le dossier partagé du
  * projet est jugé par sa ligne seule. Une session distante ne se juge pas par le git d'ici. Une
  * question encore vivante ou un enfant ouvert suffisent à dire non : git ne tourne pas pour rien.
  */
@@ -1783,8 +1818,9 @@ async function finishedFacts(
   const known = await lines()
   const inProject = known !== undefined && known.match.some(prefix => cwd.startsWith(prefix))
   const line = id && inProject && (known.done.has(id) || known.open.has(id)) ? (known.done.has(id) ? 'closed' : 'open') : undefined
-  // Mode Projet (#76) : les sessions partagent le dossier du projet, sans branche ; seule la ligne compte.
-  if (known?.mode === 'projet' && inProject && !cwd.includes('/.claude/worktrees/')) {
+  // Sans code (#76, #176) : les sessions partagent le dossier du projet, sans branche ; seule la ligne
+  // compte. Le dossier de l'enfant le dit, sauf `mode` de la roadmap qui force.
+  if (inProject && !cwd.includes('/.claude/worktrees/') && (known?.mode ?? (await detectWork($, cwd))) === 'projet') {
     facts.dirty = 0
     if (line) facts.landed = line === 'closed'
     return facts
@@ -1862,7 +1898,7 @@ async function childAlertContext($: EngineInterface): Promise<string | undefined
       const source = await sourceNow($)
       if (!source) return undefined
       const ids = (tasks: Task[] | string) => new Set(typeof tasks === 'string' ? [] : tasks.flatMap(t => (t.id ? [t.id] : [])))
-      return { open: ids(await load($, files(source).open, 'ROADMAP.md')), done: ids(await load($, files(source).done, 'ROADMAP-fait.md')), mode: source.mode ?? 'code', match: source.match }
+      return { open: ids(await load($, files(source).open, 'ROADMAP.md')), done: ids(await load($, files(source).done, 'ROADMAP-fait.md')), ...(source.mode ? { mode: source.mode } : {}), match: source.match }
     })()
     return known
   }
@@ -2571,7 +2607,7 @@ async function launchSession($: EngineInterface, source: Source, task: Task, sho
   const key = taskKey(task)
   // Le bouton se grise et dit « Lancement… » : une seule écriture.
   await setView($, v => ({ launched: v.launched.includes(key) ? v.launched : [...v.launched, key], launchNote: LAUNCHING }))
-  const projet = projectSettings(source).mode === 'projet'
+  const projet = projectSettings(source).travail === 'projet'
   const base =
     kind === 'check'
       ? checkBrief(source, task, shortTitle, !projet || (await isGitDir($, source.dir)), await briefFound($, source, task))
@@ -2621,7 +2657,7 @@ async function launchSession($: EngineInterface, source: Source, task: Task, sho
     } as const
     // Les champs que l'app peut refuser, dans l'ordre où ils tombent, un par refus : le mode (#87 :
     // l'app n'accorde le bypass que depuis une session déjà en bypass), l'effort (haut par défaut,
-    // Bertrand, 2026-10-23 ; borné à celui de la session qui lance), puis, en mode Projet (#76), le
+    // Bertrand, 2026-10-23 ; borné à celui de la session qui lance), puis, sans code (#76, #176), le
     // dossier du projet sans worktree (le panneau ne lit pas la copie d'un worktree). Un champ tombé
     // hérite de la session qui lance.
     const effort = LAUNCH_EFFORTS.has(settings.launchEffort) ? settings.launchEffort : undefined
@@ -2730,17 +2766,17 @@ async function maestroText($: EngineInterface, go: boolean, only?: 'launch' | 's
   for (const f of followed) if (f.id) statuses[f.id] = childStatusOf(await $.store.get(`${CHILD_STATUS_PREFIX}${f.id}`).catch(() => undefined))
   const me = ownSession?.id
   const { waiting, running, others } = maestroSplit({ tracked: followed, ...(me ? { me } : {}), openSessions: openSessionIds, statuses, now })
-  // Mode Projet (#76) : seules mes tâches se lancent ; celles d'autres personnes se relancent.
-  const projet = projectSettings(source).mode === 'projet'
+  // #76, #176 : une tâche qu'une autre personne porte (`resp:`) ne se lance pas, elle se relance.
+  const projet = projectSettings(source).travail === 'projet'
   const ready = launchable(open, { prereqOf: prereq, isLive: t => tracked(t) !== undefined, me: source.me }).filter(
-    t => !view.launched.includes(taskKey(t)) && (!projet || isMine(t, source.me)),
+    t => !view.launched.includes(taskKey(t)) && !heldByOther(t, source.me),
   )
   const openTasks = open.filter(t => !t.done)
-  const othersLate = projet ? openTasks.filter(t => !isMine(t, source.me) && isOverdue(t, todayOf(now))).length : 0
+  const othersLate = openTasks.filter(t => heldByOther(t, source.me) && isOverdue(t, todayOf(now))).length
   // Les réglages de session du projet (#119) : `questions` et `adhd` règlent le texte de Maestro.
   // Illisibles : les défauts, `autonome` éteint.
   const prefs = await readSessionPrefs($).then(r => r.prefs, () => DEFAULT_SESSION_PREFS)
-  // Le réglage autonome (#77) : les cartes sans menu, comme « Maestro go ». En mode Projet, Maestro
+  // Le réglage autonome (#77) : les cartes sans menu, comme « Maestro go ». Sans code, Maestro
   // garde son menu : seules la fusion et la publication sans demander y valent, par le bloc des
   // réglages (#105, README « Mode Projet »).
   const autonome = !projet && prefs.autonome
@@ -2787,7 +2823,6 @@ async function welcomeOf($: EngineInterface, data: NonNullable<Awaited<ReturnTyp
     tasks: data.tasks,
     today: todayOf(ms),
     me: data.source.me ?? [],
-    mode: settings.mode,
     relanceDays: settings.relanceDays,
     sessions: data.maestroTasks.filter(t => t.state !== 'done').length,
   })
@@ -2870,7 +2905,7 @@ async function submitWelcome($: EngineInterface, text: string): Promise<void> {
 async function askClaude($: EngineInterface, brief: { title: string; prompt: string; background: string }, refusals: readonly string[] = []): Promise<void> {
   try {
     const source = await sourceNow($)
-    await submitLaunch($, brief, viaClaudeNote(refusals), source ? projectSettings(source).mode : 'code')
+    await submitLaunch($, brief, viaClaudeNote(refusals), source ? projectSettings(source).travail : 'code')
   } catch (err) {
     await setView($, () => ({ launchNote: `Lancement impossible : ${err instanceof Error ? err.message : String(err)}` }))
   }
@@ -2903,12 +2938,12 @@ function queueSubmit($: EngineInterface, text: string): void {
   }
 }
 
-async function submitLaunch($: EngineInterface, brief: { title: string; prompt: string; background: string }, note: string, mode: Mode = 'code'): Promise<void> {
+async function submitLaunch($: EngineInterface, brief: { title: string; prompt: string; background: string }, note: string, travail: Travail = 'code'): Promise<void> {
   // La conversation n'en montre que la première ligne : le hook prompt.submit passe le reste en contexte (#140).
   const text = launchPrompt(
     brief.title,
     [
-      `Propose cette session sous forme de carte (${cardTool(LAUNCH_EFFORTS.has(settings.launchEffort) ? settings.launchEffort : undefined, mode)}), titre « ${brief.title} », avec ce brief. Pose la carte sans essayer de la lancer, puis réponds en une phrase au plus :`,
+      `Propose cette session sous forme de carte (${cardTool(LAUNCH_EFFORTS.has(settings.launchEffort) ? settings.launchEffort : undefined, travail)}), titre « ${brief.title} », avec ce brief. Pose la carte sans essayer de la lancer, puis réponds en une phrase au plus :`,
       '',
       brief.prompt,
       '',
@@ -3484,7 +3519,7 @@ async function openFile($: EngineInterface, path: string, line?: number): Promis
 }
 
 // Les filtres d'axe, partagés par la légende et la barre. Un filtre change : les sections se rouvrent.
-/** Mode Projet (#99) : un clic sur un axe garde le compteur ou l'état choisi, pour les combiner ; posé à chaque dessin. */
+/** Un clic sur un axe garde le compteur ou l'état choisi, pour les combiner (#99, partout depuis #176) ; posé à chaque dessin. */
 let axisKeepsState = false
 
 function pressAxis($: EngineInterface, a: string): void {
@@ -5488,14 +5523,14 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     const pre = prereqFor(current)
     // Ce qui la bloque : sa prérequise, ou celle de son parent (#125).
     const holder = blockerFor(current)
-    const { cles, mode: ficheMode } = projectSettings(source)
+    const { cles } = projectSettings(source)
     // En édition (#161, maquette C) : les champs en place dans les cartes, préremplis de la ligne brute,
     // les valeurs tapées gardées hors de l'état (`editDrafts`) pour qu'un redessin ne les perde pas.
     const editKey = taskKey(current)
     const editing = !current.done && editingKey === editKey
     const editText = editing ? (await readOr($, paths.open)) ?? '' : ''
     const editSpecs = editing
-      ? editableFields(current, editText.split('\n')[line - 1] ?? '', { mode: ficheMode, axes: declaredAxes(editText), cles })
+      ? editableFields(current, editText.split('\n')[line - 1] ?? '', { axes: declaredAxes(editText), cles })
       : []
     const unlocks = allTasks.filter(t => prereqsFor(t).includes(current))
     // Sa place dans sa chaîne d'ouvertes : « étape 2 sur 4 ».
@@ -6125,7 +6160,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
               {current.section !== '' && current.section !== 'En cours' && field('Section', plain(current.section))}
               {stepOf && field('Étape', plain(`${stepOf.step} sur ${lastStep} de la chaîne`))}
               {field('Retours', current.feedback && plain(current.feedback.map(n => `#${n}`).join(', ')))}
-              {/* Mode Projet (#76) : la personne qui porte la tâche, sa mère et ses sous-tâches, les clés déclarées. */}
+              {/* La personne qui porte la tâche, sa mère et ses sous-tâches, les clés déclarées : montrées quand la ligne les a (#76, #176). */}
               {field(
                 'Responsable',
                 current.resp !== undefined && (me.includes(attendWho(current.resp)) ? plain(current.resp) : tag(shortAttend(current.resp), 'wait')),
@@ -6338,13 +6373,15 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   const total = openTasks.length + doneTasks.length
   const pct = (n: number, of: number) => (of === 0 ? 0 : Math.round((n * 100) / of))
 
-  // Mode Projet (#99) : Ma journée à l'ouverture, quatre compteurs d'urgence, et le filtre « Qui ».
-  const { mode, relanceDays, cles, clesVisibles, rangerPar } = projectSettings(source)
-  const projet = mode === 'projet'
-  axisKeepsState = projet
-  const people = projet ? peopleOf(openTasks.filter(t => matches(t, axis, 'all', me)), me) : []
+  // Un seul mode (#176) : Ma journée à l'ouverture, les sept pastilles et le filtre « Qui » partout,
+  // chacun caché quand il n'a rien ; un clic sur un axe garde le filtre choisi (#99).
+  const { relanceDays, cles, clesVisibles, rangerPar } = projectSettings(source)
+  axisKeepsState = true
+  // « Qui » dès qu'une autre personne que moi est nommée (`resp:` ou `attend:`).
+  const named = peopleOf(openTasks.filter(t => matches(t, axis, 'all', me)), me)
+  const people = named.some(p => !me.includes(p)) ? named : []
   // Une personne qui n'est plus dans la vue (un autre axe choisi) : tout le monde.
-  const who = projet && people.includes(whoRaw) ? whoRaw : 'all'
+  const who = people.includes(whoRaw) ? whoRaw : 'all'
   // Les compteurs et les états comptent la vue : l'axe et la personne choisis.
   const inAxis = openTasks.filter(t => matches(t, axis, 'all', me) && matchesWho(t, who, me))
   const todayAll = inAxis.filter(t => isToday(t, today, me))
@@ -6357,8 +6394,8 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   const liveAll = inAxis.filter(t => isLive(t) || blocked(t))
   // « Retours » : les tâches nées d'un retour de l'app, ou qui en ont reçu.
   const feedbackAll = inAxis.filter(t => t.feedback !== undefined)
-  // Par défaut, les tâches en cours ; aucune en cours, toutes. Chez Maestro (#149) : « En cours » si une
-  // session t'attend, sinon Ma journée, sinon les récentes.
+  // Par défaut (#176) : les tâches en cours, sinon Ma journée, sinon toutes. Chez Maestro (#149) : Ma
+  // journée, sinon les récentes.
   const maestroBrand = ownBrand?.brand.kind === 'maestro' ? ownBrand.brand : undefined
   // Le bloc « En cours » de Maestro (#160) : ses sessions qui tournent ou t'attendent, en lignes ; la
   // liste de la roadmap dessous ne les redit pas.
@@ -6379,20 +6416,13 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
       ? 'all'
       : attendRaw !== 'auto'
       ? attendRaw
-      : maestroBrand
-        ? openingFilter({ today: todayAll.length, recent: recentAll.length, mode })
-        : projet
-          ? 'today'
-          : liveAll.length > 0
-            ? 'live'
-            : 'all'
+      : // Les tâches qu'une session travaille, sans les bloquées : une chaîne `après:` n'ouvre pas sur « En cours ».
+        openingFilter({ today: todayAll.length, live: inAxis.filter(isLive).length, recent: recentAll.length, maestro: maestroBrand !== undefined })
   // Le bloc « En cours » de Maestro (#149, #160) : dès qu'il a lancé une tâche, il remplace le filtre « En cours ».
   const maestroLine = maestroBrand !== undefined && maestroBrand.tasks.length > 0
   const mineCount = inAxis.filter(t => isMine(t, me)).length
   const thirdParties = countBy(inAxis.filter(t => !isMine(t, me)), t => (t.attend === undefined ? undefined : attendWho(t.attend)))
   const tierChosen = thirdParties.some(([who]) => who === attend)
-  // En mode Projet, « Qui » remplace la liste des tiers.
-  const showThirdParties = !projet && !showDone && (attend === 'others' || tierChosen)
 
   const shown = (
     attend === 'late'
@@ -6426,8 +6456,9 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   const groupOf = (t: Task) => subjectOf(headOf(t))
   // En arbre, par jour ou par sujet, le même choix dans toutes les vues ; en mode Projet, aussi par
   // échéance ou par responsable (#76). La vue que le projet déclare l'emporte ; sans elle, l'arbre,
-  // dans les deux modes, mères ou pas (#168).
-  const by = groupingOf(groupBy, showDone, source.vue, mode)
+  // mères ou pas (#168). L'échéance et le responsable seulement si la roadmap en a (#176).
+  const rangeable = groupingData(openTasks)
+  const by = groupingOf(groupBy, showDone, source.vue, rangeable)
   const titlesNow = titlesNote(pending, by)
   // Seules les ouvertes rangées par sujet ont des sections de sujet.
   const subjects: [string, number][] = by === 'subject' ? countBy(unsorted, groupOf) : []
@@ -7122,42 +7153,6 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
       mark: (d: boolean) => tallIcon(fade(halfDiscIcon(palette.wait), d), 'attend un tiers', 16, '◐', 'permission'),
     },
   ]
-  // Les tiers attendus, sous « Attend un tiers » (mode Code) : dans « Plus de filtres » (#115).
-  const thirdPartyList = (
-    <Box flexDirection="column">
-      {thirdParties.map(([who, n]) => {
-        const chosen = attend === who
-        const ink = chosen ? palette.waitOn : tierChosen ? palette.text3 : palette.text2
-        return (
-          <Box
-            key={`hit:attend:${who}`}
-            flexDirection="row"
-            justifyContent="space-between"
-            alignItems="center"
-            paddingLeft={SPACE.nest}
-            paddingRight={1}
-            backgroundColor={chosen ? palette.waitTint : undefined}
-            hover={{ backgroundColor: chosen ? palette.waitTint : palette.hover }}
-          >
-            <Box flexDirection="row" alignItems="center" gap={SPACE.row} flexShrink={1} minWidth={0}>
-              <Box flexDirection="row" alignItems="center" flexShrink={0}>
-                {tallIcon(personIcon(ink, 12, STROKE.small), who, 12, '·', 'permission')}
-              </Box>
-              <Button key={`attend:${keyPart(who)}`} plain dimColor={tierChosen && !chosen} onPress={setAttend(who, 'others')}>
-                <Text wrap="truncate-end">{who}</Text>
-              </Button>
-            </Box>
-            <Box flexDirection="row" flexShrink={0}>
-              <Box width={shareCol} />
-              <Box width={numCol} justifyContent="flex-end">
-                {countPill(n, tierChosen && !chosen, ink)}
-              </Box>
-            </Box>
-          </Box>
-        )
-      })}
-    </Box>
-  )
   // « À traiter » (#115, maquette C) : quatre lignes (trois en mode Code, #130) du gabarit des axes,
   // une icône de trait dans la couleur de la ligne ; la choisie prend sa teinte, son encre et une pastille pleine. Au terminal, des boutons.
   const countOf: Record<string, number> = {
@@ -7181,7 +7176,8 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     neutral: { hex: palette.text2, tint: palette.sel, on: palette.text },
   }
   // Sous les faites, les pastilles restent, estompées : un clic revient aux ouvertes, filtrées (#152).
-  const todo = todoCounters(mode, maestroLine)
+  // Un seul mode (#176, maquette A) : une pastille à 0 se cache, sauf choisie (un clic la retire) ; « Toutes » reste.
+  const todo = todoCounters(maestroLine).filter(c => c.key === 'all' || (countOf[c.key] ?? 0) > 0 || attend === c.key)
   // Une ligne à 0 ne se clique plus, sauf choisie : un second clic la retire.
   const todoClickable = (c: TodoCounter) => (countOf[c.key] ?? 0) > 0 || attend === c.key
   const todoRow = (c: TodoCounter) => {
@@ -7213,11 +7209,11 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
       </Box>
     )
   }
-  // « Plus de filtres » (#115) : les autres filtres non vides, et en mode Projet le menu « Qui ». Il
+  // « Plus de filtres » (#115) : les autres filtres non vides, et le menu « Qui » (#176). Il
   // reste ouvert tant qu'un de ses filtres, un tiers ou une personne est choisi.
   // Un filtre choisi garde sa ligne à 0, comme une ligne de « À traiter » : un clic le retire.
-  const secondary = showDone ? [] : secondaryFilters(mode, maestroLine).flatMap(k => states.filter(st => st.key === k && (st.n > 0 || attend === k)))
-  const moreForced = secondaryFilters(mode, maestroLine).includes(attend) || tierChosen || who !== 'all'
+  const secondary = showDone ? [] : secondaryFilters(maestroLine).flatMap(k => states.filter(st => st.key === k && (st.n > 0 || attend === k)))
+  const moreForced = secondaryFilters(maestroLine).includes(attend) || tierChosen || who !== 'all'
   const moreOpen = moreFilters || moreForced
   // Ouvert de force, le clic ne change rien : ni l'affichage, ni l'état caché.
   const toggleMore = () => {
@@ -7256,7 +7252,6 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
           </Box>
         </Box>
       ))}
-      {showThirdParties && thirdPartyList}
       {people.length > 0 && (
         <Box flexDirection="row" alignItems="center" paddingLeft={SPACE.nest} paddingTop="xs">
           {Select ? (
@@ -7278,7 +7273,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     <Box flexDirection="column" gap={SPACE.tight}>
       <Box flexDirection="row" flexWrap="wrap" alignItems="center" gap={SPACE.row} paddingX={SPACE.indent}>
         {todo.map(todoRow)}
-        {secondary.length > 0 || people.length > 0 || showThirdParties ? moreRow : null}
+        {secondary.length > 0 || people.length > 0 ? moreRow : null}
       </Box>
       {moreOpen && moreBody}
     </Box>
@@ -7290,7 +7285,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   // Les zones fixes : le compte des faites, les axes, le chevron du bloc « En cours », la roue, les
   // pastilles cliquables et « Plus › » (#115), les boutons de session des faites.
   const liveOpen = !(view.liveFolded ?? false)
-  const fixedZones = 1 + axes.length + (blockTasks.length > 0 ? 1 : 0) + 1 + todo.filter(todoClickable).length + (todoBlock && (secondary.length > 0 || people.length > 0 || showThirdParties) ? 1 : 0) + 2 * sessionRows.size
+  const fixedZones = 1 + axes.length + (blockTasks.length > 0 ? 1 : 0) + 1 + todo.filter(todoClickable).length + (todoBlock && (secondary.length > 0 || people.length > 0) ? 1 : 0) + 2 * sessionRows.size
   if (graphic) {
     // Les lignes du bloc « En cours » de Maestro d'abord (#160) : leur numéro ouvre leur session.
     const shownWithSession = [...(liveOpen ? blockTasks : []), ...drawnTasks.filter(t => t.id && (liveOf(t) ?? doneSessionOf(t)))]
@@ -7442,10 +7437,10 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
               <Select
                 key="group-by"
                 label="Ranger"
-                options={(groupings(mode, showDone).includes(by) ? groupings(mode, showDone) : [by, ...groupings(mode, showDone)]).map(g => ({ value: groupingLabel(g) }))}
+                options={(groupings(rangeable, showDone).includes(by) ? groupings(rangeable, showDone) : [by, ...groupings(rangeable, showDone)]).map(g => ({ value: groupingLabel(g) }))}
                 value={groupingLabel(by)}
                 onSelect={(v: string) => {
-                  const g = [by, ...groupings(mode, showDone)].find(x => groupingLabel(x) === v)
+                  const g = [by, ...groupings(rangeable, showDone)].find(x => groupingLabel(x) === v)
                   if (g) void setView($, () => ({ groupBy: g }))
                 }}
               />
@@ -7454,7 +7449,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
                 key="group-by"
                 plain
                 label={groupingLabel(by)}
-                onPress={() => void setView($, () => ({ groupBy: nextGrouping(by, mode, showDone) }))}
+                onPress={() => void setView($, () => ({ groupBy: nextGrouping(by, rangeable, showDone) }))}
               />
             )}
           </Box>

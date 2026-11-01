@@ -182,7 +182,7 @@ def _source(p):
 
 def plugins_et_skills(requis, plugins, home, skills=None, facultatif=False):
     """`skills` : les skills de méthode exigées ; par défaut celles du brief d'une session de code.
-    `facultatif` (mode Projet, #94) : le brief propose ces skills sans les exiger, donc Superpowers
+    `facultatif` (dossier sans code, #94) : le brief propose ces skills sans les exiger, donc Superpowers
     absent, éteint ou incomplet est À voir, pas KO."""
     out = []
     manque_sp = VOIR if facultatif else KO
@@ -204,7 +204,7 @@ def plugins_et_skills(requis, plugins, home, skills=None, facultatif=False):
     installer = "claude plugin marketplace add %s && claude plugin install %s@%s" % (sp["depot"], sp["plugin"], sp["catalogue"])
     if not trouves:
         out.append(ligne(manque_sp, "Superpowers",
-                         "absent : facultatif en mode Projet, le brief propose plan et brainstorm à la demande" if facultatif
+                         "absent : facultatif dans un dossier sans code, le brief propose plan et brainstorm à la demande" if facultatif
                          else "absent : les sessions lancées citent ses skills de méthode", installer))
         return out
     actif = next((p for p in trouves if p.get("enabled")), None)
@@ -348,9 +348,9 @@ def roadmap(main):
                          "lancer la skill onboarding (projet existant) : elle complète sans rien écraser"))
     else:
         out.append(ligne(OK, "Structure", "conforme au format (CLAUDE.md, roadmap, hook de démarrage, scripts)"))
-    requis = requis_code(main)
+    requis, sur = ob.requis_du_dossier(main)
     if requis:
-        out.append(champs_exiges(rdir, requis, lancees=True))
+        out.append(champs_exiges(rdir, requis, lancees=sur == "lancees"))
     check = os.path.join(main, "scripts", "check.mjs")
     if os.path.isfile(check) and shutil.which("node"):
         r = lancer(["node", "scripts/check.mjs"], cwd=main, timeout=120)
@@ -365,15 +365,19 @@ def roadmap(main):
     return out
 
 
-# ---------------------------------------------------------------- mode Projet (#76)
+# ---------------------------------------------------------------- dossier sans code (#76, #176)
 
 VUES = {"echeance", "responsable", "arbre", "sujet", "jour"}
 
 
 def reglages_projet(main):
     """Les réglages de `.claude/roadmap.json` que le panneau ne comprendrait pas : il les ignore."""
+    chemin = os.path.join(main, ".claude", "roadmap.json")
+    if not os.path.exists(chemin):
+        # #176 : un dossier sans code peut s'en passer (Life Cowork, sa roadmap à la racine).
+        return ligne(OK, "Réglages", "pas de .claude/roadmap.json : les défauts"), {}
     try:
-        with open(os.path.join(main, ".claude", "roadmap.json"), encoding="utf-8") as f:
+        with open(chemin, encoding="utf-8") as f:
             cfg = json.load(f)
     except (OSError, ValueError):
         return ligne(KO, "Réglages", ".claude/roadmap.json illisible", "corriger son JSON, ou la skill onboarding"), {}
@@ -406,7 +410,8 @@ def reglages_projet(main):
     rangement = cfg.get("rangement")
     if rangement is not None and not (isinstance(rangement, dict) and isinstance(rangement.get("skill"), str) and rangement["skill"]):
         soucis.append("rangement sans skill, ignoré : l'archivage ne l'attend pas")
-    requis = cfg.get("requis", ob.REQUIS_PROJET)
+    soucis += soucis_de_mode(cfg)
+    requis = cfg.get("requis", ob.requis_du_dossier(main, cfg)[0])
     if not isinstance(requis, list):
         soucis.append("requis n'est pas une liste")
     else:
@@ -415,13 +420,14 @@ def reglages_projet(main):
             soucis.append("requis : %s ni de la grammaire ni déclarée(s), ignorée(s)" % ", ".join(map(str, inconnues)))
     if soucis:
         return ligne(VOIR, "Réglages", " ; ".join(soucis), "corriger .claude/roadmap.json : le panneau ignore ces réglages"), cfg
-    return ligne(OK, "Réglages", "mode Projet, vue %s, %d clé(s) déclarée(s)" % (vue or "echeance", len(cles))), cfg
+    vue = vue or ("echeance" if cfg.get("mode") == "projet" else "arbre")
+    return ligne(OK, "Réglages", "vue %s, %d clé(s) déclarée(s)" % (vue, len(cles))), cfg
 
 
 def champs_exiges(rdir, requis, lancees=False):
     """Les tâches ouvertes à qui manque un champ exigé : écrites hors de Claude Code, ou avant.
 
-    `lancees` (mode Code, #80) : seules comptent les tâches lancées, qui portent `qui:` ou `branche:`.
+    `lancees` (#80, `requis_sur`, #176) : seules comptent les tâches lancées, qui portent `qui:` ou `branche:`.
     """
     try:
         with open(os.path.join(rdir, "ROADMAP.md"), encoding="utf-8") as f:
@@ -504,22 +510,12 @@ def parents_enfants(rdir):
     return ligne(OK, "Parents et enfants", "%d parent(s), %d enfant(s)" % (len([k for k in enfants if k in par_id]), nb_enfants))
 
 
-def requis_code(main):
-    """Les champs exigés d'une tâche lancée en mode Code : `requis` de .claude/roadmap.json s'il est une liste."""
-    try:
-        with open(os.path.join(main, ".claude", "roadmap.json"), encoding="utf-8") as f:
-            requis = (json.load(f) or {}).get("requis", ob.REQUIS_CODE)
-    except (OSError, ValueError, AttributeError):
-        return ob.REQUIS_CODE
-    return requis if isinstance(requis, list) else ob.REQUIS_CODE
-
-
 def roadmap_projet(main):
     out = []
     rdir = ob.trouver_roadmap(main)
     if rdir is None or not os.path.isfile(os.path.join(rdir, "ROADMAP.md")):
         out.append(ligne(KO, "Roadmap", "introuvable : .claude/roadmap.json ne désigne pas de ROADMAP.md",
-                         "lancer la skill onboarding (mode Projet) sur %s" % main))
+                         "lancer la skill onboarding sur %s" % main))
         return out
     ou = "racine du dossier" if os.path.normpath(rdir) == os.path.normpath(main) else os.path.relpath(rdir, main) + "/"
     with open(os.path.join(rdir, "ROADMAP.md"), encoding="utf-8") as f:
@@ -528,28 +524,50 @@ def roadmap_projet(main):
     ecarts = ob.verifier(main)
     if ecarts:
         out.append(ligne(VOIR, "Structure", "%d écart(s) au format, dont : %s" % (len(ecarts), ecarts[0]),
-                         "lancer la skill onboarding (mode Projet) : elle complète sans rien écraser"))
+                         "lancer la skill onboarding : elle complète sans rien écraser"))
     else:
-        out.append(ligne(OK, "Structure", "conforme au mode Projet (CLAUDE.md, roadmap, .claude/roadmap.json)"))
+        out.append(ligne(OK, "Structure", "conforme au format sans code (CLAUDE.md, roadmap, .claude/roadmap.json)"))
     reglages, cfg = reglages_projet(main)
     out.append(reglages)
-    requis = cfg.get("requis", ob.REQUIS_PROJET) if isinstance(cfg.get("requis", []), list) else ob.REQUIS_PROJET
-    out.append(champs_exiges(rdir, requis))
+    requis, sur = ob.requis_du_dossier(main, cfg)
+    out.append(champs_exiges(rdir, requis, lancees=sur == "lancees"))
     out.append(parents_enfants(rdir))
     return out
 
 
-def mode_inconnu(main):
-    """Un `mode` que le panneau ne connaît pas (« Projet », « project ») : il le lit comme Code, sans rien dire."""
+def soucis_de_mode(cfg):
+    """`mode` et `requis_sur` que le panneau ne connaît pas (« Projet », « toutes ») : il les ignore sans rien dire."""
+    soucis = []
+    mode = cfg.get("mode")
+    if mode is not None and mode not in ("auto",) + ob.MODES_FORCES:
+        soucis.append("mode « %s » inconnu (auto, code ou projet) : le travail se déduit du dossier" % mode)
+    sur = cfg.get("requis_sur")
+    if sur is not None and sur not in ob.REQUIS_SUR:
+        soucis.append("requis_sur « %s » inconnu (%s), ignoré" % (sur, " ou ".join(ob.REQUIS_SUR)))
+    return soucis
+
+
+def reglages_inconnus(main):
+    """Les réglages inconnus d'un projet de code, en une ligne « À voir » ; rien s'il n'y en a pas."""
     try:
         with open(os.path.join(main, ".claude", "roadmap.json"), encoding="utf-8") as f:
-            mode = (json.load(f) or {}).get("mode")
-    except (OSError, ValueError, AttributeError):
+            cfg = json.load(f)
+    except (OSError, ValueError):
         return None
-    if mode is None or mode in ("code", "projet"):
+    soucis = soucis_de_mode(cfg) if isinstance(cfg, dict) else []
+    if not soucis:
         return None
-    return ligne(VOIR, "Réglages", "mode « %s » inconnu (code ou projet) : le panneau lit ce projet en mode Code" % mode,
-                 "corriger mode dans .claude/roadmap.json")
+    return ligne(VOIR, "Réglages", " ; ".join(soucis), "corriger .claude/roadmap.json")
+
+
+def travail(main):
+    """Le travail du dossier (#176), et ce qui le dit : `mode`, sinon ce que le doctor a vu. Une
+    détection fausse se voit ici et se corrige par `mode`."""
+    force = ob.mode_force(main)
+    if force:
+        return ligne(OK, "Travail", "%s (forcé par mode dans .claude/roadmap.json)" % force.capitalize())
+    t, raison = ob.detecter_travail(main)
+    return ligne(OK, "Travail", "%s (%s)" % (t.capitalize(), raison))
 
 
 # ---------------------------------------------------------------- ensemble
@@ -696,11 +714,12 @@ def diagnostiquer(dossier, plugins="lire", home=None, avec_outils=True, gere=Non
         plugins = lire_plugins(home)
     lignes = []
     principal = ob.principal(dossier)
-    if ob.mode_du_dossier(principal) == "projet":
-        # Mode Projet (#76) : ni GitHub, ni check.mjs, ni swiftui-pro ; la roadmap et ses champs.
+    if ob.travail_du_dossier(principal) == "projet":
+        # Un dossier sans code (#76, #176) : ni GitHub, ni check.mjs, ni swiftui-pro ; la roadmap et ses champs.
         est_git = git(principal, "rev-parse", "--git-dir").returncode == 0
         if avec_outils:
             lignes += outils(requis, "projet", est_git)
+        lignes.append(travail(principal))
         lignes += roadmap_projet(principal)
         lignes += [l for l in [regles_du_projet(principal)] if l]
         lignes.append(design_system(principal))
@@ -711,7 +730,8 @@ def diagnostiquer(dossier, plugins="lire", home=None, avec_outils=True, gere=Non
                 "ko": sum(1 for l in lignes if l["statut"] == KO), "a_voir": sum(1 for l in lignes if l["statut"] == VOIR)}
     if avec_outils:
         lignes += outils(requis)
-    inconnu = mode_inconnu(principal)
+    lignes.append(travail(principal))
+    inconnu = reglages_inconnus(principal)
     if inconnu:
         lignes.append(inconnu)
     faits, main = depot(dossier)

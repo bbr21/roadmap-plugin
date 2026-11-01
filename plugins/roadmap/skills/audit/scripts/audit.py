@@ -115,12 +115,13 @@ def _me(perso):
 
 
 def situer(dossier):
-    """(dossier du projet, dossier de la roadmap, mode). En mode Code, le dossier principal sur `main`."""
+    """(dossier du projet, dossier de la roadmap, travail). Un projet de code (#176) se lit dans son
+    dossier principal, sur `main` ; un dossier sans code, tel quel."""
     dossier = os.path.abspath(os.path.expanduser(dossier))
-    mode = ob.mode_du_dossier(dossier)
+    mode = ob.travail_du_dossier(dossier)
     if mode == "code":
         dossier = ob.principal(dossier)
-        mode = ob.mode_du_dossier(dossier)
+        mode = ob.travail_du_dossier(dossier)
         res = ob.git(dossier, "rev-parse", "--abbrev-ref", "HEAD")
         if mode == "code" and res.returncode == 0 and res.stdout.strip() != "main":
             raise Erreur("le dossier principal %s n'est pas sur main (%s) : la roadmap ne s'écrit que sur main"
@@ -158,7 +159,8 @@ def releve(dossier, jour=None, perso="~/.claude/roadmap-perso.json"):
     jour = jour or datetime.date.today().isoformat()
     dossier, rdir, mode = situer(dossier)
     cfg = _cfg(dossier)
-    requis = cfg.get("requis") if isinstance(cfg.get("requis"), list) else (REQUIS_PROJET if mode == "projet" else [])
+    # Les champs exigés se déclarent (#176) ; un ancien `mode: "projet"` garde ceux du mode Projet.
+    requis = ob.requis_du_dossier(dossier, cfg)[0]
     relance = cfg.get("relance") if isinstance(cfg.get("relance"), int) else RELANCE_JOURS
     me = _me(perso)
     texte_o = _lire_fichier(os.path.join(rdir, FICHIER_OUVERT)) or ""

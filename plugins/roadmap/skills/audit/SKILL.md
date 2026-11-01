@@ -1,6 +1,6 @@
 ---
 name: audit
-description: "The single audit of a roadmap-plugin project's roadmap, in Code or Projet mode: structure (split bundles into a parent and dated children, two levels, après: dependencies, groupings, duplicates, gaps), then one question per late or undated task and per misplaced priority, the recommendation first (reschedule, done, pause, drop), and closing on proof where the project says (preuves). Writes through the tasks skill, which follows ecriture. Runs as a scheduled task too: only what is clear gets written, the rest waits in ROADMAP-questions.json, counted by priority. Triggers on « audite ma roadmap », « fais le ménage dans ma roadmap », « nettoie ma roadmap », « fais le doctor de ma roadmap », « découpe mes tâches », « cherche les doublons dans ma roadmap », « qu'est-ce qui est en retard », and at the end of onboarding. Not for the project's structure (doctor), importing a roadmap (onboarding), nor adding or marking done one named task (tasks)."
+description: "The single audit of a roadmap-plugin project's roadmap, with or without code (#176: the folder says which): structure (split bundles into a parent and dated children, two levels, après: dependencies, groupings, duplicates, gaps), then one question per late or undated task and per misplaced priority, the recommendation first (reschedule, done, pause, drop), and closing on proof where the project says (preuves). Writes through the tasks skill, which follows ecriture. Runs as a scheduled task too: only what is clear gets written, the rest waits in ROADMAP-questions.json, counted by priority. Triggers on « audite ma roadmap », « fais le ménage dans ma roadmap », « nettoie ma roadmap », « fais le doctor de ma roadmap », « découpe mes tâches », « cherche les doublons dans ma roadmap », « qu'est-ce qui est en retard », and at the end of onboarding. Not for the project's structure (doctor), importing a roadmap (onboarding), nor adding or marking done one named task (tasks)."
 ---
 
 # Audit the roadmap
@@ -34,7 +34,7 @@ there is none (#130).
 
 The script is `scripts/audit.py`, run from this skill's folder (the path given when the skill
 loads). It reads the grammar through the `onboarding` skill's importer; answers are written by
-the `tasks` skill's `tasks.py`. In Code mode both read and write the roadmap of the main
+the `tasks` skill's `tasks.py`. With code both read and write the roadmap of the main
 checkout, on `main`.
 
 ## 1. Survey
@@ -160,7 +160,7 @@ JJ/MM : raison) ».
 - a **source** `<source>:<query>` (`gmail:in:sent`): through the session's matching connector;
   without one, say so;
 - `#<title>`: the section of the `regles` file, which says where to look;
-- nothing declared: in Code mode, `git log` and PRs.
+- nothing declared: with code, `git log` and PRs.
 
 A **clear** proof (the email sent, the deliverable filed) → the `done` option, `date` = the date
 of the proof, `proof` = what proves it and where; adjust the option if you found it elsewhere. A
@@ -213,7 +213,7 @@ lines another way.
 1. `python3 "<onboarding skill folder>/scripts/onboarding.py" verifier <folder>`
    (« Conforme au format. »).
 2. In a repository: a commit of the roadmap files only (`ROADMAP.md`, `ROADMAP-fait.md`,
-   `ROADMAP-bilans.csv`, `ROADMAP-questions.json`), on `main` in the main checkout in Code mode,
+   `ROADMAP-bilans.csv`, `ROADMAP-questions.json`), on `main` in the main checkout with code,
    then push. Backups are not committed; offer to delete them once the roadmap is read in the panel.
 3. A short report, in French: what was written (the bilans), what was refused and stays a gap,
    and the pending questions' summary line (« Questions en attente : 3 (prio:1 : 1, sans

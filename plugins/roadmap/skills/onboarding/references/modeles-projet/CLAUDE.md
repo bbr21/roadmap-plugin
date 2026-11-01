@@ -2,7 +2,7 @@
 
 {{RESUME}}
 
-Ce dossier se pilote en mode Projet du plugin roadmap : de la gestion de projet, sans code. Les tâches passent par les connecteurs de la session (messagerie, agenda, documents…). Ni branche, ni worktree, ni verrou, ni fusion.
+Ce dossier se pilote par le plugin roadmap, sans code : de la gestion de projet. Les tâches passent par les connecteurs de la session (messagerie, agenda, documents…). Ni branche, ni worktree, ni verrou, ni fusion.
 
 ## Démarrer une session
 
@@ -32,5 +32,5 @@ Chaque tâche ouverte porte {{REQUIS}}. `parent:-` et `après:-` disent qu'elle 
 ```
 CLAUDE.md          ces règles
 {{CARTE_ROADMAP}}
-.claude/           roadmap.json : le mode Projet, les champs exigés, les clés déclarées, la vue du panneau
+.claude/           roadmap.json : les champs exigés, les clés déclarées, la vue du panneau
 ```
