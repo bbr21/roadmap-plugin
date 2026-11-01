@@ -194,6 +194,7 @@ import {
   launchBrief,
   launchPrompt,
   ownLaunch,
+  panelSubmit,
   checkBrief,
   briefPaths,
   type BriefFound,
@@ -2828,12 +2829,12 @@ let launchOutbox: string | undefined
 /** Sans dessin du panneau dans ce délai, le lancement part quand même, le brief entier visible. */
 const LAUNCH_FALLBACK_MS = 3000
 
-/** Envoie le lancement en attente, une seule fois : depuis le dessin du panneau, ou le secours. */
+/** Envoie le lancement en attente, une seule fois : depuis le dessin du panneau, ou le secours ; au nom de la personne (#170). */
 function sendLaunch($: EngineInterface, text?: string): void {
   if (launchOutbox === undefined || (text !== undefined && launchOutbox !== text)) return
   const out = launchOutbox
   launchOutbox = undefined
-  void $.prompt.submit({ text: out }).catch(() => undefined)
+  void $.prompt.submit(panelSubmit(out)).catch(() => undefined)
 }
 
 /** Dépose un envoi dans la boîte d'envoi : le prochain dessin du panneau l'envoie, sinon le secours. */

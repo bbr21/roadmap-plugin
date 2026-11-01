@@ -690,6 +690,15 @@ export function splitLaunch(text: string): { line: string; context: string } | u
 }
 
 /**
+ * Ce que la boîte d'envoi du panneau passe à `$.prompt.submit` (#170). Tout ce qui y passe vient d'un
+ * clic de la personne : il part en son nom (`asUser`), sans quoi le moteur l'encadre de « The roadmap
+ * plugin sent a message: … ». L'origine reste celle du plugin pour ses hooks (`ownLaunch`).
+ */
+export function panelSubmit(text: string): { text: string; asUser: true } {
+  return { text, asUser: true }
+}
+
+/**
  * Le lancement à réécrire : le texte de `launchPrompt` envoyé par ce plugin, jamais celui que la
  * personne tape ou qu'un autre plugin envoie. Le moteur pose toujours l'origine ; le kit de test, non.
  */
