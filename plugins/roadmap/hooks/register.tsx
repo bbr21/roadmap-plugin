@@ -255,6 +255,10 @@ import {
   zoneReady,
   zoneReload,
   zoneWatch,
+  heldFocus,
+  noteHeldFocus,
+  retireFocusKeys,
+  retireHeldFocus,
   DEFAULT_SESSION_PREFS,
   sessionPrefs,
   sessionPrefsText,
@@ -389,6 +393,8 @@ function pressKey(id: string): string {
 }
 // Les zones de clic de ce chargement du module : la relance quand leur cadre ne dit pas « prêt ».
 const zones = zoneWatch()
+// L'élément du panneau que la personne tient, et ceux qu'un défilement a fait quitter (#154).
+const focusHeld = heldFocus()
 // Où se pose chaque masque de coin, en cellules depuis les bords de la Box.
 const CORNERS: [Corner, { top?: number; bottom?: number; left?: number; right?: number }][] = [
   ['tl', { top: 0, left: 0 }],
@@ -4300,23 +4306,26 @@ export const register: Register = (on, options) => {
     const t0 = tick()
     perfLoaded = t0
     perfCached = false
-    const tree = await drawPane($, e)
+    const tree = retireFocusKeys(await drawPane($, e), focusHeld.epochs)
     notePerf(t0, tree, e.props.scroll)
     return tree
   })
 
-  // Le défilement du panneau, relevé sans rien changer : le moteur pose la fenêtre (#106).
+  // Le défilement du panneau, relevé : le moteur pose la fenêtre (#106). Celui de la personne fait
+  // quitter l'élément qu'elle tenait (#154) : sa clé change, l'app ne remonte plus jusqu'à lui.
   on('ui.scroll', { component: 'Pane', requestId: PANE }, async ($, e, next) => {
     const t0 = tick()
     const result = await next(e)
     noteScroll(e, result, tick() - t0)
+    if (e.origin.kind === 'person' && result.deny === undefined) retireHeldFocus(focusHeld, e.by)
     return result
   })
 
-  // Le focus du panneau, relevé sans rien changer, avec la réponse du moteur (#111).
+  // Le focus du panneau, relevé avec la réponse du moteur (#111), et l'élément tenu retenu (#154).
   on('ui.focus', { component: 'Pane', requestId: PANE }, async ($, e, next) => {
     const result = await next(e)
     noteFocus(e, result)
+    if (result.deny === undefined) noteHeldFocus(focusHeld, e.element)
     return result
   })
 

@@ -4360,6 +4360,65 @@ export function zoneFault(w: ZoneWatch, module: string, element: string, gen: nu
   return true
 }
 
+/**
+ * Le panneau qui remonte seul en haut pendant qu'on fait défiler (#154, après #106 et #111). Le moteur
+ * (2.1.309) garde l'élément que la personne a focalisé (« Ranger », un filtre, la recherche) jusqu'à un
+ * autre focus nommé ; un rapport de focus sans élément ne passe par aucun crochet, et il y répond cet
+ * élément, que l'app focalise sans `preventScroll` : la fenêtre remonte jusqu'à lui. L'app ne focalise
+ * qu'un élément qu'elle dessine encore : dès que la personne fait défiler, l'élément tenu change de clé
+ * (`<clé>~<N>`). Un crochet ne peut pas vider le focus (le moteur refuse une réécriture sans élément).
+ */
+export type HeldFocus = {
+  /** La clé de base de l'élément que la personne tient, tant qu'elle n'a pas fait défiler. */
+  held?: string
+  /** Pour chaque clé quittée, le nombre de fois : le suffixe de sa clé dessinée. */
+  epochs: Map<string, number>
+}
+
+export function heldFocus(): HeldFocus {
+  return { epochs: new Map() }
+}
+
+const focusBase = (key: string) => key.replace(/~\d+$/, '')
+
+/** Un focus de la personne : l'élément qu'elle tient, sous sa clé de base ; aucun, le cadre. */
+export function noteHeldFocus(w: HeldFocus, element: string | undefined): void {
+  w.held = element === undefined ? undefined : focusBase(element)
+}
+
+/** Un défilement de la personne quitte l'élément tenu : sa clé change au dessin suivant. */
+export function retireHeldFocus(w: HeldFocus, by: number): boolean {
+  if (w.held === undefined || by === 0) return false
+  w.epochs.set(w.held, (w.epochs.get(w.held) ?? 0) + 1)
+  w.held = undefined
+  return true
+}
+
+const FOCUSABLE = new Set(['Button', 'Input', 'Select'])
+
+/** L'arbre dessiné, les boutons, menus et champs quittés sous leur nouvelle clé ; le reste tel quel. */
+export function retireFocusKeys<T>(tree: T, epochs: ReadonlyMap<string, number>): T {
+  if (epochs.size === 0) return tree
+  const walk = (n: unknown): unknown => {
+    if (Array.isArray(n)) {
+      const out = n.map(walk)
+      return out.some((c, i) => c !== n[i]) ? out : n
+    }
+    if (!n || typeof n !== 'object') return n
+    const node = n as { type?: unknown; props?: Record<string, unknown>; children?: unknown }
+    const children = walk(node.children)
+    const key = node.props?.key
+    const epoch = typeof node.type === 'string' && FOCUSABLE.has(node.type) && typeof key === 'string' ? epochs.get(key) : undefined
+    if (epoch === undefined && children === node.children) return n
+    return {
+      ...node,
+      ...(children !== node.children && { children }),
+      ...(epoch !== undefined && { props: { ...node.props, key: `${key as string}~${epoch}` } }),
+    }
+  }
+  return walk(tree) as T
+}
+
 // Réglages de session (2026-10-23) : ce que Bertrand veut dans ses sessions, lu dans
 // ~/.claude/reglages-session.json et injecté au démarrage. Sans fichier, tout est allumé, sauf
 // `autonome` (#77) : un nouvel utilisateur ne fusionne pas seul sans l'avoir choisi. Une valeur qui

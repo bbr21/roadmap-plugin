@@ -599,6 +599,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.112.1 (2026-11-01)** : panneau : le panneau ne remonte plus tout seul pendant qu'on fait défiler la liste (#154)
 - **0.112.0 (2026-10-31)** : panneau : N faites à droite de l'en-tête, la roue des réglages dans le pied à côté de Rafraîchir ; quand l'app retarde, l'encart ouvre la page Plugins de claude.ai et Recharger pose /reload-plugins dans la saisie (#162)
 - **0.111.0 (2026-10-31)** : panneau : la fiche d'une tâche a une flèche retour en tête, à la place de la marque, qui ramène à la roadmap ; plus de bouton Toute la roadmap ni de Retour à la liste en bas (#165)
 - **0.110.0 (2026-10-31)** : panneau : la roadmap s'ouvre en arbre dès qu'elle a une tâche mère ; arbre redessiné « Le fil » (une case par ligne pour cocher ou rouvrir, mère nette, étapes légères), « Tout replier » et « Tout clore » (#163)
