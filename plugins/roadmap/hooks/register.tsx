@@ -20,9 +20,9 @@ import {
   checkIcon,
   checkRowIcon,
   chainRowIcon,
-  treeHeadRowIcon,
-  treeHeadIcon,
-  treeStepIcon,
+  treeMotherRowIcon,
+  treeChildRowIcon,
+  axisBandIcon,
   progressIcon,
   bubbleIcon,
   squareRowIcon,
@@ -131,12 +131,12 @@ import {
   byDay,
   doneByDay,
   groupingOf,
-  hasOpenParent,
   nextGrouping,
   groupingLabel,
   byDeadline,
   byOwner,
   byTree,
+  axisTree,
   parentLeftAlone,
   blockerOf,
   closeCaption,
@@ -294,8 +294,8 @@ import {
   dropBilanCsv,
   reopenInTexts,
   treeCheck,
-  treeDepartment,
   treeSteps,
+  treeDepartment,
   foldAllView,
   duePill,
   abandonBilan,
@@ -574,9 +574,12 @@ async function paletteOf($: EngineInterface): Promise<Palette> {
 }
 
 /** La place d'une ligne dans l'arbre (#125) : la tête d'un bloc, ou un enfant avec son rang. */
+// Une ligne de l'arbre par axe (#168) : la mère (sa flèche dans son carré, son bloc pour
+// l'avancement), une fille (son coude), une tâche seule ; toutes portent leur rond à cocher.
 type TreeMark =
-  | { kind: 'head'; id: string; open: boolean; ghost: boolean; progress: string }
-  | { kind: 'child'; rank: number; last: boolean; parent?: Task }
+  | { kind: 'head'; id: string; open: boolean; ghost: boolean; block: TreeBlock }
+  | { kind: 'child'; last: boolean; parent?: Task }
+  | { kind: 'alone' }
 
 /**
  * La capture des tasks, pour la session : la roadmap telle qu'au début de la session et telle que
@@ -6176,7 +6179,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   const pct = (n: number, of: number) => (of === 0 ? 0 : Math.round((n * 100) / of))
 
   // Mode Projet (#99) : Ma journée à l'ouverture, quatre compteurs d'urgence, et le filtre « Qui ».
-  const { mode, vue, relanceDays, cles, clesVisibles, rangerPar } = projectSettings(source)
+  const { mode, relanceDays, cles, clesVisibles, rangerPar } = projectSettings(source)
   const projet = mode === 'projet'
   axisKeepsState = projet
   const people = projet ? peopleOf(openTasks.filter(t => matches(t, axis, 'all', me)), me) : []
@@ -6261,12 +6264,10 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   const unsortedSet = new Set(unsorted)
   const headOf = (t: Task) => chainHead(t, prereqFor, unsortedSet)
   const groupOf = (t: Task) => subjectOf(headOf(t))
-  // Par jour ou par sujet, le même choix dans toutes les vues ; en mode Projet, aussi par échéance,
-  // par responsable ou en arbre, et la vue du projet à l'ouverture (#76).
-  // La vue que le projet déclare l'emporte ; sans elle, l'arbre quand la roadmap a des mères (#163),
-  // sinon le défaut du mode (l'échéance en mode Projet, que `projectSettings` remplit).
-  const parents = hasOpenParent(openTasks)
-  const by = groupingOf(groupBy, showDone, source.vue ?? (parents ? undefined : vue), mode, parents)
+  // En arbre, par jour ou par sujet, le même choix dans toutes les vues ; en mode Projet, aussi par
+  // échéance ou par responsable (#76). La vue que le projet déclare l'emporte ; sans elle, l'arbre,
+  // dans les deux modes, mères ou pas (#168).
+  const by = groupingOf(groupBy, showDone, source.vue, mode)
   // Seules les ouvertes rangées par sujet ont des sections de sujet.
   const subjects: [string, number][] = by === 'subject' ? countBy(unsorted, groupOf) : []
   // L'arbre : ses sections, et la profondeur de chaque ligne, marquée devant son titre.
@@ -6427,24 +6428,34 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     // Une marque de 16 × 24 tient la hauteur de la ligne : ni cale ni coins arrondis par ligne de
     // tâche (sur une roadmap de 120 tâches dépliées, 870 dessins figeaient le panneau).
     // Une tâche d'une chaîne : le trait et son étape font partie de la marque, un seul dessin.
-    const markSource = t.done ? checkRowIcon(palette.ok) : squareRowIcon(axisHex(t.axis))
-    // L'arbre (#125) : la tête porte son chevron dans sa marque, un enfant le trait et son rang.
+    // Dans l'arbre (#168), le carré de l'axe reste sur une ligne faite : c'est son rond qui se coche.
+    const markSource = t.done && !tree ? checkRowIcon(palette.ok) : squareRowIcon(axisHex(t.axis))
+    // L'arbre par axe (#168) : la mère porte sa flèche dans son carré, une fille son coude.
     const drawn = head
-      ? treeHeadRowIcon(markSource, head.open, palette.text3)
+      ? treeMotherRowIcon(axisHex(t.axis), head.open, palette.onAxis)
       : child
-        ? chainRowIcon(markSource, child.last ? 'last' : 'mid', child.rank, palette.text3, palette.text2)
+        ? treeChildRowIcon(markSource, child.last, palette.border)
         : chain
           ? chainRowIcon(markSource, chain.pos, chain.step, palette.text3, palette.text2)
           : markSource
-    const markAlt = `${isAbandoned(t) ? 'annulée' : t.done ? 'faite' : t.axis}${chain ? `, étape ${chain.step}` : ''}${child ? `, rang ${child.rank}` : ''}${head ? (head.open ? ', replier' : ', déplier') : ''}`
+    const markAlt = `${isAbandoned(t) ? 'annulée' : t.done ? 'faite' : t.axis}${chain ? `, étape ${chain.step}` : ''}${head ? (head.open ? ', replier' : ', déplier') : ''}`
     const mark = Svg ? (
-      <Svg source={ghost ? fade(drawn, true) : drawn} alt={markAlt} width={chain || tree ? 32 : 16} height={24} />
-    ) : t.done ? (
+      <Svg source={ghost || (tree && t.done) ? fade(drawn, true) : drawn} alt={markAlt} width={chain || child ? 32 : 16} height={24} />
+    ) : head ? (
+      <Text color={axisTheme(t.axis)}>{head.open ? '⌄' : '›'}</Text>
+    ) : t.done && !tree ? (
       <Text color="success">✓</Text>
     ) : (
       <Text color={axisTheme(t.axis)}>■</Text>
     )
-    const right = t.done ? axisLabel(t.axis) : days === undefined ? '' : ageLabel(days)
+    // Le rond de l'arbre (#168, système A) : devant le numéro ; la case d'une mère à filles ouvertes
+    // demande « Tout clore » (#163). Un bouton du kit en glyphe : aucune zone de clic de plus.
+    const check = tree && !ghost ? (
+      <Button key={`check:${t.id ?? keyPart(t.key)}`} plain onPress={() => void checkTask($, source, t, head ? head.block.tasks.length : 0)}>
+        <Text color={t.done ? palette.ok : palette.text3}>{treeCheck(t.done)}</Text>
+      </Button>
+    ) : null
+    const right = tree ? (t.done ? 'fait' : days === undefined ? '' : ageLabel(days)) : t.done ? axisLabel(t.axis) : days === undefined ? '' : ageLabel(days)
     // Une tâche faite dont la session reste ouverte : y retourner, ou l'archiver, d'un clic.
     const kept = sessionRows.has(taskKey(t)) ? doneSessionOf(t) : undefined
     const inSession = isLive(t) || block !== undefined
@@ -6466,10 +6477,14 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     const pills = [
       ...(!ghost && !t.done && t.feedback ? [feedbackPill()] : []),
       ...(!ghost && !inSession && !locked ? listPills(t, today, me).map(rowPill) : []),
-      ...(!ghost && !t.done && clesVisibles ? keyPills(t, clesVisibles, cles, child?.parent).map(p => drawnPill({ text: p.text, bg: palette.sel, fg: palette.text2, weight: 600 })) : []),
+      // Dans l'arbre, une seule pastille de clé, le département, sur chaque ligne, faite comprise (#163).
+      ...(!ghost && clesVisibles && tree
+        ? [treeDepartment(t, { enabled: settings.axisPill, axisFilter: axis, clesVisibles })].filter((x): x is string => x !== undefined).map(text => drawnPill({ text, bg: palette.sel, fg: t.done ? palette.text3 : palette.text2, weight: 600 }))
+        : []),
+      ...(!ghost && !t.done && clesVisibles && !tree ? keyPills(t, clesVisibles, cles, child?.parent).map(p => drawnPill({ text: p.text, bg: palette.sel, fg: palette.text2, weight: 600 })) : []),
     ]
     const number = t.id ? taskNumber(t.id, rowSession ? () => void openSession($, rowSession.entry) : undefined) : undefined
-    const department = ghost ? undefined : axisPillText(t, { enabled: settings.axisPill, axisFilter: axis, groupedByAxis: pending && by === 'subject', clesVisibles })
+    const department = ghost ? undefined : axisPillText(t, { enabled: settings.axisPill, axisFilter: axis, groupedByAxis: (pending && by === 'subject') || (tree !== undefined && !rangerPar), clesVisibles })
     return (
       <Box
         key={`hit:${t.key}`}
@@ -6483,20 +6498,24 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
         {(chain || child) && !Svg && (
           <Box key={`c:${t.key}`} flexDirection="row" alignItems="center" flexShrink={0}>
             <Text color={palette.text3}>{child ? (child.last ? '└' : '├') : chain?.pos === 'first' ? '┌' : chain?.pos === 'last' ? '└' : '├'}</Text>
-            <Text size="caption" tabular color={palette.text2}>{String(child ? child.rank : chain?.step)}</Text>
+            {chain && <Text size="caption" tabular color={palette.text2}>{String(chain.step)}</Text>}
           </Box>
         )}
         {/* La tête d'un bloc : son chevron replie le bloc, par la zone de l'en-tête quand le dessin
             en a la place, sinon par un bouton en glyphe. */}
-        {head && !(Svg && headZones) && (
+        {/* La mère (#168) : sa flèche est dans son carré ; le carré la replie, par la zone de
+            l'en-tête quand le dessin en a la place, sinon par un bouton en glyphe. */}
+        {head && !(Svg && headZones) ? (
           <Button key={`group:${keyPart(head.id)}`} plain dimColor onPress={toggleGroup(head.id)}>
             {head.open ? '⌄' : '›'}
           </Button>
+        ) : (
+          <Box flexShrink={0}>
+            {mark}
+            {head && Svg && headZones && hit(`group:${head.id}`, toggleGroup(head.id), 1)}
+          </Box>
         )}
-        <Box flexShrink={0}>
-          {mark}
-          {head && Svg && headZones && hit(`group:${head.id}`, toggleGroup(head.id), 1)}
-        </Box>
+        {check && <Box key={`c:${t.key}`} flexShrink={0}>{check}</Box>}
         {/* Le numéro d'abord, à sa colonne : les pastilles suivent, les numéros restent alignés. Sans
             pastille, le numéro entre dans le bloc du titre, sans écart (#156) : sur le bureau, la marge
             du bouton du titre fait l'espace d'un mot ; au terminal, sans marge, l'écart d'une cellule
@@ -6506,7 +6525,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
         <Box key={`lead:${t.key}`} flexDirection="row" alignItems="center" gap={graphic ? 0 : SPACE.row} flexGrow={1} flexShrink={1} minWidth={0}>
           {t.id && pills.length === 0 && number}
           <Button key={t.key} plain dimColor={ghost || (!t.done && !titled(t))} onPress={select(selectionOf(t))}>
-            <Text wrap="truncate-end" {...(head && !ghost ? { weight: 'semibold' as const } : {})}>{s.titre}</Text>
+            <Text wrap="truncate-end" {...(tree && t.done ? { strikethrough: true, color: palette.text3 } : {})}>{s.titre}</Text>
           </Button>
         </Box>
         {/* Le département (#156, maquette A) : l'axe en pastille, à droite du titre, avant l'âge ; un réglage. */}
@@ -6539,7 +6558,13 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
             </Box>
           </Box>
         )}
-        {head && countPill(head.progress, ghost, palette.text2)}
+        {/* L'avancement de la mère (#163) : sa barre et ses filles faites sur leur total. */}
+        {head && (
+          <Box flexDirection="row" alignItems="center" gap={SPACE.row} flexShrink={0}>
+            {Svg ? <Svg source={progressIcon(head.block.done, head.block.total, palette.ok, palette.sel)} alt={`${head.block.done}/${head.block.total}`} width={34} height={4} /> : null}
+            <Text size="caption" tabular color={palette.text2}>{`${head.block.done}/${head.block.total}`}</Text>
+          </Box>
+        )}
         {!head && !kept && !inSession && !locked && right !== '' && (
           <Box flexShrink={0}>
             <Text size="caption" tabular color={palette.text2} wrap="end">
@@ -6561,121 +6586,35 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     )
   }
 
-  // Une ligne de l'arbre « Le fil » (#163, maquette A choisie par Bertrand) : 30 px ; la marque (le
-  // chevron de la mère, le fil et le rang d'une étape), sa case (un bouton du kit en glyphe, sans
-  // zone de clic : toutes les lignes se cochent), le titre et son numéro, la seule pastille (le
-  // département), puis l'avancement de la mère ou ce qu'attend l'étape en texte, et le ▶.
-  type TreePlace = { kind: 'head'; id: string; open: boolean; block: TreeBlock } | { kind: 'step'; rank: number; last: boolean; parent: Task } | { kind: 'alone' }
-  const treeRow = (t: Task, place: TreePlace) => {
-    const s = short(t)
-    const head = place.kind === 'head' ? place : undefined
-    const step = place.kind === 'step' ? place : undefined
-    const ghost = head?.block.ghost === true
-    const inSession = !t.done && isLive(t)
-    const blocker = t.done || inSession ? undefined : blockerFor(t)
-    const locked = blocker !== undefined
-    const playable = !t.done && !ghost && !inSession && !locked && !launched.includes(taskKey(t))
-    const markAlt = head ? (head.open ? 'replier' : 'déplier') : `rang ${step?.rank ?? 1}`
-    // Une tâche seule (#163) : ni chevron ni fil, sa case d'abord.
-    const mark = place.kind === 'alone' ? null : Svg ? (
-      <Svg
-        source={head ? treeHeadIcon({ open: head.open, chevronHex: palette.text3 }) : treeStepIcon({ rank: step?.rank ?? 1, last: step?.last ?? false, lineHex: palette.border, textHex: palette.text3 })}
-        alt={markAlt}
-        width={head ? 16 : 22}
-        height={30}
-      />
-    ) : (
-      <Text color={palette.text3}>{head ? (head.open ? '⌄' : '›') : `${step?.last ? '└' : '├'}${step?.rank ?? 1}`}</Text>
-    )
-    const openKids = head ? head.block.tasks.length : 0
-    const check = ghost ? null : (
-      <Button key={`check:${t.id ?? keyPart(t.key)}`} plain onPress={() => void checkTask($, source, t, openKids)}>
-        <Text color={t.done ? palette.ok : head ? axisHex(t.axis) : palette.text3}>{treeCheck(t.done)}</Text>
-      </Button>
-    )
-    const department = ghost ? undefined : treeDepartment(t, { enabled: settings.axisPill, axisFilter: axis, ...(clesVisibles ? { clesVisibles } : {}) })
-    const due = t.due === undefined ? undefined : duePill(t.due, today)
-    const dueInk = (p: ReturnType<typeof duePill> | undefined) => (p?.kind === 'late' ? palette.lateOn : p?.kind === 'soon' ? palette.blockOn : palette.text2)
-    const who = t.resp === undefined ? undefined : shortAttend(t.resp)
-    const next = head?.block.next?.due === undefined ? undefined : duePill(head.block.next.due, today)
-    return (
-      <Box key={`hit:${t.key}`} flexDirection="row" alignItems="center" gap={SPACE.row} paddingX={SPACE.indent} hover={{ backgroundColor: palette.hover }}>
-        {mark !== null && <Box flexShrink={0}>
-          {head && !(Svg && headZones) ? (
-            <Button key={`group:${keyPart(head.id)}`} plain dimColor onPress={toggleGroup(head.id)}>
-              {head.open ? '⌄' : '›'}
-            </Button>
-          ) : (
-            mark
-          )}
-          {head && Svg && headZones && hit(`group:${head.id}`, toggleGroup(head.id), 1)}
-        </Box>}
-        {check && <Box key={`c:${t.key}`} flexShrink={0}>{check}</Box>}
-        <Box key={`lead:${t.key}`} flexDirection="row" alignItems="center" gap={graphic ? 0 : SPACE.row} flexGrow={1} flexShrink={1} minWidth={0}>
-          <Button key={t.key} plain dimColor={ghost} onPress={select(selectionOf(t))}>
-            <Text
-              wrap="truncate-end"
-              {...(head && !ghost ? { weight: 'semibold' as const } : {})}
-              {...(t.done ? { strikethrough: true, color: palette.text3 } : locked ? { color: palette.text2 } : {})}
-            >
-              {s.titre}
-            </Text>
-          </Button>
-          {t.id && <Text size="caption" tabular color={palette.text3}>{` #${t.id}`}</Text>}
-        </Box>
-        {department !== undefined && <Box key={`axis:${t.key}`} flexShrink={0}>{drawnPill({ text: department, bg: palette.sel, fg: t.done ? palette.text3 : palette.text2, weight: 600 })}</Box>}
-        {head ? (
-          <Box flexDirection="row" alignItems="center" gap={SPACE.row} flexShrink={0}>
-            {Svg ? <Svg source={progressIcon(head.block.done, head.block.total, palette.ok, palette.sel)} alt={`${head.block.done}/${head.block.total}`} width={34} height={4} /> : null}
-            <Text size="caption" tabular color={palette.text2}>{`${head.block.done}/${head.block.total}`}</Text>
-            {/* Une mère bloquée dit ce qu'elle attend à la place de sa date. */}
-            {t.done ? (
-              <Text size="caption" color={palette.text3}>fait</Text>
-            ) : locked && blocker?.pre ? (
-              <Box key={`lock:${t.key}`} flexDirection="row" alignItems="center" gap={SPACE.row} flexShrink={0}>
-                {lock(`Bloquée : ${short(blocker.pre).titre} n'est pas encore faite`)}
-                <Text size="caption" color={palette.text3} wrap="end">{`${blocker.parent ? 'parent ' : ''}après ${blocker.pre.id ? `#${blocker.pre.id}` : short(blocker.pre).titre}`}</Text>
-              </Box>
-            ) : next ? (
-              <Text size="caption" tabular color={dueInk(next)}>{next.kind === 'late' ? (next.text.split(' · ')[0] ?? next.text) : next.text}</Text>
-            ) : null}
-          </Box>
-        ) : t.done ? (
-          <Text size="caption" color={palette.text3}>fait</Text>
-        ) : inSession ? (
-          maestroLine ? drawnPill({ text: 'en session', bg: palette.liveTint, fg: palette.liveOn, weight: TEXT.weight.soft }) : sessionColumn(t)
-        ) : locked && blocker?.pre ? (
-          <Box key={`lock:${t.key}`} flexDirection="row" alignItems="center" gap={SPACE.row} flexShrink={0}>
-            {lock(blocker.parent ? `Bloquée : son parent attend ${short(blocker.pre).titre}` : `Bloquée : ${short(blocker.pre).titre} n'est pas encore faite`)}
-            <Text size="caption" color={palette.text3} wrap="end">{`${blocker.parent ? 'parent ' : ''}après ${blocker.pre.id ? `#${blocker.pre.id}` : short(blocker.pre).titre}`}</Text>
-          </Box>
-        ) : who !== undefined || due !== undefined ? (
-          <Box flexShrink={0}>
-            <Text size="caption" tabular color={dueInk(due)} wrap="end">{[who, due?.text].filter((x): x is string => x !== undefined).join(' · ')}</Text>
-          </Box>
-        ) : null}
-        {!t.done && (
-          <Box key={`p:${t.key}`} width={3} flexShrink={0} flexDirection="row" justifyContent="center">
-            {playable && (
-              <Button key={`play:${t.key}`} plain dimColor onPress={() => void launchSession($, source, t, s.titre)}>
-                ▶
-              </Button>
-            )}
-          </Box>
-        )}
-      </Box>
-    )
-  }
-
   // Une section repliable : chevron, nom, et à droite le compte (et le disque rouge d'« En retard »).
   // `shownRows` : les lignes que le budget du dessin lui laisse ; au-delà, « Voir les N autres ».
   // `id` tient l'état de la section (dépliée, repliée, « Voir les N autres ») ; `name` est son libellé.
-  const section = (id: string, name: string, tasks: Task[], shownRows: number, lead?: RenderElement, mark?: RenderElement, block?: TreeBlock) => {
-    const isOpen = isOpenGroup(id)
+  const section = (id: string, name: string, tasks: Task[], shownRows: number, lead?: RenderElement, mark?: RenderElement, block?: TreeBlock, bare = false) => {
+    const isOpen = bare || isOpenGroup(id)
     const rest = tasks.length - shownRows
-    // Un bloc de l'arbre « Le fil » (#163, maquette A) : la mère en tête, une seule fois, sa case et
-    // son avancement ; « Tout clore » dessous quand sa case le demande ; ses étapes, ouvertes et
-    // faites, par rang, sur le fil de la mère.
+    // Une suite de tâches seules d'une section d'axe (#168) : sans en-tête, toujours dépliée.
+    if (bare) {
+      return (
+        <Box key={`section:${id}`} flexDirection="column">
+          {tasks.slice(0, shownRows).map(t => row(t, undefined, { kind: 'alone' }))}
+          {rest > 0 && (
+            <Box key={`more-row:${id}`} flexDirection="row" paddingX={SPACE.indent} paddingLeft={SPACE.nest}>
+              <Button
+                key={`more:${keyPart(id)}`}
+                plain
+                dimColor
+                label={shownRows === 0 ? `Voir les ${rest} tâches` : `Voir les ${rest} autres`}
+                onPress={() => void setView($, v => ({ moreGroups: v.moreGroups.includes(id) ? v.moreGroups : [...v.moreGroups, id] }))}
+              />
+            </Box>
+          )}
+        </Box>
+      )
+    }
+    // Un bloc de l'arbre (#163 ; #168, maquettes de Bertrand) : la mère en tête, une seule fois, au
+    // niveau des tâches seules, sa flèche dans son carré, son rond et son avancement ; « Tout clore »
+    // dessous quand son rond le demande ; ses filles, ouvertes et faites, par rang, un cran à droite,
+    // reliées par leur coude.
     if (block?.head) {
       const mother = block.head
       const shown = tasks.slice(0, shownRows)
@@ -6683,7 +6622,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
       return (
         <Box key={`section:${id}`} flexDirection="column" paddingTop="xs">
           <Box key={`hit:group:${id}`} flexDirection="column">
-            {treeRow(mother, { kind: 'head', id, open: isOpen, block })}
+            {row(mother, undefined, { kind: 'head', id, open: isOpen, ghost: block.ghost, block })}
           </Box>
           {asking && (
             <Box key={`ask:${id}`} flexDirection="column" gap="xs" marginLeft={SPACE.nest} paddingX={SPACE.indent} paddingY="xs" backgroundColor={palette.blockTint}>
@@ -6697,7 +6636,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
           )}
           {isOpen && (
             <Box flexDirection="column" paddingBottom="sm">
-              {shown.map((t, i) => treeRow(t, { kind: 'step', rank: block.rank.get(t) ?? 1, last: i === shown.length - 1 && rest <= 0, parent: mother }))}
+              {shown.map((t, i) => row(t, undefined, { kind: 'child', last: i === shown.length - 1 && rest <= 0, parent: mother }))}
               {rest > 0 && (
                 <Box key={`more-row:${id}`} flexDirection="row" paddingX={SPACE.indent} paddingLeft={SPACE.nest}>
                   <Button
@@ -6755,7 +6694,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
               // En arbre, la profondeur tient la place du trait des chaînes.
               const chains = by === 'tree' ? new Map<Task, ChainStep>() : chainSteps(tasks, prereqFor)
               // Les tâches seules de l'arbre (#163) : la ligne « Le fil », sa case et son seul département.
-              return tasks.slice(0, shownRows).map(t => (block ? treeRow(t, { kind: 'alone' }) : row(t, chains.get(t))))
+              return tasks.slice(0, shownRows).map(t => (block ? row(t, undefined, { kind: 'alone' }) : row(t, chains.get(t))))
             })()}
             {rest > 0 && (
               <Box key={`more-row:${id}`} flexDirection="row" paddingX={SPACE.indent} paddingLeft={SPACE.nest}>
@@ -6795,10 +6734,33 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
 
   // L'arbre, rangé en bandes par la valeur de `ranger_par` (#125) : une bande par valeur, les blocs
   // sous la valeur de leur tête, les tâches seules coupées par bande. Une bande se replie à part.
-  type ListGroup = { key?: string; name: string; tasks: Task[]; lead?: RenderElement; mark?: RenderElement; block?: TreeBlock; band?: { count: number; lead?: RenderElement }; under?: string }
+  // Sans `ranger_par`, l'arbre se range par axe (#168) : une bande par axe, dans l'ordre de la
+  // légende, la flèche dans son carré ; dedans, les mères et les suites de tâches seules, triées
+  // en C (`axisTree`) ; une suite de seules est un groupe sans en-tête (`bare`).
+  type ListGroup = { key?: string; name: string; tasks: Task[]; lead?: RenderElement; mark?: RenderElement; block?: TreeBlock; band?: { count: number; lead?: RenderElement; axis?: string }; under?: string; bare?: boolean }
   const bandValue = (t: Task) => (rangerPar ? t.extra?.[rangerPar]?.[0] : undefined)
+  const aloneBlock = (key: string, tasks: Task[]): TreeBlock => ({ key, label: '', ghost: false, tasks, rank: new Map(), done: 0, total: 0, doneTasks: [], closed: false })
   const treeGroups: ListGroup[] = !rangerPar
-    ? tree.map(g => ({ key: g.key, name: g.label, tasks: g.head ? treeSteps(g) : g.tasks, block: g }))
+    ? axisTree(tree, order, isLive).flatMap(sec => {
+        const id = `axe:${sec.axis}`
+        const out: ListGroup[] = [{ key: id, name: axisLabel(sec.axis), tasks: [], band: { count: sec.count, axis: sec.axis } }]
+        let run: Task[] = []
+        const flush = () => {
+          if (run.length === 0) return
+          const key = `${id}:seules:${out.length}`
+          out.push({ key, name: '', tasks: run, block: aloneBlock(key, run), under: id, bare: true })
+          run = []
+        }
+        for (const it of sec.items) {
+          if (it.kind === 'alone') run.push(it.task)
+          else {
+            flush()
+            out.push({ key: it.block.key, name: it.block.label, tasks: treeSteps(it.block), block: it.block, under: id })
+          }
+        }
+        flush()
+        return out
+      })
     : bandsOf(
         tree.flatMap(g =>
           g.head
@@ -6821,9 +6783,20 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
       })
   const bandOpen = (id: string) => !closedGroups.includes(id)
   const toggleBand = (id: string) => () => void setView($, v => ({ closedGroups: toggleIn(v.closedGroups, id) }))
-  const bandRow = (id: string, name: string, count: number, lead?: RenderElement) => (
+  const bandRow = (id: string, name: string, count: number, lead?: RenderElement, axisOf?: string) => (
     <Box key={`band:${id}`} flexDirection="row" justifyContent="space-between" alignItems="center" paddingX={SPACE.indent} paddingTop="sm">
-      <Button key={`bande:${keyPart(name)}`} plain label={`${bandOpen(id) ? '⌄' : '›'} ${name}`} onPress={toggleBand(id)} />
+      {/* Une section d'axe (#168) : la flèche dans le carré de l'axe, aligné sur ceux des lignes ; le carré et le nom la replient. */}
+      {axisOf !== undefined && Svg ? (
+        <Box flexDirection="row" alignItems="center" gap={SPACE.row} flexShrink={1} minWidth={0}>
+          <Box flexShrink={0}>
+            <Svg source={axisBandIcon(axisHex(axisOf), bandOpen(id), palette.onAxis)} alt={bandOpen(id) ? 'replier' : 'déplier'} width={16} height={24} />
+            {headZones && hit(`band:${id}`, toggleBand(id), 1)}
+          </Box>
+          <Button key={`bande:${keyPart(name)}`} plain label={name} onPress={toggleBand(id)} />
+        </Box>
+      ) : (
+        <Button key={`bande:${keyPart(name)}`} plain label={`${bandOpen(id) ? '⌄' : '›'} ${name}`} onPress={toggleBand(id)} />
+      )}
       <Box flexDirection="row" alignItems="center" gap={SPACE.row} flexShrink={0}>
         {lead}
         {countPill(count, false, palette.text2)}
@@ -6889,22 +6862,26 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   // au seuil où le panneau gèle (2026-10-23).
   // Les groupes d'une bande repliée ne se dessinent pas, et ne prennent rien au budget.
   const groups = allGroups.filter(g => g.under === undefined || bandOpen(g.under))
-  let budget = settings.axisPill && !showDone && !clesVisibles?.length && axis === 'all' ? ROW_BUDGET_AXIS_PILL : ROW_BUDGET
+  // Dans l'arbre par axe, la bande tait la pastille d'axe : le budget plein (#168).
+  let budget = settings.axisPill && !showDone && !clesVisibles?.length && axis === 'all' && (by !== 'tree' || rangerPar) ? ROW_BUDGET_AXIS_PILL : ROW_BUDGET
   const rowsOf = new Map<string, number>()
   const idOf = (g: { key?: string; name: string }) => g.key ?? g.name
   for (const g of groups) {
-    if (!isOpenGroup(idOf(g))) continue
+    if (!g.bare && !isOpenGroup(idOf(g))) continue
     const n = moreGroups.includes(idOf(g)) ? g.tasks.length : Math.min(g.tasks.length, Math.max(budget, 0))
     rowsOf.set(idOf(g), n)
     budget -= n
   }
   // La tête d'un bloc de l'arbre est une ligne de tâche dessinée, comme ses enfants (#125).
   const drawnTasks = groups.flatMap(g => [...(g.block?.head ? [g.block.head] : []), ...g.tasks.slice(0, rowsOf.get(idOf(g)) ?? 0)])
-  const names = groups.filter(g => !g.band).map(idOf)
+  // Les sections qui se déplient, celles des bandes repliées comprises. Un arbre sans mère (#168) :
+  // « Tout replier » replie ses bandes d'axe ; avec des mères, il ne replie qu'elles (#163).
+  const names = allGroups.filter(g => !g.band && !g.bare).map(idOf)
+  const bandIds = by === 'tree' && !searching && !showDone && names.length === 0 ? allGroups.filter(g => g.band).map(idOf) : []
   // Les mères de l'arbre (#163) : « Tout replier » les ferme toutes, « Tout déplier » les rouvre.
   const motherKeys = by === 'tree' && !searching && !showDone ? groups.filter(g => g.block?.head !== undefined).map(idOf) : []
   const mothersOpen = motherKeys.some(isOpenGroup)
-  const allOpen = names.length > 0 && names.every(n => openGroups.includes(n))
+  const allOpen = bandIds.length > 0 ? bandIds.every(b => !closedGroups.includes(b)) : names.length > 0 && names.every(n => openGroups.includes(n))
   const action = searching
     ? { label: 'Effacer', run: () => void update($, searchAtom, () => '') }
     : filtered
@@ -6912,9 +6889,9 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     : allOpen
       ? {
           label: 'Tout replier',
-          run: () => void setView($, () => ({ openGroups: [], moreGroups: [] })),
+          run: () => void setView($, v => ({ openGroups: [], moreGroups: [], closedGroups: [...v.closedGroups.filter(c => !bandIds.includes(c)), ...bandIds] })),
         }
-      : { label: 'Tout déplier', run: () => void setView($, () => ({ openGroups: names })) }
+      : { label: 'Tout déplier', run: () => void setView($, v => ({ openGroups: names, closedGroups: v.closedGroups.filter(c => !bandIds.includes(c)) })) }
 
   const anyAxis = axis !== 'all' || showDone
   const axisOn = (a: string) => axis === a && !showDone
@@ -7118,7 +7095,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     const shownWithSession = [...(liveOpen ? blockTasks : []), ...drawnTasks.filter(t => t.id && (liveOf(t) ?? doneSessionOf(t)))]
     numberZones = new Set(shownWithSession.slice(0, Math.max(0, ZONE_LIMIT - fixedZones)).map(t => t.id as string))
   }
-  headZones = graphic && fixedZones + numberZones.size + groups.filter(g => !g.band).length <= ZONE_LIMIT
+  headZones = graphic && fixedZones + numberZones.size + groups.filter(g => !g.bare).length <= ZONE_LIMIT
 
   // Le bloc « En cours » de Maestro (#160, maquette A) : encadré, en tête des filtres, ses sessions en
   // lignes de la liste (roue ou main, barre, compte) ; toujours là, quels que soient filtre, axe ou recherche.
@@ -7216,7 +7193,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     <Box flexDirection="column" gap={SPACE.root} {...bodyPad}>
       {head}
 
-      {pending && (
+      {pending && by !== 'tree' && (
         <Box flexDirection="row" alignItems="center" gap={SPACE.row} paddingX={SPACE.indent}>
           {Svg && <Svg source={pendingIcon(palette.text2)} alt="en cours" width={SIZE.icon.md} height={SIZE.icon.md} isInteractive />}
           <Text size="caption" color={palette.text2}>Titres en cours de calcul : rangées par axe en attendant</Text>
@@ -7321,7 +7298,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
         <Text color={palette.text2}>{attend === 'today' ? "Rien d'urgent aujourd'hui." : 'Aucune tâche ouverte pour ce filtre.'}</Text>
       )}
 
-      <Box flexDirection="column">{groups.map(g => (g.band ? bandRow(idOf(g), g.name, g.band.count, g.band.lead) : section(idOf(g), g.name, g.tasks, rowsOf.get(idOf(g)) ?? 0, g.lead, g.mark, g.block)))}</Box>
+      <Box flexDirection="column">{groups.map(g => (g.band ? bandRow(idOf(g), g.name, g.band.count, g.band.lead, g.band.axis) : section(idOf(g), g.name, g.tasks, rowsOf.get(idOf(g)) ?? 0, g.lead, g.mark, g.block, g.bare)))}</Box>
 
       {/* Le pied (#138, puis #162, maquette B) : la roue des réglages, la version de cette session, et à droite
           « Rafraîchir », qui relit tout et la compare à la publiée, ou « Recharger » quand seule la session retarde. */}

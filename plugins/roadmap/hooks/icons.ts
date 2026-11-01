@@ -588,6 +588,36 @@ export function treeHeadRowIcon(mark: string, open: boolean, chevronHex: string)
   return `<svg xmlns="http://www.w3.org/2000/svg" width="32" height="24" viewBox="0 0 32 24">${chevron}${inner}</svg>`
 }
 
+// L'arbre par axe (#168, maquettes choisies par Bertrand le 2026-11-01) : la flèche dans le carré,
+// pour la section comme pour la mère ; les filles reliées par un coude qui part du carré de la mère.
+
+/** La flèche d'un carré d'axe, en `inkHex` (`onAxis`), centrée en (cx, cy), sur `half` de demi-largeur. */
+function innerChevron(cx: number, cy: number, half: number, open: boolean, inkHex: string): string {
+  const d = open
+    ? `M${cx - half} ${cy - half / 2}L${cx} ${cy + half / 2}L${cx + half} ${cy - half / 2}`
+    : `M${cx - half / 2} ${cy - half}L${cx + half / 2} ${cy}L${cx - half / 2} ${cy + half}`
+  return `<path d="${d}" fill="none" stroke="${inkHex}" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>`
+}
+
+/** Le carré d'une mère de l'arbre par axe (#168), 16 × 24 : le carré de son axe, sa flèche dedans. */
+export function treeMotherRowIcon(hex: string, open: boolean, inkHex: string): string {
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="24" viewBox="0 0 16 24"><rect x="2" y="6" width="12" height="12" rx="${RADIUS.square}" fill="${hex}"/>${innerChevron(8, 12, 3, open, inkHex)}</svg>`
+}
+
+/**
+ * Une fille de l'arbre par axe (#168), 32 × 24 : le coude (├, └ pour la dernière) sous le carré de
+ * sa mère, puis sa marque (carré d'axe ou coche) un cran à droite.
+ */
+export function treeChildRowIcon(mark: string, last: boolean, lineHex: string): string {
+  const inner = mark.replace(/^<svg /, '<svg x="16" y="0" ')
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="32" height="24" viewBox="0 0 32 24"><path d="M8 0V${last ? 12 : 24}M8 12H15" fill="none" stroke="${lineHex}" stroke-width="1.2"/>${inner}</svg>`
+}
+
+/** Le carré d'une section d'axe (#168), 16 × 24 : un peu plus grand que celui des lignes, sa flèche dedans. */
+export function axisBandIcon(hex: string, open: boolean, inkHex: string): string {
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="24" viewBox="0 0 16 24"><rect x="1" y="5" width="14" height="14" rx="3" fill="${hex}"/>${innerChevron(8, 12, 3.5, open, inkHex)}</svg>`
+}
+
 // L'arbre « Le fil » (#163, maquette A choisie par Bertrand le 2026-10-31) : lignes de 30 px. La
 // case à cocher est un bouton du kit à côté (un bouton ne porte pas de dessin) ; la marque garde le
 // fil et le rang, un seul dessin par étape.

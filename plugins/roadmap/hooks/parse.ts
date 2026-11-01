@@ -1391,10 +1391,10 @@ export function doneByDay(done: readonly Task[], today: string): { label: string
   return byDay(done, today, t => t.fait)
 }
 
-/** Le rangement d'une liste : par jour, par sujet, et en mode Projet par échéance, par responsable ou en arbre (#76). */
+/** Le rangement d'une liste : en arbre, par jour, par sujet, et en mode Projet par échéance ou par responsable (#76, #168). */
 export type Grouping = 'day' | 'subject' | 'deadline' | 'owner' | 'tree'
 const VUE_GROUPING: Record<Vue, Grouping> = { jour: 'day', sujet: 'subject', echeance: 'deadline', responsable: 'owner', arbre: 'tree' }
-const PROJECT_GROUPINGS: readonly Grouping[] = ['deadline', 'owner', 'tree']
+const PROJECT_GROUPINGS: readonly Grouping[] = ['deadline', 'owner']
 const GROUPING_LABELS: Record<Grouping, string> = {
   day: 'Par jour',
   subject: 'Par sujet',
@@ -1405,16 +1405,16 @@ const GROUPING_LABELS: Record<Grouping, string> = {
 
 /**
  * Le rangement d'une vue : un choix enregistré l'emporte ; sinon (`auto`) les faites par jour et les
- * ouvertes selon la vue du projet (par sujet sans vue). Les faites ne se rangent que par jour ou par
- * sujet ; un rangement du mode Projet resté en mémoire ne s'impose pas à un projet de code.
+ * ouvertes selon la vue que le projet déclare, en arbre sans elle, dans les deux modes et mères ou pas
+ * (#168). Les faites ne se rangent que par jour ou par sujet ; l'échéance ou le responsable restés
+ * en mémoire ne s'imposent pas à un projet de code.
  */
-export function groupingOf(groupBy: string | undefined, showDone: boolean, vue?: Vue, mode?: Mode, parents = false): Grouping {
+export function groupingOf(groupBy: string | undefined, showDone: boolean, vue?: Vue, mode?: Mode): Grouping {
   if (groupBy === 'day' || groupBy === 'subject') return groupBy
-  if ((PROJECT_GROUPINGS as readonly string[]).includes(groupBy ?? '') && mode !== 'code') return showDone ? 'day' : (groupBy as Grouping)
+  if (groupBy === 'tree' || ((PROJECT_GROUPINGS as readonly string[]).includes(groupBy ?? '') && mode !== 'code')) return showDone ? 'day' : (groupBy as Grouping)
   if (showDone) return 'day'
   if (vue) return VUE_GROUPING[vue]
-  // Sans choix ni vue du projet, une roadmap qui a des mères s'ouvre en arbre (#163), là où l'arbre est offert.
-  return parents && mode === 'projet' ? 'tree' : 'subject'
+  return 'tree'
 }
 
 /** Une ouverte au moins a sa mère ouverte (`parent:N`) : la roadmap a un arbre (#163). */
@@ -1423,9 +1423,13 @@ export function hasOpenParent(tasks: readonly Task[]): boolean {
   return tasks.some(t => !t.done && t.parent !== undefined && t.parent !== t.id && open.has(t.parent))
 }
 
-/** Les rangements du menu « Ranger » (#115) : en mode Projet, échéance, responsable, arbre, sujet, jour ; sinon, et pour les faites, sujet et jour. */
+/**
+ * Les rangements du menu « Ranger » (#115) : en mode Projet, échéance, responsable, arbre, sujet, jour ;
+ * en mode Code, arbre, sujet, jour (#168) ; pour les faites, sujet et jour.
+ */
 export function groupings(mode: Mode, showDone: boolean): Grouping[] {
-  return mode === 'projet' && !showDone ? ['deadline', 'owner', 'tree', 'subject', 'day'] : ['subject', 'day']
+  if (showDone) return ['subject', 'day']
+  return mode === 'projet' ? ['deadline', 'owner', 'tree', 'subject', 'day'] : ['tree', 'subject', 'day']
 }
 
 /** Le rangement suivant, au bouton du mobile (sans menu) : le suivant de `groupings`, le premier après le dernier. */
@@ -1773,12 +1777,52 @@ export function byTree(
     : blocks
 }
 
+/** Une ligne d'une section d'axe de l'arbre (#168) : une mère et son bloc, ou une tâche seule. */
+export type AxisItem = { kind: 'mother'; block: TreeBlock } | { kind: 'alone'; task: Task }
+/** Une section d'axe de l'arbre (#168) : son axe, ses ouvertes comptées, ses lignes rangées. */
+export type AxisSection = { axis: string; count: number; items: AxisItem[] }
+
+/**
+ * Les blocs de `byTree` en sections d'axe (#168, maquettes choisies par Bertrand le 2026-11-01) :
+ * une par axe, dans l'ordre de la légende (`order`, puis les autres par ordre alphabétique). Une
+ * mère se range dans l'axe de sa tête, ses filles avec elle, même d'un autre axe. Dans une section
+ * (maquette C) : ce qui est en session d'abord, puis ce qui attend quelqu'un, puis le reste ; à
+ * égalité, la plus récente (`ouvert:`, puis le numéro) en tête. Une mère se range au mieux d'elle et
+ * de ses filles ouvertes ; une mère faite aujourd'hui (`closed`) vient en dernier.
+ */
+export function axisTree(blocks: readonly TreeBlock[], order: readonly string[], isLive: (t: Task) => boolean): AxisSection[] {
+  const items: AxisItem[] = blocks.flatMap((b): AxisItem[] => (b.head ? [{ kind: 'mother', block: b }] : b.tasks.map(task => ({ kind: 'alone', task }))))
+  const axisOf = (i: AxisItem) => (i.kind === 'mother' ? (i.block.head as Task).axis : i.task.axis)
+  const tier = (t: Task) => (t.done ? 3 : isLive(t) ? 0 : t.attend !== undefined ? 1 : 2)
+  const num = (t: Task) => (t.id === undefined ? -1 : Number(t.id))
+  // La clé de tri d'une ligne : son rang (0 à 3), sa date et son numéro ; la meilleure de la mère et de ses filles.
+  const keyOf = (i: AxisItem): [number, string, number] => {
+    if (i.kind === 'alone') return [tier(i.task), i.task.ouvert ?? '', num(i.task)]
+    const head = i.block.head as Task
+    if (i.block.closed) return [3, head.ouvert ?? '', num(head)]
+    const all = [...(i.block.ghost ? [] : [head]), ...i.block.tasks]
+    return [Math.min(...all.map(tier)), all.map(t => t.ouvert ?? '').sort().pop() ?? '', num(head)]
+  }
+  const before = (a: AxisItem, b: AxisItem) => {
+    const [ta, da, na] = keyOf(a)
+    const [tb, db, nb] = keyOf(b)
+    return ta - tb || db.localeCompare(da) || nb - na
+  }
+  const axes = [...new Set(items.map(axisOf))]
+  const ranked = [...order.filter(a => axes.includes(a)), ...axes.filter(a => !order.includes(a)).sort((a, b) => a.localeCompare(b, 'fr'))]
+  return ranked.map(axis => {
+    const mine = items.filter(i => axisOf(i) === axis).sort(before)
+    const count = mine.reduce((n, i) => n + (i.kind === 'alone' ? (i.task.done ? 0 : 1) : (i.block.ghost || i.block.closed ? 0 : 1) + i.block.tasks.length), 0)
+    return { axis, count, items: mine }
+  })
+}
+
 /** Le résumé de la ligne de filtre : « Mcp · attend Martial · 4 tâches », ou le total sans filtre. */
 export function filterSummary(view: { axis: string; attend: string; showDone: boolean; shown: number; doneShown: number; groupBy?: string; who?: string }): string {
   const by = groupingOf(view.groupBy, view.showDone)
   if (view.showDone) return `${view.doneShown} faite${view.doneShown > 1 ? 's' : ''}, par ${by === 'subject' ? 'sujet' : 'jour'}`
-  // Les ouvertes se rangent par sujet d'ordinaire : seuls les autres rangements se disent.
-  const byDayNote = by === 'subject' || view.attend === 'today' ? '' : by === 'tree' ? ', en arbre' : `, ${GROUPING_LABELS[by].toLowerCase()}`
+  // Les ouvertes se rangent en arbre d'ordinaire (#168) : seuls les autres rangements se disent.
+  const byDayNote = by === 'tree' || view.attend === 'today' ? '' : `, ${GROUPING_LABELS[by].toLowerCase()}`
   const who = view.who ?? 'all'
   if (view.axis === 'all' && view.attend === 'all' && who === 'all') return `${view.shown} tâche${view.shown > 1 ? 's' : ''} ouverte${view.shown > 1 ? 's' : ''}${byDayNote}`
   const parts: string[] = []
@@ -3825,7 +3869,8 @@ export function foldAllView(
 
 /** La case d'une ligne de l'arbre (#163) : un glyphe, le libellé d'un bouton du kit, cliquable sur chaque ligne sans zone de clic. */
 export function treeCheck(checked: boolean): string {
-  return checked ? '☑' : '☐'
+  // Un rond devant le numéro (#168, système A choisi par Bertrand) : vide, puis plein une fois faite.
+  return checked ? '●' : '○'
 }
 
 /** Le journal des bilans sans la dernière ligne de cette tâche à cette date (#163, une tâche rouverte). */

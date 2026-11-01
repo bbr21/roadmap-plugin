@@ -39,6 +39,8 @@ export type Palette = {
   /** Bouton Lancer. */
   pri: string
   priText: string
+  /** La flèche posée dans un carré d'axe (#168) : blanche dans les deux thèmes. */
+  onAxis: string
   /** Boutons icône. */
   btn: string
   btnHover: string
@@ -85,6 +87,7 @@ export const PALETTES: Record<ThemeName, Palette> = {
     done: '#7D8590',
     pri: '#ECEBE7',
     priText: '#1F1E1D',
+    onAxis: '#FFFFFF',
     btn: '#2D2C29',
     btnHover: '#383633',
     note: '#27292C',
@@ -119,6 +122,7 @@ export const PALETTES: Record<ThemeName, Palette> = {
     done: '#848B95',
     pri: '#1F1E1D',
     priText: '#FFFFFF',
+    onAxis: '#FFFFFF',
     btn: '#F1EFE9',
     btnHover: '#E7E4DB',
     note: '#F2F2F1',

@@ -43,7 +43,12 @@ les sessions toutes les 3 s (le dossier de la roadmap toutes les 15 s), et montr
   Retours et le menu « Qui ») ; il reste ouvert tant qu'un de ses filtres est choisi ;
 - une recherche par mots ou par numéro (#47), dans les ouvertes et les faites, qui filtre à la frappe,
   et à côté le menu « Ranger » qui montre le rangement en cours ;
-- les tâches par sujet en sections repliables, une ligne par tâche (pastilles échéance, tiers,
+- par défaut, l'arbre par axe (#168), en mode Code comme en mode Projet : une section par axe, dans
+  l'ordre de la légende, la flèche dans le carré de l'axe ; dedans, ce qui est en session d'abord,
+  puis ce qui attend quelqu'un, puis la plus récente ; une mère au niveau des tâches seules, sa
+  flèche dans son carré, ses filles un cran à droite, reliées par des coudes ; un rond devant le
+  numéro coche la tâche, qui se barre et reste à sa place ;
+- les tâches par sujet (au menu « Ranger ») en sections repliables, une ligne par tâche (pastilles échéance, tiers,
   « à revoir », âge), triées : en session, puis par échéance, puis de la plus récente à la plus
   ancienne ; une tâche se range sous sa prérequise ; au bout de chaque tâche ouverte (ni en session,
   ni bloquée, ni déjà demandée), un ▶ lance sa session sans ouvrir la fiche (#149 : à la place du
@@ -51,9 +56,11 @@ les sessions toutes les 3 s (le dossier de la roadmap toutes les 15 s), et montr
   tient sur toutes les lignes) ; chez Maestro, une tâche en session n'y porte que la pastille
   « en session », sa barre et son étape sont dans l'arbre ;
 - toutes les faites, rangées par jour de clôture ou par sujet ;
-- dans toutes les vues, le menu « Ranger » (Par sujet, Par jour ; un bouton sur mobile) : un seul choix pour toutes les vues ;
+- dans toutes les vues, le menu « Ranger » (En arbre, Par sujet, Par jour ; en mode Projet aussi Par
+  échéance et Par responsable ; un bouton sur mobile) : un seul choix pour toutes les vues ;
   par jour, une ouverte se range au jour de son `ouvert:` (« En retard » reste en tête), une faite
-  au jour de son `fait:` ; sans choix, les ouvertes vont par sujet et les faites par jour ;
+  au jour de son `fait:` ; sans choix ni `vue` déclarée par le projet, les ouvertes vont en arbre
+  (#168) et les faites par jour ;
 - la modification d'une tâche ouverte depuis sa fiche (#161) : le crayon à droite du titre met la
   fiche en édition, champs en place dans ses cartes, préremplis de la ligne (libellé dans la Mission,
   Attend, Après et Parent, Axe, Responsable (`resp:` en mode Projet, `qui:` en mode Code), les clés
@@ -248,7 +255,8 @@ Premiers usages : la roadmap de Caro et le dossier AAFES Cowork, depuis l'onglet
   détail les montre, la recherche les lit. `"cles_visibles": ["dept", "statut"]` les montre en
   pastilles pleines sur la ligne (#125) ; `statut` tait sa première valeur (Todo) et une attente
   dont le tiers est déjà en pastille. En arbre (#163), une seule pastille par ligne : le
-  département, la première clé montrée hors du statut (sans `cles_visibles`, l'axe). `"ranger_par": "projet"` range
+  département, la première clé montrée hors du statut (sans `cles_visibles` ni `ranger_par`, aucune :
+  l'arbre est rangé par axe, #168). `"ranger_par": "projet"` range
   l'arbre en bandes repliables, une par valeur de la clé (les déclarées dans leur ordre, puis les
   autres, puis « Sans projet »), les blocs sous la valeur de leur parent. Une clé non déclarée
   dans `cles` est ignorée, et le doctor le dit.
@@ -602,6 +610,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.114.0 (2026-11-01)** : panneau : la roadmap s'ouvre en arbre par axe, en mode Code comme en mode Projet ; une section par axe dans l'ordre de la légende, les mères et leurs filles reliées par des coudes, un rond pour cocher (#168)
 - **0.113.2 (2026-11-01)** : panneau : les étapes d'une session suivent la conversation après une boîte de fin en cours de tâche, et les barres du bloc Maestro partent toutes de la même colonne (#172)
 - **0.113.1 (2026-11-01)** : panneau : un lancement par ▶ part au nom de la personne, sans l'habillage « The roadmap plugin sent a message » (#170)
 - **0.113.0 (2026-11-01)** : skills : tout projet a son ROADMAP-REGLES.md à côté de ROADMAP.md, posé par l'onboarding, exigé par le doctor, lu par tasks, audit et Maestro (#167)
