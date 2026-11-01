@@ -34,7 +34,7 @@ export type Palette = {
   finishedOn: string
   /** Coche, session lancée. */
   ok: string
-  /** Segment et carré « Faites ». */
+  /** Les Done : la barre pleine de la vue Done, le compte « x Done » montré ; le vert de `ok` depuis #180. */
   done: string
   /** Bouton Lancer. */
   pri: string
@@ -84,7 +84,8 @@ export const PALETTES: Record<ThemeName, Palette> = {
     finishedTint: '#2F2742',
     finishedOn: '#C7AEFA',
     ok: '#5BAE6A',
-    done: '#7D8590',
+    // Le vert de `ok` (#180) : les Done se voient, même dans leur vue.
+    done: '#5BAE6A',
     pri: '#ECEBE7',
     priText: '#1F1E1D',
     onAxis: '#FFFFFF',
@@ -119,7 +120,7 @@ export const PALETTES: Record<ThemeName, Palette> = {
     finishedTint: '#EFE9FC',
     finishedOn: '#5F35BF',
     ok: '#2E8540',
-    done: '#848B95',
+    done: '#2E8540',
     pri: '#1F1E1D',
     priText: '#FFFFFF',
     onAxis: '#FFFFFF',

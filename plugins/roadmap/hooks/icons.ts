@@ -553,6 +553,14 @@ export function squareRowIcon(hex: string): string {
 }
 
 /**
+ * Le carré d'axe d'une tâche close (#180, maquette C) : à pleine couleur, un peu plus grand que celui
+ * d'une ouverte (12 au lieu de 10) pour porter sa coche, en `inkHex` (blanc, `onAxis`), centré sur 24.
+ */
+export function squareCheckRowIcon(hex: string, inkHex: string): string {
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="24" viewBox="0 0 16 24"><rect x="2" y="6" width="12" height="12" rx="${RADIUS.square}" fill="${hex}"/><path d="M5.2 12.2l1.9 1.9 3.7-3.9" fill="none" stroke="${inkHex}" stroke-width="${STROKE.check}" stroke-linecap="round" stroke-linejoin="round"/></svg>`
+}
+
+/**
  * Une marque de ligne (le carré d'axe ou la coche, 16 × 24) précédée du trait de sa chaîne
  * (`après:`) et de son étape, en un seul dessin de 32 × 24 : un Svg par ligne, comme une ligne
  * hors chaîne (le poids d'un dessin est compté). Le trait descend de la première tâche, traverse

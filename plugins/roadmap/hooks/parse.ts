@@ -4006,6 +4006,12 @@ export function foldAllView(
   return filtered ? { closedGroups: open ? drop(view.closedGroups) : add(view.closedGroups) } : { openGroups: open ? add(view.openGroups) : drop(view.openGroups) }
 }
 
+/**
+ * Le libellé du bouton posé sur le carré coché d'une faite (#180) : une espace cadratin, sans encre,
+ * de la largeur du carré ; le carré dessiné dessous fait la case.
+ */
+export const CHECK_OVERLAY = '\u2003'
+
 /** La case d'une ligne de l'arbre (#163) : un glyphe, le libellé d'un bouton du kit, cliquable sur chaque ligne sans zone de clic. */
 export function treeCheck(checked: boolean): string {
   // Un rond devant le numéro (#168, système A choisi par Bertrand) : vide, puis plein une fois faite.

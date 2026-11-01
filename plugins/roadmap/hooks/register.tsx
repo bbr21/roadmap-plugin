@@ -24,6 +24,7 @@ import {
   axisBandIcon,
   progressIcon,
   bubbleIcon,
+  squareCheckRowIcon,
   squareRowIcon,
   cornerIcon,
   memo,
@@ -302,6 +303,7 @@ import {
   closeInTexts,
   dropBilanCsv,
   reopenInTexts,
+  CHECK_OVERLAY,
   treeCheck,
   ARM_MS,
   armAsk,
@@ -6627,9 +6629,10 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     // Une marque de 16 × 24 tient la hauteur de la ligne : ni cale ni coins arrondis par ligne de
     // tâche (sur une roadmap de 120 tâches dépliées, 870 dessins figeaient le panneau).
     // Une tâche d'une chaîne : le trait et son étape font partie de la marque, un seul dessin.
-    // Dans l'arbre (#168), et dans la liste des faites depuis #179, le carré de l'axe reste sur une
-    // ligne faite, estompé : c'est son rond qui se coche.
-    const markSource = squareRowIcon(axisHex(t.axis))
+    // Une faite (#180, maquette C) : le carré de son axe, à pleine couleur, coché de blanc ; on le
+    // reclique pour la rouvrir (`doneCheck`). Une mère faite garde sa flèche et son rond.
+    const checkedMark = t.done && !head && Svg !== undefined
+    const markSource = checkedMark ? squareCheckRowIcon(axisHex(t.axis), palette.onAxis) : squareRowIcon(axisHex(t.axis))
     // L'arbre par axe (#168) : la mère porte sa flèche dans son carré, une fille son coude.
     const drawn = head
       ? treeMotherRowIcon(axisHex(t.axis), head.open, palette.onAxis)
@@ -6640,7 +6643,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
           : markSource
     const markAlt = `${isAbandoned(t) ? 'annulée' : t.done ? 'faite' : t.axis}${chain ? `, étape ${chain.step}` : ''}${head ? (head.open ? ', replier' : ', déplier') : ''}`
     const mark = Svg ? (
-      <Svg source={ghost || t.done ? fade(drawn, true) : drawn} alt={markAlt} width={chain || child ? 32 : 16} height={24} />
+      <Svg source={ghost || (t.done && !checkedMark) ? fade(drawn, true) : drawn} alt={markAlt} width={chain || child ? 32 : 16} height={24} />
     ) : head ? (
       <Text color={axisTheme(t.axis)}>{head.open ? '⌄' : '›'}</Text>
     ) : (
@@ -6652,12 +6655,23 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     // glyphe : aucune zone de clic de plus.
     const openKids = head ? head.block.tasks.length : 0
     const armedHere = armShown(armedOf(view), taskKey(t), now)
-    const check = (tree || t.done) && !ghost && block === undefined ? (
+    const checkable = (tree || t.done) && !ghost && block === undefined
+    // Sur une faite dessinée, le bouton couvre le carré coché, sans encre : un bouton ne porte pas de
+    // dessin, et une zone de clic par ligne dépasserait ZONE_LIMIT (#180). Peint après le carré, il
+    // reçoit le clic.
+    const doneCheck = checkable && checkedMark ? (
+      <Box position="absolute" top={0} left={0}>
+        <Button key={`check:${t.id ?? keyPart(t.key)}`} plain onPress={() => void armCheck($, t)}>
+          {CHECK_OVERLAY}
+        </Button>
+      </Box>
+    ) : null
+    const check = checkable && !checkedMark ? (
       <Button key={`check:${t.id ?? keyPart(t.key)}`} plain onPress={() => void armCheck($, t)}>
         <Text color={armedHere ? palette.blockOn : t.done ? palette.ok : palette.text3} {...(armedHere ? { weight: 'semibold' as const } : {})}>{treeCheck(t.done)}</Text>
       </Button>
     ) : null
-    const ask = check && armedHere
+    const ask = (check || doneCheck) && armedHere
       ? armAsk({ task: t, title: s.titre, action: t.done ? 'reopen' : openKids > 0 ? 'family' : 'done', open: openKids, ...(source.ecriture ? { ecriture: source.ecriture } : {}), cowork: bilanData.viaCowork })
       : undefined
     const right = tree ? (t.done ? 'fait' : days === undefined ? '' : ageLabel(days)) : t.done ? axisLabel(t.axis) : days === undefined ? '' : ageLabel(days)
@@ -6743,6 +6757,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
           <Box flexShrink={0}>
             {mark}
             {head && Svg && headZones && hit(`group:${head.id}`, toggleGroup(head.id), 1)}
+            {doneCheck}
           </Box>
         )}
         {check && <Box key={`c:${t.key}`} flexShrink={0}>{check}</Box>}
@@ -7131,10 +7146,11 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
 
   const anyAxis = axis !== 'all' || showDone
   const axisOn = (a: string) => axis === a && !showDone
-  const segments = [
-    ...axes.map(a => ({ name: a, hex: axisHex(a), theme: axisTheme(a), n: axisCount(openTasks, a), dim: anyAxis && !axisOn(a) })),
-    { name: DONE_SEGMENT, hex: palette.done, theme: 'inactive', n: doneTasks.length, dim: anyAxis && !showDone },
-  ]
+  // La barre (#180, maquette C) : les seules ouvertes, par axe ; en vue Done, pleine, du vert des Done,
+  // et un clic dessus revient aux ouvertes.
+  const segments = showDone
+    ? [{ name: DONE_SEGMENT, hex: palette.done, theme: 'success', n: doneTasks.length, dim: false }]
+    : axes.map(a => ({ name: a, hex: axisHex(a), theme: axisTheme(a), n: axisCount(openTasks, a), dim: anyAxis && !axisOn(a) }))
   const shares = integerShares(segments.map(seg => seg.n))
   // La barre et le filet se dessinent un peu plus larges que le panneau, et l'app les y ramène.
   const wide = fullWidth((e.props as { bodyColumns?: number }).bodyColumns ?? 48)
@@ -7353,10 +7369,10 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
           <Text size="title" weight="semibold" tabular>{`${pct(doneTasks.length, total)} %`}</Text>
         )}
         {/* Toujours sur une ligne, sans l'heure de lecture (retirée, 2026-10-22) ; forme courte si très étroit. */}
-        {/* « N Done » (#174) est le lien vers les faites (#152, maquette C) : souligné, en gras une fois choisi. */}
+        {/* « N Done » (#174) est le lien vers les faites (#152, maquette C) : souligné, en gras et en vert une fois choisi (#180). */}
         <Box key="hit:done-count" flexDirection="row" flexShrink={1} minWidth={0} marginLeft={1} hover={{ backgroundColor: palette.hover }}>
           {graphic && (
-            <Text size="caption" tabular underline color={showDone ? palette.text : palette.text2} weight={showDone ? 'semibold' : undefined} wrap="truncate-end">
+            <Text size="caption" tabular underline color={showDone ? palette.done : palette.text2} weight={showDone ? 'semibold' : undefined} wrap="truncate-end">
               {tight ? `${doneTasks.length}` : `${doneTasks.length} Done`}
             </Text>
           )}
@@ -7370,7 +7386,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
 
       <Box paddingX={SPACE.indent} paddingY="xs" justifyContent="center">
         {Svg ? (
-          <Svg source={barIcon(segments, palette.done, wide)} alt={`${pct(doneTasks.length, total)} % fait`} height={6} />
+          <Svg source={barIcon(segments, palette.sel, wide)} alt={`${pct(doneTasks.length, total)} % fait`} height={6} />
         ) : (
           <Box flexDirection="row" width="100%" height={1}>
             {segments.map((seg, i) =>
