@@ -32,6 +32,8 @@ declare module 'claude-code' {
       prefsGivenText: string
       /** Le contexte du message précédent, en jetons (#119) : 0 quand rien n'est mesuré depuis le dernier `/clear` ou la dernière compaction vue. */
       contextSeen: number
+      /** Le contexte de cette session à la fin de son dernier tour (#157), pour l'en-tête de la bande de Maestro ; null avant la première mesure. */
+      bandContext: { tokens: number; window: number } | null
       /** Les questions des boîtes de fin de Maestro depuis le dernier message de la personne (#133) : un réveil ne les repose pas. */
       pendingAsks: readonly string[]
       /** L'explication ouverte dans le volet Réglages (#118) : la clé de sa ligne (`pref:adhd`, `opt:theme`), vide sinon. */

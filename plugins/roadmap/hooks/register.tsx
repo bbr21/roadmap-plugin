@@ -53,6 +53,7 @@ import {
   spinnerIcon,
   stepIcon,
   stepsBarIcon,
+  contextBarIcon,
   squareIcon,
   STROKE,
   type Palette,
@@ -250,6 +251,10 @@ import {
   wakeTurn,
   prefsChangedLead,
   contextShrank,
+  contextUseOf,
+  contextView,
+  type ContextUse,
+  type ContextView,
   closingBlockGaps,
   archivedChildrenOf,
   archivedOpenText,
@@ -492,6 +497,8 @@ const prefsGivenAtom = atom({ plugin: 'roadmap', key: 'prefsGivenText' } as cons
 const pendingAsksAtom = atom({ plugin: 'roadmap', key: 'pendingAsks' } as const, [] as readonly string[])
 /** Le contexte du message précédent, en jetons (#119) : 0 quand rien n'est mesuré depuis le dernier vidage. */
 const contextSeenAtom = atom({ plugin: 'roadmap', key: 'contextSeen' } as const, 0)
+/** Le contexte de cette session à la fin de son dernier tour (#157), pour l'en-tête de la bande de Maestro. */
+const bandContextAtom = atom({ plugin: 'roadmap', key: 'bandContext' } as const, null as ContextUse | null)
 
 /**
  * Change l'état d'un clic en une écriture : `patch` dit les champs qui changent, d'après l'état
@@ -1605,6 +1612,11 @@ function childStatusOf(value: unknown): ChildStatus | undefined {
     const q = v.question as { text?: unknown; since?: unknown } | null
     if (typeof q !== 'object' || q === null || typeof q.text !== 'string' || typeof q.since !== 'number' || !Number.isFinite(q.since)) return undefined
   }
+  // Un contexte d'un autre format tombe seul : la note garde ses étapes (#157).
+  if ((value as { context?: unknown }).context !== undefined && !contextUseOf((value as { context?: unknown }).context)) {
+    const { context: _, ...rest } = value as ChildStatus
+    return rest
+  }
   return value as ChildStatus
 }
 
@@ -1620,8 +1632,10 @@ let noting: Promise<void> = Promise.resolve()
 /**
  * Change la note de cette session, si elle a un parent ; une erreur, horloge comprise, ne bloque
  * jamais l'outil. Chaque note attend la précédente : elle relit ce que l'autre vient d'écrire.
+ * `keepAt` garde l'heure de la note (#157 : le contexte n'est pas une nouvelle de ses étapes) ; un
+ * `change` qui rend la note telle quelle n'écrit rien.
  */
-function noteChild($: EngineInterface, change: (s: ChildStatus, now: number) => ChildStatus): Promise<void> {
+function noteChild($: EngineInterface, change: (s: ChildStatus, now: number) => ChildStatus, opts: { keepAt?: boolean } = {}): Promise<void> {
   noting = noting.then(async () => {
     try {
       const me = await ownParent($)
@@ -1629,7 +1643,9 @@ function noteChild($: EngineInterface, change: (s: ChildStatus, now: number) => 
       const key = `${CHILD_STATUS_PREFIX}${me.id}`
       const prev = childStatusOf(await $.store.get(key)) ?? { steps: [], at: 0 }
       const now = await $.clock.now()
-      await $.store.set(key, { ...change(prev, now), at: now })
+      const changed = change(prev, now)
+      if (changed === prev) return
+      await $.store.set(key, { ...changed, at: opts.keepAt && prev.at > 0 ? prev.at : now })
     } catch {
       // fiche, horloge ou store illisible : rien de noté, l'outil passe
     }
@@ -3514,6 +3530,26 @@ export const register: Register = (on, options) => {
     return next(e)
   })
 
+  // Le contexte à la fin de chaque tour (#157) : l'en-tête de la bande de Maestro le lit, et une
+  // session lancée par Maestro l'écrit dans sa note, à côté de ses étapes, sans en changer l'heure.
+  on('session.measure', async ($, e, next) => {
+    const result = await next(e)
+    const use = contextUseOf(e.context)
+    try {
+      await update($, bandContextAtom, () => use ?? null)
+    } catch {
+      // état illisible : la bande relit le contexte à son dessin
+    }
+    if (use) {
+      void noteChild(
+        $,
+        prev => (prev.at === 0 || (prev.context?.tokens === use.tokens && prev.context.window === use.window) ? prev : { ...prev, context: use }),
+        { keepAt: true },
+      )
+    }
+    return result
+  })
+
   // Le rappel du mode ADHD, à chaque message : la consigne du démarrage s'efface au fil de la session.
   // « Maestro » en tête du message : le panneau s'ouvre et Claude reçoit l'état d'avancement.
   // Par prompt.submit, que sec-default laisse aux plugins installés (#116), le contexte joint à la descente.
@@ -3916,9 +3952,12 @@ export const register: Register = (on, options) => {
       const now = await $.clock.now()
       const statuses = await Promise.all(band.tasks.map(t => readSteps($, t.sessionId)))
       const views = statuses.map((status, i) => (status ? stepsView(status.steps, { now, at: status.at, closed: band.tasks[i]?.closed === true }) : undefined))
+      // Le contexte de Maestro (#157) : la mesure du dernier tour, ou celle du moment avant la première.
+      const mine = (await read($, bandContextAtom)) ?? contextUseOf((await $.session.usage().catch(() => undefined))?.context)
+      const contexts = { mine: contextView(mine ?? undefined), rows: statuses.map(status => contextView(status?.context)) }
       return maestroBandTree($, e, band, found.data.palette, views, t =>
         void (t.sessionId ? openSession($, { sessionId: t.sessionId, startedAt: now, title: t.label }) : undefined),
-      now)
+      now, contexts)
     } catch {
       return next(e)
     }
@@ -4344,6 +4383,7 @@ function maestroBandTree(
   views: readonly (StepsView | undefined)[],
   open: (t: BrandTask) => void,
   now: number,
+  contexts: { mine?: ContextView; rows: readonly (ContextView | undefined)[] } = { rows: [] },
 ): RenderElement {
   const resolved = $.ui.resolve(e)
   const { Box, Text, Button } = resolved
@@ -4353,17 +4393,27 @@ function maestroBandTree(
   const hue = (t: BrandTask): [string, string] =>
     t.finished ? [palette.finished, palette.finishedOn] : t.state === 'wait' ? [palette.block, palette.blockOn] : t.state === 'live' ? [palette.live, palette.liveOn] : [palette.done, palette.text2]
   const strut = Svg && <Svg source={`<svg xmlns="http://www.w3.org/2000/svg" width="1" height="${SIZE.strut.row}"/>`} alt="espace" width={1} height={SIZE.strut.row} />
+  // Le contexte (#157, maquette C) : celui de Maestro dans l'en-tête, celui de chaque session sous sa jauge d'étapes.
+  const mine = contexts.mine
+  const mineBar = mine && Svg ? contextBarIcon(palette, mine, { width: BAND_GAUGE.context, height: 4 }) : undefined
   return (
     <Box flexDirection="column" gap={SPACE.tight} backgroundColor={palette.bg} padding="sm">
       <Box flexDirection="row" alignItems="center" gap={SPACE.row}>
         <Text size="footnote" weight="semibold">{words.title}</Text>
         {words.foot !== '' && <Text size="caption" color={palette.text3}>{`· ${words.foot}`}</Text>}
+        {mine && <Box flexGrow={1} />}
+        {mine && <Text size="caption" color={palette.text3}>Contexte</Text>}
+        {mine && <Text size="caption" tabular color={palette.text2}>{`${mine.percent} %`}</Text>}
+        {mine && <Text size="caption" tabular color={palette.text3}>{mine.text.slice(mine.text.indexOf('·'))}</Text>}
+        {mineBar && Svg && <Svg source={mineBar.source} alt={`contexte de Maestro ${mine?.text ?? ''}`} width={mineBar.width} height={mineBar.height} />}
       </Box>
       <Box flexDirection="column">
         {band.tasks.map((t, i) => {
           const view = views[i]
           const [dot, word] = hue(t)
           const bar = view && Svg ? stepsBarIcon(palette, view.segments, { width: BAND_GAUGE.row, height: 4, waiting: t.state === 'wait', finished: t.finished === true }) : undefined
+          const ctx = contexts.rows[i]
+          const ctxBar = ctx && Svg ? contextBarIcon(palette, ctx, { width: bar?.width ?? BAND_GAUGE.row, height: 2 }) : undefined
           const name = <Text size="footnote" wrap="truncate-end">{t.label}</Text>
           return (
             <Box key={`band-row:${keyPart(t.id)}`} flexDirection="row" alignItems="center" gap={SPACE.row} paddingX={1} hover={{ backgroundColor: palette.hover }}>
@@ -4384,7 +4434,12 @@ function maestroBandTree(
               <Box flexGrow={1} flexShrink={1} minWidth={0}>
                 {view?.current && !t.finished && <Text size="caption" color={palette.text3} wrap="truncate-end">{`· ${view.current}`}</Text>}
               </Box>
-              {bar && Svg && <Svg source={bar.source} alt={`étapes ${view?.count ?? ''}`} width={bar.width} height={bar.height} />}
+              {Svg && (bar || ctxBar) && (
+                <Box flexDirection="column" gap={SPACE.tight}>
+                  {bar && <Svg source={bar.source} alt={`étapes ${view?.count ?? ''}`} width={bar.width} height={bar.height} />}
+                  {ctxBar && ctx && <Svg source={ctxBar.source} alt={`contexte ${ctx.text}`} width={ctxBar.width} height={ctxBar.height} />}
+                </Box>
+              )}
               <Box minWidth={4} alignItems="flex-end">
                 {view && <Text size="caption" tabular color={palette.text3}>{view.count}</Text>}
               </Box>
@@ -4404,8 +4459,8 @@ function maestroBandTree(
   )
 }
 
-/** La largeur de la jauge d'une ligne de la bande de Maestro (#147), en px. */
-const BAND_GAUGE = { row: 64 }
+/** Les largeurs des jauges de la bande de Maestro, en px : celle d'une ligne (#147), celle du contexte de Maestro (#157). */
+const BAND_GAUGE = { row: 64, context: 120 }
 
 /**
  * L'en-tête du panneau, au-dessus de la roadmap : Maestro et ses voies ; chez une tâche dont on a demandé

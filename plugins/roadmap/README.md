@@ -553,6 +553,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.103.0 (2026-10-31)** : bande de Maestro : le contexte utilisé de Maestro dans l'en-tête (13 % · 132,5k / 1M, jauge orange à 70 %, rouge à 85 %), et celui de chaque session en jauge fine sous ses étapes (#157)
 - **0.102.0 (2026-10-31)** : panneau : chaque tâche ouverte porte son département en pastille à droite du titre (réglage Département en pastille, allumé), et « #N · » se colle au titre (#156)
 - **0.101.0 (2026-10-31)** : panneau : la fiche montre la mission seule, puis une carte Fin en tableau mis en forme (Fait, Livré, Souci, État, À toi) ; toute tâche close a son récap, gardé ou tiré de la roadmap et du bilan (#150)
 - **0.100.1 (2026-10-31)** : panneau : « Marquer faite » et « Annuler la tâche » acceptent les clés déclarées par le projet (cles), comme « projet: » (#155)

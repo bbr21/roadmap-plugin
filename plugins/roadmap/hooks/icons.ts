@@ -3,7 +3,7 @@
 // Couleurs et mesures : tokens.ts (#108) ; dessins du handoff de design (README « Icônes »). Un SVG
 // dessiné en image ne connaît pas `currentColor`, d'où la couleur passée à chaque dessin.
 
-import type { StepSegment, TodoIcon } from './parse'
+import type { ContextView, StepSegment, TodoIcon } from './parse'
 import { FONT, MIX, PALETTES, RADIUS, SIZE, STROKE, TEXT, type Palette, type ThemeName } from './tokens'
 
 // Les palettes et les traits sont des tokens du design system (#108) ; on les sert aussi d'ici.
@@ -695,6 +695,26 @@ export function stepsBarIcon(
     .join('')
   return {
     source: `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">${body}</svg>`,
+    width,
+    height,
+  }
+}
+
+/**
+ * La jauge fine du contexte d'une session (#157) : le fond gris, la part utilisée à la couleur du seuil
+ * (bleu, orange, rouge), pleine au-delà de la fenêtre.
+ */
+export function contextBarIcon(
+  palette: Palette,
+  view: ContextView,
+  opts: { width: number; height: number },
+): { source: string; width: number; height: number } {
+  const { width, height } = opts
+  const rx = Math.min(RADIUS.bar, height / 2)
+  const used = (Math.min(100, Math.max(0, view.percent)) * width) / 100
+  const fill = view.tone === 'full' ? palette.late : view.tone === 'high' ? palette.block : palette.live
+  return {
+    source: `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}"><rect x="0" y="0" width="${width}" height="${height}" rx="${rx}" fill="${palette.sel}"/>${used > 0 ? `<rect x="0" y="0" width="${used.toFixed(1)}" height="${height}" rx="${rx}" fill="${fill}"/>` : ''}</svg>`,
     width,
     height,
   }

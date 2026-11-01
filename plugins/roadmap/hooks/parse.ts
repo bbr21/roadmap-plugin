@@ -2479,8 +2479,42 @@ export type ChildStep = { content: string; status: 'pending' | 'in_progress' | '
 /**
  * Ce qu'un enfant note de lui : sa liste d'étapes, sa question en attente, son dernier récap. Une
  * question `from: 'box'` vient de sa boîte de fin (#121) : elle tombe au tour suivant de l'enfant.
+ * `context` : son contexte utilisé à la fin de son dernier tour (#157), écrit sans changer `at`.
  */
-export type ChildStatus = { steps: ChildStep[]; question?: { text: string; since: number; from?: 'box' }; recap?: string; at: number }
+export type ChildStatus = { steps: ChildStep[]; question?: { text: string; since: number; from?: 'box' }; recap?: string; context?: ContextUse; at: number }
+
+/** Le contexte utilisé d'une session (#157) : les jetons du dernier tour sur la fenêtre de son modèle. */
+export type ContextUse = { tokens: number; window: number }
+
+/** Ce que la bande montre d'un contexte (#157) : le %, « 13 % · 132,5k / 1M », la couleur du seuil. */
+export type ContextView = { percent: number; text: string; tone: 'ok' | 'high' | 'full' }
+
+/** Un contexte lisible, jetons et fenêtre en nombres ; sinon rien (une note d'un autre format). */
+export function contextUseOf(value: unknown): ContextUse | undefined {
+  if (typeof value !== 'object' || value === null) return undefined
+  const { tokens, window } = value as { tokens?: unknown; window?: unknown }
+  return typeof tokens === 'number' && Number.isFinite(tokens) && typeof window === 'number' && Number.isFinite(window) ? { tokens, window } : undefined
+}
+
+/** Des jetons comme la carte Context de l'app, en virgule décimale : 850, 9,4k, 132,5k, 1M, 1,5M (#157). */
+export function formatTokens(n: number): string {
+  const one = (x: number) => (Math.round(x * 10) / 10).toString().replace('.', ',')
+  if (n >= 1_000_000) return `${one(n / 1_000_000)}M`
+  if (n >= 1_000) return `${one(n / 1_000)}k`
+  return String(Math.round(n))
+}
+
+/** Les seuils du contexte (#157) : orange à 70 %, rouge à 85 %, près de la compaction. */
+const CONTEXT_HIGH = 70
+const CONTEXT_FULL = 85
+
+/** Le contexte d'une session tel que la bande le montre (#157) ; rien de mesuré, ou une fenêtre inconnue : rien. */
+export function contextView(c: ContextUse | undefined): ContextView | undefined {
+  if (!c || !(c.window > 0) || !(c.tokens >= 0)) return undefined
+  const percent = Math.round((c.tokens * 100) / c.window)
+  const tone = percent >= CONTEXT_FULL ? 'full' : percent >= CONTEXT_HIGH ? 'high' : 'ok'
+  return { percent, text: `${percent} % · ${formatTokens(c.tokens)} / ${formatTokens(c.window)}`, tone }
+}
 
 const STEP_STATUSES: readonly string[] = ['pending', 'in_progress', 'completed']
 
