@@ -645,6 +645,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.121.0 (2026-11-01)** : panneau : s'ouvre sur toutes les tâches, en arbre, « Plus › » replié, chez Maestro comme ailleurs (#188)
 - **0.120.0 (2026-11-01)** : panneau : la case s'anime quand on coche (rebond du carré, coche tracée) et une tâche cochée reste un instant à sa place avant de partir dans les Done (#182)
 - **0.119.1 (2026-11-01)** : panneau : le bloc « En cours » de Maestro montre aussi les tâches en cours dans d'autres sessions, même chez un Maestro neuf (#187)
 - **0.119.0 (2026-11-01)** : panneau : les Done en vert, la barre des seules ouvertes (pleine en vue Done), la case d'une faite en carré d'axe coché (#180)

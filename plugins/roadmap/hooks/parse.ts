@@ -1529,13 +1529,23 @@ export function todoCounters(maestro = false): TodoCounter[] {
 }
 
 /**
- * Le filtre à l'ouverture (#149, #176) : ce qu'une session travaille s'il y en a, puis « Ma journée »,
- * sinon tout. Chez Maestro, dont le bloc montre déjà ce qui tourne (#160) : Ma journée, sinon les
- * récentes, sinon tout.
+ * La vue à l'ouverture du panneau (#188, capture de Bertrand) : toutes les tâches, pastille « Toutes »,
+ * tous les axes, rangées selon `groupingOf` (l'arbre, sauf une vue que le projet déclare), « Plus › »
+ * replié, chez Maestro comme ailleurs. Remplace les choix d'ouverture de #149, #160 et #176.
  */
-export function openingFilter(o: { today: number; live: number; recent: number; maestro?: boolean }): 'today' | 'live' | 'recent' | 'all' {
-  if (o.maestro) return o.today > 0 ? 'today' : o.recent > 0 ? 'recent' : 'all'
-  return o.live > 0 ? 'live' : o.today > 0 ? 'today' : 'all'
+export const OPENING_VIEW = { axis: 'all', attend: 'all', who: 'all', moreFilters: false, showDone: false, groupBy: 'auto' } as const
+
+/**
+ * « Plus › » déplié (#115, #176) : ouvert à la main, ou tenu ouvert tant qu'un de ses filtres, un tiers
+ * (`tierChosen`) ou une personne (`who`) est choisi.
+ */
+export function moreFiltersOpen(o: { attend: string; who: string; moreFilters: boolean; tierChosen: boolean }): boolean {
+  return o.moreFilters || moreFiltersForced(o)
+}
+
+/** « Plus › » tenu ouvert par ce qu'il porte : son clic ne le replie pas. */
+export function moreFiltersForced(o: { attend: string; who: string; tierChosen: boolean }): boolean {
+  return secondaryFilters().includes(o.attend) || o.tierChosen || o.who !== 'all'
 }
 
 /** Les filtres repliés sous « Plus de filtres » (#115) : ceux qui ne sont pas des pastilles ; le menu « Qui » s'y ajoute (#176). */

@@ -253,7 +253,8 @@ import {
   sessionScanNote,
   maestroTasksNote,
   liveBlockRows,
-  openingFilter,
+  OPENING_VIEW,
+  moreFiltersForced,
   otherTaskNote,
   problemsText,
   sourceFor,
@@ -516,8 +517,8 @@ const UNKNOWN_MAX_MS = 12 * 3_600_000
  */
 const VIEW: View = {
   axis: 'all',
-  // `auto` (#176) : les tâches en cours s'il y en a, sinon Ma journée, sinon toutes ; un clic sur un filtre le remplace.
-  attend: 'auto',
+  // Toutes les tâches (#188) ; un clic sur un filtre le remplace jusqu'à la prochaine ouverture.
+  attend: 'all',
   who: 'all',
   moreFilters: false,
   showDone: false,
@@ -3865,10 +3866,11 @@ async function sessionPrefsBlock($: EngineInterface): Promise<string | undefined
 // 110 pour un volet déjà ouvert à la main ; en dessous, le volet attend sans rien dire. La raison part au
 // journal de débogage : chez Caro (#117), c'est elle qui dit pourquoi le panneau ne paraissait pas.
 async function openPane($: EngineInterface, source: Source) {
-  // Un panneau qui s'ouvre (pas déjà dessiné) reprend son filtre d'ouverture (#149) ; ouvert, il garde le
-  // filtre choisi. Liste des volets illisible (le kit de test ne la donne pas) : rien ne change.
+  // Un panneau qui s'ouvre (pas déjà dessiné) reprend la vue d'ouverture (#188) : toutes les tâches, en
+  // arbre, « Plus › » replié ; ouvert, il garde le filtre choisi. Liste des volets illisible (le kit de
+  // test ne la donne pas) : rien ne change.
   try {
-    if (!(await $.ui.panes()).some(p => p.id === PANE && p.isPlaced)) await setView($, () => ({ attend: 'auto' }))
+    if (!(await $.ui.panes()).some(p => p.id === PANE && p.isPlaced)) await setView($, () => ({ ...OPENING_VIEW }))
   } catch {
     // liste des volets illisible
   }
@@ -6439,8 +6441,6 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   const liveAll = inAxis.filter(t => isLive(t) || blocked(t))
   // « Retours » : les tâches nées d'un retour de l'app, ou qui en ont reçu.
   const feedbackAll = inAxis.filter(t => t.feedback !== undefined)
-  // Par défaut (#176) : les tâches en cours, sinon Ma journée, sinon toutes. Chez Maestro (#149) : Ma
-  // journée, sinon les récentes.
   const maestroBrand = ownBrand?.brand.kind === 'maestro' ? ownBrand.brand : undefined
   // Le bloc « En cours » de Maestro (#160) : ses sessions qui tournent ou t'attendent, puis les tâches
   // qu'une autre session travaille (#187), en lignes ; la liste de la roadmap dessous ne les redit pas.
@@ -6464,10 +6464,10 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     // Chez Maestro, « En cours » n'est plus un filtre (#160) : une vue gardée dessus montre toutes les tâches.
     attendRaw === 'live' && maestroBrand
       ? 'all'
-      : attendRaw !== 'auto'
-      ? attendRaw
-      : // Les tâches qu'une session travaille, sans les bloquées : une chaîne `après:` n'ouvre pas sur « En cours ».
-        openingFilter({ today: todayAll.length, live: inAxis.filter(isLive).length, recent: recentAll.length, maestro: maestroBrand !== undefined })
+      : // `auto`, d'une vue gardée d'avant l'ouverture sur « Toutes » (#188) : toutes les tâches.
+        attendRaw === 'auto'
+        ? OPENING_VIEW.attend
+        : attendRaw
   // Le bloc « En cours » de Maestro (#149, #160) remplace le filtre « En cours », même avant sa première
   // tâche lancée (#187) : un Maestro neuf y voit ce qui tourne ailleurs, et rien quand rien ne tourne.
   const maestroLine = maestroBrand !== undefined
@@ -7285,7 +7285,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   // reste ouvert tant qu'un de ses filtres, un tiers ou une personne est choisi.
   // Un filtre choisi garde sa ligne à 0, comme une ligne de « À traiter » : un clic le retire.
   const secondary = showDone ? [] : secondaryFilters(maestroLine).flatMap(k => states.filter(st => st.key === k && (st.n > 0 || attend === k)))
-  const moreForced = secondaryFilters(maestroLine).includes(attend) || tierChosen || who !== 'all'
+  const moreForced = moreFiltersForced({ attend, who, tierChosen })
   const moreOpen = moreFilters || moreForced
   // Ouvert de force, le clic ne change rien : ni l'affichage, ni l'état caché.
   const toggleMore = () => {
