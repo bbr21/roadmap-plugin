@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Tenir la roadmap au quotidien (#158) : le contexte (règles, déclarations, prochain numéro), le
 rapprochement d'une action avec les tâches du même sujet, puis l'écriture des opérations validées
-(ajouter, compléter, redater, cocher sur preuve, abandonner), essai à blanc d'abord, tout ou rien.
+(ajouter, compléter, redater, cocher sur preuve, abandonner, mettre en pause), essai à blanc d'abord, tout ou rien.
 
 python3 tasks.py context FOLDER [--day YYYY-MM-DD] > context.json
 python3 tasks.py match FOLDER --text "…" [--text "…"]
@@ -39,7 +39,10 @@ OPS = {
     "reschedule": {"op", "id", "due"},
     "done": {"op", "id", "date", "proof"},
     "drop": {"op", "id", "reason"},
+    "pause": {"op", "id", "until", "reason"},
 }
+# La section où part une tâche en pause (#159) : sa date de reprise la range, aucune clé nouvelle.
+SECTION_PAUSE = "Plus tard"
 # Ce que `fields` ne pose jamais : le numéro, la session, la clôture ; `parent` d'un ajout passe par `parent`.
 INTERDITS_AJOUT = {"id", "qui", "branche", "verrou", "fait", "parent"}
 INTERDITS_COMPLETER = {"id", "qui", "branche", "verrou", "fait"}
@@ -147,7 +150,8 @@ class _Tenue(audit._Preparation):
         self.axes = ctx.get("axes") or []
         self.sections = ctx.get("sections") or []
         self.notes = []
-        self.tenue = {"ajoutees": [], "completees": [], "redatees": [], "cochees": [], "abandonnees": []}
+        self.tenue = {"ajoutees": [], "completees": [], "redatees": [], "cochees": [], "abandonnees": [],
+                      "en_pause": []}
         self.blanc_apres = set()  # ancres d'une section vide : une ligne vide après les tâches posées
         self.section_de = {t["ligne"]: t["section"] for t in im.lire_checklist(self.texte_o)[0]}
 
@@ -260,6 +264,13 @@ class _Tenue(audit._Preparation):
         apres = brut.pop("après", None)
         parent = brut.pop("parent", None)
         for k, v in brut.items():
+            if v is None:
+                # `null` retire une clé facultative (#159 : la `prio:` posée sur un enfant).
+                if k in self.requis or k in INTERDITS_COMPLETER:
+                    raise Erreur("%s : %s est un champ exigé ou réservé, il ne se retire pas" % (quoi, k))
+                t.champs = [(c, x) for c, x in t.champs if c != k]
+                t.touche = True
+                continue
             t.set(k, self.champ_propose(k, v, quoi, INTERDITS_COMPLETER))
         if parent is not None:
             p = str(parent).lstrip("#")
@@ -329,6 +340,35 @@ class _Tenue(audit._Preparation):
         self.fermer_tache(t, self.jour, " (abandonné)", "Abandonnée : %s" % raison, raison)
         self.tenue["abandonnees"].append(t.id)
 
+    def mettre_en_pause(self, op):
+        """En pause (#159) : `due:` devient la date de reprise, la note le dit, et la tâche passe en
+        « Plus tard » ; un enfant reste sous son parent."""
+        t = self.tache(op.get("id"), "pause")
+        quoi = "pause de #%s" % t.id
+        self.libre(t, quoi)
+        reprise = _date(op.get("until"), quoi, "until")
+        raison = audit._propre(op.get("reason"))
+        if not raison:
+            raise Erreur("%s : la raison manque" % quoi)
+        ouverts = self.enfants_ouverts(t)
+        if ouverts:
+            raise Erreur("%s : #%s a un enfant ouvert (#%s) : mets en pause ses enfants" % (quoi, t.id, ouverts[0].id))
+        t.set("due", reprise)
+        jour = datetime.date.fromisoformat(self.jour)
+        t.note = (t.note + " (en pause depuis le %s : %s)" % (jour.strftime("%d/%m"), raison)).strip()
+        if _sans_parent(t) == "-" and SECTION_PAUSE in self.sections and self.section_de.get(t.ligne) != SECTION_PAUSE:
+            t.deplacee = True
+            self.placer(t, None, SECTION_PAUSE, quoi)
+        self.tenue["en_pause"].append(t.id)
+
+    def ouvertes(self):
+        vues, sortie = set(), []
+        for t in super().ouvertes():
+            if id(t) not in vues:
+                vues.add(id(t))
+                sortie.append(t)
+        return sortie
+
     # -- rendu
 
     def rendre_ouvert(self):
@@ -338,7 +378,7 @@ class _Tenue(audit._Preparation):
             sortie.extend(m.rendre() for m in self.avant_ligne.get(n, []))
             if t is None:
                 sortie.append(ligne)
-            elif not getattr(t, "retiree", False):
+            elif not getattr(t, "retiree", False) and not getattr(t, "deplacee", False):
                 sortie.append(t.rendre())
             sortie.extend(e.rendre() for e in self.apres_ligne.get(n, []))
             if n in self.blanc_apres and self.apres_ligne.get(n) and n < len(self.lignes) and self.lignes[n].strip():
@@ -359,11 +399,6 @@ def _verifier_operation(op):
         raise Erreur("%s : fields est un objet" % nom)
 
 
-def _lignes_changees(avant, apres):
-    vues = set((avant or "").split("\n"))
-    return [l for l in apres.split("\n") if l.strip() and l not in vues]
-
-
 def preparer(ctx, props):
     """Les fichiers préparés ({chemin: texte}) et le bilan ; `Erreur` au premier écart, rien d'écrit."""
     rdir = os.path.dirname(ctx["roadmap"])
@@ -376,7 +411,7 @@ def preparer(ctx, props):
     for op in operations:
         _verifier_operation(op)
         {"add": prep.ajouter, "update": prep.completer_tache, "reschedule": prep.redater,
-         "done": prep.cocher, "drop": prep.abandonner}[op["op"]](op)
+         "done": prep.cocher, "drop": prep.abandonner, "pause": prep.mettre_en_pause}[op["op"]](op)
     prep.boucles()
     apres_o = prep.rendre_ouvert()
     apres_f = prep.rendre_fait()
@@ -390,7 +425,7 @@ def preparer(ctx, props):
         fichiers[chemin_bilans] = bilans
     fichiers = {p: t for p, t in fichiers.items() if audit._lire_fichier(p) != t}
     bilan = dict(prep.tenue, ids_crees=prep.bilan["ids_crees"], notes=prep.notes, comptes=prep.bilan.get("comptes"),
-                 lignes={os.path.basename(p): _lignes_changees(audit._lire_fichier(p), t) for p, t in fichiers.items()})
+                 lignes={os.path.basename(p): audit.lignes_changees(audit._lire_fichier(p), t) for p, t in fichiers.items()})
     return fichiers, bilan
 
 
@@ -428,7 +463,7 @@ def ecrire(dossier, chemin_ops, appliquer=False, maintenant=None):
 
 def afficher(bilan, decl):
     for nom, cle in (("Ajoutées", "ajoutees"), ("Complétées", "completees"), ("Redatées", "redatees"),
-                     ("Cochées", "cochees"), ("Abandonnées", "abandonnees")):
+                     ("Cochées", "cochees"), ("Abandonnées", "abandonnees"), ("En pause", "en_pause")):
         if bilan[cle]:
             print("%s : #%s" % (nom, ", #".join(bilan[cle])))
     for note in bilan["notes"]:

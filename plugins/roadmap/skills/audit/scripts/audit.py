@@ -4,8 +4,9 @@ doublons possibles), puis l'application des propositions validées (découpages,
 fusions, fermetures, dépendances, valeurs), tout ou rien, sauvegardée et prouvée par un bilan qui
 retrouve chaque fragment du texte d'origine.
 
-python3 audit.py releve DOSSIER [--jour AAAA-MM-JJ] > releve.json
-python3 audit.py appliquer DOSSIER --propositions propositions.json [--jour AAAA-MM-JJ]
+python3 audit.py survey FOLDER [--day YYYY-MM-DD] > survey.json
+python3 audit.py apply FOLDER --proposals proposals.json [--day YYYY-MM-DD]
+python3 audit.py pending FOLDER [--add questions.json] [--resolve KEY ...]
 
 Python 3.9 et plus, bibliothèque standard seulement. Lit la grammaire avec `importer.py` de la skill
 onboarding, pour que les deux skills lisent une ligne de la même façon.
@@ -34,6 +35,15 @@ FICHIER_OUVERT, FICHIER_FAIT = im.FICHIER_OUVERT, im.FICHIER_FAIT
 RELANCE_JOURS = 14
 REQUIS_PROJET = ["id", "ouvert", "due", "resp", "parent", "après"]
 SEUIL_DOUBLON = 0.3
+# #159 : un fichier d'un lieu de preuve qui porte cette part des mots du libellé est une piste.
+SEUIL_PREUVE = 0.6
+# Au-delà de ce retard, l'audit recommande la pause plutôt qu'une date de plus.
+RETARD_PAUSE = 30
+# La reprise d'une tâche en pause : le lundi qui suit ce nombre de jours.
+JOURS_PAUSE = 28
+FICHIER_QUESTIONS = "ROADMAP-questions.json"
+TEXTES_PREUVE = (".md", ".txt", ".eml", ".html", ".htm", ".json", ".csv")
+MAX_ENTREES_PREUVE = 5000
 
 # Les mots qu'une reformulation change sans rien perdre du sens : articles et déterminants,
 # prépositions, conjonctions. Une liste fermée ; tout autre mot compte dans le bilan, la négation
@@ -178,10 +188,13 @@ def releve(dossier, jour=None, perso="~/.claude/roadmap-perso.json"):
 
     trous = {k: [] for k in ("sans_due", "en_retard", "sans_resp", "a_relancer",
                              "mere_sans_enfant_ouvert", "parent_introuvable")}
+    # Un parent qui a un enfant ouvert est daté par lui (#125) : il n'est pas « sans date ».
+    meres_ouvertes = {t["parent"] for t in taches if t["parent"]}
     for t in taches:
         c, i = t["champs"], t["id"]
         if not c.get("due"):
-            trous["sans_due"].append(i)
+            if i not in meres_ouvertes:
+                trous["sans_due"].append(i)
         elif c["due"] < jour:
             trous["en_retard"].append(i)
         if "resp" in requis and not c.get("resp"):
@@ -217,6 +230,7 @@ def releve(dossier, jour=None, perso="~/.claude/roadmap-perso.json"):
         if len(valeurs) > len(set(valeurs)):
             heritage.add(k)
 
+    pistes = pistes_preuve(taches, ob.declarations(dossier, cfg), dossier, jour, noms)
     return {
         "roadmap": os.path.join(rdir, FICHIER_OUVERT), "fait": os.path.join(rdir, FICHIER_FAIT),
         "dossier": dossier, "jour": jour, "mode": mode, "requis": requis, "me": me, "relance": relance,
@@ -224,7 +238,251 @@ def releve(dossier, jour=None, perso="~/.claude/roadmap-perso.json"):
         "paquets": [t["id"] for t in taches if len(t["fragments"]) > 1],
         "trous": trous, "doublons_possibles": doublons, "heritage": sorted(heritage),
         "cles": sorted(declarees),
+        "pistes_preuve": pistes,
+        "questions": questions_par_tache(taches, trous, pistes, jour),
+        "en_attente": _en_attente(_lire_questions(rdir), taches)[0],
     }
+
+
+# ---------------------------------------------------------------- #159 : preuves et questions
+
+
+def _date_du_fichier(chemin):
+    m = re.search(r"(\d{4}-\d{2}-\d{2})", os.path.basename(chemin))
+    if m:
+        try:
+            return datetime.date.fromisoformat(m.group(1)).isoformat()
+        except ValueError:
+            pass
+    return datetime.date.fromtimestamp(os.path.getmtime(chemin)).isoformat()
+
+
+def _fichiers_de(lieu):
+    if os.path.isfile(lieu):
+        yield lieu
+        return
+    # Le lieu est déclaré par le projet lui-même ; le parcours reste borné (chaque entrée visitée
+    # compte) et ne suit pas les liens symboliques.
+    n = 0
+    for racine, dossiers, noms in os.walk(lieu):
+        dossiers[:] = sorted(d for d in dossiers if not d.startswith("."))
+        n += len(dossiers) + len(noms)
+        if n > MAX_ENTREES_PREUVE:
+            return
+        for nom in sorted(noms):
+            if nom.lower().endswith(TEXTES_PREUVE) and not os.path.islink(os.path.join(racine, nom)):
+                yield os.path.join(racine, nom)
+
+
+def pistes_preuve(taches, decl, dossier, jour, noms=frozenset()):
+    """Les fichiers des lieux `chemin` de `preuves`, datés entre l'ouverture d'une tâche et le jour,
+    qui portent au moins SEUIL_PREUVE des mots de son libellé : des pistes, que Claude lit."""
+    lieux = [p["absolu"] for p in decl.get("preuves") or [] if p.get("type") == "chemin" and p.get("existe")]
+    fichiers = []
+    for lieu in lieux:
+        for chemin in _fichiers_de(lieu):
+            try:
+                with open(chemin, encoding="utf-8", errors="replace") as f:
+                    texte = f.read(50000)
+            except OSError:
+                continue
+            fichiers.append((chemin, _date_du_fichier(chemin), mots(os.path.basename(chemin) + " " + texte)))
+    meres = {t["parent"] for t in taches if t["parent"]}
+    pistes = []
+    for t in taches:
+        cible = _signifiants(t["libelle"], 4, noms)
+        if len(cible) < 2 or t["id"] in meres:
+            continue
+        ouvert = t["champs"].get("ouvert") or ""
+        for chemin, date, portes in fichiers:
+            score = len(cible & portes) / len(cible)
+            if score >= SEUIL_PREUVE and ouvert <= date <= jour:
+                pistes.append({"tache": t["id"], "fichier": os.path.relpath(chemin, dossier), "date": date,
+                               "score": round(score, 2)})
+    pistes.sort(key=lambda p: (int(p["tache"]) if p["tache"].isdigit() else 0, -p["score"], p["date"]))
+    return pistes
+
+
+def lundi_apres(jour, jours=0):
+    """Le premier lundi strictement après `jour` + `jours` (AAAA-MM-JJ)."""
+    d = datetime.date.fromisoformat(jour) + datetime.timedelta(days=jours)
+    return (d + datetime.timedelta(days=7 - d.weekday())).isoformat()
+
+
+def _jj_mm(date):
+    return datetime.date.fromisoformat(date).strftime("%d/%m")
+
+
+def _priorite(t, par_id):
+    if t["parent"] in par_id:
+        return par_id[t["parent"]]["champs"].get("prio") or t["champs"].get("prio")
+    return t["champs"].get("prio")
+
+
+def questions_par_tache(taches, trous, pistes, jour):
+    """Une question par tâche en retard, sans date ou enfant à `prio:` (#159), la recommandation en
+    premier, chaque option avec ses opérations de `tasks.py write` ; dans l'ordre des priorités."""
+    par_id = {t["id"]: t for t in taches}
+    meres = {t["parent"] for t in taches if t["parent"]}
+    piste_de = {}
+    for p in pistes:
+        piste_de.setdefault(p["tache"], p)
+    le = _jj_mm(jour)
+    questions = []
+
+    def poser(t, kind, texte, options):
+        options[0] = dict(options[0], label=options[0]["label"] + " (recommandé)")
+        questions.append({"key": "%s-%s" % (kind, t["id"]), "task": t["id"], "kind": kind,
+                          "priority": _priorite(t, par_id), "asked": jour, "question": texte, "options": options})
+
+    for kind, ids in (("late", trous["en_retard"]), ("undated", trous["sans_due"])):
+        for i in ids:
+            t = par_id[i]
+            c = t["champs"]
+            nom = "« %s » (#%s)" % (t["libelle"], i)
+            lundi = lundi_apres(jour)
+            dater = {"label": "%s au lundi %s" % ("Redater" if kind == "late" else "Dater", _jj_mm(lundi)),
+                     "operations": [{"op": "reschedule", "id": i, "due": lundi}]}
+            if i in meres:
+                # Un parent à enfant ouvert ne se coche, ne s'abandonne ni ne se met en pause : on le redate.
+                loin = lundi_apres(jour, JOURS_PAUSE)
+                options = [dater, {"label": "Repousser au lundi %s" % _jj_mm(loin),
+                                   "operations": [{"op": "reschedule", "id": i, "due": loin}]}]
+            else:
+                p = piste_de.get(i)
+                if p:
+                    faite = {"label": "Faite le %s" % _jj_mm(p["date"]), "operations": [
+                        {"op": "done", "id": i, "date": p["date"], "proof": "piste de l'audit : %s" % p["fichier"]}]}
+                else:
+                    faite = {"label": "Faite", "operations": [
+                        {"op": "done", "id": i, "date": jour, "proof": "confirmée à l'audit du %s" % le}]}
+                reprise = lundi_apres(jour, JOURS_PAUSE)
+                pause = {"label": "En pause jusqu'au lundi %s" % _jj_mm(reprise), "operations": [
+                    {"op": "pause", "id": i, "until": reprise, "reason": "décidé à l'audit du %s" % le}]}
+                abandon = {"label": "Abandonner", "operations": [
+                    {"op": "drop", "id": i, "reason": "abandonnée à l'audit du %s" % le}]}
+                retard = _jours(c["due"], jour) if c.get("due") else 0
+                if p:
+                    options = [faite, dater, pause, abandon]
+                elif retard is not None and retard > RETARD_PAUSE:
+                    options = [pause, dater, faite, abandon]
+                else:
+                    options = [dater, faite, pause, abandon]
+                if c.get("qui") and c.get("branche"):
+                    options = [o for o in options if o is dater or o is faite]
+            if kind == "late":
+                texte = "%s est en retard depuis le %s : que fait-on ?" % (nom, _jj_mm(c["due"]))
+            else:
+                texte = "%s n'a pas d'échéance : que fait-on ?" % nom
+            poser(t, kind, texte, options)
+
+    for t in taches:
+        mere = par_id.get(t["parent"])
+        prio = t["champs"].get("prio")
+        if not (mere and prio) or (t["champs"].get("qui") and t["champs"].get("branche")):
+            continue
+        nom_m = "« %s » (#%s)" % (mere["libelle"], mere["id"])
+        retirer = {"op": "update", "id": t["id"], "fields": {"prio": None}}
+        porter = {"label": "Porter prio:%s sur %s" % (prio, nom_m),
+                  "operations": [retirer, {"op": "update", "id": mere["id"], "fields": {"prio": prio}}]}
+        if mere["champs"].get("prio"):
+            options = [{"label": "Garder prio:%s de %s, retirer celle-ci" % (mere["champs"]["prio"], nom_m),
+                        "operations": [retirer]}, porter]
+        else:
+            options = [porter, {"label": "Retirer la priorité", "operations": [retirer]}]
+        poser(t, "prio_on_child", "« %s » (#%s) porte prio:%s, mais une priorité se pose sur son parent %s : que fait-on ?"
+              % (t["libelle"], t["id"], prio, nom_m), options)
+
+    rang = {"1": 0, "2": 1, "3": 2}
+    questions.sort(key=lambda q: (rang.get(q["priority"], 3), int(q["task"]) if q["task"].isdigit() else 0))
+    return questions
+
+
+# ---------------------------------------------------------------- #159 : les questions en attente
+
+
+def _lire_questions(rdir):
+    texte = _lire_fichier(os.path.join(rdir, FICHIER_QUESTIONS))
+    if texte is None:
+        return []
+    try:
+        data = json.loads(texte)
+        questions = data["questions"]
+        assert isinstance(questions, list)
+    except (ValueError, KeyError, TypeError, AssertionError):
+        raise Erreur("%s illisible : un objet {\"version\": 1, \"questions\": [...]} attendu" % FICHIER_QUESTIONS)
+    return questions
+
+
+def _verifier_question(q):
+    if not isinstance(q, dict):
+        raise Erreur("question en attente : un objet, pas %r" % (q,))
+    for k in ("key", "kind", "question"):
+        if not isinstance(q.get(k), str) or not q[k].strip():
+            raise Erreur("question en attente : %s manque (%r)" % (k, q.get("key")))
+    options = q.get("options")
+    if not isinstance(options, list) or not options:
+        raise Erreur("question %s : options doit être une liste non vide" % q["key"])
+    for o in options:
+        if not isinstance(o, dict) or not isinstance(o.get("label"), str) or not (
+                isinstance(o.get("operations"), list) or isinstance(o.get("proposals"), dict)):
+            raise Erreur("question %s : chaque option a un label et des operations (ou des proposals)" % q["key"])
+
+
+def _en_attente(questions, taches):
+    """(questions encore valables, clés retirées) : une question dont la tâche n'est plus ouverte part."""
+    ouvertes = {t["id"] for t in taches}
+    gardees = [q for q in questions if not q.get("task") or str(q["task"]) in ouvertes]
+    return gardees, [q["key"] for q in questions if q not in gardees]
+
+
+def compter(questions):
+    compte = {"total": len(questions), "prio:1": 0, "prio:2": 0, "prio:3": 0, "sans priorité": 0}
+    for q in questions:
+        p = q.get("priority")
+        compte["prio:%s" % p if p in ("1", "2", "3") else "sans priorité"] += 1
+    parts = ["%s : %d" % (k, n) for k, n in compte.items() if k != "total" and n]
+    resume = "Questions en attente : %d" % compte["total"] + (" (%s)" % ", ".join(parts) if parts else "")
+    return compte, resume
+
+
+def attente(dossier, ajouter=None, resoudre=(), jour=None, perso="~/.claude/roadmap-perso.json"):
+    """Lit, complète (`ajouter` : un fichier JSON, liste de questions ; même `key` : la dernière gagne)
+    et résout (`resoudre` : des clés) les questions en attente de ROADMAP-questions.json ; retire
+    celles dont la tâche n'est plus ouverte. Rend les questions, leur compte par priorité, le résumé."""
+    dossier, rdir, _ = situer(dossier)
+    texte_o = _lire_fichier(os.path.join(rdir, FICHIER_OUVERT)) or ""
+    taches = [{"id": im.champ(t, "id")} for t in im.lire_checklist(texte_o)[0] if not t["fait"]]
+    avant = _lire_questions(rdir)
+    questions = list(avant)
+    if ajouter:
+        try:
+            with open(ajouter, encoding="utf-8") as f:
+                nouvelles = json.load(f)
+        except (OSError, ValueError) as e:
+            raise Erreur("questions illisibles (%s) : %s" % (ajouter, e))
+        if isinstance(nouvelles, dict):
+            nouvelles = nouvelles.get("questions")
+        if not isinstance(nouvelles, list):
+            raise Erreur("questions : une liste attendue (%s)" % ajouter)
+        for q in nouvelles:
+            _verifier_question(q)
+        cles = {q["key"] for q in nouvelles}
+        questions = [q for q in questions if q.get("key") not in cles] + nouvelles
+    connues = {q.get("key") for q in questions}
+    for k in resoudre:
+        if k not in connues:
+            raise Erreur("question %s inconnue de %s" % (k, FICHIER_QUESTIONS))
+    questions = [q for q in questions if q.get("key") not in set(resoudre)]
+    questions, retirees = _en_attente(questions, taches)
+    chemin = os.path.join(rdir, FICHIER_QUESTIONS)
+    if questions != avant:
+        texte = json.dumps({"version": 1, "questions": questions}, ensure_ascii=False, indent=2) + "\n"
+        im._ecrire_tout({chemin: texte})
+    compte, resume = compter(questions)
+    res = {"chemin": chemin, "questions": questions, "retirees": retirees, "compte": compte, "resume": resume}
+    print(json.dumps(res, ensure_ascii=False, indent=2))
+    return res
 
 
 # ---------------------------------------------------------------- appliquer
@@ -236,18 +494,19 @@ ORDRE = ["id", "ouvert", "due", "resp", "parent", "après", "attend", "relance",
 CHAMPS_INTERDITS = {"id", "qui", "branche", "verrou", "fait", "parent", "après"}
 CLES_PANNEAU = set(im.CLES_GRAMMAIRE) | {"tous", "relance"}
 NON_HERITES = {"id", "ouvert", "parent", "après", "qui", "branche", "verrou", "fait", "ref"}
-# Les clés permises dans propositions.json, par niveau : une faute de frappe perdrait un choix validé.
+# Les clés permises dans proposals.json, par niveau : une faute de frappe perdrait un choix validé.
+# Le contrat est en anglais, comme la skill (#159) ; le code garde le vocabulaire de l'audit.
 SCHEMA = {
-    "": {"releve", "decoupages", "regroupements", "fusions", "fermetures", "apres", "valeurs", "heritage"},
-    "decoupages": {"id", "mere", "fragments_mere", "enfants"},
-    "decoupages.mere": {"libelle", "note", "champs"},
-    "decoupages.enfants": {"cle", "libelle", "note", "fragments", "champs"},
-    "regroupements": {"mere", "enfants"},
-    "regroupements.mere": {"cle", "libelle", "note", "axe", "champs"},
-    "fusions": {"garde", "part", "libelle"},
-    "fermetures": {"id"},
-    "apres": {"id", "apres"},
-    "valeurs": {"id", "champ", "valeur"},
+    "": {"survey", "splits", "groups", "merges", "closures", "after", "values", "inherit"},
+    "splits": {"id", "parent", "parent_fragments", "children"},
+    "splits.parent": {"label", "note", "fields"},
+    "splits.children": {"key", "label", "note", "fragments", "fields"},
+    "groups": {"parent", "children"},
+    "groups.parent": {"key", "label", "note", "axis", "fields"},
+    "merges": {"keep", "drop", "label"},
+    "closures": {"id"},
+    "after": {"id", "after"},
+    "values": {"id", "field", "value"},
 }
 VALEURS_PERMISES = ("due", "resp", "relance", "attend", "prio", "ouvert", "parent")
 
@@ -305,7 +564,7 @@ def _charger_props(chemin):
     try:
         with open(chemin, encoding="utf-8") as f:
             props = json.load(f)
-        with open(props["releve"], encoding="utf-8") as f:
+        with open(props["survey"], encoding="utf-8") as f:
             return props, json.load(f)
     except (OSError, ValueError, KeyError, TypeError) as e:
         raise Erreur("propositions ou relevé illisibles (%s) : %s" % (chemin, e))
@@ -317,7 +576,7 @@ class _Preparation:
         self.rdir = os.path.dirname(releve["roadmap"])
         self.jour = releve["jour"]
         self.requis = releve.get("requis") or []
-        self.heritage = [k for k in props.get("heritage", releve.get("heritage") or []) if k not in NON_HERITES]
+        self.heritage = [k for k in props.get("inherit", releve.get("heritage") or []) if k not in NON_HERITES]
         self.declarees = set(releve.get("cles") or [])
         self.gardes = set()
         self.texte_o = _lire_fichier(releve["roadmap"]) or ""
@@ -412,31 +671,31 @@ class _Preparation:
         self.deux_niveaux(mere, quoi)
         frags = fragments(mere.libelle)
         avant_mere = mere.libelle + " " + mere.note
-        m = d.get("mere") or {}
-        if m.get("libelle"):
-            mere.libelle = _propre(m["libelle"])
+        m = d.get("parent") or {}
+        if m.get("label"):
+            mere.libelle = _propre(m["label"])
             mere.touche = True
         if "note" in m and m["note"] is not None:
             mere.note = _propre(m["note"])
             mere.touche = True
-        for k, v in self.champs_proposes(m.get("champs"), quoi).items():
+        for k, v in self.champs_proposes(m.get("fields"), quoi).items():
             mere.set(k, v)
         cibles = {}
-        for n in d.get("fragments_mere") or []:
+        for n in d.get("parent_fragments") or []:
             cibles.setdefault(n, []).append(mere)
         enfants = []
-        for e in d.get("enfants") or []:
-            champs = self.champs_proposes(e.get("champs"), quoi)
+        for e in d.get("children") or []:
+            champs = self.champs_proposes(e.get("fields"), quoi)
             champs.update({"ouvert": mere.get("ouvert") or self.jour, "parent": mere.id})
             for k in self.heritage:
                 if k not in champs and mere.get(k):
                     champs[k] = mere.get(k)
             self.completer(champs, mere, quoi)
-            champs["id"] = self.numero(e.get("cle"))
-            enfant = _Tache(id=champs["id"], libelle=_propre(e.get("libelle")), note=_propre(e.get("note")),
+            champs["id"] = self.numero(e.get("key"))
+            enfant = _Tache(id=champs["id"], libelle=_propre(e.get("label")), note=_propre(e.get("note")),
                             axe=mere.axe, champs=_ordonnes(champs))
             enfant.ancre = mere.ligne
-            self.cles[e["cle"]] = enfant
+            self.cles[e["key"]] = enfant
             enfants.append(enfant)
             for n in e.get("fragments") or []:
                 cibles.setdefault(n, []).append(enfant)
@@ -462,20 +721,20 @@ class _Preparation:
         self.bilan["fragments"]["total"] += len(frags)
 
     def regrouper(self, g):
-        m = g.get("mere")
+        m = g.get("parent")
         if isinstance(m, dict):
-            quoi = "regroupement sous « %s »" % (m.get("libelle") or "")[:40]
-            champs = self.champs_proposes(m.get("champs"), quoi)
+            quoi = "regroupement sous « %s »" % (m.get("label") or "")[:40]
+            champs = self.champs_proposes(m.get("fields"), quoi)
             champs.setdefault("ouvert", self.jour)
             for k in ("parent", "après"):
                 if k in self.requis:
                     champs.setdefault(k, "-")
             self.completer(champs, None, quoi)
-            champs["id"] = self.numero(m.get("cle"))
-            mere = _Tache(id=champs["id"], libelle=_propre(m.get("libelle")), note=_propre(m.get("note")),
-                          axe=_propre(m.get("axe")) or "dossier", champs=_ordonnes(champs))
-            self.cles[m["cle"]] = mere
-            enfants = [self.tache(e, quoi) for e in g.get("enfants") or []]
+            champs["id"] = self.numero(m.get("key"))
+            mere = _Tache(id=champs["id"], libelle=_propre(m.get("label")), note=_propre(m.get("note")),
+                          axe=_propre(m.get("axis")) or "dossier", champs=_ordonnes(champs))
+            self.cles[m["key"]] = mere
+            enfants = [self.tache(e, quoi) for e in g.get("children") or []]
             if not enfants:
                 raise Erreur("%s : aucun enfant" % quoi)
             ancre = min(t.ligne or t.ancre for t in enfants)
@@ -483,7 +742,7 @@ class _Preparation:
             self.bilan["nouvelles_meres"] += 1
         else:
             mere = self.tache(m, "regroupement")
-            enfants = [self.tache(e, "regroupement sous #%s" % mere.id) for e in g.get("enfants") or []]
+            enfants = [self.tache(e, "regroupement sous #%s" % mere.id) for e in g.get("children") or []]
             # Son parent parmi les enfants regroupés : une boucle, que la relecture nomme.
             if (mere.get("parent") or "-").lstrip("#") not in [e.id for e in enfants]:
                 self.deux_niveaux(mere, "regroupement sous #%s" % mere.id)
@@ -501,18 +760,18 @@ class _Preparation:
         self.bilans.append([self.jour, t.id, t.libelle, souci, "", "", "", ""])
 
     def fusionner(self, f):
-        if str(f.get("part")) in self.cles:
-            raise Erreur("fusion : #%s est créée par cet audit, elle ne se fusionne pas" % f.get("part"))
-        part = self.tache(f.get("part"), "fusion")
-        garde = self.tache(f.get("garde"), "fusion de #%s" % part.id)
+        if str(f.get("drop")) in self.cles:
+            raise Erreur("fusion : #%s est créée par cet audit, elle ne se fusionne pas" % f.get("drop"))
+        part = self.tache(f.get("drop"), "fusion")
+        garde = self.tache(f.get("keep"), "fusion de #%s" % part.id)
         quoi = "fusion de #%s dans #%s" % (part.id, garde.id)
         if part is garde:
             raise Erreur("%s : une tâche ne se fusionne pas dans elle-même" % quoi)
         if part.id in self.decoupees:
             raise Erreur("%s : #%s est déjà découpée" % (quoi, part.id))
         self.libre(part, quoi)
-        if f.get("libelle"):
-            nouveau = _propre(f["libelle"])
+        if f.get("label"):
+            nouveau = _propre(f["label"])
             manque = mots(garde.libelle) - mots(nouveau + " " + garde.note)
             if manque:
                 raise Erreur("%s : le nouveau libellé perd « %s »" % (quoi, sorted(manque)[0]))
@@ -554,7 +813,7 @@ class _Preparation:
     def dependre(self, a):
         t = self.tache(a.get("id"), "dépendance")
         nums = [x.strip() for x in (t.get("après") or "-").split(",") if x.strip() not in ("-", "")]
-        for ref in a.get("apres") or []:
+        for ref in a.get("after") or []:
             n = self.tache(ref, "dépendance de #%s" % t.id).id
             if n == t.id:
                 raise Erreur("dépendance : #%s ne peut pas venir après elle-même" % t.id)
@@ -565,11 +824,11 @@ class _Preparation:
 
     def valoir(self, v):
         t = self.tache(v.get("id"), "valeur")
-        k = v.get("champ")
+        k = v.get("field")
         quoi = "valeur %s de #%s" % (k, t.id)
         if k not in VALEURS_PERMISES:
             raise Erreur("%s : seuls %s se posent par l'audit" % (quoi, ", ".join(VALEURS_PERMISES)))
-        val = self.champ_propose(k, v.get("valeur"), quoi, interdits=set())
+        val = self.champ_propose(k, v.get("value"), quoi, interdits=set())
         if k == "parent" and val != "-":
             if val in self.ids_fait:
                 pass  # une mère close : permis, la tâche existe
@@ -676,10 +935,10 @@ class _Preparation:
         self.bilan["comptes"] = comptes
 
 
-LISTES = {"decoupages", "regroupements", "fusions", "fermetures", "apres", "valeurs", "heritage",
-          "decoupages.enfants", "decoupages.fragments_mere", "decoupages.enfants.fragments",
-          "regroupements.enfants", "apres.apres"}
-DICOS = {"decoupages.mere", "decoupages.mere.champs", "decoupages.enfants.champs", "regroupements.mere.champs"}
+LISTES = {"splits", "groups", "merges", "closures", "after", "values", "inherit",
+          "splits.children", "splits.parent_fragments", "splits.children.fragments",
+          "groups.children", "after.after"}
+DICOS = {"splits.parent", "splits.parent.fields", "splits.children.fields", "groups.parent.fields"}
 
 
 def _verifier_schema(props):
@@ -690,10 +949,10 @@ def _verifier_schema(props):
                 raise Erreur("propositions : %s doit être une liste, pas %r" % (sous, v))
             if sous in DICOS and not isinstance(v, dict):
                 raise Erreur("propositions : %s doit être un objet, pas %r" % (sous, v))
-            if sous.endswith("fragments") or sous == "decoupages.fragments_mere":
+            if sous.endswith("fragments"):
                 if not all(isinstance(n, int) and not isinstance(n, bool) for n in v):
                     raise Erreur("propositions : %s doit lister des numéros de fragment" % sous)
-            if sous.endswith(".champs"):
+            if sous.endswith(".fields"):
                 types(v, sous)
 
     def voir(obj, niveau):
@@ -708,7 +967,7 @@ def _verifier_schema(props):
                 ", ".join(sorted(inconnues)), " dans %s" % niveau if niveau else "", ", ".join(sorted(SCHEMA[niveau]))))
         for k, v in obj.items():
             sous = "%s.%s" % (niveau, k) if niveau else k
-            if sous in SCHEMA and not (sous == "regroupements.mere" and not isinstance(v, dict)):
+            if sous in SCHEMA and not (sous == "groups.parent" and not isinstance(v, dict)):
                 for x in (v if isinstance(v, list) else [v]):
                     voir(x, sous)
 
@@ -730,17 +989,17 @@ def preparer(releve, props):
         raise Erreur("la roadmap a changé depuis le relevé : relance le relevé, puis refais les propositions")
     _verifier_schema(props)
     prep = _Preparation(releve, props)
-    for d in props.get("decoupages") or []:
+    for d in props.get("splits") or []:
         prep.decouper(d)
-    for g in props.get("regroupements") or []:
+    for g in props.get("groups") or []:
         prep.regrouper(g)
-    for f in props.get("fusions") or []:
+    for f in props.get("merges") or []:
         prep.fusionner(f)
-    for f in props.get("fermetures") or []:
+    for f in props.get("closures") or []:
         prep.fermer(f)
-    for a in props.get("apres") or []:
+    for a in props.get("after") or []:
         prep.dependre(a)
-    for v in props.get("valeurs") or []:
+    for v in props.get("values") or []:
         prep.valoir(v)
     prep.boucles()
     apres_o = prep.rendre_ouvert()
@@ -769,18 +1028,30 @@ def _sauvegarder(rdir, maintenant, chemins, prefixe="sauvegarde-audit-"):
     return sauvegarde
 
 
+def lignes_changees(avant, apres):
+    vues = set((avant or "").split("\n"))
+    return [l for l in apres.split("\n") if l.strip() and l not in vues]
+
+
 def appliquer(dossier, chemin_props, maintenant=None):
-    """Prépare, vérifie, sauvegarde puis écrit les propositions validées ; affiche et rend le bilan."""
+    """Prépare, vérifie, sauvegarde puis écrit les propositions validées ; affiche et rend le bilan.
+    Quand le projet écrit sa roadmap par son outil (`ecriture`, #159), montre les lignes sans écrire."""
     maintenant = maintenant or datetime.datetime.now()
     props, rel = _charger_props(chemin_props)
-    _, rdir, _ = situer(dossier)
+    projet, rdir, _ = situer(dossier)
     if os.path.realpath(os.path.dirname(rel["roadmap"])) != os.path.realpath(rdir):
         raise Erreur("le relevé porte sur %s, pas sur la roadmap de %s" % (rel["roadmap"], dossier))
+    decl = ob.declarations(projet)
+    if decl["ecriture_illisible"]:
+        raise Erreur("ecriture de .claude/roadmap.json est illisible : rien ne s'écrit tant qu'elle n'est pas "
+                     "corrigée (skill doctor)")
     fichiers, bilan = preparer(rel, props)
-    bilan["sauvegarde"] = None
-    if fichiers:
+    bilan.update(sauvegarde=None, ecrit=False, ecriture=decl["ecriture"],
+                 lignes={os.path.basename(p): lignes_changees(_lire_fichier(p), t) for p, t in fichiers.items()})
+    if fichiers and not decl["ecriture"]:
         bilan["sauvegarde"] = _sauvegarder(rdir, maintenant, fichiers)
         im._ecrire_tout(fichiers)
+        bilan["ecrit"] = True
     afficher_bilan(bilan)
     return bilan
 
@@ -797,25 +1068,39 @@ def afficher_bilan(bilan):
     if bilan["ids_crees"]:
         print("  Numéros créés : #%s" % ", #".join(bilan["ids_crees"]))
     print("  Numéros uniques, parents et dépendances valides, chaque ligne dans la grammaire.")
-    print("Sauvegarde : %s" % bilan["sauvegarde"] if bilan["sauvegarde"] else "Rien à changer.")
+    e = bilan.get("ecriture")
+    if e and any(bilan.get("lignes", {}).values()):
+        print("Rien n'est écrit : ce projet écrit sa roadmap par %s (%s). Passe-lui ces lignes :" % (e["outil"], e["consigne"]))
+        for nom, lignes in bilan["lignes"].items():
+            print("  %s :" % nom)
+            for l in lignes:
+                print("    %s" % l)
+    else:
+        print("Sauvegarde : %s" % bilan["sauvegarde"] if bilan["sauvegarde"] else "Rien à changer.")
 
 
 def main(argv=None):
     import argparse
     p = argparse.ArgumentParser(prog="audit.py", description="Audit du contenu de la roadmap (#103).")
     sous = p.add_subparsers(dest="commande", required=True)
-    r = sous.add_parser("releve", help="relevé du contenu, en JSON, sans rien écrire")
+    r = sous.add_parser("survey", help="the roadmap's survey, as JSON, writing nothing")
     r.add_argument("dossier")
-    a = sous.add_parser("appliquer", help="applique les propositions validées, tout ou rien")
+    a = sous.add_parser("apply", help="apply the validated proposals, all or nothing")
     a.add_argument("dossier")
-    a.add_argument("--propositions", required=True)
-    for s in (r, a):
-        s.add_argument("--jour", help="AAAA-MM-JJ (aujourd'hui par défaut)")
+    a.add_argument("--proposals", dest="propositions", required=True)
+    q = sous.add_parser("pending", help="the questions waiting in ROADMAP-questions.json: add, resolve, count")
+    q.add_argument("dossier")
+    q.add_argument("--add", dest="ajouter", help="a JSON file: a list of questions (the survey's format)")
+    q.add_argument("--resolve", dest="resoudre", nargs="+", default=[], help="keys of answered questions")
+    for s in (r, a, q):
+        s.add_argument("--day", dest="jour", help="YYYY-MM-DD (today by default)")
         s.add_argument("--perso", default="~/.claude/roadmap-perso.json", help=argparse.SUPPRESS)
     args = p.parse_args(argv)
     try:
-        if args.commande == "releve":
+        if args.commande == "survey":
             print(json.dumps(releve(args.dossier, args.jour, args.perso), ensure_ascii=False, indent=2))
+        elif args.commande == "pending":
+            attente(args.dossier, args.ajouter, args.resoudre, args.jour, args.perso)
         else:
             maintenant = datetime.datetime.now()
             if args.jour:

@@ -101,7 +101,8 @@ Write `<scratchpad>/operations.json`:
     {"op": "update", "id": "41", "fields": {"attend": "Jason", "dept": "Bidding"}},
     {"op": "reschedule", "id": "18", "due": "2026-11-05"},
     {"op": "done", "id": "12", "date": "2026-10-30", "proof": "email envoyé à Jason le 30/10 (40-deliverables/emails/…)"},
-    {"op": "drop", "id": "7", "reason": "remplacée par le vendor agreement"}
+    {"op": "drop", "id": "7", "reason": "remplacée par le vendor agreement"},
+    {"op": "pause", "id": "22", "until": "2026-11-30", "reason": "budget gelé jusqu'à la clôture"}
   ]
 }
 ```
@@ -112,13 +113,18 @@ Write `<scratchpad>/operations.json`:
   The id is the next free one. A child is written under its parent, after its other children, and
   takes the required fields it lacks (`après:-` otherwise) and the parent's category keys.
 - **update**: `fields` (never `id`, `qui`, `branche`, `verrou`, `fait`); `parent` and `après` are
-  allowed, and checked.
+  allowed, and checked. `null` removes an optional key (a `prio:` set on a child); a required key
+  is never removed.
 - **reschedule**: `due`.
 - **done**: `date` (the date of the proof), `proof` (what proves it, and where). The line moves to
   the top of `ROADMAP-fait.md`, its bilan row to `ROADMAP-bilans.csv` (« Faite : <proof> »). A
   recurring standalone task (`tous:`) is marked done with the panel's « Marquer faite » button,
   which carries it over.
 - **drop**: `reason`; « (abandonné) » at the end of the label, like the panel's « Annuler la tâche ».
+- **pause** (#159): `until` (the resume date), `reason`. `due:` becomes `until`, the note gets
+  « (en pause depuis le JJ/MM : <reason>) », and a task without a parent moves to « Plus tard »; a
+  child stays under its parent. Refused on a line taken by a session and on a parent with an open
+  child.
 
 Then the **dry run**, always:
 
