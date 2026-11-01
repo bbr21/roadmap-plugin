@@ -1040,13 +1040,26 @@ export function foldCell(md: string, max = 240): { md: string; cut: boolean } {
       if (size > max) break
       kept.push(l)
     }
-    if (kept.length > 0) return { md: `${kept.join('\n')}…`, cut: true }
+    // Une seule puce gardée : plus une liste, sa puce isolée décalait la valeur (#173).
+    if (kept.length === 1) return { md: `${kept[0]!.slice(2)}…`, cut: true }
+    if (kept.length > 1) return { md: `${kept.join('\n')}…`, cut: true }
+    // La première puce dépasse à elle seule : sa coupe, sans puce.
+    md = lines[0]!.slice(2)
   }
   const head = md.slice(0, max)
   const word = /\s/.test(md.charAt(max)) ? head : head.replace(/\s+\S*$/, '')
   let text = (word || head).replace(/[\s,;:—-]+$/, '')
   if ((text.match(/`/g) ?? []).length % 2 === 1) text += '`'
   return { md: `${text}…`, cut: true }
+}
+
+/**
+ * Un `code` court (24 signes au plus) ne se coupe plus à son tiret (#173) : un gluon (U+2060) suit chacun,
+ * et le code passe entier à la ligne (« ROADMAP-REGLES.md » se coupait en « ROADMAP- » et « REGLES.md »).
+ * Un code plus long garde ses coupures, pour ne pas déborder de la carte.
+ */
+export function codeKeptWhole(md: string): string {
+  return md.replace(/`([^`\n]+)`/g, (whole, code: string) => (code.length <= 24 ? `\`${code.replace(/-(?!\u2060)/g, '-\u2060')}\`` : whole))
 }
 
 /** Une ligne de la carte Fin : son étiquette, sa valeur en markdown, et sa teinte (souci : vert s'il a tout roulé). */

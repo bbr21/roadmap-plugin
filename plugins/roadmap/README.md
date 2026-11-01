@@ -610,6 +610,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.114.1 (2026-11-01)** : panneau : la fiche d'une tâche close tient dans la largeur ; la Chaîne ne déborde plus, Tout voir est aligné, Livré s'affiche sans puce isolée ni code coupé à son tiret (#173)
 - **0.114.0 (2026-11-01)** : panneau : la roadmap s'ouvre en arbre par axe, en mode Code comme en mode Projet ; une section par axe dans l'ordre de la légende, les mères et leurs filles reliées par des coudes, un rond pour cocher (#168)
 - **0.113.2 (2026-11-01)** : panneau : les étapes d'une session suivent la conversation après une boîte de fin en cours de tâche, et les barres du bloc Maestro partent toutes de la même colonne (#172)
 - **0.113.1 (2026-11-01)** : panneau : un lancement par ▶ part au nom de la personne, sans l'habillage « The roadmap plugin sent a message » (#170)

@@ -117,6 +117,7 @@ import {
   ficheCards,
   missionCut,
   finCard,
+  codeKeptWhole,
   foldCell,
   livreOfNote,
   missionFrame,
@@ -5349,23 +5350,42 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     const steps = chain.length > 1 ? chainSteps(sortTasks(chain, sortOrder), prereqFor) : new Map<Task, ChainStep>()
     const stepOf = steps.get(current)
     const lastStep = Math.max(0, ...[...steps.values()].map(x => x.step))
-    // Un lien vers une tâche enchaînée : carré d'axe, titre (cliquable), et son état.
+    // Un lien vers une tâche enchaînée : carré d'axe, titre (cliquable), et son état. Le titre rétrécit et
+    // se coupe, l'état garde sa largeur : un titre long poussait la carte hors du panneau (#173).
     const link = (x: Task) => (
-      <Box flexDirection="row" alignItems="center" gap={SPACE.row}>
+      <Box key={`link-row:${x.key}`} flexDirection="row" alignItems="center" gap={SPACE.row} flexShrink={1} minWidth={0}>
         {icon(squareIcon(axisHex(x.axis)), x.axis, 16, '■', axisTheme(x.axis))}
         {x.id && taskNumber(x.id)}
-        <Button key={`link:${x.key}`} plain hover={{ underline: true }} onPress={select(selectionOf(x))}>
-          <Text wrap="truncate-end">{short(x).titre}</Text>
-        </Button>
-        {x.done ? (
-          <Box flexDirection="row" alignItems="center" gap={SPACE.row}>
-            {icon(checkIcon(palette.ok, 12, STROKE.pill), 'faite', 12, '✓', 'success')}
-            <Text size="caption" weight="medium" color={palette.ok}>faite</Text>
+        <Box key={`link-title:${x.key}`} flexShrink={1} minWidth={0}>
+          <Button key={`link:${x.key}`} plain hover={{ underline: true }} onPress={select(selectionOf(x))}>
+            <Text wrap="truncate-end">{short(x).titre}</Text>
+          </Button>
+        </Box>
+        <Box key={`link-state:${x.key}`} flexShrink={0}>
+          {x.done ? (
+            <Box flexDirection="row" alignItems="center" gap={SPACE.row}>
+              {icon(checkIcon(palette.ok, 12, STROKE.pill), 'faite', 12, '✓', 'success')}
+              <Text size="caption" weight="medium" color={palette.ok}>faite</Text>
+            </Box>
+          ) : isLive(x) ? (
+            drawnPill({ text: 'en session', bg: palette.liveTint, fg: palette.liveOn, mark: 'spinner', height: SIZE.pill.detail })
+          ) : (
+            drawnPill({ text: 'à faire', bg: palette.sel, fg: palette.text2, height: SIZE.pill.detail, weight: TEXT.weight.soft })
+          )}
+        </Box>
+      </Box>
+    )
+    // « Tout voir », « Replier » d'un cadre (#173) : sur le bureau, un texte aligné sur le reste de la carte et
+    // sa zone de clic ; le bouton de l'app, même `plain`, y est natif et sa marge le décalait. Au terminal, le bouton.
+    const moreLink = (id: string, label: string, onPress: () => void) => (
+      <Box flexDirection="row">
+        {graphic && Client ? (
+          <Box key={`hit:${id}`} hover={{ backgroundColor: palette.hover }}>
+            <Text color={palette.text2}>{label}</Text>
+            {hit(id, onPress, 1)}
           </Box>
-        ) : isLive(x) ? (
-          drawnPill({ text: 'en session', bg: palette.liveTint, fg: palette.liveOn, mark: 'spinner', height: SIZE.pill.detail })
         ) : (
-          drawnPill({ text: 'à faire', bg: palette.sel, fg: palette.text2, height: SIZE.pill.detail, weight: TEXT.weight.soft })
+          <Button key={id} plain dimColor label={label} onPress={onPress} />
         )}
       </Box>
     )
@@ -5421,22 +5441,13 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
                     <Text color={palette.text2}>{r.name}</Text>
                   </Box>
                   <Box flexShrink={1} minWidth={0} flexGrow={1}>
-                    {r.tone === 'ok' ? <Text wrap="wrap" color={palette.ok}>{r.fold.md}</Text> : <Markdown text={r.fold.md} {...(r.tone === 'dim' ? { dimColor: true } : {})} />}
+                    {r.tone === 'ok' ? <Text wrap="wrap" color={palette.ok}>{r.fold.md}</Text> : <Markdown text={codeKeptWhole(r.fold.md)} {...(r.tone === 'dim' ? { dimColor: true } : {})} />}
                   </Box>
                 </Box>
               </Box>
             ))}
-            {canOpen && (
-              <Box flexDirection="row">
-                <Button
-                  key="fin"
-                  plain
-                  dimColor
-                  label={opened ? 'Replier' : 'Tout voir'}
-                  onPress={() => void setView($, v => ({ conclusionOpen: v.conclusionOpen === current.key ? '' : current.key }))}
-                />
-              </Box>
-            )}
+            {canOpen &&
+              moreLink('fin', opened ? 'Replier' : 'Tout voir', () => void setView($, v => ({ conclusionOpen: v.conclusionOpen === current.key ? '' : current.key })))}
           </Box>
         </Box>
       )
@@ -5589,10 +5600,10 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
             : 'live'
           : undefined
     const headBrand = focusBrand ?? taskBrandOf(current, source, allTasks, { label: s.titre })
-    // Une carte : sa légende, puis ses lignes, dans un cadre à bord fin.
+    // Une carte : sa légende, puis ses lignes, dans un cadre à bord fin, qui ne grandit pas au-delà du panneau (#173).
     const card = (name: string, body: RenderElement) => (
       <Box key={`card:${name}`} paddingX={SPACE.indent}>
-        <Box flexDirection="column" gap={SPACE.tight} paddingX={SPACE.indent} paddingY="xs" flexGrow={1} borderStyle="round" borderColor={palette.border}>
+        <Box key={`card-frame:${name}`} flexDirection="column" gap={SPACE.tight} paddingX={SPACE.indent} paddingY="xs" flexGrow={1} flexShrink={1} minWidth={0} borderStyle="round" borderColor={palette.border}>
           <Text size="caption" weight="medium" color={palette.text2}>{name}</Text>
           {body}
         </Box>
@@ -6147,17 +6158,11 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
             <Text size="caption" weight="medium" color={labelSpec && editBad(labelSpec) ? palette.lateOn : palette.text2}>Mission</Text>
             {labelSpec ? editInput(labelSpec) : <Text wrap="wrap">{cut?.cut && !missionShown ? cut.text : frame.text}</Text>}
             {labelSpec && editBad(labelSpec) && <Text size="caption" color={palette.lateOn} wrap="wrap">{editNote}</Text>}
-            {!editing && (frame.recap || cut?.cut) && (
-              <Box flexDirection="row">
-                <Button
-                  key="mission-line"
-                  plain
-                  dimColor
-                  label={missionShown ? 'Replier' : frame.recap ? 'La ligne de la roadmap' : 'Tout voir'}
-                  onPress={() => void setView($, v => ({ missionOpen: v.missionOpen === current.key ? '' : current.key }))}
-                />
-              </Box>
-            )}
+            {!editing &&
+              (frame.recap || cut?.cut) &&
+              moreLink('mission-line', missionShown ? 'Replier' : frame.recap ? 'La ligne de la roadmap' : 'Tout voir', () =>
+                void setView($, v => ({ missionOpen: v.missionOpen === current.key ? '' : current.key })),
+              )}
             {!editing && frame.recap && missionShown && <Text size="caption" wrap="wrap">{current.label}</Text>}
             {!editing && noteShown && (cut ? !cut.cut || missionShown : missionShown) && <Text color={palette.text2} wrap="wrap">{noteShown}</Text>}
           </Box>
