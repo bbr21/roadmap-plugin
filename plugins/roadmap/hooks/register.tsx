@@ -4811,19 +4811,21 @@ function brandTree(
     variant !== 'header' && Svg && words.stations && numbered
       ? brandStationsIcon(palette, accent, words.stations, surfaceWidth(e, variant === 'focus' ? 4 : 6, card ? 520 : Infinity))
       : undefined
+  // Le titre en `title` sur la carte et dans la fiche, à la hauteur de son crayon (#181) ; `heading` dans la bande.
+  const titleSize = variant === 'header' ? 'heading' : 'title'
   const title = onTitle ? (
     // Un bouton de l'app ne tient que du texte : le numéro et le titre, deux Text dedans.
     <Box key={`title:${onTitle.key}`} flexDirection="row" flexShrink={1} minWidth={0}>
       <Button key={onTitle.key} plain hover={{ underline: true }} onPress={onTitle.press}>
-        {numbered && <Text size={card ? 'title' : 'heading'} weight="semibold" color={accent}>{`#${brand.id} `}</Text>}
-        <Text size={card ? 'title' : 'heading'} weight="semibold" wrap="wrap">{brand.label}</Text>
+        {numbered && <Text size={titleSize} weight="semibold" color={accent}>{`#${brand.id} `}</Text>}
+        <Text size={titleSize} weight="semibold" wrap="wrap">{brand.label}</Text>
       </Button>
     </Box>
   ) : (
     <Box flexDirection="row" gap={SPACE.row}>
-      {numbered && <Text size={card ? 'title' : 'heading'} weight="semibold" color={accent}>{`#${brand.id}`}</Text>}
+      {numbered && <Text size={titleSize} weight="semibold" color={accent}>{`#${brand.id}`}</Text>}
       <Box flexShrink={1} minWidth={0}>
-        <Text size={card ? 'title' : 'heading'} weight="semibold" wrap="wrap">{brand.label}</Text>
+        <Text size={titleSize} weight="semibold" wrap="wrap">{brand.label}</Text>
       </Box>
     </Box>
   )
