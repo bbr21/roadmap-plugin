@@ -4699,8 +4699,9 @@ function brandTree(
   variant: 'card' | 'header' | 'focus',
   today = '',
   state?: BrandTask['state'],
-  // Le titre « #N … » d'une tâche, cliquable (#142) : la clé de son bouton et ce qu'il fait.
-  onTitle?: { key: string; press: () => void },
+  // Le titre « #N … » d'une tâche, cliquable (#142) : la clé de son bouton et ce qu'il fait ; avec `hit`,
+  // sa zone de clic, posée sur le titre en texte au lieu du bouton (#193).
+  onTitle?: { key: string; press: () => void; hit?: RenderElement | null },
   // Chez Maestro, dans l'en-tête du panneau (#143) : les notes d'étapes de ses tâches, l'épingle, l'ouverture.
   steps?: BrandSteps,
   // Les voies seules, sans la ligne « Maestro … » : l'arbre que montre le filtre « En cours » (#149).
@@ -4856,9 +4857,24 @@ function brandTree(
     variant !== 'header' && Svg && words.stations && numbered
       ? brandStationsIcon(palette, accent, words.stations, surfaceWidth(e, variant === 'focus' ? 4 : 6, card ? 520 : Infinity))
       : undefined
-  // Le titre en `title` sur la carte et dans la fiche, à la hauteur de son crayon (#181) ; `heading` dans la bande.
+  // Le titre en `title` sur la carte et dans la fiche (#181) ; `heading` dans la bande.
   const titleSize = variant === 'header' ? 'heading' : 'title'
-  const title = onTitle ? (
+  const plainTitle = (
+    <Box flexDirection="row" gap={SPACE.row}>
+      {numbered && <Text size={titleSize} weight="semibold" color={accent}>{`#${brand.id}`}</Text>}
+      <Box flexShrink={1} minWidth={0}>
+        <Text size={titleSize} weight="semibold" wrap="wrap" hover={onTitle?.hit ? { underline: true } : undefined}>{brand.label}</Text>
+      </Box>
+    </Box>
+  )
+  const title = onTitle?.hit ? (
+    // Sur le bureau, un bouton de l'app est natif : il écrit son texte à sa taille et ignore celle des Text
+    // (#181 resté sans effet) ; le titre en texte et sa zone de clic, comme « Tout voir » (#173, #193).
+    <Box key={`hit:${onTitle.key}`} flexShrink={1} minWidth={0}>
+      {plainTitle}
+      {onTitle.hit}
+    </Box>
+  ) : onTitle ? (
     // Un bouton de l'app ne tient que du texte : le numéro et le titre, deux Text dedans.
     <Box key={`title:${onTitle.key}`} flexDirection="row" flexShrink={1} minWidth={0}>
       <Button key={onTitle.key} plain hover={{ underline: true }} onPress={onTitle.press}>
@@ -4867,12 +4883,7 @@ function brandTree(
       </Button>
     </Box>
   ) : (
-    <Box flexDirection="row" gap={SPACE.row}>
-      {numbered && <Text size={titleSize} weight="semibold" color={accent}>{`#${brand.id}`}</Text>}
-      <Box flexShrink={1} minWidth={0}>
-        <Text size={titleSize} weight="semibold" wrap="wrap">{brand.label}</Text>
-      </Box>
-    </Box>
+    plainTitle
   )
   return (
     <Box flexDirection="column" gap={SPACE.tight} paddingY={card ? 'xs' : undefined}>
@@ -5771,7 +5782,8 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
         true,
       )
     // Un bouton icône : carré, fond `btn`, icône de 16 ; au terminal, le mot.
-    const action = (key: string, mark: string, label: string, onPress: () => void, scope?: string) =>
+    // `small` : le bouton d'une ligne de texte, 24 px et une icône de 14 px, comme le crayon de la fiche (#193).
+    const action = (key: string, mark: string, label: string, onPress: () => void, scope?: string, small = false) =>
       pressable(
         key,
         onPress,
@@ -5784,8 +5796,8 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
           hover={{ backgroundColor: palette.btnHover, ...(scope ? { scope } : {}) }}
         >
           {corners(RADIUS.control, palette.bg)}
-          {strut(SIZE.strut.control)}
-          {Svg && <Svg source={mark} alt={label} width={SIZE.icon.md} height={SIZE.icon.md} />}
+          {strut(small ? SIZE.strut.row : SIZE.strut.control)}
+          {Svg && <Svg source={mark} alt={label} width={small ? SIZE.icon.sm : SIZE.icon.md} height={small ? SIZE.icon.sm : SIZE.icon.md} />}
         </Box>,
         <Button key={key} plain label={label} onPress={onPress} />,
       )
@@ -6351,14 +6363,23 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
         </Box>
       )
     }
-    // Le crayon, à droite du titre d'une ouverte (#161) : « Modifier » ferme l'encart de clôture.
+    // Le crayon, à droite du titre d'une ouverte (#161) : « Modifier » ferme l'encart de clôture. Un petit
+    // bouton gris d'une ligne, 24 px, sous un titre de 22 px (#193, maquette B).
     const pencil =
       !current.done && !editing
-        ? action('edit-task', pencilIcon(palette.text), 'Modifier', () => {
-            clearDrafts(editKey)
-            void setView($, () => ({ editing: editKey, editNote: '', editField: '', editCount: 0, cancelAsk: '', cancelNote: '' }))
-          })
+        ? action(
+            'edit-task',
+            pencilIcon(palette.text, SIZE.icon.sm),
+            'Modifier',
+            () => {
+              clearDrafts(editKey)
+              void setView($, () => ({ editing: editKey, editNote: '', editField: '', editCount: 0, cancelAsk: '', cancelNote: '' }))
+            },
+            undefined,
+            true,
+          )
         : undefined
+    const openLine = () => void openFile($, current.done ? paths.done : paths.open, line)
     const labelSpec = editSpecs.find(spec => spec.field === 'label')
     return (
       <Box flexDirection="column" gap={SPACE.root} paddingX={SPACE.indent}>
@@ -6373,10 +6394,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
             'focus',
             today,
             headState,
-            {
-              key: 'open-line',
-              press: () => void openFile($, current.done ? paths.done : paths.open, line),
-            },
+            { key: 'open-line', press: openLine, hit: hit('open-line', openLine) },
             undefined,
             false,
             pencil,
