@@ -5622,11 +5622,12 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
               </Box>
               <Text size="caption" color={palette.text2}>{fin.when}</Text>
             </Box>
-            {/* Le tableau : une colonne d'étiquettes étroite, un trait entre les lignes, les valeurs en markdown. */}
+            {/* Le tableau : la colonne d'étiquettes des champs de la carte Détails, sans écart de plus, pour que
+                les valeurs des deux cartes commencent au même endroit (#183) ; un trait entre les lignes. */}
             {shown.map((r, i) => (
               <Box key={`fin:${r.name}`} flexDirection="column" gap={SPACE.tight}>
                 {i > 0 && Svg && <Svg source={ruleIcon(palette.border, fullWidth((e.props as { bodyColumns?: number }).bodyColumns ?? 48))} alt="séparateur" height={1} />}
-                <Box flexDirection="row" gap={SPACE.row}>
+                <Box key={`fin-row:${r.name}`} flexDirection="row">
                   <Box width={10} flexShrink={0}>
                     <Text color={palette.text2}>{r.name}</Text>
                   </Box>
