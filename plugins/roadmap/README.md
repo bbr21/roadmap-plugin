@@ -645,6 +645,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.124.0 (2026-11-01)** : panneau, maestro : le brief de lancement s'ouvre par sa mission, ses fichiers et « Fini quand », lisibles d'un coup d'œil sur la carte (#194)
 - **0.123.0 (2026-11-01)** : panneau : les ouvertes toujours en arbre, que « Ranger » (par sujet, par jour, par échéance, par responsable) trie sans le couper ; par jour, chaque arbre à sa prochaine échéance, l'étape du jour sous sa mère (#189)
 - **0.122.1 (2026-11-01)** : panneau : le titre de la fiche d'une tâche en texte de 22 px (un bouton natif ignorait sa taille), le crayon en petit bouton gris de 24 px (#193)
 - **0.122.0 (2026-11-01)** : contrôle, tasks, onboarding : une sous-tâche prend l'axe de sa tâche parente, un autre axe est refusé ; changer l'axe d'une mère emmène ses sous-tâches (#190)

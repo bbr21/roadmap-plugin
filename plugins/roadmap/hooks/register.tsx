@@ -201,8 +201,10 @@ import {
   hashLabel,
   keyPart,
   integerShares,
+  briefDocs,
   launchBrief,
   launchPrompt,
+  namedFiles,
   ownLaunch,
   panelSubmit,
   checkBrief,
@@ -2709,7 +2711,11 @@ async function workBrief($: EngineInterface, source: Source, task: Task, shortTi
   const bilanLog = bilanConfigFor(await readOr($, `${source.dir}/cowork.json`)).log
   const own = await readOwnSession($, true)
   const maestro = own && (await ownIsMaestro($, own)) ? own.title || 'Maestro' : undefined
-  return launchBrief(source, task, shortTitle, bilanLog, maestro, await briefFound($, source, task))
+  const found = await briefFound($, source, task)
+  // #194 : les fichiers que nomment la spec et la fiche ouvrent le brief, sous la mission.
+  const named: string[] = []
+  for (const doc of briefDocs(source, task, found)) for (const f of namedFiles((await readOr($, doc)) ?? '')) if (!named.includes(f)) named.push(f)
+  return launchBrief(source, task, shortTitle, bilanLog, maestro, found, named)
 }
 
 /** Les chemins de la ligne (`fiche:`, `spec:`, `src:`) qui existent : le brief ne donne à lire que ceux-là (#93). */

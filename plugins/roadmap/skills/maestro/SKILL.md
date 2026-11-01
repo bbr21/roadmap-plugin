@@ -54,12 +54,23 @@ full on 26/10/2026; a single name, Maestro, since 29/10/2026 (#112).
 Always from Maestro: the sub-session is then attached to it, and each of its ends of turn comes up
 to it.
 
-- **The panel's ▶**: title `#<id> · <libellé court>`, full brief, and the Maestro clause added by
-  itself.
+- **The brief opens on its mission** (#194): the app's « New session » card shows only the first
+  lines of the brief, so the person must grasp the task from them at a glance. Every brief, the ▶'s
+  and Maestro's alike, starts with three short lines, in French, before anything else:
+  - `Mission : …`: one sentence saying what the session will do, taken from the line's label (its
+    infinitive verb and object), with `(tâche #<id> de <projet>)`; never « Tâche #191 du projet… »
+    or « Relis d'abord sa ligne… » in first place;
+  - `Fichiers : …`: the files the session will touch, those the spec, the fiche or the split name;
+    no line when none is known;
+  - `Fini quand : …`: what done means, tests included (under Maestro: the branch pushed, ready to
+    merge);
+  - then `---`, then the detailed brief (the line to reread, the context, the Maestro clause).
+- **The panel's ▶**: title `#<id> · <libellé court>`, full brief opened by its mission, and the
+  Maestro clause added by itself.
 - **By hand** (`start_session`, `user_asked` when the person asked for it, otherwise an
-  `own_initiative` card): same title, own worktree, full brief (the line to reread, the files, what
-  « fini » means, test included) and the Maestro clause, copied in, written in French like the rest
-  of the brief:
+  `own_initiative` card): same title, own worktree, full brief opened by its three mission lines,
+  then the detail (the line to reread, the files, what « fini » means, test included) and the
+  Maestro clause, copied in, written in French like the rest of the brief:
   - you work for Maestro (the session « <nom> »), which coordinates and merges;
   - work on your branch, rerun the project's tests, push it, open your PR if the project has them;
   - do not merge into `main`: Maestro merges, one branch at a time;

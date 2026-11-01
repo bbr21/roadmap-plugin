@@ -3602,6 +3602,68 @@ export function briefPaths(source: Source, task: Task): string[] {
 }
 
 /**
+ * Les documents de la ligne qui nomment ses fichiers (#194) : le `spec.md` de sa spec (ou la spec si
+ * c'est un fichier) et sa fiche, parmi les chemins relevés ; le panneau les lit pour la tête du brief.
+ */
+export function briefDocs(source: Source, task: Task, found: BriefFound): string[] {
+  const docs: string[] = []
+  for (const p of task.spec ? pathCandidates(source, task.spec) : []) {
+    if (found[p] === 'dir') docs.push(`${p.replace(/\/+$/, '')}/spec.md`)
+    else if (found[p] === 'file') docs.push(p)
+  }
+  for (const p of task.fiche ? pathCandidates(source, task.fiche) : []) if (found[p] === 'file') docs.push(p)
+  return [...new Set(docs)]
+}
+
+/** Les extensions qui font d'un mot entre accents graves un fichier, pas un identifiant (`source.dir`). */
+const FILE_EXT = 'ts|tsx|js|jsx|mjs|cjs|json|md|py|sh|swift|css|scss|html|yml|yaml|toml|txt|csv|sql|kt|go|rs|rb|java|plist|xml|svg'
+const NAMED_FILE_RE = new RegExp(`^[\\w.@~-]+(?:/[\\w.@~-]+)*\\.(?:${FILE_EXT})$`, 'i')
+
+/**
+ * Les fichiers que nomme un document (#194) : les chemins entre accents graves, dans l'ordre, sans
+ * doublon, sans gabarit (`<slug>`), commande ni adresse.
+ */
+export function namedFiles(text: string): string[] {
+  const out: string[] = []
+  for (const m of text.matchAll(/`([^`\n]+)`/g)) {
+    const word = m[1]!.trim()
+    if (NAMED_FILE_RE.test(word) && !out.includes(word)) out.push(word)
+  }
+  return out
+}
+
+/** Le plus de fichiers que la tête du brief nomme : au-delà, « … ». */
+const HEAD_FILES = 6
+
+/**
+ * La tête du brief de lancement (#194) : la carte « New session » de l'app n'en montre que le début.
+ * Trois lignes qui se lisent d'un coup d'œil, la mission, les fichiers touchés et ce que veut dire
+ * « fini », puis un séparateur ; le brief détaillé suit, inchangé.
+ */
+function missionHead(source: Source, task: Task, travail: Travail, maestro: string | undefined, named: readonly string[]): string[] {
+  // Le libellé commence par un verbe à l'infinitif : sa première proposition, avant le détail, est la mission.
+  const raw = task.label.split(/\s[:;—]\s/)[0]!.trim().replace(/[.\s]+$/, '')
+  const head = clip(/^\p{Lu}\p{Ll}/u.test(raw) ? raw[0]!.toLowerCase() + raw.slice(1) : raw, 120)
+  const where = task.id ? `tâche #${task.id} de ${source.name}` : `roadmap ${source.name}`
+  const line = task.id ? `la ligne #${task.id}` : 'la ligne'
+  const files = named.slice(0, HEAD_FILES).map(f => `\`${f}\``)
+  const done =
+    travail === 'projet'
+      ? `ce que dit ${line} est fait, et la ligne est cochée avec son bilan.`
+      : maestro
+        ? `ce que dit ${line} est livré, les tests sont verts, et la branche est poussée, prête à fusionner (Maestro fusionne).`
+        : `ce que dit ${line} est livré, les tests sont verts, et la ligne est cochée avec son bilan.`
+  return [
+    `Mission : ${head} (${where}).`,
+    ...(files.length > 0 ? [`Fichiers : ${files.join(', ')}${named.length > HEAD_FILES ? ', …' : ''}.`] : []),
+    `Fini quand : ${done}`,
+    '',
+    '---',
+    '',
+  ]
+}
+
+/**
  * Le fichier des règles de la roadmap (#167, #171) : `regles` de `.claude/roadmap.json`, depuis la
  * racine du projet comme `onboarding.chemin_regles`, sinon `ROADMAP-REGLES.md` à côté de `ROADMAP.md`.
  */
@@ -3738,6 +3800,7 @@ export function launchBrief(
   bilanLog = DEFAULT_BILAN.log,
   maestro?: string,
   found: BriefFound = {},
+  named: readonly string[] = [],
 ): { title: string; prompt: string; background: string } {
   const { travail, requis, requiredOn } = projectSettings(source)
   const { files, notes } = briefFiles(source, task, found)
@@ -3754,6 +3817,7 @@ export function launchBrief(
         `Une ligne cochée écrit son bilan dans \`${source.dir}/${bilanLog}\`, avant de proposer l'archivage : il fait la boîte « Conclusion » du panneau, \`fait\` (une ligne sur ce qui a été fait) et \`souci\` (une ligne sur le souci rencontré, vide si tout a roulé), puis ressenti, cause, corrections et une phrase de note.`,
       ]
   const prompt = [
+    ...missionHead(source, task, travail, maestro, named),
     `Prends en charge cette task de la roadmap ${source.name}${task.id ? ` (id:${task.id})` : ''} :`,
     '',
     ...briefTask(task),
@@ -5520,7 +5584,8 @@ export type Brand =
 /** Le brief de `launchBrief` en tête du message : son numéro de tâche, et le Maestro de sa clause. */
 export function briefTaskOf(text: string): { id: string; maestro?: string } | undefined {
   const body = withoutReminders(text)
-  const m = /^\s*Prends en charge cette task de la roadmap .*?\(id:([1-9]\d*)\) :/.exec(body)
+  // La tête du brief (#194) : mission, fichiers et « Fini quand », jusqu'au séparateur.
+  const m = /^\s*(?:Mission : [^\n]*\n(?:[^\n]*\n){0,4}?---\n\n)?Prends en charge cette task de la roadmap .*?\(id:([1-9]\d*)\) :/.exec(body)
   if (!m?.[1]) return undefined
   const maestro = /Tu travailles pour Maestro : la session qui t'a lancée, « ([^»]+) »/.exec(body)?.[1]?.trim()
   return maestro ? { id: m[1], maestro } : { id: m[1] }
