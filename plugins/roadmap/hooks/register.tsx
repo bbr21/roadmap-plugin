@@ -1238,7 +1238,7 @@ async function guardBash($: EngineInterface, command: unknown): Promise<string |
     // Un dossier qu'on ne sait pas lire (variable, hors dépôt) : refusé si le dépôt de la session
     // est partagé, plutôt que laissé passer (relecture de sécurité du 2026-10-29).
     const own = await repoOf($, await $.session.cwd())
-    if (own?.shared) return guardText(hit, own.main)
+    if (own?.shared) return guardText(hit, own.main, true)
   }
   return undefined
 }

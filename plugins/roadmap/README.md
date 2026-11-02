@@ -669,6 +669,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.150.1 (2026-11-02)** : hooks : le garde-fou du dossier principal ne prend plus un worktree de l'app pour lui et lit une variable affectée plus tôt dans la ligne (#226)
 - **0.150.0 (2026-11-02)** : panneau : la carte d'ouverture de Maestro ne liste plus ses tâches lancées, que le panneau et la bande portent déjà (#215)
 - **0.149.0 (2026-11-02)** : panneau : l'arbre au rendu de la maquette #212 C partout (titre en texte, mère en gras et son carré gardé, date au bout, faite barrée, « Replier les sections », responsable gris) (#224)
 - **0.148.0 (2026-11-02)** : panneau : /maestro-bar fait paraître la bande de Maestro au-dessus de la saisie, ou dit pourquoi elle ne paraît pas (#225)

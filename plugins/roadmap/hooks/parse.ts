@@ -6625,17 +6625,23 @@ function resolvePath(base: string, path: string): string {
   return normalPath(path.startsWith('/') ? path : `${base}/${path}`)
 }
 
+/** Une commande d'une ligne shell, ses mots, et les séparateurs qui la précèdent et la suivent (`;`, `&&`, `|`…). */
+type ShellCommand = { words: string[]; before: string; after: string }
+
+/** Un séparateur après lequel la commande suivante tourne toujours, dans le même shell. */
+const sureSeparator = (op: string) => op === '' || op === ';' || op === '\n'
+
 /**
  * Les commandes d'une ligne shell, chacune en mots : guillemets retirés, `$HOME` développé hors
- * guillemets simples, `~` en tête d'un mot sans guillemets ; coupées sur `&&`, `||`, `;`, `|` et les
- * retours à la ligne hors guillemets.
+ * guillemets simples, `~` en tête d'un mot sans guillemets ; coupées sur `&&`, `||`, `;`, `|`, `&` et
+ * les retours à la ligne hors guillemets, chacune avec ses séparateurs (#226).
  */
-function shellCommands(line: string, home: string): string[][] {
-  const commands: string[][] = [[]]
+function shellCommands(line: string, home: string): ShellCommand[] {
+  const commands: ShellCommand[] = [{ words: [], before: '', after: '' }]
   let word: string | undefined
   let quote: '' | "'" | '"' = ''
   const end = () => {
-    if (word !== undefined) commands[commands.length - 1]!.push(word)
+    if (word !== undefined) commands[commands.length - 1]!.words.push(word)
     word = undefined
   }
   for (let i = 0; i < line.length; i++) {
@@ -6652,7 +6658,16 @@ function shellCommands(line: string, home: string): string[][] {
     } else if (c === ' ' || c === '\t') end()
     else if (c === ';' || c === '|' || c === '&' || c === '\n') {
       end()
-      if (commands[commands.length - 1]!.length > 0) commands.push([])
+      let op: string = c
+      if ((c === '&' || c === '|') && line[i + 1] === c) {
+        op = c + c
+        i++
+      }
+      const last = commands[commands.length - 1]!
+      if (last.words.length > 0) {
+        last.after = op
+        commands.push({ words: [], before: op, after: '' })
+      } else if (!sureSeparator(op)) last.before = op
     } else if (line.startsWith('$HOME', i)) {
       word = (word ?? '') + home
       i += 4
@@ -6660,7 +6675,7 @@ function shellCommands(line: string, home: string): string[][] {
     else word = (word ?? '') + c
   }
   end()
-  return commands.filter(words => words.length > 0)
+  return commands.filter(command => command.words.length > 0)
 }
 
 /** La règle qu'enfreint une sous-commande git, ou rien. */
@@ -6703,35 +6718,76 @@ function gitRule(sub: string, args: string[]): { rule: string; anywhere: boolean
 /** Une commande git d'une ligne shell : le dossier où elle agit, sa sous-commande et ses arguments. */
 type GitCall = { dir: string; sub: string; args: string[] }
 
+/** `$NOM` et `${NOM}` remplacés par leur valeur connue ; une variable inconnue reste telle quelle. */
+function expandVars(word: string, vars: Map<string, string>): string {
+  return word.replace(/\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))/g, (all, braced?: string, bare?: string) => vars.get(braced ?? bare ?? '') ?? all)
+}
+
+/** Les mots qui changent une variable ou le chemin d'exécution : une ligne qui en a ne suit plus ses variables (#226). */
+const SHELL_FLOW = new Set(['if', 'then', 'else', 'elif', 'fi', 'for', 'while', 'until', 'do', 'done', 'case', 'esac', 'select', 'function', '{', '}', '!', '[[', 'read', 'unset', 'declare', 'typeset', 'local', 'readonly', 'mapfile', 'readarray', 'getopts', 'let', 'source', '.', 'exec'])
+
+/**
+ * Une ligne dont les variables se suivent sans risque : ni bloc, ni boucle, ni sous-shell, ni commande
+ * qui affecte une variable autrement que `W=…` (`read`, `unset`, `printf -v`, `W+=…`).
+ */
+function plainShell(commands: ShellCommand[]): boolean {
+  return commands.every(({ words }) => {
+    const first = words.find(w => !/^[A-Za-z_][A-Za-z0-9_]*=/.test(w) && w !== 'env' && w !== 'export') ?? ''
+    if (SHELL_FLOW.has(first) || /^[({]/.test(first)) return false
+    if (first === 'printf' && words.includes('-v')) return false
+    return !words.some(w => /^[A-Za-z_][A-Za-z0-9_]*\+=/.test(w) || /^\(|\)$/.test(w))
+  })
+}
+
 /**
  * Les commandes d'une ligne shell, chacune avec le dossier où elle tourne (le dernier `cd`, sinon
- * `cwd`) et ses variables en tête ; les shells imbriqués (`bash -c`, `eval`) lus à leur tour.
+ * `cwd`) et ses variables en tête ; les shells imbriqués (`bash -c`, `eval`) lus à leur tour. Une
+ * variable affectée seule (`W=…;`, `export W=…`) vaut pour les commandes qui la suivent (#226), mais
+ * seulement si l'affectation a lieu à coup sûr dans ce shell : après `;` ou un retour à la ligne (ni
+ * `&&`, ni `||`), hors d'un pipe ou d'un `&`, dans une ligne sans bloc ni boucle (`plainShell`).
+ * Sinon la variable reste illisible, et la commande qui la nomme refusée dans un dépôt partagé.
  */
-function shellSteps(command: string, cwd: string, home: string): ShellStep[] {
+function shellSteps(command: string, cwd: string, home: string, vars = new Map<string, string>()): ShellStep[] {
   const steps: ShellStep[] = []
   let dir = cwd
-  for (const all of shellCommands(command, home)) {
+  const commands = shellCommands(command, home)
+  const plain = plainShell(commands)
+  if (!plain) vars.clear()
+  for (const { words: raw, before, after } of commands) {
+    const all = raw.map(w => expandVars(w, vars))
     // `GIT_TRACE=1 git …`, `env GIT_DIR=… git …` : les variables en tête ne sont pas la commande,
     // mais GIT_WORK_TREE et GIT_DIR nomment son dossier.
     const env = new Map<string, string>()
-    let start = all[0] === 'env' ? 1 : 0
+    let start = all[0] === 'env' || all[0] === 'export' ? 1 : 0
     while (start < all.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(all[start]!)) {
       const at = all[start]!.indexOf('=')
-      env.set(all[start]!.slice(0, at), all[start]!.slice(at + 1))
+      // `W=~/x` : le shell développe le `~` d'une affectation.
+      env.set(all[start]!.slice(0, at), all[start]!.slice(at + 1).replace(/^~(?=\/|$)/, home))
       start++
     }
     const words = all.slice(start)
+    // Une valeur qu'on ne sait pas lire (`$(…)`, variable inconnue) rend la variable illisible ;
+    // une affectation en tête d'une commande ne vaut que pour elle.
+    const sure = plain && sureSeparator(before) && after !== '|' && after !== '&'
+    for (const [name, value] of env) {
+      if (words.length > 0 || all[0] === 'env') {
+        if (/[$`]/.test(value)) vars.delete(name)
+      } else if (sure && !/[$`]/.test(value)) vars.set(name, value)
+      else vars.delete(name)
+    }
+    if (words.length === 0) continue
     if (words[0] === 'cd') {
       dir = resolvePath(dir, words[1] ?? home)
       continue
     }
     // Une commande dans un shell imbriqué (relecture de sécurité du 2026-10-29) : lue à son tour.
+    // Il ne voit pas une variable non exportée : sa ligne se lit telle quelle, sans variable connue.
     if (['bash', 'sh', 'zsh'].includes(words[0] ?? '') && words[1] === '-c' && words[2] !== undefined) {
-      steps.push(...shellSteps(words[2], dir, home))
+      steps.push(...shellSteps(raw[start + 2] ?? words[2], dir, home))
       continue
     }
     if (words[0] === 'eval') {
-      steps.push(...shellSteps(words.slice(1).join(' '), dir, home))
+      steps.push(...shellSteps(words.slice(1).join(' '), dir, home, vars))
       continue
     }
     steps.push({ dir, env, words })
@@ -6822,8 +6878,18 @@ export function deliveryReminder(kinds: readonly Delivery['kind'][], maestro: bo
   return lines.join('\n')
 }
 
-/** Le refus du garde-fou, que lit le modèle à la place de la sortie de la commande. */
-export function guardText(hit: GitHit, main: string): string {
+/**
+ * Le refus du garde-fou, que lit le modèle à la place de la sortie de la commande. `unread` : le
+ * dossier de la commande ne se lit pas (variable inconnue, hors dépôt), et le refus le dit plutôt
+ * que de nommer le dossier principal (#226).
+ */
+export function guardText(hit: GitHit, main: string, unread = false): string {
+  if (unread) {
+    return [
+      `Plugin roadmap, garde-fou du dossier principal : \`${hit.rule}\` est refusé, parce qu'il ne sait pas lire son dossier, \`${hit.dir}\`, et que ce dépôt a un dossier principal partagé (${main}).`,
+      "Écris le chemin de ton worktree en clair (`git -C /chemin/du/worktree …`), ou affecte la variable dans la même commande (`W=/chemin; git -C $W …`).",
+    ].join(' ')
+  }
   return [
     `Plugin roadmap, garde-fou du dossier principal : \`${hit.rule}\` est refusé ${hit.anywhere ? 'vers main' : 'dans'} ${main}.`,
     "Ce dossier est partagé par les sessions en parallèle : la commande y emporterait ou y détruirait le travail d'une autre.",
