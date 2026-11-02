@@ -128,6 +128,8 @@ Write `<scratchpad>/operations.json`:
 - **update**: `fields` (never `id`, `qui`, `branche`, `verrou`, `fait`); `parent` and `après` are
   allowed, and checked; a task given a `parent` takes that parent's axis. `null` removes an optional key (a `prio:` set on a child); a required key
   is never removed.
+  `pj` (attachments, #204) is a field like the others: project file paths (screenshots, PDFs,
+  photos), comma-separated, relative to the project root; copy the file into the project first.
 - **reschedule**: `due`.
 - **done**: `date` (the date of the proof), `proof` (what proves it, and where). The line moves to
   the top of `ROADMAP-fait.md`, its bilan row to `ROADMAP-bilans.csv` (« Faite : <proof> »). A

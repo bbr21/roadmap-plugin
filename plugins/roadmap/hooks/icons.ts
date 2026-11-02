@@ -279,6 +279,11 @@ export function documentIcon(hex: string, size = 16, width: number = STROKE.base
   return line(hex, size, width, '<path d="M6.5 3.5h7.5l4 4v13H6.5z"/><path d="M14 3.5v4h4M9.5 12.5h5M9.5 16h5"/>')
 }
 
+/** Image : une pièce jointe sans aperçu (#204). */
+export function imageIcon(hex: string, size = 16, width: number = STROKE.base): string {
+  return line(hex, size, width, '<rect x="3.5" y="4.5" width="17" height="15" rx="2"/><circle cx="9" cy="10" r="1.5"/><path d="M20.5 16l-5-5-8 8.5"/>')
+}
+
 export function externalIcon(hex: string, size = 16, width: number = STROKE.base): string {
   return line(hex, size, width, '<path d="M14 4.5h5.5V10M19.5 4.5L11 13"/><path d="M18 14v5.5H4.5V6H10"/>')
 }

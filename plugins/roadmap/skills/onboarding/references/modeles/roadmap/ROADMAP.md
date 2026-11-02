@@ -5,7 +5,7 @@ Les tâches ouvertes de {{NOM}}. Ce fichier ne se modifie que dans le dossier pr
 ## Grammaire d'une ligne
 
 ```
-- [ ] <Verbe à l'infinitif + objet> `[axe | id:N | qui:… | attend:… | branche:… | verrou:…@AAAA-MM-JJ | ouvert:AAAA-MM-JJ | due:AAAA-MM-JJ | après:N | prio:1 | feedback:N | fait:AAAA-MM-JJ | spec:… | fiche:… | src:…]`
+- [ ] <Verbe à l'infinitif + objet> `[axe | id:N | qui:… | attend:… | branche:… | verrou:…@AAAA-MM-JJ | ouvert:AAAA-MM-JJ | due:AAAA-MM-JJ | après:N | prio:1 | feedback:N | fait:AAAA-MM-JJ | spec:… | fiche:… | pj:… | src:…]`
 ```
 
 - **axe** (premier champ, sans clé) : {{AXES}}.
@@ -16,6 +16,7 @@ Les tâches ouvertes de {{NOM}}. Ce fichier ne se modifie que dans le dossier pr
 - **due** : échéance. **après** : le numéro de la tâche à faire d'abord ; le panneau Roadmap range la chaîne dans l'ordre d'exécution, reliée par un trait et numérotée.
 - **parent** : le numéro de la tâche mère (`parent:12`), ou `parent:-`. Une sous-tâche n'a pas d'axe à elle : elle prend celui de sa mère, et `node scripts/check.mjs` refuse un autre axe.
 - **feedback** : les numéros des retours reçus (`feedback:12,15`).
+- **pj** : les pièces jointes, des fichiers du projet (captures, PDF, photos) séparés par des virgules, relatifs à sa racine (`pj:docs/retours/12/capture.jpg`) ; le panneau Roadmap les montre dans la fiche de la tâche (une image en vignette, un clic l'ouvre en grand) et la session lancée sur la tâche les reçoit à lire.
 - **prio** : facultatif, `1` (urgent), `2` (important) ou `3` (quand on a le temps). Lu et contrôlé, mais le panneau ne l'affiche pas et ne range pas par lui.
 - **spec** : dossier `docs/plans/<type>-<slug>/`. **fiche** : document de contexte. Sur une ligne prise, ils peuvent n'exister que sur sa branche jusqu'à la fusion ; `node scripts/check.mjs` les exige sur `main` pour une ligne libre ou close. **src** : d'où vient la demande.
 - **fait** : date de clôture (et son heure, `fait:AAAA-MM-JJ HH:MM`), dans ROADMAP-fait seulement, suivie de ce qui a été livré.

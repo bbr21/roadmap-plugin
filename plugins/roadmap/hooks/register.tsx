@@ -41,6 +41,7 @@ import {
   playIcon,
   externalIcon,
   documentIcon,
+  imageIcon,
   archiveIcon,
   pencilIcon,
   clockIcon,
@@ -206,6 +207,9 @@ import {
   type Pill,
   hashLabel,
   keyPart,
+  attachmentKind,
+  pathCandidates,
+  thumbSvg,
   integerShares,
   briefDocs,
   launchBrief,
@@ -5333,6 +5337,86 @@ async function readFicheDocs($: EngineInterface, source: Source, task: Task, now
   return docs
 }
 
+/** Une pièce jointe de la ligne (`pj:`, #204) : son nom, le chemin trouvé (absent : introuvable), son aperçu. */
+type Attachment = { name: string; written: string; kind: 'image' | 'pdf' | 'file'; path?: string; thumb?: string }
+
+/** La vignette d'une image dans la fiche (#204, maquette B en plus petit) : 48 × 64 px, tirée à 2× par `sips`. */
+const THUMB = { width: 48, height: 64, px: 128 }
+/** Au-delà, un `Svg` est refusé (131 072 caractères) : l'image garde sa ligne, sans aperçu. */
+const THUMB_SVG_MAX = 120_000
+
+/** Les pièces jointes de la tâche ouverte, relues au plus toutes les 30 s ; les aperçus, par fichier et date de modification. */
+let attachmentsRead: { key: string; at: number; list: Attachment[] } | undefined
+const thumbs = new Map<string, string | null>()
+/** Le dossier privé des vignettes, tiré une fois par `mktemp -d` (sous le `$TMPDIR` de l'utilisateur, mode 700). */
+let thumbDir: Promise<string | undefined> | undefined
+
+async function privateThumbDir($: EngineInterface): Promise<string | undefined> {
+  thumbDir ??= $.process
+    .run(['mktemp', '-d', '-t', 'roadmap-pj'], { timeoutMs: 5_000 })
+    .then(ran => (ran.exitCode === 0 && ran.stdout.trim().startsWith('/') ? ran.stdout.trim() : undefined))
+    .catch(() => undefined)
+  const dir = await thumbDir
+  // Un échec se retente au dessin suivant.
+  if (dir === undefined) thumbDir = undefined
+  return dir
+}
+
+async function readAttachments($: EngineInterface, source: Source, task: Task, now: number): Promise<Attachment[]> {
+  const pj = task.pj ?? []
+  if (pj.length === 0) return []
+  const key = `${source.dir}|${task.key}|${pj.join(',')}`
+  if (attachmentsRead && attachmentsRead.key === key && now - attachmentsRead.at < FOCUS_FACTS_MS) return attachmentsRead.list
+  const list: Attachment[] = []
+  for (const written of pj) {
+    let found: { path: string; mtime: number } | undefined
+    for (const path of pathCandidates(source, written)) {
+      try {
+        const st = await $.fs.stat(path)
+        if (st.kind === 'file') {
+          found = { path, mtime: st.mtimeMs }
+          break
+        }
+      } catch {
+        // absent ici : le candidat suivant
+      }
+    }
+    const kind = attachmentKind(written)
+    const thumb = found && kind === 'image' ? await thumbOf($, found.path, found.mtime) : undefined
+    list.push({ name: written.split('/').pop() || written, written, kind, ...(found ? { path: found.path } : {}), ...(thumb ? { thumb } : {}) })
+  }
+  attachmentsRead = { key, at: now, list }
+  return list
+}
+
+/**
+ * L'aperçu d'une image (#204) : `sips` (macOS) la réduit en JPEG dans un dossier privé tiré au hasard
+ * (jamais un nom prévisible de `/tmp`, qu'un autre compte pourrait piéger d'un lien), lue en octets,
+ * effacée, et posée dans un SVG. Sans `sips`, un échec ou un aperçu trop lourd : rien, retenu jusqu'à
+ * ce que le fichier change.
+ */
+async function thumbOf($: EngineInterface, path: string, mtime: number): Promise<string | undefined> {
+  const key = `${path}|${mtime}`
+  if (thumbs.has(key)) return thumbs.get(key) ?? undefined
+  let svg: string | null = null
+  try {
+    const dir = await privateThumbDir($)
+    if (dir === undefined) return undefined
+    const out = `${dir}/${hashLabel(key)}.jpg`
+    const ran = await $.process.run(['sips', '-Z', String(THUMB.px), '-s', 'format', 'jpeg', '-s', 'formatOptions', '70', path, '--out', out], { timeoutMs: 10_000 })
+    if (ran.exitCode === 0) {
+      const { base64 } = await $.fs.read(out, { as: 'bytes' })
+      const drawn = thumbSvg(base64, THUMB.width, THUMB.height)
+      if (drawn.length <= THUMB_SVG_MAX) svg = drawn
+    }
+    await $.process.run(['rm', '-f', out], { timeoutMs: 5_000 }).catch(() => undefined)
+  } catch {
+    // pas de sips (hors macOS), fichier illisible : pas d'aperçu
+  }
+  thumbs.set(key, svg)
+  return svg ?? undefined
+}
+
 /**
  * Le corps de la carte « Étapes » de la fiche (#142, #143 maquette C + A ; carte repliable #199) : la
  * barre, puis toutes les étapes, un filet entre elles ; son résumé, le compte et l'âge de la note.
@@ -5746,6 +5830,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     // Son dossier (Spec, Plan, Maquettes) et le récap de fin de sa session (#144), dans les deux contextes.
     const ficheSource = inSession && ownBrand ? ownBrand.data.source : source
     const docs = await readFicheDocs($, ficheSource, current, now)
+    const attachments = await readAttachments($, ficheSource, current, now)
     const storedRecap = current.id ? recapOf(await $.store.get(recapKey(ficheSource.name, current.id)).catch(() => undefined)) : undefined
     const frame = missionFrame(current.label, storedRecap)
     // Le morceau « livré : … » de la note d'une close va dans la carte Fin (#150) ; le reste de la note reste.
@@ -6065,6 +6150,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
       branch: facts?.branch.length ?? 0,
       links,
       details: detailCount,
+      attachments: attachments.length,
       editing,
     })
     // L'état en pastille : celui que Maestro voit dans sa session, celui de la session qui y travaille ailleurs.
@@ -6103,6 +6189,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
         ...(current.parent !== undefined ? { parent: current.parent } : {}),
       }),
       details: cardSummary('details', { details: detailCount }),
+      pj: cardSummary('pj', { attachments: attachments.length }),
     }
     const stepsPart = ficheSteps($, e, palette, stepsNote, now, current.done, stepsSession, headState)
     // L'état sous l'en-tête (#199, choix de Bertrand) : une bande teintée, son icône, son mot et pourquoi ;
@@ -6566,6 +6653,56 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
               )}
           </Box>,
         ),
+      // Les pièces jointes (#204, maquette B, vignettes plus petites) : les images en vignettes de 48 × 64,
+      // un clic les ouvre en grand dans le panneau Fichiers ; dessous, une ligne par autre fichier, une
+      // absente grisée, « introuvable », sans clic. Au terminal, sans Svg, des boutons.
+      pj: () => {
+        const shown = attachments.filter(a => a.thumb && a.path && Svg && graphic)
+        const rows = attachments.filter(a => !shown.includes(a))
+        const open = (a: Attachment) => () => void openFile($, a.path!)
+        const kindWord = (a: Attachment) => (a.path === undefined ? 'introuvable' : a.kind === 'image' ? 'image' : a.kind === 'pdf' ? 'PDF' : 'fichier')
+        return card(
+          'pj',
+          'Pièces jointes',
+          summaries.pj,
+          <Box flexDirection="column">
+            {shown.length > 0 && (
+              <Box key="pj-thumbs" flexDirection="row" flexWrap="wrap" gap={SPACE.row} paddingY="xs">
+                {shown.map(a => (
+                  <Box key={`pj-thumb:${a.path}`} flexShrink={0} hover={{ backgroundColor: palette.hover }}>
+                    <Svg source={a.thumb!} alt={a.name} width={THUMB.width} height={THUMB.height} />
+                    {hit(`pj:${a.path}`, open(a))}
+                  </Box>
+                ))}
+              </Box>
+            )}
+            {rows.map(a => {
+              const tone = a.path ? palette.text2 : palette.text3
+              const mark = a.kind === 'image' ? imageIcon(tone, SIZE.icon.sm) : documentIcon(tone, SIZE.icon.sm)
+              return (
+                <Box key={`pj-row:${a.written}`} flexDirection="column">
+                  {ruleAbove}
+                  {graphic ? (
+                    <Box key={`pj-line:${a.written}`} flexDirection="row" alignItems="center" gap={SPACE.row} {...(a.path ? { hover: { backgroundColor: palette.hover } } : {})}>
+                      {strut(SIZE.strut.field)}
+                      {icon(mark, kindWord(a), SIZE.icon.sm, '▫', tone)}
+                      <Box flexGrow={1} flexShrink={1} minWidth={0}>
+                        <Text wrap="truncate-end" {...(a.path ? {} : { color: palette.text3 })}>{a.name}</Text>
+                      </Box>
+                      <Text size="caption" color={palette.text3}>{kindWord(a)}</Text>
+                      {a.path && hit(`pj:${a.path}`, open(a))}
+                    </Box>
+                  ) : a.path ? (
+                    <Button key={`pj-open:${a.written}`} plain label={`${a.name} · ${kindWord(a)}`} onPress={open(a)} />
+                  ) : (
+                    <Text dimColor>{`${a.name} · introuvable`}</Text>
+                  )}
+                </Box>
+              )
+            })}
+          </Box>,
+        )
+      },
     }
     // L'édition (#161, maquette C) : un champ par ligne éditable, à côté de son étiquette ; un menu sur
     // bureau quand le projet liste ses valeurs (`—` : vide). Le refus rougit l'étiquette et se dit dessous.

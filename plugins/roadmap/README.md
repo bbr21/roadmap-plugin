@@ -652,6 +652,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.134.0 (2026-11-02)** : panneau : pièces jointes d'une tâche (pj:), carte de la fiche à vignettes, lues par le brief (#204)
 - **0.133.0 (2026-11-01)** : panneau : vue Done en familles, sous-tâche sous sa mère, mères repliées, bouton « Déplier les sous-tâches » (#203)
 - **0.132.1 (2026-11-01)** : panneau : à 0 tâche ouverte, le panneau s'ouvre sur les Done par jour, barre verte (#202)
 - **0.132.0 (2026-11-01)** : panneau : au-delà de 65 % de contexte, le pourcentage de la bande de Maestro passe en rouge et une pastille « Compacter » lance /compact (#197)

@@ -49,7 +49,7 @@ REQUIS_PROJET = ["id", "ouvert", "due", "resp", "parent", "après"]
 REQUIS_CODE = ["ouvert", "due", "qui", "après"]
 # Les clés de la grammaire : une clé déclarée (`cles`) ne peut en reprendre aucune.
 CLES_GRAMMAIRE = {"id", "qui", "attend", "resp", "branche", "verrou", "ouvert", "due", "parent", "après", "prio",
-                  "feedback", "fait", "spec", "fiche", "src"}
+                  "feedback", "pj", "fait", "spec", "fiche", "src"}
 CLE_DECLAREE = re.compile(r"^[a-zà-ÿ][a-zà-ÿ0-9-]*$")
 SECTIONS_CLAUDE_PROJET = ["Démarrer une session", "Une tâche complète", "Finir une tâche", "Règles", "Carte"]
 

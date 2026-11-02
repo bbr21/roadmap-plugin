@@ -29,6 +29,8 @@ export type Task = {
   prio?: Prio
   /** `feedback:` : les numéros des retours de l'app d'où vient la tâche, ou qu'elle a reçus (Splitmybill). */
   feedback?: string[]
+  /** `pj:` : les pièces jointes, des chemins de fichiers du projet (relatifs à sa racine), séparés par des virgules (#204). */
+  pj?: string[]
   /** `resp:` : la personne qui porte la tâche, collègue compris (mode Projet, #76) ; `resp:` vide ou `resp:-` la laisse absente. */
   resp?: string
   /** `parent:` : le numéro de la tâche mère (`parent:12` ou `parent:#12`) ; `parent:-` (racine) le laisse absent. */
@@ -199,6 +201,30 @@ const ID_RE = /^[1-9]\d*$/
 const PARENT_RE = /^#?([1-9]\d*)$/
 const PRIO_RE = /^[123]$/
 const FEEDBACK_RE = /^\d+(,\d+)*$/
+const IMAGE_RE = /\.(png|jpe?g|gif|webp|heic|heif|tiff?|bmp)$/i
+
+/** Les chemins de `pj:` (#204) : coupés aux virgules, sans les vides. */
+function attachmentPaths(v: string): string[] {
+  return v.split(',').map(x => x.trim()).filter(x => x !== '')
+}
+
+/** Le genre d'une pièce jointe, par son extension (#204) : une image a un aperçu, un PDF son icône. */
+export function attachmentKind(path: string): 'image' | 'pdf' | 'file' {
+  if (IMAGE_RE.test(path)) return 'image'
+  return /\.pdf$/i.test(path) ? 'pdf' : 'file'
+}
+
+/**
+ * L'aperçu d'une image (#204), la vignette JPEG réduite par `sips` posée dans un SVG : le panneau de
+ * bureau n'a pas d'élément image, il dessine un `Svg` comme une image. Coupée au cadre, coins arrondis.
+ */
+export function thumbSvg(base64: string, width: number, height: number): string {
+  return (
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">` +
+    `<clipPath id="c"><rect width="${width}" height="${height}" rx="4"/></clipPath>` +
+    `<image href="data:image/jpeg;base64,${base64}" width="${width}" height="${height}" preserveAspectRatio="xMidYMid slice" clip-path="url(#c)"/></svg>`
+  )
+}
 const SECTION_RE = /^##\s+(.*)$/
 
 export function parseRoadmap(text: string, file: string): Task[] {
@@ -246,7 +272,10 @@ export function parseRoadmap(text: string, file: string): Task[] {
       else if (k === 'tous' && (RECURRENCES as readonly string[]).includes(v)) task.tous = v as Recurrence
       else if (k === 'relance' && DATE_RE.test(v)) task.relance = v
       else if (k === 'feedback' && FEEDBACK_RE.test(v)) task.feedback = v.split(',')
-      else if (k !== '' && !KEYS.includes(k)) {
+      else if (k === 'pj') {
+        const paths = attachmentPaths(v)
+        if (paths.length > 0) task.pj = paths
+      } else if (k !== '' && !KEYS.includes(k)) {
         const values = v.split(',').map(x => x.trim()).filter(x => x !== '')
         if (values.length > 0) task.extra = { ...task.extra, [k]: values }
       }
@@ -259,7 +288,7 @@ export function parseRoadmap(text: string, file: string): Task[] {
 // Le contrôle de la grammaire, plus strict que la lecture : la lecture ignore une ligne qu'elle ne
 // comprend pas, le contrôle la signale. Clés admises : celles que la lecture garde, plus `verrou`
 // (Splitmybill).
-const KEYS: readonly string[] = [...FIELDS, 'après', 'parent', 'id', 'prio', 'feedback', 'verrou', 'tous', 'relance']
+const KEYS: readonly string[] = [...FIELDS, 'après', 'parent', 'id', 'prio', 'feedback', 'pj', 'verrou', 'tous', 'relance']
 /** Les clés de la grammaire : une clé déclarée dans `cles` ne peut en reprendre aucune. */
 export const GRAMMAR_KEYS: readonly string[] = KEYS
 const DECLARED_KEY_RE = /^[a-zà-ÿ][a-zà-ÿ0-9-]*$/
@@ -368,6 +397,7 @@ export function lintRoadmap(text: string, done: boolean, rules: Partial<LintRule
       else if (k === 'prio' && !PRIO_RE.test(v)) say(`prio: vaut 1, 2 ou 3 (« ${v} »)`)
       else if (k === 'tous' && !(RECURRENCES as readonly string[]).includes(v)) say(`tous: vaut semaine, 2semaines, mois, trimestre ou an (« ${v} »)`)
       else if (k === 'feedback' && !FEEDBACK_RE.test(v)) say(`feedback: des numéros de retours séparés par des virgules (« ${v} »)`)
+      else if (k === 'pj' && (v === '' || v.split(',').some(x => x.trim() === ''))) say(`pj: des chemins de fichiers séparés par des virgules (« ${v} »)`)
       keys.set(k, v)
     }
     // Les champs exigés : sur une tâche ouverte de ROADMAP.md seulement (lancée, en mode Code) ; vide compte comme absent.
@@ -3852,7 +3882,7 @@ const URL_RE = /^[a-z][a-z0-9+.-]*:\/\//i
  * Où peut être un chemin de la ligne : tel quel s'il est absolu, sinon sous la racine du projet
  * (la grammaire et `check.mjs` y lisent `fiche:` et `spec:`), puis sous le dossier de la roadmap.
  */
-function pathCandidates(source: Source, path: string): string[] {
+export function pathCandidates(source: Source, path: string): string[] {
   if (URL_RE.test(path)) return []
   if (path.startsWith('/')) return [path]
   const rel = path.replace(/^\.\//, '')
@@ -3861,7 +3891,7 @@ function pathCandidates(source: Source, path: string): string[] {
 
 /** Les chemins que le panneau vérifie avant d'écrire le brief : seuls ceux qui existent y sont donnés à lire. */
 export function briefPaths(source: Source, task: Task): string[] {
-  return [...new Set([...[task.fiche, task.src, task.spec].flatMap(p => (p ? pathCandidates(source, p) : [])), reglesPath(source)])]
+  return [...new Set([...[task.fiche, task.src, task.spec, ...(task.pj ?? [])].flatMap(p => (p ? pathCandidates(source, p) : [])), reglesPath(source)])]
 }
 
 /**
@@ -3978,6 +4008,12 @@ function briefFiles(source: Source, task: Task, found: BriefFound): { files: str
     else notes.push(`Source : ${task.src}`)
   }
   doc(task.spec, 'spec')
+  // Les pièces jointes (#204) : une trouvée se lit (une capture aussi), une absente se dit.
+  for (const p of task.pj ?? []) {
+    const hit = at(p, true)
+    if (hit) files.push(`\`${hit}\` (pièce jointe)`)
+    else notes.push(`Pièce jointe \`${p}\` : introuvable sous \`${source.root ?? source.dir}\`${task.branche ? `, peut-être seulement sur la branche \`${task.branche}\`` : ''}.`)
+  }
   return { files, notes }
 }
 
@@ -4605,7 +4641,7 @@ function fieldOfProblem(why: string, cles: Readonly<Record<string, readonly stri
  * L'ordre de la grammaire, où se place un champ que la ligne n'avait pas (#161) ; `*` : les clés
  * déclarées par le projet, et toute clé inconnue.
  */
-const EDIT_ORDER = ['id', 'resp', 'qui', 'attend', 'branche', 'verrou', 'ouvert', 'due', 'parent', 'après', 'prio', 'tous', 'relance', 'feedback', '*', 'spec', 'fiche', 'src']
+const EDIT_ORDER = ['id', 'resp', 'qui', 'attend', 'branche', 'verrou', 'ouvert', 'due', 'parent', 'après', 'prio', 'tous', 'relance', 'feedback', '*', 'spec', 'fiche', 'pj', 'src']
 function editRank(field: string): number {
   const k = field.slice(0, Math.max(0, field.indexOf(':')))
   const at = EDIT_ORDER.indexOf(k)
@@ -6067,7 +6103,7 @@ export function taskBrandOf(
 }
 
 /** Les cartes de la fiche d'une tâche (#142, maquette C), dans l'ordre où elles se lisent. */
-export type FicheCard = 'avancement' | 'lancer' | 'chaine' | 'details'
+export type FicheCard = 'avancement' | 'lancer' | 'chaine' | 'details' | 'pj'
 
 /**
  * Ce que montre la fiche d'une tâche selon où on la lit (`session` : la session lancée pour elle ;
@@ -6086,6 +6122,8 @@ export function ficheCards(o: {
   branch: number
   links: number
   details: number
+  /** Les pièces jointes de la ligne (`pj:`, #204) : leur carte vient après Détails. */
+  attachments?: number
   /** En édition (#161, maquette C) : les cartes qui portent un champ, sans « Lancer ». */
   editing?: boolean
 }): { cards: FicheCard[] } {
@@ -6096,6 +6134,7 @@ export function ficheCards(o: {
   if (!session && !o.done && !o.live) cards.push('lancer')
   if (o.links > 0) cards.push('chaine')
   if (o.details > 0) cards.push('details')
+  if ((o.attachments ?? 0) > 0) cards.push('pj')
   return { cards }
 }
 
@@ -6122,8 +6161,9 @@ export function stateBand(o: { state: 'wait' | 'live' | 'merge' | 'done'; questi
 /** Le résumé d'une ligne sur la tête d'une carte de la fiche (#199) : ce qu'elle garde, repliée. */
 export function cardSummary(
   card: FicheCard | 'fin' | 'etapes',
-  o: { steps?: { count: string; age: string }; branch?: string[]; attend?: string; after?: string[]; unlocks?: string[]; parent?: string; details?: number; when?: string },
+  o: { steps?: { count: string; age: string }; branch?: string[]; attend?: string; after?: string[]; unlocks?: string[]; parent?: string; details?: number; when?: string; attachments?: number },
 ): string {
+  if (card === 'pj') return o.attachments ? `${o.attachments} fichier${o.attachments > 1 ? 's' : ''}` : ''
   if (card === 'etapes') return o.steps ? `${o.steps.count} · ${o.steps.age}` : ''
   if (card === 'avancement') return o.branch?.[0] ?? (o.attend ? `attend ${o.attend}` : '')
   if (card === 'chaine') {
