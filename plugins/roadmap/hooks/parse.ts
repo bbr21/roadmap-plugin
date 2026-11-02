@@ -1241,11 +1241,6 @@ export function isOverdue(task: Task, today: string): boolean {
   return !task.done && task.due !== undefined && task.due < today
 }
 
-/** Récente : ouverte aujourd'hui ou hier. */
-export function isRecent(task: Task, today: string): boolean {
-  return !task.done && task.ouvert !== undefined && daysBetween(task.ouvert, today) <= 1
-}
-
 /** À moi : personne d'autre n'est attendu. */
 /**
  * Qui une tâche attend, sans la précision entre parenthèses : « BBR (trancher le cap) » → « BBR ».
@@ -1460,7 +1455,7 @@ export function doneByDay(done: readonly Task[], today: string): { label: string
  * ouvertes sont toujours en arbre, que le rangement trie sans le couper (#189) : « En arbre » n'en
  * est plus un, et la vue `arbre` d'un projet vaut par sujet.
  */
-export type Grouping = 'day' | 'subject' | 'deadline' | 'owner'
+export type Grouping = 'day' | 'subject' | 'deadline' | 'owner' | 'number'
 const VUE_GROUPING: Record<Vue, Grouping> = { jour: 'day', sujet: 'subject', echeance: 'deadline', responsable: 'owner', arbre: 'subject' }
 /** Ce qu'une roadmap a pour se ranger (#176) : une ouverte avec `due:`, une ouverte avec `resp:`. */
 export type GroupingData = { due: boolean; resp: boolean }
@@ -1483,6 +1478,7 @@ const GROUPING_LABELS: Record<Grouping, string> = {
   subject: 'Par sujet',
   deadline: 'Par échéance',
   owner: 'Par responsable',
+  number: 'Par numéro',
 }
 
 /**
@@ -1495,7 +1491,7 @@ const GROUPING_LABELS: Record<Grouping, string> = {
 export function groupingOf(groupBy: string | undefined, showDone: boolean, vue?: Vue, data: GroupingData = ALL_DATA): Grouping {
   if (showDone) return groupBy === 'subject' ? 'subject' : 'day'
   if (groupBy === 'subject' || groupBy === 'tree') return 'subject'
-  if ((groupBy === 'day' || groupBy === 'deadline' || groupBy === 'owner') && hasData(groupBy, data)) return groupBy
+  if ((groupBy === 'day' || groupBy === 'deadline' || groupBy === 'owner' || groupBy === 'number') && hasData(groupBy, data)) return groupBy
   if (vue && hasData(VUE_GROUPING[vue], data)) return VUE_GROUPING[vue]
   return 'subject'
 }
@@ -1508,11 +1504,12 @@ export function hasOpenParent(tasks: readonly Task[]): boolean {
 
 /**
  * Les rangements du menu « Ranger » (#115, #176, #189) : échéance si une ouverte a `due:`, responsable
- * si une ouverte a `resp:`, sujet, puis jour si une ouverte a `due:` ; pour les faites, sujet et jour.
+ * si une ouverte a `resp:`, sujet, jour si une ouverte a `due:`, puis numéro, partout (#192) ; pour les
+ * faites, sujet et jour.
  */
 export function groupings(data: GroupingData, showDone: boolean): Grouping[] {
   if (showDone) return ['subject', 'day']
-  return (['deadline', 'owner', 'subject', 'day'] as const).filter(g => hasData(g, data))
+  return (['deadline', 'owner', 'subject', 'day', 'number'] as const).filter(g => hasData(g, data))
 }
 
 /** Le rangement suivant, au bouton du mobile (sans menu) : le suivant de `groupings`, le premier après le dernier. */
@@ -1566,9 +1563,12 @@ export function moreFiltersForced(o: { attend: string; who: string; tierChosen: 
   return secondaryFilters().includes(o.attend) || o.tierChosen || o.who !== 'all'
 }
 
-/** Les filtres repliés sous « Plus de filtres » (#115) : ceux qui ne sont pas des pastilles ; le menu « Qui » s'y ajoute (#176). */
+/**
+ * Les filtres repliés sous « Plus de filtres » (#115) : ceux qui ne sont pas des pastilles ; le menu
+ * « Qui » s'y ajoute (#176). « Récentes » n'en est plus un : c'est le rangement par numéro (#192).
+ */
 export function secondaryFilters(_maestro = false): string[] {
-  return ['recent', 'mine', 'others']
+  return ['mine', 'others']
 }
 
 /** Le nom d'un rangement sur le bouton : « Par échéance », « Par sujet »… */
@@ -2102,6 +2102,20 @@ export function ownerTree(blocks: readonly TreeBlock[], me: readonly string[], i
   )
 }
 
+/**
+ * Les arbres par numéro, la vue « Récentes » (#192, décision de Bertrand du 2026-11-01) : une seule
+ * section, chaque arbre au numéro de sa racine, le plus grand (le plus récent) en haut, sans numéro en
+ * bas. Une sous-tâche reste sous sa mère, quel que soit son numéro. Le numéro et non `ouvert:`, que la
+ * prise d'une ligne réécrit.
+ */
+export function numberTree(blocks: readonly TreeBlock[]): TreeSection[] {
+  const items = treeUnits(blocks)
+    .map(u => ({ num: idNum(rootTask(u)), items: u.items }))
+    .sort((a, b) => b.num - a.num)
+    .flatMap(p => p.items)
+  return items.length === 0 ? [] : [{ key: 'numero', label: 'Récentes', count: items.reduce((n, i) => n + itemCount(i), 0), items }]
+}
+
 /** Le résumé de la ligne de filtre : « Mcp · attend Martial · 4 tâches », ou le total sans filtre. */
 export function filterSummary(view: { axis: string; attend: string; showDone: boolean; shown: number; doneShown: number; groupBy?: string; who?: string }): string {
   const by = groupingOf(view.groupBy, view.showDone)
@@ -2117,7 +2131,6 @@ export function filterSummary(view: { axis: string; attend: string; showDone: bo
   else if (view.attend === 'soon') parts.push('cette semaine')
   else if (view.attend === 'relaunch') parts.push('à relancer')
   else if (view.attend === 'mine') parts.push('à moi')
-  else if (view.attend === 'recent') parts.push('récentes')
   else if (view.attend === 'live') parts.push('en cours')
   else if (view.attend === 'feedback') parts.push('retours')
   else if (view.attend === 'others') parts.push('attend un tiers')

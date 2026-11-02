@@ -50,7 +50,6 @@ import {
   personIcon,
   resolveTheme,
   ringIcon,
-  sparkIcon,
   ruleIcon,
   fullWidth,
   spinnerIcon,
@@ -138,6 +137,7 @@ import {
   dayTree,
   deadlineTree,
   ownerTree,
+  numberTree,
   type AxisItem,
   parentLeftAlone,
   blockerOf,
@@ -221,7 +221,6 @@ import {
   isMine,
   attendWho,
   shortAttend,
-  isRecent,
   isOverdue,
   matches,
   newProblems,
@@ -6462,7 +6461,6 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   const soonAll = inAxis.filter(t => isDueSoon(t, today))
   const relaunchAll = inAxis.filter(t => isToRelaunch(t, today, me, relanceDays))
   const lateAll = inAxis.filter(t => isOverdue(t, today))
-  const recentAll = inAxis.filter(t => isRecent(t, today))
   // « En cours » : les tâches qu'une session travaille (roue, ou main quand elle t'attend) et
   // celles bloquées par leur prérequise (cadenas).
   const liveAll = inAxis.filter(t => isLive(t) || blocked(t))
@@ -6491,8 +6489,9 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     // Chez Maestro, « En cours » n'est plus un filtre (#160) : une vue gardée dessus montre toutes les tâches.
     attendRaw === 'live' && maestroBrand
       ? 'all'
-      : // `auto`, d'une vue gardée d'avant l'ouverture sur « Toutes » (#188) : toutes les tâches.
-        attendRaw === 'auto'
+      : // `auto`, d'une vue gardée d'avant l'ouverture sur « Toutes » (#188), ou l'ancien filtre
+        // « Récentes », devenu le rangement par numéro (#192) : toutes les tâches.
+        attendRaw === 'auto' || attendRaw === 'recent'
         ? OPENING_VIEW.attend
         : attendRaw
   // Le bloc « En cours » de Maestro (#149, #160) remplace le filtre « En cours », même avant sa première
@@ -6511,9 +6510,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
           ? soonAll
           : attend === 'relaunch'
             ? relaunchAll
-      : attend === 'recent'
-        ? recentAll
-        : attend === 'live'
+      : attend === 'live'
           ? liveAll
           : attend === 'feedback'
             ? feedbackAll
@@ -7065,7 +7062,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   // sous la valeur de leur tête, les tâches seules coupées par bande. Une bande se replie à part.
   // Sans `ranger_par`, par sujet, l'arbre se range par axe (#168) : une bande par axe, dans l'ordre de
   // la légende, la flèche dans son carré ; par jour, par échéance ou par responsable (#189), une
-  // bande par section. Dedans, les arbres entiers : les mères en blocs, chaque suite de tâches seules
+  // bande par section ; par numéro (#192), une seule bande, « Récentes ». Dedans, les arbres entiers : les mères en blocs, chaque suite de tâches seules
   // en groupe sans en-tête (`bare`). Par jour, une mère porte la tâche du jour de son arbre (`focus`).
   type ListGroup = { key?: string; name: string; tasks: Task[]; lead?: RenderElement; mark?: RenderElement; block?: TreeBlock; focus?: Task; band?: { count: number; lead?: RenderElement; axis?: string }; under?: string; bare?: boolean }
   const bandValue = (t: Task) => (rangerPar ? t.extra?.[rangerPar]?.[0] : undefined)
@@ -7091,7 +7088,8 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     flush()
     return out
   }
-  const rangedSections = by === 'day' ? dayTree(tree, today, isLive) : by === 'deadline' ? deadlineTree(tree, today, isLive) : by === 'owner' ? ownerTree(tree, me, isLive) : undefined
+  const rangedSections =
+    by === 'day' ? dayTree(tree, today, isLive) : by === 'deadline' ? deadlineTree(tree, today, isLive) : by === 'owner' ? ownerTree(tree, me, isLive) : by === 'number' ? numberTree(tree) : undefined
   const treeGroups: ListGroup[] = rangedSections
     ? rangedSections.flatMap(sec => sectionGroups(sec.key, sec.label, sec.count, sec.items, sec.late ? { lead: lateLead() } : {}))
     : !rangerPar
@@ -7226,8 +7224,6 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     { key: 'live', name: 'En cours', n: liveAll.length, mark: (d: boolean) => tallIcon(fade(spinnerIcon(palette.live, 16, undefined, true), d), 'en cours', 16, '◌', 'suggestion') },
     { key: 'feedback', name: 'Retours', n: feedbackAll.length, mark: (d: boolean) => tallIcon(fade(bubbleIcon(palette.wait), d), 'retours', 16, '❝', 'permission') },
     { key: 'late', name: 'En retard', n: lateAll.length, mark: (d: boolean) => tallIcon(fade(discIcon(palette.late), d), 'en retard', 16, '●', 'error') },
-    // Récentes : ouvertes aujourd'hui ou hier.
-    { key: 'recent', name: 'Récentes', n: recentAll.length, mark: (d: boolean) => tallIcon(fade(sparkIcon(palette.ok), d), 'récentes', 16, '✦', 'success') },
     { key: 'mine', name: 'À moi', n: mineCount, mark: (d: boolean) => tallIcon(fade(ringIcon(palette.mine), d), 'à moi', 16, '○', 'suggestion') },
     {
       key: 'others',
@@ -7246,7 +7242,6 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     relaunch: relaunchAll.length,
     live: liveAll.length,
     feedback: feedbackAll.length,
-    recent: recentAll.length,
     mine: mineCount,
     others: inAxis.length - mineCount,
   }

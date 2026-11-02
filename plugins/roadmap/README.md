@@ -32,12 +32,10 @@ les sessions toutes les 3 s (le dossier de la roadmap toutes les 15 s), et montr
   retarde, « Recharger » pose `/reload-plugins` dans la saisie (le plugin ne peut pas le lancer lui-même) ;
 - chez Maestro, la ligne « En cours » (#149) : le compte de ses sessions et un point par voie ;
   la choisir montre l'arbre des sessions (barre et étape sous chaque voie) à la place de la liste.
-  À l'ouverture, le panneau de Maestro la choisit si une session t'attend, sinon Ma journée, sinon
-  les récentes ;
+  À l'ouverture, le panneau de Maestro montre toutes ses tâches (#188) ;
 - les filtres en une rangée de pastilles (#115, #149) : une icône de trait dans leur couleur, le
   nom, le nombre ; la choisie prend sa teinte et un second clic la retire. Ma journée, En cours (sauf chez Maestro), En retard, Cette semaine, À relancer, Retours (`feedback:`), dans tout projet, chacune cachée à 0 (#176) ;
-- « Plus › », au bout de la rangée : les autres états non vides (Récentes, ouvertes aujourd'hui ou hier ;
-  À moi ; Attend un tiers ; et le menu « Qui » dès qu'une autre personne est nommée, #176) ; il reste ouvert tant qu'un de ses filtres est choisi ;
+- « Plus › », au bout de la rangée : les autres états non vides (À moi ; Attend un tiers ; et le menu « Qui » dès qu'une autre personne est nommée, #176) ; il reste ouvert tant qu'un de ses filtres est choisi ;
 - une recherche par mots ou par numéro (#47), dans les ouvertes et les faites, qui filtre à la frappe,
   et à côté le menu « Ranger » qui montre le rangement en cours ;
 - par défaut, l'arbre par axe (#168), dans tout projet : une section par axe, dans
@@ -55,7 +53,7 @@ les sessions toutes les 3 s (le dossier de la roadmap toutes les 15 s), et montr
   tient sur toutes les lignes) ; chez Maestro, une tâche en session n'y porte que la pastille
   « en session », sa barre et son étape sont dans l'arbre ;
 - toutes les faites, rangées par jour de clôture ou par sujet ;
-- dans toutes les vues, le menu « Ranger » (Par sujet, le défaut ; Par jour et Par échéance quand une ouverte a `due:`, Par responsable quand une a `resp:`, #176 ; un bouton sur mobile) : un seul choix pour toutes les vues ; les ouvertes sont toujours en arbre, que le rangement trie sans le couper, et par jour chaque arbre se range à sa prochaine échéance, l'étape du jour sous sa mère repliée (#189) ;
+- dans toutes les vues, le menu « Ranger » (Par sujet, le défaut ; Par jour et Par échéance quand une ouverte a `due:`, Par responsable quand une a `resp:`, #176 ; Par numéro, la vue « Récentes », partout, #192 ; un bouton sur mobile) : un seul choix pour toutes les vues ; les ouvertes sont toujours en arbre, que le rangement trie sans le couper, et par jour chaque arbre se range à sa prochaine échéance, l'étape du jour sous sa mère repliée (#189) ;
   par jour, une ouverte se range au jour de son `ouvert:` (« En retard » reste en tête), une faite
   au jour de son `fait:` ; sans choix ni `vue` déclarée par le projet, les ouvertes vont en arbre
   (#168) et les faites par jour ;
@@ -645,6 +643,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.125.0 (2026-11-01)** : panneau : « Ranger › Par numéro » range les arbres par le numéro de leur tâche racine, le plus récent en haut ; le filtre « Récentes » quitte « Plus › » (#192)
 - **0.124.0 (2026-11-01)** : panneau, maestro : le brief de lancement s'ouvre par sa mission, ses fichiers et « Fini quand », lisibles d'un coup d'œil sur la carte (#194)
 - **0.123.0 (2026-11-01)** : panneau : les ouvertes toujours en arbre, que « Ranger » (par sujet, par jour, par échéance, par responsable) trie sans le couper ; par jour, chaque arbre à sa prochaine échéance, l'étape du jour sous sa mère (#189)
 - **0.122.1 (2026-11-01)** : panneau : le titre de la fiche d'une tâche en texte de 22 px (un bouton natif ignorait sa taille), le crayon en petit bouton gris de 24 px (#193)
