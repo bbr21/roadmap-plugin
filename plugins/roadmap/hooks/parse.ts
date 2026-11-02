@@ -5948,6 +5948,44 @@ export function ficheCards(o: {
 }
 
 /**
+ * La bande d'état de la fiche (#199, sous l'en-tête, hors de la ligne « Tâche lancée par Maestro ») : le
+ * mot de la pastille de Maestro, pourquoi, l'icône devant et sa teinte. Une close dit « Completed », une annulée « annulée », sans icône.
+ */
+export function stateBand(o: { state: 'wait' | 'live' | 'merge' | 'done'; question?: string; current?: string; ahead?: number; fait?: string; abandoned?: boolean }): {
+  word: string
+  why: string
+  mark?: 'person' | 'spinner' | 'merge' | 'check'
+  tone: 'wait' | 'live' | 'merge' | 'done' | 'cancel'
+} {
+  if (o.state === 'done' && o.abandoned) return { word: 'annulée', why: o.fait ? `annulée le ${shortDate(o.fait)}` : '', tone: 'cancel' }
+  if (o.state === 'wait') return { word: "t'attend", why: o.question ?? "la session s'est arrêtée", mark: 'person', tone: 'wait' }
+  if (o.state === 'live') return { word: 'en session', why: o.current ?? '', mark: 'spinner', tone: 'live' }
+  if (o.state === 'merge') {
+    const commits = o.ahead ? `${o.ahead} commit${o.ahead > 1 ? 's' : ''}, ` : ''
+    return { word: 'à fusionner', why: `${commits}Maestro fusionne`, mark: 'merge', tone: 'merge' }
+  }
+  return { word: 'Completed', why: o.fait ? `close le ${shortDate(o.fait)}` : '', mark: 'check', tone: 'done' }
+}
+
+/** Le résumé d'une ligne sur la tête d'une carte de la fiche (#199) : ce qu'elle garde, repliée. */
+export function cardSummary(
+  card: FicheCard | 'fin' | 'etapes',
+  o: { steps?: { count: string; age: string }; branch?: string[]; attend?: string; after?: string[]; unlocks?: string[]; parent?: string; details?: number; when?: string },
+): string {
+  if (card === 'etapes') return o.steps ? `${o.steps.count} · ${o.steps.age}` : ''
+  if (card === 'avancement') return o.branch?.[0] ?? (o.attend ? `attend ${o.attend}` : '')
+  if (card === 'chaine') {
+    const ids = (list: string[]) => list.map(n => `#${n}`).join(', ')
+    if (o.after?.length) return `après ${ids(o.after)}`
+    if (o.unlocks?.length) return `débloque ${ids(o.unlocks)}`
+    return o.parent ? `parent #${o.parent}` : ''
+  }
+  if (card === 'details') return o.details ? `${o.details} champ${o.details > 1 ? 's' : ''}` : ''
+  if (card === 'fin') return o.when ?? ''
+  return ''
+}
+
+/**
  * La carte du message d'ouverture : « Maestro » seul ou « Maestro go », ou le brief d'une tâche lancée ;
  * tout autre message garde sa rangée, « Maestro scan » du bouton de #126 compris.
  */

@@ -649,6 +649,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.130.0 (2026-11-01)** : panneau : la fiche d'une tâche en cartes repliables à tête, un filet par ligne, l'état en bande sous l'en-tête, un seul état « Completed » dans toute la fiche (#199)
 - **0.129.0 (2026-11-01)** : panneau : la ligne de tâche refaite : plus de rond, le carré d'axe coche et décoche après un tag « Confirmer » sur la même ligne ; une faite grisée et barrée, son carré garde la couleur de l'axe ; colonnes alignées (#198)
 - **0.128.1 (2026-11-01)** : panneau : les tâches lancées par Maestro restent à la place de leur premier lancement, dans la bande et le bloc En cours (#195)
 - **0.128.0 (2026-11-01)** : panneau : dates à l'américaine par défaut (« Nov 4 », heure sur 12 h), réglage dateFormat us | fr ; le contrôle refuse une date fait: ou ouvert: dans le futur, comptée à l'heure locale (#201)

@@ -99,6 +99,8 @@ export type View = {
   editCount?: number
   /** La tâche (son numéro) dont la carte d'étapes est épinglée dans l'arbre de Maestro (#143) ; vide ou absente : aucune. */
   stepsPin?: string
+  /** Les cartes de la fiche repliées par leur tête (#199), par nom (`fin`, `etapes`, `details`…), pour toutes les tâches ; absent : toutes dépliées. */
+  foldedCards?: string[]
   /** Le bloc « En cours » de Maestro replié par son chevron (#160) ; absent, déplié. */
   liveFolded?: boolean
   /** La ligne dont le rond est armé (#179, clé `taskKey`) : son encart attend sa confirmation ; vide ou absente : aucune. */

@@ -116,6 +116,7 @@ import {
   launchBoxRefusal,
   dueLabel,
   findSelected,
+  cardSummary,
   ficheCards,
   missionCut,
   finCard,
@@ -353,6 +354,7 @@ import {
   mergeSteps,
   childAlerts,
   stepsStamp,
+  stateBand,
   stepsView,
   childAlertText,
   childrenOf,
@@ -4754,7 +4756,6 @@ function brandTree(
   palette: Palette,
   variant: 'card' | 'header' | 'focus',
   today = '',
-  state?: BrandTask['state'],
   // Le titre « #N … » d'une tâche, cliquable (#142) : la clé de son bouton et ce qu'il fait ; avec `hit`,
   // sa zone de clic, posée sur le titre en texte au lieu du bouton (#193).
   onTitle?: { key: string; press: () => void; hit?: RenderElement | null },
@@ -4959,8 +4960,6 @@ function brandTree(
         <Box flexGrow={1} flexShrink={1} minWidth={0}>
           <Text size="footnote" color={palette.text2} wrap="truncate-end">{words.sub}</Text>
         </Box>
-        {/* Une tâche close : « Completed » en violet, comme dans la bande de Maestro (#174). */}
-        {state && pill(BRAND_STATE_WORDS[state], ...tone(state, state === 'done'), state === 'merge' ? 'merge' : undefined)}
       </Box>
       {titleEnd ? (
         <Box key="title-row" flexDirection="row" alignItems="flex-start" gap={SPACE.row}>
@@ -4980,9 +4979,6 @@ function brandTree(
     </Box>
   )
 }
-
-/** Les mots d'état d'une tâche lancée, ceux des pastilles de Maestro. */
-const BRAND_STATE_WORDS: Record<BrandTask['state'], string> = { wait: "t'attend", live: 'en session', merge: 'à fusionner', done: 'Completed' }
 
 /**
  * La marque de cette session : chez Maestro (son titre ou sa marque), Maestro et ses tâches ; chez une
@@ -5157,7 +5153,7 @@ async function paneBrand(
   if (!found) return null
   // Chez Maestro, rien en tête (#149) : ses sessions vivent dans la ligne « En cours » et son arbre.
   if (found.brand.kind !== 'task') return null
-  return brandTree($, e, found.brand, found.data.palette, 'header', today, undefined, {
+  return brandTree($, e, found.brand, found.data.palette, 'header', today, {
     key: 'task-focus',
     press: () => void setView($, () => ({ whole: false, selected: '' })),
   })
@@ -5288,8 +5284,9 @@ async function readFicheDocs($: EngineInterface, source: Source, task: Task, now
 }
 
 /**
- * Le bloc « Étapes » de la fiche (#142, #143 maquette C + A), sous la mission : « Étapes », le compte et
- * l'âge de la note, la barre, puis toutes les étapes. Rien sans note lisible.
+ * Le corps de la carte « Étapes » de la fiche (#142, #143 maquette C + A ; carte repliable #199) : la
+ * barre, puis toutes les étapes, un filet entre elles ; son résumé, le compte et l'âge de la note.
+ * Rien sans note lisible.
  */
 function ficheSteps(
   $: EngineInterface,
@@ -5298,41 +5295,44 @@ function ficheSteps(
   own: ChildStatus | undefined,
   now: number,
   closed = false,
-  // #191 : la session qui tient ces étapes, pour « Fusionner », et l'état de la pastille, pour la couleur.
+  // #191 : la session qui tient ces étapes, pour « Fusionner », et l'état de la bande, pour la couleur.
   sessionId?: string,
   state?: BrandTask['state'],
-): RenderElement | null {
+): { summary: string; body: RenderElement } | null {
   const status = own ? shownStatus(own, sessionId, closed) : undefined
   const view = status ? stepsView(status.steps, { now, at: status.at, fold: Infinity, closed }) : undefined
   if (!status || !view) return null
   const { Box, Text } = $.ui.resolve(e)
   const Svg = e.surface === 'terminal' ? undefined : $.ui.resolve(e).Svg
   const bar = stepsBarIcon(palette, view.segments, { width: 240, waiting: status.question !== undefined, merging: state === 'merge' })
-  return (
-    <Box key="fiche-steps" flexDirection="column" gap={SPACE.tight} paddingX={SPACE.indent}>
-      <Box flexDirection="row" alignItems="center" gap={SPACE.row}>
-        <Text size="caption" weight="medium" color={palette.text2}>Étapes</Text>
-        <Text size="caption" color={palette.text3}>{`${view.count} · ${view.age}`}</Text>
-      </Box>
-      {Svg && <Svg source={bar.source} alt={`étapes ${view.count}`} width={bar.width} height={bar.height} />}
-      {view.rows.map((r, i) =>
-        r.kind === 'folded' ? (
-          <Text key={`fiche-step:${i}`} size="footnote" color={palette.text2}>{r.text}</Text>
-        ) : (
-          <Box key={`fiche-step:${i}`} flexDirection="row" alignItems="center" gap={SPACE.row}>
-            {Svg ? (
-              <Svg source={stepIcon(palette, r.status)} alt={STEP_WORDS[r.status]} width={SIZE.icon.md} height={SIZE.icon.md} />
+  const rule = ruleIcon(palette.border, fullWidth((e.props as { bodyColumns?: number }).bodyColumns ?? 48))
+  return {
+    summary: cardSummary('etapes', { steps: { count: view.count, age: view.age } }),
+    body: (
+      <Box key="fiche-steps" flexDirection="column" gap={SPACE.tight}>
+        {Svg && <Svg source={bar.source} alt={`étapes ${view.count}`} width={bar.width} height={bar.height} />}
+        {view.rows.map((r, i) => (
+          <Box key={`fiche-step:${i}`} flexDirection="column" gap={SPACE.tight}>
+            {i > 0 && Svg && <Svg source={rule} alt="séparateur" height={1} />}
+            {r.kind === 'folded' ? (
+              <Text size="footnote" color={palette.text2}>{r.text}</Text>
             ) : (
-              <Text size="footnote" color={palette.text2}>{STEP_MARKS[r.status]}</Text>
+              <Box flexDirection="row" alignItems="center" gap={SPACE.row}>
+                {Svg ? (
+                  <Svg source={stepIcon(palette, r.status)} alt={STEP_WORDS[r.status]} width={SIZE.icon.md} height={SIZE.icon.md} />
+                ) : (
+                  <Text size="footnote" color={palette.text2}>{STEP_MARKS[r.status]}</Text>
+                )}
+                <Text size="footnote" weight={r.status === 'now' ? 'semibold' : undefined} color={r.status === 'now' ? palette.text : palette.text2} wrap="wrap">
+                  {r.content}
+                </Text>
+              </Box>
             )}
-            <Text size="footnote" weight={r.status === 'now' ? 'semibold' : undefined} color={r.status === 'now' ? palette.text : palette.text2} wrap="wrap">
-              {r.content}
-            </Text>
           </Box>
-        ),
-      )}
-    </Box>
-  )
+        ))}
+      </Box>
+    ),
+  }
 }
 
 /**
@@ -5400,6 +5400,8 @@ function stepsCard(
 /** Ce que dit la marque d'une étape, et sa marque au terminal (#143). */
 const STEP_WORDS: Record<StepSegment, string> = { done: 'faite', now: 'en cours', todo: 'à faire' }
 const STEP_MARKS: Record<StepSegment, string> = { done: '✓', now: '›', todo: '○' }
+/** Ce que dit l'icône de la bande d'état de la fiche (#199). */
+const BAND_MARK_WORDS: Record<NonNullable<ReturnType<typeof stateBand>['mark']>, string> = { person: 'attend ta réponse', spinner: 'en cours', merge: 'fusion', check: 'faite' }
 
 async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<RenderElement> {
   // Les gestionnaires de clic ne se vident pas ici : un rendu attend ses lectures, et un clic
@@ -5461,7 +5463,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   const {
     axis: axisRaw, attend: attendRaw, who: whoRaw = 'all', moreFilters = false, showDone, groupBy, selected, openGroups, closedGroups, moreGroups,
     launchNote, launched, openNote, conclusionOpen, missionOpen = '', cancelAsk = '', closeKind = 'abandon', cancelNote = '',
-    editing: editingKey = '', editNote = '', editField = '', editCount = 0,
+    editing: editingKey = '', editNote = '', editField = '', editCount = 0, foldedCards = [],
   } = view
   const data = await paneData($, source, [stamp, titlesVersion, themeStamp, retry, liveVersion].join('|'))
   const { palette, bilan: bilanData, titles, live: liveEntries, ignored } = data
@@ -5740,9 +5742,10 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
         </Box>
         <Box key={`link-state:${x.key}`} flexShrink={0}>
           {x.done ? (
+            // Une close dit « Completed » en violet, comme la bande de la fiche (#199) ; une annulée, « annulée ».
             <Box flexDirection="row" alignItems="center" gap={SPACE.row}>
-              {icon(checkIcon(palette.ok, 12, STROKE.pill), 'faite', 12, '✓', 'success')}
-              <Text size="caption" weight="medium" color={palette.ok}>Done</Text>
+              {isAbandoned(x) ? <Text color={palette.text2}>⊘</Text> : icon(checkIcon(palette.finishedOn, 12, STROKE.pill), 'faite', 12, '✓', palette.finishedOn)}
+              <Text size="caption" weight="medium" color={isAbandoned(x) ? palette.text2 : palette.finishedOn}>{isAbandoned(x) ? 'annulée' : 'Completed'}</Text>
             </Box>
           ) : isLive(x) ? (
             drawnPill({ text: 'en session', bg: palette.liveTint, fg: palette.liveOn, mark: 'spinner', height: SIZE.pill.detail })
@@ -5766,16 +5769,62 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
         )}
       </Box>
     )
-    // Un champ : son nom sur 10 unités, la valeur à côté ; absent, rien.
+    // Le filet au-dessus de chaque ligne d'une carte (#199, maquette A), comme dans la carte Fin (#183).
+    const rule = ruleIcon(palette.border, fullWidth((e.props as { bodyColumns?: number }).bodyColumns ?? 48))
+    const ruleAbove = Svg ? <Svg source={rule} alt="séparateur" height={1} /> : null
+    // Une carte de la fiche (#199, maquette A) : un cadre fin ; sa tête, le chevron, le titre, le résumé à
+    // droite, se clique pour la replier ou la déplier. Repliée par son nom, pour toutes les tâches ; en
+    // édition, toutes dépliées. Au terminal, la tête est un bouton de l'app.
+    const folded = (id: string) => !editing && foldedCards.includes(id)
+    const toggleCard = (id: string) => () =>
+      void setView($, v => {
+        const was = v.foldedCards ?? []
+        return { foldedCards: was.includes(id) ? was.filter(x => x !== id) : [...was, id] }
+      })
+    const card = (id: string, name: string, summary: string, body: RenderElement, o: { before?: RenderElement | false | null; after?: RenderElement | false | null } = {}) => {
+      const closed = folded(id)
+      const head =
+        graphic && Client && Svg ? (
+          <Box key={`hit:card:${id}`} flexDirection="row" alignItems="center" gap={SPACE.row} hover={{ backgroundColor: palette.hover }}>
+            {strut(SIZE.strut.row)}
+            <Svg source={chevronIcon(palette.text2, !closed, SIZE.icon.sm)} alt={closed ? 'replié' : 'déplié'} width={SIZE.icon.sm} height={SIZE.icon.sm} />
+            {o.before}
+            <Text size="footnote" weight="semibold">{name}</Text>
+            {o.after}
+            <Box flexGrow={1} flexShrink={1} minWidth={0} flexDirection="row" justifyContent="flex-end">
+              {summary !== '' && <Text size="caption" color={palette.text3} wrap="truncate-end">{summary}</Text>}
+            </Box>
+            {hit(`card:${id}`, toggleCard(id))}
+          </Box>
+        ) : (
+          <Button key={`card:${id}`} plain onPress={toggleCard(id)}>
+            <Text>{closed ? '▸ ' : '▾ '}</Text>
+            <Text weight="semibold">{name}</Text>
+            {summary !== '' && <Text dimColor>{` · ${summary}`}</Text>}
+          </Button>
+        )
+      return (
+        <Box key={`card-box:${id}`} paddingX={SPACE.indent}>
+          <Box key={`card-frame:${id}`} flexDirection="column" gap={SPACE.tight} paddingX={SPACE.indent} paddingY="xs" flexGrow={1} flexShrink={1} minWidth={0} borderStyle="round" borderColor={palette.border}>
+            {head}
+            {!closed && body}
+          </Box>
+        </Box>
+      )
+    }
+    // Un champ : son nom sur 10 unités, la valeur à côté, un filet au-dessus ; absent, rien.
     const field = (name: string, value: RenderElement | undefined | false, key = name) =>
       value ? (
-        <Box key={`field:${key}`} flexDirection="row" alignItems="center">
-          <Box width={10} flexShrink={0} flexDirection="row" alignItems="center">
-            {strut(SIZE.strut.field)}
-            <Text color={palette.text2}>{name}</Text>
-          </Box>
-          <Box flexDirection="row" alignItems="center" gap={SPACE.row} flexShrink={1} minWidth={0}>
-            {value}
+        <Box key={`field:${key}`} flexDirection="column">
+          {ruleAbove}
+          <Box key={`field-row:${key}`} flexDirection="row" alignItems="center">
+            <Box width={10} flexShrink={0} flexDirection="row" alignItems="center">
+              {strut(SIZE.strut.field)}
+              <Text color={palette.text2}>{name}</Text>
+            </Box>
+            <Box flexDirection="row" alignItems="center" gap={SPACE.row} flexShrink={1} minWidth={0}>
+              {value}
+            </Box>
           </Box>
         </Box>
       ) : null
@@ -5797,37 +5846,38 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
           : fin.ressenti === 'bloqué'
             ? { bg: palette.lateTint, fg: palette.lateOn }
             : { bg: palette.sel, fg: palette.text }
-      return (
-        <Box key="fin-box" paddingX={SPACE.indent}>
-          <Box flexDirection="column" gap={SPACE.tight} paddingX={SPACE.indent} paddingY="sm" flexGrow={1} borderStyle="round" borderColor={palette.border}>
-            <Box flexDirection="row" justifyContent="space-between" alignItems="center" gap={SPACE.row}>
-              <Box flexDirection="row" alignItems="center" gap={SPACE.row}>
-                {fin.emoji && <Text>{fin.emoji}</Text>}
-                <Text weight="semibold">Fin</Text>
-                {fin.ressenti && drawnPill({ text: fin.ressenti, ...tone, height: SIZE.pill.detail, weight: TEXT.weight.soft })}
-                {fin.missing && drawnPill({ text: 'conclusion manquante', bg: palette.lateTint, fg: palette.lateOn, height: SIZE.pill.detail, weight: TEXT.weight.soft })}
-              </Box>
-              <Text size="caption" color={palette.text2}>{fin.when}</Text>
-            </Box>
-            {/* Le tableau : la colonne d'étiquettes des champs de la carte Détails, sans écart de plus, pour que
-                les valeurs des deux cartes commencent au même endroit (#183) ; un trait entre les lignes. */}
-            {shown.map((r, i) => (
-              <Box key={`fin:${r.name}`} flexDirection="column" gap={SPACE.tight}>
-                {i > 0 && Svg && <Svg source={ruleIcon(palette.border, fullWidth((e.props as { bodyColumns?: number }).bodyColumns ?? 48))} alt="séparateur" height={1} />}
-                <Box key={`fin-row:${r.name}`} flexDirection="row">
-                  <Box width={10} flexShrink={0}>
-                    <Text color={palette.text2}>{r.name}</Text>
-                  </Box>
-                  <Box flexShrink={1} minWidth={0} flexGrow={1}>
-                    {r.tone === 'ok' ? <Text wrap="wrap" color={palette.ok}>{r.fold.md}</Text> : <Markdown text={codeKeptWhole(r.fold.md)} {...(r.tone === 'dim' ? { dimColor: true } : {})} />}
-                  </Box>
+      return card(
+        'fin',
+        'Fin',
+        fin.when,
+        <Box flexDirection="column" gap={SPACE.tight}>
+          {/* Le tableau : la colonne d'étiquettes des champs de la carte Détails, sans écart de plus, pour que
+              les valeurs des deux cartes commencent au même endroit (#183) ; un filet au-dessus de chaque ligne (#199). */}
+          {shown.map(r => (
+            <Box key={`fin:${r.name}`} flexDirection="column" gap={SPACE.tight}>
+              {ruleAbove}
+              <Box key={`fin-row:${r.name}`} flexDirection="row">
+                <Box width={10} flexShrink={0}>
+                  <Text color={palette.text2}>{r.name}</Text>
+                </Box>
+                <Box flexShrink={1} minWidth={0} flexGrow={1}>
+                  {r.tone === 'ok' ? <Text wrap="wrap" color={palette.ok}>{r.fold.md}</Text> : <Markdown text={codeKeptWhole(r.fold.md)} {...(r.tone === 'dim' ? { dimColor: true } : {})} />}
                 </Box>
               </Box>
-            ))}
-            {canOpen &&
-              moreLink('fin', opened ? 'Replier' : 'Tout voir', () => void setView($, v => ({ conclusionOpen: v.conclusionOpen === current.key ? '' : current.key })))}
-          </Box>
-        </Box>
+            </Box>
+          ))}
+          {canOpen &&
+            moreLink('fin', opened ? 'Replier' : 'Tout voir', () => void setView($, v => ({ conclusionOpen: v.conclusionOpen === current.key ? '' : current.key })))}
+        </Box>,
+        {
+          before: fin.emoji && <Text>{fin.emoji}</Text>,
+          after: (
+            <Box flexDirection="row" alignItems="center" gap={SPACE.row}>
+              {fin.ressenti && drawnPill({ text: fin.ressenti, ...tone, height: SIZE.pill.detail, weight: TEXT.weight.soft })}
+              {fin.missing && drawnPill({ text: 'conclusion manquante', bg: palette.lateTint, fg: palette.lateOn, height: SIZE.pill.detail, weight: TEXT.weight.soft })}
+            </Box>
+          ),
+        },
       )
     }
     const mono = (text: string | undefined) =>
@@ -5986,19 +6036,75 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     const headState: BrandTask['state'] | undefined =
       waitState === 'wait' && stepsNote?.question === undefined && (aheadNow ?? 0) > 0 ? 'merge' : waitState
     const headBrand = focusBrand ?? taskBrandOf(current, source, allTasks, { label: s.titre })
-    // Une carte : sa légende, puis ses lignes, dans un cadre à bord fin, qui ne grandit pas au-delà du panneau (#173).
-    const card = (name: string, body: RenderElement) => (
-      <Box key={`card:${name}`} paddingX={SPACE.indent}>
-        <Box key={`card-frame:${name}`} flexDirection="column" gap={SPACE.tight} paddingX={SPACE.indent} paddingY="xs" flexGrow={1} flexShrink={1} minWidth={0} borderStyle="round" borderColor={palette.border}>
-          <Text size="caption" weight="medium" color={palette.text2}>{name}</Text>
-          {body}
+    // Le résumé de la tête de chaque carte, ce qu'elle garde repliée (#199).
+    const summaries: Record<FicheCard, string> = {
+      avancement: cardSummary('avancement', {
+        ...(facts ? { branch: facts.branch } : {}),
+        ...(current.attend !== undefined ? { attend: attendWho(current.attend) } : {}),
+      }),
+      lancer: '',
+      chaine: cardSummary('chaine', {
+        after: prereqsFor(current).flatMap(x => (x.id ? [x.id] : [])),
+        unlocks: unlocks.flatMap(x => (x.id ? [x.id] : [])),
+        ...(current.parent !== undefined ? { parent: current.parent } : {}),
+      }),
+      details: cardSummary('details', { details: detailCount }),
+    }
+    const stepsPart = ficheSteps($, e, palette, stepsNote, now, current.done, stepsSession, headState)
+    // L'état sous l'en-tête (#199, choix de Bertrand) : une bande teintée, son icône, son mot et pourquoi ;
+    // il a quitté la ligne « Tâche lancée par Maestro », où il flottait à droite.
+    const band = headState
+      ? stateBand({
+          state: headState,
+          abandoned,
+          ...(stepsNote?.question ? { question: stepsNote.question.text } : {}),
+          ...(stepsNote?.steps.find(x => x.status === 'in_progress') ? { current: stepsNote.steps.find(x => x.status === 'in_progress')!.content } : {}),
+          ...(aheadNow ? { ahead: aheadNow } : {}),
+          ...(current.fait ? { fait: current.fait } : {}),
+        })
+      : undefined
+    const stateBox = () => {
+      if (!band) return null
+      const [bg, fg] = {
+        wait: [palette.blockTint, palette.blockOn],
+        live: [palette.liveTint, palette.liveOn],
+        merge: [palette.waitTint, palette.waitOn],
+        done: [palette.finishedTint, palette.finishedOn],
+        cancel: [palette.sel, palette.text2],
+      }[band.tone]
+      const mark =
+        band.mark === 'person'
+          ? personIcon(fg, SIZE.icon.sm)
+          : band.mark === 'merge'
+            ? mergeIcon(fg, SIZE.icon.sm)
+            : band.mark === 'check'
+              ? checkIcon(fg, SIZE.icon.sm, STROKE.pill)
+              : band.mark === 'spinner'
+                ? spinnerIcon(fg, SIZE.icon.sm, undefined, false, now)
+                : undefined
+      return (
+        <Box key="state-band-row" paddingX={SPACE.indent}>
+          <Box key="state-band" flexDirection="row" alignItems="center" gap={SPACE.row} paddingX={SPACE.indent} flexGrow={1} backgroundColor={bg}>
+            {corners(RADIUS.control, palette.bg)}
+            {strut(SIZE.strut.field)}
+            {Svg && mark && <Svg source={mark} alt={BAND_MARK_WORDS[band.mark!]} width={SIZE.icon.sm} height={SIZE.icon.sm} {...(band.mark === 'spinner' ? { isInteractive: true } : {})} />}
+            {band.tone === 'cancel' && <Text color={fg}>⊘</Text>}
+            <Text weight="semibold" color={fg}>{band.word}</Text>
+            {band.why !== '' && (
+              <Box flexShrink={1} minWidth={0}>
+                <Text color={palette.text} wrap="truncate-end">{band.why}</Text>
+              </Box>
+            )}
+          </Box>
         </Box>
-      </Box>
-    )
+      )
+    }
     const cards: Record<FicheCard, () => RenderElement> = {
       avancement: () =>
         card(
+          'avancement',
           'Avancement',
+          summaries.avancement,
           <Box flexDirection="column" gap={SPACE.block}>
             <Box flexDirection="column">
               {docs.length > 0 &&
@@ -6182,7 +6288,9 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
         ),
       lancer: () =>
         card(
+          'lancer',
           'Lancer',
+          summaries.lancer,
           <Box flexDirection="column" gap={SPACE.block}>
               <Box flexDirection="row" alignItems="stretch" gap={SPACE.row}>
                 {!current.done && !live && launched.includes(taskKey(current)) && requested()}
@@ -6322,7 +6430,9 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
         ),
       chaine: () =>
         card(
+          'chaine',
           'Chaîne',
+          summaries.chaine,
           <Box flexDirection="column">
               {prereqsFor(current).map((x, i) => field(i === 0 ? 'Après' : '', link(x), `Après:${x.key}`))}
               {missingPrereqs(current, allTasks).map((n, i) =>
@@ -6345,15 +6455,17 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
         ),
       details: () =>
         card(
+          'details',
           'Détails',
+          summaries.details,
           <Box flexDirection="column">
-            {/* Close : faite (la coche verte) ou annulée (⊘). */}
+            {/* Close : « Completed » en violet, le mot de la bande (#199), ou annulée (⊘). */}
             {current.done &&
               field(
                 'État',
                 <Box flexDirection="row" alignItems="center" gap={SPACE.row}>
-                  {abandoned ? <Text color={palette.text2}>⊘</Text> : icon(checkIcon(palette.ok, 14), 'faite', 14, '✓', 'success')}
-                  <Text color={abandoned ? palette.text2 : palette.ok}>{abandoned ? 'annulée' : 'Done'}</Text>
+                  {abandoned ? <Text color={palette.text2}>⊘</Text> : icon(checkIcon(palette.finishedOn, 14), 'faite', 14, '✓', palette.finishedOn)}
+                  <Text color={abandoned ? palette.text2 : palette.finishedOn}>{abandoned ? 'annulée' : 'Completed'}</Text>
                 </Box>,
               )}
             {s.sujet !== '…' && field('Sujet', plain(s.sujet))}
@@ -6444,6 +6556,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
           .filter(spec => spec.card === where)
           .map(spec => (
             <Box key={`edit-row:${keyPart(spec.field)}`} flexDirection="column" gap={SPACE.tight}>
+              {ruleAbove}
               <Box flexDirection="row" alignItems="center">
                 <Box width={10} flexShrink={0} flexDirection="row" alignItems="center">
                   {strut(SIZE.strut.field)}
@@ -6460,9 +6573,9 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     )
     const editCards: Partial<Record<FicheCard, () => RenderElement>> = editing
       ? {
-          avancement: () => card('Avancement', editRows('avancement')),
-          chaine: () => card('Chaîne', editRows('chaine')),
-          details: () => card('Détails', editRows('details')),
+          avancement: () => card('avancement', 'Avancement', '', editRows('avancement')),
+          chaine: () => card('chaine', 'Chaîne', '', editRows('chaine')),
+          details: () => card('details', 'Détails', '', editRows('details')),
         }
       : {}
     const stopEditing = () => {
@@ -6531,7 +6644,6 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
             palette,
             'focus',
             today,
-            headState,
             { key: 'open-line', press: openLine, hit: hit('open-line', openLine) },
             undefined,
             false,
@@ -6544,6 +6656,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
             },
           )}
         </Box>
+        {stateBox()}
         {/* En édition (#161) : la barre sous l'en-tête, à la place du crayon. */}
         {editing && editBar()}
         {/* La mission seule dans son cadre (#150, maquette C) : celle de la fiche de fin de sa session, sa
@@ -6564,7 +6677,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
           </Box>
         </Box>
         {finBox()}
-        {ficheSteps($, e, palette, stepsNote, now, current.done, stepsSession, headState)}
+        {stepsPart && card('etapes', 'Étapes', stepsPart.summary, stepsPart.body)}
         {layout.cards.map(c => (editCards[c] ?? cards[c])())}
         <Box flexDirection="column" gap={SPACE.block} paddingX={SPACE.indent}>
           {openNote !== '' && <Text size="caption" color={palette.text2}>{openNote}</Text>}
