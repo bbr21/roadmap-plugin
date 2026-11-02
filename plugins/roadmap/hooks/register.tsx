@@ -403,6 +403,7 @@ import {
   bypassCard,
   isModeRefusal,
   forbiddenGit,
+  queuedCommand,
   type Delivery,
   guardText,
   type GitHit,
@@ -1188,6 +1189,27 @@ async function written($: EngineInterface, run: () => Promise<ToolCallResult>, p
   const ran = await run()
   // Une commande en lecture seule n'écrit rien : rien à relire.
   return ran.isReadOnly === true ? ran : afterWrite($, ran, path, own ? before : await reread())
+}
+
+/** Ce que l'outil Bash donne d'un appel : la commande, et son délai (ms) au premier plan. */
+type BashCall = { command: string; timeout?: number; run_in_background?: boolean }
+
+/** L'attente plus la suite tiennent dans les 10 min que l'outil Bash accorde au plus à un appel au premier plan. */
+const QUEUE_TIMEOUT_MS = 600_000
+
+/**
+ * La file des tests lourds (#222, BBR, 2026-11-02) : une suite lourde passe par `one-at-a-time.sh` du
+ * plugin, une à la fois par projet ; au premier plan, son délai monte à 10 min. Une réécriture en
+ * échec laisse la commande telle quelle.
+ */
+function inQueue<E extends BashCall>($: EngineInterface, e: E): E {
+  try {
+    const command = queuedCommand(e.command, $.plugin.root)
+    if (command === undefined) return e
+    return e.run_in_background === true ? { ...e, command } : { ...e, command, timeout: Math.max(e.timeout ?? 0, QUEUE_TIMEOUT_MS) }
+  } catch {
+    return e
+  }
 }
 
 /**
@@ -4592,7 +4614,7 @@ export const register: Register = (on, options) => {
   on('tool.call', { tool: 'Bash' }, async ($, e, next) => {
     const refusal = await guardBash($, (e as { command?: unknown }).command)
     if (refusal !== undefined) return { deny: refusal }
-    const ran = await written($, () => next(e), undefined, writesRoadmap(e.command))
+    const ran = await written($, () => next(inQueue($, e)), undefined, writesRoadmap(e.command))
     if (fromAgent(e) || ran.deny !== undefined || ran.isError === true) return ran
     // Une fusion sur main ou une publication (#136) : la liste d'étapes se renvoie avant la commande suivante.
     try {

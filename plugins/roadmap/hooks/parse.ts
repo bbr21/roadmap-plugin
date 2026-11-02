@@ -7055,3 +7055,48 @@ export function waitNote(kind: 'titles' | 'launched'): WaitNote {
   return WAIT_NOTES[kind]
 }
 
+
+// ---------------------------------------------------------------- la file des tests lourds (#222)
+
+/**
+ * Les débuts de commande d'une suite de tests lourde (#222) : chacune occupe le processeur de 2 à 6 min,
+ * et plusieurs en même temps ont porté la charge du Mac à 380 pour 10 cœurs. Un test ciblé
+ * (`npm test -- <fichier>`, `node --test`, un `test_*.py`) et `check.mjs` n'en sont pas.
+ */
+const HEAVY_TESTS: readonly RegExp[] = [
+  /^claude\s+plugin\s+test(?=\s|$)/,
+  /^(?:\S*python3?\s+(?:-\S+\s+)*)?(?:\S*\/)?release\.py\s+(?:check|release)(?=\s|$)/,
+  /^npm\s+(?:test|t|run\s+test(?::\S+)?)(?=\s|$)(?!.*\s--(?:\s|$))/,
+  /^(?:\S*\/)?test\.sh(?=\s|$)/,
+  /^xcodebuild\s(?:.*\s)?test(?=\s|$)/,
+  /^swift\s+test(?=\s|$)/,
+]
+
+/** Vrai quand une des commandes simples de `command` lance une suite lourde ; les textes entre guillemets ne comptent pas. */
+export function heavyTest(command: string): boolean {
+  const bare = command.replace(/'[^']*'|"(?:[^"\\]|\\.)*"/g, '""')
+  return bare.split(/&&|\|\||[;|&\n]/).some(step => {
+    const start = step.replace(/^[\s({]+/, '').replace(/^(?:(?:[A-Za-z_][A-Za-z0-9_]*=\S*|time|exec|command)\s+)+/, '')
+    return HEAVY_TESTS.some(re => re.test(start))
+  })
+}
+
+const QUEUE_LABEL_MAX = 60
+
+function shellQuote(text: string): string {
+  return `'${text.replace(/'/g, `'\\''`)}'`
+}
+
+/**
+ * La commande lourde passée par la file du projet (#222) : `one-at-a-time.sh take` attend son tour pour
+ * le shell de l'outil (`$$`), la commande tourne intacte dans ce même shell, `give` rend la place et le
+ * code de sortie de la commande reste le sien. `undefined` : rien à mettre en file (commande légère, ou
+ * déjà passée par la file). La prise ne conditionne pas la commande : un script introuvable ne l'empêche pas.
+ */
+export function queuedCommand(command: string, root: string): string | undefined {
+  if (command.includes('one-at-a-time.sh') || !heavyTest(command)) return undefined
+  const flat = command.trim().replace(/\s+/g, ' ')
+  const label = flat.length > QUEUE_LABEL_MAX ? `${flat.slice(0, QUEUE_LABEL_MAX - 1)}…` : flat
+  const script = shellQuote(`${root}/scripts/one-at-a-time.sh`)
+  return `${script} take $$ ${shellQuote(label)}; {\n${command}\n}; __roadmap_rc=$?; ${script} give $$; (exit $__roadmap_rc)`
+}

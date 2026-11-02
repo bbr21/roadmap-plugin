@@ -663,6 +663,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.147.0 (2026-11-02)** : hooks : les tests lourds passent un par un par projet (one-at-a-time.sh), le hook Bash met en file claude plugin test, release.py check et npm test (#222)
 - **0.146.0 (2026-11-02)** : réglages : le choix Compte (Auto, Perso, Team / Enterprise) remplace « Hooks classiques », sans ligne grise dès la première session sur un compte Team (#223)
 - **0.145.0 (2026-11-02)** : panneau : la jauge fine de contexte de chaque session revient sous sa jauge d'étapes dans la bande de Maestro (#217)
 - **0.144.0 (2026-11-02)** : maestro, tasks : proposer une task dès qu'une idée neuve ou une action sort de l'échange, règle fixe dite à chaque message d'un projet à roadmap (#216)

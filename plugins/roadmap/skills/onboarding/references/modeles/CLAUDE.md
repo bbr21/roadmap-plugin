@@ -62,7 +62,9 @@ Le verrou tombe quand la session le retire (commit sur `main`), au plus tard à 
 
 ## Pièges
 
-Aucun encore. Un piège rencontré s'écrit ici en une ligne : le symptôme, puis ce qu'il faut faire.
+Un piège rencontré s'écrit ici en une ligne : le symptôme, puis ce qu'il faut faire.
+
+- Une suite de tests lourde (`npm test`, `claude plugin test`, un `test.sh`, `xcodebuild test`, `swift test`) attend son tour dans la file du projet, que pose le plugin roadmap : « tests lourds en file depuis… » n'est pas une panne. Une attente longue se lance en arrière-plan (`run_in_background`), qui garde sa place.
 
 ## Où écrire quoi
 
