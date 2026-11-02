@@ -5521,6 +5521,27 @@ export const CLASSIC_SKIPS_OFF = 2
 export const ACCOUNTS = ['auto', 'perso', 'team'] as const
 export type Account = (typeof ACCOUNTS)[number]
 
+/**
+ * Les options du plugin `name` parmi les lignes de /config (#227), une par champ : sa première ligne et les clés de
+ * toutes. Le moteur nomme une ligne `<plugin>.<champ>`, mais `<id complet>.<champ>` (`roadmap@inline.account`) quand
+ * deux plugins du même nom sont actifs (le magasin du compte et le catalogue local) : la clé courte n'existe plus, et
+ * seul le plugin chargé lit la sienne. Écrire toutes les clés d'un champ atteint celui qui tourne.
+ */
+export function ownOptions<R extends { key: string; provider: { plugin: string } }>(rows: readonly R[], name: string): { field: string; row: R; keys: string[] }[] {
+  const own: { field: string; row: R; keys: string[] }[] = []
+  for (const row of rows) {
+    const plugin = row.provider.plugin
+    if (plugin !== name && !plugin.startsWith(`${name}@`)) continue
+    const prefix = [`${name}.`, `${plugin}.`].find(p => row.key.startsWith(p))
+    if (prefix === undefined) continue
+    const field = row.key.slice(prefix.length)
+    const seen = own.find(o => o.field === field)
+    if (seen) seen.keys.push(row.key)
+    else own.push({ field, row, keys: [row.key] })
+  }
+  return own
+}
+
 /** Le compte que disent les options, `undefined` pour Auto ; sans compte posé, un `classicHooks` éteint par #219 vaut Team. */
 export function declaredAccount(account: unknown, classicHooks: unknown): Account | undefined {
   if (account === 'perso' || account === 'team') return account

@@ -72,6 +72,7 @@ import { SETTINGS_PANE, drawSettings, openSettings, prefsFile, redrawSettings, s
 import {
   CLASSIC_SKIPS_OFF,
   declaredAccount,
+  ownOptions,
   type Account,
   ageLabel,
   axisLabel,
@@ -1052,10 +1053,41 @@ async function noteClassicSkip($: EngineInterface, stopRan: boolean): Promise<vo
   classicSkips.skipped += 1
   if (classicSkips.stopSeen || classicSkips.skipped < CLASSIC_SKIPS_OFF) return
   classicSkips.asked = true
+  // Deux plugins « roadmap » actifs : la ligne s'appelle `roadmap@<id>.account`, et la clé courte est refusée (#227).
+  const name = $.plugin.name
+  let keys = [`${name}.account`]
   try {
-    await $.config.set({ key: `${$.plugin.name}.account`, value: 'team' })
+    keys = ownOptions(await $.config.list(), name).find(o => o.field === 'account')?.keys ?? keys
   } catch {
-    // option non écrite : les hooks restent, et leurs secours tiennent
+    // liste illisible : la clé d'un plugin seul
+  }
+  await noteAccountSwitch($, { keys })
+  const outcome: Record<string, string> = {}
+  for (const key of keys) {
+    try {
+      const { deny } = await $.config.set({ key, value: 'team' })
+      outcome[key] = deny === undefined ? 'team' : `refusé : ${deny}`
+    } catch (err) {
+      // option non écrite : les hooks restent, et leurs secours tiennent
+      outcome[key] = `refusé : ${err instanceof Error ? err.message : String(err)}`
+    }
+  }
+  await noteAccountSwitch($, { outcome })
+}
+
+const ACCOUNT_SWITCH_KEY = 'account-switch'
+
+/**
+ * Le sort de la bascule du Compte Auto sur Team (#227), au store, clé `account-switch` : les clés visées, puis ce que le
+ * moteur a répondu pour chacune. Une ligne grise restée sur une autre machine se lit dans `~/.claude/plugins/store/roadmap_*.json`.
+ */
+async function noteAccountSwitch($: EngineInterface, part: Record<string, unknown>): Promise<void> {
+  try {
+    const stored = await $.store.get(ACCOUNT_SWITCH_KEY)
+    const seen = typeof stored === 'object' && stored !== null && !Array.isArray(stored) ? stored : {}
+    await $.store.set(ACCOUNT_SWITCH_KEY, { ...seen, ...part, at: await $.clock.now(), version: sessionVersion ?? '?' })
+  } catch {
+    // store illisible, ou module déjà rechargé par l'écriture : la bascule tient sans sa note
   }
 }
 

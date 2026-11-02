@@ -641,7 +641,9 @@ de session, fin de tour, skills, compaction) ; sur un compte Team ou Enterprise,
 tour fini sans Stop et passe seul le réglage sur `team`. `perso` : les hooks restent, rien ne change
 seul. `team` : aucun de ces hooks, dès la première session et sans ligne grise ; ses secours par
 message prennent le relais (le rappel de fin de tour arrive au message suivant). Un `classicHooks`
-éteint par la 0.142 vaut `team` tant que `account` n'est pas posé.
+éteint par la 0.142 vaut `team` tant que `account` n'est pas posé. Deux plugins « roadmap » actifs (magasin
+du compte et catalogue local) ont chacun leur clé, `roadmap@<source>.account` : la bascule et le volet les
+écrivent toutes, et le sort de la bascule se lit au store, clé `account-switch` (#227).
 `capture` éteint coupe tous les contrôles et rappels de la roadmap : la grammaire, et en fin de tour
 le travail à inscrire, le bilan d'une tâche cochée, son rangement et l'archivage de la session,
 l'idée à coder sans ligne, et après un commit les tests, les skills de méthode et les maquettes ; la
@@ -669,6 +671,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.150.2 (2026-11-02)** : réglages : deux plugins « roadmap » actifs (magasin du compte et catalogue local) n'empêchent plus le choix Compte de basculer sur Team ni ne vident le volet Réglages (#227)
 - **0.150.1 (2026-11-02)** : hooks : le garde-fou du dossier principal ne prend plus un worktree de l'app pour lui et lit une variable affectée plus tôt dans la ligne (#226)
 - **0.150.0 (2026-11-02)** : panneau : la carte d'ouverture de Maestro ne liste plus ses tâches lancées, que le panneau et la bande portent déjà (#215)
 - **0.149.0 (2026-11-02)** : panneau : l'arbre au rendu de la maquette #212 C partout (titre en texte, mère en gras et son carré gardé, date au bout, faite barrée, « Replier les sections », responsable gris) (#224)

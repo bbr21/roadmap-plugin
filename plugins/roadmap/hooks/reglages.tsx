@@ -9,6 +9,7 @@ import {
   SESSION_PREF_INFO,
   baseName,
   mainCheckout,
+  ownOptions,
   projectKeyOf,
   sessionPrefsView,
   setSessionPref,
@@ -156,35 +157,43 @@ function writePref($: EngineInterface, key: PrefKey, value: boolean, project: Se
   return writing
 }
 
-/** Le dernier refus d'une option du panneau, par clé de la ligne. */
+/** Le dernier refus d'une option du panneau, par champ. */
 const optionNotes = new Map<string, string>()
 
+/** Une option du plugin : son champ, sa ligne de /config, et les clés de chaque plugin du même nom (#227). */
+type PluginOption = { field: string; row: ConfigRow; keys: string[] }
+
 /**
- * Un clic sur une option du panneau : changée comme dans le menu de configuration de Claude Code.
- * Le changement recharge le plugin (ses options sont fixes pour un chargement) ; un refus se garde
- * pour s'afficher sous la ligne.
+ * Un clic sur une option du panneau : changée comme dans le menu de configuration de Claude Code, sous chacune de
+ * ses clés (deux plugins « roadmap » actifs ont chacun la leur, #227). Le changement recharge le plugin (ses options
+ * sont fixes pour un chargement) ; un refus se garde pour s'afficher sous la ligne.
  */
-function setOption($: EngineInterface, key: string, value: ConfigValue): Promise<void> {
+function setOption($: EngineInterface, o: PluginOption, value: ConfigValue): Promise<void> {
   return (async () => {
-    try {
-      const { deny } = await $.config.set({ key, value })
-      if (deny !== undefined) optionNotes.set(key, `Refusé : ${deny}`)
-      else optionNotes.delete(key)
-    } catch (err) {
-      optionNotes.set(key, `Refusé : ${err instanceof Error ? err.message : String(err)}`)
+    const refusals: string[] = []
+    for (const key of o.keys) {
+      try {
+        const { deny } = await $.config.set({ key, value })
+        if (deny !== undefined) refusals.push(deny)
+      } catch (err) {
+        refusals.push(err instanceof Error ? err.message : String(err))
+      }
     }
+    if (refusals.length > 0) optionNotes.set(o.field, `Refusé : ${refusals.join(' · ')}`)
+    else optionNotes.delete(o.field)
     await update($, prefsStampAtom, v => v + 1)
   })()
 }
 
 /**
  * Les options du plugin, telles que le menu de configuration les montre ; aucune si la liste échoue.
- * Reconnues à leur clé, `<plugin>.<champ>` : dans l'app, leur fournisseur s'écrit `roadmap@inline`,
- * pas `roadmap` (sonde de #91, 2026-10-29), et le volet n'en trouvait aucune.
+ * Reconnues à leur fournisseur, `roadmap` ou `roadmap@<source>` (sonde de #91, 2026-10-29), et à leur clé,
+ * `roadmap.<champ>`, ou `roadmap@<source>.<champ>` quand deux plugins « roadmap » sont actifs : chez Caroline,
+ * le volet n'en trouvait alors aucune (#227).
  */
-async function pluginOptions($: EngineInterface): Promise<ConfigRow[]> {
+async function pluginOptions($: EngineInterface): Promise<PluginOption[]> {
   try {
-    return (await $.config.list()).filter(row => row.provider.plugin !== 'engine' && row.key.startsWith(`${$.plugin.name}.`))
+    return ownOptions(await $.config.list(), $.plugin.name)
   } catch {
     return []
   }
@@ -379,10 +388,11 @@ export async function drawSettings($: EngineInterface, e: RenderInput<'Pane'>, p
     })
   }
 
-  const control = (o: ConfigRow, field: string) => {
+  const control = (option: PluginOption) => {
+    const { row: o, field } = option
     const key = `opt:${field}`
     if (o.isLocked) return <Text size="caption" color={palette.text2}>Fixé par ton organisation</Text>
-    if (o.kind === 'boolean') return onOff(key, o.value === true, to => void setOption($, o.key, to))
+    if (o.kind === 'boolean') return onOff(key, o.value === true, to => void setOption($, option, to))
     if (o.kind === 'choice' && o.options && o.options.length > 0) {
       const values = o.options
       const current = String(o.value)
@@ -392,28 +402,26 @@ export async function drawSettings($: EngineInterface, e: RenderInput<'Pane'>, p
             key={key}
             options={choiceOptions(field, values)}
             value={current}
-            onSelect={(value: string) => void setOption($, o.key, value)}
+            onSelect={(value: string) => void setOption($, option, value)}
           />
         )
       }
       const next = values[(values.indexOf(current) + 1) % values.length] ?? values[0]!
-      return <Button key={key} plain label={CHOICE_LABELS[field]?.[current] ?? current} onPress={() => void setOption($, o.key, next)} />
+      return <Button key={key} plain label={CHOICE_LABELS[field]?.[current] ?? current} onPress={() => void setOption($, option, next)} />
     }
     return <Text mono size="caption">{String(o.value)}</Text>
   }
 
-  const fieldOf = (o: ConfigRow) => o.key.slice(o.key.indexOf('.') + 1)
-
   /** Une option : son nom court et son défaut si une section la range, son titre du menu sinon. */
-  const optionRow = (o: ConfigRow, known?: SectionOption) => {
-    const field = fieldOf(o)
+  const optionRow = (option: PluginOption, known?: SectionOption) => {
+    const { row: o, field } = option
     // Un texte se tape dans un champ à part, sous son titre : il ne tient pas à côté.
     const typed = Input !== undefined && (o.kind === 'text' || o.kind === 'number') && !o.isLocked
     return line(
       `opt:${field}`,
       `opt-row:${field}`,
       known?.name ?? o.label,
-      !typed && <Box flexShrink={0}>{control(o, field)}</Box>,
+      !typed && <Box flexShrink={0}>{control(option)}</Box>,
       { text: o.description ?? o.label, meta: known ? `Par défaut : ${known.def} · Prend effet : ${NOW}` : `Prend effet : ${NOW}` },
       [
         typed && (
@@ -421,10 +429,10 @@ export async function drawSettings($: EngineInterface, e: RenderInput<'Pane'>, p
             key={`opt:${field}`}
             value={String(o.value)}
             submitLabel="enregistrer"
-            onSubmit={(value: string) => void setOption($, o.key, o.kind === 'number' ? Number(value) : value)}
+            onSubmit={(value: string) => void setOption($, option, o.kind === 'number' ? Number(value) : value)}
           />
         ),
-        optionNotes.has(o.key) && caption(optionNotes.get(o.key)!, palette.lateOn),
+        optionNotes.has(field) && caption(optionNotes.get(field)!, palette.lateOn),
       ],
     )
   }
@@ -455,14 +463,14 @@ export async function drawSettings($: EngineInterface, e: RenderInput<'Pane'>, p
     }
     // Une section sans aucune de ses options listées ne se dessine pas.
     const rows = (s.options ?? []).flatMap(known => {
-      const o = options.find(row => fieldOf(row) === known.field)
+      const o = options.find(option => option.field === known.field)
       return o ? [optionRow(o, known)] : []
     })
     if (rows.length > 0) sections.push(section(s.id, s.title, OPTIONS_SCOPE, rows, sections.length === 0))
   }
   // Une option qu'aucune section ne range encore (ajoutée au plugin après le volet) : dans « Autres ».
   const ranged = new Set(SETTINGS_SECTIONS.flatMap(s => (s.options ?? []).map(o => o.field)))
-  const others = options.filter(o => !ranged.has(fieldOf(o))).sort((a, b) => KIND_ORDER[a.kind] - KIND_ORDER[b.kind])
+  const others = options.filter(o => !ranged.has(o.field)).sort((a, b) => KIND_ORDER[a.row.kind] - KIND_ORDER[b.row.kind])
   if (others.length > 0) sections.push(section('other', 'Autres', OPTIONS_SCOPE, others.map(o => optionRow(o))))
 
   return (
