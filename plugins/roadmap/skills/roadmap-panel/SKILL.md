@@ -87,6 +87,10 @@ How sessions work and the roadmap's settings (#76, #176), optional too:
   `jour`. Default: the tree (`echeance` for an old `"mode": "projet"`). « Par échéance » and « Par
   responsable » are offered only when an open task has `due:` or `resp:`. The panel opens on « En
   cours » when a session works a task, otherwise on « Ma journée », otherwise on everything.
+- `publier` (#191): in a code project, the step the panel adds after « Fusionner » to the steps of a
+  launched session, ticked when the task's line is closed: `true` for « Publier », or a one-line
+  label (« Déployer le VPS »). Without it, only « Fusionner » is added. Declare it when the project
+  publishes, deploys or migrates after a merge.
 - `relance`: the number of days without news from an awaited third party beyond which its task is
   « À relancer » (integer; default 14). The count starts from `relance:` on the line, otherwise
   from `ouvert:`.

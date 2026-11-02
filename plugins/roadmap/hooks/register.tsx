@@ -34,6 +34,7 @@ import {
   chevronIcon,
   lockIcon,
   handIcon,
+  mergeIcon,
   folderIcon,
   alertIcon,
   playIcon,
@@ -344,6 +345,7 @@ import {
   type ChildWake,
   applyPlan,
   boxSteps,
+  mergeSteps,
   childAlerts,
   stepsStamp,
   stepsView,
@@ -4492,7 +4494,10 @@ export const register: Register = (on, options) => {
       if (!found || !band) return next(e)
       const now = await $.clock.now()
       const statuses = await Promise.all(band.tasks.map(t => readSteps($, t.sessionId)))
-      const views = statuses.map((status, i) => (status ? stepsView(status.steps, { now, at: status.at, closed: band.tasks[i]?.closed === true }) : undefined))
+      const views = statuses.map((status, i) => {
+        const t = band.tasks[i]
+        return status ? stepsView(shownStatus(status, t?.sessionId, t?.closed === true).steps, { now, at: status.at, closed: t?.closed === true }) : undefined
+      })
       // Le contexte de Maestro (#157) : la mesure du dernier tour, ou celle du moment avant la première.
       // Celui des sessions ne se montre plus (#174).
       const mine = (await read($, bandContextAtom)) ?? contextUseOf((await $.session.usage().catch(() => undefined))?.context)
@@ -4579,6 +4584,10 @@ async function maestroTasksOf(
   const rows = [...sessionRows, ...[...startedBySession].map(([sessionId, startedBy]) => ({ sessionId, startedBy }))]
   const found = maestroTaskSessions({ tasks, me, rows, tracked })
   await learnCreated($, found.map(f => f.sessionId))
+  // #191 : l'avance de leur branche, et la question qui attend, séparent « à fusionner » de « t'attend ».
+  const now = await $.clock.now()
+  await refreshAhead($, source, found.map(f => f.sessionId), now)
+  const asking = new Map(await Promise.all(found.map(async f => [f.sessionId, (await readSteps($, f.sessionId))?.question !== undefined] as const)))
   return maestroBrandTasks(
     found.map(({ task: t, sessionId: sid }) => ({
       id: t.id as string,
@@ -4589,6 +4598,8 @@ async function maestroTasksOf(
       done: t.done,
       sessionId: sid,
       createdAt: createdBySession.get(sid) ?? Number.NaN,
+      ...(aheadBySession.get(sid)?.ahead !== undefined ? { ahead: aheadBySession.get(sid)?.ahead as number } : {}),
+      asking: asking.get(sid) === true,
     })),
   )
 }
@@ -4723,12 +4734,13 @@ function brandTree(
   const card = variant === 'card'
   const strut = (height: number) =>
     Svg ? <Svg source={`<svg xmlns="http://www.w3.org/2000/svg" width="1" height="${height}"/>`} alt="espace" width={1} height={height} /> : null
-  const pill = (label: string, bg: string, fg: string) => {
+  const pill = (label: string, bg: string, fg: string, mark?: PillMark) => {
     if (!Svg) return <Text key={label} size="caption" color={fg}>{` ${label} `}</Text>
-    const p = pillIcon({ text: label, bg, fg, height: SIZE.pill.row, weight: TEXT.weight.soft })
+    const p = pillIcon({ text: label, bg, fg, height: SIZE.pill.row, weight: TEXT.weight.soft, ...(mark ? { mark } : {}) })
     return <Svg key={label} source={p.source} alt={label} width={p.width} height={p.height} />
   }
-  // « T'attend » en orange, celui de « bloquée » ; une tâche toute finie en violet (#145).
+  // « T'attend » en orange, celui de « bloquée » ; une tâche toute finie en violet (#145) ; « à fusionner »
+  // dans le bleu-vert de « attend un tiers » : c'est Maestro qui fusionne (#191, maquette A).
   const tone = (s: BrandTask['state'], finished = false): [string, string] =>
     finished
       ? [palette.finishedTint, palette.finishedOn]
@@ -4736,7 +4748,9 @@ function brandTree(
         ? [palette.blockTint, palette.blockOn]
         : s === 'live'
           ? [palette.liveTint, palette.liveOn]
-          : [palette.sel, palette.text2]
+          : s === 'merge'
+            ? [palette.waitTint, palette.waitOn]
+            : [palette.sel, palette.text2]
   const mark = (size: number) => Svg && <Svg source={brandMarkIcon(palette, size)} alt="Roadmap" width={size} height={size} />
 
   if (brand.kind === 'maestro') {
@@ -4744,7 +4758,8 @@ function brandTree(
     const more = brand.tasks.length - shown.length
     // Les étapes de chaque voie (#143), seulement dans l'en-tête du panneau : une voie qui en a prend deux lignes.
     const stepsOf = (t: BrandTask) => {
-      const status = steps?.of[t.id]
+      const own = steps?.of[t.id]
+      const status = own ? shownStatus(own, t.sessionId, t.closed === true) : undefined
       const view = status && steps ? stepsView(status.steps, { now: steps.now, at: status.at, closed: t.closed === true }) : undefined
       return status && view ? { status, view } : undefined
     }
@@ -4764,7 +4779,7 @@ function brandTree(
       if (!found || !steps) return null
       const { status, view } = found
       const pinned = steps.pin === t.id
-      const bar = stepsBarIcon(palette, view.segments, { width: 120, height: 4, waiting: t.state === 'wait', finished: t.finished === true })
+      const bar = stepsBarIcon(palette, view.segments, { width: 120, height: 4, waiting: t.state === 'wait', merging: t.state === 'merge', finished: t.finished === true })
       const label = view.current ? `${view.count} · ${clip(view.current, 40)}` : view.count
       return (
         <Box flexDirection="row" alignItems="center" gap={SPACE.row}>
@@ -4808,7 +4823,7 @@ function brandTree(
                   <Box flexGrow={1} flexShrink={1} minWidth={0}>
                     {laneName(t)}
                   </Box>
-                  {pill(words.states[i] ?? '', ...tone(t.state, t.finished === true))}
+                  {pill(words.states[i] ?? '', ...tone(t.state, t.finished === true), t.state === 'merge' && !t.finished ? 'merge' : undefined)}
                 </Box>
                 {!card && laneSteps(t)}
               </Box>
@@ -4905,7 +4920,7 @@ function brandTree(
           <Text size="footnote" color={palette.text2} wrap="truncate-end">{words.sub}</Text>
         </Box>
         {/* Une tâche close : « Completed » en violet, comme dans la bande de Maestro (#174). */}
-        {state && pill(BRAND_STATE_WORDS[state], ...tone(state, state === 'done'))}
+        {state && pill(BRAND_STATE_WORDS[state], ...tone(state, state === 'done'), state === 'merge' ? 'merge' : undefined)}
       </Box>
       {titleEnd ? (
         <Box key="title-row" flexDirection="row" alignItems="flex-start" gap={SPACE.row}>
@@ -4927,7 +4942,7 @@ function brandTree(
 }
 
 /** Les mots d'état d'une tâche lancée, ceux des pastilles de Maestro. */
-const BRAND_STATE_WORDS: Record<BrandTask['state'], string> = { wait: "t'attend", live: 'en session', done: 'Completed' }
+const BRAND_STATE_WORDS: Record<BrandTask['state'], string> = { wait: "t'attend", live: 'en session', merge: 'à fusionner', done: 'Completed' }
 
 /**
  * La marque de cette session : chez Maestro (son titre ou sa marque), Maestro et ses tâches ; chez une
@@ -4971,9 +4986,17 @@ function maestroBandTree(
   const Svg = 'Svg' in resolved && e.surface !== 'terminal' ? resolved.Svg : undefined
   const Client = 'Client' in resolved && Svg ? resolved.Client : undefined
   const words = brandText(band.brand)
-  // Les couleurs de #145 : t'attend en orange, toute finie en violet.
+  // Les couleurs de #145 : t'attend en orange, toute finie en violet ; à fusionner en bleu-vert (#191).
   const hue = (t: BrandTask): [string, string] =>
-    t.finished ? [palette.finished, palette.finishedOn] : t.state === 'wait' ? [palette.block, palette.blockOn] : t.state === 'live' ? [palette.live, palette.liveOn] : [palette.done, palette.text2]
+    t.finished
+      ? [palette.finished, palette.finishedOn]
+      : t.state === 'wait'
+        ? [palette.block, palette.blockOn]
+        : t.state === 'live'
+          ? [palette.live, palette.liveOn]
+          : t.state === 'merge'
+            ? [palette.wait, palette.waitOn]
+            : [palette.done, palette.text2]
   const strut = Svg && <Svg source={`<svg xmlns="http://www.w3.org/2000/svg" width="1" height="${SIZE.strut.row}"/>`} alt="espace" width={1} height={SIZE.strut.row} />
   // L'icône d'archivage d'une session close (#174) : un dessin et sa zone de clic ; au terminal ou sans
   // zone, un bouton de texte. Archiver garde le clic de Bertrand : l'icône est ce clic.
@@ -5013,7 +5036,7 @@ function maestroBandTree(
         {band.tasks.map((t, i) => {
           const view = views[i]
           const [dot, word] = hue(t)
-          const bar = view && Svg ? stepsBarIcon(palette, view.segments, { width: BAND_GAUGE.row, height: 4, waiting: t.state === 'wait', finished: t.finished === true }) : undefined
+          const bar = view && Svg ? stepsBarIcon(palette, view.segments, { width: BAND_GAUGE.row, height: 4, waiting: t.state === 'wait', merging: t.state === 'merge', finished: t.finished === true }) : undefined
           const name = <Text size="footnote" wrap="truncate-end">{t.label}</Text>
           return (
             <Box key={`band-row:${keyPart(t.id)}`} flexDirection="row" alignItems="center" gap={SPACE.row} paddingX={1} hover={{ backgroundColor: palette.hover }}>
@@ -5115,6 +5138,10 @@ async function readFocusFacts($: EngineInterface, source: Source, task: Task, ow
     const names = await gitIn($, root, 'diff', '--name-only', `${base}...HEAD`)
     const gap = counts.code === 0 && names.code === 0 ? branchGap(counts.out, names.out) : undefined
     if (gap) branch = branchText(gap, base)
+    // #191 : l'avance de sa propre branche coche « Fusionner » dans sa fiche.
+    const settings = projectSettings(source)
+    mergeProject = { git: settings.travail === 'code', ...(settings.publier ? { publish: settings.publier } : {}) }
+    if (ownId && mergeProject.git) aheadBySession.set(ownId, { at: now, ahead: gap?.ahead })
   } catch {
     // pas de git (mode Projet, dossier hors dépôt) : pas de ligne Branche
   }
@@ -5130,6 +5157,51 @@ async function readSteps($: EngineInterface, sessionId: string | undefined): Pro
   } catch {
     return undefined
   }
+}
+
+/** Ce que `mergeSteps` lit du projet (#191) : du code (git), et l'étape de `publier` ; posé à chaque relecture des avances. */
+let mergeProject: { git: boolean; publish?: string } = { git: false }
+
+/** L'avance de la branche de chaque session sur sa base (#191) : ses commits hors de la base ; inconnue sans git. */
+const aheadBySession = new Map<string, { at: number; ahead: number | undefined }>()
+
+/**
+ * Relit, au plus toutes les 30 s par session, l'avance de la branche des sessions (#191) : la branche de
+ * la liste des sessions contre sa base (`childFiche`), dans le dépôt de cette session, qui voit les
+ * branches des worktrees. Sans code, session distante, branche absente ou égale à sa base, git en
+ * échec : inconnue, et rien ne change à l'affichage.
+ */
+async function refreshAhead($: EngineInterface, source: Source, sessionIds: readonly (string | undefined)[], now: number): Promise<void> {
+  const settings = projectSettings(source)
+  mergeProject = { git: settings.travail === 'code', ...(settings.publier ? { publish: settings.publier } : {}) }
+  if (!mergeProject.git) return
+  const root = await $.session.root()
+  await Promise.all(
+    sessionIds.map(async sid => {
+      if (!sid) return
+      const known = aheadBySession.get(sid)
+      if (known && now - known.at < FOCUS_FACTS_MS) return
+      let ahead: number | undefined
+      try {
+        const row = sessionRows.find(r => typeof r === 'object' && r !== null && (r as { sessionId?: unknown }).sessionId === sid) as { branch?: unknown } | undefined
+        const branch = typeof row?.branch === 'string' && row.branch !== '' ? row.branch : undefined
+        const fiche = await childFiche($, sid)
+        if (branch && fiche.remote !== true && branch !== fiche.base) {
+          const r = await gitIn($, root, 'rev-list', '--count', `${fiche.base}..${branch}`)
+          if (r.code === 0 && /^\d+$/.test(r.out.trim())) ahead = Number(r.out.trim())
+        }
+      } catch {
+        // git ou fiche illisible : inconnue
+      }
+      aheadBySession.set(sid, { at: now, ahead })
+    }),
+  )
+}
+
+/** Les étapes d'une session telles que le panneau les dessine (#191) : les siennes, puis « Fusionner » (et « Publier »). */
+function shownStatus(status: ChildStatus, sessionId: string | undefined, closed: boolean): ChildStatus {
+  const ahead = sessionId ? aheadBySession.get(sessionId)?.ahead : undefined
+  return { ...status, steps: mergeSteps(status.steps, { ...mergeProject, ...(ahead !== undefined ? { ahead } : {}), closed }) }
 }
 
 /** L'empreinte des notes d'étapes au dernier pas du sondage (#143). */
@@ -5179,12 +5251,23 @@ async function readFicheDocs($: EngineInterface, source: Source, task: Task, now
  * Le bloc « Étapes » de la fiche (#142, #143 maquette C + A), sous la mission : « Étapes », le compte et
  * l'âge de la note, la barre, puis toutes les étapes. Rien sans note lisible.
  */
-function ficheSteps($: EngineInterface, e: RenderInput<'Pane'>, palette: Palette, status: ChildStatus | undefined, now: number, closed = false): RenderElement | null {
+function ficheSteps(
+  $: EngineInterface,
+  e: RenderInput<'Pane'>,
+  palette: Palette,
+  own: ChildStatus | undefined,
+  now: number,
+  closed = false,
+  // #191 : la session qui tient ces étapes, pour « Fusionner », et l'état de la pastille, pour la couleur.
+  sessionId?: string,
+  state?: BrandTask['state'],
+): RenderElement | null {
+  const status = own ? shownStatus(own, sessionId, closed) : undefined
   const view = status ? stepsView(status.steps, { now, at: status.at, fold: Infinity, closed }) : undefined
   if (!status || !view) return null
   const { Box, Text } = $.ui.resolve(e)
   const Svg = e.surface === 'terminal' ? undefined : $.ui.resolve(e).Svg
-  const bar = stepsBarIcon(palette, view.segments, { width: 240, waiting: status.question !== undefined })
+  const bar = stepsBarIcon(palette, view.segments, { width: 240, waiting: status.question !== undefined, merging: state === 'merge' })
   return (
     <Box key="fiche-steps" flexDirection="column" gap={SPACE.tight} paddingX={SPACE.indent}>
       <Box flexDirection="row" alignItems="center" gap={SPACE.row}>
@@ -5403,11 +5486,14 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   }
   const isLive = (t: Task) => liveOf(t) !== undefined
   // Les notes d'étapes des tâches en session (#143) : la mini-barre et la carte de leur ligne.
+  // Avec « Fusionner » ajoutée dans un dossier à git (#191).
   const rowSteps = new Map<string, ChildStatus>()
+  await refreshAhead($, source, openTasks.map(t => liveOf(t)?.entry.sessionId), now)
   await Promise.all(
     openTasks.map(async t => {
-      const found = await readSteps($, liveOf(t)?.entry.sessionId)
-      if (found) rowSteps.set(taskKey(t), found)
+      const sid = liveOf(t)?.entry.sessionId
+      const found = await readSteps($, sid)
+      if (found) rowSteps.set(taskKey(t), shownStatus(found, sid, t.done))
     }),
   )
   // Tâches enchaînées : `après:` désigne la prérequise ; une tâche est bloquée tant qu'elle n'est pas faite.
@@ -5843,7 +5929,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     })
     // L'état en pastille : celui que Maestro voit dans sa session, celui de la session qui y travaille ailleurs.
     const ownRunning = focusBrand && ownBrand?.data.own.id !== undefined ? runningBySession.get(ownBrand.data.own.id) : undefined
-    const headState: BrandTask['state'] | undefined = current.done
+    const waitState: BrandTask['state'] | undefined = current.done
       ? 'done'
       : focusBrand
         ? focusBrand.maestro && ownRunning !== undefined
@@ -5856,6 +5942,13 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
             ? 'wait'
             : 'live'
           : undefined
+    // #191 : à l'arrêt, sans question, sa branche en avance sur sa base : « à fusionner », pas « t'attend ».
+    const stepsSession = inSession ? ownBrand?.data.own.id : liveOf(current)?.entry.sessionId
+    const stepsNote = await readSteps($, stepsSession)
+    if (!inSession) await refreshAhead($, source, [stepsSession], now)
+    const aheadNow = stepsSession ? aheadBySession.get(stepsSession)?.ahead : undefined
+    const headState: BrandTask['state'] | undefined =
+      waitState === 'wait' && stepsNote?.question === undefined && (aheadNow ?? 0) > 0 ? 'merge' : waitState
     const headBrand = focusBrand ?? taskBrandOf(current, source, allTasks, { label: s.titre })
     // Une carte : sa légende, puis ses lignes, dans un cadre à bord fin, qui ne grandit pas au-delà du panneau (#173).
     const card = (name: string, body: RenderElement) => (
@@ -6431,7 +6524,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
           </Box>
         </Box>
         {finBox()}
-        {ficheSteps($, e, palette, await readSteps($, inSession ? ownBrand?.data.own.id : liveOf(current)?.entry.sessionId), now, current.done)}
+        {ficheSteps($, e, palette, stepsNote, now, current.done, stepsSession, headState)}
         {layout.cards.map(c => (editCards[c] ?? cards[c])())}
         <Box flexDirection="column" gap={SPACE.block} paddingX={SPACE.indent}>
           {openNote !== '' && <Text size="caption" color={palette.text2}>{openNote}</Text>}
@@ -6482,7 +6575,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   await Promise.all(
     [...blockOf.values()].map(async bt => {
       const found = await readSteps($, bt.sessionId)
-      if (found) blockSteps.set(bt.id, found)
+      if (found) blockSteps.set(bt.id, shownStatus(found, bt.sessionId, bt.closed === true))
     }),
   )
   const attend =
@@ -6624,6 +6717,12 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     ) : (
       <Text color="permission">✋</Text>
     )
+  const mergeMark = () =>
+    Svg ? (
+      <Svg source={mergeIcon(palette.wait, 14, STROKE.pill, 'À fusionner')} alt="À fusionner" width={SIZE.icon.sm} height={SIZE.icon.sm} isInteractive />
+    ) : (
+      <Text color="suggestion">⑂</Text>
+    )
   const spinner = () =>
     Svg ? (
       <Svg source={spinnerIcon(palette.live, 14, 'En cours dans une session', false, now)} alt="En cours dans une session" width={SIZE.icon.sm} height={SIZE.icon.sm} isInteractive />
@@ -6651,13 +6750,16 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   const stepsCells = rowStepsCells([...blockSteps.values(), ...rowSteps.values()].map(st => stepsView(st.steps, { now, at: st.at, closed: false }).count))
   const sessionColumn = (t: Task, block?: BrandTask) => {
     const status = block ? blockSteps.get(block.id) : rowSteps.get(taskKey(t))
-    const waiting = block ? block.state === 'wait' : waitingOn(t)
+    // #191 : finie, sa branche en avance, sans question : à fusionner, ni la main ni la roue.
+    const sid = liveOf(t)?.entry.sessionId
+    const merging = block ? block.state === 'merge' : waitingOn(t) && status?.question === undefined && (sid ? (aheadBySession.get(sid)?.ahead ?? 0) : 0) > 0
+    const waiting = (block ? block.state === 'wait' : waitingOn(t)) && !merging
     const view = status ? stepsView(status.steps, { now, at: status.at, closed: t.done }) : undefined
-    const bar = status && view ? stepsBarIcon(palette, view.segments, { width: ROW_STEPS.bar, height: 4, waiting: waiting || status.question !== undefined }) : undefined
+    const bar = status && view ? stepsBarIcon(palette, view.segments, { width: ROW_STEPS.bar, height: 4, waiting: waiting || status.question !== undefined, merging }) : undefined
     return (
       <Box key={`steps:${t.key}`} flexDirection="row" alignItems="center" gap={SPACE.row} flexShrink={0} {...(Svg ? { width: stepsCells.columns } : {})}>
         <Box width={ROW_STEPS.icon} flexShrink={0} flexDirection="row" justifyContent="center">
-          {waiting ? hand() : spinner()}
+          {merging ? mergeMark() : waiting ? hand() : spinner()}
         </Box>
         {Svg &&
           (bar && view ? (

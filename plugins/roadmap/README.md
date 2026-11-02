@@ -643,6 +643,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.126.0 (2026-11-01)** : panneau : une tâche de code n'est finie qu'une fois fusionnée : étape « Fusionner » (et « Publier » avec la clé publier) cochée par git, état « à fusionner » à la place de « t'attend » dans la fiche, la bande et le bloc En cours (#191)
 - **0.125.0 (2026-11-01)** : panneau : « Ranger › Par numéro » range les arbres par le numéro de leur tâche racine, le plus récent en haut ; le filtre « Récentes » quitte « Plus › » (#192)
 - **0.124.0 (2026-11-01)** : panneau, maestro : le brief de lancement s'ouvre par sa mission, ses fichiers et « Fini quand », lisibles d'un coup d'œil sur la carte (#194)
 - **0.123.0 (2026-11-01)** : panneau : les ouvertes toujours en arbre, que « Ranger » (par sujet, par jour, par échéance, par responsable) trie sans le couper ; par jour, chaque arbre à sa prochaine échéance, l'étape du jour sous sa mère (#189)

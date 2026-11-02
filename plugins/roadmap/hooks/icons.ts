@@ -186,8 +186,8 @@ export function brandMarkIcon(palette: Palette, size = 20): string {
  */
 export function brandLanesIcon(
   palette: Palette,
-  // `finished` : toute finie, violette pointillée (#145) ; `wait` : t'attend, orange.
-  states: readonly ('wait' | 'live' | 'done' | 'finished')[],
+  // `finished` : toute finie, violette pointillée (#145) ; `wait` : t'attend, orange ; `merge` : à fusionner, bleu-vert (#191).
+  states: readonly ('wait' | 'live' | 'merge' | 'done' | 'finished')[],
   row = 24,
   hub = 32,
 ): { source: string; width: number; height: number } {
@@ -195,7 +195,7 @@ export function brandLanesIcon(
   const top = (height - states.length * row) / 2
   const cy = height / 2
   const width = hub + 52
-  const hex = { wait: palette.block, live: palette.live, done: palette.done, finished: palette.finished }
+  const hex = { wait: palette.block, live: palette.live, merge: palette.wait, done: palette.done, finished: palette.finished }
   const lanes = states
     .map((state, i) => {
       const y = top + i * row + row / 2
@@ -313,6 +313,11 @@ export function handIcon(hex: string, size = 14, width: number = STROKE.pill, ti
   )
 }
 
+/** Deux branches qui se rejoignent : la session a fini, sa branche attend sa fusion (#191). */
+export function mergeIcon(hex: string, size = 14, width: number = STROKE.pill, title?: string): string {
+  return line(hex, size, width, MARK_PATHS.merge, title)
+}
+
 export function lockIcon(hex: string, size = 14, width: number = STROKE.pill, title?: string): string {
   return line(hex, size, width, '<rect x="5" y="10.5" width="14" height="10" rx="2"/><path d="M8 10.5V8a4 4 0 0 1 8 0v2.5"/>', title)
 }
@@ -391,7 +396,7 @@ export function textWidth(text: string, size: number, bold = false): number {
   return Math.ceil(em * size * (bold ? 1.05 : 1))
 }
 
-export type PillMark = 'clock' | 'person' | 'spinner' | 'check'
+export type PillMark = 'clock' | 'person' | 'spinner' | 'check' | 'merge'
 
 /**
  * Une pastille : 18 px de haut (20 au détail), rayon de la moitié, texte de 12 px gras, chiffres
@@ -476,6 +481,8 @@ export const filterPillIcon = memo(filterPillIconRaw)
 const MARK_PATHS: Record<PillMark, string> = {
   clock: '<circle cx="12" cy="12" r="8.5"/><path d="M12 7.5v5l3 2"/>',
   person: '<circle cx="12" cy="8" r="3.75"/><path d="M4.75 20c1.2-3.6 4-5.5 7.25-5.5s6.05 1.9 7.25 5.5"/>',
+  // Deux branches qui se rejoignent (#191, maquette A) : « à fusionner ».
+  merge: '<circle cx="6" cy="5" r="2.5"/><circle cx="6" cy="19" r="2.5"/><circle cx="18" cy="10" r="2.5"/><path d="M6 7.5v9M18 12.5c0 4-6 3.2-10.4 4.8"/>',
   spinner: `<circle cx="12" cy="12" r="9" stroke-opacity="${MIX.spinnerTrack}"/><path d="M12 3a9 9 0 0 1 9 9"/>`,
   check: '<path d="M5 12.5l4.5 4.5L19 7.5"/>',
 }
@@ -737,12 +744,13 @@ export function barCuts(segments: BarSegment[], width = BAR_WIDTH): { cuts: numb
 /**
  * La barre d'étapes d'une session (#143, maquette C + A) : un segment par étape, 1 px entre eux, 2 px
  * au moins chacun (la barre s'élargit au-delà de `width`) ; vert fait, bleu en cours (orange quand la
- * session t'attend), `sel` à faire ; toute violette quand la tâche est toute finie (#145).
+ * session t'attend, bleu-vert quand sa branche attend sa fusion, #191), `sel` à faire ; toute violette
+ * quand la tâche est toute finie (#145).
  */
 export function stepsBarIcon(
   palette: Palette,
   segments: readonly StepSegment[],
-  opts: { width: number; height?: number; waiting?: boolean; finished?: boolean },
+  opts: { width: number; height?: number; waiting?: boolean; merging?: boolean; finished?: boolean },
 ): { source: string; width: number; height: number } {
   const height = opts.height ?? 6
   const gap = 1
@@ -751,7 +759,7 @@ export function stepsBarIcon(
   const w = (width - (n - 1) * gap) / n
   // Toute finie, toute violette ; la session t'attend, l'étape en cours orange (#145).
   const fill = (s: StepSegment) =>
-    opts.finished ? palette.finished : s === 'done' ? palette.ok : s === 'now' ? (opts.waiting ? palette.block : palette.live) : palette.sel
+    opts.finished ? palette.finished : s === 'done' ? palette.ok : s === 'now' ? (opts.waiting ? palette.block : opts.merging ? palette.wait : palette.live) : palette.sel
   const body = segments
     .map((s, i) => `<rect x="${(i * (w + gap)).toFixed(1)}" y="0" width="${w.toFixed(1)}" height="${height}" rx="${Math.min(RADIUS.bar, height / 2)}" fill="${fill(s)}"/>`)
     .join('')

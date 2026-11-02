@@ -95,6 +95,8 @@ export type Source = {
   ecriture?: Ecriture
   /** `preuves` (#158) : où chercher qu'une tâche est faite ; une liste de lieux, ou `#<titre>` d'une section des règles. */
   preuves?: string[] | string
+  /** `publier` (#191) : le libellé de l'étape ajoutée après « Fusionner » (`true` : « Publier ») ; sans lui, pas d'étape. */
+  publier?: string
 }
 
 /** `ecriture` de `.claude/roadmap.json` (#158) : sans elle, les skills du plugin écrivent elles-mêmes. */
@@ -145,6 +147,8 @@ export type ProjectSettings = {
   regles?: string
   ecriture?: Ecriture
   preuves?: string[] | string
+  /** `publier` (#191), résolu par `parseProjectConfig`. */
+  publier?: string
 }
 
 /** Les champs exigés d'un ancien `mode: "projet"`, et de l'onboarding sans code : `parent:` et `après:` renvoient à des numéros. */
@@ -180,6 +184,7 @@ export function projectSettings(source: Source): ProjectSettings {
     ...(source.regles ? { regles: source.regles } : {}),
     ...(source.ecriture ? { ecriture: source.ecriture } : {}),
     ...(source.preuves ? { preuves: source.preuves } : {}),
+    ...(source.publier ? { publier: source.publier } : {}),
   }
 }
 
@@ -2993,6 +2998,28 @@ export function boxSteps(steps: readonly ChildStep[]): ChildStep[] {
   return steps.map(s => ({ ...s, status: 'completed' as const }))
 }
 
+/** L'étape que le panneau ajoute aux étapes d'une session de code (#191). */
+export const MERGE_STEP = 'Fusionner'
+
+/**
+ * Les étapes d'une session telles que le panneau les dessine (#191) : dans un dossier à git, « Fusionner »
+ * en dernier, puis l'étape de `publish` (`publier` de `.claude/roadmap.json`). Le panneau les coche par
+ * git : fusionnée quand la ligne est close, ou que la branche n'a plus rien hors de sa base (`ahead` 0)
+ * et que la session a fini ses étapes (une branche neuve est aussi à 0). « Publier » se coche à la ligne
+ * close. Sans git ni lecture (`ahead` inconnu), la liste telle quelle ; une liste qui a déjà son étape ne
+ * la reçoit pas deux fois. Jamais écrites dans la note : `boxSteps` ne les voit pas.
+ */
+export function mergeSteps(steps: readonly ChildStep[], o: { git: boolean; ahead?: number; publish?: string; closed?: boolean }): ChildStep[] {
+  const out = steps.map(s => ({ ...s }))
+  if (!o.git || o.ahead === undefined || out.length === 0) return out
+  const own = out.every(s => s.status === 'completed')
+  const merged = o.closed === true || (o.ahead === 0 && own)
+  const has = (label: string) => out.some(s => s.content.trim().toLowerCase().startsWith(label.toLowerCase()))
+  if (!has(MERGE_STEP)) out.push({ content: MERGE_STEP, status: merged ? 'completed' : own ? 'in_progress' : 'pending' })
+  if (o.publish && !has(o.publish)) out.push({ content: o.publish, status: o.closed === true ? 'completed' : merged ? 'in_progress' : 'pending' })
+  return out
+}
+
 /** L'étape d'une liste, pour le parent : « étape 5/7 Coder », « 7/7 faites », rien sans liste. */
 export function stepLabel(steps: readonly ChildStep[]): string | undefined {
   if (steps.length === 0) return undefined
@@ -3907,7 +3934,7 @@ export function checkBrief(
 export function parseProjectConfig(text: string, base: string, defaults: { name: string; me: string[] }): Source | undefined {
   const data: unknown = JSON.parse(text)
   if (typeof data !== 'object' || data === null) return undefined
-  const c = data as { name?: unknown; dir?: unknown; me?: unknown; subjects?: unknown; mode?: unknown; requis?: unknown; requis_sur?: unknown; cles?: unknown; vue?: unknown; rangement?: unknown; relance?: unknown; design?: unknown; cles_visibles?: unknown; ranger_par?: unknown; regles?: unknown; ecriture?: unknown; preuves?: unknown }
+  const c = data as { name?: unknown; dir?: unknown; me?: unknown; subjects?: unknown; mode?: unknown; requis?: unknown; requis_sur?: unknown; cles?: unknown; vue?: unknown; rangement?: unknown; relance?: unknown; design?: unknown; cles_visibles?: unknown; ranger_par?: unknown; regles?: unknown; ecriture?: unknown; preuves?: unknown; publier?: unknown }
   const dir = typeof c.dir === 'string' && c.dir !== '' ? (c.dir.startsWith('/') ? c.dir : `${base}/${c.dir}`) : base
   const strings = (v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : undefined)
   // Une valeur inconnue ou d'un mauvais type prend le défaut : le panneau s'ouvre quand même. `auto`
@@ -3942,6 +3969,8 @@ export function parseProjectConfig(text: string, base: string, defaults: { name:
   const lieux = Array.isArray(c.preuves) ? c.preuves.map(path).filter((x): x is string => x !== undefined) : []
   const section = typeof c.preuves === 'string' && c.preuves.startsWith('#') ? path(c.preuves.slice(1)) : undefined
   const preuves = section ? `#${section}` : lieux.length > 0 ? lieux : undefined
+  // #191 : `true` vaut « Publier » ; une chaîne d'une ligne nomme l'étape (« Déployer le VPS »).
+  const publier = c.publier === true ? 'Publier' : typeof c.publier === 'string' && !/[\r\n`]/.test(c.publier) && c.publier.trim() !== '' ? clip(c.publier.trim(), 40) : undefined
   return {
     name: typeof c.name === 'string' && c.name !== '' ? c.name : defaults.name,
     match: [base],
@@ -3962,6 +3991,7 @@ export function parseProjectConfig(text: string, base: string, defaults: { name:
     ...(regles ? { regles } : {}),
     ...(ecriture ? { ecriture } : {}),
     ...(preuves ? { preuves } : {}),
+    ...(publier ? { publier } : {}),
   }
 }
 
@@ -5199,7 +5229,7 @@ export function maestroWakeReminder(pending: readonly string[]): string {
 /** Le rappel du mode ADHD chez Maestro, aux tours que lance la personne : un en-tête stable. */
 export function maestroPrefsReminder(prefs: SessionPrefs): string | undefined {
   if (!prefs.adhd) return undefined
-  return `Mode ADHD, chez Maestro : ouvre le message par un repère stable en gras, compté sur ta liste d'étapes, ⏳ **Maestro · 2 en cours · 1 t'attend** (✅ **Maestro · tout est livré** quand rien ne reste), jamais l'étape d'une tâche. Puis ce qui attend ${person()} en premier, court ; le détail reste chez les sessions enfants. Le tour finit par le bloc État, À toi (ses besoins : ${NEEDS}), Session, sans emoji. Pas de boîte de fin sans question tant qu'une étape de ta liste reste ouverte : l'app cocherait toute la liste, le seul repère de ${person()} sur ses sessions ; après une boîte avec question, repose ta liste entière (items) au tour suivant.`
+  return `Mode ADHD, chez Maestro : ouvre le message par un repère stable en gras, compté sur ta liste d'étapes, ⏳ **Maestro · 2 en cours · 1 t'attend · 1 à fusionner** (« t'attend » : une question pour ${person()} ; « à fusionner » : une branche finie qui attend ta fusion ; ✅ **Maestro · tout est livré** quand rien ne reste), jamais l'étape d'une tâche. Puis ce qui attend ${person()} en premier, court ; le détail reste chez les sessions enfants. Le tour finit par le bloc État, À toi (ses besoins : ${NEEDS}), Session, sans emoji. Pas de boîte de fin sans question tant qu'une étape de ta liste reste ouverte : l'app cocherait toute la liste, le seul repère de ${person()} sur ses sessions ; après une boîte avec question, repose ta liste entière (items) au tour suivant.`
 }
 
 /**
@@ -5544,10 +5574,11 @@ export function maestroRelaunchContext(o: { source: Source; tasks: readonly Task
 /** Une tâche rattachée à Maestro : `wait` sa session attend une réponse, `live` elle tourne, `done` close. */
 /** Une tâche lancée par Maestro : son état et, quand on la connaît, sa session (ses étapes, son ouverture, #143). */
 /**
- * Une tâche lancée par Maestro. `closed` : sa ligne est close ; `finished` : close et sa session ne tourne
+ * Une tâche lancée par Maestro. `state` : `wait` sa session t'attend, `live` elle tourne, `merge` elle a
+ * fini et sa branche attend sa fusion (#191), `done` close. `closed` : sa ligne est close ; `finished` : close et sa session ne tourne
  * plus (finie ou archivée), la tâche est toute finie (#145).
  */
-export type BrandTask = { id: string; label: string; state: 'wait' | 'live' | 'done'; sessionId?: string; closed?: true; finished?: true; archivable?: true }
+export type BrandTask = { id: string; label: string; state: 'wait' | 'live' | 'merge' | 'done'; sessionId?: string; closed?: true; finished?: true; archivable?: true }
 
 /**
  * Les tâches du bloc « En cours » de Maestro (#160) : celles dont la session tourne ou t'attend, ni closes
@@ -5666,7 +5697,19 @@ export function bandColumns(o: { counts: readonly string[]; states: readonly str
 
 /** Les tâches des sessions lancées par Maestro, par création de leur session, par numéro en secours (#143). */
 export function maestroBrandTasks(
-  entries: readonly { id: string; label: string; running: boolean; open: boolean; done: boolean; sessionId?: string; createdAt?: number }[],
+  entries: readonly {
+    id: string
+    label: string
+    running: boolean
+    open: boolean
+    done: boolean
+    sessionId?: string
+    createdAt?: number
+    /** Les commits de sa branche hors de sa base (#191) ; inconnu sans git. */
+    ahead?: number
+    /** Sa session a posé une question qui attend (formulaire, boîte avec question). */
+    asking?: boolean
+  }[],
 ): BrandTask[] {
   // Par création de leur session, la plus ancienne en haut, closes à leur place (#143, demande de
   // Bertrand) ; sans la date de toutes, par numéro : les numéros suivent l'ordre d'ouverture.
@@ -5677,7 +5720,8 @@ export function maestroBrandTasks(
     .map(e => ({
       id: e.id,
       label: e.label,
-      state: (e.done || !e.open ? 'done' : e.running ? 'live' : 'wait') as BrandTask['state'],
+      // À l'arrêt sans question, sa branche en avance : c'est Maestro qui fusionne, pas toi qu'on attend (#191).
+      state: (e.done || !e.open ? 'done' : e.running ? 'live' : !e.asking && (e.ahead ?? 0) > 0 ? 'merge' : 'wait') as BrandTask['state'],
       ...(e.sessionId ? { sessionId: e.sessionId } : {}),
       ...(e.done ? { closed: true as const } : {}),
       ...(e.done && !(e.open && e.running) ? { finished: true as const } : {}),
@@ -5687,7 +5731,7 @@ export function maestroBrandTasks(
 }
 
 // « Completed » et « Done » (#174, Bertrand) : les mots d'état affichés dans le panneau ; les textes pour Claude restent en français.
-const BRAND_STATE_WORD: Record<BrandTask['state'], string> = { wait: "t'attend", live: 'en session', done: 'Completed' }
+const BRAND_STATE_WORD: Record<BrandTask['state'], string> = { wait: "t'attend", live: 'en session', merge: 'à fusionner', done: 'Completed' }
 
 const FR_MONTHS = ['janv.', 'févr.', 'mars', 'avr.', 'mai', 'juin', 'juil.', 'août', 'sept.', 'oct.', 'nov.', 'déc.']
 
@@ -5728,7 +5772,8 @@ export function brandText(
     const n = brand.tasks.filter(t => t.state !== 'done').length
     const waiting = brand.tasks.filter(t => t.state === 'wait').length
     const sessions = `${n} session${n > 1 ? 's' : ''}`
-    const wait = waiting > 0 ? `, ${waiting} t'attend${waiting > 1 ? 'ent' : ''}` : ''
+    const merging = brand.tasks.filter(t => t.state === 'merge').length
+    const wait = (waiting > 0 ? `, ${waiting} t'attend${waiting > 1 ? 'ent' : ''}` : '') + (merging > 0 ? `, ${merging} à fusionner` : '')
     // L'accueil (#141) remplace le titre et la phrase de la carte ; sans session, rien d'administratif.
     const sub = brand.welcome
       ? brand.welcome.sub
