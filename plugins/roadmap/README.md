@@ -41,10 +41,11 @@ les sessions toutes les 3 s (le dossier de la roadmap toutes les 15 s), et montr
 - par défaut, l'arbre par axe (#168), dans tout projet : une section par axe, dans
   l'ordre de la légende, la flèche dans le carré de l'axe ; dedans, ce qui est en session d'abord,
   puis ce qui attend quelqu'un, puis la plus récente ; une mère au niveau des tâches seules, sa
-  flèche dans son carré, ses filles un cran à droite, reliées par des coudes ; un rond devant le
-  numéro (qui le suit, à l'écart fixe de la ligne, #179) coche la tâche, qui se barre et reste à sa
-  place ; un premier clic sur le rond arme la ligne, un second, sur le bouton de son encart, le fait
-  (#179) ;
+  flèche dans son carré, ses filles un cran à droite, reliées par des coudes ; plus de rond
+  (#198) : le carré d'axe de la tâche la coche, elle se barre en gris et reste à sa place ; un
+  premier clic sur le carré arme la ligne, un second, sur le tag « Confirmer » au bout de la ligne,
+  le fait (#179, #198) ; toutes les lignes s'alignent en colonnes : carré, numéro, tags, échéance,
+  titre, département, âge, ▶ (une colonne vide pour toute la liste laisse sa place à la suivante) ;
 - les tâches par sujet (au menu « Ranger ») en sections repliables, une ligne par tâche (pastilles échéance, tiers,
   « à revoir », âge), triées : en session, puis par échéance, puis de la plus récente à la plus
   ancienne ; une tâche se range sous sa prérequise ; au bout de chaque tâche ouverte (ni en session,
@@ -345,17 +346,17 @@ filtres, « Qui », les rangements) vaut dans tout projet.
   un fil fin qui porte leur rang (1, 2 : en séquence par `après:` ; 1, 1 : en parallèle), avec leur
   case, leur département, puis « Rodney · 29/10 » (responsable et date en texte, rouge en retard,
   orange dans les 7 jours) ou le cadenas « après #437 ». Lignes de 30 px, plus d'âge sur la ligne.
-  **Cocher** : la case (○) d'une étape la clôt comme « Marquer faite » ; l'étape cochée (●) reste à
-  sa place, barrée, et sa case la rouvre (sa ligne revient dans ROADMAP.md, son bilan est
-  retiré) ; la dernière étape cochée coche sa mère, rouvrir une étape rouvre sa mère. **Double
-  confirmation** (#179, maquette A) : le premier clic sur la case n'écrit rien, il arme la ligne
-  (fond orangé) et pose sous elle un encart qui dit ce qui va se passer (« Rouvrir #267 Licences ? »,
-  « Cocher #437 … ? », et ce qui s'écrira) avec « Rouvrir », « Cocher » ou « Tout clore », et
-  « Annuler » ; seul ce bouton écrit. Un second clic sur la case, un clic ailleurs dans le panneau
-  ou 8 s sans rien désarment ; une seule ligne armée. La case d'une mère qui a des étapes ouvertes
-  arme « Clore #12 Mocap et ses 3 étapes ouvertes ? » (Tout clore, Annuler). La liste « N faites »
-  porte le même rond ●, devant le numéro, qui rouvre de la même façon. Un projet qui déclare
-  `ecriture` (#164) : la case n'écrit pas, après la confirmation elle le demande à Claude (« Coche
+  **Cocher** : le carré d'axe d'une étape la clôt comme « Marquer faite » ; l'étape cochée reste à
+  sa place, grisée et barrée, son carré coché de blanc, et ce carré la rouvre (sa ligne revient dans
+  ROADMAP.md, son bilan est retiré) ; la dernière étape cochée coche sa mère, rouvrir une étape
+  rouvre sa mère. **Double confirmation** (#179 ; #198, maquette A) : le premier clic sur le carré
+  n'écrit rien, il l'entoure d'un filet orange et pose au bout de la ligne, à la place de l'âge et
+  du ▶, le tag « Confirmer » (« Rouvrir » sur une faite) ; seul ce tag écrit. Un second clic sur le
+  carré, un clic ailleurs dans le panneau ou 8 s sans rien désarment ; une seule ligne armée. Le
+  carré d'une mère la replie : une mère qui a des étapes ouvertes se clôt par sa fiche, où
+  « Marquer faite » demande « Clore #12 « Mocap » et ses 3 étapes ouvertes ? » (Tout clore). La
+  liste « N faites » porte le même carré, qui rouvre de la même façon. Un projet qui déclare
+  `ecriture` (#164) : la case n'écrit pas, après le tag elle le demande à Claude (« Coche
   #N par la skill tasks », « Rouvre #N … »). Une mère cochée aujourd'hui garde son
   bloc jusqu'au lendemain. Un dossier Cowork ne
   rouvre pas : `cowork.py` ne le sait pas, le toast le dit. « Tout replier » / « Tout déplier »,
@@ -648,6 +649,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.129.0 (2026-11-01)** : panneau : la ligne de tâche refaite : plus de rond, le carré d'axe coche et décoche après un tag « Confirmer » sur la même ligne ; une faite grisée et barrée, son carré garde la couleur de l'axe ; colonnes alignées (#198)
 - **0.128.1 (2026-11-01)** : panneau : les tâches lancées par Maestro restent à la place de leur premier lancement, dans la bande et le bloc En cours (#195)
 - **0.128.0 (2026-11-01)** : panneau : dates à l'américaine par défaut (« Nov 4 », heure sur 12 h), réglage dateFormat us | fr ; le contrôle refuse une date fait: ou ouvert: dans le futur, comptée à l'heure locale (#201)
 - **0.127.0 (2026-11-01)** : reglages-session : l'en-tête du mode ADHD devient une carte d'étape (icône d'état, étape N/total, nom, barre ▰▱, état en mots), le constat dessous (#196)

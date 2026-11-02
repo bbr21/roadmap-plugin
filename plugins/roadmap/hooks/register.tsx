@@ -25,6 +25,7 @@ import {
   progressIcon,
   bubbleIcon,
   squareCheckRowIcon,
+  squareArmedRowIcon,
   squareCheckMoveIcon,
   squareRowIcon,
   cornerIcon,
@@ -311,16 +312,18 @@ import {
   dropBilanCsv,
   reopenInTexts,
   CHECK_OVERLAY,
-  treeCheck,
   ARM_MS,
-  armAsk,
+  armTag,
   armShown,
   checkArm,
   checkMoveAt,
   checkLingers,
   CHECK_HOLD_MS,
   pressDisarms,
-  treeNumberBox,
+  NUMBER_CELLS,
+  AGE_CELLS,
+  rowColumns,
+  splitRowPills,
   treeSteps,
   treeDepartment,
   foldAllView,
@@ -611,7 +614,7 @@ async function paletteOf($: EngineInterface): Promise<Palette> {
 
 /** La place d'une ligne dans l'arbre (#125) : la tête d'un bloc, ou un enfant avec son rang. */
 // Une ligne de l'arbre par axe (#168) : la mère (sa flèche dans son carré, son bloc pour
-// l'avancement), une fille (son coude), une tâche seule ; toutes portent leur rond à cocher.
+// l'avancement), une fille (son coude), une tâche seule ; leur carré coche, sauf celui de la mère, qui la replie (#198).
 type TreeMark =
   | { kind: 'head'; id: string; open: boolean; ghost: boolean; block: TreeBlock }
   | { kind: 'child'; last: boolean; parent?: Task }
@@ -3340,9 +3343,9 @@ async function disarm($: EngineInterface): Promise<void> {
 }
 
 /**
- * Le rond d'une ligne (#179, maquette A) : un premier clic arme sa ligne et pose son encart, un
- * second sur le même rond la désarme ; rien ne s'écrit. Passé `ARM_MS`, une minuterie retire
- * l'encart (et `checkArm` refuse de toute façon un bouton trop tardif).
+ * Le carré d'une ligne (#179 ; le carré, #198) : un premier clic arme sa ligne et pose son tag
+ * « Confirmer », un second sur le même carré la désarme ; rien ne s'écrit. Passé `ARM_MS`, une
+ * minuterie retire le tag (et `checkArm` refuse de toute façon un clic trop tardif).
  */
 async function armCheck($: EngineInterface, task: Task): Promise<void> {
   const now = await $.clock.now()
@@ -3360,9 +3363,9 @@ async function armCheck($: EngineInterface, task: Task): Promise<void> {
 }
 
 /**
- * Le bouton de l'encart (#179) : la ligne encore armée s'exécute, comme la case de #163 : une faite
- * se rouvre, une ouverte se clôt (comme « Marquer faite »), une mère à étapes ouvertes passe par
- * « Tout clore » ; avec `ecriture` (#164), la demande part à Claude. Une écriture à la fois.
+ * Le tag « Confirmer » de la ligne armée (#179, #198) : elle s'exécute, comme la case de #163 : une
+ * faite se rouvre, une ouverte se clôt (comme « Marquer faite ») ; avec `ecriture` (#164), la demande
+ * part à Claude. Une écriture à la fois. (« Tout clore » une mère passe par sa fiche, #198.)
  */
 async function checkTask($: EngineInterface, source: Source, task: Task, openKids: number): Promise<void> {
   const out0 = checkArm(armedOf(await read($, viewAtom)), { kind: 'confirm', key: taskKey(task) }, await $.clock.now())
@@ -3370,7 +3373,7 @@ async function checkTask($: EngineInterface, source: Source, task: Task, openKid
   await setView($, () => DISARMED)
   if (out0.run === undefined) {
     try {
-      $.ui.toast('Délai passé : reclique sur le rond.')
+      $.ui.toast('Délai passé : reclique sur le carré.')
     } catch {
       // pas de toast sur cette surface
     }
@@ -4404,7 +4407,7 @@ export const register: Register = (on, options) => {
   on('ui.press', async ($, e, next) => {
     if (e.plugin === 'roadmap') {
       notePress(e.element)
-      // Un clic ailleurs désarme le rond armé (#179).
+      // Un clic ailleurs désarme le carré armé (#179, #198).
       if (pressDisarms(e.element)) await disarm($)
     }
     return next(e)
@@ -5601,21 +5604,16 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   // Le numéro d'une tâche devant son titre : petit, discret, suivi d'un point de séparation. Hors du
   // bouton, qui imposerait sa couleur au texte.
   // `open` : la tâche a une session ouverte, et un clic sur son numéro y mène.
-  const taskNumber = (id: string, open?: () => void, afterCheck = false) => (
-    // Une colonne de 6 de large (un numéro cliquable est un bouton, dont la marge intérieure
-    // tronquait « #133 » dans 4), calée à droite : le point colle au numéro et les titres restent
-    // alignés ; l'écart des numéros courts passe à gauche, contre le carré (2026-10-23). Derrière un
-    // rond (#179), le numéro le suit, à l'écart fixe de la ligne (`treeNumberBox`).
-    <Box key={`n:${id}`} {...treeNumberBox(afterCheck)}>
+  const taskNumber = (id: string, open?: () => void, done = false) => (
+    // Sa colonne de NUMBER_CELLS (#198), calée à droite, sur toutes les lignes : les tags, l'échéance et
+    // le titre suivent, alignés. Un numéro cliquable est un bouton au terminal ; sur le bureau, un texte
+    // et sa zone de clic (un bouton imposait sa taille de texte, 2026-10-23). Une faite : gris clair, barré.
+    <Box key={`n:${id}`} width={NUMBER_CELLS} flexDirection="row" justifyContent="flex-end" alignItems="center" flexShrink={0}>
       {open && !graphic ? (
         <Button key={`num:${id}`} plain dimColor onPress={open}>{`#${id}`}</Button>
-      ) : open && numberZones.has(id) ? (
-        // Un bouton de l'app imposait sa taille de texte : le numéro cliquable sortait plus gros
-        // que les autres (2026-10-23). Il reste du texte, et une zone de clic se pose dessus.
-        <Text size="caption" tabular color={palette.text2} hover={{ underline: true }}>{`#${id}`}</Text>
-      ) : null}
-      {/* Sans clic, le numéro et le point en un seul texte : un élément de moins par ligne. */}
-      <Text size="caption" tabular color={palette.text2}>{open && (numberZones.has(id) || !graphic) ? ' ·' : `#${id} ·`}</Text>
+      ) : (
+        <Text size="caption" tabular color={done ? palette.text3 : palette.text2} {...(done ? { strikethrough: true } : {})} {...(open && numberZones.has(id) ? { hover: { underline: true } } : {})}>{`#${id}`}</Text>
+      )}
       {open && numberZones.has(id) && hit(`num:${id}`, open, 1)}
     </Box>
   )
@@ -5676,9 +5674,6 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
       : kind === 'wait'
         ? drawnPill({ text, bg: palette.waitTint, fg: palette.waitOn, mark: 'person', height: SIZE.pill.detail })
         : drawnPill({ text, bg: palette.sel, fg: palette.text2, height: SIZE.pill.detail, weight: TEXT.weight.soft })
-  // Une tâche née d'un retour de l'app, ou qui en a reçu (`feedback:`) : violette, la voix d'un testeur.
-  const feedbackPill = (height?: number) =>
-    drawnPill({ text: 'Feedback', bg: palette.waitTint, fg: palette.waitOn, weight: TEXT.weight.soft, ...(height ? { height } : {}) })
 
   // --- La fiche d'une tâche (#142) : celle de la session, ou celle du clic ---------
   // Sa tâche introuvable (ligne retirée), la session voit toute la roadmap.
@@ -5686,6 +5681,10 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   const inSession = ownTask !== undefined
   const current = ownTask ?? findSelected([...openTasks, ...doneTasks], selected)
   if (current) {
+    // Une mère à étapes ouvertes (#198) : « Marquer faite » la clôt avec elles, « Tout clore » (#163),
+    // depuis que son carré, qui porte sa flèche, ne fait que la replier.
+    const kidsOpen = current.id && !current.done ? openTasks.filter(t => t.parent === current.id && t.id !== current.id).length : 0
+    const closeAll = () => void setView($, () => ({ cancelAsk: '', cancelNote: '' })).then(() => closeFamily($, source, current))
     // Dans sa session : le dossier, la branche et son écart, lus hors de la roadmap.
     const facts = inSession && ownBrand ? await readFocusFacts($, ownBrand.data.source, current, ownBrand.data.own.id, now) : undefined
     // Son dossier (Spec, Plan, Maquettes) et le récap de fin de sa session (#144), dans les deux contextes.
@@ -6123,7 +6122,9 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
                       <Box key="cancel-box" flexDirection="column" gap={SPACE.block} padding="sm" borderStyle="round" borderColor={palette.border}>
                         <Text weight="semibold" wrap="wrap">
                           {closeKind === 'done'
-                            ? `Marquer${current.id ? ` #${current.id}` : ''} « ${s.titre} » faite ?`
+                            ? kidsOpen > 0
+                              ? `Clore #${current.id} « ${s.titre} » et ${kidsOpen > 1 ? `ses ${kidsOpen} étapes ouvertes` : 'son étape ouverte'} ?`
+                              : `Marquer${current.id ? ` #${current.id}` : ''} « ${s.titre} » faite ?`
                             : `Annuler${current.id ? ` #${current.id}` : ''} « ${s.titre} » ?`}
                         </Text>
                         <Text size="caption" color={palette.text2} wrap="wrap">
@@ -6151,8 +6152,8 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
                           {closeKind === 'done' ? (
                             <Button
                               key="done-confirm"
-                              label={cancelNote === CANCEL_BUSY ? 'Écriture…' : 'Confirmer'}
-                              onPress={() => void confirmClose($, source, current, 'done')}
+                              label={cancelNote === CANCEL_BUSY ? 'Écriture…' : kidsOpen > 0 ? 'Tout clore' : 'Confirmer'}
+                              onPress={kidsOpen > 0 ? closeAll : () => void confirmClose($, source, current, 'done')}
                             />
                           ) : (
                             <Button
@@ -6265,7 +6266,9 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
                 <Box key="cancel-box" flexDirection="column" gap={SPACE.block} padding="sm" borderStyle="round" borderColor={palette.border}>
                   <Text weight="semibold" wrap="wrap">
                     {closeKind === 'done'
-                      ? `Marquer${current.id ? ` #${current.id}` : ''} « ${s.titre} » faite ?`
+                      ? kidsOpen > 0
+                              ? `Clore #${current.id} « ${s.titre} » et ${kidsOpen > 1 ? `ses ${kidsOpen} étapes ouvertes` : 'son étape ouverte'} ?`
+                              : `Marquer${current.id ? ` #${current.id}` : ''} « ${s.titre} » faite ?`
                       : `Annuler${current.id ? ` #${current.id}` : ''} « ${s.titre} » ?`}
                   </Text>
                   <Text size="caption" color={palette.text2} wrap="wrap">
@@ -6293,8 +6296,8 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
                     {closeKind === 'done' ? (
                       <Button
                         key="done-confirm"
-                        label={cancelNote === CANCEL_BUSY ? 'Écriture…' : 'Confirmer'}
-                        onPress={() => void confirmClose($, source, current, 'done')}
+                        label={cancelNote === CANCEL_BUSY ? 'Écriture…' : kidsOpen > 0 ? 'Tout clore' : 'Confirmer'}
+                        onPress={kidsOpen > 0 ? closeAll : () => void confirmClose($, source, current, 'done')}
                       />
                     ) : (
                       <Button
@@ -6774,11 +6777,32 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     // Gris : la tâche attend une autre tâche, pas toi (la main orange, elle, t'attend).
     Svg ? <Svg source={lockIcon(palette.text2, 14, STROKE.pill, title)} alt={title} width={SIZE.icon.sm} height={SIZE.icon.sm} isInteractive /> : <Text dimColor>⊘</Text>
 
-  const rowPill = (p: Pill) => {
+  // Le dessin d'une pastille de la liste ; sa largeur compte aussi dans les colonnes (#198).
+  const rowPillSpec = (p: Pill) => {
     const c = pillColors[p.kind]
     const mark: PillMark | undefined = p.kind === 'late' ? 'clock' : p.kind === 'wait' || p.kind === 'waitAging' || p.kind === 'waitOld' || p.kind === 'owner' ? 'person' : undefined
-    return drawnPill({ text: p.text, bg: c.bg, fg: c.fg, ...(mark ? { mark } : {}), weight: c.strong ? 600 : 500 })
+    return { text: p.text, bg: c.bg, fg: c.fg, ...(mark ? { mark } : {}), weight: (c.strong ? 600 : 500) as 500 | 600 }
   }
+  type PillSpec = Parameters<typeof drawnPill>[0]
+  // Les pastilles d'une ligne (#198) : les tags (retour, récurrence, responsable, puis les clés
+  // montrées ; un enfant de l'arbre ne reprend pas celles de son parent) et l'échéance à part, chacun
+  // dans sa colonne. Une faite ou une mère grise n'en a aucune ; en session ou bloquée, ni échéance ni
+  // responsable : la roue ou le cadenas le disent. Dans l'arbre, une seule clé : le département (#163).
+  const rowParts = (t: Task, o: { tree: boolean; ghost: boolean; inSession: boolean; locked: boolean; parent?: Parameters<typeof keyPills>[3] }) => {
+    if (o.ghost || t.done) return { feedback: false, keys: [] as PillSpec[], tags: [] as PillSpec[], due: undefined as PillSpec | undefined }
+    const feedback = t.feedback !== undefined
+    const listed: { due?: Pill; tags: Pill[] } = !o.inSession && !o.locked ? splitRowPills(listPills(t, today, me)) : { tags: [] }
+    const keys: PillSpec[] = !clesVisibles
+      ? []
+      : o.tree
+        ? [treeDepartment(t, { enabled: settings.axisPill, axisFilter: axis, clesVisibles })].filter((x): x is string => x !== undefined).map(text => ({ text, bg: palette.sel, fg: palette.text2, weight: 600 as const }))
+        : keyPills(t, clesVisibles, cles, o.parent).map(p => ({ text: p.text, bg: palette.sel, fg: palette.text2, weight: 600 as const }))
+    const tags: PillSpec[] = [...(feedback ? [{ text: 'Feedback', bg: palette.waitTint, fg: palette.waitOn, weight: TEXT.weight.soft }] : []), ...listed.tags.map(rowPillSpec), ...keys]
+    return { feedback, keys, tags, due: listed.due ? rowPillSpec(listed.due) : undefined }
+  }
+  // La largeur des colonnes des tags et de l'échéance (#198), posée plus bas, une fois les lignes
+  // dessinées connues : la plus large d'entre elles ; 0, la colonne ne se pose pas.
+  let rowCols = { tags: 0, due: 0 }
 
   // Une tâche en session (#143) : la roue (ou la main qui t'attend), la mini-barre et le compte, dans une
   // colonne de largeur fixe (#145) : d'une ligne à l'autre, la roue et la barre gardent leur place et leur
@@ -6821,11 +6845,17 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     const head = tree?.kind === 'head' ? tree : undefined
     const child = tree?.kind === 'child' ? tree : undefined
     const ghost = head?.ghost === true
+    // La case (#198, maquette A) : le carré d'axe de toute ligne, ouverte ou faite, dans toutes les
+    // vues ; plus de rond. Un premier clic l'arme (filet orange) et pose « Confirmer » au bout de la
+    // ligne, un second la désarme. Ni la mère, dont le carré porte la flèche qui la replie (#168), ni
+    // une mère grise, ni une ligne du bloc de Maestro.
+    const checkable = !head && !ghost && block === undefined
+    const armed = checkable && armShown(armedOf(view), taskKey(t), now)
     // Une marque de 16 × 24 tient la hauteur de la ligne : ni cale ni coins arrondis par ligne de
     // tâche (sur une roadmap de 120 tâches dépliées, 870 dessins figeaient le panneau).
     // Une tâche d'une chaîne : le trait et son étape font partie de la marque, un seul dessin.
     // Une faite (#180, maquette C) : le carré de son axe, à pleine couleur, coché de blanc ; on le
-    // reclique pour la rouvrir (`doneCheck`). Une mère faite garde sa flèche et son rond.
+    // reclique pour la rouvrir. Une mère faite garde sa flèche.
     const checkedMark = t.done && !head && Svg !== undefined
     // La case qui vient d'être cochée ou rouverte joue son mouvement (#182, maquette A), une fois, dans
     // le cadre interactif qui seul joue le SMIL ; ensuite, le dessin fixe.
@@ -6833,9 +6863,11 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     const markSource =
       moving !== undefined
         ? squareCheckMoveIcon(axisHex(t.axis), palette.onAxis, t.done, moving)
-        : checkedMark
-          ? squareCheckRowIcon(axisHex(t.axis), palette.onAxis)
-          : squareRowIcon(axisHex(t.axis))
+        : armed
+          ? squareArmedRowIcon(axisHex(t.axis), palette.block, palette.onAxis, checkedMark)
+          : checkedMark
+            ? squareCheckRowIcon(axisHex(t.axis), palette.onAxis)
+            : squareRowIcon(axisHex(t.axis))
     // L'arbre par axe (#168) : la mère porte sa flèche dans son carré, une fille son coude.
     const drawn = head
       ? treeMotherRowIcon(axisHex(t.axis), head.open, palette.onAxis)
@@ -6844,39 +6876,28 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
         : chain
           ? chainRowIcon(markSource, chain.pos, chain.step, palette.text3, palette.text2)
           : markSource
-    const markAlt = `${isAbandoned(t) ? 'annulée' : t.done ? 'faite' : t.axis}${chain ? `, étape ${chain.step}` : ''}${head ? (head.open ? ', replier' : ', déplier') : ''}`
+    const markAlt = `${isAbandoned(t) ? 'annulée' : t.done ? 'faite' : t.axis}${armed ? ', armée' : ''}${chain ? `, étape ${chain.step}` : ''}${head ? (head.open ? ', replier' : ', déplier') : ''}`
+    const checkKey = `check:${t.id ?? keyPart(t.key)}`
     const mark = Svg ? (
       <Svg source={ghost || (t.done && !checkedMark) ? fade(drawn, true) : drawn} alt={markAlt} width={chain || child ? 32 : 16} height={24} {...(moving !== undefined ? { isInteractive: true } : {})} />
     ) : head ? (
       <Text color={axisTheme(t.axis)}>{head.open ? '⌄' : '›'}</Text>
+    ) : checkable ? (
+      // Au terminal, sans dessin : le carré est le bouton lui-même.
+      <Button key={checkKey} plain onPress={() => void armCheck($, t)}>■</Button>
     ) : (
       <Text color={axisTheme(t.axis)}>■</Text>
     )
-    // Le rond de l'arbre (#168, système A), et d'une faite de la liste (#179) : devant le numéro. Un
-    // premier clic arme la ligne et pose son encart sous elle (#179, maquette A), dont le bouton
-    // rouvre, coche ou, pour une mère à filles ouvertes, « Tout clore » (#163). Un bouton du kit en
-    // glyphe : aucune zone de clic de plus.
-    const openKids = head ? head.block.tasks.length : 0
-    const armedHere = armShown(armedOf(view), taskKey(t), now)
-    const checkable = (tree || t.done) && !ghost && block === undefined
-    // Sur une faite dessinée, le bouton couvre le carré coché, sans encre : un bouton ne porte pas de
-    // dessin, et une zone de clic par ligne dépasserait ZONE_LIMIT (#180). Peint après le carré, il
-    // reçoit le clic.
-    const doneCheck = checkable && checkedMark ? (
-      <Box position="absolute" top={0} left={0}>
-        <Button key={`check:${t.id ?? keyPart(t.key)}`} plain onPress={() => void armCheck($, t)}>
+    // Sur le bureau, un bouton sans encre couvre le carré : un bouton ne porte pas de dessin, et une
+    // zone de clic par ligne dépasserait ZONE_LIMIT (#180). Peint après le carré, il reçoit le clic ;
+    // derrière un coude ou un trait de chaîne, il se décale sur le carré (16 px, deux cellules).
+    const squareHit = checkable && Svg ? (
+      <Box position="absolute" top={0} left={chain || child ? 2 : 0}>
+        <Button key={checkKey} plain onPress={() => void armCheck($, t)}>
           {CHECK_OVERLAY}
         </Button>
       </Box>
     ) : null
-    const check = checkable && !checkedMark ? (
-      <Button key={`check:${t.id ?? keyPart(t.key)}`} plain onPress={() => void armCheck($, t)}>
-        <Text color={armedHere ? palette.blockOn : t.done ? palette.ok : palette.text3} {...(armedHere ? { weight: 'semibold' as const } : {})}>{treeCheck(t.done)}</Text>
-      </Button>
-    ) : null
-    const ask = (check || doneCheck) && armedHere
-      ? armAsk({ task: t, title: s.titre, action: t.done ? 'reopen' : openKids > 0 ? 'family' : 'done', open: openKids, ...(source.ecriture ? { ecriture: source.ecriture } : {}), cowork: bilanData.viaCowork })
-      : undefined
     const right = tree ? (t.done ? 'fait' : days === undefined ? '' : ageLabel(days)) : t.done ? axisLabel(t.axis) : days === undefined ? '' : ageLabel(days)
     // Une tâche faite dont la session reste ouverte : y retourner, ou l'archiver, d'un clic.
     const kept = sessionRows.has(taskKey(t)) ? doneSessionOf(t) : undefined
@@ -6893,46 +6914,42 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     // ZONE_LIMIT. Ni sur une tâche en session, bloquée ou déjà demandée ; sa colonne reste, vide,
     // pour garder les carrés alignés.
     const playable = !t.done && !ghost && !inSession && !locked && !launched.includes(taskKey(t))
-    // Les pastilles entre le numéro et le titre : retour, échéance, attente…, puis les clés montrées
-    // (#125 : département, statut… en pastilles pleines, cadenas compris ; un enfant de l'arbre ne
-    // reprend pas celles de son parent).
-    const feedback = !ghost && !t.done && t.feedback !== undefined
-    // Les pastilles de clé, dessinées : dans l'arbre, une seule, le département, sur chaque ligne, faite
-    // comprise (#163).
-    const keySpecs = [
-      ...(!ghost && clesVisibles && tree
-        ? [treeDepartment(t, { enabled: settings.axisPill, axisFilter: axis, clesVisibles })].filter((x): x is string => x !== undefined).map(text => ({ text, bg: palette.sel, fg: t.done ? palette.text3 : palette.text2, weight: 600 as const }))
-        : []),
-      ...(!ghost && !t.done && clesVisibles && !tree ? keyPills(t, clesVisibles, cles, child?.parent).map(p => ({ text: p.text, bg: palette.sel, fg: palette.text2, weight: 600 as const })) : []),
-    ]
-    const allPills = [
-      ...(feedback ? [feedbackPill()] : []),
-      ...(!ghost && !inSession && !locked ? listPills(t, today, me).map(rowPill) : []),
-      ...keySpecs.map(spec => drawnPill(spec)),
-    ]
+    const parts = rowParts(t, { tree: tree !== undefined, ghost, inSession, locked, ...(child?.parent ? { parent: child.parent } : {}) })
     // En session, la ligne tient dans la largeur (#177, #248 de Splitmybill) : une pastille qui ne laisse
     // pas sa place au titre part, avant que la colonne de session ne soit poussée hors du panneau. Ses
     // pastilles sont la Feedback et les clés (sans `listPills`), dans cet ordre. Le retrait compte les
     // marges du panneau, du cadre du bloc et de la ligne.
-    const pills =
+    const shownTags =
       inSession && Svg
-        ? allPills.slice(
+        ? parts.tags.slice(
             0,
             fitRowPills({
               columns: (e.props as { bodyColumns?: number }).bodyColumns ?? 56,
               inset: 6,
               steps: stepsCells.columns,
-              pills: [
-                ...(feedback ? [pillIcon({ text: 'Feedback', bg: palette.waitTint, fg: palette.waitOn, weight: TEXT.weight.soft }).width] : []),
-                ...keySpecs.map(spec => pillIcon(spec).width),
-              ].map(pxCells),
+              pills: parts.tags.map(spec => pxCells(pillIcon(spec).width)),
             }).kept,
           )
-        : allPills
-    const number = t.id ? taskNumber(t.id, rowSession ? () => void openSession($, rowSession.entry) : undefined, check !== null) : undefined
+        : parts.tags
+    const pills = shownTags.map(spec => drawnPill(spec))
+    const due = parts.due ? drawnPill(parts.due) : null
+    const number = t.id ? taskNumber(t.id, rowSession ? () => void openSession($, rowSession.entry) : undefined, t.done) : undefined
     // Jamais dans « En cours » (#177) : le bloc de Maestro ou le filtre ; le carré d'axe suffit.
     const department = ghost ? undefined : axisPillText(t, { enabled: settings.axisPill, axisFilter: axis, live: block !== undefined || attend === 'live', groupedByAxis: tree !== undefined && !rangerPar && (by === 'subject' || attend === 'today'), clesVisibles })
-    const line = (
+    // Le tag de la ligne armée (#198, maquette A) : au bout de la ligne, à la place de l'âge et du ▶,
+    // orange plein ; une zone de clic, la seule de la liste (comptée sous ZONE_LIMIT). Sans zone, un bouton.
+    const confirm = armed ? armTag(t.done ? 'reopen' : 'done') : undefined
+    const doConfirm = () => void checkTask($, source, t, 0)
+    const confirmTag =
+      confirm === undefined ? null : graphic ? (
+        <Box key={`arm:${t.key}`} flexShrink={0}>
+          {drawnPill({ text: confirm, bg: palette.block, fg: palette.bg, weight: 600 })}
+          {hit('arm-confirm', doConfirm, 1)}
+        </Box>
+      ) : (
+        <Button key="arm-confirm" variant="primary" label={confirm} onPress={doConfirm} />
+      )
+    return (
       <Box
         key={`hit:${t.key}`}
         flexDirection="row"
@@ -6948,8 +6965,6 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
             {chain && <Text size="caption" tabular color={palette.text2}>{String(chain.step)}</Text>}
           </Box>
         )}
-        {/* La tête d'un bloc : son chevron replie le bloc, par la zone de l'en-tête quand le dessin
-            en a la place, sinon par un bouton en glyphe. */}
         {/* La mère (#168) : sa flèche est dans son carré ; le carré la replie, par la zone de
             l'en-tête quand le dessin en a la place, sinon par un bouton en glyphe. */}
         {head && !(Svg && headZones) ? (
@@ -6960,20 +6975,31 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
           <Box flexShrink={0}>
             {mark}
             {head && Svg && headZones && hit(`group:${head.id}`, toggleGroup(head.id), 1)}
-            {doneCheck}
+            {squareHit}
           </Box>
         )}
-        {check && <Box key={`c:${t.key}`} flexShrink={0}>{check}</Box>}
-        {/* Le numéro d'abord, à sa colonne : les pastilles suivent, les numéros restent alignés. Sans
-            pastille, le numéro entre dans le bloc du titre, sans écart (#156) : sur le bureau, la marge
-            du bouton du titre fait l'espace d'un mot ; au terminal, sans marge, l'écart d'une cellule
-            reste. Aucun élément de plus par ligne. */}
-        {t.id && pills.length > 0 && number}
-        {pills}
-        <Box key={`lead:${t.key}`} flexDirection="row" alignItems="center" gap={graphic ? 0 : SPACE.row} flexGrow={1} flexShrink={1} minWidth={0}>
-          {t.id && pills.length === 0 && number}
+        {/* Les colonnes (#198) : numéro, tags, échéance, puis le titre, à la même place sur toutes les
+            lignes. Les tags et l'échéance ont la largeur de la plus large des lignes dessinées ; une
+            colonne vide pour toutes ne se pose pas. Au terminal, sans largeur, à la suite. */}
+        {number}
+        {Svg
+          ? rowCols.tags > 0 && (
+              <Box key={`tags:${t.key}`} width={rowCols.tags} flexDirection="row" alignItems="center" gap={SPACE.row} flexShrink={0}>
+                {pills}
+              </Box>
+            )
+          : pills}
+        {Svg
+          ? rowCols.due > 0 && (
+              <Box key={`due:${t.key}`} width={rowCols.due} flexDirection="row" alignItems="center" flexShrink={0}>
+                {due}
+              </Box>
+            )
+          : due}
+        <Box key={`lead:${t.key}`} flexDirection="row" alignItems="center" flexGrow={1} flexShrink={1} minWidth={0}>
           <Button key={t.key} plain dimColor={ghost || (!t.done && !titled(t))} onPress={select(selectionOf(t))}>
-            <Text wrap="truncate-end" {...(tree && t.done ? { strikethrough: true, color: palette.text3 } : {})}>{s.titre}</Text>
+            {/* Une faite (#198) : grise et barrée, discrètement, dans toutes les vues. */}
+            <Text wrap="truncate-end" {...(t.done ? { strikethrough: true, color: palette.text3 } : {})}>{s.titre}</Text>
           </Button>
         </Box>
         {/* Le département (#156, maquette A) : l'axe en pastille, à droite du titre, avant l'âge ; un réglage. */}
@@ -7013,15 +7039,19 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
             <Text size="caption" tabular color={palette.text2}>{`${head.block.done}/${head.block.total}`}</Text>
           </Box>
         )}
-        {!head && !kept && !inSession && !locked && right !== '' && (
-          <Box flexShrink={0}>
-            <Text size="caption" tabular color={palette.text2} wrap="end">
-              {right}
-            </Text>
+        {/* L'âge, à sa colonne calée à droite (#198) : les départements restent alignés. */}
+        {!head && !kept && !inSession && !locked && confirm === undefined && (
+          <Box key={`age:${t.key}`} minWidth={AGE_CELLS} flexShrink={0} flexDirection="row" justifyContent="flex-end">
+            {right !== '' && (
+              <Text size="caption" tabular color={t.done ? palette.text3 : palette.text2} wrap="end">
+                {right}
+              </Text>
+            )}
           </Box>
         )}
-        {/* Le ▶ au bout de la ligne, à la place du chevron (#149) : le titre ouvre la fiche. */}
-        {!t.done && (
+        {/* Le ▶ au bout de la ligne, à la place du chevron (#149) : le titre ouvre la fiche. Sa colonne
+            reste, vide, sur une faite (#198) : les âges restent alignés. La ligne armée y pose son tag. */}
+        {confirmTag ?? (
           <Box key={`p:${t.key}`} width={3} flexShrink={0} flexDirection="row" justifyContent="center">
             {playable && (
               <Button key={`play:${t.key}`} plain dimColor onPress={() => void launchSession($, source, t, s.titre)}>
@@ -7030,23 +7060,6 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
             )}
           </Box>
         )}
-      </Box>
-    )
-    if (ask === undefined) return line
-    // L'encart de la ligne armée (#179, maquette A, celui de « Tout clore ») : la question, ce qui va
-    // s'écrire, puis le bouton qui le fait et « Annuler ». Une carte au filet orange sur le fond du
-    // panneau, sans aplat ; la ligne armée n'a plus de fond, seul son rond dit l'armement (#184, maquette C).
-    return (
-      <Box key={`armed:${t.key}`} flexDirection="column">
-        {line}
-        <Box key={`ask:${t.key}`} flexDirection="column" gap="xs" marginLeft={SPACE.nest} paddingX={SPACE.indent} paddingY="xs" borderStyle="round" borderColor={palette.block}>
-          <Text size="footnote" weight="semibold" color={palette.blockOn} wrap="wrap">{ask.question}</Text>
-          <Text size="caption" color={palette.text2} wrap="wrap">{ask.detail}</Text>
-          <Box flexDirection="row" gap={SPACE.row}>
-            <Button key="arm-confirm" variant="primary" label={ask.button} onPress={() => void checkTask($, source, t, openKids)} />
-            <Button key="arm-cancel" label="Annuler" onPress={() => void disarm($)} />
-          </Box>
-        </Box>
       </Box>
     )
   }
@@ -7077,9 +7090,8 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
       )
     }
     // Un bloc de l'arbre (#163 ; #168, maquettes de Bertrand) : la mère en tête, une seule fois, au
-    // niveau des tâches seules, sa flèche dans son carré, son rond et son avancement ; « Tout clore »
-    // dessous quand son rond est armé (l'encart de la ligne, #179) ; ses filles, ouvertes et faites, par rang, un cran à droite,
-    // reliées par leur coude.
+    // niveau des tâches seules, sa flèche dans son carré et son avancement (« Tout clore » passe par
+    // sa fiche, #198) ; ses filles, ouvertes et faites, par rang, un cran à droite, reliées par leur coude.
     if (block?.head) {
       const mother = block.head
       const shown = tasks.slice(0, shownRows)
@@ -7504,7 +7516,29 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   // Les zones fixes : le compte des faites, les axes, le chevron du bloc « En cours », la roue, les
   // pastilles cliquables et « Plus › » (#115), les boutons de session des faites.
   const liveOpen = !(view.liveFolded ?? false)
-  const fixedZones = 1 + axes.length + (blockTasks.length > 0 ? 1 : 0) + 1 + todo.filter(todoClickable).length + (todoBlock && (secondary.length > 0 || people.length > 0) ? 1 : 0) + 2 * sessionRows.size
+  // La ligne armée pose une zone de plus, celle de son tag « Confirmer » (#198).
+  const armedView = armedOf(view)
+  const armedZone = armedView !== undefined && armShown(armedView, armedView.key, now) ? 1 : 0
+  const fixedZones = armedZone + 1 + axes.length + (blockTasks.length > 0 ? 1 : 0) + 1 + todo.filter(todoClickable).length + (todoBlock && (secondary.length > 0 || people.length > 0) ? 1 : 0) + 2 * sessionRows.size
+  // Les colonnes des tags et de l'échéance (#198) : la plus large des lignes dessinées, celles du bloc
+  // « En cours » comprises ; une mère grise n'a pas de pastille.
+  if (Svg) {
+    const inTree = !showDone && !searching
+    const drawnRows = [
+      ...(liveOpen ? blockTasks.map(t => ({ t, ghost: false, live: true })) : []),
+      ...groups.flatMap(g => [
+        ...(g.block?.head ? [{ t: g.block.head, ghost: g.block.ghost === true, live: false }] : []),
+        ...(rowsOf.has(idOf(g)) ? g.tasks.slice(0, rowsOf.get(idOf(g))) : g.focus ? [g.focus] : []).map(t => ({ t, ghost: false, live: false })),
+      ]),
+    ]
+    rowCols = rowColumns(
+      drawnRows.map(({ t, ghost, live }) => {
+        const inSession = live || isLive(t)
+        const parts = rowParts(t, { tree: inTree, ghost, inSession, locked: !inSession && blockerFor(t) !== undefined })
+        return { tags: parts.tags.map(spec => pillIcon(spec).width), ...(parts.due ? { due: pillIcon(parts.due).width } : {}) }
+      }),
+    )
+  }
   if (graphic) {
     // Les lignes du bloc « En cours » de Maestro d'abord (#160) : leur numéro ouvre leur session.
     const shownWithSession = [...(liveOpen ? blockTasks : []), ...drawnTasks.filter(t => t.id && (liveOf(t) ?? doneSessionOf(t)))]

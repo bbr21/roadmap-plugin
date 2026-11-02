@@ -1718,6 +1718,40 @@ export function rowStepsCells(counts: readonly string[]): { count: number; colum
   return { count, columns: ROW_STEPS.icon + 1 + pxCells(ROW_STEPS.bar) + 1 + count }
 }
 
+/** La colonne du numéro d'une ligne (#198) : « #198 » calé à droite, un numéro cliquable (bouton) compris. */
+export const NUMBER_CELLS = 6
+/** La colonne de l'âge d'une ligne, au moins (#198) : « 12 j » calé à droite ; « fait » ou un axe la dépassent. */
+export const AGE_CELLS = 4
+
+/** Les pastilles d'échéance : la colonne de l'échéance (#198) ; les autres font les tags. */
+const DUE_KINDS: ReadonlySet<PillKind> = new Set(['late', 'due', 'soon', 'stale'])
+
+/** Les pastilles d'une ligne (#198) : l'échéance (ou « à revoir ») à part, les autres en tags, dans leur ordre. */
+export function splitRowPills(pills: readonly Pill[]): { due?: Pill; tags: Pill[] } {
+  const due = pills.find(p => DUE_KINDS.has(p.kind))
+  return { ...(due ? { due } : {}), tags: pills.filter(p => !DUE_KINDS.has(p.kind)) }
+}
+
+/**
+ * La largeur des colonnes des tags et de l'échéance (#198), en cellules : celle de la plus large des
+ * lignes dessinées (tags en px, un écart d'une cellule entre eux). Une colonne vide pour toutes les
+ * lignes vaut 0 et ne se pose pas : la suivante prend sa place.
+ */
+export function rowColumns(rows: readonly { tags: readonly number[]; due?: number }[]): { tags: number; due: number } {
+  let tags = 0
+  let due = 0
+  for (const r of rows) {
+    if (r.tags.length > 0) tags = Math.max(tags, pxCells(r.tags.reduce((a, b) => a + b, 0) + (r.tags.length - 1) * CELL_PX))
+    if (r.due !== undefined) due = Math.max(due, pxCells(r.due))
+  }
+  return { tags, due }
+}
+
+/** Le tag de la ligne armée (#198, maquette A), au bout de la ligne : ce que fait son clic. */
+export function armTag(action: 'done' | 'reopen'): string {
+  return action === 'reopen' ? 'Rouvrir' : 'Confirmer'
+}
+
 /** Le titre d'une ligne garde au moins ces cellules à côté de ses pastilles (#177). */
 export const ROW_TITLE_MIN = 6
 
@@ -4330,16 +4364,10 @@ export function foldAllView(
 }
 
 /**
- * Le libellé du bouton posé sur le carré coché d'une faite (#180) : une espace cadratin, sans encre,
- * de la largeur du carré ; le carré dessiné dessous fait la case.
+ * Le libellé du bouton posé sur le carré d'une ligne (#180 ; toute ligne, #198) : une espace cadratin,
+ * sans encre, de la largeur du carré ; le carré dessiné dessous fait la case.
  */
 export const CHECK_OVERLAY = '\u2003'
-
-/** La case d'une ligne de l'arbre (#163) : un glyphe, le libellé d'un bouton du kit, cliquable sur chaque ligne sans zone de clic. */
-export function treeCheck(checked: boolean): string {
-  // Un rond devant le numéro (#168, système A choisi par Bertrand) : vide, puis plein une fois faite.
-  return checked ? '●' : '○'
-}
 
 /** Le journal des bilans sans la dernière ligne de cette tâche à cette date (#163, une tâche rouverte). */
 export function dropBilanCsv(existing: string | undefined, id: string, date: string): string {
@@ -4578,19 +4606,19 @@ export function checkRoute(o: { ecriture?: Ecriture; cowork: boolean; task: { id
   })
 }
 
-/** Le temps qu'une ligne reste armée (#179) : passé ce délai, son encart part et son bouton ne fait plus rien. */
+/** Le temps qu'une ligne reste armée (#179) : passé ce délai, son tag « Confirmer » part et ne fait plus rien (#198). */
 export const ARM_MS = 8000
 
-/** La ligne dont le rond est armé (#179) : sa clé, et le moment du clic. */
+/** La ligne dont le carré est armé (#179, #198) : sa clé, et le moment du clic. */
 export type Armed = { key: string; at: number }
 
-/** Ce qui arrive à l'armement : un clic sur un rond, le bouton de l'encart, « Annuler », un clic ailleurs. */
+/** Ce qui arrive à l'armement : un clic sur un carré, le tag « Confirmer », un clic ailleurs. */
 export type ArmEvent = { kind: 'round'; key: string } | { kind: 'confirm'; key: string } | { kind: 'cancel' } | { kind: 'elsewhere' }
 
 /**
- * La double confirmation du rond de l'arbre (#179, maquette A) : un premier clic arme sa ligne, le
- * bouton de l'encart l'exécute (`run`) ; un second clic sur le même rond, « Annuler », un clic
- * ailleurs ou `ARM_MS` sans rien désarment. Une seule ligne armée à la fois.
+ * La double confirmation du carré d'une ligne (#179 ; le carré, #198) : un premier clic arme sa ligne,
+ * le tag « Confirmer » l'exécute (`run`) ; un second clic sur le même carré, un clic ailleurs ou
+ * `ARM_MS` sans rien désarment. Une seule ligne armée à la fois.
  */
 export function checkArm(armed: Armed | undefined, e: ArmEvent, now: number): { armed?: Armed; run?: string } {
   const live = armed !== undefined && now - armed.at < ARM_MS ? armed : undefined
@@ -4642,43 +4670,11 @@ export function checkLingers(move: CheckMove | undefined, now: number): boolean 
 }
 
 /**
- * Un clic ailleurs désarme (#179) : tout bouton ou zone du panneau, sauf un rond (`check:…`, qui
- * arme ou désarme lui-même) et les boutons de l'encart (`arm-…`).
+ * Un clic ailleurs désarme (#179) : tout bouton ou zone du panneau, sauf un carré (`check:…`, qui
+ * arme ou désarme lui-même) et le tag « Confirmer » de la ligne armée (`arm-…`, #198).
  */
 export function pressDisarms(element: string): boolean {
   return !/(^|[^a-z-])(check:|arm-)/.test(element)
-}
-
-/**
- * L'encart d'une ligne armée (#179) : la question, ce qui va s'écrire (ou que Claude le fera, avec
- * `ecriture`), et le libellé du bouton qui le fait. `title` : le titre court de la tâche.
- */
-export function armAsk(o: { task: { id?: string; label: string }; title: string; action: 'done' | 'reopen' | 'family'; open?: number; ecriture?: Ecriture; cowork: boolean }): { question: string; detail: string; button: string } {
-  const named = o.task.id !== undefined ? `#${o.task.id} ${o.title}` : taskRef(o.task)
-  if (o.action === 'reopen') {
-    const detail = o.cowork
-      ? `cowork.py ne sait pas rouvrir une tâche : demande-le à Claude (« rouvre ${taskRef(o.task)} »).`
-      : o.ecriture !== undefined
-        ? `Claude la rouvre par la skill tasks. ${entrustedNote(o.ecriture)}.`
-        : 'Elle repart dans les ouvertes, à sa place. Dans git : commit et push sur main.'
-    return { question: `Rouvrir ${named} ?`, detail, button: 'Rouvrir' }
-  }
-  const detail = closeCaption('done', o)
-  if (o.action === 'done') return { question: `Cocher ${named} ?`, detail, button: 'Cocher' }
-  const open = o.open ?? 0
-  const steps = open > 1 ? `ses ${open} étapes ouvertes` : 'son étape ouverte'
-  return { question: `Clore ${named} et ${steps} ?`, detail, button: 'Tout clore' }
-}
-
-/**
- * La boîte du numéro devant le titre (#179) : dans l'arbre, il suit le rond, à l'écart fixe de la
- * ligne (le même qu'entre le carré d'axe et le rond) ; ailleurs, sa colonne de 6 calée à droite,
- * pour aligner les titres des lignes sans rond.
- */
-export function treeNumberBox(inTree: boolean): { width?: number; flexDirection: 'row'; justifyContent?: 'flex-end'; alignItems: 'center'; flexShrink: 0 } {
-  return inTree
-    ? { flexDirection: 'row', alignItems: 'center', flexShrink: 0 }
-    : { width: 6, flexDirection: 'row', justifyContent: 'flex-end', alignItems: 'center', flexShrink: 0 }
 }
 
 /** La légende de l'encart de clôture : ce qui va se passer, et, avec `ecriture` (#164), à qui c'est confié. */

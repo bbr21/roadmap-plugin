@@ -568,6 +568,18 @@ export function squareCheckRowIcon(hex: string, inkHex: string): string {
 }
 
 /**
+ * Le carré d'une ligne armée (#198, maquette A) : celui d'une ouverte (ou, `done`, coché) entouré d'un
+ * filet `ringHex` (orange, `block`), qui le relie au tag « Confirmer » au bout de la ligne.
+ */
+export function squareArmedRowIcon(hex: string, ringHex: string, inkHex: string, done: boolean): string {
+  const ring = `<rect x="0.75" y="4.75" width="14.5" height="14.5" rx="4" fill="none" stroke="${ringHex}" stroke-width="1.5"/>`
+  const body = done
+    ? `<rect x="2" y="6" width="12" height="12" rx="${RADIUS.square}" fill="${hex}"/><path d="M5.2 12.2l1.9 1.9 3.7-3.9" fill="none" stroke="${inkHex}" stroke-width="${STROKE.check}" stroke-linecap="round" stroke-linejoin="round"/>`
+    : `<rect x="3" y="7" width="10" height="10" rx="${RADIUS.square}" fill="${hex}"/>`
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="24" viewBox="0 0 16 24">${ring}${body}</svg>`
+}
+
+/**
  * La case qui bouge (#182, maquette A) : le carré coché de `squareCheckRowIcon`, animé en SMIL, figé
  * à la fin sur le dessin fixe. Cocher (`done`) : le carré passe de 10 à 12 avec un petit rebond, puis
  * la coche se trace ; rouvrir : la coche s'efface, puis le carré revient au carré de 10 d'une ouverte.
