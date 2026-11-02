@@ -6646,8 +6646,12 @@ function resolvePath(base: string, path: string): string {
   return normalPath(path.startsWith('/') ? path : `${base}/${path}`)
 }
 
-/** Une commande d'une ligne shell, ses mots, et les séparateurs qui la précèdent et la suivent (`;`, `&&`, `|`…). */
-type ShellCommand = { words: string[]; before: string; after: string }
+/**
+ * Une commande d'une ligne shell, ses mots, et les séparateurs qui la précèdent et la suivent (`;`,
+ * `&&`, `|`…). `odd` : un antislash hors guillemets simples, ou un `#` qui ouvre un commentaire, que ce
+ * découpage ne suit pas ; la ligne ne suit alors plus ses variables (#226).
+ */
+type ShellCommand = { words: string[]; before: string; after: string; odd?: boolean }
 
 /** Un séparateur après lequel la commande suivante tourne toujours, dans le même shell. */
 const sureSeparator = (op: string) => op === '' || op === ';' || op === '\n'
@@ -6667,18 +6671,22 @@ function shellCommands(line: string, home: string): ShellCommand[] {
   }
   for (let i = 0; i < line.length; i++) {
     const c = line[i]!
+    if (c === '\\' && quote !== "'") commands[commands.length - 1]!.odd = true
     if (quote !== '') {
       if (c === quote) quote = ''
       else if (quote === '"' && line.startsWith('$HOME', i)) {
         word = (word ?? '') + home
         i += 4
       } else word = (word ?? '') + c
+    } else if (c === '#' && word === undefined) {
+      commands[commands.length - 1]!.odd = true
+      word = c
     } else if (c === "'" || c === '"') {
       quote = c
       word = word ?? ''
     } else if (c === ' ' || c === '\t') end()
     // `2>&1`, `>&2`, `&>fichier` : une redirection, pas un séparateur.
-    else if (c === '&' && (/[<>]$/.test(word ?? '') || line[i + 1] === '>')) word = (word ?? '') + c
+    else if (c === '&' && (((line[i - 1] === '>' || line[i - 1] === '<') && /[<>]$/.test(word ?? '')) || line[i + 1] === '>')) word = (word ?? '') + c
     else if (c === ';' || c === '|' || c === '&' || c === '\n') {
       end()
       let op: string = c
@@ -6749,21 +6757,23 @@ function expandVars(word: string, vars: Map<string, string>): string {
 /**
  * Les commandes qui ne peuvent changer aucune variable du shell (#226, relecture de sécurité) : des
  * programmes, et `cd`, `echo`, `test`, `true`, `false`, `:` parmi les commandes du shell. Une liste
- * blanche : `read`, `trap`, `printf -v`, `builtin`, `if`, `for`… n'y sont pas, et une ligne qui en a
- * ne suit plus ses variables.
+ * blanche : `read`, `trap`, `printf -v`, `builtin`, `eval`, `if`, `for`… n'y sont pas, et une ligne
+ * qui en a ne suit plus ses variables.
  */
-const VAR_SAFE_COMMANDS = new Set(['git', 'node', 'npm', 'npx', 'python3', 'python', 'claude', 'bash', 'sh', 'zsh', 'eval', 'cd', 'echo', 'test', '[', 'true', 'false', ':', 'cat', 'ls', 'grep', 'rg', 'sed', 'awk', 'head', 'tail', 'wc', 'sort', 'uniq', 'cut', 'tr', 'find', 'diff', 'jq', 'date', 'pwd', 'basename', 'dirname', 'mkdir', 'cp', 'mv', 'rm', 'touch', 'tee', 'xargs', 'sleep'])
+const VAR_SAFE_COMMANDS = new Set(['git', 'node', 'npm', 'npx', 'python3', 'python', 'claude', 'bash', 'sh', 'zsh', 'cd', 'echo', 'test', '[', 'true', 'false', ':', 'cat', 'ls', 'grep', 'rg', 'sed', 'awk', 'head', 'tail', 'wc', 'sort', 'uniq', 'cut', 'tr', 'find', 'diff', 'jq', 'date', 'pwd', 'basename', 'dirname', 'mkdir', 'cp', 'mv', 'rm', 'touch', 'tee', 'xargs', 'sleep'])
 
 /**
  * Une ligne dont les variables se suivent sans risque : chaque commande est une affectation seule ou
- * une commande de `VAR_SAFE_COMMANDS` (ou un programme nommé par son chemin), et aucun mot n'a de
- * `$(…)`, de guillemet inversé, de `${…}` autre que `${NOM}`, de `W+=` ni de parenthèse.
+ * une commande de `VAR_SAFE_COMMANDS` (ou un programme nommé par son chemin, `/…`, `./…`, `../…`), et
+ * aucun mot n'a de `$(…)`, de `$[…]`, de guillemet inversé, de `${…}` autre que `${NOM}`, de `W+=`, de
+ * `W[…]` ni de parenthèse.
  */
 function plainShell(commands: ShellCommand[]): boolean {
-  return commands.every(({ words }) => {
-    if (words.some(w => /\$\(|`|\$\{(?![A-Za-z_][A-Za-z0-9_]*\})|^[A-Za-z_][A-Za-z0-9_]*\+=|^\(|\)$/.test(w))) return false
+  return commands.every(({ words, odd }) => {
+    if (odd) return false
+    if (words.some(w => /\$\(|\$\[|`|\$\{(?![A-Za-z_][A-Za-z0-9_]*\})|^[A-Za-z_][A-Za-z0-9_]*(\+=|\[)|^\(|\)$/.test(w))) return false
     const first = words.find(w => !/^[A-Za-z_][A-Za-z0-9_]*=/.test(w) && w !== 'env' && w !== 'export')
-    return first === undefined || VAR_SAFE_COMMANDS.has(first) || (first.includes('/') && !first.includes('$'))
+    return first === undefined || VAR_SAFE_COMMANDS.has(first) || /^\.{0,2}\/[^=[$]*$/.test(first)
   })
 }
 
@@ -6815,7 +6825,8 @@ function shellSteps(command: string, cwd: string, home: string, vars = new Map<s
       continue
     }
     if (words[0] === 'eval') {
-      steps.push(...shellSteps(words.slice(1).join(' '), dir, home, vars))
+      // Son corps se lit à son tour ; ce qu'il affecte n'en sort pas (ligne avec `eval` : variables illisibles).
+      steps.push(...shellSteps(words.slice(1).join(' '), dir, home, new Map(vars)))
       continue
     }
     steps.push({ dir, env, words })
