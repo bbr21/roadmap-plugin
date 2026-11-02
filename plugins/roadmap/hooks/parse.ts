@@ -5897,17 +5897,19 @@ export function firstLaunch(prev: number | undefined, created: number, seen: num
 }
 
 /**
- * Les tâches du bloc « En cours » de Maestro (#160) : celles dont la session tourne ou t'attend, ni closes
- * ni finies, dans l'ordre de ses sessions. La liste de la roadmap dessous ne les redit pas.
+ * Les tâches du bloc « En cours » de Maestro (#160) : celles dont la session tourne ou t'attend, et les
+ * closes dont la session n'est pas archivée (#218), « Completed » comme dans la bande, dans l'ordre de ses
+ * sessions. Une ouverte dont la session est archivée n'y est pas. La liste de la roadmap dessous ne les redit pas.
  */
 export function liveBlockIds(tasks: readonly BrandTask[]): string[] {
-  return tasks.filter(t => t.state !== 'done' && !t.closed && !t.finished).map(t => t.id)
+  return tasks.filter(t => (t.closed ? !t.finished || t.archivable : t.state !== 'done')).map(t => t.id)
 }
 
 /**
  * Les lignes du bloc « En cours » de Maestro (#160, #187) : ses sessions qui tournent ou t'attendent
  * (`liveBlockIds`), puis les tâches ouvertes qu'une autre session travaille (ligne prise, session
  * vivante), chacune une fois. Un Maestro neuf, qui n'a rien lancé, montre ainsi ce qui tourne ailleurs.
+ * Une session de Maestro close et pas archivée trouve sa tâche parmi les faites (`done`, #218).
  * Avec `launchedAt`, toutes rangées ensemble par premier lancement, les sans-date à la fin (#195).
  */
 export function liveBlockRows<T extends { id?: string }>(
@@ -5915,10 +5917,11 @@ export function liveBlockRows<T extends { id?: string }>(
   open: readonly T[],
   isLive: (t: T) => boolean,
   launchedAt?: (t: T) => number | undefined,
+  done: readonly T[] = [],
 ): { task: T; brand?: BrandTask }[] {
   const ids = liveBlockIds(own)
   const mine = ids.flatMap(id => {
-    const task = open.find(t => t.id === id)
+    const task = open.find(t => t.id === id) ?? (own.find(bt => bt.id === id)?.closed ? done.find(t => t.id === id) : undefined)
     const brand = own.find(bt => bt.id === id)
     return task ? [{ task, brand }] : []
   })

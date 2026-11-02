@@ -7376,7 +7376,8 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   // qu'une autre session travaille (#187), en lignes ; la liste de la roadmap dessous ne les redit pas.
   // Toutes rangées par premier lancement (#195) : celles des autres sessions aussi, par la date de la leur.
   if (maestroBrand) await learnCreated($, openTasks.filter(isLive).map(t => liveOf(t)?.entry.sessionId).filter((id): id is string => id !== undefined), now)
-  const blockRows = maestroBrand ? liveBlockRows(maestroBrand.tasks, openTasks, isLive, t => launchOf(t, liveOf(t)?.entry.sessionId, now)) : []
+  // Une session close et pas archivée y garde sa ligne, « Completed », comme dans la bande (#218).
+  const blockRows = maestroBrand ? liveBlockRows(maestroBrand.tasks, openTasks, isLive, t => launchOf(t, liveOf(t)?.entry.sessionId, now), doneTasks) : []
   const blockOf = new Map(blockRows.flatMap(r => (r.brand ? [[r.brand.id, r.brand] as const] : [])))
   const blockKeys = new Set(blockRows.map(r => taskKey(r.task)))
   const inBlock = (t: Task) => blockKeys.has(taskKey(t))
@@ -7581,19 +7582,45 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   // découpe de la barre change. Pas de carte au survol (#145) : la ligne la coupait ; la fiche montre les étapes.
   // Une ligne du bloc « En cours » de Maestro (#160) lit les étapes et l'attente de sa session à lui.
   // La colonne tient tout son contenu, à la largeur du plus long compte montré (#177) : jamais coupé.
-  const stepsCells = rowStepsCells([...blockSteps.values(), ...rowSteps.values()].map(st => stepsView(st.steps, { now, at: st.at, closed: false }).count))
+  const stepsCells = rowStepsCells([
+    ...[...blockSteps].map(([id, st]) => stepsView(st.steps, { now, at: st.at, closed: blockOf.get(id)?.closed === true })?.count ?? ''),
+    ...[...rowSteps.values()].map(st => stepsView(st.steps, { now, at: st.at, closed: false })?.count ?? ''),
+  ])
+  // Une session close du bloc (#218) : « Completed » et l'icône d'archivage après la colonne des étapes,
+  // dans une case que toutes les lignes du bloc gardent, pour que les barres restent alignées.
+  const blockDone = [...blockOf.values()].some(bt => bt.state === 'done')
+  const completedWord = bandState({ state: 'done' }).word
+  const blockEndCells = blockDone ? [...completedWord].length + 1 + 2 : 0
+  const blockEnd = (t: Task, block: BrandTask) => {
+    if (!blockDone) return null
+    const done = block.state === 'done'
+    return (
+      <Box key={`end:${t.key}`} flexDirection="row" alignItems="center" justifyContent="flex-end" gap={SPACE.row} flexShrink={0} {...(Svg ? { width: blockEndCells } : {})}>
+        {done && <Text size="caption" color={block.finished ? palette.finishedOn : palette.text2}>{completedWord}</Text>}
+        {done && block.archivable && block.sessionId && (
+          <Box key={`ba:${t.key}`} flexDirection="row" alignItems="center" flexShrink={0}>
+            {Svg ? <Svg source={archiveIcon(palette.text2, 14)} alt="Archiver la session" width={SIZE.icon.sm} height={SIZE.icon.sm} /> : null}
+            {graphic ? hit(`block-archive:${block.id}`, () => void archiveBandSession($, block, now), 1) : <Button key={`block-archive:${block.id}`} plain dimColor label="Archiver" onPress={() => void archiveBandSession($, block, now)} />}
+          </Box>
+        )}
+      </Box>
+    )
+  }
   const sessionColumn = (t: Task, block?: BrandTask) => {
     const status = block ? blockSteps.get(block.id) : rowSteps.get(taskKey(t))
     // #191 : finie, sa branche en avance, sans question : à fusionner, ni la main ni la roue.
     const sid = liveOf(t)?.entry.sessionId
     const merging = block ? block.state === 'merge' : waitingOn(t) && status?.question === undefined && (sid ? (aheadBySession.get(sid)?.ahead ?? 0) : 0) > 0
     const waiting = (block ? block.state === 'wait' : waitingOn(t)) && !merging
+    // Close (#218) : la coche, violette quand la session ne tourne plus, et sa jauge pleine, comme la bande.
+    const completed = block?.state === 'done'
     const view = status ? stepsView(status.steps, { now, at: status.at, closed: t.done }) : undefined
-    const bar = status && view ? stepsBarIcon(palette, view.segments, { width: ROW_STEPS.bar, height: 4, waiting: waiting || status.question !== undefined, merging }) : undefined
+    const bar = status && view ? stepsBarIcon(palette, view.segments, { width: ROW_STEPS.bar, height: 4, waiting: waiting || status.question !== undefined, merging, finished: block?.finished === true }) : undefined
+    const checkHex = block?.finished ? palette.finished : palette.done
     return (
       <Box key={`steps:${t.key}`} flexDirection="row" alignItems="center" gap={SPACE.row} flexShrink={0} {...(Svg ? { width: stepsCells.columns } : {})}>
         <Box width={ROW_STEPS.icon} flexShrink={0} flexDirection="row" justifyContent="center">
-          {merging ? mergeMark() : waiting ? hand() : spinner()}
+          {completed ? (Svg ? <Svg source={checkIcon(checkHex, 14, STROKE.pill)} alt={completedWord} width={SIZE.icon.sm} height={SIZE.icon.sm} /> : <Text size="caption" color={checkHex}>✓</Text>) : merging ? mergeMark() : waiting ? hand() : spinner()}
         </Box>
         {Svg &&
           (bar && view ? (
@@ -7671,7 +7698,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     ) : null
     const right = doneRights.get(t) ?? (tree ? (t.done ? 'fait' : days === undefined ? '' : ageLabel(days)) : t.done ? axisLabel(t.axis) : days === undefined ? '' : ageLabel(days))
     // Une tâche faite dont la session reste ouverte : y retourner, ou l'archiver, d'un clic.
-    const kept = sessionRows.has(taskKey(t)) ? doneSessionOf(t) : undefined
+    const kept = block === undefined && sessionRows.has(taskKey(t)) ? doneSessionOf(t) : undefined
     const inSession = isLive(t) || block !== undefined
     // La session de la tâche, ouverte ou faite : son numéro y mène ; dans le bloc, celle de Maestro.
     const blockEntry = block?.sessionId ? { sessionId: block.sessionId, startedAt: now, title: block.label } : undefined
@@ -7697,7 +7724,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
             fitRowPills({
               columns: (e.props as { bodyColumns?: number }).bodyColumns ?? 56,
               inset: 6,
-              steps: stepsCells.columns,
+              steps: stepsCells.columns + (block ? blockEndCells : 0),
               pills: parts.tags.map(spec => pxCells(pillIcon(spec).width)),
             }).kept,
           )
@@ -7780,6 +7807,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
             aussi, dans son bloc « En cours », sans arbre (#160). */}
         {(inSession || locked || head) && due}
         {inSession && sessionColumn(t, block)}
+        {block && blockEnd(t, block)}
         {/* Le cadenas dit ce qu'il attend (#125) : « après » et le numéro de sa prérequise, ou « parent après » celui qu'attend son parent. */}
         {locked && pre && (
           <Box key={`lock:${t.key}`} flexDirection="row" alignItems="center" gap={SPACE.row} flexShrink={0}>
@@ -7963,8 +7991,9 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   }
 
   // Toutes les faites de l'axe, la plus récente d'abord ; rangées par jour ou par sujet.
+  // Une close du bloc « En cours » (#218) n'y est pas redite : sa ligne est dans le bloc.
   const doneShown = doneTasks
-    .filter(t => matches(t, axis, 'all', me))
+    .filter(t => matches(t, axis, 'all', me) && !inBlock(t))
     .sort((a, b) => (b.fait ?? '').localeCompare(a.fait ?? ''))
   // Les faites en familles (#203, maquette C) : une sous-tâche sous sa mère, par jour ou par sujet ;
   // à droite, ce que le rangement ne dit pas (le sujet, ou le jour de clôture).
@@ -7979,7 +8008,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   const titleOf = (t: Task) => titles[hashLabel(t.label)]?.titre
   const foundOpen = searching ? sortTasks(searchTasks(openTasks.filter(t => !inBlock(t)), search, titleOf), sortOrder) : []
   const foundDone = searching
-    ? searchTasks(doneTasks, search, titleOf).sort((a, b) => (b.fait ?? '').localeCompare(a.fait ?? ''))
+    ? searchTasks(doneTasks.filter(t => !inBlock(t)), search, titleOf).sort((a, b) => (b.fait ?? '').localeCompare(a.fait ?? ''))
     : []
   const foundCount = foundOpen.length + foundDone.length
   const foundShown = foundOpen.slice(0, SEARCH_MAX)
@@ -8282,7 +8311,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     </Box>
   )
   // Les zones de clic de ce dessin : légende, roue et « À traiter », puis les en-têtes de section s'il reste de la place.
-  if (graphic) sessionRows = new Set(doneTasks.filter(t => doneSessionOf(t) !== undefined).slice(0, SESSION_ROWS).map(taskKey))
+  if (graphic) sessionRows = new Set(doneTasks.filter(t => !inBlock(t) && doneSessionOf(t) !== undefined).slice(0, SESSION_ROWS).map(taskKey))
   // Seules les lignes cliquables de « À traiter » ont une zone ; les filtres repliés sont des boutons de l'app (#115).
   // Les axes toujours dépliés (#160) : plus de ligne repliée (#149) ; les faites s'ouvrent par le lien de l'en-tête (#152).
   // Les zones fixes : le compte des faites, les axes, le chevron du bloc « En cours », la roue, les
@@ -8291,7 +8320,9 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   // La ligne armée pose une zone de plus, celle de son tag « Confirmer » (#198).
   const armedView = armedOf(view)
   const armedZone = armedView !== undefined && armShown(armedView, armedView.key, now) ? 1 : 0
-  const fixedZones = armedZone + 1 + axes.length + (blockTasks.length > 0 ? 1 : 0) + 1 + todo.filter(todoClickable).length + (todoBlock && (secondary.length > 0 || people.length > 0) ? 1 : 0) + 2 * sessionRows.size
+  // L'icône d'archivage d'une session close du bloc « En cours » (#218) : une zone par ligne dépliée.
+  const blockArchiveZones = liveOpen ? blockRows.filter(r => r.brand?.state === 'done' && r.brand.archivable && r.brand.sessionId).length : 0
+  const fixedZones = armedZone + 1 + axes.length + (blockTasks.length > 0 ? 1 : 0) + 1 + todo.filter(todoClickable).length + (todoBlock && (secondary.length > 0 || people.length > 0) ? 1 : 0) + 2 * sessionRows.size + blockArchiveZones
   if (graphic) {
     // Les lignes du bloc « En cours » de Maestro d'abord (#160) : leur numéro ouvre leur session.
     const shownWithSession = [...(liveOpen ? blockTasks : []), ...drawnTasks.filter(t => t.id && (liveOf(t) ?? doneSessionOf(t)))]
