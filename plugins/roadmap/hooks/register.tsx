@@ -3054,6 +3054,75 @@ function noteWelcomeCard($: EngineInterface, kind: 'reachedAt' | 'drawnAt' | 'fa
   return welcomeCardWrites
 }
 
+/**
+ * Le sort du dessin du panneau (#220), noté au store comme celui de la carte d'accueil (#153) : sa première
+ * arrivée, son premier dessin réussi, sa dernière panne (le message, la pile, la version). Un panneau resté
+ * vide sur une autre machine se lit là, dans `~/.claude/plugins/store/roadmap_*.json`, clé `pane-draw`.
+ */
+const PANE_DRAW_KEY = 'pane-draw'
+type PaneFailure = { kind: 'throw' | 'timeout'; message: string; stack?: string }
+let paneDrawReached = false
+let paneDrawDrawn = false
+let paneDrawWrites: Promise<void> = Promise.resolve()
+
+/** Note le sort du dessin du panneau ; jamais bloquant. Une arrivée et un dessin réussi se notent une fois, une panne à chaque fois. */
+function notePaneDraw($: EngineInterface, kind: 'reachedAt' | 'drawnAt' | 'failedAt', failure?: PaneFailure): Promise<void> {
+  if (kind === 'reachedAt') {
+    if (paneDrawReached) return paneDrawWrites
+    paneDrawReached = true
+  }
+  if (kind === 'drawnAt') {
+    if (paneDrawDrawn) return paneDrawWrites
+    paneDrawDrawn = true
+  }
+  // Après une panne, le dessin réussi suivant se note de nouveau.
+  if (kind === 'failedAt') paneDrawDrawn = false
+  paneDrawWrites = paneDrawWrites.then(async () => {
+    try {
+      const at = await $.clock.now()
+      const stored = await $.store.get(PANE_DRAW_KEY)
+      const seen = typeof stored === 'object' && stored !== null && !Array.isArray(stored) ? stored : {}
+      const why = failure ? { error: failure.message, kind: failure.kind, stack: (failure.stack ?? '').split('\n').slice(0, 8).join('\n') } : {}
+      await $.store.set(PANE_DRAW_KEY, { ...seen, [kind]: at, version: sessionVersion ?? '?', ...why })
+    } catch {
+      // store illisible : le sort se notera au dessin suivant
+    }
+  })
+  return paneDrawWrites
+}
+
+/**
+ * La carte d'un dessin du panneau en panne (#220) : ce qui s'est passé, le message, la version du plugin et
+ * « Réessayer », plutôt que « has not drawn in this pane ». Rien de ce que le dessin lit d'ordinaire n'est
+ * exigé : la palette illisible, les couleurs du thème de l'app.
+ */
+async function paneFailure($: EngineInterface, e: RenderInput<'Pane'>, failure: PaneFailure): Promise<RenderElement> {
+  void notePaneDraw($, 'failedAt', failure)
+  const { Box, Text, Button } = $.ui.resolve(e)
+  const version = await loadSessionVersion($).catch(() => sessionVersion ?? '?')
+  const palette = await paletteOf($).catch(() => undefined)
+  // Lu pour que « Réessayer » redessine le panneau.
+  await read($, retryAtom).catch(() => 0)
+  const retry = () => {
+    knownSource = undefined
+    paneCache = undefined
+    void update($, retryAtom, v => v + 1)
+  }
+  const what = failure.kind === 'timeout' ? 'Le dessin a dépassé le temps que lui laisse l\'app.' : 'Une erreur a interrompu le dessin.'
+  return (
+    <Box flexDirection="column" gap={SPACE.block} paddingX={SPACE.screen} paddingTop="sm">
+      <Text weight="semibold" {...(palette ? { color: palette.late } : { color: 'error' })}>Le panneau n'a pas pu se dessiner</Text>
+      <Text wrap="wrap" {...(palette ? { color: palette.text2 } : {})}>{what}</Text>
+      {failure.message !== '' && <Text mono size="caption" wrap="wrap">{failure.message}</Text>}
+      <Text size="caption" {...(palette ? { color: palette.text2 } : {})}>{`Version du plugin : roadmap ${version}`}</Text>
+      <Box flexDirection="row">
+        <Button key="pane-error-retry" label="Réessayer" onPress={retry} />
+      </Box>
+      <Text size="caption" wrap="wrap" {...(palette ? { color: palette.text2 } : {})}>Une capture de ce cadre suffit pour corriger le panneau.</Text>
+    </Box>
+  )
+}
+
 /** Une action de l'accueil (#141) : ce que lit son bouton, à la place du scan entier. */
 async function maestroActionText($: EngineInterface, action: MaestroAction): Promise<string> {
   if (action === 'lancer') return maestroText($, false, 'launch')
@@ -4767,16 +4836,25 @@ export const register: Register = (on, options) => {
     }
   })
 
+  // Le panneau ne reste jamais vide en silence (#220) : une erreur du dessin montre sa carte d'erreur ; un
+  // dessin qui dépasse son temps ou un arbre refusé par l'app passe par `.catch`, qui montre la même.
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     // Un lancement déposé par un bouton part d'ici, où le hook prompt.submit du plugin tourne (#140).
     sendLaunch($)
+    void notePaneDraw($, 'reachedAt')
     const t0 = tick()
     perfLoaded = t0
     perfCached = false
-    const tree = retireFocusKeys(await drawPane($, e), focusHeld.epochs)
+    let tree: RenderElement
+    try {
+      tree = retireFocusKeys(await drawPane($, e), focusHeld.epochs)
+    } catch (err) {
+      return paneFailure($, e, { kind: 'throw', message: err instanceof Error ? err.message : String(err), ...(err instanceof Error && err.stack ? { stack: err.stack } : {}) })
+    }
     notePerf(t0, tree, e.props.scroll)
+    void notePaneDraw($, 'drawnAt')
     return tree
-  })
+  }).catch(async ($, e, next) => paneFailure($, e, { kind: next.error.kind, message: next.error.message ?? '' }))
 
   // Le défilement du panneau, relevé : le moteur pose la fenêtre (#106). Celui de la personne fait
   // quitter l'élément qu'elle tenait (#154) : sa clé change, l'app ne remonte plus jusqu'à lui.

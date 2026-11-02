@@ -659,6 +659,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.142.1 (2026-11-02)** : panneau : une panne du dessin montre une carte d'erreur (message, version, Réessayer) au lieu d'un panneau vide, et se note au store (pane-draw) (#220)
 - **0.142.0 (2026-11-02)** : hooks : sous sec-default (compte Team), plus de lignes « hook was skipped », les hooks classic s'éteignent seuls et leurs secours font le travail (#219)
 - **0.141.0 (2026-11-02)** : panneau : liste chez Maestro, fiche chez un enfant à coup sûr, la tâche retrouvée dans le projet où elle vit, une fiche « introuvable » plutôt que la liste en silence (#213)
 - **0.140.0 (2026-11-02)** : panneau : « Rouvrir la session » au pied de la carte Fin d'une tâche close, désarchive et ouvre sa session (#206)
