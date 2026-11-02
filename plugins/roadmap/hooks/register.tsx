@@ -306,6 +306,7 @@ import {
   zoneWatch,
   heldFocus,
   noteHeldFocus,
+  retireActedFocus,
   retireFocusKeys,
   retireHeldFocus,
   DEFAULT_SESSION_PREFS,
@@ -4801,7 +4802,17 @@ export const register: Register = (on, options) => {
       // Un clic ailleurs désarme le carré armé (#179, #198).
       if (pressDisarms(e.element)) await disarm($)
     }
-    return next(e)
+    const result = await next(e)
+    // Le bouton cliqué dans le panneau quitte le focus au dessin suivant (#228).
+    if (e.plugin === 'roadmap' && e.component === 'Pane' && e.requestId === PANE && e.surface === 'desktop') retireActedFocus(focusHeld, e.element)
+    return result
+  })
+
+  // Un choix dans un menu du panneau (« Ranger », « Qui ») : le menu quitte le focus au dessin suivant (#228).
+  on('ui.select', { component: 'Pane', requestId: PANE }, async ($, e, next) => {
+    const result = await next(e)
+    if (e.surface === 'desktop') retireActedFocus(focusHeld, e.element)
+    return result
   })
 
   on('command.run', { command: 'roadmap' }, async $ => openCommand($))

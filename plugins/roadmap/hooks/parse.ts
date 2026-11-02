@@ -5313,6 +5313,20 @@ export function retireHeldFocus(w: HeldFocus, by: number): boolean {
   return true
 }
 
+/**
+ * Un geste fait sur l'élément (un clic, un choix dans un menu) : il quitte le focus au dessin suivant,
+ * sans attendre un défilement relevé (#228). Chez Caroline, l'élément tenu en bas (Rafraîchir, « Ranger »)
+ * ramenait la fenêtre vers lui à chaque cran vers le haut ; tirer la barre, qui vide l'élément tenu, débloquait.
+ * Seul l'élément que la personne tient change : un geste sur un autre ne touche à rien.
+ */
+export function retireActedFocus(w: HeldFocus, element: string): boolean {
+  const base = focusBase(element)
+  if (w.held !== base) return false
+  w.epochs.set(base, (w.epochs.get(base) ?? 0) + 1)
+  w.held = undefined
+  return true
+}
+
 const FOCUSABLE = new Set(['Button', 'Input', 'Select'])
 
 /** L'arbre dessiné, les boutons, menus et champs quittés sous leur nouvelle clé ; le reste tel quel. */
