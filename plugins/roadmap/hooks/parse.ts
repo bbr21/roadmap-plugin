@@ -6657,23 +6657,34 @@ type ShellCommand = { words: string[]; before: string; after: string; odd?: bool
 const sureSeparator = (op: string) => op === '' || op === ';' || op === '\n'
 
 /**
- * Les commandes d'une ligne shell, chacune en mots : guillemets retirés, `$HOME` développé hors
- * guillemets simples, `~` en tête d'un mot sans guillemets ; coupées sur `&&`, `||`, `;`, `|`, `&` et
- * les retours à la ligne hors guillemets, chacune avec ses séparateurs (#226).
+ * Les commandes d'une ligne shell, chacune en mots : guillemets retirés (`$'…'` et `$"…"` compris),
+ * antislash lu comme bash le lit, `$HOME` développé hors guillemets simples, `~` en tête d'un mot sans
+ * guillemets ; coupées sur `&&`, `||`, `;`, `|`, `&` et les retours à la ligne hors guillemets, chacune
+ * avec ses séparateurs (#226).
  */
 function shellCommands(line: string, home: string): ShellCommand[] {
   const commands: ShellCommand[] = [{ words: [], before: '', after: '' }]
   let word: string | undefined
-  let quote: '' | "'" | '"' = ''
+  let quote: '' | "'" | '"' | "$'" = ''
   const end = () => {
     if (word !== undefined) commands[commands.length - 1]!.words.push(word)
     word = undefined
   }
   for (let i = 0; i < line.length; i++) {
     const c = line[i]!
-    if (c === '\\' && quote !== "'") commands[commands.length - 1]!.odd = true
+    // Un antislash échappe le caractère qui suit (entre guillemets doubles, seulement `"`, `\\`, `$`,
+    // `` ` ``) ; suivi d'un retour à la ligne, il continue la ligne. Relecture de sécurité de #226 : lu
+    // de travers, il cachait une commande dans une chaîne qui n'en est pas une.
+    if (c === '\\' && quote !== "'") {
+      commands[commands.length - 1]!.odd = true
+      const next = line[i + 1]
+      i++
+      if (next === undefined) word = (word ?? '') + c
+      else if (next !== '\n' || quote === "$'") word = (word ?? '') + (quote === '"' && !'"\\$`'.includes(next) ? c + next : next)
+      continue
+    }
     if (quote !== '') {
-      if (c === quote) quote = ''
+      if (c === (quote === "$'" ? "'" : quote)) quote = ''
       else if (quote === '"' && line.startsWith('$HOME', i)) {
         word = (word ?? '') + home
         i += 4
@@ -6684,9 +6695,15 @@ function shellCommands(line: string, home: string): ShellCommand[] {
     } else if (c === "'" || c === '"') {
       quote = c
       word = word ?? ''
+    } else if (c === '$' && (line[i + 1] === "'" || line[i + 1] === '"')) {
+      // `$'…'` (ses antislashs échappent) et `$"…"` (comme `"…"`) : la ligne ne suit plus ses variables.
+      commands[commands.length - 1]!.odd = true
+      quote = line[i + 1] === "'" ? "$'" : '"'
+      word = word ?? ''
+      i++
     } else if (c === ' ' || c === '\t') end()
     // `2>&1`, `>&2`, `&>fichier` : une redirection, pas un séparateur.
-    else if (c === '&' && (((line[i - 1] === '>' || line[i - 1] === '<') && /[<>]$/.test(word ?? '')) || line[i + 1] === '>')) word = (word ?? '') + c
+    else if (c === '&' && (((line[i - 1] === '>' || line[i - 1] === '<') && line[i - 2] !== '\\' && /[<>]$/.test(word ?? '')) || line[i + 1] === '>')) word = (word ?? '') + c
     else if (c === ';' || c === '|' || c === '&' || c === '\n') {
       end()
       let op: string = c
