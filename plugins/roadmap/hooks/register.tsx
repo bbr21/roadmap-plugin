@@ -136,6 +136,7 @@ import {
   DONE_TREE_PREFIX,
   doneRight,
   doneTree,
+  dueInk,
   groupingOf,
   nextGrouping,
   groupingLabel,
@@ -330,7 +331,6 @@ import {
   pressDisarms,
   NUMBER_CELLS,
   AGE_CELLS,
-  rowColumns,
   splitRowPills,
   treeSteps,
   treeDepartment,
@@ -7104,11 +7104,8 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
         ? [treeDepartment(t, { enabled: settings.axisPill, axisFilter: axis, clesVisibles })].filter((x): x is string => x !== undefined).map(text => ({ text, bg: palette.sel, fg: palette.text2, weight: 600 as const }))
         : keyPills(t, clesVisibles, cles, o.parent).map(p => ({ text: p.text, bg: palette.sel, fg: palette.text2, weight: 600 as const }))
     const tags: PillSpec[] = [...(feedback ? [{ text: 'Feedback', bg: palette.waitTint, fg: palette.waitOn, weight: TEXT.weight.soft }] : []), ...listed.tags.map(rowPillSpec), ...keys]
-    return { feedback, keys, tags, due: listed.due ? rowPillSpec(listed.due) : undefined }
+    return { feedback, keys, tags, due: listed.due }
   }
-  // La largeur des colonnes des tags et de l'échéance (#198), posée plus bas, une fois les lignes
-  // dessinées connues : la plus large d'entre elles ; 0, la colonne ne se pose pas.
-  let rowCols = { tags: 0, due: 0 }
 
   // Une tâche en session (#143) : la roue (ou la main qui t'attend), la mini-barre et le compte, dans une
   // colonne de largeur fixe (#145) : d'une ligne à l'autre, la roue et la barre gardent leur place et leur
@@ -7238,7 +7235,14 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
           )
         : parts.tags
     const pills = shownTags.map(spec => drawnPill(spec))
-    const due = parts.due ? drawnPill(parts.due) : null
+    // L'échéance en texte, de la couleur de son urgence (#203, maquette C des étiquettes).
+    const due = parts.due && !t.done ? (
+      <Box key={`dl:${t.key}`} flexShrink={0}>
+        <Text size="caption" tabular color={dueInk(parts.due.kind, palette)} wrap="end">
+          {parts.due.text}
+        </Text>
+      </Box>
+    ) : null
     const number = t.id ? taskNumber(t.id, rowSession ? () => void openSession($, rowSession.entry) : undefined, t.done) : undefined
     // Jamais dans « En cours » (#177) : le bloc de Maestro ou le filtre ; le carré d'axe suffit.
     const department = ghost ? undefined : axisPillText(t, { enabled: settings.axisPill, axisFilter: axis, live: block !== undefined || attend === 'live', groupedByAxis: tree !== undefined && !rangerPar && (by === 'subject' || attend === 'today'), clesVisibles })
@@ -7284,30 +7288,20 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
             {squareHit}
           </Box>
         )}
-        {/* Les colonnes (#198) : numéro, tags, échéance, puis le titre, à la même place sur toutes les
-            lignes. Les tags et l'échéance ont la largeur de la plus large des lignes dessinées ; une
-            colonne vide pour toutes ne se pose pas. Au terminal, sans largeur, à la suite. */}
+        {/* Le titre suit le numéro (#203, maquette C des étiquettes) : plus de colonne réservée devant
+            lui ; les tags viennent à droite du titre, l'échéance au bout, en texte, à la place de l'âge. */}
         {number}
-        {Svg
-          ? rowCols.tags > 0 && (
-              <Box key={`tags:${t.key}`} width={rowCols.tags} flexDirection="row" alignItems="center" gap={SPACE.row} flexShrink={0}>
-                {pills}
-              </Box>
-            )
-          : pills}
-        {Svg
-          ? rowCols.due > 0 && (
-              <Box key={`due:${t.key}`} width={rowCols.due} flexDirection="row" alignItems="center" flexShrink={0}>
-                {due}
-              </Box>
-            )
-          : due}
         <Box key={`lead:${t.key}`} flexDirection="row" alignItems="center" flexGrow={1} flexShrink={1} minWidth={0}>
           <Button key={t.key} plain dimColor={ghost || (!t.done && !titled(t))} onPress={select(selectionOf(t))}>
             {/* Une faite (#198) : grise et barrée, discrètement, dans toutes les vues. */}
             <Text wrap="truncate-end" {...(t.done ? { strikethrough: true, color: palette.text3 } : {})}>{s.titre}</Text>
           </Button>
         </Box>
+        {pills.length > 0 && (
+          <Box key={`tags:${t.key}`} flexDirection="row" alignItems="center" gap={SPACE.row} flexShrink={0}>
+            {pills}
+          </Box>
+        )}
         {/* Le département (#156, maquette A) : l'axe en pastille, à droite du titre, avant l'âge ; un réglage. */}
         {department !== undefined && (
           <Box key={`axis:${t.key}`} flexShrink={0}>
@@ -7316,6 +7310,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
         )}
         {/* En session : la roue ou la main qui t'attend, la barre et le compte (#143, #145), chez Maestro
             aussi, dans son bloc « En cours », sans arbre (#160). */}
+        {(inSession || locked || head) && due}
         {inSession && sessionColumn(t, block)}
         {/* Le cadenas dit ce qu'il attend (#125) : « après » et le numéro de sa prérequise, ou « parent après » celui qu'attend son parent. */}
         {locked && pre && (
@@ -7345,14 +7340,15 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
             <Text size="caption" tabular color={palette.text2}>{`${head.block.done}/${head.block.total}`}</Text>
           </Box>
         )}
-        {/* L'âge, à sa colonne calée à droite (#198) : les départements restent alignés. */}
+        {/* L'âge, à sa colonne calée à droite (#198) : les départements restent alignés. Une échéance
+            prend sa place, en texte coloré (#203, maquette C des étiquettes). */}
         {!head && !kept && !inSession && !locked && confirm === undefined && (
           <Box key={`age:${t.key}`} minWidth={AGE_CELLS} flexShrink={0} flexDirection="row" justifyContent="flex-end">
-            {right !== '' && (
+            {due ?? (right !== '' && (
               <Text size="caption" tabular color={t.done ? palette.text3 : palette.text2} wrap="end">
                 {right}
               </Text>
-            )}
+            ))}
           </Box>
         )}
         {/* Le ▶ au bout de la ligne, à la place du chevron (#149) : le titre ouvre la fiche. Sa colonne
@@ -7828,25 +7824,6 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   const armedView = armedOf(view)
   const armedZone = armedView !== undefined && armShown(armedView, armedView.key, now) ? 1 : 0
   const fixedZones = armedZone + 1 + axes.length + (blockTasks.length > 0 ? 1 : 0) + 1 + todo.filter(todoClickable).length + (todoBlock && (secondary.length > 0 || people.length > 0) ? 1 : 0) + 2 * sessionRows.size
-  // Les colonnes des tags et de l'échéance (#198) : la plus large des lignes dessinées, celles du bloc
-  // « En cours » comprises ; une mère grise n'a pas de pastille.
-  if (Svg) {
-    const inTree = !showDone && !searching
-    const drawnRows = [
-      ...(liveOpen ? blockTasks.map(t => ({ t, ghost: false, live: true })) : []),
-      ...groups.flatMap(g => [
-        ...(g.block?.head ? [{ t: g.block.head, ghost: g.block.ghost === true, live: false }] : []),
-        ...(rowsOf.has(idOf(g)) ? g.tasks.slice(0, rowsOf.get(idOf(g))) : g.focus ? [g.focus] : []).map(t => ({ t, ghost: false, live: false })),
-      ]),
-    ]
-    rowCols = rowColumns(
-      drawnRows.map(({ t, ghost, live }) => {
-        const inSession = live || isLive(t)
-        const parts = rowParts(t, { tree: inTree, ghost, inSession, locked: !inSession && blockerFor(t) !== undefined })
-        return { tags: parts.tags.map(spec => pillIcon(spec).width), ...(parts.due ? { due: pillIcon(parts.due).width } : {}) }
-      }),
-    )
-  }
   if (graphic) {
     // Les lignes du bloc « En cours » de Maestro d'abord (#160) : leur numéro ouvre leur session.
     const shownWithSession = [...(liveOpen ? blockTasks : []), ...drawnTasks.filter(t => t.id && (liveOf(t) ?? doneSessionOf(t)))]

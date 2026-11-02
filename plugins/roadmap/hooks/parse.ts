@@ -1782,21 +1782,6 @@ export function splitRowPills(pills: readonly Pill[]): { due?: Pill; tags: Pill[
   return { ...(due ? { due } : {}), tags: pills.filter(p => !DUE_KINDS.has(p.kind)) }
 }
 
-/**
- * La largeur des colonnes des tags et de l'échéance (#198), en cellules : celle de la plus large des
- * lignes dessinées (tags en px, un écart d'une cellule entre eux). Une colonne vide pour toutes les
- * lignes vaut 0 et ne se pose pas : la suivante prend sa place.
- */
-export function rowColumns(rows: readonly { tags: readonly number[]; due?: number }[]): { tags: number; due: number } {
-  let tags = 0
-  let due = 0
-  for (const r of rows) {
-    if (r.tags.length > 0) tags = Math.max(tags, pxCells(r.tags.reduce((a, b) => a + b, 0) + (r.tags.length - 1) * CELL_PX))
-    if (r.due !== undefined) due = Math.max(due, pxCells(r.due))
-  }
-  return { tags, due }
-}
-
 /** Le tag de la ligne armée (#198, maquette A), au bout de la ligne : ce que fait son clic. */
 export function armTag(action: 'done' | 'reopen'): string {
   return action === 'reopen' ? 'Rouvrir' : 'Confirmer'
@@ -3778,6 +3763,14 @@ export function duePill(due: string, today: string): Pill {
   if (days < 0) return { kind: 'late', text: `${shortDate(due)} · ${-days} j` }
   if (days <= 7) return { kind: 'soon', text: days === 0 ? 'auj.' : days === 1 ? 'demain' : shortDate(due) }
   return { kind: 'due', text: shortDate(due) }
+}
+
+/**
+ * L'encre de l'échéance écrite au bout d'une ligne (#203, maquette C des étiquettes) : rouge en retard,
+ * orange dans les 7 jours, grise au-delà et pour « à revoir », comme la date de l'arbre « Le fil » (#163).
+ */
+export function dueInk(kind: PillKind, palette: { lateOn: string; blockOn: string; text2: string }): string {
+  return kind === 'late' ? palette.lateOn : kind === 'soon' ? palette.blockOn : palette.text2
 }
 
 const RECUR_LABELS: Record<Recurrence, string> = { semaine: 'hebdo', '2semaines': '2 sem.', mois: 'mensuel', trimestre: 'trimestriel', an: 'annuel' }
