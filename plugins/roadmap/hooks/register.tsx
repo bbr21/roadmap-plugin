@@ -5108,7 +5108,8 @@ function surfaceWidth(e: RenderInput<'UserMessage'> | RenderInput<'Pane'>, margi
 
 /**
  * L'identité Roadmap au style Voies (#137, maquette A choisie par Bertrand le 2026-10-30), sans cadre ni
- * filet : chez Maestro, le moyeu d'où part une voie vers chaque tâche lancée, à la couleur de son état ;
+ * filet : chez Maestro, le moyeu d'où part une voie vers chaque tâche lancée, à la couleur de son état
+ * (la carte d'ouverture ne montre pas ses tâches, #215) ;
  * chez une tâche, sa ligne de marque, son titre, son axe et son échéance, et (carte, vue de tâche) sa
  * voie : la station d'avant, la sienne, celle qu'elle débloque. Les mots sont ceux de `brandText`.
  * `card` : à la place du message d'ouverture ; `header` : en haut du panneau ; `focus` : la tête de la
@@ -5180,8 +5181,8 @@ function brandTree(
       return status && view ? { status, view } : undefined
     }
     const anySteps = !card && shown.some(t => stepsOf(t) !== undefined)
-    const row = card ? 28 : anySteps ? SIZE.strut.row + 20 : SIZE.strut.row
-    const lanes = Svg && shown.length > 0 ? brandLanesIcon(palette, shown.map(t => (t.finished ? 'finished' : t.state)), row, card ? 40 : 32) : undefined
+    const row = anySteps ? SIZE.strut.row + 20 : SIZE.strut.row
+    const lanes = Svg && shown.length > 0 ? brandLanesIcon(palette, shown.map(t => (t.finished ? 'finished' : t.state)), row, 32) : undefined
     const laneName = (t: BrandTask) =>
       steps && t.sessionId ? (
         <Button key={`brand-open:${keyPart(t.id)}`} plain onPress={() => steps.open(t)}>
@@ -5241,25 +5242,26 @@ function brandTree(
                   </Box>
                   {pill(words.states[i] ?? '', ...tone(t.state, t.finished === true), t.state === 'merge' && !t.finished ? 'merge' : undefined)}
                 </Box>
-                {!card && laneSteps(t)}
+                {laneSteps(t)}
               </Box>
             </Box>
           ))}
         </Box>
       </Box>
     )
+    // La carte d'ouverture ne montre pas ses tâches (#215) : le panneau et la bande au-dessus de la saisie
+    // les portent déjà ; elle garde la marque, les mots et l'accueil.
     if (card) {
       return (
         <Box flexDirection="column" gap={SPACE.block} paddingY="xs">
           <Box flexDirection="row" alignItems="center" gap={SPACE.row}>
-            {(shown.length === 0 || brand.welcome) && mark(28)}
+            {mark(28)}
             <Box flexDirection="column" flexShrink={1} minWidth={0}>
               <Text size="title" weight="semibold" wrap="wrap">{words.title}</Text>
               <Text size="footnote" color={palette.text2} wrap="wrap">{words.sub}</Text>
             </Box>
           </Box>
           {brand.welcome && welcomeTree($, e, brand.welcome, palette, pill)}
-          {list}
         </Box>
       )
     }
