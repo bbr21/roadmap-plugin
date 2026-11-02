@@ -5,7 +5,9 @@ rapprochement d'une action avec les tâches du même sujet, puis l'écriture des
 
 python3 tasks.py context FOLDER [--day YYYY-MM-DD] > context.json
 python3 tasks.py match FOLDER --text "…" [--text "…"]
-python3 tasks.py write FOLDER --operations operations.json [--apply]
+python3 tasks.py write FOLDER --operations operations.json [--apply] [--json]
+
+`write` finit par le compte rendu fixe (#232) : Ajoutées, Mises à jour, T'attendent.
 
 Python 3.9 et plus, bibliothèque standard seulement. Hérite du moteur d'écriture de l'audit
 (`audit._Preparation`) et lit la grammaire par l'import de la skill onboarding : les trois skills
@@ -46,6 +48,11 @@ SECTION_PAUSE = "Plus tard"
 # Ce que `fields` ne pose jamais : le numéro, la session, la clôture ; `parent` d'un ajout passe par `parent`.
 INTERDITS_AJOUT = {"id", "qui", "branche", "verrou", "fait", "parent"}
 INTERDITS_COMPLETER = {"id", "qui", "branche", "verrou", "fait"}
+# Les questions qui attendent la personne (#232), au format de l'audit (#159) : leur genre, et sa raison dite.
+RAISONS = {"conflict": "conflit", "undated": "date manquante", "late": "en retard", "partial_proof": "preuve partielle",
+           "rhythm": "rythme", "reopen": "réouverture", "prio_on_child": "priorité sur un enfant", "structure": "structure"}
+# Le libellé d'une tâche dans le compte rendu : coupé au mot au-delà.
+LIBELLE_COURT = 60
 
 
 def _lire(chemin):
@@ -54,6 +61,16 @@ def _lire(chemin):
 
 def _sans_parent(t):
     return (t.get("parent") or "-").lstrip("#")
+
+
+def _jj_mm(iso):
+    return "%s/%s" % (iso[8:10], iso[5:7])
+
+
+def _court(libelle, n=LIBELLE_COURT):
+    if len(libelle) <= n:
+        return libelle
+    return libelle[:n].rsplit(" ", 1)[0].rstrip(" ,;:") + "…"
 
 
 # ---------------------------------------------------------------- contexte et rapprochement
@@ -152,6 +169,9 @@ class _Tenue(audit._Preparation):
         self.notes = []
         self.tenue = {"ajoutees": [], "completees": [], "redatees": [], "cochees": [], "abandonnees": [],
                       "en_pause": []}
+        # Le compte rendu (#232) : une entrée par tâche ajoutée, une par changement d'une tâche.
+        self.compte = {"ajoutees": [], "mises_a_jour": [], "t_attendent": []}
+        self.closes = {c["id"]: c["libelle"] for c in ctx.get("closes") or []}
         self.blanc_apres = set()  # ancres d'une section vide : une ligne vide après les tâches posées
         self.section_de = {t["ligne"]: t["section"] for t in im.lire_checklist(self.texte_o)[0]}
 
@@ -186,6 +206,9 @@ class _Tenue(audit._Preparation):
     def refuser_prio_enfant(self, t, quoi):
         if _sans_parent(t) != "-" and t.get("prio"):
             raise Erreur("%s : prio se pose sur le parent #%s, jamais sur un enfant" % (quoi, _sans_parent(t)))
+
+    def changer(self, t, change):
+        self.compte["mises_a_jour"].append({"id": t.id, "libelle": _court(t.libelle), "change": change})
 
     # -- opérations
 
@@ -231,6 +254,8 @@ class _Tenue(audit._Preparation):
         self.placer(t, mere, op.get("section"), quoi)
         self.bilan["enfants"] += 1
         self.tenue["ajoutees"].append(t.id)
+        self.compte["ajoutees"].append({"id": t.id, "libelle": _court(libelle), "parent": mere.id if mere else None,
+                                        "due": t.get("due")})
 
     def placer(self, t, mere, section, quoi):
         """Un enfant sous son parent, après ses autres enfants ; une autre tâche au bout de sa section."""
@@ -292,11 +317,14 @@ class _Tenue(audit._Preparation):
             self.poser_apres(t, apres, quoi)
         self.refuser_prio_enfant(t, quoi)
         self.tenue["completees"].append(t.id)
+        dit = ["%s retiré" % k if v is None else "%s:%s" % (k, t.get(k)) for k, v in (op.get("fields") or {}).items()]
+        self.changer(t, "complétée : %s" % ", ".join(dit))
 
     def redater(self, op):
         t = self.tache(op.get("id"), "redate")
         t.set("due", _date(op.get("due"), "redate de #%s" % t.id, "due"))
         self.tenue["redatees"].append(t.id)
+        self.changer(t, "redatée au %s" % _jj_mm(t.get("due")))
 
     def fermer_tache(self, t, date, suffixe, souci, raison=""):
         t.retiree = True
@@ -321,6 +349,7 @@ class _Tenue(audit._Preparation):
                          % (quoi, t.get("tous")))
         self.fermer_tache(t, date, "", "Faite : %s" % preuve)
         self.tenue["cochees"].append(t.id)
+        self.changer(t, "cochée le %s : %s" % (_jj_mm(date), preuve))
         p = _sans_parent(t)
         mere = self.taches.get(p) or self.cles.get(p)
         if mere is None or getattr(mere, "retiree", False) or self.enfants_ouverts(mere):
@@ -328,9 +357,12 @@ class _Tenue(audit._Preparation):
         if mere.get("tous"):
             self.notes.append("#%s, récurrente (tous:%s), reste ouverte : ajoute les étapes de la période suivante"
                               % (mere.id, mere.get("tous")))
+            self.changer(mere, "reste ouverte (récurrente, tous:%s) : ajouter les étapes de la période suivante"
+                         % mere.get("tous"))
             return
         self.fermer_tache(mere, date, "", "Close avec son dernier enfant #%s" % t.id)
         self.tenue["cochees"].append(mere.id)
+        self.changer(mere, "close avec son dernier enfant #%s, le %s" % (t.id, _jj_mm(date)))
 
     def abandonner(self, op):
         t = self.tache(op.get("id"), "abandon")
@@ -345,6 +377,7 @@ class _Tenue(audit._Preparation):
                          % (quoi, t.id, ouverts[0].id))
         self.fermer_tache(t, self.jour, " (abandonné)", "Abandonnée : %s" % raison, raison)
         self.tenue["abandonnees"].append(t.id)
+        self.changer(t, "abandonnée : %s" % raison)
 
     def mettre_en_pause(self, op):
         """En pause (#159) : `due:` devient la date de reprise, la note le dit, et la tâche passe en
@@ -366,6 +399,33 @@ class _Tenue(audit._Preparation):
             t.deplacee = True
             self.placer(t, None, SECTION_PAUSE, quoi)
         self.tenue["en_pause"].append(t.id)
+        self.changer(t, "en pause jusqu'au %s : %s" % (_jj_mm(reprise), raison))
+
+    def attendre(self, q):
+        """Une question qui attend la personne (#232) : au format de l'audit, sur une tâche (ouverte,
+        ajoutée par ce lot sous sa clé, ou close) ou sur une action sans tâche (`about`)."""
+        audit._verifier_question(q)
+        quoi = "question %s" % q["key"]
+        if q["kind"] not in RAISONS:
+            raise Erreur("%s : kind « %s » inconnu (admis : %s)" % (quoi, q["kind"], ", ".join(RAISONS)))
+        ref = q.get("task")
+        if ref in (None, ""):
+            libelle = audit._propre(q.get("about"))
+            if not libelle:
+                raise Erreur("%s : ni task (la tâche visée) ni about (l'action, sans tâche)" % quoi)
+            num = None
+        else:
+            ref = str(ref).lstrip("#")
+            t = self.cles.get(ref) or self.taches.get(ref)
+            if t is not None:
+                num, libelle = t.id, t.libelle
+            elif ref in self.closes:
+                num, libelle = ref, self.closes[ref]
+            else:
+                raise Erreur("%s : tâche #%s inconnue (ni ouverte, ni ajoutée par ce lot, ni close)" % (quoi, ref))
+        reco = q["options"][0]["label"].replace("(recommandé)", "").strip()
+        self.compte["t_attendent"].append({"key": q["key"], "id": num, "libelle": _court(libelle),
+                                           "raison": RAISONS[q["kind"]], "question": q["question"], "recommande": reco})
 
     def ouvertes(self):
         vues, sortie = set(), []
@@ -418,6 +478,11 @@ def preparer(ctx, props):
         _verifier_operation(op)
         {"add": prep.ajouter, "update": prep.completer_tache, "reschedule": prep.redater,
          "done": prep.cocher, "drop": prep.abandonner, "pause": prep.mettre_en_pause}[op["op"]](op)
+    questions = props.get("questions") or []
+    if not isinstance(questions, list):
+        raise Erreur("questions : une liste de questions (le format de l'audit)")
+    for q in questions:
+        prep.attendre(q)
     prep.boucles()
     apres_o = prep.rendre_ouvert()
     apres_f = prep.rendre_fait()
@@ -431,11 +496,12 @@ def preparer(ctx, props):
         fichiers[chemin_bilans] = bilans
     fichiers = {p: t for p, t in fichiers.items() if audit._lire_fichier(p) != t}
     bilan = dict(prep.tenue, ids_crees=prep.bilan["ids_crees"], notes=prep.notes, comptes=prep.bilan.get("comptes"),
+                 compte_rendu=prep.compte, jour=prep.jour,
                  lignes={os.path.basename(p): audit.lignes_changees(audit._lire_fichier(p), t) for p, t in fichiers.items()})
     return fichiers, bilan
 
 
-def ecrire(dossier, chemin_ops, appliquer=False, maintenant=None):
+def ecrire(dossier, chemin_ops, appliquer=False, maintenant=None, en_json=False):
     """L'essai à blanc (les lignes rendues, rien d'écrit), ou, avec `appliquer`, l'écriture tout ou
     rien après sauvegarde ; refusée quand le projet écrit sa roadmap par son outil (`ecriture`)."""
     maintenant = maintenant or datetime.datetime.now()
@@ -463,28 +529,66 @@ def ecrire(dossier, chemin_ops, appliquer=False, maintenant=None):
             bilan["sauvegarde"] = audit._sauvegarder(rdir, maintenant, fichiers, prefixe="sauvegarde-tasks-")
             im._ecrire_tout(fichiers)
             bilan["ecrit"] = True
-    afficher(bilan, decl)
+    outil = decl["ecriture"]["outil"] if decl["ecriture"] else None
+    bilan["etat"] = "ecrit" if bilan["ecrit"] else ("outil" if outil else "essai")
+    bilan["markdown"] = rendre_compte_rendu(bilan["compte_rendu"], bilan["etat"], bilan["jour"], outil,
+                                            bilan["sauvegarde"])
+    afficher(bilan, decl, en_json)
     return bilan
 
 
-def afficher(bilan, decl):
-    for nom, cle in (("Ajoutées", "ajoutees"), ("Complétées", "completees"), ("Redatées", "redatees"),
-                     ("Cochées", "cochees"), ("Abandonnées", "abandonnees"), ("En pause", "en_pause")):
-        if bilan[cle]:
-            print("%s : #%s" % (nom, ", #".join(bilan[cle])))
-    for note in bilan["notes"]:
-        print("Note : %s" % note)
+def _case(texte):
+    return str(texte).replace("|", "\\|").replace("\n", " ")
+
+
+def _tableau(entete, rangs):
+    lignes = ["| %s |" % " | ".join(entete), "|%s" % ("---|" * len(entete))]
+    return "\n".join(lignes + ["| %s |" % " | ".join(_case(c) for c in r) for r in rangs])
+
+
+def rendre_compte_rendu(cr, etat, jour, outil=None, sauvegarde=None):
+    """Le compte rendu fixe d'une écriture (#232, maquette A) : trois rubriques, toujours dans cet
+    ordre, un tableau chacune, une rubrique vide écrite « rien »."""
+    dit = {"ecrit": "écrit", "essai": "essai à blanc", "outil": "à passer à %s" % outil}[etat]
+    rubriques = [
+        ("Ajoutées", ["#", "Tâche", "Sous", "Échéance"],
+         [("#" + a["id"], a["libelle"], "#" + a["parent"] if a["parent"] else "–",
+           _jj_mm(a["due"]) if a["due"] else "–") for a in cr["ajoutees"]]),
+        ("Mises à jour", ["#", "Tâche", "Ce qui change"],
+         [("#" + m["id"], m["libelle"], m["change"]) for m in cr["mises_a_jour"]]),
+        ("T'attendent", ["#", "Question", "Raison", "Recommandé"],
+         [("#" + q["id"] if q["id"] else "–", q["question"], q["raison"], q["recommande"]) for q in cr["t_attendent"]]),
+    ]
+    blocs = ["### Compte rendu de la roadmap · %s · %s" % (_jj_mm(jour), dit)]
+    for nom, entete, rangs in rubriques:
+        if rangs:
+            blocs.append("#### %s (%d)\n\n%s" % (nom, len(rangs), _tableau(entete, rangs)))
+        else:
+            blocs.append("#### %s\n\nrien" % nom)
+    if sauvegarde:
+        blocs.append("Sauvegarde : `%s`" % sauvegarde)
+    return "\n\n".join(blocs)
+
+
+def afficher(bilan, decl, en_json=False):
+    """Les lignes changées et la consigne pour le modèle d'abord, le compte rendu en dernier : la
+    skill le recopie tel quel (#232). `en_json` : le bilan entier, compte rendu compris."""
+    if en_json:
+        print(json.dumps(bilan, ensure_ascii=False, indent=2))
+        return
     for nom, lignes in bilan["lignes"].items():
         print("%s :" % nom)
         for l in lignes:
             print("  %s" % l)
     if bilan["ecrit"]:
-        print("Écrit. Sauvegarde : %s" % bilan["sauvegarde"])
+        print("Écrit.")
     elif decl["ecriture"]:
         print("Essai à blanc : rien n'est écrit. Ce projet écrit sa roadmap par %s : %s. Passe-lui ces lignes ; --apply est refusé."
               % (decl["ecriture"]["outil"], decl["ecriture"]["consigne"]))
     else:
         print("Essai à blanc : rien n'est écrit. Relance avec --apply pour écrire.")
+    print()
+    print(bilan["markdown"])
 
 
 def main(argv=None):
@@ -500,6 +604,7 @@ def main(argv=None):
     e.add_argument("dossier")
     e.add_argument("--operations", required=True)
     e.add_argument("--apply", dest="appliquer", action="store_true")
+    e.add_argument("--json", dest="en_json", action="store_true", help="the bilan and its report as JSON")
     for s in (c, r, e):
         s.add_argument("--day", dest="jour", help="YYYY-MM-DD (today by default)")
         s.add_argument("--perso", default="~/.claude/roadmap-perso.json", help=argparse.SUPPRESS)
@@ -514,7 +619,7 @@ def main(argv=None):
             maintenant = datetime.datetime.now()
             if args.jour:
                 maintenant = datetime.datetime.combine(datetime.date.fromisoformat(args.jour), maintenant.time())
-            ecrire(args.dossier, args.operations, args.appliquer, maintenant)
+            ecrire(args.dossier, args.operations, args.appliquer, maintenant, args.en_json)
     except Erreur as err:
         print("Refusé : %s" % err, file=sys.stderr)
         return 1

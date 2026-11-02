@@ -20,6 +20,8 @@ French, as the roadmap does. Only this skill is in English.
 - **All or nothing.** The script prepares in memory, checks, shows (dry run), then writes in one go
   after a backup, or hands the lines to the project's tool.
 - **A task is marked done on proof**, at the date of the proof, with its bilan row.
+- **The same report after every write** (#232): the script prints it, in three fixed sections
+  (Ajoutées, Mises à jour, T'attendent); it is copied as is, then one form settles what waits.
 
 **The model** (#125): a task is **standalone**, **parent** (a subject: short title, keys, rhythm,
 priority, no action) or **child** (a step, `parent:N`), two levels at most. `après:` links two
@@ -115,9 +117,24 @@ Write `<scratchpad>/operations.json`:
     {"op": "done", "id": "12", "date": "2026-10-30", "proof": "email envoyé à Jason le 30/10 (40-deliverables/emails/…)"},
     {"op": "drop", "id": "7", "reason": "remplacée par le vendor agreement"},
     {"op": "pause", "id": "22", "until": "2026-11-30", "reason": "budget gelé jusqu'à la clôture"}
+  ],
+  "questions": [
+    {"key": "conflict-18", "task": "18", "kind": "conflict",
+     "question": "« Deck du call mensuel » (#18) : Jason dit le 06/11, la roadmap le 05/11 : quelle date ?",
+     "options": [{"label": "Le 06/11 (recommandé)", "operations": [{"op": "reschedule", "id": "18", "due": "2026-11-06"}]},
+                 {"label": "Garder le 05/11", "operations": []}]}
   ]
 }
 ```
+
+- **questions** (#232, optional): every question of « What gets asked » below, in the audit's
+  format (`ROADMAP-questions.json`, #159), so the report lists them under « T'attendent ».
+  `key` (unique), `kind` (`conflict`, `undated`, `partial_proof`, `rhythm`, `reopen`, or one of
+  the audit's: `late`, `prio_on_child`, `structure`), `question` (readable on its own: the task's
+  label in it), `options` (the recommendation first, marked « (recommandé) », each with the
+  `operations` that answer it, `[]` for « change nothing »), and `task` (an open id, the `key` of
+  an `add` of this batch, or a closed id for `reopen`) or, for an action with no task, `about`
+  (its text). Nothing is written for a question: its answer goes through a new `write`.
 
 - **add**: `key` (unique, not a number), `label` (in French: an infinitive verb and its object; a
   parent carries a subject name), `axis` (a child's is its parent's: leave it out, another one is
@@ -147,7 +164,7 @@ Then the **dry run**, always:
 python3 "<skill folder>/scripts/tasks.py" write <project folder> --operations <scratchpad>/operations.json
 ```
 
-It shows the rendered lines and writes nothing. A refusal (« Refusé : … ») leaves nothing written
+It shows the rendered lines, then the report (step 5), and writes nothing. A refusal (« Refusé : … ») leaves nothing written
 and names the problem: missing required field, undeclared key or value outside its list, unknown
 axis or section, a child's axis other than its parent's, wrong date, third level, `prio:` on a child, `après:` to another parent's child
 or in a loop, a line taken by a session (`qui:` and `branche:`, which can only be rescheduled or
@@ -169,13 +186,36 @@ Then:
 2. In a repository: a commit of the roadmap files only (`ROADMAP.md`, `ROADMAP-fait.md`,
    `ROADMAP-bilans.csv`), on `main` in the main checkout with code, then push. The backup is
    not committed.
-3. A short report, in French: for each action, its case and what was written (`#N` ajoutée sous
-   `#P`, cochée au …, rien : déjà couverte par `#M`); then the pending questions.
+3. **The report, copied as is** (#232). The last block `write` prints, from « ### Compte rendu de
+   la roadmap » to its end, is the report: copy it into the answer **without rewriting, reordering
+   or summing it up**. It always has three sections in this order, each a table, an empty one
+   written « rien »:
+
+   - **Ajoutées**: `#N`, short label, parent (`Sous`), due date;
+   - **Mises à jour**: `#N`, short label, what changed: completed, rescheduled, done on proof,
+     paused, dropped, closed with its last child, recurring parent left open;
+   - **T'attendent**: `#N` (or « – » for an action with no task), the question, the reason
+     (conflict, missing date, partial proof, rhythm, reopening), the recommendation.
+
+   Its title says the state: « écrit » (after `--apply`), « essai à blanc », or « à passer à
+   <outil> » (with `ecriture`: copy the report once the project's tool has written the lines). A
+   caller that keeps a conclusion file (a catch-up, a dispatch) writes that same block in it, or
+   the `--json` output (`compte_rendu`, `markdown`) when it wants the data. Before the report, in
+   one line each, what the table cannot say: an action written nowhere (« rien : déjà couverte
+   par #M », « déjà faite », excluded by the `regles` file).
+4. **Then one form for « T'attendent »**, and nothing else (« What gets asked » below): one
+   multiple-choice form (`AskUserQuestion`), one question per row, the row's own `question` and
+   `options` (the recommendation first), four questions at most per round; more than four, the
+   next round right after the answers. The chosen options' `operations` go into a new
+   `operations.json`, then `write` again (dry run, then `--apply`), which prints a new report.
+   « T'attendent » says « rien »: no form.
 
 ## What gets asked, and nothing else
 
-Through the multiple-choice form: four questions at most per round, the recommendation first,
-each question readable on its own (the task's label in it, not « the previous one »):
+Each question goes into `operations.json` (`questions`, step 4), so the report lists it under
+« T'attendent »; then it is asked through the one form of step 5: four questions at most per
+round, the recommendation first, each question readable on its own (the task's label in it, not
+« the previous one »):
 
 - an action **contrary** to an open task, with no reason given;
 - the **date** of a new task that the source does not give (recommendation: the next occasion,
@@ -212,8 +252,9 @@ a project that has a roadmap, because the skill is not always loaded when the id
 
 ## Unattended (scheduled task)
 
-Nobody answers: write only what is clear, show no form. Each question waits where the `regles`
-file says; otherwise in the report, with the task it concerns. The report ends with the number of
+Nobody answers: write only what is clear, show no form. The questions still go into
+`operations.json`, so the report keeps them under « T'attendent ». Each one also waits where the
+`regles` file says; otherwise the report is where it waits. The report ends with the number of
 pending questions, by priority (`prio:1`, `prio:2`, `prio:3`, no priority; a child counts its
 parent's).
 

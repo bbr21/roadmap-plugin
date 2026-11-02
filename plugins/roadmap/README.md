@@ -671,6 +671,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.152.0 (2026-11-02)** : tasks : un compte rendu fixe après chaque écriture (Ajoutées, Mises à jour, T'attendent), puis un seul formulaire pour ce qui attend (#232)
 - **0.151.2 (2026-11-02)** : hooks : le garde-fou git relit largement une ligne qu'il ne comprend pas et la refuse dans le dossier principal, au lieu d'apprendre bash cas par cas (#230)
 - **0.151.1 (2026-11-02)** : panneau : une tâche parent repliée prend le même espacement qu'une tâche seule (#231)
 - **0.151.0 (2026-11-02)** : doctor : signale un plugin roadmap actif en double, la copie à garder et le geste pour retirer l'autre (#229)
