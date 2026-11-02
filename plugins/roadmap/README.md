@@ -490,11 +490,12 @@ remplaçant le précédent (#119) :
   diff) s'ouvre par la session elle-même (`preview_start`, `mcp__ccd_view__show_pane`), depuis le
   28/10/2026 (#74). Éteint, Maestro pose aussi son menu « Je lance lesquelles ? » dans son message,
   sans formulaire (#119) ;
-- `adhd` : chaque message commence par une ligne en gras, emoji d'état + étape sur le total + nom
-  (en cours `⏳ **2/4 Écrire le plan**` ; finie `✅ **2/4 Écrire le plan**` ; détour
-  `⚠️ **3/4 Coder et tester** ↳ test rouge` ; fin `✅ **4/4 Publier la version**`, #107) ; les
-  étapes sont celles de la liste d'étapes native, même ordre, même nom (un verbe et son objet,
-  « Écrire le plan », jamais renommé) ; pas de ligne pour une réponse courte hors tâche, puis une phrase de constat et, s'il en reste une, la seule
+- `adhd` : chaque message d'une tâche s'ouvre sur sa carte d'étape (#196), un tableau markdown
+  d'une colonne que l'app dessine en bande grise : `| ⏳ Étape 2/4 · Écrire le plan · ▰▱▱▱ en cours |`,
+  `|---|`, puis la phrase de constat dans la case dessous ; l'icône et le mot disent l'état (⏳ en
+  cours, ✅ faite, ⚠️ détour avec ↳ sa raison, 🎉 tâche finie), la barre l'avancement (▰ par étape
+  finie) ; les étapes sont celles de la liste d'étapes native, même ordre, même nom (un verbe et son
+  objet, « Écrire le plan », jamais renommé) ; pas de carte pour une réponse courte hors tâche, puis, s'il en reste une, la seule
   action ou décision qui revient à Bertrand, listes et gras, pas de pavé. Donnée seulement au démarrage, la consigne s'effaçait au
   fil d'une longue session : depuis le 24/10/2026, une ligne de rappel l'accompagne à chaque
   message de Bertrand (hook `prompt.submit` depuis #116). Depuis le 29/10/2026 (#85), un tour de travail
@@ -643,6 +644,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.127.0 (2026-11-01)** : reglages-session : l'en-tête du mode ADHD devient une carte d'étape (icône d'état, étape N/total, nom, barre ▰▱, état en mots), le constat dessous (#196)
 - **0.126.0 (2026-11-01)** : panneau : une tâche de code n'est finie qu'une fois fusionnée : étape « Fusionner » (et « Publier » avec la clé publier) cochée par git, état « à fusionner » à la place de « t'attend » dans la fiche, la bande et le bloc En cours (#191)
 - **0.125.0 (2026-11-01)** : panneau : « Ranger › Par numéro » range les arbres par le numéro de leur tâche racine, le plus récent en haut ; le filtre « Récentes » quitte « Plus › » (#192)
 - **0.124.0 (2026-11-01)** : panneau, maestro : le brief de lancement s'ouvre par sa mission, ses fichiers et « Fini quand », lisibles d'un coup d'œil sur la carte (#194)
