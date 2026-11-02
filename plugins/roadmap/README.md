@@ -206,7 +206,8 @@ tâche lancée : le numéro, le nom qui ouvre la session, puis au bord droit sa 
 reste visible quand le fil défile, cède à un sondage, et s'efface tant que la boîte de fin pose une
 question ; la liste native reste dans le fil. Une session close et à l'arrêt, encore ouverte, porte au
 bout de sa ligne l'icône d'archivage : un clic l'archive (#174). L'en-tête dit « Contexte 40 % » pour
-Maestro seul, sans tokens ni jauge ; les lignes n'ont plus de contexte (#174). La jauge, le compte, l'étape et
+Maestro seul, sans tokens ni jauge (#174) ; sous la jauge d'étapes de chaque ligne, une jauge fine dit le
+contexte de sa session, noté à la fin de chacun de ses tours, orange à 70 %, rouge à 85 % (#157, revenue par #217). La jauge, le compte, l'étape et
 l'état se serrent au bord droit, chacun à la largeur de son plus long texte, alignés d'une ligne à
 l'autre (#174, #211).
 
@@ -659,6 +660,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.145.0 (2026-11-02)** : panneau : la jauge fine de contexte de chaque session revient sous sa jauge d'étapes dans la bande de Maestro (#217)
 - **0.144.0 (2026-11-02)** : maestro, tasks : proposer une task dès qu'une idée neuve ou une action sort de l'échange, règle fixe dite à chaque message d'un projet à roadmap (#216)
 - **0.143.0 (2026-11-02)** : panneau : le bloc En cours garde une session Completed tant qu'elle n'est pas archivée, avec son icône d'archivage, comme la bande (#218)
 - **0.142.1 (2026-11-02)** : panneau : une panne du dessin montre une carte d'erreur (message, version, Réessayer) au lieu d'un panneau vide, et se note au store (pane-draw) (#220)

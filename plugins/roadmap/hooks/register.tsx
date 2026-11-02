@@ -62,6 +62,7 @@ import {
   stepIcon,
   stepRailIcon,
   stepsBarIcon,
+  contextBarIcon,
   squareIcon,
   STROKE,
   type Palette,
@@ -4831,14 +4832,15 @@ export const register: Register = (on, options) => {
         const t = band.tasks[i]
         return status ? stepsView(shownStatus(status, t?.sessionId, t?.closed === true).steps, { now, at: status.at, closed: t?.closed === true }) : undefined
       })
-      // Le contexte de Maestro (#157) : la mesure du dernier tour, ou celle du moment avant la première.
-      // Celui des sessions ne se montre plus (#174).
+      // Le contexte de Maestro (#157) : la mesure du dernier tour, ou celle du moment avant la première ;
+      // celui de chaque session, noté à la fin de ses tours, sous sa jauge d'étapes (#157, revenu par #217).
       const mine = (await read($, bandContextAtom)) ?? contextUseOf((await $.session.usage().catch(() => undefined))?.context)
+      const contexts = { mine: contextView(mine ?? undefined), rows: statuses.map(status => contextView(status?.context)) }
       return maestroBandTree($, e, band, found.data.palette, views, {
         open: t => void (t.sessionId ? openSession($, { sessionId: t.sessionId, startedAt: now, title: t.label }) : undefined),
         archive: t => void archiveBandSession($, t, now),
         compact: () => void compactFromBand($),
-      }, now, contextView(mine ?? undefined), await read($, zoneGenAtom))
+      }, now, contexts, await read($, zoneGenAtom))
     } catch {
       return next(e)
     }
@@ -5347,7 +5349,7 @@ function maestroBandTree(
   views: readonly (StepsView | undefined)[],
   act: { open: (t: BrandTask) => void; archive: (t: BrandTask) => void; compact: () => void },
   now: number,
-  mine?: ContextView,
+  contexts: { mine?: ContextView; rows: readonly (ContextView | undefined)[] } = { rows: [] },
   zoneGen = 0,
 ): RenderElement {
   const resolved = $.ui.resolve(e)
@@ -5355,6 +5357,7 @@ function maestroBandTree(
   const Svg = 'Svg' in resolved && e.surface !== 'terminal' ? resolved.Svg : undefined
   const Client = 'Client' in resolved && Svg ? resolved.Client : undefined
   const words = brandText(band.brand)
+  const mine = contexts.mine
   // Les couleurs de #145 : t'attend en orange, toute finie en violet ; à fusionner en bleu-vert (#191).
   const hue = (t: BrandTask): [string, string] =>
     t.finished
@@ -5473,6 +5476,9 @@ function maestroBandTree(
           const view = views[i]
           const [dot, word] = hue(t)
           const bar = view && Svg ? stepsBarIcon(palette, view.segments, { width: BAND_GAUGE.row, height: 4, waiting: t.state === 'wait', merging: t.state === 'merge', finished: t.finished === true }) : undefined
+          // Le contexte de la session en jauge fine sous sa jauge d'étapes (#157, revenu par #217) ; sans mesure, rien.
+          const ctx = contexts.rows[i]
+          const ctxBar = ctx && Svg ? contextBarIcon(palette, ctx, { width: bar?.width ?? BAND_GAUGE.row, height: 2 }) : undefined
           const mark = marks[i] ?? bandState(t)
           const step = stepOf(t, i)
           return (
@@ -5492,6 +5498,7 @@ function maestroBandTree(
               {Svg && (
                 <Box key={`band-gauge:${keyPart(t.id)}`} width={BAND_COLUMNS.gauge} flexShrink={0} flexDirection="column" gap={SPACE.tight}>
                   {bar && <Svg source={bar.source} alt={`étapes ${view?.count ?? ''}`} width={bar.width} height={bar.height} />}
+                  {ctxBar && ctx && <Svg source={ctxBar.source} alt={`contexte ${ctx.text}`} width={ctxBar.width} height={ctxBar.height} />}
                 </Box>
               )}
               {/* Compte, état et archivage serrés à la largeur de leur plus long texte (#174). */}
@@ -5527,7 +5534,7 @@ function maestroBandTree(
   )
 }
 
-/** La largeur de la jauge d'une ligne de la bande de Maestro, en px (#147) ; celle du contexte de Maestro est partie (#174). */
+/** La largeur des jauges d'une ligne de la bande de Maestro, étapes et contexte, en px (#147, #217) ; celle de Maestro est partie (#174). */
 const BAND_GAUGE = { row: 64 }
 
 /**
