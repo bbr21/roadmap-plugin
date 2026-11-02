@@ -726,11 +726,11 @@ export function ideaOffer(text: string): string | undefined {
  * Le rappel de fin de tour d'une idée à coder restée sans ligne (#83) : la réponse propose une
  * chose à construire, et ni la roadmap ni une carte de session n'ont bougé pendant le tour.
  */
-export function ideaReminder(source: Source, phrase: string): string {
+export function ideaReminder(source: Source, phrase: string, child = false): string {
   return [
     `Plugin roadmap : ta dernière réponse propose une chose à construire (« ${phrase} »), et ni la roadmap (\`${source.dir}/ROADMAP.md\`) ni une carte de session n'ont bougé pendant ce tour.`,
-    "Règle du plugin roadmap : une question dont la réponse fait naître une chose à coder se termine par la proposition d'ouvrir sa ligne, pour que l'idée ne se perde pas.",
-    "Termine ce tour par la boîte de fin (wrap_up) : la question « J'ouvre la ligne de … ? », la chose en quelques mots, et en premier un bouton qui l'ouvre. Si ce n'est pas une chose à coder (un geste du chantier en cours, une piste en l'air, une ligne qui existe déjà), dis pourquoi en une ligne et termine.",
+    "Règle du plugin roadmap (Proposer une task, #216) : une chose à construire qui sort de l'échange devient une task proposée dans le tour même, pour que l'idée ne se perde pas.",
+    `${child ? proposeHow('child') : proposeHow('solo')} Si ce n'est pas une task (un geste de la tâche en cours, une piste en l'air, un sujet qui a déjà sa task), dis pourquoi en une ligne et termine.`,
   ].join('\n')
 }
 
@@ -2981,7 +2981,7 @@ export function maestroClause(maestro: string, travail: Travail = 'code'): strin
       `- ${maestroMockups('à côté du document')}`,
       '- Ne coche pas ta ligne : Maestro la coche, avec son bilan. Ton dernier compte rendu dit ce qui a été fait et le souci rencontré.',
       `- ${maestroClauseEnd()}`,
-      "- Une tâche que tu proposes (suite, idée, défaut hors de ta tâche), ou un lancement que " + person() + " te demande, remonte à Maestro : pose ta carte comme d'habitude (ou lance comme demandé), le panneau Roadmap la lui transmet au lieu de la laisser dans ton transcript, que " + person() + " ne regarde pas, et pour que la session créée soit sa fille directe ; Maestro ouvre sa ligne et pose la carte.",
+      "- Dès qu'une idée neuve ou une action hors de ta tâche apparaît (suite, idée, défaut), pose ta carte dans le tour même, sans attendre qu'on te la demande et sans écrire sa ligne (#216). Une tâche que tu proposes, ou un lancement que " + person() + " te demande, remonte à Maestro : pose ta carte comme d'habitude (ou lance comme demandé), le panneau Roadmap la lui transmet au lieu de la laisser dans ton transcript, que " + person() + " ne regarde pas, et pour que la session créée soit sa fille directe ; Maestro ouvre sa ligne et pose la carte.",
     ]
   }
   return [
@@ -2995,7 +2995,7 @@ export function maestroClause(maestro: string, travail: Travail = 'code'): strin
     `- ${maestroMockups('dans le dossier du chantier, `docs/plans/<type>-<slug>/maquettes.html`')}`,
     '- Ne coche pas ta ligne : Maestro la coche à la fusion, avec son bilan. Ton dernier compte rendu dit ce qui a été fait et le souci rencontré.',
     `- ${maestroClauseEnd()} Rien de non commité ne doit rester dans ton worktree.`,
-    "- Une tâche que tu proposes (suite, idée, défaut hors de ta tâche), ou un lancement que " + person() + " te demande, remonte à Maestro : pose ta carte comme d'habitude (ou lance comme demandé), le panneau Roadmap la lui transmet au lieu de la laisser dans ton transcript, que " + person() + " ne regarde pas, et pour que la session créée soit sa fille directe ; Maestro ouvre sa ligne et pose la carte.",
+    "- Dès qu'une idée neuve ou une action hors de ta tâche apparaît (suite, idée, défaut), pose ta carte dans le tour même, sans attendre qu'on te la demande et sans écrire sa ligne (#216). Une tâche que tu proposes, ou un lancement que " + person() + " te demande, remonte à Maestro : pose ta carte comme d'habitude (ou lance comme demandé), le panneau Roadmap la lui transmet au lieu de la laisser dans ton transcript, que " + person() + " ne regarde pas, et pour que la session créée soit sa fille directe ; Maestro ouvre sa ligne et pose la carte.",
   ]
 }
 
@@ -5407,7 +5407,28 @@ function designText(design?: Design): string {
   return `Toute maquette de ce projet s'appuie sur son design system, déclaré dans \`.claude/roadmap.json\` (\`design\`) : ${listFr(entries)}. Lis-le avant de dessiner (son README, ses composants, ses variables, son modèle ; s'il est publié par \`/design-sync\`, le projet claude.ai que nomme sa configuration \`.design-sync/config.json\`), et n'invente ni couleur, ni police, ni composant qu'il a déjà ; ce qui lui manque se propose comme un ajout au design system.`
 }
 
-export function sessionPrefsText(prefs: SessionPrefs, error?: string, project?: string, design?: Design): string {
+// Proposer une task (#216, Caroline, projet Blur, cadré avec Bertrand le 2026-11-02) : une idée lancée au
+// fil d'un échange se perdait dès que le sujet changeait ou que la session se compactait ; le filet de
+// #83 ne venait qu'en fin de tour. Règle fixe, pas un réglage : dite en entier à chaque message d'un
+// projet à roadmap, la variante selon la session (Maestro, sous-session, session seule).
+export type ProposeKind = 'maestro' | 'child' | 'solo'
+
+function proposeRule(): string {
+  return `une idée neuve qui demande du travail (outil, règle, document, réglage), ou une action à faire hors du périmètre de la tâche en cours, qu'elle vienne de ${person()} ou de toi, devient une task proposée dans le tour même, sans attendre qu'on la demande. Rien pour une réflexion, une question répondue, une explication ; ni pour une correction dans le périmètre de la tâche en cours (elle s'y fait) ; ni pour une décision sans action (elle va dans la mémoire du projet) ; un sujet qui a déjà sa task : étoffe-la et dis-le en une ligne. Les règles du projet (\`ROADMAP-REGLES.md\`, ou le fichier \`regles\` de \`.claude/roadmap.json\`) passent en premier. Une carte par idée, sans doublon : relis la roadmap et les sessions liées (\`list_sessions\` avec \`linked: true\`) avant. Lancer garde le clic de ${person()} sur Start, même en autonome.`
+}
+
+function proposeHow(kind: ProposeKind): string {
+  if (kind === 'child') return "Tu travailles pour Maestro : pose ta carte `own_initiative` dans le tour même et n'écris pas la ligne : le panneau la remonte à Maestro, qui ouvre la ligne et la repropose."
+  if (kind === 'maestro') return 'Chez toi, Maestro : ouvre la ligne par la skill `tasks` (après rapprochement), puis pose la carte `own_initiative`, titre `#<id> · <libellé court>`, brief ouvert par Mission, Fichiers, Fini quand, avec la clause de Maestro ; un travail fait ailleurs (autre dépôt, autre personne) : la ligne seule, dite en une ligne.'
+  return 'Ouvre la ligne par la skill `tasks` (après rapprochement), puis pose la carte `own_initiative`, titre `#<id> · <libellé court>`, brief complet.'
+}
+
+/** La règle entière, avec la variante de la session, jointe à chaque message d'un projet à roadmap (#216). */
+export function proposeTaskText(kind: ProposeKind): string {
+  return `Proposer une task (plugin roadmap, règle fixe) : ${proposeRule()} ${proposeHow(kind)}`
+}
+
+export function sessionPrefsText(prefs: SessionPrefs, error?: string, project?: string, design?: Design, roadmap = false): string {
   const lines: string[] = []
   if (prefs.questions) {
     lines.push(
@@ -5431,6 +5452,8 @@ export function sessionPrefsText(prefs: SessionPrefs, error?: string, project?: 
   )
   lines.push(gesturesText(prefs.autonome))
   lines.push(mockupText(design))
+  // Proposer une task (#216) : dite dans tout projet à roadmap ; la variante de la session vient avec chaque message.
+  if (roadmap) lines.push(`- **Proposer une task** (règle fixe, projet à roadmap) : ${proposeRule()}`)
   const broken = error === undefined ? [] : [`- Le fichier ${SESSION_PREFS_FILE} est illisible (${error}) : réglages par défaut. La skill reglages-session le répare.`]
   return [
     `Réglages de session de ${person()}${project === undefined ? '' : ` pour le projet ${project}`} (plugin roadmap, ${SESSION_PREFS_FILE} ; la skill reglages-session les lit et les change). Ils valent pour toute la session, en plus des règles du projet ; une consigne de ${person()} dans la conversation l'emporte.`,

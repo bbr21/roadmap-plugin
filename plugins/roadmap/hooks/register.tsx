@@ -96,6 +96,7 @@ import {
   captureReminder,
   ideaOffer,
   ideaReminder,
+  proposeTaskText,
   codeWithoutTests,
   isMethodSkill,
   isSwiftUISkill,
@@ -827,7 +828,8 @@ async function ideaNote($: EngineInterface, c: Capture, last: string | undefined
   const phrase = ideaOffer(`${last ?? ''}\n\n${c.boxThisTurn}`)
   if (phrase === undefined) return undefined
   if (joined(await roadmapNow($, c.source)) !== c.roadmapAtTurn) return undefined
-  return ideaReminder(c.source, phrase)
+  // Le parent Maestro mémorisé par le message (prompt.submit, #216) : pas d'appel d'outil en fin de tour.
+  return ideaReminder(c.source, phrase, parentMaestro)
 }
 
 /** Ce que dit une boîte de fin : récap, question, boutons. */
@@ -4154,21 +4156,23 @@ async function readPerso($: EngineInterface): Promise<{ me: string[]; sources: S
  * Les réglages de session du projet de la session (#102), son nom pour le bloc du démarrage, et le
  * design system que déclare son `.claude/roadmap.json` (#129), que cite la règle des maquettes.
  */
-async function readSessionPrefs($: EngineInterface): Promise<{ prefs: SessionPrefs; error?: string; project?: string; design?: Design }> {
+async function readSessionPrefs($: EngineInterface): Promise<{ prefs: SessionPrefs; error?: string; project?: string; design?: Design; roadmap: boolean }> {
   await readPerso($)
   const file = await prefsFile($)
   const text = file && (await $.fs.exists(file.path)) ? await $.fs.read(file.path) : undefined
   const project = await sessionProject($)
-  const design = (await currentSource($))?.design
-  const read = { ...sessionPrefs(text, project.key, project.home), ...(design ? { design } : {}) }
+  const source = await currentSource($)
+  const design = source?.design
+  // Un projet à roadmap reçoit la règle « Proposer une task » (#216).
+  const read = { ...sessionPrefs(text, project.key, project.home), ...(design ? { design } : {}), roadmap: source !== undefined }
   return project.name === undefined ? read : { ...read, project: project.name }
 }
 
 /** Le bloc des réglages de session complets ; une panne de lecture ne bloque jamais le démarrage ni le message. */
 async function sessionPrefsBlock($: EngineInterface): Promise<string | undefined> {
   try {
-    const { prefs, error, project, design } = await readSessionPrefs($)
-    return sessionPrefsText(prefs, error, project, design)
+    const { prefs, error, project, design, roadmap } = await readSessionPrefs($)
+    return sessionPrefsText(prefs, error, project, design, roadmap)
   } catch {
     return undefined
   }
@@ -4435,7 +4439,7 @@ export const register: Register = (on, options) => {
     // le nouveau bloc remplace alors l'ancien. Puis le rappel du mode ADHD.
     try {
       const current = await readSessionPrefs($)
-      const block = sessionPrefsText(current.prefs, current.error, current.project, current.design)
+      const block = sessionPrefsText(current.prefs, current.error, current.project, current.design, current.roadmap)
       const given = await read($, prefsGivenAtom)
       if (block !== given) {
         texts.push(given === '' ? block : `${prefsChangedLead()}\n\n${block}`)
@@ -4443,10 +4447,14 @@ export const register: Register = (on, options) => {
       }
       // Chez Maestro (#133) : au réveil, le rappel du réveil ; aux tours de la personne, l'en-tête stable.
       const maestro = await maestroHere($)
-      const reminder = maestro && wakeTurn(e.text)
+      const wake = maestro && wakeTurn(e.text)
+      const reminder = wake
         ? maestroWakeReminder(await read($, pendingAsksAtom))
         : maestro ? maestroPrefsReminder(current.prefs) : sessionPrefsReminder(current.prefs)
       if (reminder !== undefined) texts.push(reminder)
+      // Proposer une task (#216) : la règle entière à chaque message d'un projet à roadmap, selon la
+      // session ; pas au réveil de Maestro, où la personne n'a rien dit.
+      if (current.roadmap && !wake) texts.push(proposeTaskText(maestro ? 'maestro' : (await parentIsMaestro($)) ? 'child' : 'solo'))
     } catch {
       // réglages ou état de session illisibles : le message passe sans eux
     }

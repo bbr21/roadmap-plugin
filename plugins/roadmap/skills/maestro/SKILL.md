@@ -95,8 +95,10 @@ to it.
     does not offer the `archive` app button); on that click, `archive_session` (`self`); if the
     app refuses, say so; your line still open, do not offer archiving: Maestro ticks it at the
     merge;
-  - a task you propose, or a launch the person asks of you, goes up to Maestro: post your card as
-    usual, the panel forwards it to Maestro so that the session created is its direct child.
+  - as soon as a new idea or an action outside your task comes up, post your card in the same
+    turn, without being asked and without writing its line (#216); a task you propose, or a
+    launch the person asks of you, goes up to Maestro: post your card as usual, the panel forwards
+    it to Maestro so that the session created is its direct child.
 
 - **The card is the question** (#122): a posted card already asks « je lance ? »; the person
   answers it by clicking Start. Maestro's end box does not duplicate it: no
@@ -233,6 +235,16 @@ to it.
   the card is posted in this turn, without asking them again whether they want it; it is a card and
   not a launch, because the app refuses `user_asked` on a turn woken by a session's message. Maestro
   does not code it, and adds its step to its list once it is launched.
+- **Propose a task** (#216, Caroline): a new idea or an action to do that comes out of the
+  exchange with the person, outside the tasks in progress, becomes a proposed task in the same
+  turn, without waiting to be asked: Maestro opens its line through the `tasks` skill (after
+  matching), then posts the card (`own_initiative`, title `#<id> · <libellé court>`, brief opened
+  by its mission, Maestro clause). Work done elsewhere: the line alone, said in one line. Nothing
+  for a reflection, an answered question, a decision without an action (the project's memory), a
+  subject that already has its task (enrich it, one line); the project's rules (`regles`) win.
+  One card per idea, after rereading the roadmap and the linked sessions; launching keeps the
+  person's click. The panel states the rule with every message, in the session's own variant
+  (Maestro, sub-session, single session).
 - **The root Maestro** (#132): the highest open ancestor recognised as Maestro by its title or its
   mark, otherwise the highest one that has launched at least two sessions still open. A session
   that has a Maestro above it is never one, even with two sessions launched: its creations go up,

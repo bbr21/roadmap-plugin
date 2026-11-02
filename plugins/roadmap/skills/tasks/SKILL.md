@@ -1,6 +1,6 @@
 ---
 name: tasks
-description: "Keeps the roadmap of a roadmap-plugin project up to date day to day, with or without code (#176: the folder says which): adds, updates, reschedules, marks done on proof or drops a task, after matching it against the tasks on the same subject (never a new task for a subject that already has one). Reads what the project declares in .claude/roadmap.json: its own rules (regles), which win, its writing tool (ecriture) and where to look for proof that a task is done (preuves). A script writes all or nothing, dry run first. Triggers on « ajoute ça à la roadmap », « rappelle-moi de… », « mets une tâche pour… », « coche », « c'est fait », « marque #12 faite », « redate », « décale à lundi », « abandonne cette tâche », add this to the roadmap, mark it done, and when a conversation produces a dated action not to lose. Not for auditing the whole roadmap (audit), setting up a project (onboarding), checking it is wired (doctor), nor a folder that keeps its roadmap through its own skill without .claude/roadmap.json."
+description: "Keeps the roadmap of a roadmap-plugin project up to date day to day, with or without code (#176: the folder says which): adds, updates, reschedules, marks done on proof or drops a task, after matching it against the tasks on the same subject (never a new task for a subject that already has one). Reads what the project declares in .claude/roadmap.json: its own rules (regles), which win, its writing tool (ecriture) and where to look for proof that a task is done (preuves). A script writes all or nothing, dry run first. Triggers on « ajoute ça à la roadmap », « rappelle-moi de… », « mets une tâche pour… », « coche », « c'est fait », « marque #12 faite », « redate », « décale à lundi », « abandonne cette tâche », add this to the roadmap, mark it done, and on its own when a new idea or action comes out of the exchange (#216). Not for auditing the whole roadmap (audit), setting up a project (onboarding), checking it is wired (doctor), nor a folder keeping its roadmap by its own skill without .claude/roadmap.json."
 ---
 
 # Keep the roadmap
@@ -186,6 +186,29 @@ each question readable on its own (the task's label in it, not « the previous o
 
 Everything else is done without a question and said in one line: the case of a clear match, what
 a child inherits, the id, the default section.
+
+## Propose a task (#216)
+
+A rule of the plugin, not only of this skill: the plugin states it in full with every message of
+a project that has a roadmap, because the skill is not always loaded when the idea goes by.
+
+- **When**: a new idea that needs work (tool, rule, document, setting), or an action to do outside
+  the scope of the task in progress, whoever says it, the person or Claude. In the turn where it
+  appears, without waiting to be asked.
+- **Not**: a reflection, an answered question, an explanation; a fix within the scope of the
+  task in progress (it is done there); a decision without an action (it goes into the project's
+  memory); a subject that already has its task (§ 2: enrich it, and say so in one line).
+- **The project's rules win** (`regles`): what they exclude never becomes a task (at Blur, an
+  action that is not Caroline's becomes a follow-up « qui doit parler à qui »).
+- **How**: write the line (§ 2 to 5), then post the session card (`start_session`,
+  `own_initiative`), titled `#<id> · <libellé court>`, its brief opened by Mission, Fichiers,
+  Fini quand. Under Maestro, a sub-session posts its card only, without writing the line: the panel
+  sends it up to Maestro, who opens the line and posts it again. Work done elsewhere (another
+  repository, another person): the line alone, said in one line.
+- **One card per idea, no duplicate**: reread the roadmap and the linked sessions
+  (`list_sessions` with `linked: true`) first. The app shows three cards per turn at most: beyond
+  that, the lines are written and the answer says so. Launching keeps the person's click on Start,
+  even with the autonomous setting: the card is the proposal.
 
 ## Unattended (scheduled task)
 
