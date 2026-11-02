@@ -74,6 +74,7 @@ import {
   type MaestroBand,
   type StepsView,
   maestroBrandTasks,
+  firstLaunch,
   maestroTaskSessions,
   openingBrand,
   paneFocus,
@@ -2601,6 +2602,7 @@ async function poll($: EngineInterface): Promise<void> {
       await refreshSessions($, knownSource, true)
       if (await restamp($, knownSource)) await summarize($, knownSource)
     }
+    await retryCreated($)
   } catch {
     // un pas raté (module rechargé, état indisponible) : le suivant réessaie, sans rejet laissé en l'air
   } finally {
@@ -4551,25 +4553,57 @@ export const register: Register = (on, options) => {
 
 /**
  * La date de création de chaque session, lue une fois par session (`get_session` : `list_sessions` ne la
- * donne pas) et gardée dans le module ; illisible, `NaN`, et l'arbre de Maestro se range par numéro (#143).
+ * donne pas) et gardée dans le module. Seule une date lisible se garde (#195) : un refus (le contrôle du
+ * mode auto en rend au hasard, sans lever), une erreur ou une date illisible se réessaie CREATED_RETRY_MS
+ * plus tard, à l'horloge ; avant, un seul refus gardait `NaN` et renversait l'arbre de Maestro au tri par numéro.
  */
 const createdBySession = new Map<string, number>()
+/** L'heure du dernier essai de chaque session restée sans date : pas de nouvel essai avant CREATED_RETRY_MS. */
+const createdTriedAt = new Map<string, number>()
+const CREATED_RETRY_MS = 60_000
 
-async function learnCreated($: EngineInterface, ids: readonly string[]): Promise<void> {
-  const missing = ids.filter(id => !createdBySession.has(id))
+async function learnCreated($: EngineInterface, ids: readonly string[], now: number): Promise<void> {
+  const missing = ids.filter(id => {
+    const tried = createdTriedAt.get(id)
+    return !createdBySession.has(id) && (tried === undefined || now - tried >= CREATED_RETRY_MS)
+  })
   await Promise.all(
     missing.map(async id => {
-      createdBySession.set(id, Number.NaN)
+      createdTriedAt.set(id, now)
       try {
         const ran = await $.tool.call({ tool: GET_SESSION_TOOL, session_id: id })
+        if (ran.deny !== undefined || ran.isError) return
         const created = (JSON.parse(ran.text ?? '{}') as { createdAt?: unknown }).createdAt
         const at = typeof created === 'number' ? created : typeof created === 'string' ? Date.parse(created) : Number.NaN
-        createdBySession.set(id, at)
+        if (Number.isFinite(at)) createdBySession.set(id, at)
       } catch {
-        // fiche illisible : rangée par numéro, sans redemander à chaque dessin
+        // fiche illisible : un nouvel essai plus tard
       }
     }),
   )
+}
+
+/**
+ * Un pas de la minuterie relit les dates restées illisibles, à leur heure : la bande ne se redessine
+ * que quand un état qu'elle lit change, et sans ce pas une tâche restait hors de sa place (#195).
+ */
+async function retryCreated($: EngineInterface): Promise<void> {
+  const pending = [...createdTriedAt.keys()].filter(id => !createdBySession.has(id))
+  if (pending.length === 0) return
+  await learnCreated($, pending, await $.clock.now())
+  if (pending.some(id => createdBySession.has(id))) await update($, liveVersionAtom, v => v + 1)
+}
+
+/**
+ * La place figée de chaque tâche lancée (#195), par `taskKey` : la bande de Maestro et son bloc « En cours »
+ * rangent par elle, et elle ne bouge plus quand la tâche avance, attend, finit ou se relance.
+ */
+const launchByTask = new Map<string, number>()
+
+function launchOf(t: Task, sessionId: string | undefined, now: number): number {
+  const at = firstLaunch(launchByTask.get(taskKey(t)), sessionId !== undefined ? (createdBySession.get(sessionId) ?? Number.NaN) : Number.NaN, now)
+  launchByTask.set(taskKey(t), at)
+  return at
 }
 
 /** Les tâches des sessions que cette session a lancées, avec leur état : ce que Maestro montre. */
@@ -4586,9 +4620,9 @@ async function maestroTasksOf(
   const tracked = (t: Task) => live[liveKeyOf(source, t)]?.sessionId ?? sessionMatches.get(taskKey(t))?.sessionId
   const rows = [...sessionRows, ...[...startedBySession].map(([sessionId, startedBy]) => ({ sessionId, startedBy }))]
   const found = maestroTaskSessions({ tasks, me, rows, tracked })
-  await learnCreated($, found.map(f => f.sessionId))
-  // #191 : l'avance de leur branche, et la question qui attend, séparent « à fusionner » de « t'attend ».
   const now = await $.clock.now()
+  await learnCreated($, found.map(f => f.sessionId), now)
+  // #191 : l'avance de leur branche, et la question qui attend, séparent « à fusionner » de « t'attend ».
   await refreshAhead($, source, found.map(f => f.sessionId), now)
   const asking = new Map(await Promise.all(found.map(async f => [f.sessionId, (await readSteps($, f.sessionId))?.question !== undefined] as const)))
   return maestroBrandTasks(
@@ -4600,7 +4634,7 @@ async function maestroTasksOf(
       open: !archivedSessionIds.has(sid) && (openSessionIds.size === 0 || openSessionIds.has(sid)),
       done: t.done,
       sessionId: sid,
-      createdAt: createdBySession.get(sid) ?? Number.NaN,
+      launchedAt: launchOf(t, sid, now),
       ...(aheadBySession.get(sid)?.ahead !== undefined ? { ahead: aheadBySession.get(sid)?.ahead as number } : {}),
       asking: asking.get(sid) === true,
     })),
@@ -6565,7 +6599,9 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   const maestroBrand = ownBrand?.brand.kind === 'maestro' ? ownBrand.brand : undefined
   // Le bloc « En cours » de Maestro (#160) : ses sessions qui tournent ou t'attendent, puis les tâches
   // qu'une autre session travaille (#187), en lignes ; la liste de la roadmap dessous ne les redit pas.
-  const blockRows = maestroBrand ? liveBlockRows(maestroBrand.tasks, openTasks, isLive) : []
+  // Toutes rangées par premier lancement (#195) : celles des autres sessions aussi, par la date de la leur.
+  if (maestroBrand) await learnCreated($, openTasks.filter(isLive).map(t => liveOf(t)?.entry.sessionId).filter((id): id is string => id !== undefined), now)
+  const blockRows = maestroBrand ? liveBlockRows(maestroBrand.tasks, openTasks, isLive, t => launchOf(t, liveOf(t)?.entry.sessionId, now)) : []
   const blockOf = new Map(blockRows.flatMap(r => (r.brand ? [[r.brand.id, r.brand] as const] : [])))
   const blockKeys = new Set(blockRows.map(r => taskKey(r.task)))
   const inBlock = (t: Task) => blockKeys.has(taskKey(t))

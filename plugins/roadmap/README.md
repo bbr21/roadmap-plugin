@@ -648,6 +648,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.128.1 (2026-11-01)** : panneau : les tâches lancées par Maestro restent à la place de leur premier lancement, dans la bande et le bloc En cours (#195)
 - **0.128.0 (2026-11-01)** : panneau : dates à l'américaine par défaut (« Nov 4 », heure sur 12 h), réglage dateFormat us | fr ; le contrôle refuse une date fait: ou ouvert: dans le futur, comptée à l'heure locale (#201)
 - **0.127.0 (2026-11-01)** : reglages-session : l'en-tête du mode ADHD devient une carte d'étape (icône d'état, étape N/total, nom, barre ▰▱, état en mots), le constat dessous (#196)
 - **0.126.0 (2026-11-01)** : panneau : une tâche de code n'est finie qu'une fois fusionnée : étape « Fusionner » (et « Publier » avec la clé publier) cochée par git, état « à fusionner » à la place de « t'attend » dans la fiche, la bande et le bloc En cours (#191)

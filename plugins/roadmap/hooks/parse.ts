@@ -5615,7 +5615,17 @@ export function maestroRelaunchContext(o: { source: Source; tasks: readonly Task
  * fini et sa branche attend sa fusion (#191), `done` close. `closed` : sa ligne est close ; `finished` : close et sa session ne tourne
  * plus (finie ou archivée), la tâche est toute finie (#145).
  */
-export type BrandTask = { id: string; label: string; state: 'wait' | 'live' | 'merge' | 'done'; sessionId?: string; closed?: true; finished?: true; archivable?: true }
+export type BrandTask = { id: string; label: string; state: 'wait' | 'live' | 'merge' | 'done'; sessionId?: string; closed?: true; finished?: true; archivable?: true; launchedAt?: number }
+
+/**
+ * La place figée d'une tâche lancée (#195) : la date de sa session quand elle se lit, la plus ancienne
+ * déjà connue sinon (une relance garde la place de la première, une place provisoire trop tardive se
+ * corrige) ; illisible, la place déjà prise, ou à défaut le moment où le panneau la voit (`seen`).
+ */
+export function firstLaunch(prev: number | undefined, created: number, seen: number): number {
+  if (!Number.isFinite(created)) return prev ?? seen
+  return prev === undefined ? created : Math.min(prev, created)
+}
 
 /**
  * Les tâches du bloc « En cours » de Maestro (#160) : celles dont la session tourne ou t'attend, ni closes
@@ -5629,11 +5639,13 @@ export function liveBlockIds(tasks: readonly BrandTask[]): string[] {
  * Les lignes du bloc « En cours » de Maestro (#160, #187) : ses sessions qui tournent ou t'attendent
  * (`liveBlockIds`), puis les tâches ouvertes qu'une autre session travaille (ligne prise, session
  * vivante), chacune une fois. Un Maestro neuf, qui n'a rien lancé, montre ainsi ce qui tourne ailleurs.
+ * Avec `launchedAt`, toutes rangées ensemble par premier lancement, les sans-date à la fin (#195).
  */
 export function liveBlockRows<T extends { id?: string }>(
   own: readonly BrandTask[],
   open: readonly T[],
   isLive: (t: T) => boolean,
+  launchedAt?: (t: T) => number | undefined,
 ): { task: T; brand?: BrandTask }[] {
   const ids = liveBlockIds(own)
   const mine = ids.flatMap(id => {
@@ -5642,7 +5654,11 @@ export function liveBlockRows<T extends { id?: string }>(
     return task ? [{ task, brand }] : []
   })
   const others = open.filter(t => isLive(t) && !(t.id !== undefined && ids.includes(t.id))).map(task => ({ task }))
-  return [...mine, ...others]
+  const rows: { task: T; brand?: BrandTask }[] = [...mine, ...others]
+  if (!launchedAt) return rows
+  const key = (r: { task: T; brand?: BrandTask }) => r.brand?.launchedAt ?? launchedAt(r.task) ?? Number.POSITIVE_INFINITY
+  // Le tri est stable : à date égale, ou sans date, l'ordre d'avant.
+  return rows.sort((a, b) => (key(a) === key(b) ? 0 : key(a) < key(b) ? -1 : 1))
 }
 
 export type Brand =
@@ -5741,19 +5757,20 @@ export function maestroBrandTasks(
     open: boolean
     done: boolean
     sessionId?: string
-    createdAt?: number
+    /** Son premier lancement (`firstLaunch`, #195) ; inconnu, la tâche va après les datées. */
+    launchedAt?: number
     /** Les commits de sa branche hors de sa base (#191) ; inconnu sans git. */
     ahead?: number
     /** Sa session a posé une question qui attend (formulaire, boîte avec question). */
     asking?: boolean
   }[],
 ): BrandTask[] {
-  // Par création de leur session, la plus ancienne en haut, closes à leur place (#143, demande de
-  // Bertrand) ; sans la date de toutes, par numéro : les numéros suivent l'ordre d'ouverture.
-  const dated = entries.length > 0 && entries.every(e => typeof e.createdAt === 'number' && !Number.isNaN(e.createdAt))
+  // Par premier lancement, la plus ancienne en haut, closes à leur place (#143, #195, demande de
+  // Bertrand) ; une tâche sans date va après les datées, par numéro, sans renverser les autres.
   const byNumber = (a: { id: string }, b: { id: string }) => Number(a.id) - Number(b.id) || a.id.localeCompare(b.id)
+  const at = (e: { launchedAt?: number }) => (typeof e.launchedAt === 'number' && Number.isFinite(e.launchedAt) ? e.launchedAt : Number.POSITIVE_INFINITY)
   return [...entries]
-    .sort((a, b) => (dated ? (a.createdAt as number) - (b.createdAt as number) || byNumber(a, b) : byNumber(a, b)))
+    .sort((a, b) => (at(a) === at(b) ? byNumber(a, b) : at(a) < at(b) ? -1 : 1))
     .map(e => ({
       id: e.id,
       label: e.label,
@@ -5764,6 +5781,7 @@ export function maestroBrandTasks(
       ...(e.done && !(e.open && e.running) ? { finished: true as const } : {}),
       // Close, sa session encore ouverte et à l'arrêt : l'icône d'archivage de la bande (#174).
       ...(e.done && e.open && !e.running ? { archivable: true as const } : {}),
+      ...(Number.isFinite(at(e)) ? { launchedAt: at(e) } : {}),
     }))
 }
 
