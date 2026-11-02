@@ -117,6 +117,7 @@ import {
   launchBoxRefusal,
   dueLabel,
   findSelected,
+  cardFolded,
   cardSummary,
   ficheCards,
   missionCut,
@@ -275,6 +276,8 @@ import {
   sourceFor,
   titlePrompt,
   todayOf,
+  toggleFold,
+  unlocksOf,
   type SessionPrefs,
   type Source,
   type Task,
@@ -5597,7 +5600,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   const {
     axis: axisRaw, attend: attendRaw, who: whoRaw = 'all', moreFilters = false, showDone: doneChosen, groupBy, selected, openGroups, closedGroups, moreGroups,
     launchNote, launched, openNote, conclusionOpen, missionOpen = '', cancelAsk = '', closeKind = 'abandon', cancelNote = '',
-    editing: editingKey = '', editNote = '', editField = '', editCount = 0, foldedCards = [],
+    editing: editingKey = '', editNote = '', editField = '', editCount = 0, foldedCards = [], openedCards = [],
   } = view
   const data = await paneData($, source, [stamp, titlesVersion, themeStamp, retry, liveVersion].join('|'))
   const { palette, bilan: bilanData, titles, live: liveEntries, ignored } = data
@@ -5860,7 +5863,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     const editSpecs = editing
       ? editableFields(current, editText.split('\n')[line - 1] ?? '', { axes: declaredAxes(editText), cles })
       : []
-    const unlocks = allTasks.filter(t => prereqsFor(t).includes(current))
+    const unlocks = unlocksOf(current, allTasks, prereqsFor)
     // Sa place dans sa chaîne d'ouvertes : « étape 2 sur 4 ».
     const openSet = new Set(openTasks)
     const head = current.done ? current : chainHead(current, prereqFor, openSet)
@@ -5914,12 +5917,9 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     // Une carte de la fiche (#199, maquette A) : un cadre fin ; sa tête, le chevron, le titre, le résumé à
     // droite, se clique pour la replier ou la déplier. Repliée par son nom, pour toutes les tâches ; en
     // édition, toutes dépliées. Au terminal, la tête est un bouton de l'app.
-    const folded = (id: string) => !editing && foldedCards.includes(id)
-    const toggleCard = (id: string) => () =>
-      void setView($, v => {
-        const was = v.foldedCards ?? []
-        return { foldedCards: was.includes(id) ? was.filter(x => x !== id) : [...was, id] }
-      })
+    // Une Done ouvre ses Étapes repliées (#210) ; un choix fait à la main l'emporte.
+    const folded = (id: string) => !editing && cardFolded(id, { foldedCards, openedCards }, current.done)
+    const toggleCard = (id: string) => () => void setView($, v => toggleFold(id, v, current.done))
     const card = (id: string, name: string, summary: string, body: RenderElement, o: { before?: RenderElement | false | null; after?: RenderElement | false | null } = {}) => {
       const closed = folded(id)
       const head =
@@ -6175,7 +6175,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     const aheadNow = stepsSession ? aheadBySession.get(stepsSession)?.ahead : undefined
     const headState: BrandTask['state'] | undefined =
       waitState === 'wait' && stepsNote?.question === undefined && (aheadNow ?? 0) > 0 ? 'merge' : waitState
-    const headBrand = focusBrand ?? taskBrandOf(current, source, allTasks, { label: s.titre })
+    const headBrand = focusBrand ?? taskBrandOf(current, source, allTasks, { label: s.titre, prereqs: prereqsFor })
     // Le résumé de la tête de chaque carte, ce qu'elle garde repliée (#199).
     const summaries: Record<FicheCard, string> = {
       avancement: cardSummary('avancement', {

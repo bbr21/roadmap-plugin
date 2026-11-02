@@ -5848,10 +5848,10 @@ export type Brand =
       axis: string
       axisIndex: number
       due?: string
-      /** La station d'avant sur sa voie : sa première prérequise (`après:`), faite ou non. */
-      before?: { id: string; done: boolean }
-      /** La station d'après : la première tâche ouverte qui l'attend. */
-      next?: string
+      /** La station d'avant sur sa voie : toutes ses prérequises (`après:`), faite si toutes le sont (#209). */
+      before?: { ids: string[]; done: boolean }
+      /** La station d'après : toutes les tâches qui l'attendent, la liste de la carte Chaîne (`unlocksOf`, #209). */
+      next?: string[]
       maestro?: string
     }
 
@@ -6028,9 +6028,9 @@ export function brandText(
     ...(brand.before || brand.next
       ? {
           stations: {
-            ...(brand.before ? { before: { text: brand.before.done ? `#${brand.before.id} Done` : `après #${brand.before.id}`, done: brand.before.done } } : {}),
+            ...(brand.before ? { before: { text: brand.before.done ? `${hashIds(brand.before.ids)} Done` : `après ${hashIds(brand.before.ids)}`, done: brand.before.done } } : {}),
             here: `#${brand.id}, ici`,
-            ...(brand.next ? { next: `débloque #${brand.next}` } : {}),
+            ...(brand.next ? { next: `débloque ${hashIds(brand.next)}` } : {}),
           },
         }
       : {}),
@@ -6061,6 +6061,19 @@ export function branchText(gap: { ahead: number; behind: number; files: number }
   ]
 }
 
+/** Des numéros de tâche en clair : « #205, #208, #207 ». */
+function hashIds(ids: readonly string[]): string {
+  return ids.map(n => `#${n}`).join(', ')
+}
+
+/**
+ * Les tâches qui attendent celle-ci (`après:`), faites ou non, dans l'ordre de `tasks` : la carte Chaîne
+ * les dit « débloque », et la voie en tête de fiche les compte toutes (#209).
+ */
+export function unlocksOf(task: Task, tasks: readonly Task[], prereqs: (t: Task) => Task[] = t => prereqsOf(t, tasks)): Task[] {
+  return tasks.filter(t => t !== task && prereqs(t).includes(task))
+}
+
 /** La marque d'une tâche de la roadmap, sa couleur d'axe prise dans l'ordre du panneau ; absente, rien. */
 function taskBrand(id: string, source: Source, tasks: readonly Task[], maestro?: string): Brand | undefined {
   const task = tasks.find(t => t.id === id)
@@ -6075,12 +6088,13 @@ export function taskBrandOf(
   task: Task,
   source: Source,
   tasks: readonly Task[],
-  o: { label?: string; maestro?: string } = {},
+  o: { label?: string; maestro?: string; prereqs?: (t: Task) => Task[] } = {},
 ): Extract<Brand, { kind: 'task' }> {
   const order = axisOrder(tasks.filter(t => !t.done), tasks.filter(t => t.done))
-  // Sa voie : la prérequise qui trace la chaîne, et la première ouverte qui l'attend.
-  const before = task.id ? prereqOf(task, tasks) : undefined
-  const next = task.id ? tasks.find(t => !t.done && t.id !== undefined && prereqsOf(t, tasks).includes(task)) : undefined
+  // Sa voie (#209) : toutes ses prérequises, et toutes celles qui l'attendent, les listes de la carte Chaîne.
+  const prereqs = o.prereqs ?? ((t: Task) => prereqsOf(t, tasks))
+  const before = task.id ? prereqs(task).filter(t => t.id !== undefined) : []
+  const next = task.id ? unlocksOf(task, tasks, prereqs).flatMap(t => (t.id ? [t.id] : [])) : []
   return {
     kind: 'task',
     project: source.name,
@@ -6089,8 +6103,8 @@ export function taskBrandOf(
     axis: task.axis,
     axisIndex: Math.max(0, order.indexOf(task.axis)),
     ...(task.due ? { due: task.due } : {}),
-    ...(before?.id ? { before: { id: before.id, done: before.done } } : {}),
-    ...(next?.id ? { next: next.id } : {}),
+    ...(before.length > 0 ? { before: { ids: before.map(t => t.id as string), done: before.every(t => t.done) } } : {}),
+    ...(next.length > 0 ? { next } : {}),
     ...(o.maestro ? { maestro: o.maestro } : {}),
   }
 }
@@ -6149,6 +6163,30 @@ export function stateBand(o: { state: 'wait' | 'live' | 'merge' | 'done'; questi
     return { word: 'à fusionner', why: `${commits}Maestro fusionne`, mark: 'merge', tone: 'merge' }
   }
   return { word: 'Completed', why: o.fait ? `close le ${shortDate(o.fait)}` : '', mark: 'check', tone: 'done' }
+}
+
+/** Les cartes repliées d'office (#210) : sur une tâche Done, ses étapes toutes cochées n'apprennent plus rien. */
+const FOLDED_WHEN_DONE = ['etapes']
+
+/**
+ * Une carte de la fiche est-elle repliée (#199, #210) : le choix fait à la main, par son nom et pour
+ * toutes les tâches, l'emporte ; sinon, repliée d'office sur une Done si elle est de `FOLDED_WHEN_DONE`.
+ */
+export function cardFolded(id: string, v: { foldedCards?: string[]; openedCards?: string[] }, done: boolean): boolean {
+  if (v.foldedCards?.includes(id)) return true
+  if (v.openedCards?.includes(id)) return false
+  return done && FOLDED_WHEN_DONE.includes(id)
+}
+
+/** Le clic sur la tête d'une carte : il inverse ce qu'on voit et le retient, dans l'une des deux listes. */
+export function toggleFold(
+  id: string,
+  v: { foldedCards?: string[]; openedCards?: string[] },
+  done: boolean,
+): { foldedCards: string[]; openedCards: string[] } {
+  const folded = (v.foldedCards ?? []).filter(x => x !== id)
+  const opened = (v.openedCards ?? []).filter(x => x !== id)
+  return cardFolded(id, v, done) ? { foldedCards: folded, openedCards: [...opened, id] } : { foldedCards: [...folded, id], openedCards: opened }
 }
 
 /** Le résumé d'une ligne sur la tête d'une carte de la fiche (#199) : ce qu'elle garde, repliée. */

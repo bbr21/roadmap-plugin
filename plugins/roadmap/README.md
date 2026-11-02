@@ -652,6 +652,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.136.0 (2026-11-02)** : panneau : la voie de la fiche compte toutes les prérequises et débloquées (#209), Étapes repliées sur une tâche Done (#210)
 - **0.135.0 (2026-11-02)** : panneau : le titre suit le numéro, l'échéance en texte coloré au bout de la ligne, les étiquettes après le titre (#212)
 - **0.134.0 (2026-11-02)** : panneau : pièces jointes d'une tâche (pj:), carte de la fiche à vignettes, lues par le brief (#204)
 - **0.133.0 (2026-11-01)** : panneau : vue Done en familles, sous-tâche sous sa mère, mères repliées, bouton « Déplier les sous-tâches » (#203)
