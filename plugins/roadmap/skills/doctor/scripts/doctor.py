@@ -180,6 +180,37 @@ def _source(p):
     return "installé par le terminal"
 
 
+def _version(p):
+    return tuple(int(n) for n in re.findall(r"\d+", str(p.get("version", ""))))
+
+
+def _retirer(p):
+    """Le geste qui retire cette copie : dans claude.ai pour un plugin du compte, sinon au terminal."""
+    if _de_l_app(p):
+        return "claude.ai, Réglages, Plugins : retirer %s (plugin du compte)" % p.get("id")
+    portee = p.get("scope") if p.get("scope") in ("user", "project", "local") else "user"
+    return "claude plugin uninstall %s --scope %s" % (p.get("id"), portee)
+
+
+def roadmap_en_double(roadmap):
+    """Deux copies actives du plugin roadmap (#229) : le moteur renomme alors leurs options
+    roadmap@<source>.<champ> (#227). On garde celle du compte, que l'app met à jour elle-même,
+    sinon la plus récente ; le doctor dit le geste pour l'autre, sans le faire."""
+    actifs = [p for p in roadmap if p.get("enabled")]
+    if len(actifs) < 2:
+        return None
+    garde = max(actifs, key=lambda p: (_de_l_app(p), _version(p)))
+    autres = [p for p in actifs if p is not garde]
+    avance = [p for p in autres if _version(p) > _version(garde)]
+    detail = "%d copies actives : %s ; leurs options se renomment (roadmap@<source>.<champ>). Garder %s%s" % (
+        len(actifs), ", ".join("%s %s (%s)" % (p.get("id"), p.get("version", "?"), _source(p)) for p in actifs),
+        garde.get("id"), ", que l'app met à jour elle-même" if _de_l_app(garde) else ", la plus récente")
+    if avance:
+        detail += " ; %s est en avance : le magasin du compte la rattrape par Check for updates dans claude.ai" % (
+            ", ".join(p.get("id") for p in avance))
+    return ligne(VOIR, "Plugin roadmap en double", detail, " ; ".join(_retirer(p) for p in autres))
+
+
 def plugins_et_skills(requis, plugins, home, skills=None, facultatif=False):
     """`skills` : les skills de méthode exigées ; par défaut celles du brief d'une session de code.
     `facultatif` (dossier sans code, #94) : le brief propose ces skills sans les exiger, donc Superpowers
@@ -198,6 +229,9 @@ def plugins_et_skills(requis, plugins, home, skills=None, facultatif=False):
     else:
         actif = next(p for p in roadmap if p.get("enabled"))
         out.append(ligne(OK, "Plugin roadmap", "version %s (%s)" % (actif.get("version", "?"), _source(actif))))
+        double = roadmap_en_double(roadmap)
+        if double:
+            out.append(double)
 
     sp = requis["superpowers"]
     trouves = [p for p in plugins if _nom(p) == sp["plugin"]]

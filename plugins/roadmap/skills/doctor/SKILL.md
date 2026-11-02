@@ -26,6 +26,7 @@ changes nothing: neither the project nor the machine.
 | Settings | an unknown `mode` (other than `auto`, `code`, `projet`) or `requis_sur` (other than `ouvertes`, `lancees`): « À voir » |
 | Required fields | every launched task (`qui:` or `branche:`) carries `ouvert`, `due`, `qui` and `après`, or the fields of `requis` in `.claude/roadmap.json` (`[]`: no line), on every open task when `requis_sur` is `ouvertes`; otherwise « À voir », with the count |
 | Roadmap plugin | installed and enabled, in the version the app loads |
+| Roadmap plugin twice | one enabled copy only; two (the account's store and the local catalog `roadmap@roadmap`), « À voir » (#229): keep the account's copy, which the app updates, otherwise the most recent, with the exact gesture that removes the other |
 | Superpowers | installed and enabled |
 | Method skills | every skill the launched sessions cite exists in the installed version: a skill renamed by Superpowers shows up here |
 | Superpowers updates | installed by the app: tracked by the app, with the date of the last one; installed from the terminal: automatic, otherwise the date of the last one and how to turn it on |
@@ -49,6 +50,7 @@ In a folder without code (#76, #176: no git repository, a repository without cod
 | Settings | `mode`, `requis_sur`, `vue`, `cles`, `requis`, `cles_visibles` and `ranger_par` in `.claude/roadmap.json` understood by the panel; otherwise « À voir » |
 | Required fields | the fields of `requis` on every open task (`requis_sur: "ouvertes"`, written by the onboarding; an old `mode: "projet"` too), else on every launched task; otherwise « À voir », with the count (a line written outside Claude Code is flagged only here) |
 | Roadmap plugin | as with code |
+| Roadmap plugin twice | as with code |
 | Superpowers, its updates | optional (#94): missing or disabled, « À voir » with the command, never KO |
 | Plugin hooks | as with code |
 | User name | as with code |
@@ -95,6 +97,10 @@ command that fixes it, as the script gives it. Then the verdict in one sentence.
   goes through its fallbacks, and only the full settings after a compaction are missing. To get
   everything back, the fix is a gesture of the organisation's admin, not of the user; never
   suggest setting `appendPlugins` in the user's settings.
+- Roadmap plugin twice « À voir »: the engine renames both copies' options
+  `roadmap@<source>.<champ>` (#227), so a setting written by one is not read by the other. Give
+  the copy to keep and the script's gesture for the other one, which the user does themselves:
+  the doctor never uninstalls a plugin.
 - Everything green: say so in one sentence, and that « Maestro » works in this project.
 - The doctor does not read the content of tasks. Tasks bundled together, duplicated or without a
   deadline: offer the `audit` skill, which splits, merges and completes after validation.
