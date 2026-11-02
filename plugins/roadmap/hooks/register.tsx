@@ -3053,6 +3053,25 @@ async function archiveSession($: EngineInterface, key: string, entry: LiveEntry)
   }
 }
 
+/** Un /compact lancé par la bande et pas encore répondu : un second clic n'en lance pas un autre (#197). */
+let compactAsked = false
+
+/**
+ * « Compacter » de la bande de Maestro (#197) : /compact comme si la personne le tapait, mis en file
+ * jusqu'au repos de la session. Un refus se dit en toast.
+ */
+async function compactFromBand($: EngineInterface): Promise<void> {
+  if (compactAsked) return
+  compactAsked = true
+  try {
+    await $.command.run({ command: 'compact' })
+  } catch (err) {
+    $.ui.toast(`Compaction impossible : ${err instanceof Error ? err.message : String(err)}`)
+  } finally {
+    compactAsked = false
+  }
+}
+
 /** L'icône d'archivage d'une ligne de la bande de Maestro (#174) : la session de sa tâche, par son suivi s'il y en a un. */
 async function archiveBandSession($: EngineInterface, t: BrandTask, now: number): Promise<void> {
   if (!t.sessionId) return
@@ -4514,6 +4533,7 @@ export const register: Register = (on, options) => {
       return maestroBandTree($, e, band, found.data.palette, views, {
         open: t => void (t.sessionId ? openSession($, { sessionId: t.sessionId, startedAt: now, title: t.label }) : undefined),
         archive: t => void archiveBandSession($, t, now),
+        compact: () => void compactFromBand($),
       }, now, contextView(mine ?? undefined), await read($, zoneGenAtom))
     } catch {
       return next(e)
@@ -5012,7 +5032,7 @@ function maestroBandTree(
   band: MaestroBand,
   palette: Palette,
   views: readonly (StepsView | undefined)[],
-  act: { open: (t: BrandTask) => void; archive: (t: BrandTask) => void },
+  act: { open: (t: BrandTask) => void; archive: (t: BrandTask) => void; compact: () => void },
   now: number,
   mine?: ContextView,
   zoneGen = 0,
@@ -5051,6 +5071,23 @@ function maestroBandTree(
       </Box>
     )
   }
+  // « Compacter » au-delà de 65 % de contexte (#197, maquette B) : une pastille rouge et sa zone de clic ;
+  // au terminal ou sans zone, un bouton de texte.
+  const compactButton = () => {
+    const id = 'band-compact'
+    if (!Svg || !Client) return <Button key={id} plain label="Compacter" onPress={act.compact} />
+    pressHandlers.set(id, act.compact)
+    zoneDrawn(zones, 'press-hit', now)
+    const pill = pillIcon({ text: 'Compacter', bg: palette.lateTint, fg: palette.lateOn, height: SIZE.pill.row })
+    return (
+      <Box key={id} flexDirection="row" alignItems="center">
+        <Svg source={pill.source} alt="Compacter" width={pill.width} height={pill.height} />
+        <Box position="absolute" top={0} left={0} right={0}>
+          <Client key={`${pressKey(id)}-g${zoneGen}`} module="./press-hit.tsx" props={{ id }} width="100%" height={1} />
+        </Box>
+      </Box>
+    )
+  }
   // La roue pour une session qui tourne, le mot pour les autres.
   const spins = (t: BrandTask) => Boolean(Svg) && t.state === 'live' && !t.finished
   const cols = bandColumns({
@@ -5063,10 +5100,16 @@ function maestroBandTree(
       <Box flexDirection="row" alignItems="center" gap={SPACE.row}>
         <Text size="footnote" weight="semibold">{words.title}</Text>
         {words.foot !== '' && <Text size="caption" color={palette.text3}>{`· ${words.foot}`}</Text>}
-        {/* Le contexte de Maestro, seul : « Contexte 40 % », sans tokens ni jauge (#174). */}
+        {/* Le contexte de Maestro, seul : « Contexte 40 % », sans tokens ni jauge (#174) ; au-delà de 65 %,
+            le % en rouge, suivi de « Compacter » (#197). */}
         {mine && <Box flexGrow={1} />}
         {mine && <Text size="caption" color={palette.text3}>Contexte</Text>}
-        {mine && <Text size="caption" tabular color={palette.text2}>{`${mine.percent} %`}</Text>}
+        {mine && (
+          <Text size="caption" tabular {...(mine.compact ? { weight: 'semibold' as const } : {})} color={mine.compact ? palette.late : palette.text2}>
+            {`${mine.percent} %`}
+          </Text>
+        )}
+        {mine?.compact && compactButton()}
       </Box>
       <Box flexDirection="column">
         {band.tasks.map((t, i) => {

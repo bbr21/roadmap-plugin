@@ -651,6 +651,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.132.0 (2026-11-01)** : panneau : au-delà de 65 % de contexte, le pourcentage de la bande de Maestro passe en rouge et une pastille « Compacter » lance /compact (#197)
 - **0.131.0 (2026-11-01)** : reglages-session : messages de travail plus fournis (Fait · Trouvé · Suite sous la carte d'étape), fiche de fin de session à verdict en tête, due aussi quand la session est bloquée (#128)
 - **0.130.0 (2026-11-01)** : panneau : la fiche d'une tâche en cartes repliables à tête, un filet par ligne, l'état en bande sous l'en-tête, un seul état « Completed » dans toute la fiche (#199)
 - **0.129.0 (2026-11-01)** : panneau : la ligne de tâche refaite : plus de rond, le carré d'axe coche et décoche après un tag « Confirmer » sur la même ligne ; une faite grisée et barrée, son carré garde la couleur de l'axe ; colonnes alignées (#198)

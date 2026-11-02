@@ -3004,8 +3004,11 @@ export type ChildStatus = { steps: ChildStep[]; question?: { text: string; since
 /** Le contexte utilisé d'une session (#157) : les jetons du dernier tour sur la fenêtre de son modèle. */
 export type ContextUse = { tokens: number; window: number }
 
-/** Ce que la bande montre d'un contexte (#157) : le %, « 13 % · 132,5k / 1M », la couleur du seuil. */
-export type ContextView = { percent: number; text: string; tone: 'ok' | 'high' | 'full' }
+/**
+ * Ce que la bande montre d'un contexte (#157) : le %, « 13 % · 132,5k / 1M », la couleur du seuil ;
+ * `compact` : au-delà de 65 %, le % de Maestro passe en rouge et « Compacter » lance /compact (#197).
+ */
+export type ContextView = { percent: number; text: string; tone: 'ok' | 'high' | 'full'; compact: boolean }
 
 /** Un contexte lisible, jetons et fenêtre en nombres ; sinon rien (une note d'un autre format). */
 export function contextUseOf(value: unknown): ContextUse | undefined {
@@ -3025,13 +3028,15 @@ export function formatTokens(n: number): string {
 /** Les seuils du contexte (#157) : orange à 70 %, rouge à 85 %, près de la compaction. */
 const CONTEXT_HIGH = 70
 const CONTEXT_FULL = 85
+/** Au-delà de ce %, la bande de Maestro propose de compacter (#197). */
+const CONTEXT_COMPACT = 65
 
 /** Le contexte d'une session tel que la bande le montre (#157) ; rien de mesuré, ou une fenêtre inconnue : rien. */
 export function contextView(c: ContextUse | undefined): ContextView | undefined {
   if (!c || !(c.window > 0) || !(c.tokens >= 0)) return undefined
   const percent = Math.round((c.tokens * 100) / c.window)
   const tone = percent >= CONTEXT_FULL ? 'full' : percent >= CONTEXT_HIGH ? 'high' : 'ok'
-  return { percent, text: `${percent} % · ${formatTokens(c.tokens)} / ${formatTokens(c.window)}`, tone }
+  return { percent, text: `${percent} % · ${formatTokens(c.tokens)} / ${formatTokens(c.window)}`, tone, compact: percent > CONTEXT_COMPACT }
 }
 
 const STEP_STATUSES: readonly string[] = ['pending', 'in_progress', 'completed']
