@@ -172,9 +172,9 @@ export const SIZE = {
   /** Hauteur des pastilles : compte de section, ligne, détail, axe. */
   pill: { count: 16, row: 18, detail: 20, axis: 22 },
   /** Côté des icônes. */
-  icon: { xs: 12, sm: 14, md: 16, lg: 24 },
-  /** Hauteurs tenues par une cale : ligne, champ du détail, bouton et bandeau. */
-  strut: { row: 24, field: 28, control: 32 },
+  icon: { xs: 12, chip: 13, sm: 14, md: 16, lg: 24 },
+  /** Hauteurs tenues par une cale : bouton dans une ligne de champ (#208), ligne, champ du détail, bouton et bandeau. */
+  strut: { chip: 20, row: 24, field: 28, control: 32 },
   /** Hauteur du grand pourcentage. */
   percent: 32,
   /** Hauteur de la barre de composition. */

@@ -401,7 +401,7 @@ export function textWidth(text: string, size: number, bold = false): number {
   return Math.ceil(em * size * (bold ? 1.05 : 1))
 }
 
-export type PillMark = 'clock' | 'person' | 'spinner' | 'check' | 'merge'
+export type PillMark = 'clock' | 'person' | 'spinner' | 'check' | 'merge' | 'cancel'
 
 /**
  * Une pastille : 18 px de haut (20 au détail), rayon de la moitié, texte de 12 px gras, chiffres
@@ -490,6 +490,8 @@ const MARK_PATHS: Record<PillMark, string> = {
   merge: '<circle cx="6" cy="5" r="2.5"/><circle cx="6" cy="19" r="2.5"/><circle cx="18" cy="10" r="2.5"/><path d="M6 7.5v9M18 12.5c0 4-6 3.2-10.4 4.8"/>',
   spinner: `<circle cx="12" cy="12" r="9" stroke-opacity="${MIX.spinnerTrack}"/><path d="M12 3a9 9 0 0 1 9 9"/>`,
   check: '<path d="M5 12.5l4.5 4.5L19 7.5"/>',
+  // Un cercle barré (#207) : l'étiquette « annulée ».
+  cancel: '<circle cx="12" cy="12" r="8"/><path d="M6.5 17.5l11-11"/>',
 }
 
 /** Le grand pourcentage d'avancement : 28 px, gras 600, sur une ligne de 32 (la taille « title » de l'app est plus petite). */
@@ -696,6 +698,24 @@ export function checkRowIcon(hex: string): string {
  */
 export function fullWidth(columns: number): number {
   return Math.max(BAR_WIDTH, Math.round(columns * 9))
+}
+
+/**
+ * Le fondu d'un cadre coupé (#205, maquette A) : un dégradé de la couleur du cadre, transparent en haut,
+ * plein en bas, sur une ligne et demie ; posé sur la dernière ligne, il la fait pâlir. Pleine largeur.
+ */
+export function fadeIcon(hex: string, width = BAR_WIDTH, height = 30): string {
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" preserveAspectRatio="none"><defs><linearGradient id="f" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${hex}" stop-opacity="0"/><stop offset="1" stop-color="${hex}" stop-opacity="1"/></linearGradient></defs><rect width="${width}" height="${height}" fill="url(#f)"/></svg>`
+}
+
+/**
+ * La flèche d'un cadre coupé (#205, choix de BBR : « une fleche qui annonce l'expand », nette sur le fondu) :
+ * le chevron vers le bas (ouvrir) ou le haut (replier), à droite d'un aplat de la couleur du cadre qui
+ * s'efface vers la gauche, pour qu'aucun mot de la ligne fondue ne passe dessous. 40 × 20.
+ */
+export function foldArrowIcon(o: { fg: string; bg: string; up: boolean }): string {
+  const chevron = o.up ? 'M6 15l6-6 6 6' : 'M6 9.5l6 6 6-6'
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="40" height="20" viewBox="0 0 40 20"><defs><linearGradient id="a" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="${o.bg}" stop-opacity="0"/><stop offset="1" stop-color="${o.bg}" stop-opacity="1"/></linearGradient></defs><rect width="16" height="20" fill="url(#a)"/><rect x="16" width="24" height="20" fill="${o.bg}"/><g transform="translate(22 2)" fill="none" stroke="${o.fg}" stroke-width="${STROKE.base}" stroke-linecap="round" stroke-linejoin="round"><path d="${chevron}" transform="scale(0.667)"/></g></svg>`
 }
 
 /** Le filet au-dessus de la ligne de filtre : 1 px, pleine largeur. */

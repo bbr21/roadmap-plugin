@@ -18,6 +18,8 @@ import {
   filterPillIcon,
   type PillMark,
   checkIcon,
+  fadeIcon,
+  foldArrowIcon,
   chainRowIcon,
   treeMotherRowIcon,
   treeChildRowIcon,
@@ -5884,6 +5886,9 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     // Sans récap, une ligne longue tient en trois lignes, le reste derrière « Tout voir » (#146, maquette B).
     const cut = frame.recap ? undefined : missionCut(frame.text)
     const missionShown = missionOpen === current.key
+    // Sur le bureau, la coupe se fait en hauteur sous un fondu (#205) ; au terminal, en signes (#146).
+    const faded = cut?.cut === true && graphic && Client !== undefined && Svg !== undefined
+    const toggleMission = () => void setView($, v => ({ missionOpen: v.missionOpen === current.key ? '' : current.key }))
     const s = short(current)
     const days = age(current)
     const line = Number(current.key.split(':').pop())
@@ -5914,6 +5919,12 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     const steps = chain.length > 1 ? chainSteps(sortTasks(chain, sortOrder), prereqFor) : new Map<Task, ChainStep>()
     const stepOf = steps.get(current)
     const lastStep = Math.max(0, ...[...steps.values()].map(x => x.step))
+    // L'état d'une close en étiquette, la forme de « en session » (#207) : « Completed » violette et sa coche,
+    // « annulée » grise et son cercle barré ; dans la Chaîne comme dans les Détails.
+    const donePill = (x: Task) =>
+      isAbandoned(x)
+        ? drawnPill({ text: 'annulée', bg: palette.sel, fg: palette.text2, mark: 'cancel', height: SIZE.pill.detail })
+        : drawnPill({ text: 'Completed', bg: palette.finishedTint, fg: palette.finishedOn, mark: 'check', height: SIZE.pill.detail })
     // Un lien vers une tâche enchaînée : carré d'axe, titre (cliquable), et son état. Le titre rétrécit et
     // se coupe, l'état garde sa largeur : un titre long poussait la carte hors du panneau (#173).
     const link = (x: Task) => (
@@ -5927,11 +5938,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
         </Box>
         <Box key={`link-state:${x.key}`} flexShrink={0}>
           {x.done ? (
-            // Une close dit « Completed » en violet, comme la bande de la fiche (#199) ; une annulée, « annulée ».
-            <Box flexDirection="row" alignItems="center" gap={SPACE.row}>
-              {isAbandoned(x) ? <Text color={palette.text2}>⊘</Text> : icon(checkIcon(palette.finishedOn, 12, STROKE.pill), 'faite', 12, '✓', palette.finishedOn)}
-              <Text size="caption" weight="medium" color={isAbandoned(x) ? palette.text2 : palette.finishedOn}>{isAbandoned(x) ? 'annulée' : 'Completed'}</Text>
-            </Box>
+            donePill(x)
           ) : isLive(x) ? (
             drawnPill({ text: 'en session', bg: palette.liveTint, fg: palette.liveOn, mark: 'spinner', height: SIZE.pill.detail })
           ) : (
@@ -5952,6 +5959,37 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
         ) : (
           <Button key={id} plain dimColor label={label} onPress={onPress} />
         )}
+      </Box>
+    )
+    // Un cadre coupé (#205, maquette A et choix de BBR) : le texte entier dans une Box de quatre lignes qui cache
+    // la suite, un dégradé de la couleur du cadre sur la dernière, la flèche nette au bout de celle-ci, posés
+    // après le texte (le kit n'a pas de zIndex : ce qui couvre vient en dernier). Ouvert : le texte entier, la
+    // flèche vers le haut à droite, sur sa ligne. `arrow` faux : le fondu sans flèche (une autre cellule la porte).
+    const foldArrow = (id: string, up: boolean, bg: string, onPress: () => void) =>
+      Svg && (
+        <Box key={`hit:${id}`} flexDirection="row" flexShrink={0}>
+          <Svg source={foldArrowIcon({ fg: palette.text2, bg, up })} alt={up ? 'Replier' : 'Tout voir'} width={40} height={20} />
+          {hit(id, onPress, 1)}
+        </Box>
+      )
+    const fadeClip = (id: string, body: RenderElement, bg: string, onPress: () => void, arrow = true) => (
+      <Box key={`clip:${id}`} flexDirection="column" height={4} overflow="hidden" flexShrink={0}>
+        {body}
+        {Svg && (
+          <Box position="absolute" bottom={0} left={0} right={0}>
+            <Svg source={fadeIcon(bg, fullWidth((e.props as { bodyColumns?: number }).bodyColumns ?? 48))} alt="fondu" height={30} />
+          </Box>
+        )}
+        {arrow && (
+          <Box position="absolute" bottom={0} right={0}>
+            {foldArrow(id, false, bg, onPress)}
+          </Box>
+        )}
+      </Box>
+    )
+    const foldedRow = (id: string, up: boolean, bg: string, onPress: () => void) => (
+      <Box flexDirection="row" justifyContent="flex-end">
+        {foldArrow(id, up, bg, onPress)}
       </Box>
     )
     // Le filet au-dessus de chaque ligne d'une carte (#199, maquette A), comme dans la carte Fin (#183).
@@ -6017,11 +6055,18 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     const bilan = current.done && current.id ? bilanData.bilans.get(current.id) : undefined
     const conclusionDue = current.done && current.id !== undefined && (current.fait ?? '').slice(0, 10) >= bilanData.config.depuis
     const fin = finCard({ ...(storedRecap ? { recap: storedRecap } : {}), task: current, ...(bilan ? { bilan } : {}), due: conclusionDue })
+    const finValue = (r: { tone?: string }, md: string) =>
+      r.tone === 'ok' ? <Text wrap="wrap" color={palette.ok}>{md}</Text> : <Markdown text={codeKeptWhole(md)} {...(r.tone === 'dim' ? { dimColor: true } : {})} />
     const finBox = (): RenderElement | null => {
       if (!fin) return null
       const opened = conclusionOpen === current.key
       const shown = [...fin.rows, ...(opened ? fin.more : [])].map(r => ({ ...r, fold: opened ? { md: r.md, cut: false } : foldCell(r.md) }))
       const canOpen = fin.more.length > 0 || shown.some(r => r.fold.cut)
+      // Sur le bureau, une cellule longue garde son texte entier sous le fondu (#205), la flèche au bout de la
+      // dernière si elle est coupée, sinon sur sa ligne sous le tableau ; au terminal, la coupe en signes.
+      const fades = graphic && Client !== undefined && Svg !== undefined
+      const toggleFin = () => void setView($, v => ({ conclusionOpen: v.conclusionOpen === current.key ? '' : current.key }))
+      const lastCut = fades && !opened && shown.length > 0 && shown[shown.length - 1]!.fold.cut
       const tone =
         fin.ressenti === 'fluide'
           ? { bg: mixOver(palette.ok, palette.bg, MIX.smooth), fg: palette.ok }
@@ -6043,13 +6088,15 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
                   <Text color={palette.text2}>{r.name}</Text>
                 </Box>
                 <Box flexShrink={1} minWidth={0} flexGrow={1}>
-                  {r.tone === 'ok' ? <Text wrap="wrap" color={palette.ok}>{r.fold.md}</Text> : <Markdown text={codeKeptWhole(r.fold.md)} {...(r.tone === 'dim' ? { dimColor: true } : {})} />}
+                  {fades && r.fold.cut
+                    ? fadeClip(`fin:${r.name}`, finValue(r, r.md), palette.bg, toggleFin, lastCut && r === shown[shown.length - 1])
+                    : finValue(r, r.fold.md)}
                 </Box>
               </Box>
             </Box>
           ))}
-          {canOpen &&
-            moreLink('fin', opened ? 'Replier' : 'Tout voir', () => void setView($, v => ({ conclusionOpen: v.conclusionOpen === current.key ? '' : current.key })))}
+          {canOpen && !fades && moreLink('fin', opened ? 'Replier' : 'Tout voir', toggleFin)}
+          {canOpen && fades && !lastCut && foldedRow('fin', opened, palette.bg, toggleFin)}
         </Box>,
         {
           before: fin.emoji && <Text>{fin.emoji}</Text>,
@@ -6142,24 +6189,29 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
       )
     // Un bouton icône : carré, fond `btn`, icône de 16 ; au terminal, le mot.
     // `small` : le bouton d'une ligne de texte, 24 px et une icône de 14 px, comme le crayon de la fiche (#193).
-    const action = (key: string, mark: string, label: string, onPress: () => void, scope?: string, small = false) =>
-      pressable(
+    // `small` : 24 px (le crayon) ; `chip` : 20 px, la hauteur d'une pastille, pour un bouton posé dans une
+    // ligne de champ sans la grandir (#208, maquette B : les boutons de la ligne Fichiers).
+    const action = (key: string, mark: string, label: string, onPress: () => void, scope?: string, small: boolean | 'chip' = false) => {
+      const chip = small === 'chip'
+      const iconSize = chip ? SIZE.icon.chip : small ? SIZE.icon.sm : SIZE.icon.md
+      return pressable(
         key,
         onPress,
         <Box
           flexDirection="row"
           justifyContent="center"
           alignItems="center"
-          paddingX={SPACE.indent}
+          paddingX={chip ? SPACE.tight : SPACE.indent}
           backgroundColor={palette.btn}
           hover={{ backgroundColor: palette.btnHover, ...(scope ? { scope } : {}) }}
         >
-          {corners(RADIUS.control, palette.bg)}
-          {strut(small ? SIZE.strut.row : SIZE.strut.control)}
-          {Svg && <Svg source={mark} alt={label} width={small ? SIZE.icon.sm : SIZE.icon.md} height={small ? SIZE.icon.sm : SIZE.icon.md} />}
+          {corners(chip ? RADIUS.chip : RADIUS.control, palette.bg)}
+          {strut(chip ? SIZE.strut.chip : small ? SIZE.strut.row : SIZE.strut.control)}
+          {Svg && <Svg source={mark} alt={label} width={iconSize} height={iconSize} />}
         </Box>,
         <Button key={key} plain label={label} onPress={onPress} />,
       )
+    }
     // La fiche (#142, maquette C) : l'en-tête Voies, la mission dans son cadre, puis les cartes que
     // l'état rend utiles (`ficheCards`), dans sa session comme au clic dans la roadmap.
     const children = allTasks.filter(x => x !== current && current.id !== undefined && x.parent === current.id)
@@ -6643,15 +6695,8 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
           'Détails',
           summaries.details,
           <Box flexDirection="column">
-            {/* Close : « Completed » en violet, le mot de la bande (#199), ou annulée (⊘). */}
-            {current.done &&
-              field(
-                'État',
-                <Box flexDirection="row" alignItems="center" gap={SPACE.row}>
-                  {abandoned ? <Text color={palette.text2}>⊘</Text> : icon(checkIcon(palette.finishedOn, 14), 'faite', 14, '✓', palette.finishedOn)}
-                  <Text color={abandoned ? palette.text2 : palette.finishedOn}>{abandoned ? 'annulée' : 'Completed'}</Text>
-                </Box>,
-              )}
+            {/* Close : l'étiquette « Completed » violette, le mot de la bande (#199, #207), ou « annulée » grise. */}
+            {current.done && field('État', donePill(current))}
             {s.sujet !== '…' && field('Sujet', plain(s.sujet))}
               {current.section !== '' && current.section !== 'En cours' && field('Section', plain(current.section))}
               {stepOf && field('Étape', plain(`${stepOf.step} sur ${lastStep} de la chaîne`))}
@@ -6681,9 +6726,9 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
             {(fichePath || srcPath) &&
               field(
                 'Fichiers',
-                <Box flexDirection="row" alignItems="center" gap={SPACE.row}>
-                  {fichePath && action('open-fiche', documentIcon(palette.text), 'Fiche', () => void openFile($, fichePath))}
-                  {srcPath && action('open-src', externalIcon(palette.text), 'Source', () => void openFile($, srcPath))}
+                <Box key="files-buttons" flexDirection="row" alignItems="center" gap={SPACE.row}>
+                  {fichePath && action('open-fiche', documentIcon(palette.text, SIZE.icon.chip), 'Fiche', () => void openFile($, fichePath), undefined, 'chip')}
+                  {srcPath && action('open-src', externalIcon(palette.text, SIZE.icon.chip), 'Source', () => void openFile($, srcPath), undefined, 'chip')}
                 </Box>,
               )}
             {current.ouvert !== undefined &&
@@ -6899,13 +6944,17 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
           <Box flexDirection="column" gap={SPACE.tight} paddingX={SPACE.indent} paddingY="sm" flexGrow={1} backgroundColor={palette.note}>
             {corners(RADIUS.control, palette.bg)}
             <Text size="caption" weight="medium" color={labelSpec && editBad(labelSpec) ? palette.lateOn : palette.text2}>Mission</Text>
-            {labelSpec ? editInput(labelSpec) : <Text wrap="wrap">{cut?.cut && !missionShown ? cut.text : frame.text}</Text>}
+            {labelSpec
+              ? editInput(labelSpec)
+              : faded && !missionShown
+                ? fadeClip('mission-line', <Text wrap="wrap">{frame.text}</Text>, palette.note, toggleMission)
+                : <Text wrap="wrap">{cut?.cut && !missionShown && !faded ? cut.text : frame.text}</Text>}
             {labelSpec && editBad(labelSpec) && <Text size="caption" color={palette.lateOn} wrap="wrap">{editNote}</Text>}
+            {/* Coupée (#205) : la flèche, dans le fondu ou sous le texte ouvert ; au terminal, « Tout voir ». */}
+            {!editing && faded && missionShown && foldedRow('mission-line', true, palette.note, toggleMission)}
             {!editing &&
-              (frame.recap || cut?.cut) &&
-              moreLink('mission-line', missionShown ? 'Replier' : frame.recap ? 'La ligne de la roadmap' : 'Tout voir', () =>
-                void setView($, v => ({ missionOpen: v.missionOpen === current.key ? '' : current.key })),
-              )}
+              (frame.recap || (cut?.cut && !faded)) &&
+              moreLink('mission-line', missionShown ? 'Replier' : frame.recap ? 'La ligne de la roadmap' : 'Tout voir', toggleMission)}
             {!editing && frame.recap && missionShown && <Text size="caption" wrap="wrap">{current.label}</Text>}
             {!editing && noteShown && (cut ? !cut.cut || missionShown : missionShown) && <Text color={palette.text2} wrap="wrap">{noteShown}</Text>}
           </Box>
