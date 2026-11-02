@@ -6300,14 +6300,16 @@ export function brandText(
  * Ce que montre le panneau d'une session (#137) : sa tâche, dans une session « #N · … », tant qu'aucune
  * tâche n'est ouverte en détail et que la flèche retour de la fiche n'a pas été pressée (#165) ; sinon la roadmap.
  * Une session « #N · … » dont la tâche reste introuvable voit l'alerte (`missing`), jamais la liste en
- * silence ; Maestro voit toujours la liste, même titré « #N · … » (#213).
+ * silence ; Maestro voit toujours la liste, même titré « #N · … » (#213). Une session lancée par Maestro
+ * (`child`) n'a que la fiche de sa tâche : la vue demandée n'y compte pas, la liste reste à Maestro (#233).
  */
 export function paneFocus(
   brand: Brand | undefined,
   view: { selected: string; whole?: boolean },
-  o: { titleId?: string; isMaestro?: boolean } = {},
+  o: { titleId?: string; isMaestro?: boolean; child?: boolean } = {},
 ): 'task' | 'missing' | 'roadmap' {
-  if (o.isMaestro || brand?.kind === 'maestro' || view.selected !== '' || view.whole === true) return 'roadmap'
+  if (o.isMaestro || brand?.kind === 'maestro') return 'roadmap'
+  if (!o.child && (view.selected !== '' || view.whole === true)) return 'roadmap'
   if (brand?.kind === 'task') return 'task'
   return o.titleId !== undefined ? 'missing' : 'roadmap'
 }

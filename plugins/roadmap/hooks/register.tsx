@@ -1886,6 +1886,9 @@ async function ownParent($: EngineInterface): Promise<{ id: string; parent: stri
 /** Le parent de cette session est un Maestro : gardé, un parent ne cesse pas de l'être (#124). */
 let parentMaestro = false
 
+/** Le panneau a déjà demandé si le parent est un Maestro (#233) : une fois, ensuite les hooks le tiennent. */
+let parentAsked = false
+
 /**
  * Cette session a-t-elle été lancée par un Maestro (#124) ? Sa ligne est alors tenue par lui, qui la
  * coche à la fusion : la clause lui interdit d'y toucher. Le parent se juge comme Maestro lui-même :
@@ -6142,11 +6145,18 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
 
   // Dans une session « #N · … » : la fiche de sa tâche plutôt que toute la roadmap (#137, #142) ; Maestro,
   // toujours la liste ; sa tâche introuvable partout, l'alerte, jamais la liste en silence (#213).
-  const ownBrand = await sessionBrandOf($)
   const own = await readOwnSession($)
   const titleId = sessionTitleId(own.title)
+  // Lancée par Maestro (#233) : sa fiche seule. Demandé une fois au premier dessin d'une session « #N · … »,
+  // sans attendre le premier message ; ensuite, les hooks le tiennent.
+  if (titleId !== undefined && !parentAsked) {
+    parentAsked = true
+    await parentIsMaestro($)
+  }
+  const ownBrand = await sessionBrandOf($)
   const isMaestro = isMaestroSession(own.title) || (own.id !== undefined && (await loadMaestros($))[own.id] !== undefined)
-  const focus = paneFocus(ownBrand?.brand, view, { ...(titleId !== undefined ? { titleId } : {}), isMaestro })
+  const child = parentMaestro && !isMaestro
+  const focus = paneFocus(ownBrand?.brand, view, { ...(titleId !== undefined ? { titleId } : {}), isMaestro, child })
   const focusBrand = ownBrand?.brand.kind === 'task' && focus === 'task' ? ownBrand.brand : undefined
   if (focus === 'missing' && titleId !== undefined) {
     const others = (missingSearch?.id === titleId ? missingSearch.names : [source.name]).filter(n => n !== source.name)
@@ -6167,10 +6177,13 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
             {corners(RADIUS.control, palette.bg)}
             <Button key="missing-retry" plain label="Réessayer" onPress={retryMissing} />
           </Box>
-          <Box key="missing-whole-row" paddingX={SPACE.indent} paddingY="xs" alignItems="center" backgroundColor={palette.btn} hover={{ backgroundColor: palette.btnHover }}>
-            {corners(RADIUS.control, palette.bg)}
-            <Button key="missing-whole" plain label="Toute la roadmap" onPress={() => void setView($, () => ({ whole: true }))} />
-          </Box>
+          {/* Chez un enfant de Maestro, pas de chemin vers la liste : elle reste à Maestro (#233). */}
+          {!child && (
+            <Box key="missing-whole-row" paddingX={SPACE.indent} paddingY="xs" alignItems="center" backgroundColor={palette.btn} hover={{ backgroundColor: palette.btnHover }}>
+              {corners(RADIUS.control, palette.bg)}
+              <Button key="missing-whole" plain label="Toute la roadmap" onPress={() => void setView($, () => ({ whole: true }))} />
+            </Box>
+          )}
         </Box>
         <Text size="caption" color={palette.text2}>Nouvel essai seul toutes les 15 s</Text>
       </Box>
@@ -6436,9 +6449,14 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
         {icon(squareIcon(axisHex(x.axis)), x.axis, 16, '■', axisTheme(x.axis))}
         {x.id && taskNumber(x.id)}
         <Box key={`link-title:${x.key}`} flexShrink={1} minWidth={0}>
-          <Button key={`link:${x.key}`} plain hover={{ underline: true }} onPress={select(selectionOf(x))}>
+          {/* Chez un enfant de Maestro, le titre se lit sans mener à sa fiche (#233). */}
+          {inSession && child ? (
             <Text wrap="truncate-end">{short(x).titre}</Text>
-          </Button>
+          ) : (
+            <Button key={`link:${x.key}`} plain hover={{ underline: true }} onPress={select(selectionOf(x))}>
+              <Text wrap="truncate-end">{short(x).titre}</Text>
+            </Button>
+          )}
         </Box>
         <Box key={`link-state:${x.key}`} flexShrink={0}>
           {x.done ? (
@@ -7446,7 +7464,8 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     return (
       <Box flexDirection="column" gap={SPACE.root} paddingX={SPACE.indent}>
         {/* L'en-tête Voies (#137) ; son titre ouvre la ligne dans la roadmap, sa flèche ramène à la
-            roadmap entière (#165) : dans la session, la vue d'ensemble ; au clic, la liste d'où l'on vient. */}
+            roadmap entière (#165) : dans la session, la vue d'ensemble ; au clic, la liste d'où l'on vient.
+            Chez un enfant de Maestro, pas de flèche : la marque à sa place, la liste reste à Maestro (#233). */}
         <Box paddingX={SPACE.indent}>
           {brandTree(
             $,
@@ -7459,12 +7478,14 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
             undefined,
             false,
             pencil,
-            {
-              key: 'back',
-              press: inSession
-                ? () => void setView($, () => ({ whole: true, editing: '', editNote: '', editField: '' }))
-                : select(''),
-            },
+            inSession && child
+              ? undefined
+              : {
+                  key: 'back',
+                  press: inSession
+                    ? () => void setView($, () => ({ whole: true, editing: '', editNote: '', editField: '' }))
+                    : select(''),
+                },
           )}
         </Box>
         {stateBox()}
