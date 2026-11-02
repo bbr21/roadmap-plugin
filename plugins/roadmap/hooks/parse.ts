@@ -6677,6 +6677,8 @@ function shellCommands(line: string, home: string): ShellCommand[] {
       quote = c
       word = word ?? ''
     } else if (c === ' ' || c === '\t') end()
+    // `2>&1`, `>&2`, `&>fichier` : une redirection, pas un séparateur.
+    else if (c === '&' && (/[<>]$/.test(word ?? '') || line[i + 1] === '>')) word = (word ?? '') + c
     else if (c === ';' || c === '|' || c === '&' || c === '\n') {
       end()
       let op: string = c
@@ -6744,19 +6746,24 @@ function expandVars(word: string, vars: Map<string, string>): string {
   return word.replace(/\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))/g, (all, braced?: string, bare?: string) => vars.get(braced ?? bare ?? '') ?? all)
 }
 
-/** Les mots qui changent une variable ou le chemin d'exécution : une ligne qui en a ne suit plus ses variables (#226). */
-const SHELL_FLOW = new Set(['if', 'then', 'else', 'elif', 'fi', 'for', 'while', 'until', 'do', 'done', 'case', 'esac', 'select', 'function', '{', '}', '!', '[[', 'read', 'unset', 'declare', 'typeset', 'local', 'readonly', 'mapfile', 'readarray', 'getopts', 'let', 'source', '.', 'exec'])
+/**
+ * Les commandes qui ne peuvent changer aucune variable du shell (#226, relecture de sécurité) : des
+ * programmes, et `cd`, `echo`, `test`, `true`, `false`, `:` parmi les commandes du shell. Une liste
+ * blanche : `read`, `trap`, `printf -v`, `builtin`, `if`, `for`… n'y sont pas, et une ligne qui en a
+ * ne suit plus ses variables.
+ */
+const VAR_SAFE_COMMANDS = new Set(['git', 'node', 'npm', 'npx', 'python3', 'python', 'claude', 'bash', 'sh', 'zsh', 'eval', 'cd', 'echo', 'test', '[', 'true', 'false', ':', 'cat', 'ls', 'grep', 'rg', 'sed', 'awk', 'head', 'tail', 'wc', 'sort', 'uniq', 'cut', 'tr', 'find', 'diff', 'jq', 'date', 'pwd', 'basename', 'dirname', 'mkdir', 'cp', 'mv', 'rm', 'touch', 'tee', 'xargs', 'sleep'])
 
 /**
- * Une ligne dont les variables se suivent sans risque : ni bloc, ni boucle, ni sous-shell, ni commande
- * qui affecte une variable autrement que `W=…` (`read`, `unset`, `printf -v`, `W+=…`).
+ * Une ligne dont les variables se suivent sans risque : chaque commande est une affectation seule ou
+ * une commande de `VAR_SAFE_COMMANDS` (ou un programme nommé par son chemin), et aucun mot n'a de
+ * `$(…)`, de guillemet inversé, de `${…}` autre que `${NOM}`, de `W+=` ni de parenthèse.
  */
 function plainShell(commands: ShellCommand[]): boolean {
   return commands.every(({ words }) => {
-    const first = words.find(w => !/^[A-Za-z_][A-Za-z0-9_]*=/.test(w) && w !== 'env' && w !== 'export') ?? ''
-    if (SHELL_FLOW.has(first) || /^[({]/.test(first)) return false
-    if (first === 'printf' && words.includes('-v')) return false
-    return !words.some(w => /^[A-Za-z_][A-Za-z0-9_]*\+=/.test(w) || /^\(|\)$/.test(w))
+    if (words.some(w => /\$\(|`|\$\{(?![A-Za-z_][A-Za-z0-9_]*\})|^[A-Za-z_][A-Za-z0-9_]*\+=|^\(|\)$/.test(w))) return false
+    const first = words.find(w => !/^[A-Za-z_][A-Za-z0-9_]*=/.test(w) && w !== 'env' && w !== 'export')
+    return first === undefined || VAR_SAFE_COMMANDS.has(first) || (first.includes('/') && !first.includes('$'))
   })
 }
 

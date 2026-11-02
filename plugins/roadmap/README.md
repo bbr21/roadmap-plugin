@@ -671,6 +671,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.150.3 (2026-11-02)** : hooks : le garde-fou ne suit une variable que sur une ligne de commandes sûres (liste blanche), et lit 2>&1 comme une redirection (#226, seconde relecture de sécurité)
 - **0.150.2 (2026-11-02)** : réglages : deux plugins « roadmap » actifs (magasin du compte et catalogue local) n'empêchent plus le choix Compte de basculer sur Team ni ne vident le volet Réglages (#227)
 - **0.150.1 (2026-11-02)** : hooks : le garde-fou du dossier principal ne prend plus un worktree de l'app pour lui et lit une variable affectée plus tôt dans la ligne (#226)
 - **0.150.0 (2026-11-02)** : panneau : la carte d'ouverture de Maestro ne liste plus ses tâches lancées, que le panneau et la bande portent déjà (#215)
