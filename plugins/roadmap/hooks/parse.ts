@@ -6041,6 +6041,34 @@ export function maestroBand(o: { brand: Brand | undefined; hasSurvey: boolean; s
   return { brand: o.brand, tasks, more: o.brand.tasks.length - tasks.length }
 }
 
+/**
+ * Ce que `/maestro-bar` a trouvé (#225) : une session de tâche (`task`) ou lancée par un Maestro
+ * (`child`), dont le Maestro porte la bande ; pas de roadmap ; une lecture en panne ; ou Maestro, avec
+ * ses sessions, la marque posée par la commande, une question de la boîte de fin à l'écran, et si l'app
+ * a déjà demandé la bande à ce plugin depuis son chargement.
+ */
+export type MaestroBarCase =
+  | { kind: 'task'; id: string }
+  | { kind: 'child' }
+  | { kind: 'no-roadmap' }
+  | { kind: 'unread' }
+  | { kind: 'maestro'; tasks: number; marked: boolean; survey: boolean; drawn: boolean }
+
+/** La ligne que `/maestro-bar` rend (#225) : ce que la bande montre, ou pourquoi elle ne montre rien. */
+export function maestroBarText(c: MaestroBarCase): string {
+  const lead = 'Bande de Maestro : '
+  if (c.kind === 'task') return `${lead}cette session tient la tâche #${c.id}, c'est son Maestro qui porte la bande.`
+  if (c.kind === 'child') return `${lead}cette session a été lancée par un Maestro, c'est lui qui porte la bande.`
+  if (c.kind === 'no-roadmap') return `${lead}aucune roadmap pour ce projet, elle n'a rien à montrer.`
+  if (c.kind === 'unread') return `${lead}la roadmap ou la liste des sessions n'a pas pu se lire, réessaie dans un instant.`
+  const marked = c.marked ? 'Session marquée Maestro. ' : ''
+  if (c.tasks === 0) return `${marked}${lead}aucune session lancée, elle paraîtra au premier lancement.`
+  const said = [`Bande de Maestro redessinée : ${c.tasks} session${c.tasks > 1 ? 's' : ''}.`]
+  if (c.survey) said.push('La question de la boîte de fin tient sa place : elle revient à la réponse.')
+  if (!c.drawn) said.push("L'app n'a encore jamais demandé la bande à ce plugin : sa version n'a peut-être pas de bande au-dessus de la saisie (AbovePrompt).")
+  return marked + said.join(' ')
+}
+
 /** La case de l'étape de la bande de Maestro, au plus, en cellules (#211) : au-delà, l'étape se tronque et le titre garde sa place. */
 export const BAND_STEP_MAX = 24
 

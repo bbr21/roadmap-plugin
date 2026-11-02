@@ -210,6 +210,12 @@ Maestro seul, sans tokens ni jauge (#174) ; sous la jauge d'étapes de chaque li
 contexte de sa session, noté à la fin de chacun de ses tours, orange à 70 %, rouge à 85 % (#157, revenue par #217). La jauge, le compte, l'étape et
 l'état se serrent au bord droit, chacun à la largeur de son plus long texte, alignés d'une ligne à
 l'autre (#174, #211).
+`/maestro-bar` force la bande (#225, demande de Bertrand du 02/11/2026) : la commande relit la fiche
+de la session, pose la marque Maestro (comme dire « Maestro »), relit les sessions, redessine la bande
+et dit en une ligne ce qu'elle montre, ou pourquoi rien : session de tâche ou lancée par un Maestro
+(son Maestro porte la bande), aucune session lancée, roadmap absente ou illisible, question de la
+boîte de fin à l'écran, app qui n'a jamais demandé la bande. Une session renommée « Maestro … » ou
+qui vient de dire « Maestro » voit aussi sa bande paraître seule, sans attendre qu'une session bouge.
 
 **Les mots d'état du panneau** (#174) : « Completed » pour une tâche close (bande de Maestro, voies,
 pastille violette de sa fiche) et « Done » pour ce qui est fait (« 7/7 Done », « N Done » de l'en-tête,
@@ -663,6 +669,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.148.0 (2026-11-02)** : panneau : /maestro-bar fait paraître la bande de Maestro au-dessus de la saisie, ou dit pourquoi elle ne paraît pas (#225)
 - **0.147.1 (2026-11-02)** : panneau : une mère lancée par Maestro ne vide plus le panneau (zone de clic posée deux fois) (#220)
 - **0.147.0 (2026-11-02)** : hooks : les tests lourds passent un par un par projet (one-at-a-time.sh), le hook Bash met en file claude plugin test, release.py check et npm test (#222)
 - **0.146.0 (2026-11-02)** : réglages : le choix Compte (Auto, Perso, Team / Enterprise) remplace « Hooks classiques », sans ligne grise dès la première session sur un compte Team (#223)

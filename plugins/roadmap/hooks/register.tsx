@@ -82,6 +82,7 @@ import {
   bandColumns,
   bandState,
   maestroBand,
+  maestroBarText,
   type MaestroBand,
   type StepsView,
   maestroBrandTasks,
@@ -1695,6 +1696,8 @@ async function markMaestro($: EngineInterface): Promise<void> {
   const now = await $.clock.now()
   const kept = Object.entries(await loadMaestros($)).filter(([, at]) => now - at <= MAESTRO_MARK_MS)
   await $.store.set(MAESTROS_KEY, { ...Object.fromEntries(kept), [own.id]: now })
+  // La marque n'est pas un atome : sans ce redessin, la bande attendait qu'une session bouge (#225).
+  await update($, liveVersionAtom, v => v + 1)
 }
 
 /** Les propositions gardées pour les Maestros ; seules les entrées bien formées comptent. */
@@ -2437,7 +2440,10 @@ async function readSelfRow($: EngineInterface): Promise<unknown> {
     const text = ran.text ?? ''
     const row: unknown = JSON.parse(text)
     if (typeof row !== 'object' || row === null) return undefined
+    const before = ownSession
     ownSession = { id: sessionIdIn(text), title: sessionTitleIn(text), parent: sessionParentIn(text) }
+    // Une session renommée « Maestro … » (ou une fiche enfin lue) : la bande se redessine (#225).
+    if (before?.id !== ownSession.id || before?.title !== ownSession.title) await update($, liveVersionAtom, v => v + 1)
     return row
   } catch {
     return undefined
@@ -4286,6 +4292,7 @@ export const register: Register = (on, options) => {
   sourceTitle = undefined
   // La session et le droit de lister les sessions se relisent aussi (un refus de la liste ne survit pas).
   ownSession = null
+  bandAsked = undefined
   listDenied = false
   lastListRows = []
   listDeniedTick = 0
@@ -4333,6 +4340,10 @@ export const register: Register = (on, options) => {
     await $.command.register({
       name: 'roadmap',
       description: 'Ouvrir le panneau de la roadmap du projet',
+    })
+    await $.command.register({
+      name: BAR_COMMAND,
+      description: 'Faire paraître la bande de Maestro au-dessus de la saisie, ou dire pourquoi elle ne paraît pas',
     })
     // Le volet Réglages vaut dans tout projet, roadmap ou non : les réglages de session valent partout.
     await $.command.register({
@@ -4769,6 +4780,8 @@ export const register: Register = (on, options) => {
 
   on('command.run', { command: 'reglages' }, async $ => openSettings($))
 
+  on('command.run', { command: BAR_COMMAND }, async $ => forceBar($))
+
   // La skill des réglages tapée seule ouvre le volet sans passer par le modèle ; suivie d'une demande
   // (« coupe le mode ADHD »), la skill la traite. Lancée par le modèle, le volet s'ouvre aussi.
   // Suivie d'une demande, le volet s'ouvre dès la commande : sous sec-default, skill.prompt ne l'ouvre pas (#116).
@@ -4845,6 +4858,7 @@ export const register: Register = (on, options) => {
   // moins une session, jamais pendant un sondage ; sinon la bande reste à l'app. La boîte de fin qui
   // pose une question prend sa place (l'app) : l'arbre revient quand elle est répondue.
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
+    bandAsked = { survey: e.props.hasSurvey }
     if (e.props.hasSurvey) return next(e)
     try {
       const found = await sessionBrandOf($)
@@ -5337,6 +5351,42 @@ function brandTree(
       {stations && Svg && <Svg source={stations.source} alt={words.stations?.here ?? ''} width={stations.width} height={stations.height} />}
     </Box>
   )
+}
+
+/** La commande qui force la bande de Maestro (#225). */
+const BAR_COMMAND = 'maestro-bar'
+
+/** Le dernier dessin de la bande demandé par l'app depuis le chargement du module, et s'il cédait à une question (#225). */
+let bandAsked: { survey: boolean } | undefined
+
+/**
+ * `/maestro-bar` (#225) : la bande ne se redessine qu'à un atome lu, et la fiche de la session se garde
+ * entre deux relectures. La commande relit la fiche (un titre changé, une fiche refusée par le mode
+ * auto), pose la marque Maestro (choix de Bertrand : la commande vaut « Maestro »), sauf dans une
+ * session de tâche ou lancée par un Maestro, relit les sessions, redessine, et dit en une ligne ce que
+ * la bande montre, ou pourquoi rien.
+ */
+async function forceBar($: EngineInterface): Promise<{ text: string }> {
+  const own = await readOwnSession($, true)
+  const id = sessionTitleId(own.title)
+  if (id !== undefined) return { text: maestroBarText({ kind: 'task', id }) }
+  if (await parentIsMaestro($)) return { text: maestroBarText({ kind: 'child' }) }
+  const source = await sourceNow($)
+  if (!source) return { text: maestroBarText({ kind: 'no-roadmap' }) }
+  const marked = own.id !== undefined && (await loadMaestros($))[own.id] === undefined && !isMaestroSession(own.title)
+  try {
+    await markMaestro($)
+  } catch {
+    // store illisible : le titre juge seul
+  }
+  await refreshSessions($, source, true)
+  const found = await sessionBrandOf($)
+  await update($, liveVersionAtom, v => v + 1)
+  $.ui.invalidate('ui.render')
+  if (found?.brand.kind !== 'maestro') return { text: maestroBarText({ kind: 'unread' }) }
+  return {
+    text: maestroBarText({ kind: 'maestro', tasks: found.brand.tasks.length, marked, survey: bandAsked?.survey === true, drawn: bandAsked !== undefined }),
+  }
 }
 
 /**
