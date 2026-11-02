@@ -239,6 +239,9 @@ import {
   integerShares,
   briefDocs,
   launchBrief,
+  treeContext,
+  TREE_MARK,
+  withTreeContext,
   launchPrompt,
   namedFiles,
   ownLaunch,
@@ -2964,7 +2967,57 @@ async function workBrief($: EngineInterface, source: Source, task: Task, shortTi
   // #194 : les fichiers que nomment la spec et la fiche ouvrent le brief, sous la mission.
   const named: string[] = []
   for (const doc of briefDocs(source, task, found)) for (const f of namedFiles((await readOr($, doc)) ?? '')) if (!named.includes(f)) named.push(f)
-  return launchBrief(source, task, shortTitle, bilanLog, maestro, found, named)
+  return launchBrief(source, task, shortTitle, bilanLog, maestro, found, named, await treeFor($, source, task))
+}
+
+/**
+ * La section de l'arbre d'une tâche (#237) : les deux fichiers de la roadmap, le journal des bilans et
+ * la liste des sessions, archivées comprises, relus maintenant. Une lecture en panne ou refusée ôte sa
+ * part (un `deny` ne lève pas, #195), le reste du brief part.
+ */
+async function treeFor($: EngineInterface, source: Source, task: Task): Promise<string[]> {
+  const { open, done } = files(source)
+  const [openTasks, doneTasks, bilan] = await Promise.all([load($, open, 'ROADMAP.md'), load($, done, 'ROADMAP-fait.md'), loadBilan($, source).catch(() => undefined)])
+  let sessions: unknown[] = []
+  try {
+    toolCalls++
+    const ran = await $.tool.call({ tool: LIST_SESSIONS_TOOL, include_archived: true, limit: TASK_SESSION_LIMIT })
+    const rows: unknown = ran.deny === undefined && !ran.isError ? JSON.parse(ran.text ?? '[]') : []
+    if (Array.isArray(rows)) sessions = rows
+  } catch {
+    // outil absent ou réponse illisible : pas de rubrique des sessions
+  }
+  return treeContext({
+    source,
+    task,
+    open: typeof openTasks === 'string' ? [] : openTasks,
+    done: typeof doneTasks === 'string' ? [] : doneTasks,
+    ...(bilan ? { bilans: bilan.bilans } : {}),
+    sessions,
+  })
+}
+
+/**
+ * Une carte que le modèle écrit lui-même (Maestro, ou une session qui propose), titrée « #N · … » :
+ * le même générateur que le ▶ y ajoute la section de l'arbre, si elle ne l'a pas (#237). Sans
+ * roadmap, sans tâche #N ou en panne : la carte part telle quelle.
+ */
+async function withTree($: EngineInterface, e: unknown): Promise<unknown> {
+  const card = e as { title?: unknown; prompt?: unknown }
+  const id = typeof card.title === 'string' ? sessionTitleId(card.title) : undefined
+  if (id === undefined || typeof card.prompt !== 'string' || card.prompt.includes(TREE_MARK)) return e
+  try {
+    const source = await sourceNow($)
+    if (!source) return e
+    const { open, done } = files(source)
+    const tasks = [open, done].map(async (p, i) => load($, p, i === 0 ? 'ROADMAP.md' : 'ROADMAP-fait.md'))
+    const task = (await Promise.all(tasks)).flatMap(t => (typeof t === 'string' ? [] : t)).find(t => t.id === id)
+    if (!task) return e
+    const prompt = withTreeContext(card.prompt, await treeFor($, source, task))
+    return prompt === card.prompt ? e : { ...(e as object), prompt }
+  } catch {
+    return e
+  }
 }
 
 /** Les chemins de la ligne (`fiche:`, `spec:`, `src:`) qui existent : le brief ne donne à lire que ceux-là (#93). */
@@ -4591,7 +4644,9 @@ export const register: Register = (on, options) => {
   on('tool.call', { tool: 'NotebookEdit' }, ($, e, next) => written($, () => next(e), e.notebook_path))
   // La carte New task d'une sous-session remonte à son Maestro (#67).
   // Option « Lancer en bypass » : la carte qui reste ici demande le bypass (#87).
-  on('tool.call', { tool: START_SESSION_TOOL }, async ($, e, next) => {
+  on('tool.call', { tool: START_SESSION_TOOL }, async ($, raw, next) => {
+    // Une carte du modèle reçoit la section de l'arbre, comme le ▶ (#237).
+    const e = next.origin.plugin === 'engine' && !fromAgent(raw) ? ((await withTree($, raw)) as typeof raw) : raw
     const ran = await forwardProposal($, e, next.origin.plugin, () =>
       next.origin.plugin === 'engine' ? launchWithMode(e, card => next(card as typeof e)) : next(e),
     )

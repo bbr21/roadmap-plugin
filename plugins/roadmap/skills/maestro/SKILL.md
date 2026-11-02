@@ -67,6 +67,12 @@ to it.
   - then `---`, then the detailed brief (the line to reread, the context, the Maestro clause).
 - **The panel's ▶**: title `#<id> · <libellé court>`, full brief opened by its mission, and the
   Maestro clause added by itself.
+- **The tree's context** (#237): every brief, the ▶'s and a hand-written card alike, ends its
+  detail with « Contexte de l'arbre de la tâche #N »: the parent task, the sisters and their state,
+  the prerequisites and what they delivered, what the task unblocks, the closed tasks that cite it
+  and the sessions already run on it, with their paths. The panel writes it: a card titled
+  `#<id> · …` without it gets it when posted. Do not copy it by hand; a card without `#<id>` in its
+  title gets none.
 - **By hand** (`start_session`, `user_asked` when the person asked for it, otherwise an
   `own_initiative` card): same title, own worktree, full brief opened by its three mission lines,
   then the detail (the line to reread, the files, what « fini » means, test included) and the

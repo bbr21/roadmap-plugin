@@ -4329,6 +4329,112 @@ function briefFiles(source: Source, task: Task, found: BriefFound): { files: str
   return { files, notes }
 }
 
+/** Le titre de la section de l'arbre (#237) : elle n'entre qu'une fois dans un brief. */
+export const TREE_MARK = "Contexte de l'arbre"
+
+/** Le plus de tâches ou de sessions qu'une rubrique de l'arbre cite : au-delà, « … et N autres ». */
+const TREE_MAX = 8
+
+/** Ce qu'une tâche close dit avoir livré : la ligne `fait` de son bilan, sinon le « livré : … » de sa ligne. */
+function deliveredOf(t: Task, bilan: Bilan | undefined): string | undefined {
+  if (bilan) {
+    const fait = bilan.fait || conclusionOf(bilan).fait
+    // « aucun » souci n'en est pas un : la ligne ne le dit pas.
+    const souci = /^(aucun|rien|-)?$/i.test(bilan.souci.trim()) ? '' : bilan.souci
+    if (fait) return `livré : ${fait}${souci ? ` ; souci : ${souci}` : ''}`
+  }
+  for (const text of [t.note, t.src]) {
+    const m = text ? /\blivr[ée]e?s?\s*:\s*(.+)$/i.exec(text) : null
+    if (m) return `livré : ${m[1]!.trim()}`
+  }
+  return undefined
+}
+
+/**
+ * La section de l'arbre d'une tâche (#237) : sa mère, ses filles, ses sœurs et leur état, ses prérequises
+ * et ce qu'elles ont livré, ce qu'elle débloque, les closes qui la citent et les sessions déjà passées
+ * sur elle (du projet seulement, `source.match`), chacune avec son chemin. Rien : une tâche seule.
+ */
+export function treeContext(o: {
+  source: Source
+  task: Task
+  open: readonly Task[]
+  done: readonly Task[]
+  bilans?: ReadonlyMap<string, Bilan>
+  sessions?: readonly unknown[]
+}): string[] {
+  const { source, task } = o
+  const all = [...o.open.filter(t => !t.done), ...o.done.filter(t => t.done)]
+  const others = all.filter(t => t !== task && !(task.id && t.id === task.id))
+  const pathOf = (t: Task) => {
+    const [file, line] = [t.key.split(':').slice(0, -1).join(':'), t.key.split(':').pop()]
+    const name = file.split('/').pop() || (t.done ? 'ROADMAP-fait.md' : 'ROADMAP.md')
+    return `\`${source.dir}/${name}\` (ligne ${line})`
+  }
+  const stateOf = (t: Task) => {
+    if (t.done) return `${isAbandoned(t) ? 'annulée' : 'faite'}${t.fait ? ` le ${t.fait}` : ''}`
+    const state = t.attend ? `attend : ${t.attend}` : t.branche || t.qui ? `en cours (\`${t.branche ?? t.qui}\`)` : 'à faire'
+    return t.due && !t.attend ? `${state}, échéance ${t.due}` : state
+  }
+  // Sans accents graves : coupé, un libellé en laisserait un seul, qui casserait le Markdown du brief.
+  const entry = (t: Task) => `${t.id ? `#${t.id} ` : ''}${t.nom ?? clip(t.label.replace(/`/g, ''), 100)} · ${stateOf(t)} · ${pathOf(t)}`
+  const capped = (items: readonly string[]) =>
+    items.length > TREE_MAX ? [...items.slice(0, TREE_MAX), `… et ${items.length - TREE_MAX} autres`] : items
+  // Un élément peut porter des lignes de détail, sous lui (le « livré » d'une prérequise).
+  const rubric = (title: string, items: readonly string[]) =>
+    items.length === 0 ? [] : [`- ${title} :`, ...capped(items).flatMap(i => i.split('\n').map((l, k) => (k === 0 ? `  - ${l}` : `    ${l}`)))]
+  // Les ouvertes dans l'ordre du fichier, puis les closes, les plus récentes en tête comme ROADMAP-fait.
+  const ordered = (ts: readonly Task[]) => [...ts.filter(t => !t.done), ...ts.filter(t => t.done)]
+
+  const out: string[] = []
+  const mother = task.parent ? others.find(t => t.id === task.parent) : undefined
+  if (mother) {
+    const fiche = mother.fiche ? (URL_RE.test(mother.fiche) ? mother.fiche : pathCandidates(source, mother.fiche)[0]) : undefined
+    out.push(`- Tâche mère : ${entry(mother)}${fiche ? ` · fiche \`${fiche}\`` : ''}`)
+  }
+  const daughters = task.id ? ordered(others.filter(t => t.parent === task.id)) : []
+  out.push(...rubric('Filles', daughters.map(entry)))
+  const sisters = task.parent ? ordered(others.filter(t => t.parent === task.parent)) : []
+  out.push(...rubric('Sœurs', sisters.map(entry)))
+  const prereqs = prereqsOf(task, all)
+  const prereqItems = prereqs.map(t => {
+    const delivered = t.done ? deliveredOf(t, t.id ? o.bilans?.get(t.id) : undefined) : undefined
+    return delivered ? `${entry(t)}\n${delivered}` : entry(t)
+  })
+  out.push(...rubric('Prérequises', prereqItems))
+  const unlocks = unlockedBy(task, all, t => prereqsOf(t, all))
+  out.push(...rubric('Débloque', unlocks.map(entry)))
+  // Les closes qui la nomment (« #N », `après:N`), hors celles déjà citées plus haut.
+  const shown = new Set<Task>([...(mother ? [mother] : []), ...daughters, ...sisters, ...prereqs, ...unlocks])
+  const cite = task.id ? new RegExp(`#${task.id}(?!\\d)`) : undefined
+  const citing = cite
+    ? others.filter(
+        t => t.done && !shown.has(t) && ([t.label, t.note, t.src, t.attend].some(x => x !== undefined && cite.test(x)) || prereqsOf(t, all).includes(task)),
+      )
+    : []
+  out.push(...rubric('Tâches closes qui la citent', citing.map(entry)))
+  // Les sessions du projet titrées « #N · … », la plus récente d'abord.
+  type Row = { title: string; cwd: string; branch?: unknown; isArchived?: unknown; lastActivityAt?: unknown }
+  const rows = (o.sessions ?? []).filter((r): r is Row => {
+    const s = r as { title?: unknown; cwd?: unknown } | null
+    return typeof s === 'object' && s !== null && typeof s.title === 'string' && typeof s.cwd === 'string'
+      && source.match.some(p => (s.cwd as string).startsWith(p)) && task.id !== undefined && sessionTitleId(s.title) === task.id
+  })
+  const at = (r: Row) => (typeof r.lastActivityAt === 'string' ? Date.parse(r.lastActivityAt) || 0 : 0)
+  const sessions = [...rows]
+    .sort((a, b) => at(b) - at(a))
+    .map(r => `« ${r.title} » · ${r.isArchived === true ? 'archivée' : 'ouverte'} · dossier \`${r.cwd}\`${typeof r.branch === 'string' && r.branch ? ` · branche \`${r.branch}\`` : ''}`)
+  out.push(...rubric('Sessions déjà passées sur elle', sessions))
+  if (out.length === 0) return []
+  return [`${TREE_MARK}${task.id ? ` de la tâche #${task.id}` : ''} (relevé au lancement ; relis les chemins pour le détail) :`, ...out]
+}
+
+/** Un brief complété par la section de l'arbre (#237), au bout, s'il ne l'a pas déjà. */
+export function withTreeContext(prompt: string, lines: readonly string[]): string {
+  if (lines.length === 0 || prompt.includes(TREE_MARK)) return prompt
+  return `${prompt.replace(/\s+$/, '')}\n\n${lines.join('\n')}`
+}
+
 /** La ligne citée, ses champs et sa note : le haut commun des briefs de lancement et de vérification. */
 function briefTask(task: Task): string[] {
   return [
@@ -4422,6 +4528,7 @@ export function launchBrief(
   maestro?: string,
   found: BriefFound = {},
   named: readonly string[] = [],
+  tree: readonly string[] = [],
 ): { title: string; prompt: string; background: string } {
   const { travail, requis, requiredOn } = projectSettings(source)
   const { files, notes } = briefFiles(source, task, found)
@@ -4446,6 +4553,7 @@ export function launchBrief(
     'Lis d\'abord, par leur chemin :',
     ...files.map(f => `- ${f}`),
     ...notes,
+    ...(tree.length > 0 ? ['', ...tree] : []),
     '',
     'Relis la ligne dans le fichier avant de commencer : elle a pu bouger depuis ce lancement.',
     ...reglesClause(source, found),
