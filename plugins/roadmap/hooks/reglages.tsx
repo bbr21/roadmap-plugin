@@ -219,7 +219,7 @@ export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
       { field: 'capture', name: 'Capter les tasks', def: 'On' },
       { field: 'titleModel', name: 'Modèle des titres courts', def: 'sonnet' },
       { field: 'me', name: 'Tes noms', def: 'vide' },
-      { field: 'classicHooks', name: 'Hooks classiques', def: 'On' },
+      { field: 'account', name: 'Compte', def: 'auto' },
     ],
   },
   {
@@ -233,6 +233,17 @@ export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
     ],
   },
 ]
+
+/** Ce que le volet écrit pour une valeur de liste quand la valeur seule ne se lit pas (#223) ; `/config` montre la valeur. */
+const CHOICE_LABELS: Readonly<Record<string, Readonly<Record<string, string>>>> = {
+  account: { auto: 'Auto', perso: 'Perso', team: 'Team / Enterprise' },
+}
+
+/** Les choix d'une liste du volet : la valeur, et son libellé quand `CHOICE_LABELS` en a un. */
+export function choiceOptions(field: string, values: readonly string[]): { value: string; label?: string }[] {
+  const labels = CHOICE_LABELS[field]
+  return values.map(value => (labels?.[value] ? { value, label: labels[value] } : { value }))
+}
 
 /** L'ordre des options qu'aucune section ne range, dans « Autres » (#91) : oui/non, puis listes, puis textes. */
 const KIND_ORDER: Record<ConfigKind, number> = { boolean: 0, choice: 1, text: 2, number: 2 }
@@ -379,14 +390,14 @@ export async function drawSettings($: EngineInterface, e: RenderInput<'Pane'>, p
         return (
           <Select
             key={key}
-            options={values.map(value => ({ value }))}
+            options={choiceOptions(field, values)}
             value={current}
             onSelect={(value: string) => void setOption($, o.key, value)}
           />
         )
       }
       const next = values[(values.indexOf(current) + 1) % values.length] ?? values[0]!
-      return <Button key={key} plain label={current} onPress={() => void setOption($, o.key, next)} />
+      return <Button key={key} plain label={CHOICE_LABELS[field]?.[current] ?? current} onPress={() => void setOption($, o.key, next)} />
     }
     return <Text mono size="caption">{String(o.value)}</Text>
   }

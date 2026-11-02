@@ -5469,7 +5469,7 @@ export const COMPACT_RATIO = 0.5
  * Les événements que sec-default saute pour les plugins installés (#116, #219) : `classic.*`, `skill.prompt`,
  * `prompt.compose`, `prompt.context`, `prompt.section`, `prompt.attachment`, `attribution.text`,
  * `session.compact` et `settings.read`. Pour chaque hook enregistré sur l'un d'eux, l'app affiche « its
- * <événement> hook was skipped » : l'option `classicHooks` éteinte, le module n'en enregistre aucun.
+ * <événement> hook was skipped » : en Compte Team / Enterprise (#223), le module n'en enregistre aucun.
  */
 export const SEC_DEFAULT_HOOKS: readonly string[] = [
   'classic.*',
@@ -5488,8 +5488,21 @@ export function secDefaultHook(event: string): boolean {
   return SEC_DEFAULT_HOOKS.some(skipped => (skipped.endsWith('.*') ? event.startsWith(skipped.slice(0, -1)) : event === skipped))
 }
 
-/** Tours finis sans Stop, dans un chargement qui ne l'a jamais vu tourner, qui éteignent `classicHooks` (#219). */
+/** Tours finis sans Stop, dans un chargement qui ne l'a jamais vu tourner, qui passent le Compte Auto à Team (#219, #223). */
 export const CLASSIC_SKIPS_OFF = 2
+
+/**
+ * Le compte de la machine, option « Compte » (#223) : `auto` garde les hooks classic et les coupe seul
+ * quand sec-default les saute ; `perso` les garde ; `team` (Team / Enterprise) n'en enregistre aucun.
+ */
+export const ACCOUNTS = ['auto', 'perso', 'team'] as const
+export type Account = (typeof ACCOUNTS)[number]
+
+/** Le compte que disent les options, `undefined` pour Auto ; sans compte posé, un `classicHooks` éteint par #219 vaut Team. */
+export function declaredAccount(account: unknown, classicHooks: unknown): Account | undefined {
+  if (account === 'perso' || account === 'team') return account
+  return classicHooks === false ? 'team' : undefined
+}
 
 /**
  * Une compaction que `session.compact` n'a pas vue (#119) : sous sec-default, ce hook est sauté, et les

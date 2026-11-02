@@ -71,6 +71,8 @@ import { MIX, RADIUS, SIZE, SPACE, TEXT } from './tokens'
 import { SETTINGS_PANE, drawSettings, openSettings, prefsFile, redrawSettings, sessionProject, watchSettings } from './reglages'
 import {
   CLASSIC_SKIPS_OFF,
+  declaredAccount,
+  type Account,
   ageLabel,
   axisLabel,
   branchGap,
@@ -624,7 +626,7 @@ function axisCount(tasks: Task[], axis: string): number {
 }
 
 /** Les réglages du plugin (userConfig), relus à chaque chargement du module. */
-let settings = { me: [] as string[], autoOpen: true, titleModel: 'sonnet', capture: true, theme: 'auto', launchEffort: 'high', launchBypass: false, axisPill: false, dateFormat: 'us', classicHooks: true }
+let settings = { me: [] as string[], autoOpen: true, titleModel: 'sonnet', capture: true, theme: 'auto', launchEffort: 'high', launchBypass: false, axisPill: false, dateFormat: 'us', account: 'auto' as Account }
 
 /**
  * La palette du panneau. Le mod ne reçoit pas l'apparence de l'app : il lit le thème de Claude
@@ -1031,14 +1033,14 @@ let stopTurn = { id: '', stopRan: false, fromReminder: false }
 
 /**
  * Les tours finis sans Stop de ce chargement (#219) : sous sec-default, l'app dit « hook was skipped » pour
- * chaque hook classic enregistré. Au `CLASSIC_SKIPS_OFF`-ième sans qu'un seul Stop ait tourné, le module
- * éteint son option `classicHooks` ; rechargé, il n'enregistre plus ces hooks. Une demande par chargement.
+ * chaque hook classic enregistré. En Compte Auto, au `CLASSIC_SKIPS_OFF`-ième sans qu'un seul Stop ait tourné,
+ * le module passe son option Compte à `team` ; rechargé, il n'enregistre plus ces hooks. Une demande par chargement.
  */
 let classicSkips = { skipped: 0, stopSeen: false, asked: false }
 
-/** Un tour du fil principal fini par une réponse : Stop a-t-il tourné ? Le deuxième saut éteint `classicHooks` (#219). */
+/** Un tour du fil principal fini par une réponse : Stop a-t-il tourné ? Le deuxième saut passe le Compte Auto à Team (#219, #223). */
 async function noteClassicSkip($: EngineInterface, stopRan: boolean): Promise<void> {
-  if (!settings.classicHooks || classicSkips.asked) return
+  if (settings.account !== 'auto' || classicSkips.asked) return
   if (stopRan) {
     classicSkips.stopSeen = true
     return
@@ -1047,7 +1049,7 @@ async function noteClassicSkip($: EngineInterface, stopRan: boolean): Promise<vo
   if (classicSkips.stopSeen || classicSkips.skipped < CLASSIC_SKIPS_OFF) return
   classicSkips.asked = true
   try {
-    await $.config.set({ key: `${$.plugin.name}.classicHooks`, value: false })
+    await $.config.set({ key: `${$.plugin.name}.account`, value: 'team' })
   } catch {
     // option non écrite : les hooks restent, et leurs secours tiennent
   }
@@ -4280,7 +4282,7 @@ export const register: Register = (on, options) => {
     launchBypass: options.launchBypass === true,
     axisPill: typeof options.axisPill === 'boolean' ? options.axisPill : false,
     dateFormat: options.dateFormat === 'fr' ? 'fr' : 'us',
-    classicHooks: typeof options.classicHooks === 'boolean' ? options.classicHooks : true,
+    account: declaredAccount(options.account, options.classicHooks) ?? 'auto',
   }
   classicSkips = { skipped: 0, stopSeen: false, asked: false }
   setDateFormat(settings.dateFormat)
@@ -4351,8 +4353,8 @@ export const register: Register = (on, options) => {
   // Réglages de session : ceux du projet de la session (#102), injectés comme contexte additionnel au
   // démarrage (startup, resume, clear, compact), dans tout projet, roadmap ou non. Une panne de lecture ne bloque jamais le démarrage.
   // Sous sec-default (compte Team ou Enterprise, #116), ce hook est sauté : le premier message les porte.
-  // Option classicHooks éteinte (#219), il n'est pas enregistré, et l'app n'a plus de saut à dire.
-  if (settings.classicHooks) {
+  // En Compte Team / Enterprise (#219, #223), il n'est pas enregistré, et l'app n'a plus de saut à dire.
+  if (settings.account !== 'team') {
     on('classic.SessionStart', async ($, e, next) => {
       const result = await next(e)
       const text = await sessionPrefsBlock($)
@@ -4375,7 +4377,7 @@ export const register: Register = (on, options) => {
     }
     return next(e)
   })
-  if (settings.classicHooks) {
+  if (settings.account !== 'team') {
     on('session.compact', async ($, e, next) => {
       // `precompute` n'installe rien, et la compaction d'un agent laisse la conversation principale.
       if (e.trigger !== 'precompute' && e.agentId === undefined) {
@@ -4662,7 +4664,7 @@ export const register: Register = (on, options) => {
   })
 
   // Une skill de méthode superpowers, ou swiftui-pro, lancée (outil Skill, commande, préchargement) : notée pour le rappel.
-  if (settings.classicHooks) {
+  if (settings.account !== 'team') {
     on('skill.prompt', async ($, e, next) => {
       skillPrompted = true
       noteSkill(e.skill)
@@ -4684,7 +4686,7 @@ export const register: Register = (on, options) => {
     return next(e)
   })
 
-  if (settings.classicHooks) {
+  if (settings.account !== 'team') {
     on('classic.Stop', async ($, e, next) => {
       stopTurn.stopRan = true
       const result = await next(e)
@@ -4754,7 +4756,7 @@ export const register: Register = (on, options) => {
     return next(e)
   })
 
-  if (settings.classicHooks) {
+  if (settings.account !== 'team') {
     on('skill.prompt', { skill: SETTINGS_SKILL }, async ($, e, next) => {
       const result = await next(e)
       const note = await skillPaneNote($, e.skill)
@@ -4773,7 +4775,7 @@ export const register: Register = (on, options) => {
 
   // La même skill lancée par le modèle, ou tapée sous un nom que le hook ci-dessus n'a pas pris : le
   // panneau s'ouvre aussi, et le texte de la skill le dit en tête.
-  if (settings.classicHooks) {
+  if (settings.account !== 'team') {
     on('skill.prompt', { skill: PANEL_SKILL }, async ($, e, next) => {
       const result = await next(e)
       const note = await skillPaneNote($, e.skill)

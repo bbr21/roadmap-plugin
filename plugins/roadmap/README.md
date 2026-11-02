@@ -628,11 +628,14 @@ gardent leur axe. Allumée, le panneau dessine 20 lignes d'un coup au lieu de 40
 et de l'en-tête d'une session à l'américaine, « Nov 4 », l'heure sur 12 h (« Nov 1 à 8:11 PM ») ; `fr`
 à la française, « 04/11 », « 4 nov. » et « 01/11 à 20:11 ». Les mots (aujourd'hui, hier, dans 4 j)
 restent en français ; les fichiers de la roadmap gardent leurs dates en AAAA-MM-JJ.
-`classicHooks` (« Hooks classiques », défaut oui ; #219) : allumé, le plugin passe aussi par les hooks
-classiques (début de session, fin de tour, skills, compaction). Sur un compte Team ou Enterprise, le
-plugin intégré `cc-plugin-sec-default` les saute et l'app affiche « hook was skipped » : le plugin le
-voit au deuxième tour fini sans Stop et éteint ce réglage seul ; ses secours par message prennent le
-relais (le rappel de fin de tour arrive au message suivant). À rallumer si ce Mac repasse sur un compte personnel.
+`account` (« Compte », défaut `auto` ; #219, #223) : le compte Claude de ce Mac, que le volet Réglages
+nomme Auto, Perso ou Team / Enterprise. `auto` : le plugin passe aussi par les hooks classiques (début
+de session, fin de tour, skills, compaction) ; sur un compte Team ou Enterprise, le plugin intégré
+`cc-plugin-sec-default` les saute et l'app affiche « hook was skipped » : le plugin le voit au deuxième
+tour fini sans Stop et passe seul le réglage sur `team`. `perso` : les hooks restent, rien ne change
+seul. `team` : aucun de ces hooks, dès la première session et sans ligne grise ; ses secours par
+message prennent le relais (le rappel de fin de tour arrive au message suivant). Un `classicHooks`
+éteint par la 0.142 vaut `team` tant que `account` n'est pas posé.
 `capture` éteint coupe tous les contrôles et rappels de la roadmap : la grammaire, et en fin de tour
 le travail à inscrire, le bilan d'une tâche cochée, son rangement et l'archivage de la session,
 l'idée à coder sans ligne, et après un commit les tests, les skills de méthode et les maquettes ; la
@@ -660,6 +663,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.146.0 (2026-11-02)** : réglages : le choix Compte (Auto, Perso, Team / Enterprise) remplace « Hooks classiques », sans ligne grise dès la première session sur un compte Team (#223)
 - **0.145.0 (2026-11-02)** : panneau : la jauge fine de contexte de chaque session revient sous sa jauge d'étapes dans la bande de Maestro (#217)
 - **0.144.0 (2026-11-02)** : maestro, tasks : proposer une task dès qu'une idée neuve ou une action sort de l'échange, règle fixe dite à chaque message d'un projet à roadmap (#216)
 - **0.143.0 (2026-11-02)** : panneau : le bloc En cours garde une session Completed tant qu'elle n'est pas archivée, avec son icône d'archivage, comme la bande (#218)

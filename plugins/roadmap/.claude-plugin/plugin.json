@@ -1,6 +1,6 @@
 {
   "name": "roadmap",
-  "version": "0.145.0",
+  "version": "0.146.0",
   "description": "Panneau Claude Code à côté du chat : la roadmap du projet de la session, filtrable, avec le détail d'une tâche et son lancement dans une nouvelle session",
   "author": {
     "name": "Bertrand Fargheon"
@@ -83,11 +83,16 @@
       "description": "Les sessions lancées depuis le panneau, ou par une carte que pose Claude (Maestro compris), demandent le mode bypass : plus aucune demande de permission. L'app ne l'accorde que si la session d'où tu lances y est déjà ; sinon la session lancée te le demande d'un clic à son démarrage. Éteint : elles prennent le mode de la session d'où tu lances.",
       "default": false
     },
-    "classicHooks": {
-      "type": "boolean",
-      "title": "Hooks classiques",
-      "description": "Allumé, le plugin passe aussi par les hooks classiques de Claude Code (début de session, fin de tour, skills, compaction). Sur un compte Team ou Enterprise, le plugin intégré cc-plugin-sec-default les saute et l'app l'affiche (« hook was skipped ») : le plugin le voit et l'éteint seul, ses secours par message prenant le relais. À rallumer si ce Mac repasse sur un compte personnel.",
-      "default": true
+    "account": {
+      "type": "string",
+      "title": "Compte",
+      "description": "Le compte Claude de ce Mac. « auto » : le plugin passe par les hooks classiques de Claude Code (début de session, fin de tour, skills, compaction) et, s'il voit qu'un compte Team ou Enterprise les saute (cc-plugin-sec-default, lignes grises « hook was skipped »), passe seul sur « team ». « perso » : compte personnel (Pro, Max), les hooks restent toujours. « team » : compte Team ou Enterprise, le plugin ne pose pas ces hooks, dès la première session et sans ligne grise ; ses secours par message prennent le relais (le rappel de fin de tour arrive au message suivant).",
+      "default": "auto",
+      "options": [
+        "auto",
+        "perso",
+        "team"
+      ]
     }
   }
 }
