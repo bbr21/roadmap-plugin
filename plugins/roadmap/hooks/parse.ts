@@ -3312,6 +3312,29 @@ export function stepsView(steps: readonly ChildStep[], opts: { now: number; at: 
   }
 }
 
+/** Une rangée du fil des étapes de la fiche (#214) : une étape, son demi-trait du haut (l'étape d'avant) et du bas (la sienne) ; ou la question d'une session qui attend. */
+export type FilRow = { kind: 'step'; status: StepSegment; content: string; top?: StepSegment; bottom?: StepSegment } | { kind: 'ask'; text: string; line?: StepSegment }
+
+/**
+ * Les rangées du fil (#214, maquette A) : une par étape, le trait vert jusqu'à l'étape en cours, gris
+ * ensuite ; la question d'une session qui attend juste sous l'étape en cours, le fil continu dessous.
+ * `view` se tire dépliée (`fold: Infinity`) : une rangée repliée n'a pas de place sur le fil.
+ */
+export function filRows(view: StepsView, question?: string): FilRow[] {
+  const all = view.rows.flatMap(r => (r.kind === 'step' ? [r] : []))
+  return all.flatMap((r, i): FilRow[] => {
+    const row: FilRow = {
+      kind: 'step',
+      status: r.status,
+      content: r.content,
+      ...(i > 0 ? { top: (all[i - 1] as typeof r).status } : {}),
+      ...(i < all.length - 1 ? { bottom: r.status } : {}),
+    }
+    if (question === undefined || r.status !== 'now') return [row]
+    return [row, { kind: 'ask', text: question, ...(i < all.length - 1 ? { line: r.status } : {}) }]
+  })
+}
+
 /** L'empreinte des notes d'étapes suivies (#143) : elle change avec une étape, pas avec l'ordre des clés. */
 export function stepsStamp(statuses: Record<string, ChildStatus | undefined>): string {
   return JSON.stringify(

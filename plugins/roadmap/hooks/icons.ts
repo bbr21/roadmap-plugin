@@ -827,6 +827,38 @@ export function contextBarIcon(
   }
 }
 
+/**
+ * Le rail d'une rangée du fil des étapes de la fiche (#214, maquette A) : 16 px de large, le demi-trait
+ * du haut et du bas (vert quand l'étape qu'il suit est faite, gris sinon, absent sans étape), puis le
+ * point : disque vert coché, anneau et cœur à la couleur du ton (bleu en cours, orange t'attend,
+ * bleu-vert à fusionner), cercle à faire. Sans `node`, le trait seul (la rangée de la question).
+ */
+export function stepRailIcon(
+  palette: Palette,
+  o: { node?: StepSegment; top?: StepSegment; bottom?: StepSegment; tone?: string; height?: number },
+): { source: string; width: number; height: number } {
+  const width = 16
+  const height = o.height ?? 28
+  const mid = height / 2
+  const stroke = (s: StepSegment) => (s === 'done' ? palette.ok : palette.sel)
+  const top = o.top ? `<rect x="7" y="0" width="2" height="${mid}" fill="${stroke(o.top)}"/>` : ''
+  const bottom = o.bottom ? `<rect x="7" y="${mid}" width="2" height="${height - mid}" fill="${stroke(o.bottom)}"/>` : ''
+  const tone = o.tone ?? palette.live
+  const node =
+    o.node === 'done'
+      ? `<circle cx="8" cy="${mid}" r="7" fill="${palette.ok}"/><path d="M4.8 ${mid + 0.2}l2.1 2.1 4.3-4.4" fill="none" stroke="${palette.bg}" stroke-width="${STROKE.base}" stroke-linecap="round" stroke-linejoin="round"/>`
+      : o.node === 'now'
+        ? `<circle cx="8" cy="${mid}" r="7" fill="${palette.bg}" stroke="${tone}" stroke-width="2"/><circle cx="8" cy="${mid}" r="3" fill="${tone}"/>`
+        : o.node === 'todo'
+          ? `<circle cx="8" cy="${mid}" r="5.5" fill="${palette.bg}" stroke="${palette.text3}" stroke-width="1.4"/>`
+          : ''
+  return {
+    source: `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">${top}${bottom}${node}</svg>`,
+    width,
+    height,
+  }
+}
+
 /** La marque d'une étape dans la carte (#143) : disque vert coché, roue bleue immobile, cercle à faire. */
 export function stepIcon(palette: Palette, status: StepSegment, size = 16): string {
   if (status === 'done') {

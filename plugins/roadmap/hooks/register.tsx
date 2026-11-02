@@ -59,6 +59,7 @@ import {
   fullWidth,
   spinnerIcon,
   stepIcon,
+  stepRailIcon,
   stepsBarIcon,
   squareIcon,
   STROKE,
@@ -369,6 +370,7 @@ import {
   childAlerts,
   stepsStamp,
   stateBand,
+  filRows,
   stepsView,
   childAlertText,
   childrenOf,
@@ -5466,9 +5468,11 @@ async function thumbOf($: EngineInterface, path: string, mtime: number): Promise
 }
 
 /**
- * Le corps de la carte « Étapes » de la fiche (#142, #143 maquette C + A ; carte repliable #199) : la
- * barre, puis toutes les étapes, un filet entre elles ; son résumé, le compte et l'âge de la note.
- * Rien sans note lisible.
+ * Le corps de la carte « Étapes » de la fiche (#142, #143 ; carte repliable #199 ; le fil #214, maquette
+ * A) : un point par étape sur un fil vert jusqu'à l'étape en cours, gris ensuite ; l'étape en cours dans
+ * une bande teintée, son mot à droite (« en cours », « t'attend » orange avec la question dessous,
+ * « à fusionner » bleu-vert, #191). Le rail a une hauteur fixe : un libellé tient sur une ligne, pour que
+ * le fil reste continu. Son résumé, le compte et l'âge de la note. Rien sans note lisible.
  */
 function ficheSteps(
   $: EngineInterface,
@@ -5486,32 +5490,55 @@ function ficheSteps(
   if (!status || !view) return null
   const { Box, Text } = $.ui.resolve(e)
   const Svg = e.surface === 'terminal' ? undefined : $.ui.resolve(e).Svg
-  const bar = stepsBarIcon(palette, view.segments, { width: 240, waiting: status.question !== undefined, merging: state === 'merge' })
-  const rule = ruleIcon(palette.border, fullWidth((e.props as { bodyColumns?: number }).bodyColumns ?? 48))
+  const question = status.question?.text
+  const tone =
+    question !== undefined
+      ? { line: palette.block, tint: palette.blockTint, on: palette.blockOn, word: "t'attend" }
+      : state === 'merge'
+        ? { line: palette.wait, tint: palette.waitTint, on: palette.waitOn, word: 'à fusionner' }
+        : { line: palette.live, tint: palette.liveTint, on: palette.liveOn, word: 'en cours' }
+  const rail = (o: Parameters<typeof stepRailIcon>[1], alt: string) => {
+    if (!Svg) return null
+    const icon = stepRailIcon(palette, { ...o, tone: tone.line })
+    return <Svg source={icon.source} alt={alt} width={icon.width} height={icon.height} />
+  }
+  const corners = Svg
+    ? CORNERS.map(([corner, at]) => (
+        <Box position="absolute" {...at}>
+          <Svg source={cornerIcon(corner, RADIUS.control, palette.bg)} alt="coin" width={RADIUS.control} height={RADIUS.control} />
+        </Box>
+      ))
+    : null
   return {
     summary: cardSummary('etapes', { steps: { count: view.count, age: view.age } }),
     body: (
-      <Box key="fiche-steps" flexDirection="column" gap={SPACE.tight}>
-        {Svg && <Svg source={bar.source} alt={`étapes ${view.count}`} width={bar.width} height={bar.height} />}
-        {view.rows.map((r, i) => (
-          <Box key={`fiche-step:${i}`} flexDirection="column" gap={SPACE.tight}>
-            {i > 0 && Svg && <Svg source={rule} alt="séparateur" height={1} />}
-            {r.kind === 'folded' ? (
-              <Text size="footnote" color={palette.text2}>{r.text}</Text>
-            ) : (
-              <Box flexDirection="row" alignItems="center" gap={SPACE.row}>
-                {Svg ? (
-                  <Svg source={stepIcon(palette, r.status)} alt={STEP_WORDS[r.status]} width={SIZE.icon.md} height={SIZE.icon.md} />
-                ) : (
-                  <Text size="footnote" color={palette.text2}>{STEP_MARKS[r.status]}</Text>
-                )}
-                <Text size="footnote" weight={r.status === 'now' ? 'semibold' : undefined} color={r.status === 'now' ? palette.text : palette.text2} wrap="wrap">
-                  {r.content}
-                </Text>
-              </Box>
-            )}
-          </Box>
-        ))}
+      <Box key="fiche-steps" flexDirection="column">
+        {filRows(view, question).map((r, i) =>
+          r.kind === 'ask' ? (
+            <Box key="fiche-step-ask" flexDirection="row" alignItems="flex-start" gap={SPACE.row}>
+              {rail({ ...(r.line ? { top: r.line, bottom: r.line } : {}), height: 20 }, 'fil')}
+              <Text size="caption" color={palette.blockOn} wrap="wrap">{r.text}</Text>
+            </Box>
+          ) : (
+            <Box key={`fiche-step:${i}`} flexDirection="row" alignItems="center" gap={SPACE.row}>
+              {rail({ node: r.status, ...(r.top ? { top: r.top } : {}), ...(r.bottom ? { bottom: r.bottom } : {}) }, `étape ${STEP_WORDS[r.status]}`)}
+              {!Svg && <Text size="footnote" color={palette.text2}>{STEP_MARKS[r.status]}</Text>}
+              {r.status === 'now' ? (
+                <Box key="fiche-step-now" flexDirection="row" alignItems="center" gap={SPACE.row} paddingX={SPACE.indent} flexGrow={1} flexShrink={1} minWidth={0} backgroundColor={tone.tint}>
+                  {corners}
+                  <Box flexGrow={1} flexShrink={1} minWidth={0}>
+                    <Text size="footnote" weight="semibold" color={palette.text} wrap="truncate-end">{r.content}</Text>
+                  </Box>
+                  <Text size="caption" weight="medium" color={tone.on}>{tone.word}</Text>
+                </Box>
+              ) : (
+                <Box flexGrow={1} flexShrink={1} minWidth={0} paddingX={SPACE.indent}>
+                  <Text size="footnote" color={palette.text2} wrap="truncate-end">{r.content}</Text>
+                </Box>
+              )}
+            </Box>
+          ),
+        )}
       </Box>
     ),
   }
