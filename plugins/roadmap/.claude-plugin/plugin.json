@@ -1,6 +1,6 @@
 {
   "name": "roadmap",
-  "version": "0.141.0",
+  "version": "0.142.0",
   "description": "Panneau Claude Code à côté du chat : la roadmap du projet de la session, filtrable, avec le détail d'une tâche et son lancement dans une nouvelle session",
   "author": {
     "name": "Bertrand Fargheon"
@@ -82,6 +82,12 @@
       "title": "Lancer en bypass",
       "description": "Les sessions lancées depuis le panneau, ou par une carte que pose Claude (Maestro compris), demandent le mode bypass : plus aucune demande de permission. L'app ne l'accorde que si la session d'où tu lances y est déjà ; sinon la session lancée te le demande d'un clic à son démarrage. Éteint : elles prennent le mode de la session d'où tu lances.",
       "default": false
+    },
+    "classicHooks": {
+      "type": "boolean",
+      "title": "Hooks classiques",
+      "description": "Allumé, le plugin passe aussi par les hooks classiques de Claude Code (début de session, fin de tour, skills, compaction). Sur un compte Team ou Enterprise, le plugin intégré cc-plugin-sec-default les saute et l'app l'affiche (« hook was skipped ») : le plugin le voit et l'éteint seul, ses secours par message prenant le relais. À rallumer si ce Mac repasse sur un compte personnel.",
+      "default": true
     }
   }
 }

@@ -627,6 +627,11 @@ gardent leur axe. Allumée, le panneau dessine 20 lignes d'un coup au lieu de 40
 et de l'en-tête d'une session à l'américaine, « Nov 4 », l'heure sur 12 h (« Nov 1 à 8:11 PM ») ; `fr`
 à la française, « 04/11 », « 4 nov. » et « 01/11 à 20:11 ». Les mots (aujourd'hui, hier, dans 4 j)
 restent en français ; les fichiers de la roadmap gardent leurs dates en AAAA-MM-JJ.
+`classicHooks` (« Hooks classiques », défaut oui ; #219) : allumé, le plugin passe aussi par les hooks
+classiques (début de session, fin de tour, skills, compaction). Sur un compte Team ou Enterprise, le
+plugin intégré `cc-plugin-sec-default` les saute et l'app affiche « hook was skipped » : le plugin le
+voit au deuxième tour fini sans Stop et éteint ce réglage seul ; ses secours par message prennent le
+relais (le rappel de fin de tour arrive au message suivant). À rallumer si ce Mac repasse sur un compte personnel.
 `capture` éteint coupe tous les contrôles et rappels de la roadmap : la grammaire, et en fin de tour
 le travail à inscrire, le bilan d'une tâche cochée, son rangement et l'archivage de la session,
 l'idée à coder sans ligne, et après un commit les tests, les skills de méthode et les maquettes ; la
@@ -654,6 +659,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.142.0 (2026-11-02)** : hooks : sous sec-default (compte Team), plus de lignes « hook was skipped », les hooks classic s'éteignent seuls et leurs secours font le travail (#219)
 - **0.141.0 (2026-11-02)** : panneau : liste chez Maestro, fiche chez un enfant à coup sûr, la tâche retrouvée dans le projet où elle vit, une fiche « introuvable » plutôt que la liste en silence (#213)
 - **0.140.0 (2026-11-02)** : panneau : « Rouvrir la session » au pied de la carte Fin d'une tâche close, désarchive et ouvre sa session (#206)
 - **0.139.0 (2026-11-02)** : panneau : la carte Étapes de la fiche en fil, l'étape en cours mise en avant, sans tableau (#214)

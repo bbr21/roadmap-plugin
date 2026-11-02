@@ -5443,6 +5443,32 @@ export function sessionPrefsText(prefs: SessionPrefs, error?: string, project?: 
 export const COMPACT_RATIO = 0.5
 
 /**
+ * Les événements que sec-default saute pour les plugins installés (#116, #219) : `classic.*`, `skill.prompt`,
+ * `prompt.compose`, `prompt.context`, `prompt.section`, `prompt.attachment`, `attribution.text`,
+ * `session.compact` et `settings.read`. Pour chaque hook enregistré sur l'un d'eux, l'app affiche « its
+ * <événement> hook was skipped » : l'option `classicHooks` éteinte, le module n'en enregistre aucun.
+ */
+export const SEC_DEFAULT_HOOKS: readonly string[] = [
+  'classic.*',
+  'skill.prompt',
+  'prompt.compose',
+  'prompt.context',
+  'prompt.section',
+  'prompt.attachment',
+  'attribution.text',
+  'session.compact',
+  'settings.read',
+]
+
+/** Un événement que sec-default saute (`SEC_DEFAULT_HOOKS`, `classic.*` pour tout `classic.`). */
+export function secDefaultHook(event: string): boolean {
+  return SEC_DEFAULT_HOOKS.some(skipped => (skipped.endsWith('.*') ? event.startsWith(skipped.slice(0, -1)) : event === skipped))
+}
+
+/** Tours finis sans Stop, dans un chargement qui ne l'a jamais vu tourner, qui éteignent `classicHooks` (#219). */
+export const CLASSIC_SKIPS_OFF = 2
+
+/**
  * Une compaction que `session.compact` n'a pas vue (#119) : sous sec-default, ce hook est sauté, et les
  * réglages complets ne revenaient pas. Entre deux messages, le contexte ne fait que croître ; s'il a
  * fondu de moitié, ou s'il n'est plus mesuré (un `/compact`, jusqu'à la réponse suivante), il a été

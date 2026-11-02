@@ -219,6 +219,7 @@ export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
       { field: 'capture', name: 'Capter les tasks', def: 'On' },
       { field: 'titleModel', name: 'Modèle des titres courts', def: 'sonnet' },
       { field: 'me', name: 'Tes noms', def: 'vide' },
+      { field: 'classicHooks', name: 'Hooks classiques', def: 'On' },
     ],
   },
   {

@@ -69,6 +69,7 @@ import {
 import { MIX, RADIUS, SIZE, SPACE, TEXT } from './tokens'
 import { SETTINGS_PANE, drawSettings, openSettings, prefsFile, redrawSettings, sessionProject, watchSettings } from './reglages'
 import {
+  CLASSIC_SKIPS_OFF,
   ageLabel,
   axisLabel,
   branchGap,
@@ -621,7 +622,7 @@ function axisCount(tasks: Task[], axis: string): number {
 }
 
 /** Les réglages du plugin (userConfig), relus à chaque chargement du module. */
-let settings = { me: [] as string[], autoOpen: true, titleModel: 'sonnet', capture: true, theme: 'auto', launchEffort: 'high', launchBypass: false, axisPill: false, dateFormat: 'us' }
+let settings = { me: [] as string[], autoOpen: true, titleModel: 'sonnet', capture: true, theme: 'auto', launchEffort: 'high', launchBypass: false, axisPill: false, dateFormat: 'us', classicHooks: true }
 
 /**
  * La palette du panneau. Le mod ne reçoit pas l'apparence de l'app : il lit le thème de Claude
@@ -1024,6 +1025,30 @@ function deliveryNote(): string | undefined {
  * deuxième arrêt d'un tour, `stop_hook_active`).
  */
 let stopTurn = { id: '', stopRan: false, fromReminder: false }
+
+/**
+ * Les tours finis sans Stop de ce chargement (#219) : sous sec-default, l'app dit « hook was skipped » pour
+ * chaque hook classic enregistré. Au `CLASSIC_SKIPS_OFF`-ième sans qu'un seul Stop ait tourné, le module
+ * éteint son option `classicHooks` ; rechargé, il n'enregistre plus ces hooks. Une demande par chargement.
+ */
+let classicSkips = { skipped: 0, stopSeen: false, asked: false }
+
+/** Un tour du fil principal fini par une réponse : Stop a-t-il tourné ? Le deuxième saut éteint `classicHooks` (#219). */
+async function noteClassicSkip($: EngineInterface, stopRan: boolean): Promise<void> {
+  if (!settings.classicHooks || classicSkips.asked) return
+  if (stopRan) {
+    classicSkips.stopSeen = true
+    return
+  }
+  classicSkips.skipped += 1
+  if (classicSkips.stopSeen || classicSkips.skipped < CLASSIC_SKIPS_OFF) return
+  classicSkips.asked = true
+  try {
+    await $.config.set({ key: `${$.plugin.name}.classicHooks`, value: false })
+  } catch {
+    // option non écrite : les hooks restent, et leurs secours tiennent
+  }
+}
 
 /**
  * Le rappel de fin de tour, ou rien : roadmap, méthode, idée, liste d'étapes, bloc de fin, rangement.
@@ -4181,7 +4206,9 @@ export const register: Register = (on, options) => {
     launchBypass: options.launchBypass === true,
     axisPill: typeof options.axisPill === 'boolean' ? options.axisPill : false,
     dateFormat: options.dateFormat === 'fr' ? 'fr' : 'us',
+    classicHooks: typeof options.classicHooks === 'boolean' ? options.classicHooks : true,
   }
+  classicSkips = { skipped: 0, stopSeen: false, asked: false }
   setDateFormat(settings.dateFormat)
 
   // Le thème de Claude Code a changé : le panneau se redessine dans l'autre palette.
@@ -4250,16 +4277,19 @@ export const register: Register = (on, options) => {
   // Réglages de session : ceux du projet de la session (#102), injectés comme contexte additionnel au
   // démarrage (startup, resume, clear, compact), dans tout projet, roadmap ou non. Une panne de lecture ne bloque jamais le démarrage.
   // Sous sec-default (compte Team ou Enterprise, #116), ce hook est sauté : le premier message les porte.
-  on('classic.SessionStart', async ($, e, next) => {
-    const result = await next(e)
-    const text = await sessionPrefsBlock($)
-    try {
-      await update($, prefsGivenAtom, () => text ?? '')
-    } catch {
-      // état de session illisible : le premier message les redonnera aussi
-    }
-    return text === undefined ? result : { ...result, additionalContext: [...(result.additionalContext ?? []), text] }
-  })
+  // Option classicHooks éteinte (#219), il n'est pas enregistré, et l'app n'a plus de saut à dire.
+  if (settings.classicHooks) {
+    on('classic.SessionStart', async ($, e, next) => {
+      const result = await next(e)
+      const text = await sessionPrefsBlock($)
+      try {
+        await update($, prefsGivenAtom, () => text ?? '')
+      } catch {
+        // état de session illisible : le premier message les redonnera aussi
+      }
+      return text === undefined ? result : { ...result, additionalContext: [...(result.additionalContext ?? []), text] }
+    })
+  }
 
   // Un /clear ou une compaction efface les réglages donnés : le démarrage classique qui suit les redonne,
   // sinon le message suivant. Sous sec-default, la compaction est sautée aussi (#116).
@@ -4271,14 +4301,16 @@ export const register: Register = (on, options) => {
     }
     return next(e)
   })
-  on('session.compact', async ($, e, next) => {
-    // `precompute` n'installe rien, et la compaction d'un agent laisse la conversation principale.
-    if (e.trigger !== 'precompute' && e.agentId === undefined) {
-      await update($, prefsGivenAtom, () => '')
-      await update($, contextSeenAtom, () => 0)
-    }
-    return next(e)
-  })
+  if (settings.classicHooks) {
+    on('session.compact', async ($, e, next) => {
+      // `precompute` n'installe rien, et la compaction d'un agent laisse la conversation principale.
+      if (e.trigger !== 'precompute' && e.agentId === undefined) {
+        await update($, prefsGivenAtom, () => '')
+        await update($, contextSeenAtom, () => 0)
+      }
+      return next(e)
+    })
+  }
 
   // Le contexte à la fin de chaque tour (#157) : l'en-tête de la bande de Maestro le lit, et une
   // session lancée par Maestro l'écrit dans sa note, à côté de ses étapes, sans en changer l'heure.
@@ -4546,15 +4578,19 @@ export const register: Register = (on, options) => {
       const block = await endOfTurnBlock($, e.answer, stopTurn.fromReminder, false)
       if (block !== undefined) pendingReminder = block
     }
+    // Stop sauté deux tours de suite, jamais vu tourner : sec-default, l'option s'éteint (#219).
+    if (e.turnId === stopTurn.id && e.reason === 'answer') await noteClassicSkip($, stopTurn.stopRan)
     return result
   })
 
   // Une skill de méthode superpowers, ou swiftui-pro, lancée (outil Skill, commande, préchargement) : notée pour le rappel.
-  on('skill.prompt', async ($, e, next) => {
-    skillPrompted = true
-    noteSkill(e.skill)
-    return next(e)
-  })
+  if (settings.classicHooks) {
+    on('skill.prompt', async ($, e, next) => {
+      skillPrompted = true
+      noteSkill(e.skill)
+      return next(e)
+    })
+  }
   // Sous sec-default, skill.prompt est sauté (#116) : l'outil Skill et la commande tapée notent la skill
   // aussi, et l'outil ouvre le volet des skills Réglages et panneau, la note dans le contexte du résultat.
   on('tool.call', { tool: 'Skill' }, async ($, e, next) => {
@@ -4570,12 +4606,14 @@ export const register: Register = (on, options) => {
     return next(e)
   })
 
-  on('classic.Stop', async ($, e, next) => {
-    stopTurn.stopRan = true
-    const result = await next(e)
-    const block = await endOfTurnBlock($, e.last_assistant_message, e.stop_hook_active === true, result.block !== undefined)
-    return block === undefined ? result : { ...result, block }
-  })
+  if (settings.classicHooks) {
+    on('classic.Stop', async ($, e, next) => {
+      stopTurn.stopRan = true
+      const result = await next(e)
+      const block = await endOfTurnBlock($, e.last_assistant_message, e.stop_hook_active === true, result.block !== undefined)
+      return block === undefined ? result : { ...result, block }
+    })
+  }
 
   // Une zone de clic démolie par l'app, même après son « prêt » (#152) : nouvelles clés, de nouvelles instances.
   on('ui.fault', async ($, e, next) => {
@@ -4638,11 +4676,13 @@ export const register: Register = (on, options) => {
     return next(e)
   })
 
-  on('skill.prompt', { skill: SETTINGS_SKILL }, async ($, e, next) => {
-    const result = await next(e)
-    const note = await skillPaneNote($, e.skill)
-    return note === undefined ? result : { ...result, text: `${note}\n\n${result.text}` }
-  })
+  if (settings.classicHooks) {
+    on('skill.prompt', { skill: SETTINGS_SKILL }, async ($, e, next) => {
+      const result = await next(e)
+      const note = await skillPaneNote($, e.skill)
+      return note === undefined ? result : { ...result, text: `${note}\n\n${result.text}` }
+    })
+  }
 
   // /roadmap:roadmap-panel tapée seule (Splitmybill, 2026-10-28) : Bertrand la tape pour faire paraître
   // le panneau, et le modèle déroulait la skill jusqu'à un diagnostic. Elle répond comme /roadmap, sans
@@ -4655,11 +4695,13 @@ export const register: Register = (on, options) => {
 
   // La même skill lancée par le modèle, ou tapée sous un nom que le hook ci-dessus n'a pas pris : le
   // panneau s'ouvre aussi, et le texte de la skill le dit en tête.
-  on('skill.prompt', { skill: PANEL_SKILL }, async ($, e, next) => {
-    const result = await next(e)
-    const note = await skillPaneNote($, e.skill)
-    return note === undefined ? result : { ...result, text: `${note}\n\n${result.text}` }
-  })
+  if (settings.classicHooks) {
+    on('skill.prompt', { skill: PANEL_SKILL }, async ($, e, next) => {
+      const result = await next(e)
+      const note = await skillPaneNote($, e.skill)
+      return note === undefined ? result : { ...result, text: `${note}\n\n${result.text}` }
+    })
+  }
 
   // L'identité Roadmap à l'ouverture (#127, maquette A) : « Maestro » ou le brief d'une tâche lancée
   // deviennent la carte Roadmap ; le modèle lit toujours le message d'origine. Déplié (ctrl+o), le texte
