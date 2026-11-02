@@ -2348,6 +2348,17 @@ export function subtaskFold(motherKeys: readonly string[], isOpen: (key: string)
   return { label: open ? 'Déplier les sous-tâches' : 'Replier les sous-tâches', open }
 }
 
+/**
+ * L'action de la liste quand l'arbre a des mères (#224, #203 C) : elle replie les sections (« En retard »,
+ * « Cette semaine », les bandes, « Tâches seules »…), le bouton des sous-tâches les mères. Comme lui,
+ * « Déplier » tant qu'une section est repliée, sinon « Replier » ; `fold`, l'état à poser au clic. Sans section, rien.
+ */
+export function sectionFold(sectionIds: readonly string[], isOpen: (id: string) => boolean): { label: 'Replier les sections' | 'Déplier les sections'; fold: boolean } | undefined {
+  if (sectionIds.length === 0) return undefined
+  const fold = sectionIds.every(isOpen)
+  return { label: fold ? 'Replier les sections' : 'Déplier les sections', fold }
+}
+
 /** Le résumé de la ligne de filtre : « Mcp · attend Martial · 4 tâches », ou le total sans filtre. */
 export function filterSummary(view: { axis: string; attend: string; showDone: boolean; shown: number; doneShown: number; groupBy?: string; who?: string }): string {
   const by = groupingOf(view.groupBy, view.showDone)
@@ -4615,6 +4626,18 @@ export function foldAllView(
  * sans encre, de la largeur du carré ; le carré dessiné dessous fait la case.
  */
 export const CHECK_OVERLAY = '\u2003'
+
+/** Cadratins au plus dans le bouton qui couvre un titre : il ne déborde pas sur les tags d'un titre coupé. */
+const TITLE_OVERLAY_MAX = 24
+
+/**
+ * Le libellé du bouton sans encre posé sur le titre d'une ligne (#224) : un bouton natif impose sa
+ * graisse, sa couleur et sa marge au texte qu'il porte ; le titre est donc un `Text`, et ce bouton,
+ * de cadratins à peu près de sa largeur (une demi-longueur, de 2 à 24), le couvre et ouvre la fiche.
+ */
+export function titleOverlay(title: string): string {
+  return CHECK_OVERLAY.repeat(Math.min(TITLE_OVERLAY_MAX, Math.max(2, Math.ceil([...title].length / 2))))
+}
 
 /** Le journal des bilans sans la dernière ligne de cette tâche à cette date (#163, une tâche rouverte). */
 export function dropBilanCsv(existing: string | undefined, id: string, date: string): string {

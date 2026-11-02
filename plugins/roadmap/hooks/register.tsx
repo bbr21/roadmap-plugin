@@ -355,7 +355,9 @@ import {
   treeSteps,
   treeDepartment,
   foldAllView,
+  sectionFold,
   subtaskFold,
+  titleOverlay,
   duePill,
   abandonBilan,
   doneBilan,
@@ -7620,8 +7622,8 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     waitAging: { bg: palette.blockTint, fg: palette.blockOn, strong: true },
     waitOld: { bg: palette.lateTint, fg: palette.lateOn, strong: true },
     stale: { bg: palette.sel, fg: palette.text2, strong: false },
-    // Le responsable quand ce n'est pas moi (#76) : la teinte d'une attente, sans gras.
-    owner: { bg: palette.waitTint, fg: palette.waitOn, strong: false },
+    // Le responsable quand ce n'est pas moi (#76) : gris, comme les autres tags (#224, maquette #212 C).
+    owner: { bg: palette.sel, fg: palette.text2, strong: false },
   }
   // La roue d'une tâche en session ; elle tourne dans un Svg interactif, qui porte aussi l'infobulle.
   // Une session ouverte qui ne tourne pas : son tour est fini, elle attend la réponse de Bertrand.
@@ -7656,7 +7658,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   // Le dessin d'une pastille de la liste ; sa largeur compte aussi dans les colonnes (#198).
   const rowPillSpec = (p: Pill) => {
     const c = pillColors[p.kind]
-    const mark: PillMark | undefined = p.kind === 'late' ? 'clock' : p.kind === 'wait' || p.kind === 'waitAging' || p.kind === 'waitOld' || p.kind === 'owner' ? 'person' : undefined
+    const mark: PillMark | undefined = p.kind === 'late' ? 'clock' : p.kind === 'wait' || p.kind === 'waitAging' || p.kind === 'waitOld' ? 'person' : undefined
     return { text: p.text, bg: c.bg, fg: c.fg, ...(mark ? { mark } : {}), weight: (c.strong ? 600 : 500) as 500 | 600 }
   }
   type PillSpec = Parameters<typeof drawnPill>[0]
@@ -7873,14 +7875,21 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
         )}
         {/* La mère (#168) : sa flèche est dans son carré ; le carré la replie, par la zone de
             l'en-tête quand le dessin en a la place, sinon par un bouton en glyphe. */}
-        {head && !(Svg && headZones) ? (
+        {head && !Svg ? (
           <Button key={`group:${keyPart(head.id)}`} plain dimColor onPress={toggleGroup(head.id)}>
             {head.open ? '⌄' : '›'}
           </Button>
         ) : (
           <Box flexShrink={0}>
             {mark}
-            {head && Svg && headZones && hit(`group:${head.id}`, toggleGroup(head.id), 1)}
+            {/* Sans zone de clic (un gros projet, #224), un bouton sans encre posé sur le carré le replie. */}
+            {head && Svg && (headZones ? hit(`group:${head.id}`, toggleGroup(head.id), 1) : (
+              <Box position="absolute" top={0} left={0}>
+                <Button key={`group:${keyPart(head.id)}`} plain onPress={toggleGroup(head.id)}>
+                  {CHECK_OVERLAY}
+                </Button>
+              </Box>
+            ))}
             {squareHit}
           </Box>
         )}
@@ -7888,10 +7897,25 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
             lui ; les tags viennent à droite du titre, l'échéance au bout, en texte, à la place de l'âge. */}
         {number}
         <Box key={`lead:${t.key}`} flexDirection="row" alignItems="center" flexGrow={1} flexShrink={1} minWidth={0}>
-          <Button key={t.key} plain dimColor={ghost || (!t.done && !titled(t))} onPress={select(selectionOf(t))}>
-            {/* Une faite (#198) : grise et barrée, discrètement, dans toutes les vues. */}
-            <Text wrap="truncate-end" {...(t.done ? { strikethrough: true, color: palette.text3 } : {})}>{s.titre}</Text>
-          </Button>
+          {/* Sur le bureau (#224, maquette C de #212), le titre est un texte : la mère en gras, une faite grise
+              et barrée (#198), un titre provisoire estompé ; un bouton natif imposerait son encre, sa
+              graisse et sa marge. Un bouton sans encre le couvre et ouvre la fiche. Au terminal, le bouton. */}
+          {Svg ? (
+            <Text wrap="truncate-end" {...(head ? { weight: 'semibold' as const } : {})} {...(t.done ? { strikethrough: true, color: palette.text3 } : ghost || !titled(t) ? { color: palette.text2 } : {})}>
+              {s.titre}
+            </Text>
+          ) : null}
+          {Svg ? (
+            <Box position="absolute" top={0} left={0}>
+              <Button key={t.key} plain onPress={select(selectionOf(t))}>
+                {titleOverlay(s.titre)}
+              </Button>
+            </Box>
+          ) : (
+            <Button key={t.key} plain dimColor={ghost || (!t.done && !titled(t))} onPress={select(selectionOf(t))}>
+              <Text wrap="truncate-end" {...(t.done ? { strikethrough: true, color: palette.text3 } : {})}>{s.titre}</Text>
+            </Button>
+          )}
         </Box>
         {pills.length > 0 && (
           <Box key={`tags:${t.key}`} flexDirection="row" alignItems="center" gap={SPACE.row} flexShrink={0}>
@@ -7906,7 +7930,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
         )}
         {/* En session : la roue ou la main qui t'attend, la barre et le compte (#143, #145), chez Maestro
             aussi, dans son bloc « En cours », sans arbre (#160). */}
-        {(inSession || locked || head) && due}
+        {(inSession || locked) && due}
         {inSession && sessionColumn(t, block)}
         {block && blockEnd(t, block)}
         {/* Le cadenas dit ce qu'il attend (#125) : « après » et le numéro de sa prérequise, ou « parent après » celui qu'attend son parent. */}
@@ -7939,9 +7963,10 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
         )}
         {/* L'âge, à sa colonne calée à droite (#198) : les départements restent alignés. Une échéance
             prend sa place, en texte coloré (#203, maquette C des étiquettes). */}
-        {!head && !kept && !inSession && !locked && confirm === undefined && (
+        {/* Une mère y met sa date, après sa barre (#224, maquette A de #163) : alignée sur celles des autres lignes. */}
+        {!kept && !inSession && !locked && confirm === undefined && (
           <Box key={`age:${t.key}`} minWidth={AGE_CELLS} flexShrink={0} flexDirection="row" justifyContent="flex-end">
-            {due ?? (right !== '' && (
+            {due ?? (!head && right !== '' && (
               <Text size="caption" tabular color={t.done ? palette.text3 : palette.text2} wrap="end">
                 {right}
               </Text>
@@ -8248,11 +8273,26 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   // Les mères de l'arbre (#163) : « Tout replier » les ferme toutes, « Tout déplier » les rouvre.
   const motherKeys = !searching ? groups.filter(g => g.block?.head !== undefined).map(idOf) : []
   const subtasks = subtaskFold(motherKeys, isOpenGroup)
+  // Avec des mères (#224, #203 C) : l'action replie les sections, le bouton des sous-tâches les mères.
+  // Les bandes s'ouvrent par défaut (`closedGroups`), les sections à en-tête sans mère (« Tâches seules ») non (`openGroups`).
+  const withMothers = !searching && !showDone && allGroups.some(g => g.block?.head !== undefined)
+  const sectionBands = withMothers ? allGroups.filter(g => g.band).map(idOf) : []
+  const sectionHeads = withMothers ? allGroups.filter(g => !g.band && !g.bare && g.block?.head === undefined).map(idOf) : []
+  const sections = sectionFold([...sectionBands, ...sectionHeads], id => (sectionBands.includes(id) ? bandOpen(id) : isOpenGroup(id)))
   const allOpen = bandIds.length > 0 ? bandIds.every(b => !closedGroups.includes(b)) : names.length > 0 && names.every(n => openGroups.includes(n))
   const action = searching
     ? { label: 'Effacer', run: () => void update($, searchAtom, () => '') }
     : filtered
     ? { label: 'Tout afficher', run: showAll }
+    : sections
+    ? {
+        label: sections.label,
+        run: () =>
+          void setView($, v => ({
+            closedGroups: [...v.closedGroups.filter(c => !sectionBands.includes(c)), ...(sections.fold ? sectionBands : [])],
+            openGroups: [...v.openGroups.filter(g => !sectionHeads.includes(g)), ...(sections.fold ? [] : sectionHeads)],
+          })),
+      }
     : allOpen
       ? {
           label: 'Tout replier',
