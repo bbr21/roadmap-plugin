@@ -765,7 +765,7 @@ export function stepListReminder(): string {
  * Ce qui manque au bloc de fin de tour (#85) : une de ses trois lignes, la mission de la fiche de fin
  * de session (#123), ou le bouton d'archivage.
  */
-export type ClosingGap = 'etat' | 'atoi' | 'session' | 'mission' | 'archiver' | 'ouverte' | 'etat-close' | 'taches'
+export type ClosingGap = 'etat' | 'atoi' | 'session' | 'mission' | 'bloque' | 'archiver' | 'ouverte' | 'etat-close' | 'taches'
 
 /** La ligne `#N` de la session dans sa roadmap (#124) : ouverte, close (avec son `fait:`), ou absente. */
 export type OwnLine = { state: 'open' | 'closed' | 'absent'; fait?: string }
@@ -825,8 +825,10 @@ const CLOSING_LINES: readonly { gap: ClosingGap; label: string; start: RegExp }[
   { gap: 'session', label: '**Session**', start: /^session\s*:/ },
 ]
 
-/** La ligne de la mission, que la fiche de fin de session porte en premier (#123). */
+/** La ligne de la mission, que la fiche de fin de session porte (#123). */
 const MISSION_LINE = /^mission\s*:/
+/** La ligne de la fiche d'une session bloquée (#128) : quoi, qui débloque, ce qui suit. */
+const BLOQUE_LINE = /^bloque\s*:/
 
 /**
  * Le bloc tel que Claude l'écrit, dit au démarrage (mode ADHD) et redit par le rappel de fin de tour,
@@ -838,15 +840,19 @@ const CLOSING_FORMAT = [
   '**Session** : à garder, et pourquoi, ou à archiver',
 ]
 
-/** La fiche de fin de session (#123, maquette A1) : un tableau markdown, la mission d'abord, sans marque. */
+/**
+ * La fiche de fin de session (#123, maquette A1), l'état en tête depuis #128 (maquette 2A) : un verdict,
+ * tout est bon ou bloqué, puis la mission. Bloquée, « Livré » s'écrit « Fait » et la ligne Bloque s'ajoute.
+ */
 const FICHE_FORMAT = [
   '| Fin | #<id> · <la tâche, en quelques mots> |',
   '|---|---|',
+  '| État | ✅ Tout est bon : <une phrase> ; tâche close : « ✅ Tout est bon, fini : #<id> close le AAAA-MM-JJ », lu dans ROADMAP-fait. Ou ⛔ Bloqué : <ce qui manque> |',
   "| Mission | ce qu'on voulait faire, et pourquoi, en deux ou trois lignes |",
-  '| Livré | ce qui a été livré : version, commits, fichiers, tests |',
-  '| État | fini · pas fini · bloqué, et une phrase ; tâche close : « fini : #<id> close le AAAA-MM-JJ », lu dans ROADMAP-fait |',
+  '| Livré | ce qui a été livré : version, commits, fichiers, tests ; bloquée : « Fait », ce qui est fait |',
+  '| Bloque | bloquée seulement : ce qui bloque, qui débloque, ce qui se fait dès que c\'est levé |',
   '| À toi | rien, ou une à trois actions, chacune avec où et comment |',
-  '| Session | à archiver |',
+  '| Session | à archiver ; bloquée : à garder, et quand elle reprend |',
 ]
 
 /**
@@ -892,9 +898,13 @@ export function closingBlockGaps(last: string | undefined, box: string, line?: O
   const gaps = CLOSING_LINES.filter(l => !lines.some(line => l.start.test(line))).map(l => l.gap)
   const session = lines.find(line => /^session\s*:/.test(line))
   const archive = session !== undefined && /archiv/.test(session) && !/gard/.test(session)
+  // Bloquée (#128) : c'est aussi une fin de session, la fiche est due, avec sa ligne Bloque.
+  const blocked = lines.some(line => /^etat\s*:.*\bbloque/.test(line))
+  if (blocked && !lines.some(line => MISSION_LINE.test(line))) gaps.push('mission')
+  if (blocked && !lines.some(line => BLOQUE_LINE.test(line))) gaps.push('bloque')
   // Ligne encore ouverte (#124) : l'archivage vient trop tôt, ni fiche ni bouton ne se réclament.
   if (line?.state === 'open') return archiveIntent(last, box) ? [...gaps, 'ouverte'] : gaps
-  if (archive && !lines.some(line => MISSION_LINE.test(line))) gaps.push('mission')
+  if (archive && !blocked && !lines.some(line => MISSION_LINE.test(line))) gaps.push('mission')
   // Maestro finit sur le tableau de ses tâches, sous sa fiche (#136).
   if (archive && maestro && !lines.some(line => TASK_ROW.test(line))) gaps.push('taches')
   if (archive && !normalizeTitle(box).includes('oui, archiver')) gaps.push('archiver')
@@ -924,9 +934,9 @@ export function closingBlockReminder(gaps: readonly ClosingGap[], line?: OwnLine
       "Ta ligne **Session** dit « à archiver » : c'est la fin de Maestro. Termine ta réponse, après la boîte de fin, par ta fiche de fin à la place du bloc de trois lignes, puis le tableau de tes tâches, une ligne par tâche que tu as lancée, une seule fois, sans emoji :",
       ...MAESTRO_FICHE_FORMAT,
     )
-  } else if (gaps.includes('mission')) {
+  } else if (gaps.includes('mission') || gaps.includes('bloque')) {
     lines.push(
-      "Ta ligne **Session** dit « à archiver » : c'est la fin de la session. Termine ta réponse, après la boîte de fin, par la fiche de fin de session à la place du bloc de trois lignes, une seule fois, sans emoji :",
+      `${gaps.includes('bloque') ? 'Ta ligne **État** dit « bloqué »' : 'Ta ligne **Session** dit « à archiver »'} : c'est une fin de session. Termine ta réponse, après la boîte de fin, par la fiche de fin de session à la place du bloc de trois lignes, une seule fois, l'état en tête :`,
       ...FICHE_FORMAT,
     )
   } else if (missing.length > 0) {
@@ -944,7 +954,7 @@ export type EndFiche = { id?: string; mission: string; livre?: string; etat?: st
 /** Une fiche de fin gardée dans le store (#144), avec l'heure où la session l'a écrite. */
 export type StoredRecap = EndFiche & { at: number }
 
-const END_FICHE_FIELDS: Record<string, keyof Omit<EndFiche, 'id'>> = { mission: 'mission', livre: 'livre', etat: 'etat', 'a toi': 'atoi' }
+const END_FICHE_FIELDS: Record<string, keyof Omit<EndFiche, 'id'>> = { mission: 'mission', livre: 'livre', fait: 'livre', etat: 'etat', 'a toi': 'atoi' }
 /** Une ligne de tableau markdown : « | étiquette | valeur | ». */
 const TABLE_ROW = /^\s*\|\s*([^|]*?)\s*\|\s*(.*?)\s*\|\s*$/
 // Une cellule sans gras ; ses `<br>` en sauts de ligne (#150), ou en espaces pour la Mission, qui tient en une phrase.
@@ -5169,7 +5179,7 @@ export function sessionPrefsText(prefs: SessionPrefs, error?: string, project?: 
   }
   if (prefs.adhd) {
     lines.push(
-      "- **Mode ADHD** : chaque message d'une tâche s'ouvre sur sa carte d'étape, un tableau markdown d'une colonne que l'app dessine en bande grise, trois lignes telles quelles : `| ⏳ Étape 2/4 · Écrire le plan · ▰▱▱▱ en cours |`, `|---|`, `| Plan écrit, reste la relecture. |`. L'en-tête dit, dans cet ordre : l'icône d'état, « Étape », son numéro sur le total, son nom, la barre (une case par étape, ▰ par étape finie, ▱ sinon), l'état en mots ; la case dessous, la phrase de constat. Étape en cours : `⏳ Étape 2/4 · Écrire le plan · ▰▱▱▱ en cours` ; étape qui vient de finir : `✅ Étape 2/4 · Écrire le plan · ▰▰▱▱ faite` ; détour (erreur, question, retour en arrière) : `⚠️ Étape 3/4 · Coder et tester · ▰▰▱▱ détour`, la raison dans la case dessous, `| ↳ test rouge : le tri casse l'ordre |` ; tâche finie : `🎉 Étape 4/4 · Publier la version · ▰▰▰▰ tâche finie`, le nom de la dernière étape. Rien avant la carte, pas de gras dedans. Les étapes sont celles de la liste d'étapes (`update_plan`), dans le même ordre et sous le même nom : un verbe et son objet, 2 à 4 mots qui disent le geste (« Écrire le plan », pas « Plan »), posés au premier message d'une tâche et jamais renommés ; le total ne bouge que si une étape s'ajoute. Une question ou une réponse courte hors tâche : pas de ligne d'étape ni de carte. Après la carte, s'il en reste une, la seule action ou décision qui revient à " + person() + ", jamais un geste qu'un outil fait à ta place. Réponses très courtes, listes à puces, gras sur l'essentiel, jamais de paragraphe dense. Seule exception : une explication que " + person() + " demande prend la place qu'il faut pour être comprise, en mots simples, avec un exemple concret. Un tour de travail (boîte de fin ou liste d'étapes) se termine, après la boîte de fin, par le bloc de fin de tour, trois lignes telles quelles, sans emoji : `**État** : pas fini` (ou fini, bloqué), et une phrase sur où on en est ; `**À toi** : rien`, ou une à trois actions, chacune avec où et comment (le volet, le fichier, le bouton) ; `**Session** : à garder`, et pourquoi, ou `**Session** : à archiver` (la boîte de fin pose alors « Archiver cette session ? » avec le bouton de réponse « Oui, archiver »). Au dernier tour de la session (à archiver), la fiche de fin de session remplace le bloc, une seule fois : un tableau markdown sans marque, `| Fin | #<id> · <la tâche> |`, `|---|---|`, puis une ligne par étiquette, dans cet ordre : `| Mission |` ce qu'on voulait faire et pourquoi, en deux ou trois lignes ; `| Livré |` ce qui a été livré ; `| État |`, qui dit, lu dans ROADMAP-fait, « fini : #<id> close le AAAA-MM-JJ » (« close par Maestro » pour une session qu'il a lancée), jamais « Maestro clôt la ligne » ; `| À toi |` ; `| Session | à archiver |`. Maestro, lui, finit sur sa fiche (la mission du lot, ce qu'il a livré, ses tâches closes), puis le tableau de ses tâches, `| Tâche | Livré | Version | État |`, une ligne par tâche qu'il a lancée ; et à chaque tâche livrée, l'étape de sa liste dit `· livrée <version>`, et, dans un tour que tu as lancé, il dit une ligne : `#<id> livrée · version · ce qui change`. Ta ligne #<id> encore ouverte, la session n'est pas à archiver. Si un rappel ne réclame que le bouton de la boîte, pose la boîte seule, sans réécrire le message ni la fiche.",
+      "- **Mode ADHD** : chaque message d'une tâche s'ouvre sur sa carte d'étape, un tableau markdown d'une colonne que l'app dessine en bande grise, trois lignes telles quelles : `| ⏳ Étape 2/4 · Écrire le plan · ▰▱▱▱ en cours |`, `|---|`, `| Plan écrit, reste la relecture. |`. L'en-tête dit, dans cet ordre : l'icône d'état, « Étape », son numéro sur le total, son nom, la barre (une case par étape, ▰ par étape finie, ▱ sinon), l'état en mots ; la case dessous, la phrase de constat. Étape en cours : `⏳ Étape 2/4 · Écrire le plan · ▰▱▱▱ en cours` ; étape qui vient de finir : `✅ Étape 2/4 · Écrire le plan · ▰▰▱▱ faite` ; détour (erreur, question, retour en arrière) : `⚠️ Étape 3/4 · Coder et tester · ▰▰▱▱ détour`, la raison dans la case dessous, `| ↳ test rouge : le tri casse l'ordre |` ; tâche finie : `🎉 Étape 4/4 · Publier la version · ▰▰▰▰ tâche finie`, le nom de la dernière étape. Rien avant la carte, pas de gras dedans. Les étapes sont celles de la liste d'étapes (`update_plan`), dans le même ordre et sous le même nom : un verbe et son objet, 2 à 4 mots qui disent le geste (« Écrire le plan », pas « Plan »), posés au premier message d'une tâche et jamais renommés ; le total ne bouge que si une étape s'ajoute. Une question ou une réponse courte hors tâche : pas de ligne d'étape ni de carte. La liste d'étapes native dit déjà où on en est : le message dit ce qui a été fait, trouvé et décidé. Dans un tour de travail, trois rubriques en gras suivent la carte, chacune d'une à quatre puces d'une phrase entière, le pourquoi compris : `**Fait**` (ce qui a été fait), `**Trouvé**` (ce qui a été appris, un choix et sa raison, ce qui coince), `**Suite**` (ce qui vient) ; une rubrique vide ne s'écrit pas, et un tout petit pas se contente de la carte. Puis, s'il en reste une, la seule action ou décision qui revient à " + person() + ", jamais un geste qu'un outil fait à ta place. Des puces et du gras sur l'essentiel, jamais de paragraphe dense. Seule exception : une explication que " + person() + " demande prend la place qu'il faut pour être comprise, en mots simples, avec un exemple concret. Un tour de travail (boîte de fin ou liste d'étapes) se termine, après la boîte de fin, par le bloc de fin de tour, trois lignes telles quelles, sans emoji : `**État** : pas fini` (ou fini, bloqué), et une phrase sur où on en est ; `**À toi** : rien`, ou une à trois actions, chacune avec où et comment (le volet, le fichier, le bouton) ; `**Session** : à garder`, et pourquoi, ou `**Session** : à archiver` (la boîte de fin pose alors « Archiver cette session ? » avec le bouton de réponse « Oui, archiver »). À toute fin de session, la fiche de fin de session remplace le bloc, une seule fois : au dernier tour (à archiver), et au tour où la session s'arrête bloquée (État bloqué). Un tableau markdown, `| Fin | #<id> · <la tâche> |`, `|---|---|`, puis une ligne par étiquette, dans cet ordre : `| État |` d'abord, un verdict, `✅ Tout est bon :` et une phrase (tâche close : « ✅ Tout est bon, fini : #<id> close le AAAA-MM-JJ », lu dans ROADMAP-fait, « close par Maestro » pour une session qu'il a lancée, jamais « Maestro clôt la ligne »), ou `⛔ Bloqué :` et ce qui manque ; `| Mission |` ce qu'on voulait faire et pourquoi, en deux ou trois lignes ; `| Livré |` ce qui a été livré (bloquée : `| Fait |`, ce qui est fait) ; bloquée seulement, `| Bloque |` ce qui bloque, qui débloque et ce qui se fait dès que c'est levé ; `| À toi |` ; `| Session |` à archiver, ou, bloquée, à garder et quand elle reprend. Un tour qui attend une réponse de " + person() + " n'est pas bloqué : le bloc de trois lignes suffit. Maestro, lui, finit sur sa fiche (la mission du lot, ce qu'il a livré, ses tâches closes), puis le tableau de ses tâches, `| Tâche | Livré | Version | État |`, une ligne par tâche qu'il a lancée ; et à chaque tâche livrée, l'étape de sa liste dit `· livrée <version>`, et, dans un tour que tu as lancé, il dit une ligne : `#<id> livrée · version · ce qui change`. Ta ligne #<id> encore ouverte, la session n'est pas à archiver. Si un rappel ne réclame que le bouton de la boîte, pose la boîte seule, sans réécrire le message ni la fiche.",
     )
   }
   if (prefs.francais) lines.push('- **Langue** : réponds en français, comptes rendus, récaps et boîte de fin compris.')
@@ -5217,7 +5227,7 @@ export function prefsChangedLead(): string {
 // s'effaçait au fil d'une longue session (fil absent 3 messages sur 4). Une ligne la redit à chaque message.
 export function sessionPrefsReminder(prefs: SessionPrefs): string | undefined {
   if (!prefs.adhd) return undefined
-  return "Mode ADHD : ouvre un message de tâche par sa carte d'étape, trois lignes de tableau, `| ⏳ Étape 2/4 · Écrire le plan · ▰▱▱▱ en cours |`, `|---|`, `| <le constat> |` (icône et mot d'état : ⏳ en cours, ✅ faite, ⚠️ détour et ↳ sa raison dans la case, 🎉 tâche finie ; barre : ▰ par étape finie ; mêmes noms, verbe et objet, qu'au message d'avant ; pas de carte pour une réponse courte hors tâche), puis la seule action ou décision qui revient à " + person() + ", s'il y en a une ; un tour de travail finit par le bloc État, À toi, Session, sans emoji ; le dernier tour d'une session, par la fiche en tableau Mission, Livré, État, À toi, Session, à sa place."
+  return "Mode ADHD : ouvre un message de tâche par sa carte d'étape, trois lignes de tableau, `| ⏳ Étape 2/4 · Écrire le plan · ▰▱▱▱ en cours |`, `|---|`, `| <le constat> |` (icône et mot d'état : ⏳ en cours, ✅ faite, ⚠️ détour et ↳ sa raison dans la case, 🎉 tâche finie ; barre : ▰ par étape finie ; mêmes noms, verbe et objet, qu'au message d'avant ; pas de carte pour une réponse courte hors tâche), puis, dans un tour de travail, **Fait**, **Trouvé**, **Suite**, chacune d'une à quatre puces d'une phrase entière, le pourquoi compris (une rubrique vide ne s'écrit pas), puis la seule action ou décision qui revient à " + person() + ", s'il y en a une ; un tour de travail finit par le bloc État, À toi, Session, sans emoji ; une fin de session (à archiver, ou bloqué), par la fiche en tableau à sa place, l'État en tête (✅ Tout est bon, ou ⛔ Bloqué), puis Mission, Livré (ou Fait), Bloque si bloqué, À toi, Session."
 }
 
 // --- Fil de Maestro (#133) -----------------------------------------------------------------------
@@ -5308,7 +5318,7 @@ export const SESSION_PREF_INFO: readonly { key: PrefKey; name: string; detail: s
     key: 'adhd',
     name: 'Mode ADHD',
     detail:
-      "Chaque message s'ouvre sur une carte d'étape, une bande grise : l'icône d'état, l'étape et son numéro, une barre d'avancement et l'état en mots (⏳ Étape 2/4 · Écrire le plan · ▰▱▱▱ en cours), le constat dessous. Puis des réponses courtes en puces, et à la fin du tour trois lignes sans emoji : État, À toi, Session. À la toute fin de la session, une fiche en tableau à leur place : la mission d'abord, puis ce qui a été livré, l'état, ce qui te revient et le sort de la session.",
+      "Chaque message s'ouvre sur une carte d'étape, une bande grise : l'icône d'état, l'étape et son numéro, une barre d'avancement et l'état en mots (⏳ Étape 2/4 · Écrire le plan · ▰▱▱▱ en cours), le constat dessous. Puis ce qui a été fait, ce qui a été trouvé et ce qui suit, en puces, et à la fin du tour trois lignes sans emoji : État, À toi, Session. À la fin de la session, ou quand elle s'arrête bloquée, une fiche en tableau à leur place : d'abord le verdict (tout est bon, ou ce qui bloque), puis la mission, ce qui a été livré, ce qui te revient et le sort de la session.",
     off: "Des messages libres, sans ligne d'étape ni bloc de fin.",
   },
   {
@@ -6456,7 +6466,8 @@ export function maestroContext(o: {
         ? []
         : ['- La fusion de la branche prête d\'une de tes sessions attend le clic de ' + person() + ' : propose-la-lui, une branche à la fois (skill roadmap:maestro, § 5).']),
     "- Les nouvelles de tes sessions enfants (celles qui coincent ou sont à archiver) t'arrivent à chaque message de " + person() + ", sous « Roadmap — nouvelles de tes sessions enfants » : suis leurs consignes. Sans ce bloc, toutes avancent.",
-    o.adhd === false ? '- Réponses courtes : pas de tableau, pas de récapitulatif.' : '- Mode ADHD et réponses courtes : pas de tableau, pas de récapitulatif.',
+    // Sans mode ADHD (#128), rien ne bride la longueur de la réponse.
+    ...(o.adhd === false ? [] : ['- Mode ADHD et réponses courtes : pas de tableau, pas de récapitulatif.']),
   )
   if (o.candidates.length > 0 && o.only !== 'sessions') {
     lines.push('', 'Les cartes prêtes, une par tâche à lancer :')

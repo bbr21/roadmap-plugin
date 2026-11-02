@@ -504,9 +504,11 @@ remplaçant le précédent (#119) :
   tour**, trois lignes sans emoji depuis #123 : `**État**` (fini, pas fini, bloqué) et une phrase,
   `**À toi**` (rien, ou une à trois actions avec où et comment), `**Session**` (à archiver, avec
   la boîte « Archiver cette session ? » et le bouton de réponse « Oui, archiver » ; à garder, et
-  pourquoi). Au dernier tour d'une session, une fiche en tableau les remplace (#123) : Mission,
-  Livré, État, À toi, Session. Éteint, Maestro ne demande plus
-  que des réponses courtes (#119) ;
+  pourquoi). Sous la ligne d'étape, un tour de travail dit **Fait**, **Trouvé**, **Suite**, en
+  puces d'une phrase, le pourquoi compris (#128). À toute fin de session, au dernier tour ou bloquée,
+  une fiche en tableau remplace les trois lignes (#123, #128) : État en tête (✅ Tout est bon,
+  ou ⛔ Bloqué), Mission, Livré (ou Fait), Bloque si bloquée, À toi, Session. Éteint, rien ne
+  bride la longueur des réponses, celles de Maestro comprises (#128) ;
 - `francais` : réponses en français ;
 - `autonome` (#77, #105, avec ou sans code, éteint par défaut) : Claude suit sa
   recommandation au lieu de poser la question, sauf pour une question d'architecture, c'est-à-dire
@@ -649,6 +651,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.131.0 (2026-11-01)** : reglages-session : messages de travail plus fournis (Fait · Trouvé · Suite sous la carte d'étape), fiche de fin de session à verdict en tête, due aussi quand la session est bloquée (#128)
 - **0.130.0 (2026-11-01)** : panneau : la fiche d'une tâche en cartes repliables à tête, un filet par ligne, l'état en bande sous l'en-tête, un seul état « Completed » dans toute la fiche (#199)
 - **0.129.0 (2026-11-01)** : panneau : la ligne de tâche refaite : plus de rond, le carré d'axe coche et décoche après un tag « Confirmer » sur la même ligne ; une faite grisée et barrée, son carré garde la couleur de l'axe ; colonnes alignées (#198)
 - **0.128.1 (2026-11-01)** : panneau : les tâches lancées par Maestro restent à la place de leur premier lancement, dans la bande et le bloc En cours (#195)
