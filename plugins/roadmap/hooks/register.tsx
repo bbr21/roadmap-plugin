@@ -1253,14 +1253,17 @@ function inQueue<E extends BashCall>($: EngineInterface, e: E): E {
  * permission, et les règles du dossier principal partagé ne tenaient plus que par les consignes. Le
  * plugin refuse donc lui-même, dans tous les modes, les commandes git qu'elles y interdisent. Une
  * commande sans git interdit ne coûte aucun appel ; un dépôt sans autre worktree garde son git libre.
+ * Toute ligne se lit, même sans le mot `git` tel quel (`g\it`, `$'\x67it'`, #230).
  */
 async function guardBash($: EngineInterface, command: unknown): Promise<string | undefined> {
-  if (typeof command !== 'string' || !command.includes('git')) return undefined
+  if (typeof command !== 'string') return undefined
   let hits: GitHit[]
+  const cwd = await $.session.cwd()
   try {
-    hits = forbiddenGit(command, await $.session.cwd(), (await $.env.get('HOME')) ?? '')
+    hits = forbiddenGit(command, cwd, (await $.env.get('HOME')) ?? '')
   } catch {
-    return undefined
+    // Une ligne qui fait échouer la lecture se refuse dans un dépôt partagé, comme un dossier illisible (#230).
+    hits = [{ rule: 'ligne illisible', dir: `${cwd}/$?`, anywhere: false, loose: true }]
   }
   for (const hit of hits) {
     const repo = /[$`]/.test(hit.dir) ? undefined : await repoOf($, hit.dir)
@@ -1270,7 +1273,7 @@ async function guardBash($: EngineInterface, command: unknown): Promise<string |
     }
     // Un dossier qu'on ne sait pas lire (variable, hors dépôt) : refusé si le dépôt de la session
     // est partagé, plutôt que laissé passer (relecture de sécurité du 2026-10-29).
-    const own = await repoOf($, await $.session.cwd())
+    const own = await repoOf($, cwd)
     if (own?.shared) return guardText(hit, own.main, true)
   }
   return undefined

@@ -6641,9 +6641,10 @@ export function bypassCard(card: Record<string, unknown>): { card: Record<string
 
 /**
  * Une commande git qu'interdisent les règles du dossier principal partagé (#87) : son nom, son dossier,
- * et `anywhere` pour un push forcé vers `main`, refusé de tout dossier du dépôt.
+ * et `anywhere` pour un push forcé vers `main`, refusé de tout dossier du dépôt. `loose` : trouvée par
+ * la lecture large d'une ligne que le découpage ne comprend pas entière (#230).
  */
-export type GitHit = { rule: string; dir: string; anywhere: boolean }
+export type GitHit = { rule: string; dir: string; anywhere: boolean; loose?: true }
 
 /** Un chemin sans `.`, `..` ni barre en trop. */
 function normalPath(path: string): string {
@@ -6662,70 +6663,100 @@ function resolvePath(base: string, path: string): string {
 
 /**
  * Une commande d'une ligne shell, ses mots, et les séparateurs qui la précèdent et la suivent (`;`,
- * `&&`, `|`…). `odd` : un antislash hors guillemets simples, ou un `#` qui ouvre un commentaire, que ce
- * découpage ne suit pas ; la ligne ne suit alors plus ses variables (#226).
+ * `&&`, `|`…). `splits` : le mot a un `$` hors guillemets, que bash coupe en mots une fois développé.
  */
-type ShellCommand = { words: string[]; before: string; after: string; odd?: boolean }
+type ShellCommand = { words: string[]; splits: boolean[]; before: string; after: string }
 
-/** Les `$` d'affilée qui finissent en `i`, sans un premier échappé : `$$` est le PID, et `$$'…'` un guillemet simple. */
-function dollarRun(line: string, i: number): number {
-  let start = i
-  while (start > 0 && line[start - 1] === '$') start--
-  return i - start + 1 - (line[start - 1] === '\\' ? 1 : 0)
-}
+/**
+ * Une ligne shell découpée. `read` faux : elle a une tournure hors de la grammaire du découpage
+ * (antislash hors guillemets simples, `$'…'`, `$"…"`, commentaire, sous-shell, groupe, substitution,
+ * here-doc, guillemet jamais fermé) ; elle ne suit plus ses variables et se relit largement (#230).
+ */
+type ShellLine = { commands: ShellCommand[]; read: boolean }
 
 /** Un séparateur après lequel la commande suivante tourne toujours, dans le même shell. */
 const sureSeparator = (op: string) => op === '' || op === ';' || op === '\n'
 
 /**
  * Les commandes d'une ligne shell, chacune en mots : guillemets retirés (`$'…'` et `$"…"` compris),
- * antislash lu comme bash le lit, `$HOME` développé hors guillemets simples, `~` en tête d'un mot sans
- * guillemets ; coupées sur `&&`, `||`, `;`, `|`, `&` et les retours à la ligne hors guillemets, chacune
- * avec ses séparateurs (#226).
+ * antislash lu comme bash le lit, `$$` lu comme un seul jeton, `$HOME` développé hors guillemets
+ * simples, `~` en tête d'un mot sans guillemets ; coupées sur `&&`, `||`, `;`, `|`, `&` et les retours
+ * à la ligne hors guillemets, chacune avec ses séparateurs (#226). Le découpage dit s'il a compris
+ * toute la ligne (`read`, #230) : il ne cherche plus à lire juste ce qu'il ne comprend pas.
  */
-function shellCommands(line: string, home: string): ShellCommand[] {
-  const commands: ShellCommand[] = [{ words: [], before: '', after: '' }]
+function shellCommands(line: string, home: string): ShellLine {
+  const commands: ShellCommand[] = [{ words: [], splits: [], before: '', after: '' }]
+  let read = true
   let word: string | undefined
+  let splits = false
   let quote: '' | "'" | '"' | "$'" = ''
+  const add = (text: string) => {
+    word = (word ?? '') + text
+  }
   const end = () => {
-    if (word !== undefined) commands[commands.length - 1]!.words.push(word)
+    if (word !== undefined) {
+      commands[commands.length - 1]!.words.push(word)
+      commands[commands.length - 1]!.splits.push(splits)
+    }
     word = undefined
+    splits = false
   }
   for (let i = 0; i < line.length; i++) {
     const c = line[i]!
-    // Un antislash échappe le caractère qui suit (entre guillemets doubles, seulement `"`, `\\`, `$`,
-    // `` ` ``) ; suivi d'un retour à la ligne, il continue la ligne. Relecture de sécurité de #226 : lu
-    // de travers, il cachait une commande dans une chaîne qui n'en est pas une.
+    // Un antislash échappe le caractère qui suit (entre guillemets doubles, seulement `"`, `\`, `$`,
+    // `` ` ``) ; suivi d'un retour à la ligne, il continue la ligne.
     if (c === '\\' && quote !== "'") {
-      commands[commands.length - 1]!.odd = true
+      read = false
       const next = line[i + 1]
       i++
-      if (next === undefined) word = (word ?? '') + c
-      else if (next !== '\n' || quote === "$'") word = (word ?? '') + (quote === '"' && !'"\\$`'.includes(next) ? c + next : next)
+      if (next === undefined) add(c)
+      else if (next !== '\n' || quote === "$'") add(quote === '"' && !'"\\$`'.includes(next) ? c + next : next)
       continue
     }
+    // `${…}` d'un bloc ; seul `${NOM}` se lit, `${X:-…}` et les autres non (relecture de sécurité de #230).
+    if (c === '$' && line[i + 1] === '{' && (quote === '' || quote === '"')) {
+      const close = line.indexOf('}', i)
+      const inner = close < 0 ? '' : line.slice(i + 2, close)
+      if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(inner)) read = false
+      if (quote === '') splits = true
+      add(close < 0 ? line.slice(i) : line.slice(i, close + 1))
+      i = close < 0 ? line.length : close
+      continue
+    }
+    if (c === '`' && quote !== "'" && quote !== "$'") read = false
     if (quote !== '') {
       if (c === (quote === "$'" ? "'" : quote)) quote = ''
-      else if (quote === '"' && line.startsWith('$HOME', i)) {
-        word = (word ?? '') + home
+      else if (quote === '"' && c === '$' && line[i + 1] === '(') {
+        read = false
+        add(c)
+      } else if (quote === '"' && line.startsWith('$HOME', i)) {
+        add(home)
         i += 4
-      } else word = (word ?? '') + c
+      } else add(c)
     } else if (c === '#' && word === undefined) {
       // Un commentaire court jusqu'au retour à la ligne, que ni antislash ni guillemet n'allongent.
-      commands[commands.length - 1]!.odd = true
+      read = false
       while (i + 1 < line.length && line[i + 1] !== '\n') i++
     } else if (c === "'" || c === '"') {
       quote = c
       word = word ?? ''
-    } else if (c === '$' && (line[i + 1] === "'" || line[i + 1] === '"') && dollarRun(line, i) % 2 === 1) {
-      // `$'…'` (ses antislashs échappent) et `$"…"` (comme `"…"`) : la ligne ne suit plus ses variables.
-      commands[commands.length - 1]!.odd = true
+    } else if (c === '$' && line[i + 1] === '$') {
+      // `$$` est le PID : bash le lit d'un bloc, de gauche à droite, et `$$'…'` ouvre un guillemet simple.
+      add('$$')
+      splits = true
+      i++
+    } else if (c === '$' && (line[i + 1] === "'" || line[i + 1] === '"')) {
+      read = false
       quote = line[i + 1] === "'" ? "$'" : '"'
       word = word ?? ''
       i++
+    } else if (c === '(' || c === ')' || c === '{' || c === '}' || (c === '<' && line[i + 1] === '<')) {
+      // Sous-shell, groupe, substitution, here-doc : hors de la grammaire du découpage.
+      read = false
+      add(c)
     } else if (c === ' ' || c === '\t') end()
     // `2>&1`, `>&2`, `&>fichier` : une redirection, pas un séparateur.
-    else if (c === '&' && (((line[i - 1] === '>' || line[i - 1] === '<') && line[i - 2] !== '\\' && /[<>]$/.test(word ?? '')) || line[i + 1] === '>')) word = (word ?? '') + c
+    else if (c === '&' && (((line[i - 1] === '>' || line[i - 1] === '<') && line[i - 2] !== '\\' && /[<>]$/.test(word ?? '')) || line[i + 1] === '>')) add(c)
     else if (c === ';' || c === '|' || c === '&' || c === '\n') {
       end()
       let op: string = c
@@ -6736,16 +6767,38 @@ function shellCommands(line: string, home: string): ShellCommand[] {
       const last = commands[commands.length - 1]!
       if (last.words.length > 0) {
         last.after = op
-        commands.push({ words: [], before: op, after: '' })
+        commands.push({ words: [], splits: [], before: op, after: '' })
       } else if (!sureSeparator(op)) last.before = op
     } else if (line.startsWith('$HOME', i)) {
-      word = (word ?? '') + home
+      add(home)
       i += 4
     } else if (c === '~' && word === undefined && (line[i + 1] === undefined || line[i + 1] === '/' || line[i + 1] === ' ')) word = home
-    else word = (word ?? '') + c
+    else {
+      if (c === '$') splits = true
+      add(c)
+    }
   }
+  if (quote !== '') read = false
   end()
-  return commands.filter(command => command.words.length > 0)
+  return { commands: commands.filter(command => command.words.length > 0), read }
+}
+
+/** Les options de `git commit` qui prennent une valeur : le message de `-m` n'est pas une option. */
+const COMMIT_VALUED = new Set(['-m', '-F', '-C', '-c', '--message', '--file', '--author', '--date'])
+
+/**
+ * Les sous-commandes git que `gitRule` peut refuser, et la règle de chacune : un argument illisible
+ * y vaut le pire (#230), un push forcé vers main pour `push`.
+ */
+const WORST_RULE: Readonly<Record<string, string>> = {
+  reset: 'git reset --hard',
+  clean: 'git clean',
+  stash: 'git stash',
+  checkout: 'git checkout <branche>',
+  switch: 'git checkout <branche>',
+  add: 'git add -A',
+  commit: 'git commit -a',
+  push: 'git push --force',
 }
 
 /** La règle qu'enfreint une sous-commande git, ou rien. */
@@ -6765,9 +6818,8 @@ function gitRule(sub: string, args: string[]): { rule: string; anywhere: boolean
       return args.some(a => a === '--all' || a === '.' || flag('A')(a)) ? { rule: 'git add -A', anywhere: false } : undefined
     case 'commit': {
       // La valeur d'une option (le message de `-m`) n'est pas une option.
-      const valued = new Set(['-m', '-F', '-C', '-c', '--message', '--file', '--author', '--date'])
       for (let i = 0; i < args.length; i++) {
-        if (valued.has(args[i]!)) i++
+        if (COMMIT_VALUED.has(args[i]!)) i++
         else if (args[i] === '--all' || flag('a')(args[i]!)) return { rule: 'git commit -a', anywhere: false }
       }
       return undefined
@@ -6808,8 +6860,7 @@ const VAR_SAFE_COMMANDS = new Set(['git', 'node', 'npm', 'npx', 'python3', 'pyth
  * `W[…]` ni de parenthèse.
  */
 function plainShell(commands: ShellCommand[]): boolean {
-  return commands.every(({ words, odd }) => {
-    if (odd) return false
+  return commands.every(({ words }) => {
     if (words.some(w => /\$\(|\$\[|`|\$\{(?![A-Za-z_][A-Za-z0-9_]*\})|^[A-Za-z_][A-Za-z0-9_]*(\+=|\[)|^\(|\)$/.test(w))) return false
     const first = words.find(w => !/^[A-Za-z_][A-Za-z0-9_]*=/.test(w) && w !== 'env' && w !== 'export')
     return first === undefined || VAR_SAFE_COMMANDS.has(first) || /^\.{0,2}\/[^=[$]*$/.test(first)
@@ -6824,14 +6875,19 @@ function plainShell(commands: ShellCommand[]): boolean {
  * `&&`, ni `||`), hors d'un pipe ou d'un `&`, dans une ligne sans bloc ni boucle (`plainShell`).
  * Sinon la variable reste illisible, et la commande qui la nomme refusée dans un dépôt partagé.
  */
-function shellSteps(command: string, cwd: string, home: string, vars = new Map<string, string>()): ShellStep[] {
+function shellSteps(command: string, cwd: string, home: string, vars = new Map<string, string>(), line = { read: true }): ShellStep[] {
   const steps: ShellStep[] = []
   let dir = cwd
-  const commands = shellCommands(command, home)
-  const plain = plainShell(commands)
+  const { commands, read } = shellCommands(command, home)
+  if (!read) line.read = false
+  const plain = read && plainShell(commands)
   if (!plain) vars.clear()
-  for (const { words: raw, before, after } of commands) {
-    const all = raw.map(w => expandVars(w, vars))
+  for (const { words: raw, splits, before, after } of commands) {
+    // Un `$NOM` hors guillemets se coupe en mots une fois développé, comme bash le coupe (#230).
+    const all = raw.flatMap((w, k) => {
+      const value = expandVars(w, vars)
+      return splits[k] && value !== w ? value.split(/[ \t\n]+/).filter(Boolean) : [value]
+    })
     // `GIT_TRACE=1 git …`, `env GIT_DIR=… git …` : les variables en tête ne sont pas la commande,
     // mais GIT_WORK_TREE et GIT_DIR nomment son dossier.
     const env = new Map<string, string>()
@@ -6853,6 +6909,10 @@ function shellSteps(command: string, cwd: string, home: string, vars = new Map<s
       else vars.delete(name)
     }
     if (words.length === 0) continue
+    // Une commande au nom illisible, ou qui en lance ou construit une autre : la ligne n'est pas lue entière.
+    // Un mot illisible dans une commande git (`git reset $FLAG`) aussi : la lecture large le prend au pire.
+    if (/[$`]/.test(words[0]!) || LAUNCHERS.has(words[0]!) || buildsCommands(words)) line.read = false
+    if (words[0] === 'git' && words.some(w => /[$`]/.test(w))) line.read = false
     if (words[0] === 'cd') {
       dir = resolvePath(dir, words[1] ?? home)
       continue
@@ -6860,12 +6920,12 @@ function shellSteps(command: string, cwd: string, home: string, vars = new Map<s
     // Une commande dans un shell imbriqué (relecture de sécurité du 2026-10-29) : lue à son tour.
     // Il ne voit pas une variable non exportée : sa ligne se lit telle quelle, sans variable connue.
     if (['bash', 'sh', 'zsh'].includes(words[0] ?? '') && words[1] === '-c' && words[2] !== undefined) {
-      steps.push(...shellSteps(raw[start + 2] ?? words[2], dir, home))
+      steps.push(...shellSteps((all.length === raw.length ? raw[start + 2] : undefined) ?? words[2], dir, home, new Map(), line))
       continue
     }
     if (words[0] === 'eval') {
       // Son corps se lit à son tour ; ce qu'il affecte n'en sort pas (ligne avec `eval` : variables illisibles).
-      steps.push(...shellSteps(words.slice(1).join(' '), dir, home, new Map(vars)))
+      steps.push(...shellSteps(words.slice(1).join(' '), dir, home, new Map(vars), line))
       continue
     }
     steps.push({ dir, env, words })
@@ -6896,19 +6956,205 @@ function gitCall({ dir, env, words }: ShellStep): GitCall | undefined {
   return { dir: target, sub: words[i] ?? '', args: words.slice(i + 1) }
 }
 
+/** Les mots qui lancent la commande qui les suit (`command git …`, `nohup git …`). */
+const LAUNCHERS = new Set(['command', 'exec', 'builtin', 'nohup', 'time', 'sudo', 'nice', 'timeout', 'watch'])
+
+/** Une commande qui en construit d'autres : `xargs`, `source`, `.`, ou un shell sans `-c` qui lit son entrée. */
+function buildsCommands(words: readonly string[]): boolean {
+  const [name, next] = words
+  if (name === 'xargs' || name === 'source' || name === '.') return true
+  return ['bash', 'sh', 'zsh'].includes(name ?? '') && next !== '-c' && (next === undefined || next.startsWith('-'))
+}
+
+/** Le texte d'un `$'…'` qui commence en `i`, ses échappements décodés, et l'indice de son `'` fermant. */
+function ansiQuoted(line: string, i: number): [string, number] {
+  const named: Record<string, string> = { n: '\n', t: '\t', r: '\r', a: '\x07', b: '\b', e: '\x1b', E: '\x1b', f: '\f', v: '\v' }
+  let out = ''
+  for (; i < line.length; i++) {
+    const c = line[i]!
+    if (c === "'") return [out, i]
+    if (c !== '\\') {
+      out += c
+      continue
+    }
+    const n = line[++i]
+    if (n === undefined) break
+    const code = n === 'x' ? /^[0-9a-fA-F]{1,2}/ : n === 'u' ? /^[0-9a-fA-F]{1,4}/ : n === 'U' ? /^[0-9a-fA-F]{1,8}/ : undefined
+    const digits = code?.exec(line.slice(i + 1))?.[0]
+    const octal = /^[0-7]{1,3}/.exec(line.slice(i))?.[0]
+    if (digits) {
+      const point = parseInt(digits, 16)
+      out += point <= 0x10ffff ? String.fromCodePoint(point) : ''
+      i += digits.length
+    } else if (octal) {
+      out += String.fromCharCode(parseInt(octal, 8))
+      i += octal.length - 1
+    } else out += named[n] ?? n
+  }
+  return [out, line.length]
+}
+
+/** Au-delà de ce nombre de dossiers, ou de mots nés d'une accolade, la lecture large compte le reste comme illisible. */
+const LOOSE_LIMIT = 64
+/** Au-delà de ce nombre de mots dans une ligne, ou de `git` dans ses morceaux, elle ne se lit plus au mot près. */
+const LOOSE_WORDS = 4096
+const LOOSE_GITS = 64
+
+/**
+ * Les mots d'une expansion d'accolades (`re{set,base}` : `reset`, `rebase`), un niveau après l'autre ;
+ * au-delà de `LOOSE_LIMIT` mots, ou avec une accolade qui reste (`{a..c}`), le mot reste tel quel,
+ * marqué illisible (`$`).
+ */
+function braceWords(word: string): string[] {
+  let words = [word]
+  for (;;) {
+    let grew = false
+    words = words.flatMap(w => {
+      const m = /^(.*?)(?<!\$)\{([^{}]*,[^{}]*)\}(.*)$/s.exec(w)
+      if (!m) return [w]
+      grew = true
+      return m[2]!.split(',').map(alt => m[1]! + alt + m[3]!)
+    })
+    if (!grew) return words.some(w => /(?<!\$)\{[^{}]*\}/.test(w)) ? [`$${word}`] : words
+    if (words.length > LOOSE_LIMIT) return [`$${word}`]
+  }
+}
+
+/**
+ * La lecture large d'une ligne (#230) : guillemets ôtés, antislashs lus (une fin de ligne échappée
+ * recolle les lignes), `$'…'` décodé, `$HOME` et `~` développés, en morceaux coupés à chaque
+ * séparateur, parenthèse ou guillemet inversé, même entre guillemets, accolades développées. `afterSub` : le
+ * morceau suit une substitution qui se ferme, dont le résultat peut être le nom de sa commande.
+ */
+function looseSegments(line: string, home: string): { words: string[]; afterSub: boolean }[] {
+  let text = ''
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i]!
+    if (c === '\\') {
+      const next = line[++i]
+      if (next !== undefined && next !== '\n') text += next
+    } else if (c === '$' && line[i + 1] === "'") {
+      const [decoded, close] = ansiQuoted(line, i + 2)
+      text += decoded
+      i = close
+    } else if (c === '$' && (line[i + 1] === '"' || line[i + 1] === '(')) continue
+    else if (c === "'" || c === '"') continue
+    else if (line.startsWith('$HOME', i) && !/[A-Za-z0-9_]/.test(line[i + 5] ?? '')) {
+      text += home
+      i += 4
+    } else if (c === '~' && /(^|[\s;&|(){}`=])$/.test(text) && /^(\/|\s|$)/.test(line[i + 1] ?? '')) text += home
+    else text += c
+  }
+  const segments: { words: string[]; afterSub: boolean }[] = []
+  let ticks = 0
+  let afterSub = false
+  for (const piece of text.split(/([;&|\n()`])/)) {
+    if (piece.length === 1 && ';&|\n()`'.includes(piece)) {
+      if (piece === '`') ticks++
+      afterSub = piece === ')' || (piece === '`' && ticks % 2 === 0)
+      continue
+    }
+    // `X=git` : la valeur d'une affectation peut être la commande que lance `$X` ; elle se lit comme un mot.
+    // Un groupe `{ …; }` n'est qu'une accolade seule ; `{a,b}` se développe.
+    const words = piece.split(/\s+/).filter(w => w !== '' && w !== '{' && w !== '}').flatMap(w => {
+      const value = /^[A-Za-z_][A-Za-z0-9_]*=(.*)$/s.exec(w)?.[1]
+      return value === undefined ? braceWords(w) : value === '' ? [] : braceWords(value)
+    })
+    segments.push({ words, afterSub })
+  }
+  return segments
+}
+
+/**
+ * Les commandes git interdites que trouve la lecture large d'une ligne non comprise (#230), dans
+ * chacun des dossiers où elle peut tourner : celui de la session, chaque `cd`, et pour une commande
+ * construite (`$CMD`, `| bash`, `xargs`…) chaque `-C`, `--git-dir`, `--work-tree`, `GIT_DIR` et
+ * `GIT_WORK_TREE` de la ligne. Une commande au nom illisible compte comme un git.
+ */
+function looseHits(line: string, cwd: string, home: string): GitHit[] {
+  const segments = looseSegments(line, home)
+  const total = segments.reduce((n, { words }) => n + words.length, 0)
+  const gits = segments.reduce((n, { words }) => n + words.filter(w => w === 'git' || w.endsWith('/git')).length, 0)
+  const bases = [cwd]
+  const named: string[] = []
+  for (const { words } of segments) {
+    words.forEach((w, k) => {
+      const [option, inline] = w.split(/=(.*)/s) as [string, string | undefined]
+      if (k === 0 && w === 'cd') {
+        for (const base of [...bases]) {
+          const next = resolvePath(base, words[1] ?? home)
+          if (bases.length >= LOOSE_LIMIT) {
+            if (!bases.includes(`${cwd}/$cd`)) bases.push(`${cwd}/$cd`)
+          } else if (!bases.includes(next)) bases.push(next)
+        }
+      }
+      const target = ['-C', '--git-dir', '--work-tree'].includes(option) ? (inline ?? words[k + 1]) : undefined
+      if (target !== undefined) named.push(target.replace(/\/\.git$/, ''))
+    })
+  }
+  for (const m of line.matchAll(/GIT_(?:DIR|WORK_TREE)=["']?([^\s"';&|]+)/g)) named.push(m[1]!.replace(/\/\.git$/, ''))
+  const unique = (dirs: string[]) => [...new Set(dirs)]
+  const hits: GitHit[] = []
+  const push = (hit: GitHit) => {
+    if (!hits.some(h => h.rule === hit.rule && h.dir === hit.dir)) hits.push(hit)
+  }
+  const built = () => {
+    for (const dir of unique([...bases, ...bases.flatMap(base => named.map(n => resolvePath(base, n)))])) push({ rule: 'commande construite', dir, anywhere: false, loose: true })
+  }
+  // Un mot illisible d'une commande git vaut le pire de ce qu'il peut être : une sous-commande
+  // illisible est une commande construite, un argument illisible (qui peut porter plusieurs mots)
+  // fait refuser la sous-commande, et un push de partout.
+  const asGit = (args: string[]) => {
+    for (const dir of bases) {
+      const call = gitCall({ dir, env: new Map(), words: ['git', ...args] })
+      if (!call) continue
+      if (/[$`]/.test(call.sub)) {
+        push({ rule: 'commande construite', dir: call.dir, anywhere: false, loose: true })
+        continue
+      }
+      const read = call.sub === 'commit' ? call.args.filter((_, k) => !COMMIT_VALUED.has(call.args[k - 1] ?? '')) : call.args
+      const worst = WORST_RULE[call.sub]
+      const found = worst !== undefined && read.some(a => /[$`]/.test(a)) ? { rule: worst, anywhere: call.sub === 'push' } : gitRule(call.sub, call.args)
+      if (found) push({ ...found, dir: call.dir, loose: true })
+    }
+  }
+  // Trop long pour se lire au mot près : la ligne compte dans chacun de ses dossiers, refusée dans le dossier principal.
+  if (total > LOOSE_WORDS || gits > LOOSE_GITS) {
+    for (const dir of unique([...bases, ...bases.flatMap(base => named.map(n => resolvePath(base, n)))])) push({ rule: 'ligne trop longue', dir, anywhere: false, loose: true })
+    return hits
+  }
+  for (const { words: all, afterSub } of segments) {
+    let start = 0
+    while (start < all.length && (LAUNCHERS.has(all[start]!) || all[start] === 'env' || all[start] === 'export')) start++
+    const words = all.slice(start)
+    if (buildsCommands(words)) built()
+    if (afterSub && words.length > 0) asGit(words)
+    else if (words[0]?.includes('$')) {
+      if (words.length === 1) built()
+      else asGit(words.slice(1))
+    }
+    all.forEach((w, k) => {
+      if (w === 'git' || w.endsWith('/git')) asGit(all.slice(k + 1))
+    })
+  }
+  return hits
+}
+
 /**
  * Les commandes git interdites d'une ligne de commande, avec leur dossier : `-C <chemin>`, sinon le
- * dernier `cd` de la ligne, sinon `cwd`. Le crochet décide ensuite si ce dossier est le dossier
- * principal d'un dépôt partagé.
+ * dernier `cd` de la ligne, sinon `cwd`. Une ligne que le découpage ne comprend pas entière y ajoute
+ * celles de sa lecture large (#230). Le crochet décide ensuite si ce dossier est le dossier principal
+ * d'un dépôt partagé.
  */
 export function forbiddenGit(command: string, cwd: string, home: string): GitHit[] {
   const hits: GitHit[] = []
-  for (const step of shellSteps(command, cwd, home)) {
+  const line = { read: true }
+  for (const step of shellSteps(command, cwd, home, new Map(), line)) {
     const call = gitCall(step)
     const found = call && gitRule(call.sub, call.args)
     if (call && found) hits.push({ ...found, dir: call.dir })
   }
-  return hits
+  return line.read ? hits : [...hits, ...looseHits(command, cwd, home)]
 }
 
 /** Une livraison (#136) : une fusion (`git merge`, avec le dossier où elle tourne) ou une publication (`release.py release`). */
@@ -6962,6 +7208,12 @@ export function deliveryReminder(kinds: readonly Delivery['kind'][], maestro: bo
  * que de nommer le dossier principal (#226).
  */
 export function guardText(hit: GitHit, main: string, unread = false): string {
+  if (hit.loose) {
+    return [
+      `Plugin roadmap, garde-fou du dossier principal : \`${hit.rule}\` est refusé, parce que la ligne a une tournure qu'il ne lit pas (antislash, \`$'…'\`, commentaire, sous-shell, substitution, here-doc, commande construite ou rangée dans une variable), et qu'elle peut agir dans ${unread ? `\`${hit.dir}\`, qu'il ne sait pas lire, alors que ce dépôt a un dossier principal partagé (${main})` : main}.`,
+      "Récris-la sans cette tournure, chaque commande git en clair (`git -C /chemin/du/worktree …`), ou fais-la depuis ton worktree.",
+    ].join(' ')
+  }
   if (unread) {
     return [
       `Plugin roadmap, garde-fou du dossier principal : \`${hit.rule}\` est refusé, parce qu'il ne sait pas lire son dossier, \`${hit.dir}\`, et que ce dépôt a un dossier principal partagé (${main}).`,

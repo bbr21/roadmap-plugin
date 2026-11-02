@@ -671,6 +671,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.151.2 (2026-11-02)** : hooks : le garde-fou git relit largement une ligne qu'il ne comprend pas et la refuse dans le dossier principal, au lieu d'apprendre bash cas par cas (#230)
 - **0.151.1 (2026-11-02)** : panneau : une tâche parent repliée prend le même espacement qu'une tâche seule (#231)
 - **0.151.0 (2026-11-02)** : doctor : signale un plugin roadmap actif en double, la copie à garder et le geste pour retirer l'autre (#229)
 - **0.150.7 (2026-11-02)** : panneau : un bouton cliqué ou un menu choisi quitte le focus au dessin suivant, la remontée ne bloque plus sur un élément tenu en bas (#228)
