@@ -147,6 +147,10 @@ Write `<scratchpad>/operations.json`:
   is never removed.
   `pj` (attachments, #204) is a field like the others: project file paths (screenshots, PDFs,
   photos), comma-separated, relative to the project root; copy the file into the project first.
+  `livrable` (deliverables, #234) has the same format and holds what the task produces (a drafted
+  email, a deck, an export), while `pj` holds its sources. When a session writes a draft for a
+  task, set `livrable` to its file: the panel shows a preview of a text or Markdown deliverable
+  (#236). A deliverable not written yet is allowed.
   `nom` (the task's short name, #235) is the name the panel shows in its list, the task's card and
   the title of the sessions it launches, instead of the one it draws from the label. When the
   person asks to rename a task (« change le nom », « appelle-la … », « renomme »), set `nom` and

@@ -154,6 +154,8 @@ export const MIX = {
   smooth: 0.2,
   /** `liveOn` sur `bg` : bordure de la carte de session. */
   sessionBorder: 0.3,
+  /** `live` sur `border` : bordure du bloc Brouillon de la fiche (#236). */
+  draftBorder: 0.45,
   /** Fond du bouton principal sur son entourage, au survol. */
   primaryHover: 0.88,
   /** Opacité d'un élément estompé. */

@@ -147,7 +147,7 @@ check('Grammaire de ROADMAP.md et ROADMAP-fait.md', (err) => {
   const axes = knownAxes();
   if (!axes.size) err(OPEN, 'liste des axes introuvable (puce « - **axe** »)');
   // Les clés que lit et contrôle le panneau Roadmap (plugin roadmap).
-  const keys = new Set(['id', 'nom', 'qui', 'attend', 'resp', 'branche', 'verrou', 'ouvert', 'due', 'parent', 'après', 'prio', 'feedback', 'pj', 'fait', 'spec', 'fiche', 'src', 'tous', 'relance']);
+  const keys = new Set(['id', 'nom', 'qui', 'attend', 'resp', 'branche', 'verrou', 'ouvert', 'due', 'parent', 'après', 'prio', 'feedback', 'pj', 'livrable', 'fait', 'spec', 'fiche', 'src', 'tous', 'relance']);
   const declared = declaredKeys();
   // id: unique sur les deux fichiers, gardé quand la ligne descend dans ROADMAP-fait.
   const ids = new Map();
@@ -219,6 +219,8 @@ check('Grammaire de ROADMAP.md et ROADMAP-fait.md', (err) => {
           if (paths.some((v) => v === '')) err(at, `pj:${value.trim()} : chemins séparés par des virgules attendus`);
           else for (const v of paths) if (!v.startsWith('/') && !/^[a-z][a-z0-9+.-]*:\/\//i.test(v)) docs.push(['pj', v]);
         }
+        // livrable: les sorties de la tâche, au format de pj: (#234) ; un livrable pas encore écrit n'est pas une faute.
+        if (key === 'livrable' && value.split(',').some((v) => v.trim() === '')) err(at, `livrable:${value.trim()} : chemins séparés par des virgules attendus`);
         if (key === 'id') {
           if (!/^[1-9]\d*$/.test(value)) err(at, `id:${value} : nombre entier attendu`);
           else if (ids.has(value)) err(at, `id:${value} déjà porté par ${ids.get(value)} : une ligne neuve prend id:${nextId}`);

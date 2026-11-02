@@ -33,6 +33,8 @@ export type Task = {
   feedback?: string[]
   /** `pj:` : les pièces jointes, des chemins de fichiers du projet (relatifs à sa racine), séparés par des virgules (#204). */
   pj?: string[]
+  /** `livrable:` : les sorties de la tâche (email rédigé, deck, export), au format de `pj:` (#234). */
+  livrable?: string[]
   /** `resp:` : la personne qui porte la tâche, collègue compris (mode Projet, #76) ; `resp:` vide ou `resp:-` la laisse absente. */
   resp?: string
   /** `parent:` : le numéro de la tâche mère (`parent:12` ou `parent:#12`) ; `parent:-` (racine) le laisse absent. */
@@ -217,6 +219,197 @@ export function attachmentKind(path: string): 'image' | 'pdf' | 'file' {
 }
 
 /**
+ * Un chemin de fichier du projet dans un texte libre (#234) : relatif, au moins un dossier, une extension.
+ * Ni un nom seul, ni « oui/non », ni une adresse web (le caractère d'avant l'écarte), ni un chemin absolu.
+ */
+const FILE_PATH_RE = /(?<![\p{L}\p{N}_./:~-])((?:\.\.?\/)?[\p{L}\p{N}_.~-]+(?:\/[\p{L}\p{N}_.~-]+)+)/gu
+const FILE_EXT_RE = /\.[\p{L}\p{N}]{1,8}$/u
+
+/** Le texte coupé en morceaux : le texte tel quel, et chaque chemin de fichier avec son nom (#234). */
+export function fileLinks(text: string): ({ text: string } | { path: string; name: string })[] {
+  const out: ({ text: string } | { path: string; name: string })[] = []
+  let at = 0
+  for (const m of text.matchAll(FILE_PATH_RE)) {
+    // Le point d'une fin de phrase revient au texte.
+    const path = m[1]!.replace(/\.+$/, '')
+    if (!FILE_EXT_RE.test(path.split('/').pop() ?? '')) continue
+    const start = m.index!
+    if (start > at) out.push({ text: text.slice(at, start) })
+    out.push({ path, name: path.split('/').pop()! })
+    at = start + path.length
+  }
+  if (at < text.length) out.push({ text: text.slice(at) })
+  return out
+}
+
+/** Les seuils de l'aperçu d'un brouillon (#236) : la coupe, le dépli, le plus gros fichier lu. */
+export const PREVIEW = { lines: 12, chars: 900, maxLines: 200, bytes: 262_144 } as const
+const PREVIEWABLE_RE = /\.(md|markdown|txt)$/i
+
+/** Un livrable que la fiche sait lire en aperçu (#236) : du texte ou du Markdown. */
+export function isPreviewable(path: string): boolean {
+  return PREVIEWABLE_RE.test(path)
+}
+
+export type DraftField = 'to' | 'cc' | 'bcc' | 'from' | 'subject'
+export type DraftPreview = {
+  kind: 'email' | 'text'
+  fields: Partial<Record<Exclude<DraftField, 'subject'>, string>>
+  status?: { text: string; tone: 'todo' | 'sent' | 'plain' }
+  /** L'objet d'un email, le titre `#` d'un texte. */
+  title?: string
+  /** Le corps nettoyé, jusqu'à `PREVIEW.maxLines` lignes. */
+  body: string
+  /** Le corps coupé pour la fiche. */
+  short: string
+  /** Les lignes du corps au-delà de `short`. */
+  more: number
+}
+
+/** Les étiquettes d'en-tête d'un email, sans casse ni accent (#236). */
+const DRAFT_LABELS: Record<string, DraftField | 'status'> = {
+  a: 'to', to: 'to', destinataire: 'to', destinataires: 'to',
+  cc: 'cc', cci: 'bcc', bcc: 'bcc',
+  de: 'from', from: 'from',
+  objet: 'subject', sujet: 'subject', subject: 'subject',
+  statut: 'status', status: 'status',
+}
+const HEADER_LINE_RE = /^\s*(?:\*\*|__)?([\p{L}][\p{L} -]{0,24}?)\s*:\s*(?:\*\*|__)?\s*(.*)$/u
+const foldLabel = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim()
+
+function draftStatus(text: string): NonNullable<DraftPreview['status']> {
+  const f = foldLabel(text)
+  const tone = f.includes('non envoye') || f.includes('brouillon') || f.includes('not sent') ? 'todo' : f.startsWith('envoye') || f.startsWith('sent') ? 'sent' : 'plain'
+  return { text, tone }
+}
+
+/** Le Markdown ôté de ce qui se lit mal en texte brut : gras, italique, `#` d'un titre, lien. */
+function plainLine(line: string): string {
+  return line
+    .replace(/^#{1,6}\s+/, '')
+    .replace(/\*\*(.+?)\*\*/g, '$1')
+    .replace(/__(.+?)__/g, '$1')
+    .replace(/(^|[^*\p{L}\p{N}])\*([^*\n]+)\*/gu, '$1$2')
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
+    .replace(/\s+$/, '')
+}
+
+/** Les lignes vides en tête et en queue ôtées, deux vides de suite n'en font qu'une. */
+function tidyLines(lines: readonly string[]): string[] {
+  const out: string[] = []
+  for (const l of lines) if (l !== '' || (out.length > 0 && out[out.length - 1] !== '')) out.push(l)
+  while (out.length > 0 && out[out.length - 1] === '') out.pop()
+  return out
+}
+
+/** La coupe du corps (#236) : des paragraphes entiers, sinon des lignes, sinon des mots. */
+function cutDraft(body: string): { short: string; more: number } {
+  const lines = body === '' ? [] : body.split('\n')
+  const fits = (n: number) => n <= PREVIEW.lines && lines.slice(0, n).join('\n').length <= PREVIEW.chars
+  if (fits(lines.length)) return { short: body, more: 0 }
+  let kept = 0
+  for (let i = 1; i <= lines.length; i++) {
+    if (i < lines.length && lines[i] !== '') continue
+    if (!fits(i)) break
+    kept = i
+  }
+  if (kept === 0) for (let i = 1; i <= lines.length && fits(i); i++) kept = i
+  if (kept === 0) {
+    const first = lines[0]!
+    const space = first.lastIndexOf(' ', PREVIEW.chars)
+    return { short: first.slice(0, space > 0 ? space : PREVIEW.chars), more: lines.length }
+  }
+  const short = tidyLines(lines.slice(0, kept))
+  return { short: short.join('\n'), more: lines.length - short.length }
+}
+
+/**
+ * L'aperçu d'un brouillon (#236) : un email (en-têtes « À : », « Objet : »… en tête, ou un front matter)
+ * ou un texte (son titre `#`), et le corps nettoyé et coupé. Le détail : spec de feat-apercu-brouillon.
+ */
+export function draftPreview(text: string): DraftPreview {
+  const lines = text.replace(/\r\n?/g, '\n').split('\n')
+  const fields: DraftPreview['fields'] = {}
+  let subject: string | undefined
+  let status: DraftPreview['status'] | undefined
+  let rest = 0
+  const take = (label: string, value: string) => {
+    const key = DRAFT_LABELS[foldLabel(label)]
+    if (key === undefined || value.trim() === '') return
+    if (key === 'subject') subject = value.trim()
+    else if (key === 'status') status = draftStatus(value.trim())
+    else fields[key] = value.trim()
+  }
+  let i = 0
+  while (i < lines.length && lines[i]!.trim() === '') i++
+  if (lines[i]?.trim() === '---') {
+    // Un front matter : `clé: valeur` jusqu'au `---` qui le ferme.
+    const end = lines.findIndex((l, k) => k > i && l.trim() === '---')
+    if (end > i) {
+      for (const l of lines.slice(i + 1, end)) {
+        const m = /^\s*([\p{L}][\p{L} -]*?)\s*:\s*(.*)$/u.exec(l)
+        if (m) take(m[1]!, m[2]!.replace(/^["']|["']$/g, ''))
+      }
+      rest = end + 1
+    }
+  } else {
+    // Un bloc d'en-têtes : des lignes « Étiquette : valeur », des vides entre elles.
+    let k = i
+    for (; k < lines.length; k++) {
+      const l = lines[k]!
+      if (l.trim() === '') continue
+      const m = HEADER_LINE_RE.exec(l)
+      if (!m) break
+      take(m[1]!, m[2]!)
+    }
+    rest = k
+  }
+  const email = fields.to !== undefined || subject !== undefined
+  let bodyLines: string[]
+  let title: string | undefined
+  if (email) {
+    bodyLines = lines.slice(rest)
+    // Le séparateur qui suit les en-têtes ne se montre pas.
+    let j = 0
+    while (j < bodyLines.length && bodyLines[j]!.trim() === '') j++
+    if (/^\s*(---+|\*\*\*+)\s*$/.test(bodyLines[j] ?? '')) bodyLines = bodyLines.slice(j + 1)
+    title = subject
+  } else {
+    fields.to = fields.cc = fields.bcc = fields.from = undefined
+    for (const key of Object.keys(fields)) delete fields[key as keyof typeof fields]
+    status = undefined
+    bodyLines = lines
+    const first = bodyLines.findIndex(l => l.trim() !== '')
+    const h = first >= 0 ? /^#\s+(.+)$/.exec(bodyLines[first]!.trim()) : null
+    if (h) {
+      title = plainLine(h[1]!)
+      bodyLines = bodyLines.slice(first + 1)
+    }
+  }
+  const body = tidyLines(bodyLines.map(plainLine)).slice(0, PREVIEW.maxLines).join('\n')
+  return {
+    kind: email ? 'email' : 'text',
+    fields,
+    ...(status ? { status } : {}),
+    ...(title ? { title } : {}),
+    body,
+    ...cutDraft(body),
+  }
+}
+
+/** Un destinataire en pastille (#236) : son nom, son rôle entre parenthèses, ses initiales. */
+export function recipientOf(to: string): { name: string; role?: string; initials: string } {
+  const m = /^(.*?)\s*\(([^)]*)\)\s*$/.exec(to.trim())
+  const name = (m ? m[1]! : to).trim()
+  const initials = name
+    .split(/\s+/)
+    .slice(0, 2)
+    .map(w => (/\p{L}/u.exec(w)?.[0] ?? '').toUpperCase())
+    .join('')
+  return { name, ...(m && m[2]!.trim() !== '' ? { role: m[2]!.trim() } : {}), initials }
+}
+
+/**
  * L'aperçu d'une image (#204), la vignette JPEG réduite par `sips` posée dans un SVG : le panneau de
  * bureau n'a pas d'élément image, il dessine un `Svg` comme une image. Coupée au cadre, coins arrondis.
  */
@@ -277,9 +470,9 @@ export function parseRoadmap(text: string, file: string): Task[] {
       else if (k === 'tous' && (RECURRENCES as readonly string[]).includes(v)) task.tous = v as Recurrence
       else if (k === 'relance' && DATE_RE.test(v)) task.relance = v
       else if (k === 'feedback' && FEEDBACK_RE.test(v)) task.feedback = v.split(',')
-      else if (k === 'pj') {
+      else if (k === 'pj' || k === 'livrable') {
         const paths = attachmentPaths(v)
-        if (paths.length > 0) task.pj = paths
+        if (paths.length > 0) task[k] = paths
       } else if (k !== '' && !KEYS.includes(k)) {
         const values = v.split(',').map(x => x.trim()).filter(x => x !== '')
         if (values.length > 0) task.extra = { ...task.extra, [k]: values }
@@ -293,7 +486,7 @@ export function parseRoadmap(text: string, file: string): Task[] {
 // Le contrôle de la grammaire, plus strict que la lecture : la lecture ignore une ligne qu'elle ne
 // comprend pas, le contrôle la signale. Clés admises : celles que la lecture garde, plus `verrou`
 // (Splitmybill).
-const KEYS: readonly string[] = [...FIELDS, 'après', 'parent', 'id', 'nom', 'prio', 'feedback', 'pj', 'verrou', 'tous', 'relance']
+const KEYS: readonly string[] = [...FIELDS, 'après', 'parent', 'id', 'nom', 'prio', 'feedback', 'pj', 'livrable', 'verrou', 'tous', 'relance']
 /** Les clés de la grammaire : une clé déclarée dans `cles` ne peut en reprendre aucune. */
 export const GRAMMAR_KEYS: readonly string[] = KEYS
 const DECLARED_KEY_RE = /^[a-zà-ÿ][a-zà-ÿ0-9-]*$/
@@ -402,7 +595,7 @@ export function lintRoadmap(text: string, done: boolean, rules: Partial<LintRule
       else if (k === 'prio' && !PRIO_RE.test(v)) say(`prio: vaut 1, 2 ou 3 (« ${v} »)`)
       else if (k === 'tous' && !(RECURRENCES as readonly string[]).includes(v)) say(`tous: vaut semaine, 2semaines, mois, trimestre ou an (« ${v} »)`)
       else if (k === 'feedback' && !FEEDBACK_RE.test(v)) say(`feedback: des numéros de retours séparés par des virgules (« ${v} »)`)
-      else if (k === 'pj' && (v === '' || v.split(',').some(x => x.trim() === ''))) say(`pj: des chemins de fichiers séparés par des virgules (« ${v} »)`)
+      else if ((k === 'pj' || k === 'livrable') && (v === '' || v.split(',').some(x => x.trim() === ''))) say(`${k}: des chemins de fichiers séparés par des virgules (« ${v} »)`)
       else if (k === 'nom' && (v === '' || v.length > NAME_MAX)) say(`nom: 40 caractères au plus, et pas vide (« ${clip(v, 50)} »)`)
       keys.set(k, v)
     }
@@ -3983,7 +4176,7 @@ export function pathCandidates(source: Source, path: string): string[] {
 
 /** Les chemins que le panneau vérifie avant d'écrire le brief : seuls ceux qui existent y sont donnés à lire. */
 export function briefPaths(source: Source, task: Task): string[] {
-  return [...new Set([...[task.fiche, task.src, task.spec, ...(task.pj ?? [])].flatMap(p => (p ? pathCandidates(source, p) : [])), reglesPath(source)])]
+  return [...new Set([...[task.fiche, task.src, task.spec, ...(task.pj ?? []), ...(task.livrable ?? [])].flatMap(p => (p ? pathCandidates(source, p) : [])), reglesPath(source)])]
 }
 
 /**
@@ -4106,6 +4299,12 @@ function briefFiles(source: Source, task: Task, found: BriefFound): { files: str
     if (hit) files.push(`\`${hit}\` (pièce jointe)`)
     else notes.push(`Pièce jointe \`${p}\` : introuvable sous \`${source.root ?? source.dir}\`${task.branche ? `, peut-être seulement sur la branche \`${task.branche}\`` : ''}.`)
   }
+  // Les livrables (#234) : un déjà écrit se relit ; un absent est à écrire, pas une erreur.
+  for (const p of task.livrable ?? []) {
+    const hit = at(p, true)
+    if (hit) files.push(`\`${hit}\` (livrable)`)
+    else notes.push(`Livrable \`${p}\` : pas encore écrit.`)
+  }
   return { files, notes }
 }
 
@@ -4179,6 +4378,16 @@ const PROJECT_METHOD: readonly string[] = [
   "Avant de dire la task finie et de cocher sa ligne : vérifie que ce qui était demandé est fait (le message parti, le document à jour, la réponse reçue) et dis-moi sur quoi tu t'appuies.",
 ]
 
+/**
+ * La clause du brouillon (#236) : un brouillon s'écrit dans un fichier, se rattache comme livrable
+ * (#234), et se montre en entier avant toute question de validation (BBR, session AAFES #554).
+ */
+export function draftClause(): readonly string[] {
+  return [
+    "Un brouillon (email, message, note) s'écrit dans un fichier du projet (un email commence par « À : » et « Objet : »), se rattache à la ligne comme livrable (`livrable:`), où le panneau en montre l'aperçu ; avant toute question de validation (« je le pose tel quel ? »), montre-le en entier dans ton message, avec son chemin, puis pose la question.",
+  ]
+}
+
 /** « a, b et c ». */
 function listFr(items: readonly string[]): string {
   return items.length <= 1 ? (items[0] ?? '') : `${items.slice(0, -1).join(', ')} et ${items[items.length - 1]}`
@@ -4226,6 +4435,7 @@ export function launchBrief(
     ...goalClause(),
     '',
     ...(travail === 'projet' ? PROJECT_METHOD : CODE_METHOD),
+    ...draftClause(),
     '',
     ...ending,
   ].join('\n')
@@ -4745,7 +4955,7 @@ function fieldOfProblem(why: string, cles: Readonly<Record<string, readonly stri
  * L'ordre de la grammaire, où se place un champ que la ligne n'avait pas (#161) ; `*` : les clés
  * déclarées par le projet, et toute clé inconnue.
  */
-const EDIT_ORDER = ['id', 'nom', 'resp', 'qui', 'attend', 'branche', 'verrou', 'ouvert', 'due', 'parent', 'après', 'prio', 'tous', 'relance', 'feedback', '*', 'spec', 'fiche', 'pj', 'src']
+const EDIT_ORDER = ['id', 'nom', 'resp', 'qui', 'attend', 'branche', 'verrou', 'ouvert', 'due', 'parent', 'après', 'prio', 'tous', 'relance', 'feedback', '*', 'spec', 'fiche', 'pj', 'livrable', 'src']
 function editRank(field: string): number {
   const k = field.slice(0, Math.max(0, field.indexOf(':')))
   const at = EDIT_ORDER.indexOf(k)
@@ -6434,7 +6644,7 @@ export function taskBrandOf(
 }
 
 /** Les cartes de la fiche d'une tâche (#142, maquette C), dans l'ordre où elles se lisent. */
-export type FicheCard = 'avancement' | 'lancer' | 'chaine' | 'details' | 'pj'
+export type FicheCard = 'avancement' | 'lancer' | 'chaine' | 'details' | 'livrables' | 'pj'
 
 /**
  * Ce que montre la fiche d'une tâche selon où on la lit (`session` : la session lancée pour elle ;
@@ -6455,6 +6665,8 @@ export function ficheCards(o: {
   details: number
   /** Les pièces jointes de la ligne (`pj:`, #204) : leur carte vient après Détails. */
   attachments?: number
+  /** Les livrables de la ligne (`livrable:`, #234) : leur carte vient avant les pièces jointes. */
+  deliverables?: number
   /** En édition (#161, maquette C) : les cartes qui portent un champ, sans « Lancer ». */
   editing?: boolean
 }): { cards: FicheCard[] } {
@@ -6465,6 +6677,7 @@ export function ficheCards(o: {
   if (!session && !o.done && !o.live) cards.push('lancer')
   if (o.links > 0) cards.push('chaine')
   if (o.details > 0) cards.push('details')
+  if ((o.deliverables ?? 0) > 0) cards.push('livrables')
   if ((o.attachments ?? 0) > 0) cards.push('pj')
   return { cards }
 }
@@ -6516,9 +6729,11 @@ export function toggleFold(
 /** Le résumé d'une ligne sur la tête d'une carte de la fiche (#199) : ce qu'elle garde, repliée. */
 export function cardSummary(
   card: FicheCard | 'fin' | 'etapes',
-  o: { steps?: { count: string; age: string }; branch?: string[]; attend?: string; after?: string[]; unlocks?: string[]; parent?: string; details?: number; when?: string; attachments?: number },
+  o: { steps?: { count: string; age: string }; branch?: string[]; attend?: string; after?: string[]; unlocks?: string[]; parent?: string; details?: number; when?: string; attachments?: number; deliverables?: number },
 ): string {
-  if (card === 'pj') return o.attachments ? `${o.attachments} fichier${o.attachments > 1 ? 's' : ''}` : ''
+  const files = (n?: number) => (n ? `${n} fichier${n > 1 ? 's' : ''}` : '')
+  if (card === 'pj') return files(o.attachments)
+  if (card === 'livrables') return files(o.deliverables)
   if (card === 'etapes') return o.steps ? `${o.steps.count} · ${o.steps.age}` : ''
   if (card === 'avancement') return o.branch?.[0] ?? (o.attend ? `attend ${o.attend}` : '')
   if (card === 'chaine') {

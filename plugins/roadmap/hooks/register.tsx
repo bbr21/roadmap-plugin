@@ -42,6 +42,9 @@ import {
   alertIcon,
   playIcon,
   externalIcon,
+  envelopeTile,
+  initialsIcon,
+  stripIcon,
   documentIcon,
   imageIcon,
   archiveIcon,
@@ -223,6 +226,12 @@ import {
   hashLabel,
   keyPart,
   attachmentKind,
+  fileLinks,
+  draftPreview,
+  isPreviewable,
+  recipientOf,
+  PREVIEW,
+  type DraftPreview,
   pathCandidates,
   thumbSvg,
   integerShares,
@@ -5825,8 +5834,8 @@ const THUMB = { width: 48, height: 64, px: 128 }
 /** Au-delà, un `Svg` est refusé (131 072 caractères) : l'image garde sa ligne, sans aperçu. */
 const THUMB_SVG_MAX = 120_000
 
-/** Les pièces jointes de la tâche ouverte, relues au plus toutes les 30 s ; les aperçus, par fichier et date de modification. */
-let attachmentsRead: { key: string; at: number; list: Attachment[] } | undefined
+/** Les pièces jointes (et les livrables, #234) de la tâche ouverte, relues au plus toutes les 30 s ; les aperçus, par fichier et date de modification. */
+const attachmentsRead = new Map<'pj' | 'livrable', { key: string; at: number; list: Attachment[] }>()
 const thumbs = new Map<string, string | null>()
 /** Le dossier privé des vignettes, tiré une fois par `mktemp -d` (sous le `$TMPDIR` de l'utilisateur, mode 700). */
 let thumbDir: Promise<string | undefined> | undefined
@@ -5842,11 +5851,12 @@ async function privateThumbDir($: EngineInterface): Promise<string | undefined> 
   return dir
 }
 
-async function readAttachments($: EngineInterface, source: Source, task: Task, now: number): Promise<Attachment[]> {
-  const pj = task.pj ?? []
+async function readAttachments($: EngineInterface, source: Source, task: Task, now: number, which: 'pj' | 'livrable' = 'pj'): Promise<Attachment[]> {
+  const pj = task[which] ?? []
   if (pj.length === 0) return []
   const key = `${source.dir}|${task.key}|${pj.join(',')}`
-  if (attachmentsRead && attachmentsRead.key === key && now - attachmentsRead.at < FOCUS_FACTS_MS) return attachmentsRead.list
+  const kept = attachmentsRead.get(which)
+  if (kept && kept.key === key && now - kept.at < FOCUS_FACTS_MS) return kept.list
   const list: Attachment[] = []
   for (const written of pj) {
     let found: { path: string; mtime: number } | undefined
@@ -5865,8 +5875,64 @@ async function readAttachments($: EngineInterface, source: Source, task: Task, n
     const thumb = found && kind === 'image' ? await thumbOf($, found.path, found.mtime) : undefined
     list.push({ name: written.split('/').pop() || written, written, kind, ...(found ? { path: found.path } : {}), ...(thumb ? { thumb } : {}) })
   }
-  attachmentsRead = { key, at: now, list }
+  attachmentsRead.set(which, { key, at: now, list })
   return list
+}
+
+/** Le brouillon que montre la fiche (#236) : le plus récent des livrables texte trouvés, son aperçu, ou trop gros pour être lu. */
+type DraftRead = { path: string; name: string; mtime: number; preview?: DraftPreview; tooBig?: true }
+/** L'aperçu lu, gardé par chemin et date de modification : un fichier inchangé ne se relit pas. */
+let draftRead: { key: string; preview: DraftPreview } | undefined
+
+async function readDraft($: EngineInterface, list: readonly Attachment[]): Promise<DraftRead | undefined> {
+  let best: { path: string; name: string; mtime: number; size: number } | undefined
+  for (const a of list) {
+    if (a.path === undefined || !isPreviewable(a.path)) continue
+    try {
+      // Relu à chaque dessin : la version que la session vient d'écrire est celle qu'on voit.
+      const st = await $.fs.stat(a.path)
+      if (st.kind === 'file' && (best === undefined || st.mtimeMs > best.mtime)) best = { path: a.path, name: a.name, mtime: st.mtimeMs, size: st.size }
+    } catch {
+      // effacé depuis : le suivant
+    }
+  }
+  if (best === undefined) return undefined
+  const head = { path: best.path, name: best.name, mtime: best.mtime }
+  if (best.size > PREVIEW.bytes) return { ...head, tooBig: true }
+  const key = `${best.path}|${best.mtime}`
+  if (draftRead?.key !== key) {
+    try {
+      draftRead = { key, preview: draftPreview(await $.fs.read(best.path)) }
+    } catch {
+      return head
+    }
+  }
+  return { ...head, preview: draftRead.preview }
+}
+
+/** Les chemins de fichiers écrits dans les champs de la fiche (#234) et le fichier trouvé pour chacun, relus au plus toutes les 30 s. */
+let linksRead: { key: string; at: number; found: Map<string, string> } | undefined
+
+async function readLinks($: EngineInterface, source: Source, texts: readonly (string | undefined)[], now: number): Promise<Map<string, string>> {
+  const written = [...new Set(texts.flatMap(t => (t ? fileLinks(t) : [])).flatMap(x => ('path' in x ? [x.path] : [])))]
+  if (written.length === 0) return new Map()
+  const key = `${source.dir}|${written.join(',')}`
+  if (linksRead && linksRead.key === key && now - linksRead.at < FOCUS_FACTS_MS) return linksRead.found
+  const found = new Map<string, string>()
+  for (const w of written) {
+    for (const path of pathCandidates(source, w)) {
+      try {
+        if ((await $.fs.stat(path)).kind === 'file') {
+          found.set(w, path)
+          break
+        }
+      } catch {
+        // absent ici : le candidat suivant
+      }
+    }
+  }
+  linksRead = { key, at: now, found }
+  return found
 }
 
 /**
@@ -6103,7 +6169,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   ])
   const {
     axis: axisRaw, attend: attendRaw, who: whoRaw = 'all', moreFilters = false, showDone: doneChosen, groupBy, selected, openGroups, closedGroups, moreGroups,
-    launchNote, launched, openNote, conclusionOpen, missionOpen = '', cancelAsk = '', closeKind = 'abandon', cancelNote = '',
+    launchNote, launched, openNote, conclusionOpen, missionOpen = '', draftOpen = '', draftFolded = '', cancelAsk = '', closeKind = 'abandon', cancelNote = '',
     editing: editingKey = '', editNote = '', editField = '', editCount = 0, foldedCards = [], openedCards = [],
   } = view
   const data = await paneData($, source, [stamp, titlesVersion, themeStamp, retry, liveVersion].join('|'))
@@ -6393,6 +6459,10 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     const ficheSource = inSession && ownBrand ? ownBrand.data.source : source
     const docs = await readFicheDocs($, ficheSource, current, now)
     const attachments = await readAttachments($, ficheSource, current, now)
+    const deliverables = await readAttachments($, ficheSource, current, now, 'livrable')
+    const draft = await readDraft($, deliverables)
+    const noteForLinks = current.done ? livreOfNote(current.note).rest : current.note
+    const fileHits = await readLinks($, ficheSource, [current.attend, noteForLinks, current.src], now)
     const storedRecap = current.id ? recapOf(await $.store.get(recapKey(ficheSource.name, current.id)).catch(() => undefined)) : undefined
     const frame = missionFrame(current.label, storedRecap)
     // Le morceau « livré : … » de la note d'une close va dans la carte Fin (#150) ; le reste de la note reste.
@@ -6647,6 +6717,36 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
           {text}
         </Text>
       )
+    // Un texte libre de la ligne (`attend:`, note, `src:`) dont les chemins de fichiers du projet trouvés
+    // s'écrivent par leur seul nom, en lien qui ouvre le fichier (#234, choix de BBR) ; sans chemin trouvé, le texte tel quel.
+    type TextLook = { mono?: boolean; size?: 'caption'; color: string }
+    const linked = (where: string, text: string, look: TextLook) => {
+      const parts = fileLinks(text)
+      const plainText = (t: string, key: string) => (
+        <Text key={key} {...(look.mono ? { mono: true } : {})} {...(look.size ? { size: look.size } : {})} color={look.color} wrap="wrap">
+          {t}
+        </Text>
+      )
+      if (!parts.some(x => 'path' in x && fileHits.has(x.path))) return plainText(text, `text:${where}`)
+      return (
+        <Box key={`linked:${where}`} flexDirection="row" flexWrap="wrap" flexShrink={1} minWidth={0}>
+          {parts.map((x, i) => {
+            const path = 'path' in x ? fileHits.get(x.path) : undefined
+            if (!('path' in x)) return x.text.trim() === '' ? null : plainText(x.text, `text:${where}:${i}`)
+            if (path === undefined) return plainText(x.path, `text:${where}:${i}`)
+            const id = `lien:${where}:${path}`
+            return graphic && Client ? (
+              <Box key={`link:${where}:${i}`} flexShrink={1} minWidth={0} hover={{ backgroundColor: palette.hover }}>
+                <Text {...(look.size ? { size: look.size } : {})} color={palette.mine} wrap="truncate-end">{x.name}</Text>
+                {hit(id, () => void openFile($, path), 1)}
+              </Box>
+            ) : (
+              <Button key={`link:${where}:${i}`} plain label={x.name} onPress={() => void openFile($, path)} />
+            )
+          })}
+        </Box>
+      )
+    }
     // Un bouton dessiné (Box et Svg), recouvert d'une zone de clic : un bouton de l'app ne porte
     // que du texte et ne s'étire pas. Au terminal, sans Svg, le bouton de l'app.
     const pressable = (id: string, onPress: () => void, look: RenderElement, fallback: RenderElement, grow = false) => {
@@ -6757,6 +6857,104 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
         </Box>,
         <Button key="reopen-session" plain label="Rouvrir la session" onPress={() => void reopenSession($, source, current, row, now)} />,
       )
+    // Le bloc Brouillon (#236, maquette A1 « L'enveloppe », choix de BBR) : sous la bande d'état, le plus
+    // récent des livrables texte. Un bandeau teinté (tuile, mot, fraîcheur) qui replie le bloc au clic ; le
+    // destinataire en pastille d'initiales, l'objet, le corps tenu par un filet et coupé, sa dernière ligne
+    // grise ; « Ouvrir », « Voir tout · +N lignes », le statut. Au terminal, du texte et des boutons.
+    const draftBlock = () => {
+      if (!draft || editing) return null
+      const p = draft.preview
+      const key = current.key
+      const folded = draftFolded === key
+      const opened = draftOpen === key
+      const sent = p?.status?.tone === 'sent'
+      const label = sent ? 'Envoyé' : current.done ? 'Livrable' : p?.kind === 'email' ? 'Brouillon à relire' : 'Brouillon'
+      const ago = now - draft.mtime
+      const fresh = `à jour · ${ago < 60_000 ? "à l'instant" : `il y a ${durationLabel(ago)}`}`
+      const openIt = () => void openFile($, draft.path)
+      const toggleOpen = () => void setView($, v => ({ draftOpen: v.draftOpen === key ? '' : key }))
+      const toggleFold = () => void setView($, v => ({ draftFolded: v.draftFolded === key ? '' : key }))
+      const to = p?.fields.to ? recipientOf(p.fields.to) : undefined
+      const who = to ? [to.role, p?.fields.cc ? `cc ${p.fields.cc}` : undefined].filter(Boolean).join(' · ') : ''
+      const lines = p ? (opened ? p.body : p.short).split('\n') : []
+      const dimLast = !opened && (p?.more ?? 0) > 0
+      const avatarHex = to ? axisColor(palette, [...to.name].reduce((n, c) => n + c.charCodeAt(0), 0)) : palette.live
+      const statusPill = p?.status && (
+        <Box key="draft-status" flexDirection="row" alignItems="center" paddingX={SPACE.tight} backgroundColor={sent ? palette.sel : palette.blockTint}>
+          {corners(RADIUS.chip, palette.bg)}
+          <Text size="caption" weight="semibold" color={sent ? palette.ok : palette.blockOn} wrap="truncate-end">
+            {p.status.tone === 'todo' ? 'non envoyé' : sent ? 'envoyé' : p.status.text}
+          </Text>
+        </Box>
+      )
+      const button = (id: string, text: string, onPress: () => void, primary: boolean) =>
+        pressable(
+          id,
+          onPress,
+          <Box flexDirection="row" alignItems="center" gap={SPACE.tight} paddingX={SPACE.indent} backgroundColor={primary ? palette.pri : palette.btn} hover={{ backgroundColor: primary ? palette.pri : palette.btnHover }}>
+            {corners(RADIUS.control, palette.bg)}
+            {strut(SIZE.strut.row)}
+            {primary && Svg && <Svg source={externalIcon(palette.priText, SIZE.icon.sm)} alt={text} width={SIZE.icon.sm} height={SIZE.icon.sm} />}
+            <Text weight="semibold" color={primary ? palette.priText : palette.text}>{text}</Text>
+          </Box>,
+          <Button key={id} plain label={text} onPress={onPress} />,
+        )
+      const bodyText = lines.map((l, i) => (
+        <Text key={`draft-line:${i}`} size="footnote" wrap="wrap" {...(dimLast && i === lines.length - 1 ? { color: palette.text3 } : {})}>
+          {l === '' ? ' ' : l}
+        </Text>
+      ))
+      return (
+        <Box key="draft" paddingX={SPACE.indent}>
+          <Box flexDirection="column" flexGrow={1} minWidth={0} borderStyle="round" borderColor={mixOver(palette.live, palette.border, MIX.draftBorder)}>
+            <Box key="draft-top" flexDirection="row" alignItems="center" gap={SPACE.row} paddingX={SPACE.indent} paddingY="xs" backgroundColor={palette.liveTint}>
+              {Svg && <Svg source={envelopeTile(palette.live, palette.onAxis, 24)} alt="brouillon" width={24} height={24} />}
+              <Text weight="semibold" color={palette.liveOn}>{label}</Text>
+              <Box flexGrow={1} flexShrink={1} minWidth={0} flexDirection="row" justifyContent="flex-end">
+                <Text size="caption" color={palette.text2} wrap="truncate-end">{fresh}</Text>
+              </Box>
+              {hit('brouillon:plier', toggleFold)}
+            </Box>
+            {!folded && (
+              <Box key="draft-body" flexDirection="column" gap={SPACE.block} paddingX={SPACE.indent} paddingY="sm">
+                {to && (
+                  <Box key="draft-to" flexDirection="row" alignItems="center" gap={SPACE.row}>
+                    {Svg && <Svg source={initialsIcon(to.initials, avatarHex, palette.onAxis, 32)} alt={to.name} width={32} height={32} />}
+                    <Box flexDirection="column" flexShrink={1} minWidth={0}>
+                      <Text weight="semibold" wrap="truncate-end">{to.name}</Text>
+                      {who !== '' && <Text size="caption" color={palette.text2} wrap="truncate-end">{who}</Text>}
+                    </Box>
+                  </Box>
+                )}
+                <Text size="heading" weight="semibold" wrap="wrap">{p?.title ?? draft.name}</Text>
+                {draft.tooBig ? (
+                  <Text size="footnote" color={palette.text2}>trop long pour l'aperçu</Text>
+                ) : p === undefined ? (
+                  <Text size="footnote" color={palette.text2}>illisible</Text>
+                ) : p.body === '' ? (
+                  <Text size="footnote" color={palette.text2}>{p.kind === 'email' ? '(corps vide)' : 'fichier vide'}</Text>
+                ) : (
+                  <Box key="draft-text" flexDirection="column" paddingX={SPACE.indent}>
+                    {Svg && (
+                      <Box position="absolute" top={0} bottom={0} left={0} overflow="hidden">
+                        <Svg source={stripIcon(palette.live, 4000)} alt="filet" width={3} height={4000} />
+                      </Box>
+                    )}
+                    {bodyText}
+                  </Box>
+                )}
+                <Box key="draft-actions" flexDirection="row" alignItems="center" gap={SPACE.row} flexWrap="wrap">
+                  {button('brouillon:ouvrir', 'Ouvrir', openIt, true)}
+                  {p && p.more > 0 && button('brouillon:voir', opened ? 'Réduire' : `Voir tout · +${p.more} lignes`, toggleOpen, false)}
+                  <Box flexGrow={1} />
+                  {statusPill}
+                </Box>
+              </Box>
+            )}
+          </Box>
+        </Box>
+      )
+    }
     // La fiche (#142, maquette C) : l'en-tête Voies, la mission dans son cadre, puis les cartes que
     // l'état rend utiles (`ficheCards`), dans sa session comme au clic dans la roadmap.
     const children = allTasks.filter(x => x !== current && current.id !== undefined && x.parent === current.id)
@@ -6791,6 +6989,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
       links,
       details: detailCount,
       attachments: attachments.length,
+      deliverables: deliverables.length,
       editing,
     })
     // L'état en pastille : celui que Maestro voit dans sa session, celui de la session qui y travaille ailleurs.
@@ -6830,6 +7029,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
       }),
       details: cardSummary('details', { details: detailCount }),
       pj: cardSummary('pj', { attachments: attachments.length }),
+      livrables: cardSummary('livrables', { deliverables: deliverables.length }),
     }
     const stepsPart = ficheSteps($, e, palette, stepsNote, now, current.done, stepsSession, headState)
     // L'état sous l'en-tête (#199, choix de Bertrand) : une bande teintée, son icône, son mot et pourquoi ;
@@ -6880,6 +7080,57 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
         </Box>
       )
     }
+    // Les pièces jointes (#204, maquette B, vignettes plus petites) et les livrables (#234) : les images en
+    // vignettes de 48 × 64, un clic les ouvre en grand dans le panneau Fichiers ; dessous, une ligne par autre
+    // fichier, un absent grisé (`missing`), sans clic. Au terminal, sans Svg, des boutons.
+    const fileCard = (id: 'pj' | 'livrables', title: string, list: Attachment[], missing: string) => {
+        const prefix = id === 'pj' ? 'pj' : 'livrable'
+        const shown = list.filter(a => a.thumb && a.path && Svg && graphic)
+        const rows = list.filter(a => !shown.includes(a))
+        const open = (a: Attachment) => () => void openFile($, a.path!)
+        const kindWord = (a: Attachment) => (a.path === undefined ? missing : a.kind === 'image' ? 'image' : a.kind === 'pdf' ? 'PDF' : 'fichier')
+        return card(
+          id,
+          title,
+          summaries[id],
+          <Box flexDirection="column">
+            {shown.length > 0 && (
+              <Box key={`${prefix}-thumbs`} flexDirection="row" flexWrap="wrap" gap={SPACE.row} paddingY="xs">
+                {shown.map(a => (
+                  <Box key={`${prefix}-thumb:${a.path}`} flexShrink={0} hover={{ backgroundColor: palette.hover }}>
+                    <Svg source={a.thumb!} alt={a.name} width={THUMB.width} height={THUMB.height} />
+                    {hit(`${prefix}:${a.path}`, open(a))}
+                  </Box>
+                ))}
+              </Box>
+            )}
+            {rows.map(a => {
+              const tone = a.path ? palette.text2 : palette.text3
+              const mark = a.kind === 'image' ? imageIcon(tone, SIZE.icon.sm) : documentIcon(tone, SIZE.icon.sm)
+              return (
+                <Box key={`${prefix}-row:${a.written}`} flexDirection="column">
+                  {ruleAbove}
+                  {graphic ? (
+                    <Box key={`${prefix}-line:${a.written}`} flexDirection="row" alignItems="center" gap={SPACE.row} {...(a.path ? { hover: { backgroundColor: palette.hover } } : {})}>
+                      {strut(SIZE.strut.field)}
+                      {icon(mark, kindWord(a), SIZE.icon.sm, '▫', tone)}
+                      <Box flexGrow={1} flexShrink={1} minWidth={0}>
+                        <Text wrap="truncate-end" {...(a.path ? {} : { color: palette.text3 })}>{a.name}</Text>
+                      </Box>
+                      <Text size="caption" color={palette.text3}>{kindWord(a)}</Text>
+                      {a.path && hit(`${prefix}:${a.path}`, open(a))}
+                    </Box>
+                  ) : a.path ? (
+                    <Button key={`${prefix}-open:${a.written}`} plain label={`${a.name} · ${kindWord(a)}`} onPress={open(a)} />
+                  ) : (
+                    <Text dimColor>{`${a.name} · ${missing}`}</Text>
+                  )}
+                </Box>
+              )
+            })}
+          </Box>,
+        )
+    }
     const cards: Record<FicheCard, () => RenderElement> = {
       avancement: () =>
         card(
@@ -6918,7 +7169,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
                     <Box flexDirection="column" gap={SPACE.tight} flexShrink={1}>
                       {me.includes(attendWho(current.attend)) ? plain(attendWho(current.attend)) : tag(shortAttend(current.attend), 'wait')}
                       {current.attend.trim() !== attendWho(current.attend) && (
-                        <Text size="caption" color={palette.text2} wrap="wrap">{current.attend}</Text>
+                        linked('attend', current.attend, { size: 'caption', color: palette.text2 })
                       )}
                     </Box>
                   )),
@@ -7268,7 +7519,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
                 ),
               )}
               {field(abandoned ? 'Annulée le' : 'Faite le', current.fait !== undefined && strong(doneLabel(current.fait)))}
-              {field('Source', mono(current.src))}
+              {field('Source', current.src !== undefined && current.src !== '' && linked('src', current.src, { mono: true, size: 'caption', color: palette.text2 }))}
               {field('Spec', mono(current.spec))}
             {(fichePath || srcPath) &&
               field(
@@ -7291,53 +7542,9 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
       // Les pièces jointes (#204, maquette B, vignettes plus petites) : les images en vignettes de 48 × 64,
       // un clic les ouvre en grand dans le panneau Fichiers ; dessous, une ligne par autre fichier, une
       // absente grisée, « introuvable », sans clic. Au terminal, sans Svg, des boutons.
-      pj: () => {
-        const shown = attachments.filter(a => a.thumb && a.path && Svg && graphic)
-        const rows = attachments.filter(a => !shown.includes(a))
-        const open = (a: Attachment) => () => void openFile($, a.path!)
-        const kindWord = (a: Attachment) => (a.path === undefined ? 'introuvable' : a.kind === 'image' ? 'image' : a.kind === 'pdf' ? 'PDF' : 'fichier')
-        return card(
-          'pj',
-          'Pièces jointes',
-          summaries.pj,
-          <Box flexDirection="column">
-            {shown.length > 0 && (
-              <Box key="pj-thumbs" flexDirection="row" flexWrap="wrap" gap={SPACE.row} paddingY="xs">
-                {shown.map(a => (
-                  <Box key={`pj-thumb:${a.path}`} flexShrink={0} hover={{ backgroundColor: palette.hover }}>
-                    <Svg source={a.thumb!} alt={a.name} width={THUMB.width} height={THUMB.height} />
-                    {hit(`pj:${a.path}`, open(a))}
-                  </Box>
-                ))}
-              </Box>
-            )}
-            {rows.map(a => {
-              const tone = a.path ? palette.text2 : palette.text3
-              const mark = a.kind === 'image' ? imageIcon(tone, SIZE.icon.sm) : documentIcon(tone, SIZE.icon.sm)
-              return (
-                <Box key={`pj-row:${a.written}`} flexDirection="column">
-                  {ruleAbove}
-                  {graphic ? (
-                    <Box key={`pj-line:${a.written}`} flexDirection="row" alignItems="center" gap={SPACE.row} {...(a.path ? { hover: { backgroundColor: palette.hover } } : {})}>
-                      {strut(SIZE.strut.field)}
-                      {icon(mark, kindWord(a), SIZE.icon.sm, '▫', tone)}
-                      <Box flexGrow={1} flexShrink={1} minWidth={0}>
-                        <Text wrap="truncate-end" {...(a.path ? {} : { color: palette.text3 })}>{a.name}</Text>
-                      </Box>
-                      <Text size="caption" color={palette.text3}>{kindWord(a)}</Text>
-                      {a.path && hit(`pj:${a.path}`, open(a))}
-                    </Box>
-                  ) : a.path ? (
-                    <Button key={`pj-open:${a.written}`} plain label={`${a.name} · ${kindWord(a)}`} onPress={open(a)} />
-                  ) : (
-                    <Text dimColor>{`${a.name} · introuvable`}</Text>
-                  )}
-                </Box>
-              )
-            })}
-          </Box>,
-        )
-      },
+      pj: () => fileCard('pj', 'Pièces jointes', attachments, 'introuvable'),
+      // Les livrables (#234) : la carte des pièces jointes, pour les sorties ; un absent n'est pas encore écrit.
+      livrables: () => fileCard('livrables', 'Livrables', deliverables, 'pas encore écrit'),
     }
     // L'édition (#161, maquette C) : un champ par ligne éditable, à côté de son étiquette ; un menu sur
     // bureau quand le projet liste ses valeurs (`—` : vide). Le refus rougit l'étiquette et se dit dessous.
@@ -7489,6 +7696,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
           )}
         </Box>
         {stateBox()}
+        {draftBlock()}
         {/* En édition (#161) : la barre sous l'en-tête, à la place du crayon. */}
         {editing && editBar()}
         {/* La mission seule dans son cadre (#150, maquette C) : celle de la fiche de fin de sa session, sa
@@ -7513,7 +7721,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
               (frame.recap || (cut?.cut && !faded)) &&
               moreLink('mission-line', missionShown ? 'Replier' : frame.recap ? 'La ligne de la roadmap' : 'Tout voir', toggleMission)}
             {!editing && frame.recap && missionShown && <Text size="caption" wrap="wrap">{current.label}</Text>}
-            {!editing && noteShown && (cut ? !cut.cut || missionShown : missionShown) && <Text color={palette.text2} wrap="wrap">{noteShown}</Text>}
+            {!editing && noteShown && (cut ? !cut.cut || missionShown : missionShown) && linked('note', noteShown, { color: palette.text2 })}
           </Box>
         </Box>
         {finBox()}

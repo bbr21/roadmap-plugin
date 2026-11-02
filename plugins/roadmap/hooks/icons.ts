@@ -279,6 +279,29 @@ export function documentIcon(hex: string, size = 16, width: number = STROKE.base
   return line(hex, size, width, '<path d="M6.5 3.5h7.5l4 4v13H6.5z"/><path d="M14 3.5v4h4M9.5 12.5h5M9.5 16h5"/>')
 }
 
+/** La tuile du bloc Brouillon (#236, maquette A1) : l'enveloppe au trait sur un carré arrondi plein. */
+export function envelopeTile(bg: string, fg: string, size = 24): string {
+  return svg(
+    size,
+    24,
+    `<rect width="24" height="24" rx="6.5" fill="${bg}"/><g fill="none" stroke="${fg}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" transform="translate(4 4) scale(0.667)"><rect x="3" y="5" width="18" height="14" rx="2.5"/><path d="M3.5 7l8.5 6 8.5-6"/></g>`,
+  )
+}
+
+/** La pastille d'initiales d'un destinataire (#236, maquette A1) : un rond plein, les initiales au centre. */
+export function initialsIcon(initials: string, bg: string, fg: string, size = 32): string {
+  return svg(
+    size,
+    32,
+    `<circle cx="16" cy="16" r="16" fill="${bg}"/><text x="16" y="16" dy="0.36em" text-anchor="middle" font-family="-apple-system, system-ui, sans-serif" font-size="12" font-weight="700" fill="${fg}">${escapeXml(initials)}</text>`,
+  )
+}
+
+/** Le filet qui tient le corps d'un brouillon (#236) : 3 px de large, coupé à la hauteur du texte. */
+export function stripIcon(hex: string, height: number): string {
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="3" height="${height}" viewBox="0 0 3 ${height}"><rect width="3" height="${height}" rx="1.5" fill="${hex}"/></svg>`
+}
+
 /** Image : une pièce jointe sans aperçu (#204). */
 export function imageIcon(hex: string, size = 16, width: number = STROKE.base): string {
   return line(hex, size, width, '<rect x="3.5" y="4.5" width="17" height="15" rx="2"/><circle cx="9" cy="10" r="1.5"/><path d="M20.5 16l-5-5-8 8.5"/>')

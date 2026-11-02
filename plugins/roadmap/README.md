@@ -671,6 +671,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.155.0 (2026-11-02)** : fiche : clé livrable: (les sorties d'une tâche, leur carte, chemins de fichiers en lien) et aperçu du brouillon dans la fiche, montré en entier avant toute validation (#234, #236)
 - **0.154.0 (2026-11-02)** : panneau : une session lancée par Maestro ne montre que la fiche de sa tâche, sans retour vers la liste (#233)
 - **0.153.0 (2026-11-02)** : panneau : le nom court d'une tâche se choisit à la main (clé nom:, depuis la fiche ou la skill tasks) et l'emporte partout sur le titre tiré (#235)
 - **0.152.0 (2026-11-02)** : tasks : un compte rendu fixe après chaque écriture (Ajoutées, Mises à jour, T'attendent), puis un seul formulaire pour ce qui attend (#232)
