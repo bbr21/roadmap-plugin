@@ -200,13 +200,15 @@ native est le seul affichage des étapes : la bande que le plugin dessinait au-d
 (#104, #107) la doublait et est retirée (#109). La consigne la veut lisible : trois à sept étapes,
 un verbe et son objet chacune, jamais recopiée dans le message, à jour à chaque changement.
 Chez Maestro, la bande au-dessus de la saisie porte l'arbre de ses sessions (#147) : une ligne par
-tâche lancée, son état en couleur, son étape en cours, sa jauge, le nom qui ouvre la session. Elle
+tâche lancée : le numéro, le nom qui ouvre la session, puis au bord droit sa jauge, son compte, son
+étape en cours et son état en icône et en mot (« en cours », « t'attend », « à fusionner »,
+« Completed », #211). Elle
 reste visible quand le fil défile, cède à un sondage, et s'efface tant que la boîte de fin pose une
 question ; la liste native reste dans le fil. Une session close et à l'arrêt, encore ouverte, porte au
 bout de sa ligne l'icône d'archivage : un clic l'archive (#174). L'en-tête dit « Contexte 40 % » pour
-Maestro seul, sans tokens ni jauge ; les lignes n'ont plus de contexte (#174). La jauge, le compte et
+Maestro seul, sans tokens ni jauge ; les lignes n'ont plus de contexte (#174). La jauge, le compte, l'étape et
 l'état se serrent au bord droit, chacun à la largeur de son plus long texte, alignés d'une ligne à
-l'autre (#174).
+l'autre (#174, #211).
 
 **Les mots d'état du panneau** (#174) : « Completed » pour une tâche close (bande de Maestro, voies,
 pastille violette de sa fiche) et « Done » pour ce qui est fait (« 7/7 Done », « N Done » de l'en-tête,
@@ -652,6 +654,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.137.0 (2026-11-02)** : panneau : bande de Maestro resserrée, numéro sans case fixe, jauge puis étape, état en icône et en mot (#211)
 - **0.136.0 (2026-11-02)** : panneau : la voie de la fiche compte toutes les prérequises et débloquées (#209), Étapes repliées sur une tâche Done (#210)
 - **0.135.0 (2026-11-02)** : panneau : le titre suit le numéro, l'échéance en texte coloré au bout de la ligne, les étiquettes après le titre (#212)
 - **0.134.0 (2026-11-02)** : panneau : pièces jointes d'une tâche (pj:), carte de la fiche à vignettes, lues par le brief (#204)

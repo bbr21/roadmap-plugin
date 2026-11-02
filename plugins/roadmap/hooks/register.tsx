@@ -72,6 +72,7 @@ import {
   brandText,
   briefTaskOf,
   bandColumns,
+  bandState,
   maestroBand,
   type MaestroBand,
   type StepsView,
@@ -5036,9 +5037,9 @@ async function sessionBrandOf($: EngineInterface): Promise<{ brand: Brand; data:
 /**
  * L'arbre de Maestro dans la bande au-dessus de la saisie (#147, style C retouché) : sur le fond du
  * panneau, « Maestro » et ses sessions ; puis une ligne par tâche, sans voies : le point de son état, le
- * numéro, le nom (ouvre la session), l'étape en cours, sa jauge, « 2/6 », l'état : la roue des lignes de
- * la liste pour une session qui tourne, le mot pour les autres (#152 : plus de jauge d'ensemble, une seule
- * jauge par ligne). Colonnes de largeur fixe, la ligne s'éclaire au survol. Au terminal, le texte seul.
+ * numéro, le nom (ouvre la session), sa jauge, « 2/6 », l'étape en cours, l'état en icône et en mot (#211,
+ * maquette D : l'étape après la jauge, les icônes du bloc « En cours ») ; une seule jauge par ligne (#152).
+ * Colonnes de largeur fixe à droite, la ligne s'éclaire au survol. Au terminal, le texte seul.
  */
 function maestroBandTree(
   $: EngineInterface,
@@ -5102,13 +5103,57 @@ function maestroBandTree(
       </Box>
     )
   }
-  // La roue pour une session qui tourne, le mot pour les autres.
-  const spins = (t: BrandTask) => Boolean(Svg) && t.state === 'live' && !t.finished
+  // L'étape en cours d'une tâche pas finie, et l'état de chaque ligne en icône et en mot (#211).
+  const stepOf = (t: BrandTask, i: number) => (t.finished ? '' : (views[i]?.current ?? ''))
+  const marks = band.tasks.map(bandState)
   const cols = bandColumns({
     counts: views.map(v => v?.count ?? ''),
-    states: band.tasks.map((t, i) => (spins(t) ? 'spinner' : (words.states[i] ?? ''))),
+    states: marks.map(m => m.word),
     archive: band.tasks.some(t => t.archivable && t.sessionId),
+    steps: band.tasks.map(stepOf),
   })
+  // L'icône de l'état, celles du bloc « En cours » (#211) ; au terminal, son signe.
+  const stateIcon = (icon: ReturnType<typeof bandState>['icon'], word: string, hex: string) => {
+    if (!Svg) return <Text size="caption" color={hex}>{{ spinner: '◌', hand: '✋', merge: '⑂', check: '✓' }[icon]}</Text>
+    const source =
+      icon === 'spinner'
+        ? spinnerIcon(palette.live, 14, word, false, now)
+        : icon === 'hand'
+          ? handIcon(palette.block, 14, STROKE.pill, word)
+          : icon === 'merge'
+            ? mergeIcon(palette.wait, 14, STROKE.pill, word)
+            : checkIcon(hex, 14, STROKE.pill)
+    return <Svg source={source} alt={word} width={SIZE.icon.sm} height={SIZE.icon.sm} {...(icon === 'spinner' ? { isInteractive: true } : {})} />
+  }
+  // Le titre ouvre la session : sur le bureau, un texte et sa zone de clic, sans la marge du bouton natif
+  // qui creusait l'écart après le numéro (#211) ; au terminal, le bouton.
+  const titleOf = (t: BrandTask) => {
+    const graphic = Boolean(t.sessionId && Svg && Client)
+    const name = (
+      <Text size="footnote" wrap="truncate-end" {...(graphic ? { hover: { underline: true } } : {})}>
+        {t.label}
+      </Text>
+    )
+    if (!t.sessionId) return name
+    const id = `band-open:${keyPart(t.id)}`
+    if (!Svg || !Client) {
+      return (
+        <Button key={id} plain hover={{ underline: true }} onPress={() => act.open(t)}>
+          {name}
+        </Button>
+      )
+    }
+    pressHandlers.set(id, () => act.open(t))
+    zoneDrawn(zones, 'press-hit', now)
+    return (
+      <Box key={id} minWidth={0}>
+        {name}
+        <Box position="absolute" top={0} left={0} right={0}>
+          <Client key={`${pressKey(id)}-g${zoneGen}`} module="./press-hit.tsx" props={{ id }} width="100%" height={1} />
+        </Box>
+      </Box>
+    )
+  }
   return (
     <Box flexDirection="column" gap={SPACE.tight} backgroundColor={palette.bg} padding="sm">
       <Box flexDirection="row" alignItems="center" gap={SPACE.row}>
@@ -5130,26 +5175,20 @@ function maestroBandTree(
           const view = views[i]
           const [dot, word] = hue(t)
           const bar = view && Svg ? stepsBarIcon(palette, view.segments, { width: BAND_GAUGE.row, height: 4, waiting: t.state === 'wait', merging: t.state === 'merge', finished: t.finished === true }) : undefined
-          const name = <Text size="footnote" wrap="truncate-end">{t.label}</Text>
+          const mark = marks[i] ?? bandState(t)
+          const step = stepOf(t, i)
           return (
             <Box key={`band-row:${keyPart(t.id)}`} flexDirection="row" alignItems="center" gap={SPACE.row} paddingX={1} hover={{ backgroundColor: palette.hover }}>
               {strut}
               {Svg && <Svg source={discIcon(dot, 12)} alt={words.states[i] ?? ''} width={12} height={12} />}
-              <Box width={5}>
+              {/* Le numéro à sa largeur, à un écart du titre : plus de case de 5 cellules (#211). */}
+              <Box flexShrink={0}>
                 <Text size="caption" tabular color={palette.text3}>{`#${t.id}`}</Text>
               </Box>
               <Box flexShrink={1} minWidth={0}>
-                {t.sessionId ? (
-                  <Button key={`band-open:${keyPart(t.id)}`} plain hover={{ underline: true }} onPress={() => act.open(t)}>
-                    {name}
-                  </Button>
-                ) : (
-                  name
-                )}
+                {titleOf(t)}
               </Box>
-              <Box flexGrow={1} flexShrink={1} minWidth={0}>
-                {view?.current && !t.finished && <Text size="caption" color={palette.text3} wrap="truncate-end">{`· ${view.current}`}</Text>}
-              </Box>
+              <Box flexGrow={1} />
               {/* Jauge, compte et état à largeur fixe, sur chaque ligne (#172) : les barres partent de la même
                   colonne, quels que soient le titre, l'étape ou le compte (« 5/7 », « 7/7 Done »). */}
               {Svg && (
@@ -5163,12 +5202,16 @@ function maestroBandTree(
                   {view && <Text size="caption" tabular color={palette.text3}>{view.count}</Text>}
                 </Box>
               )}
-              <Box key={`band-state:${keyPart(t.id)}`} width={cols.state} flexShrink={0} alignItems="flex-end">
-                {Svg && spins(t) ? (
-                  <Svg source={spinnerIcon(palette.live, 14, words.states[i], false, now)} alt={words.states[i] ?? ''} width={SIZE.icon.sm} height={SIZE.icon.sm} isInteractive />
-                ) : (
-                  <Text size="caption" color={word}>{words.states[i] ?? ''}</Text>
-                )}
+              {/* L'étape en cours, après la jauge et son compte, dans sa colonne (#211, maquette D). */}
+              {cols.step > 0 && (
+                <Box key={`band-step:${keyPart(t.id)}`} width={cols.step} flexShrink={1} minWidth={0}>
+                  {step !== '' && <Text size="caption" color={palette.text3} wrap="truncate-end">{step}</Text>}
+                </Box>
+              )}
+              {/* L'état en icône et en mot, pour tous les états (#211). */}
+              <Box key={`band-state:${keyPart(t.id)}`} width={cols.state} flexShrink={0} flexDirection="row" alignItems="center" justifyContent="flex-end" gap={SPACE.row}>
+                {stateIcon(mark.icon, mark.word, word)}
+                <Text size="caption" color={word}>{mark.word}</Text>
               </Box>
               {/* La case de l'archivage, sur chaque ligne pour garder les colonnes, dès qu'une ligne en a besoin ;
                   l'icône sur une session close à l'arrêt (#174). Au terminal, le bouton prend sa largeur. */}

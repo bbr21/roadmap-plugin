@@ -5910,19 +5910,36 @@ export function maestroBand(o: { brand: Brand | undefined; hasSurvey: boolean; s
   return { brand: o.brand, tasks, more: o.brand.tasks.length - tasks.length }
 }
 
+/** La case de l'étape de la bande de Maestro, au plus, en cellules (#211) : au-delà, l'étape se tronque et le titre garde sa place. */
+export const BAND_STEP_MAX = 24
+
 /**
- * Les cases du compte, de l'état et de l'archivage de la bande de Maestro, en cellules (#174) : chacune
- * à la largeur du plus long texte réel de la bande (un signe par cellule, le corps `caption` est plus
- * étroit), la roue en 2, l'icône d'archivage en 2, et pas de case d'archivage quand aucune ligne n'en a.
- * Serrées, le groupe se colle au bord droit ; la même largeur sur chaque ligne garde les colonnes (#172).
+ * Les cases du compte, de l'étape, de l'état et de l'archivage de la bande de Maestro, en cellules (#174) :
+ * chacune à la largeur du plus long texte réel de la bande (un signe par cellule, le corps `caption` est
+ * plus étroit) ; l'état, une icône de 2 et son mot à 1 d'écart (#211) ; l'étape plafonnée à `BAND_STEP_MAX`
+ * (#211) ; l'icône d'archivage en 2, et pas de case d'archivage quand aucune ligne n'en a. Serrées, le
+ * groupe se colle au bord droit ; la même largeur sur chaque ligne garde les colonnes (#172).
  */
-export function bandColumns(o: { counts: readonly string[]; states: readonly string[]; archive: boolean }): { count: number; state: number; archive: number } {
+export function bandColumns(o: { counts: readonly string[]; states: readonly string[]; archive: boolean; steps?: readonly string[] }): { count: number; state: number; archive: number; step: number } {
   const widest = (xs: readonly number[]) => xs.reduce((a, b) => Math.max(a, b), 0)
+  const state = widest(o.states.map(s => [...s].length))
   return {
     count: widest(o.counts.map(c => [...c].length)),
-    state: widest(o.states.map(s => (s === 'spinner' ? 2 : [...s].length))),
+    state: state > 0 ? 3 + state : 0,
     archive: o.archive ? 2 : 0,
+    step: Math.min(BAND_STEP_MAX, widest((o.steps ?? []).map(s => [...s].length))),
   }
+}
+
+/**
+ * L'état d'une ligne de la bande de Maestro, une icône et son mot, comme le bloc « En cours » du panneau
+ * (#211) : la roue « en cours », la main « t'attend », la branche « à fusionner », la coche « Completed ».
+ */
+export function bandState(t: Pick<BrandTask, 'state' | 'finished'>): { icon: 'spinner' | 'hand' | 'merge' | 'check'; word: string } {
+  if (t.state === 'live') return { icon: 'spinner', word: 'en cours' }
+  if (t.state === 'wait') return { icon: 'hand', word: BRAND_STATE_WORD.wait }
+  if (t.state === 'merge') return { icon: 'merge', word: BRAND_STATE_WORD.merge }
+  return { icon: 'check', word: BRAND_STATE_WORD.done }
 }
 
 /** Les tâches des sessions lancées par Maestro, par création de leur session, par numéro en secours (#143). */
