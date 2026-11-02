@@ -56,8 +56,8 @@ export type View = {
   who?: string
   /** « Plus de filtres » déplié (#115) ; absent dans une vue d'avant, vaut replié. */
   moreFilters?: boolean
-  /** Montrer les tasks faites (ROADMAP-fait.md). */
-  showDone: boolean
+  /** Montrer les tasks faites (ROADMAP-fait.md), choisi à la main ; absent, d'office à 0 tâche ouverte (#202). */
+  showDone?: boolean
   /**
    * Les tâches de toutes les vues rangées par jour (`day` : `ouvert:` d'une ouverte, `fait:` d'une faite)
    * ou par sujet (`subject`) ; `auto` : les ouvertes par sujet, les faites par jour.

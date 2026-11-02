@@ -261,6 +261,7 @@ import {
   maestroTasksNote,
   liveBlockRows,
   OPENING_VIEW,
+  doneViewOn,
   moreFiltersForced,
   otherTaskNote,
   problemsText,
@@ -531,7 +532,8 @@ const VIEW: View = {
   attend: 'all',
   who: 'all',
   moreFilters: false,
-  showDone: false,
+  // Pas choisie : la vue Done d'office à 0 tâche ouverte (#202).
+  showDone: undefined,
   // `auto` : les ouvertes par sujet, les faites par jour ; un clic sur « Par jour / Par sujet » vaut pour toutes les vues.
   groupBy: 'auto',
   selected: '',
@@ -3604,8 +3606,9 @@ function pressAxis($: EngineInterface, a: string): void {
   void setView($, v => ({ axis: v.axis === a ? 'all' : a, attend: axisKeepsState ? v.attend : 'all', showDone: false, closedGroups: [], moreGroups: [] }))
 }
 
-function pressDone($: EngineInterface): void {
-  void setView($, v => ({ showDone: !v.showDone, axis: 'all', attend: 'all', closedGroups: [], moreGroups: [] }))
+/** `shown` : la vue Done telle que dessinée, d'office comprise (#202) : le clic en sort. */
+function pressDone($: EngineInterface, shown: boolean): void {
+  void setView($, () => ({ showDone: !shown, axis: 'all', attend: 'all', closedGroups: [], moreGroups: [] }))
 }
 
 // --- Mesures du rendu (2026-10-23) ------------------------------------------------------------
@@ -4419,7 +4422,8 @@ export const register: Register = (on, options) => {
     const segment = (e.data as { segment?: unknown } | null)?.segment
     if (typeof segment === 'string') notePress(`bar:${segment}`)
     await disarm($)
-    if (segment === DONE_SEGMENT) pressDone($)
+    // Le segment des Done n'existe qu'en vue Done : son clic en sort.
+    if (segment === DONE_SEGMENT) pressDone($, true)
     else if (typeof segment === 'string' && segment !== '') pressAxis($, segment)
     return {}
   })
@@ -5504,7 +5508,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     read($, checkMoveAtom),
   ])
   const {
-    axis: axisRaw, attend: attendRaw, who: whoRaw = 'all', moreFilters = false, showDone, groupBy, selected, openGroups, closedGroups, moreGroups,
+    axis: axisRaw, attend: attendRaw, who: whoRaw = 'all', moreFilters = false, showDone: doneChosen, groupBy, selected, openGroups, closedGroups, moreGroups,
     launchNote, launched, openNote, conclusionOpen, missionOpen = '', cancelAsk = '', closeKind = 'abandon', cancelNote = '',
     editing: editingKey = '', editNote = '', editField = '', editCount = 0, foldedCards = [],
   } = view
@@ -5552,6 +5556,10 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   // La date d'un parent est celle de son enfant ouvert le plus proche (#125) : filtres, tri et pastilles la lisent.
   const openTasks = withParentDates(open.filter(t => !t.done))
   const doneTasks = done.filter(t => t.done)
+  // Toutes faites : les Done par jour, barre verte, plutôt qu'une liste vide (#202) ; la dernière
+  // cochée compte encore le temps de son mouvement, dans les ouvertes (#182).
+  const settling = doneTasks.filter(t => checkLingers(checkMoves.get(taskKey(t)), now)).length
+  const showDone = doneViewOn(doneChosen, openTasks.length + settling, doneTasks.length)
   const short = (t: Task): ShortTitle =>
     titles[hashLabel(t.label)] ?? { titre: fallbackTitle(t.label), sujet: '…' }
   const age = (t: Task): number | undefined => (t.ouvert ? daysBetween(t.ouvert, today) : undefined)
@@ -6821,7 +6829,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   const tree = !showDone && !searching ? byTree(sortTasks(shown, sortOrder), allTasks, t => short(t).titre, prereqsFor, today) : []
 
   const setAxis = (a: string) => () => pressAxis($, a)
-  const toggleDone = () => pressDone($)
+  const toggleDone = () => pressDone($, showDone)
   // Un tiers choisi revient, au second clic, à « Attend un tiers ».
   const setAttend = (v: string, back = 'all') => () => {
     void setView($, () => ({ attend: attend === v ? back : v, showDone: false, closedGroups: [], moreGroups: [] }))

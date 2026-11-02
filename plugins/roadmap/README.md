@@ -651,6 +651,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.132.1 (2026-11-01)** : panneau : à 0 tâche ouverte, le panneau s'ouvre sur les Done par jour, barre verte (#202)
 - **0.132.0 (2026-11-01)** : panneau : au-delà de 65 % de contexte, le pourcentage de la bande de Maestro passe en rouge et une pastille « Compacter » lance /compact (#197)
 - **0.131.0 (2026-11-01)** : reglages-session : messages de travail plus fournis (Fait · Trouvé · Suite sous la carte d'étape), fiche de fin de session à verdict en tête, due aussi quand la session est bloquée (#128)
 - **0.130.0 (2026-11-01)** : panneau : la fiche d'une tâche en cartes repliables à tête, un filet par ligne, l'état en bande sous l'en-tête, un seul état « Completed » dans toute la fiche (#199)

@@ -1590,11 +1590,21 @@ export function todoCounters(maestro = false): TodoCounter[] {
 }
 
 /**
+ * La vue Done est-elle montrée (#202) : celle choisie à la main (« N Done », un filtre), sinon d'office à
+ * 0 tâche ouverte s'il y a des faites, au lieu d'une liste vide ; une tâche qui se rouvre ou s'ajoute
+ * ramène aux ouvertes.
+ */
+export function doneViewOn(chosen: boolean | undefined, open: number, done: number): boolean {
+  return chosen ?? (open === 0 && done > 0)
+}
+
+/**
  * La vue à l'ouverture du panneau (#188, capture de Bertrand) : toutes les tâches, pastille « Toutes »,
  * tous les axes, rangées selon `groupingOf` (l'arbre, sauf une vue que le projet déclare), « Plus › »
- * replié, chez Maestro comme ailleurs. Remplace les choix d'ouverture de #149, #160 et #176.
+ * replié, chez Maestro comme ailleurs. Remplace les choix d'ouverture de #149, #160 et #176. La vue Done
+ * n'est pas choisie : `doneViewOn` la montre d'office à 0 tâche ouverte (#202).
  */
-export const OPENING_VIEW = { axis: 'all', attend: 'all', who: 'all', moreFilters: false, showDone: false, groupBy: 'auto' } as const
+export const OPENING_VIEW = { axis: 'all', attend: 'all', who: 'all', moreFilters: false, showDone: undefined, groupBy: 'auto' } as const
 
 /**
  * « Plus › » déplié (#115, #176) : ouvert à la main, ou tenu ouvert tant qu'un de ses filtres, un tiers
