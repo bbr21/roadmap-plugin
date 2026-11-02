@@ -56,8 +56,8 @@ les sessions toutes les 3 s (le dossier de la roadmap toutes les 15 s), et montr
 - toutes les faites, rangées par jour de clôture ou par sujet ;
 - dans toutes les vues, le menu « Ranger » (Par sujet, le défaut ; Par jour et Par échéance quand une ouverte a `due:`, Par responsable quand une a `resp:`, #176 ; Par numéro, la vue « Récentes », partout, #192 ; un bouton sur mobile) : un seul choix pour toutes les vues ; les ouvertes sont toujours en arbre, que le rangement trie sans le couper, et par jour chaque arbre se range à sa prochaine échéance, l'étape du jour sous sa mère repliée (#189) ;
   par jour, une ouverte se range au jour de son `ouvert:` (« En retard » reste en tête), une faite
-  au jour de son `fait:` ; sans choix ni `vue` déclarée par le projet, les ouvertes vont en arbre
-  (#168) et les faites par jour ;
+  au jour de son `fait:` ; sans choix, les ouvertes vont en arbre par sujet, dans tout projet
+  (#168, #238 : plus de `vue` déclarée) et les faites par jour ;
 - la modification d'une tâche ouverte depuis sa fiche (#161) : le crayon à droite du titre met la
   fiche en édition, champs en place dans ses cartes, préremplis de la ligne (libellé dans la Mission,
   Attend, Après et Parent, Axe, Responsable (`resp:`, la personne, #176), les clés
@@ -344,11 +344,11 @@ filtres, « Qui », les rangements) vaut dans tout projet.
   est reconduit à la place, depuis son `due:` écrit (« parent #411 reconduit au 10/11 »). Une
   annulation ou un enfant récurrent ne ferment rien d'autre ; par `cowork.py`, la note dit le parent
   à cocher.
-- **La vue** : par échéance (en retard, cette semaine, plus tard, sans échéance) quand le projet
-  déclare `"vue": "echeance"` (l'onboarding sans code l'écrit) ; le menu « Ranger » propose aussi le
-  responsable (si une tâche a `resp:`), l'arbre des tâches, le sujet, le jour.
-  Une roadmap qui a des mères s'ouvre en arbre (#163) quand le projet ne déclare pas de `vue` ; un
-  choix dans « Ranger » reste.
+- **La vue** : par sujet à l'ouverture, dans tout projet (#238 : `vue` de `.claude/roadmap.json`
+  ne sert plus, le doctor dit de la retirer) ; le menu « Ranger » propose aussi l'échéance (en
+  retard, cette semaine, plus tard, sans échéance), le responsable (si une tâche a `resp:`), le jour
+  et le numéro ; un choix dans « Ranger » reste. Hors sujet, chaque section est un bandeau teinté à
+  son icône (#238).
   L'arbre « Le fil » (#125, redessiné par #163, maquette A) : une tâche est seule, mère ou étape ; un
   bloc par mère, sa ligne en tête une seule fois, en gras, avec sa case, son département, sa barre
   d'avancement (`1/3`), la date de sa prochaine étape et son ▶ ; ses étapes dessous, en retrait sur
@@ -597,7 +597,7 @@ Dans cet ordre, pour le projet de la session (un worktree remonte à son dossier
 1. `.claude/roadmap.json` dans le projet, tout facultatif :
    `{ "name": "Clipping", "dir": "docs", "me": ["Alex"], "subjects": ["Montage", "Diffusion"] }`
    (`dir` relatif au projet ou absolu ; sans `subjects`, le modèle choisit ses sujets), et les
-   réglages : `mode` (`auto` par défaut, voir « Un seul mode »), `requis`, `requis_sur`, `cles`, `vue` (voir « Dossier sans code »), et `rangement`
+   réglages : `mode` (`auto` par défaut, voir « Un seul mode »), `requis`, `requis_sur`, `cles`, et `rangement`
    (#101) : `{ "skill": "aafes-memory", "ligne": "Rangé dans" }`, la tâche de la session cochée,
    la fin de tour ne propose l'archivage qu'une fois la ligne de rangement (ou « Rien à ranger »)
    écrite dans une réponse de la session, et rappelle sinon la règle de rangement de la skill ;
@@ -671,6 +671,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.156.0 (2026-11-02)** : panneau : les vues de la liste remises à plat : par sujet partout à l'ouverture (clé vue retirée), bandeaux à icône hors sujet, filles à faire par échéance, puis en cours, puis faites barrées (#238)
 - **0.155.0 (2026-11-02)** : fiche : clé livrable: (les sorties d'une tâche, leur carte, chemins de fichiers en lien) et aperçu du brouillon dans la fiche, montré en entier avant toute validation (#234, #236)
 - **0.154.0 (2026-11-02)** : panneau : une session lancée par Maestro ne montre que la fiche de sa tâche, sans retour vers la liste (#233)
 - **0.153.0 (2026-11-02)** : panneau : le nom court d'une tâche se choisit à la main (clé nom:, depuis la fiche ou la skill tasks) et l'emporte partout sur le titre tiré (#235)

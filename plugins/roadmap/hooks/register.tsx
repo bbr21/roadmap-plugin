@@ -24,6 +24,7 @@ import {
   treeMotherRowIcon,
   treeChildRowIcon,
   axisBandIcon,
+  bandGlyphIcon,
   progressIcon,
   bubbleIcon,
   squareCheckRowIcon,
@@ -158,6 +159,7 @@ import {
   groupingLabel,
   byTree,
   axisTree,
+  bandLook,
   dayTree,
   deadlineTree,
   ownerTree,
@@ -7774,7 +7776,8 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   // Une tâche qu'on vient de cocher reste à sa place le temps de son mouvement (#182, maquette A), puis
   // part dans les Done ; une fille d'une mère ouverte y reste de toute façon, sous sa mère.
   const openIds = new Set(openTasks.map(t => t.id))
-  const lingering = showDone ? [] : doneTasks.filter(t => checkLingers(checkMoves.get(taskKey(t)), now) && !(t.parent !== undefined && openIds.has(t.parent)))
+  const stepLingers = (t: Task) => checkLingers(checkMoves.get(taskKey(t)), now)
+  const lingering = showDone ? [] : doneTasks.filter(t => stepLingers(t) && !(t.parent !== undefined && openIds.has(t.parent)))
   const blockSteps = new Map<string, ChildStatus>()
   await Promise.all(
     [...blockOf.values()].map(async bt => {
@@ -7820,7 +7823,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   // toutes les vues. La vue que le projet déclare l'emporte ; sans elle, par sujet. Le jour et
   // l'échéance seulement si la roadmap a des `due:`, le responsable des `resp:` (#176).
   const rangeable = groupingData(openTasks)
-  const by = groupingOf(groupBy, showDone, source.vue, rangeable)
+  const by = groupingOf(groupBy, showDone, rangeable)
   // Les ouvertes sont toujours en arbre (#189) : le rangement trie des arbres entiers. L'arbre
   // garde les tâches en retard à leur place (une mère en retard garde ses filles) : la pastille de
   // retard reste sur la ligne. Sous une recherche, pas d'arbre : ses résultats n'ont pas de « ↳ » (#86).
@@ -8435,12 +8438,13 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   // la légende, la flèche dans son carré ; par jour, par échéance ou par responsable (#189), une
   // bande par section ; par numéro (#192), une seule bande, « Récentes ». Dedans, les arbres entiers : les mères en blocs, chaque suite de tâches seules
   // en groupe sans en-tête (`bare`). Par jour, une mère porte la tâche du jour de son arbre (`focus`).
-  type ListGroup = { key?: string; name: string; tasks: Task[]; lead?: RenderElement; mark?: RenderElement; block?: TreeBlock; focus?: Task; band?: { count: number; lead?: RenderElement; axis?: string }; under?: string; bare?: boolean }
+  type BandLookOf = ReturnType<typeof bandLook>
+  type ListGroup = { key?: string; name: string; tasks: Task[]; lead?: RenderElement; mark?: RenderElement; block?: TreeBlock; focus?: Task; band?: { count: number; lead?: RenderElement; axis?: string; look?: BandLookOf }; under?: string; bare?: boolean }
   const bandValue = (t: Task) => (rangerPar ? t.extra?.[rangerPar]?.[0] : undefined)
   const aloneBlock = (key: string, tasks: Task[]): TreeBlock => ({ key, label: '', ghost: false, tasks, rank: new Map(), done: 0, total: 0, doneTasks: [], closed: false })
   const lateLead = () => icon(discIcon(palette.late), 'en retard', 16, '●', 'error')
   // Une section de l'arbre en groupes : sa bande, puis ses mères et ses suites de tâches seules.
-  const sectionGroups = (id: string, name: string, count: number, items: readonly AxisItem[], band: { lead?: RenderElement; axis?: string } = {}): ListGroup[] => {
+  const sectionGroups = (id: string, name: string, count: number, items: readonly AxisItem[], band: { lead?: RenderElement; axis?: string; look?: BandLookOf } = {}): ListGroup[] => {
     const out: ListGroup[] = [{ key: id, name, tasks: [], band: { count, ...band } }]
     let run: Task[] = []
     const flush = () => {
@@ -8453,7 +8457,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
       if (it.kind === 'alone') run.push(it.task)
       else {
         flush()
-        out.push({ key: it.block.key, name: it.block.label, tasks: treeSteps(it.block), block: it.block, ...(it.focus ? { focus: it.focus } : {}), under: id })
+        out.push({ key: it.block.key, name: it.block.label, tasks: treeSteps(it.block, isLive, stepLingers), block: it.block, ...(it.focus ? { focus: it.focus } : {}), under: id })
       }
     }
     flush()
@@ -8462,7 +8466,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   const rangedSections =
     by === 'day' ? dayTree(tree, today, isLive) : by === 'deadline' ? deadlineTree(tree, today, isLive) : by === 'owner' ? ownerTree(tree, me, isLive) : by === 'number' ? numberTree(tree) : undefined
   const treeGroups: ListGroup[] = rangedSections
-    ? rangedSections.flatMap(sec => sectionGroups(sec.key, sec.label, sec.count, sec.items, sec.late ? { lead: lateLead() } : {}))
+    ? rangedSections.flatMap(sec => sectionGroups(sec.key, sec.label, sec.count, sec.items, { look: bandLook(sec.key, today, me), ...(sec.late ? { lead: lateLead() } : {}) }))
     : !rangerPar
     ? axisTree(tree, order, isLive).flatMap(sec => sectionGroups(`axe:${sec.axis}`, axisLabel(sec.axis), sec.count, sec.items, { axis: sec.axis }))
     : bandsOf(
@@ -8482,12 +8486,43 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
         const count = band.items.reduce((n, u) => n + (u.block.head && !u.block.ghost ? 1 : 0) + u.block.tasks.length, 0)
         return [
           { key: id, name: band.label, tasks: [], band: { count } },
-          ...band.items.map(u => ({ key: u.block.key, name: u.block.label, tasks: u.block.head ? treeSteps(u.block) : u.block.tasks, block: u.block, under: id })),
+          ...band.items.map(u => ({ key: u.block.key, name: u.block.label, tasks: u.block.head ? treeSteps(u.block, isLive, stepLingers) : u.block.tasks, block: u.block, under: id })),
         ]
       })
   const bandOpen = (id: string) => !closedGroups.includes(id)
   const toggleBand = (id: string) => () => void setView($, v => ({ closedGroups: toggleIn(v.closedGroups, id) }))
-  const bandRow = (id: string, name: string, count: number, lead?: RenderElement, axisOf?: string) => (
+  // Le bandeau d'une section hors sujet (#238, maquette C) : fond teinté du ton de la section, son
+  // icône et son nom dans son encre, le compte, la flèche au bout ; toute la bande replie.
+  const toneInk = (tone: BandLookOf['tone']) =>
+    tone === 'neutral'
+      ? { tint: palette.sel, ink: palette.text2 }
+      : tone === 'mine'
+      ? { tint: palette.liveTint, ink: palette.liveOn }
+      : { tint: palette[`${tone}Tint`], ink: palette[`${tone}On`] }
+  const lookRow = (id: string, name: string, count: number, look: BandLookOf) => {
+    const { tint, ink } = toneInk(look.tone)
+    return (
+      <Box key={`band:${id}`} paddingX={SPACE.indent} paddingTop="sm">
+        <Box key={`hit:bande:${keyPart(name)}`} flexDirection="row" justifyContent="space-between" alignItems="center" paddingX={SPACE.indent} backgroundColor={tint}>
+          <Box flexDirection="row" alignItems="center" gap={SPACE.row} flexShrink={1} minWidth={0}>
+            {Svg && <Svg source={bandGlyphIcon(look.glyph, ink)} alt="" width={16} height={24} />}
+            {headZones ? (
+              <Text weight="semibold" color={ink} wrap="truncate-end">{name}</Text>
+            ) : (
+              <Button key={`bande:${keyPart(name)}`} plain label={name} onPress={toggleBand(id)} />
+            )}
+          </Box>
+          <Box flexDirection="row" alignItems="center" gap={SPACE.row} flexShrink={0}>
+            {countPill(count, false, palette.text2)}
+            {Svg && <Svg source={rowMark(chevronIcon(palette.text3, bandOpen(id)))} alt={bandOpen(id) ? 'replier' : 'déplier'} width={16} height={24} />}
+          </Box>
+          {headZones && hit(`band:${id}`, toggleBand(id))}
+        </Box>
+      </Box>
+    )
+  }
+  const bandRow = (id: string, name: string, count: number, lead?: RenderElement, axisOf?: string, look?: BandLookOf) =>
+    look && Svg ? lookRow(id, name, count, look) : (
     <Box key={`band:${id}`} flexDirection="row" justifyContent="space-between" alignItems="center" paddingX={SPACE.indent} paddingTop="sm">
       {/* Une section d'axe (#168) : la flèche dans le carré de l'axe, aligné sur ceux des lignes ; le carré et le nom la replient. */}
       {axisOf !== undefined && Svg ? (
@@ -8952,7 +8987,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
         <Text color={palette.text2}>{attend === 'today' ? "Rien d'urgent aujourd'hui." : 'Aucune tâche ouverte pour ce filtre.'}</Text>
       )}
 
-      <Box flexDirection="column">{groups.map(g => (g.band ? bandRow(idOf(g), g.name, g.band.count, g.band.lead, g.band.axis) : section(idOf(g), g.name, g.tasks, rowsOf.get(idOf(g)) ?? 0, g.lead, g.mark, g.block, g.bare, g.focus)))}</Box>
+      <Box flexDirection="column">{groups.map(g => (g.band ? bandRow(idOf(g), g.name, g.band.count, g.band.lead, g.band.axis, g.band.look) : section(idOf(g), g.name, g.tasks, rowsOf.get(idOf(g)) ?? 0, g.lead, g.mark, g.block, g.bare, g.focus)))}</Box>
 
       {/* Le pied (#138, puis #162, maquette B) : la roue des réglages, la version de cette session, et à droite
           « Rafraîchir », qui relit tout et la compare à la publiée, « Recharger » quand seule la session retarde, ou « Mettre à jour » quand l'app retarde sur le catalogue local (#178). */}

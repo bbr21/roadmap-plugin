@@ -401,9 +401,6 @@ def roadmap(main):
 
 # ---------------------------------------------------------------- dossier sans code (#76, #176)
 
-VUES = {"echeance", "responsable", "arbre", "sujet", "jour"}
-
-
 def reglages_projet(main):
     """Les réglages de `.claude/roadmap.json` que le panneau ne comprendrait pas : il les ignore."""
     chemin = os.path.join(main, ".claude", "roadmap.json")
@@ -418,9 +415,9 @@ def reglages_projet(main):
     if not isinstance(cfg, dict):
         return ligne(KO, "Réglages", ".claude/roadmap.json n'est pas un objet JSON", "la skill onboarding"), {}
     soucis = []
-    vue = cfg.get("vue")
-    if vue is not None and vue not in VUES:
-        soucis.append("vue « %s » inconnue (%s)" % (vue, ", ".join(sorted(VUES))))
+    # #238 : le panneau s'ouvre par sujet dans tout projet ; `vue` ne sert plus.
+    if "vue" in cfg:
+        soucis.append("vue ignorée depuis #238 (le panneau s'ouvre par sujet) : la retirer")
     cles = cfg.get("cles") or {}
     if not isinstance(cles, dict):
         soucis.append("cles n'est pas un objet")
@@ -454,8 +451,7 @@ def reglages_projet(main):
             soucis.append("requis : %s ni de la grammaire ni déclarée(s), ignorée(s)" % ", ".join(map(str, inconnues)))
     if soucis:
         return ligne(VOIR, "Réglages", " ; ".join(soucis), "corriger .claude/roadmap.json : le panneau ignore ces réglages"), cfg
-    vue = vue or ("echeance" if cfg.get("mode") == "projet" else "arbre")
-    return ligne(OK, "Réglages", "vue %s, %d clé(s) déclarée(s)" % (vue, len(cles))), cfg
+    return ligne(OK, "Réglages", "%d clé(s) déclarée(s)" % len(cles)), cfg
 
 
 def champs_exiges(rdir, requis, lancees=False):

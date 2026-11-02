@@ -84,7 +84,6 @@ export type Source = {
   /** `requis_sur` (#176) : les champs exigés valent sur toute ouverte, ou sur une tâche lancée. */
   requisSur?: RequiredOn
   cles?: Record<string, string[]>
-  vue?: Vue
   /** Le rangement de la mémoire exigé avant de proposer l'archivage (#101) ; sans lui, rien n'est exigé. */
   rangement?: Rangement
   /** Le seuil « À relancer », en jours (#99). */
@@ -132,10 +131,7 @@ const RIEN_A_RANGER = 'Rien à ranger'
 export type Travail = 'code' | 'projet'
 /** Les valeurs de `mode` qui forcent le travail (#76, #176). */
 export type Mode = Travail
-/** Le rangement des tâches ouvertes à l'ouverture du panneau. */
-export type Vue = 'echeance' | 'responsable' | 'arbre' | 'sujet' | 'jour'
 const MODES: readonly Mode[] = ['code', 'projet']
-const VUES: readonly Vue[] = ['echeance', 'responsable', 'arbre', 'sujet', 'jour']
 
 /** Les tâches qui portent les champs exigés : toute tâche ouverte, ou seulement une tâche lancée (`qui:` ou `branche:`). */
 export type RequiredOn = 'open' | 'launched'
@@ -146,7 +142,6 @@ export type ProjectSettings = {
   requis: string[]
   requiredOn: RequiredOn
   cles: Record<string, string[]>
-  vue?: Vue
   relanceDays: number
   clesVisibles?: string[]
   rangerPar?: string
@@ -173,17 +168,15 @@ export function workOf(exitCode: number, files: string): Travail {
 }
 
 export function projectSettings(source: Source): ProjectSettings {
-  // #176 : les champs exigés et la vue ne suivent pas le travail détecté ; un ancien `mode: "projet"`
-  // garde les siens, le reste se déclare.
+  // #176 : les champs exigés ne suivent pas le travail détecté ; un ancien `mode: "projet"` garde
+  // les siens, le reste se déclare. Plus de `vue` (#238) : le panneau s'ouvre par sujet partout.
   const ancienProjet = source.mode === 'projet'
-  const vue = source.vue ?? (ancienProjet ? 'echeance' : undefined)
   return {
     travail: source.mode ?? source.travail ?? 'code',
     requis: source.requis ?? [...(ancienProjet ? PROJECT_REQUIRED : CODE_REQUIRED)],
     // #80 : une idée du Prochain n'a ni échéance ni personne qui la tient.
     requiredOn: source.requisSur ?? (ancienProjet ? 'open' : 'launched'),
     cles: source.cles ?? {},
-    ...(vue ? { vue } : {}),
     relanceDays: source.relance ?? RELAUNCH_DAYS,
     ...(source.clesVisibles ? { clesVisibles: source.clesVisibles } : {}),
     ...(source.rangerPar ? { rangerPar: source.rangerPar } : {}),
@@ -1728,10 +1721,9 @@ export function doneByDay(done: readonly Task[], today: string): { label: string
 /**
  * Le rangement d'une liste : par sujet, par jour, par échéance ou par responsable (#76, #176). Les
  * ouvertes sont toujours en arbre, que le rangement trie sans le couper (#189) : « En arbre » n'en
- * est plus un, et la vue `arbre` d'un projet vaut par sujet.
+ * est plus un.
  */
 export type Grouping = 'day' | 'subject' | 'deadline' | 'owner' | 'number'
-const VUE_GROUPING: Record<Vue, Grouping> = { jour: 'day', sujet: 'subject', echeance: 'deadline', responsable: 'owner', arbre: 'subject' }
 /** Ce qu'une roadmap a pour se ranger (#176) : une ouverte avec `due:`, une ouverte avec `resp:`. */
 export type GroupingData = { due: boolean; resp: boolean }
 const ALL_DATA: GroupingData = { due: true, resp: true }
@@ -1758,16 +1750,15 @@ const GROUPING_LABELS: Record<Grouping, string> = {
 
 /**
  * Le rangement d'une vue : un choix enregistré l'emporte ; sinon (`auto`) les faites par jour et les
- * ouvertes selon la vue que le projet déclare, par sujet sans elle (#168, #189). Les faites se rangent
- * par jour de clôture ou par sujet ; l'échéance, le jour ou le responsable, restés en mémoire ou
- * déclarés, ne s'imposent pas aux ouvertes d'une roadmap qui n'a plus leur donnée (#176). Un ancien
+ * ouvertes par sujet, dans tout projet (#168, #189 ; plus de `vue` déclarée depuis #238). Les faites
+ * se rangent par jour de clôture ou par sujet ; l'échéance, le jour ou le responsable restés en
+ * mémoire ne s'imposent pas aux ouvertes d'une roadmap qui n'a plus leur donnée (#176). Un ancien
  * « En arbre » (`tree`) se lit par sujet (#189).
  */
-export function groupingOf(groupBy: string | undefined, showDone: boolean, vue?: Vue, data: GroupingData = ALL_DATA): Grouping {
+export function groupingOf(groupBy: string | undefined, showDone: boolean, data: GroupingData = ALL_DATA): Grouping {
   if (showDone) return groupBy === 'subject' ? 'subject' : 'day'
   if (groupBy === 'subject' || groupBy === 'tree') return 'subject'
   if ((groupBy === 'day' || groupBy === 'deadline' || groupBy === 'owner' || groupBy === 'number') && hasData(groupBy, data)) return groupBy
-  if (vue && hasData(VUE_GROUPING[vue], data)) return VUE_GROUPING[vue]
   return 'subject'
 }
 
@@ -1829,7 +1820,7 @@ export function doneViewOn(chosen: boolean | undefined, open: number, done: numb
 
 /**
  * La vue à l'ouverture du panneau (#188, capture de Bertrand) : toutes les tâches, pastille « Toutes »,
- * tous les axes, rangées selon `groupingOf` (l'arbre, sauf une vue que le projet déclare), « Plus › »
+ * tous les axes, rangées selon `groupingOf` (l'arbre par sujet), « Plus › »
  * replié, chez Maestro comme ailleurs. Remplace les choix d'ouverture de #149, #160 et #176. La vue Done
  * n'est pas choisie : `doneViewOn` la montre d'office à 0 tâche ouverte (#202).
  */
@@ -2061,12 +2052,19 @@ export type TreeBlock = {
 }
 
 /**
- * Les étapes d'un bloc, ouvertes et faites, par rang puis par numéro (#163) : cocher ou décocher ne
- * déplace aucune ligne.
+ * Les filles d'un bloc, dans toutes les vues (#238, choix de Bertrand du 2026-11-02) : à faire par
+ * échéance (le retard, puis aujourd'hui, puis la suite ; sans échéance en dernier ; à égalité le
+ * numéro), puis en session, puis les faites, la plus récente close d'abord. Une faite qui se tient
+ * encore (`lingers`, #182) garde sa place d'échéance le temps de son mouvement.
  */
-export function treeSteps(block: TreeBlock, rankOf: (t: Task) => number = t => block.rank.get(t) ?? 1): Task[] {
+export function treeSteps(block: TreeBlock, isLive: (t: Task) => boolean = () => false, lingers: (t: Task) => boolean = () => false): Task[] {
   const num = (t: Task) => (t.id === undefined ? Number.MAX_SAFE_INTEGER : Number(t.id))
-  return [...block.tasks, ...block.doneTasks].sort((a, b) => rankOf(a) - rankOf(b) || num(a) - num(b))
+  const byDue = (a: Task, b: Task) => (a.due ?? '9999').localeCompare(b.due ?? '9999') || num(a) - num(b)
+  const held = block.doneTasks.filter(lingers)
+  const todo = [...block.tasks.filter(t => !isLive(t)), ...held].sort(byDue)
+  const live = block.tasks.filter(isLive).sort((a, b) => num(a) - num(b))
+  const done = block.doneTasks.filter(t => !held.includes(t)).sort((a, b) => (b.fait ?? '').localeCompare(a.fait ?? '') || num(a) - num(b))
+  return [...todo, ...live, ...done]
 }
 
 /**
@@ -2294,25 +2292,24 @@ function rootTask(unit: TreeUnit): Task {
  * Les blocs de `byTree` en sections d'axe (#168, maquettes choisies par Bertrand le 2026-11-01) :
  * une par axe, dans l'ordre de la légende (`order`, puis les autres par ordre alphabétique). Un
  * arbre se range dans l'axe de sa racine, entier : ses filles, et les blocs de ses filles mères,
- * même d'un autre axe (#189). Dans une section (maquette C) : ce qui est en session d'abord, puis
- * ce qui attend quelqu'un, puis le reste ; à égalité, la plus récente (`ouvert:`, puis le numéro)
- * en tête. Un arbre se range au mieux de ses ouvertes ; une mère faite aujourd'hui (`closed`) vient
- * en dernier.
+ * même d'un autre axe (#189). Dans une section, la règle des autres vues (#238) : l'échéance la
+ * plus proche de ses ouvertes (`unitDay`, sans échéance en dernier), puis en session, ce qui attend,
+ * le reste, puis le plus grand numéro. Une mère faite aujourd'hui (`closed`) vient en dernier.
  */
 export function axisTree(blocks: readonly TreeBlock[], order: readonly string[], isLive: (t: Task) => boolean): AxisSection[] {
   const units = treeUnits(blocks)
-  // La clé de tri d'un arbre : son rang (0 à 3), sa date et son numéro ; le meilleur de ses ouvertes.
-  const keyOf = (u: TreeUnit): [number, string, number] => {
+  // La clé de tri d'un arbre : close ou non, son jour, son rang (0 à 3) et son numéro ; le meilleur de ses ouvertes.
+  const keyOf = (u: TreeUnit): [number, string, number, number] => {
     const root = rootTask(u)
-    if (u.root.kind === 'mother' && u.root.block.closed) return [3, root.ouvert ?? '', idNum(root)]
+    if (u.root.kind === 'mother' && u.root.block.closed) return [1, '', 3, idNum(root)]
     const open = u.items.flatMap(itemOpen)
     const all = open.length > 0 ? open : [root]
-    return [Math.min(...all.map(t => liveTier(t, isLive))), all.map(t => t.ouvert ?? '').sort().pop() ?? '', idNum(root)]
+    return [0, unitDay(u)?.day ?? '9999', Math.min(...all.map(t => liveTier(t, isLive))), idNum(root)]
   }
   const before = (a: TreeUnit, b: TreeUnit) => {
-    const [ta, da, na] = keyOf(a)
-    const [tb, db, nb] = keyOf(b)
-    return ta - tb || db.localeCompare(da) || nb - na
+    const [ca, da, ta, na] = keyOf(a)
+    const [cb, db, tb, nb] = keyOf(b)
+    return ca - cb || da.localeCompare(db) || ta - tb || nb - na
   }
   const axes = [...new Set(units.map(u => rootTask(u).axis))]
   const ranked = [...order.filter(a => axes.includes(a)), ...axes.filter(a => !order.includes(a)).sort((a, b) => a.localeCompare(b, 'fr'))]
@@ -2377,6 +2374,30 @@ export function dayTree(blocks: readonly TreeBlock[], today: string, isLive: (t:
     'jour',
     true,
   )
+}
+
+/** Le ton d'un bandeau de section (#238) : une couleur de la palette, avec sa teinte et son encre. */
+export type BandTone = 'late' | 'live' | 'block' | 'neutral' | 'mine' | 'finished'
+/** L'icône d'un bandeau de section (#238), dessinée au trait dans icons.ts. */
+export type BandGlyph = 'clock' | 'sun' | 'calendar' | 'list' | 'person' | 'spark'
+
+/**
+ * Le bandeau d'une section hors sujet (#238, maquette C choisie par Bertrand le 2026-11-02), d'après
+ * sa clé : en retard (rouge, horloge), aujourd'hui (bleu, soleil), demain et cette semaine (orange,
+ * calendrier), une date et plus tard (gris, calendrier), « Sans … » (gris, liste), une personne
+ * (bleu si c'est moi, silhouette), Récentes (violet, étoile).
+ */
+export function bandLook(key: string, today: string, me: readonly string[]): { tone: BandTone; glyph: BandGlyph } {
+  const cut = key.indexOf(':')
+  const kind = cut < 0 ? key : key.slice(0, cut)
+  const value = cut < 0 ? '' : key.slice(cut + 1)
+  if (kind === 'numero') return { tone: 'finished', glyph: 'spark' }
+  if (value === 'late' || value === LATE) return { tone: 'late', glyph: 'clock' }
+  if (value === 'sans' || value.startsWith('Sans ')) return { tone: 'neutral', glyph: 'list' }
+  if (kind === 'resp') return { tone: me.includes(value) ? 'mine' : 'neutral', glyph: 'person' }
+  if (kind === 'jour' && value === today) return { tone: 'live', glyph: 'sun' }
+  if ((kind === 'jour' && daysBetween(today, value) === 1) || value === 'Cette semaine') return { tone: 'block', glyph: 'calendar' }
+  return { tone: 'neutral', glyph: 'calendar' }
 }
 
 /** Les arbres par échéance (#76, #189) : en retard, cette semaine (7 jours), plus tard, sans échéance, au jour de l'arbre. */
@@ -4495,14 +4516,13 @@ export function checkBrief(
 export function parseProjectConfig(text: string, base: string, defaults: { name: string; me: string[] }): Source | undefined {
   const data: unknown = JSON.parse(text)
   if (typeof data !== 'object' || data === null) return undefined
-  const c = data as { name?: unknown; dir?: unknown; me?: unknown; subjects?: unknown; mode?: unknown; requis?: unknown; requis_sur?: unknown; cles?: unknown; vue?: unknown; rangement?: unknown; relance?: unknown; design?: unknown; cles_visibles?: unknown; ranger_par?: unknown; regles?: unknown; ecriture?: unknown; preuves?: unknown; publier?: unknown }
+  const c = data as { name?: unknown; dir?: unknown; me?: unknown; subjects?: unknown; mode?: unknown; requis?: unknown; requis_sur?: unknown; cles?: unknown; rangement?: unknown; relance?: unknown; design?: unknown; cles_visibles?: unknown; ranger_par?: unknown; regles?: unknown; ecriture?: unknown; preuves?: unknown; publier?: unknown }
   const dir = typeof c.dir === 'string' && c.dir !== '' ? (c.dir.startsWith('/') ? c.dir : `${base}/${c.dir}`) : base
   const strings = (v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : undefined)
   // Une valeur inconnue ou d'un mauvais type prend le défaut : le panneau s'ouvre quand même. `auto`
   // (#176) ou un mode inconnu : le dossier décide du travail.
   const mode = MODES.find(m => m === c.mode)
   const requisSur = c.requis_sur === 'ouvertes' ? ('open' as const) : c.requis_sur === 'lancees' ? ('launched' as const) : undefined
-  const vue = VUES.find(v => v === c.vue)
   const cles: Record<string, string[]> = {}
   if (typeof c.cles === 'object' && c.cles !== null && !Array.isArray(c.cles)) {
     for (const [k, v] of Object.entries(c.cles)) {
@@ -4543,7 +4563,6 @@ export function parseProjectConfig(text: string, base: string, defaults: { name:
     ...(requis ? { requis } : {}),
     ...(requisSur ? { requisSur } : {}),
     ...(Object.keys(cles).length > 0 ? { cles } : {}),
-    ...(vue ? { vue } : {}),
     ...(rangement ? { rangement } : {}),
     ...(Number.isInteger(c.relance) && (c.relance as number) > 0 ? { relance: c.relance as number } : {}),
     ...(design ? { design } : {}),

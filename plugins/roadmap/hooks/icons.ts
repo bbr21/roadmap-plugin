@@ -3,7 +3,7 @@
 // Couleurs et mesures : tokens.ts (#108) ; dessins du handoff de design (README « Icônes »). Un SVG
 // dessiné en image ne connaît pas `currentColor`, d'où la couleur passée à chaque dessin.
 
-import type { ContextView, StepSegment, TodoIcon } from './parse'
+import type { BandGlyph, ContextView, StepSegment, TodoIcon } from './parse'
 import { FONT, MIX, PALETTES, RADIUS, SIZE, STROKE, TEXT, type Palette, type ThemeName } from './tokens'
 
 // Les palettes et les traits sont des tokens du design system (#108) ; on les sert aussi d'ici.
@@ -681,6 +681,23 @@ export function treeMotherRowIcon(hex: string, open: boolean, inkHex: string): s
 export function treeChildRowIcon(mark: string, last: boolean, lineHex: string): string {
   const inner = mark.replace(/^<svg /, '<svg x="16" y="0" ')
   return `<svg xmlns="http://www.w3.org/2000/svg" width="32" height="24" viewBox="0 0 32 24"><path d="M8 0V${last ? 12 : 24}M8 12H15" fill="none" stroke="${lineHex}" stroke-width="1.2"/>${inner}</svg>`
+}
+
+/** L'icône du bandeau d'une section hors sujet (#238, maquette C), au trait, centrée sur 16 × 24. */
+export function bandGlyphIcon(glyph: BandGlyph, hex: string): string {
+  const icon =
+    glyph === 'clock'
+      ? clockIcon(hex, 16, STROKE.base)
+      : glyph === 'sun'
+      ? sunIcon(hex)
+      : glyph === 'calendar'
+      ? calendarIcon(hex)
+      : glyph === 'person'
+      ? personIcon(hex, 16, STROKE.base)
+      : glyph === 'spark'
+      ? sparkIcon(hex)
+      : listLineIcon(hex)
+  return rowMark(icon)
 }
 
 /** Le carré d'une section d'axe (#168), 16 × 24 : un peu plus grand que celui des lignes, sa flèche dedans. */

@@ -65,8 +65,7 @@ How sessions work and the roadmap's settings (#76, #176), optional too:
 {
   "requis": ["id", "ouvert", "due", "resp", "parent", "après"],
   "requis_sur": "ouvertes",
-  "cles": { "type": ["Réunion", "Email"], "client": [] },
-  "vue": "echeance"
+  "cles": { "type": ["Réunion", "Email"], "client": [] }
 }
 ```
 
@@ -83,10 +82,9 @@ How sessions work and the roadmap's settings (#76, #176), optional too:
   `"mode": "projet"` keeps the six above on every open task. The detection never changes them.
 - `cles`: keys on top of the grammar (the tags of a Notion), each with its allowed values (empty
   list: free); a task's detail shows them, the search reads them.
-- `vue`: how open tasks are sorted at opening: `echeance`, `responsable`, `arbre`, `sujet` or
-  `jour`. Default: the tree (`echeance` for an old `"mode": "projet"`). « Par échéance » and « Par
-  responsable » are offered only when an open task has `due:` or `resp:`. The panel opens on « En
-  cours » when a session works a task, otherwise on « Ma journée », otherwise on everything.
+- No `vue` any more (#238): the panel opens « Par sujet » in every project; a `vue` left in the
+  file is ignored and the `doctor` skill says to remove it. « Par échéance » and « Par
+  responsable » are offered only when an open task has `due:` or `resp:`.
 - `publier` (#191): in a code project, the step the panel adds after « Fusionner » to the steps of a
   launched session, ticked when the task's line is closed: `true` for « Publier », or a one-line
   label (« Déployer le VPS »). Without it, only « Fusionner » is added. Declare it when the project

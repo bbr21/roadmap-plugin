@@ -47,7 +47,7 @@ In a folder without code (#76, #176: no git repository, a repository without cod
 | Work | as with code |
 | Structure | a `CLAUDE.md` with the rules of a folder without code, the roadmap, `ROADMAP-fait.md` and `ROADMAP-REGLES.md`, `id:` on every line |
 | Rules of the roadmap | `ROADMAP-REGLES.md` next to `ROADMAP.md` (or the file `regles` declares) is there (#167); missing: KO, with the `onboarding.py regles` command that sets it from the template. Also lists `ecriture` and `preuves` when declared; an unreadable `ecriture` is KO, a missing place « À voir » |
-| Settings | `mode`, `requis_sur`, `vue`, `cles`, `requis`, `cles_visibles` and `ranger_par` in `.claude/roadmap.json` understood by the panel; otherwise « À voir » |
+| Settings | `mode`, `requis_sur`, `cles`, `requis`, `cles_visibles` and `ranger_par` in `.claude/roadmap.json` understood by the panel; a leftover `vue` (ignored since #238) or anything else: « À voir » |
 | Required fields | the fields of `requis` on every open task (`requis_sur: "ouvertes"`, written by the onboarding; an old `mode: "projet"` too), else on every launched task; otherwise « À voir », with the count (a line written outside Claude Code is flagged only here) |
 | Roadmap plugin | as with code |
 | Roadmap plugin twice | as with code |

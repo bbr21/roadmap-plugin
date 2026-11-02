@@ -524,7 +524,6 @@ def fichiers_projet(r, aujourdhui=None):
     cfg.update({"requis": r["requis"], "requis_sur": "ouvertes"})
     if r.get("cles"):
         cfg["cles"] = r["cles"]
-    cfg["vue"] = "echeance"
     if r.get("design"):
         cfg["design"] = r["design"]
     _poser_declarations(cfg, r)
