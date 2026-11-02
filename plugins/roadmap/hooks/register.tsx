@@ -181,6 +181,7 @@ import {
   ROW_STEPS,
   rowStepsCells,
   filterSummary,
+  cachedTitle,
   fallbackTitle,
   openedLabel,
   selectionOf,
@@ -275,6 +276,7 @@ import {
   discoveredSource,
   sessionTitleKind,
   taskSessionRow,
+  taskTitle,
   reopenOutcome,
   type TaskSessionRow,
   sessionTitleIn,
@@ -2282,9 +2284,9 @@ async function purgeChildNotes($: EngineInterface): Promise<void> {
   }
 }
 
-/** Le titre court d'une tâche : celui du cache, sinon les premiers mots du libellé. */
+/** Le titre court d'une tâche : son `nom:` (#235), sinon celui du cache, sinon les premiers mots du libellé. */
 async function shortTitleOf($: EngineInterface, task: Task): Promise<string> {
-  return (await loadTitles($))[hashLabel(task.label)]?.titre ?? fallbackTitle(task.label)
+  return taskTitle(task, await loadTitles($))
 }
 
 /**
@@ -2557,7 +2559,7 @@ async function matchSessions($: EngineInterface, source: Source): Promise<void> 
       const last = typeof sess.lastActivityAt === 'string' ? Date.parse(sess.lastActivityAt) : Number.NaN
       if (Number.isNaN(last) || now - last > LIVE_MAX_MS) continue
       const id = sessionTitleId(sess.title)
-      const task = id !== undefined ? numbered.find(t => t.id === id) : taskForSessionTitle(sess.title, tasks, t => titles[hashLabel(t.label)]?.titre)
+      const task = id !== undefined ? numbered.find(t => t.id === id) : taskForSessionTitle(sess.title, tasks, t => cachedTitle(t, titles))
       if (!task) continue
       // Une session de réalisation l'emporte sur une session de vérification de la même tâche.
       const prev = next.get(taskKey(task))
@@ -2989,9 +2991,9 @@ async function maestroText($: EngineInterface, go: boolean, only?: 'launch' | 's
   ])
   if (typeof open === 'string') return `${Person()} a dit « Maestro », mais la roadmap ${source.name} est illisible (${open}) : dis-le en une phrase.`
   const all = [...open, ...(typeof done === 'string' ? [] : done)]
-  const titleOf = (t: Task) => titles[hashLabel(t.label)]?.titre ?? fallbackTitle(t.label)
+  const titleOf = (t: Task) => taskTitle(t, titles)
   // Toutes les prérequises (#76) : une tâche est bloquée tant qu'une est ouverte, et débloque toutes ses dépendantes.
-  const prereq = (t: Task) => prereqsOf(t, all, x => titles[hashLabel(x.label)]?.titre)
+  const prereq = (t: Task) => prereqsOf(t, all, x => cachedTitle(x, titles))
   const tracked = (t: Task) => (t.done ? undefined : trackedSession(source, t, live, ignored, now))
   // Au repos n'est pas « en attente » : il y faut une question notée et vivante ; et seules ses
   // sessions comptent, celles d'un autre Maestro ouvert se disent à part (#121).
@@ -5079,7 +5081,7 @@ async function brandData($: EngineInterface) {
   if (typeof data.open === 'string') return undefined
   const tasks = [...data.open, ...data.done]
   const own = await readOwnSession($)
-  const short = (t: Task) => data.titles[hashLabel(t.label)]?.titre ?? fallbackTitle(t.label)
+  const short = (t: Task) => taskTitle(t, data.titles)
   // Le titre court d'une tâche à la place de son libellé : la carte se lit d'un coup d'œil.
   const shorten = (brand: Brand | undefined): Brand | undefined => {
     if (brand?.kind !== 'task') return brand
@@ -6182,8 +6184,8 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   // cochée compte encore le temps de son mouvement, dans les ouvertes (#182).
   const settling = doneTasks.filter(t => checkLingers(checkMoves.get(taskKey(t)), now)).length
   const showDone = doneViewOn(doneChosen, openTasks.length + settling, doneTasks.length)
-  const short = (t: Task): ShortTitle =>
-    titles[hashLabel(t.label)] ?? { titre: fallbackTitle(t.label), sujet: '…' }
+  // Le nom posé à la main (`nom:`, #235) l'emporte sur le titre tiré ; le sujet vient toujours du modèle.
+  const short = (t: Task): ShortTitle => ({ sujet: '…', ...titles[hashLabel(t.label)], titre: taskTitle(t, titles) })
   const age = (t: Task): number | undefined => (t.ouvert ? daysBetween(t.ouvert, today) : undefined)
   // Une tâche en session : lancée depuis le panneau, session pas archivée. Sans fiche lisible
   // (outil absent ou refusé), on la croit en session 12 heures, sans le garantir.
@@ -6216,7 +6218,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   // Un seul calcul des prérequises par tâche : la chaîne prend la première, « Débloque » toutes.
   const prereqsCache = new Map<Task, Task[]>()
   const prereqsFor = (t: Task): Task[] => {
-    if (!prereqsCache.has(t)) prereqsCache.set(t, prereqsOf(t, allTasks, x => titles[hashLabel(x.label)]?.titre))
+    if (!prereqsCache.has(t)) prereqsCache.set(t, prereqsOf(t, allTasks, x => cachedTitle(x, titles)))
     return prereqsCache.get(t) ?? []
   }
   const prereqFor = (t: Task): Task | undefined => firstPrereq(prereqsFor(t))
@@ -7322,6 +7324,8 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     // L'édition (#161, maquette C) : un champ par ligne éditable, à côté de son étiquette ; un menu sur
     // bureau quand le projet liste ses valeurs (`—` : vide). Le refus rougit l'étiquette et se dit dessous.
     const saveBusy = editNote === SAVE_BUSY
+    // Le champ « Nom » vide montre en attente le nom que le panneau tire du libellé (#235).
+    const drawnTitle = titles[hashLabel(current.label)]?.titre ?? fallbackTitle(current.label)
     const editInput = (spec: EditSpec) => {
       const draftKey = `${editKey}|${spec.field}`
       const value = editDrafts.get(draftKey) ?? spec.value
@@ -7344,7 +7348,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
         <Input
           key={key}
           {...(spec.field === 'label' ? { rows: 3 } : {})}
-          placeholder={spec.field === 'due' ? 'AAAA-MM-JJ' : spec.options ? spec.options.join(', ') : spec.field === 'apres' || spec.field === 'parent' ? 'N, ou -' : ''}
+          placeholder={spec.field === 'nom' ? drawnTitle : spec.field === 'due' ? 'AAAA-MM-JJ' : spec.options ? spec.options.join(', ') : spec.field === 'apres' || spec.field === 'parent' ? 'N, ou -' : ''}
           value={value}
           submitLabel="enregistrer"
           onInput={onValue}
@@ -7438,6 +7442,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
         : undefined
     const openLine = () => void openFile($, current.done ? paths.done : paths.open, line)
     const labelSpec = editSpecs.find(spec => spec.field === 'label')
+    const nameSpec = editSpecs.find(spec => spec.field === 'nom')
     return (
       <Box flexDirection="column" gap={SPACE.root} paddingX={SPACE.indent}>
         {/* L'en-tête Voies (#137) ; son titre ouvre la ligne dans la roadmap, sa flèche ramène à la
@@ -7470,6 +7475,10 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
         <Box paddingX={SPACE.indent}>
           <Box flexDirection="column" gap={SPACE.tight} paddingX={SPACE.indent} paddingY="sm" flexGrow={1} backgroundColor={palette.note}>
             {corners(RADIUS.control, palette.bg)}
+            {/* En édition, le nom court au-dessus du libellé (#235) : vide, le panneau tire le sien. */}
+            {nameSpec && <Text size="caption" weight="medium" color={editBad(nameSpec) ? palette.lateOn : palette.text2}>Nom</Text>}
+            {nameSpec && editInput(nameSpec)}
+            {nameSpec && editBad(nameSpec) && <Text size="caption" color={palette.lateOn} wrap="wrap">{editNote}</Text>}
             <Text size="caption" weight="medium" color={labelSpec && editBad(labelSpec) ? palette.lateOn : palette.text2}>Mission</Text>
             {labelSpec
               ? editInput(labelSpec)
@@ -7576,8 +7585,8 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
             : [...openTasks, ...lingering].filter(t => matches(t, axis, attend, me) && matchesWho(t, who, me))
   ).filter(t => !inBlock(t))
   const filtered = axis !== 'all' || attend !== 'all' || who !== 'all' || showDone || searching
-  // Un titre court pas encore calculé : la ligne garde son titre provisoire, estompé.
-  const titled = (t: Task) => titles[hashLabel(t.label)] !== undefined
+  // Un titre court pas encore calculé : la ligne garde son titre provisoire, estompé ; un nom posé (#235) ne l'est pas.
+  const titled = (t: Task) => cachedTitle(t, titles) !== undefined
   // Par sujet, par jour, par échéance ou par responsable (#76, #176, #189) : le même choix dans
   // toutes les vues. La vue que le projet déclare l'emporte ; sans elle, par sujet. Le jour et
   // l'échéance seulement si la roadmap a des `due:`, le responsable des `resp:` (#176).
@@ -8182,7 +8191,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
       for (const t of it.kind === 'alone' ? [it.task] : [it.block.head as Task, ...it.block.doneTasks])
         doneRights.set(t, doneRight(t, doneMode, sec.day, today, axisLabel(t.axis)))
   // La recherche : ouvertes puis faites, toutes, quels que soient les filtres.
-  const titleOf = (t: Task) => titles[hashLabel(t.label)]?.titre
+  const titleOf = (t: Task) => cachedTitle(t, titles)
   const foundOpen = searching ? sortTasks(searchTasks(openTasks.filter(t => !inBlock(t)), search, titleOf), sortOrder) : []
   const foundDone = searching
     ? searchTasks(doneTasks.filter(t => !inBlock(t)), search, titleOf).sort((a, b) => (b.fait ?? '').localeCompare(a.fait ?? ''))

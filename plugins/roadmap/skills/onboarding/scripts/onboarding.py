@@ -48,7 +48,7 @@ REQUIS_PROJET = ["id", "ouvert", "due", "resp", "parent", "après"]
 # Le mode Code (#80) : une tâche lancée (`qui:` ou `branche:`) porte sa date, son échéance, qui la tient, ses dépendances.
 REQUIS_CODE = ["ouvert", "due", "qui", "après"]
 # Les clés de la grammaire : une clé déclarée (`cles`) ne peut en reprendre aucune.
-CLES_GRAMMAIRE = {"id", "qui", "attend", "resp", "branche", "verrou", "ouvert", "due", "parent", "après", "prio",
+CLES_GRAMMAIRE = {"id", "nom", "qui", "attend", "resp", "branche", "verrou", "ouvert", "due", "parent", "après", "prio",
                   "feedback", "pj", "fait", "spec", "fiche", "src"}
 CLE_DECLAREE = re.compile(r"^[a-zà-ÿ][a-zà-ÿ0-9-]*$")
 SECTIONS_CLAUDE_PROJET = ["Démarrer une session", "Une tâche complète", "Finir une tâche", "Règles", "Carte"]

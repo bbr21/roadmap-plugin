@@ -5,11 +5,12 @@ Les tâches ouvertes de {{NOM}}. Ce fichier ne se modifie que dans le dossier pr
 ## Grammaire d'une ligne
 
 ```
-- [ ] <Verbe à l'infinitif + objet> `[axe | id:N | qui:… | attend:… | branche:… | verrou:…@AAAA-MM-JJ | ouvert:AAAA-MM-JJ | due:AAAA-MM-JJ | après:N | prio:1 | feedback:N | fait:AAAA-MM-JJ | spec:… | fiche:… | pj:… | src:…]`
+- [ ] <Verbe à l'infinitif + objet> `[axe | id:N | nom:… | qui:… | attend:… | branche:… | verrou:…@AAAA-MM-JJ | ouvert:AAAA-MM-JJ | due:AAAA-MM-JJ | après:N | prio:1 | feedback:N | fait:AAAA-MM-JJ | spec:… | fiche:… | pj:… | src:…]`
 ```
 
 - **axe** (premier champ, sans clé) : {{AXES}}.
 - **id** (juste après l'axe) : le numéro de la tâche, unique sur ROADMAP.md et ROADMAP-fait.md, jamais réutilisé, gardé quand la ligne descend dans ROADMAP-fait. Une ligne neuve prend le plus grand des deux fichiers plus un : le hook de démarrage l'affiche, `node scripts/check.mjs` le vérifie. Le panneau Roadmap montre ce numéro (#N) et suit la tâche par lui.
+- **nom** (juste après `id:`) : le nom court de la tâche, choisi à la main, 40 caractères au plus, clair (2 à 5 mots qui disent de quoi elle parle) ; le panneau Roadmap le montre dans la liste, la fiche et le titre des sessions à la place du nom qu'il tire du libellé, et le garde quand le libellé change. Sans `nom:`, le panneau tire le sien.
 - **qui** : la branche de la session qui tient la tâche, ou {{QUI}}. Une ligne avec `qui:` et `branche:` est prise : une autre session ne la reprend pas. Une ligne prise est toujours dans « En cours ».
 - **attend** : ce qui bloque, et qui doit agir (souvent {{QUI}}).
 - **verrou** : ressource unique réservée, datée, par exemple `verrou:{{VERROU_EXEMPLE}}@AAAA-MM-JJ`. Liste des verrous : [CLAUDE.md]({{RM_UP}}CLAUDE.md#verrous).

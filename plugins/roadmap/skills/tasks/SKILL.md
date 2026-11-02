@@ -147,6 +147,12 @@ Write `<scratchpad>/operations.json`:
   is never removed.
   `pj` (attachments, #204) is a field like the others: project file paths (screenshots, PDFs,
   photos), comma-separated, relative to the project root; copy the file into the project first.
+  `nom` (the task's short name, #235) is the name the panel shows in its list, the task's card and
+  the title of the sessions it launches, instead of the one it draws from the label. When the
+  person asks to rename a task (« change le nom », « appelle-la … », « renomme »), set `nom` and
+  never rewrite the label, which keeps the whole mission. 40 characters at most, clear: 2 to 5
+  words that say what the task is about (« DCO Veterans Prospects »); `null` removes it and the
+  panel draws its own again. It is written right after `id:` and stays when the label changes.
 - **reschedule**: `due`.
 - **done**: `date` (the date of the proof), `proof` (what proves it, and where). The line moves to
   the top of `ROADMAP-fait.md`, its bilan row to `ROADMAP-bilans.csv` (« Faite : <proof> »). A

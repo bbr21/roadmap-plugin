@@ -160,7 +160,7 @@ def ecarts_ids(ouvert, fait, exiger=False):
 # ---------------------------------------------------------------- correspondance
 
 # Les clés de la grammaire (celles du panneau, plus `verrou`) : une clé déclarée n'en reprend aucune.
-CLES_GRAMMAIRE = {"id", "qui", "attend", "resp", "branche", "verrou", "ouvert", "due", "parent", "après", "prio",
+CLES_GRAMMAIRE = {"id", "nom", "qui", "attend", "resp", "branche", "verrou", "ouvert", "due", "parent", "après", "prio",
                   "feedback", "pj", "fait", "spec", "fiche", "src"}
 AXE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")

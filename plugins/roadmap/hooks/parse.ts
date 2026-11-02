@@ -25,6 +25,8 @@ export type Task = {
   apres?: string
   /** `id:` : le numéro de la tâche, unique dans le dossier, gardé quand elle passe dans les faites. */
   id?: string
+  /** `nom:` : le nom court choisi à la main (#235), qui l'emporte sur le titre tiré par le modèle ; `nom:-` le laisse absent. */
+  nom?: string
   /** `prio:` : 1 (urgent), 2 (important) ou 3 (quand on a le temps) ; facultative, lue et contrôlée, mais ni affichée ni triée (#130). */
   prio?: Prio
   /** `feedback:` : les numéros des retours de l'app d'où vient la tâche, ou qu'elle a reçus (Splitmybill). */
@@ -268,6 +270,9 @@ export function parseRoadmap(text: string, file: string): Task[] {
       else if (k === 'après' && v !== '' && v !== '-') task.apres = v
       else if (k === 'parent' && PARENT_RE.test(v)) task.parent = v.replace(/^#/, '')
       else if (k === 'id' && ID_RE.test(v)) task.id = v
+      else if (k === 'nom') {
+        if (v !== '' && v !== '-') task.nom = v
+      }
       else if (k === 'prio' && PRIO_RE.test(v)) task.prio = v as Prio
       else if (k === 'tous' && (RECURRENCES as readonly string[]).includes(v)) task.tous = v as Recurrence
       else if (k === 'relance' && DATE_RE.test(v)) task.relance = v
@@ -288,7 +293,7 @@ export function parseRoadmap(text: string, file: string): Task[] {
 // Le contrôle de la grammaire, plus strict que la lecture : la lecture ignore une ligne qu'elle ne
 // comprend pas, le contrôle la signale. Clés admises : celles que la lecture garde, plus `verrou`
 // (Splitmybill).
-const KEYS: readonly string[] = [...FIELDS, 'après', 'parent', 'id', 'prio', 'feedback', 'pj', 'verrou', 'tous', 'relance']
+const KEYS: readonly string[] = [...FIELDS, 'après', 'parent', 'id', 'nom', 'prio', 'feedback', 'pj', 'verrou', 'tous', 'relance']
 /** Les clés de la grammaire : une clé déclarée dans `cles` ne peut en reprendre aucune. */
 export const GRAMMAR_KEYS: readonly string[] = KEYS
 const DECLARED_KEY_RE = /^[a-zà-ÿ][a-zà-ÿ0-9-]*$/
@@ -398,6 +403,7 @@ export function lintRoadmap(text: string, done: boolean, rules: Partial<LintRule
       else if (k === 'tous' && !(RECURRENCES as readonly string[]).includes(v)) say(`tous: vaut semaine, 2semaines, mois, trimestre ou an (« ${v} »)`)
       else if (k === 'feedback' && !FEEDBACK_RE.test(v)) say(`feedback: des numéros de retours séparés par des virgules (« ${v} »)`)
       else if (k === 'pj' && (v === '' || v.split(',').some(x => x.trim() === ''))) say(`pj: des chemins de fichiers séparés par des virgules (« ${v} »)`)
+      else if (k === 'nom' && (v === '' || v.length > NAME_MAX)) say(`nom: 40 caractères au plus, et pas vide (« ${clip(v, 50)} »)`)
       keys.set(k, v)
     }
     // Les champs exigés : sur une tâche ouverte de ROADMAP.md seulement (lancée, en mode Code) ; vide compte comme absent.
@@ -3880,7 +3886,23 @@ export function keyPart(text: string): string {
 
 /** En attendant le titre court : les premiers mots du libellé. */
 export function fallbackTitle(label: string): string {
-  return clip(label.replace(/`/g, '').split(/\s+/).slice(0, 5).join(' '), 40)
+  return clip(label.replace(/`/g, '').split(/\s+/).slice(0, 5).join(' '), NAME_MAX)
+}
+
+/** La longueur d'un nom court : celui posé à la main (`nom:`, #235) comme celui des premiers mots. */
+export const NAME_MAX = 40
+
+/**
+ * Le titre court d'une tâche (#235) : son `nom:` posé à la main, sinon celui que le modèle a tiré de son
+ * libellé (le cache, sous `hashLabel`), sinon rien. Le nom ne dépend pas du libellé : il reste quand il change.
+ */
+export function cachedTitle(task: Task, titles: Readonly<Record<string, { titre: string }>>): string | undefined {
+  return task.nom ?? titles[hashLabel(task.label)]?.titre
+}
+
+/** Le titre court à montrer : `cachedTitle`, sinon les premiers mots du libellé. */
+export function taskTitle(task: Task, titles: Readonly<Record<string, { titre: string }>>): string {
+  return cachedTitle(task, titles) ?? fallbackTitle(task.label)
 }
 
 export function titlePrompt(items: { id: string; label: string }[], subjects: readonly string[]): string {
@@ -4694,7 +4716,7 @@ export function closeWithParentInTexts(
  * Un champ que la fiche d'une tâche modifie (#161) : le libellé, l'axe, une clé de la grammaire, ou
  * `cle:<k>`, une clé que le projet déclare dans `cles`.
  */
-export type EditField = 'label' | 'axis' | 'due' | 'resp' | 'qui' | 'attend' | 'apres' | 'parent' | `cle:${string}`
+export type EditField = 'nom' | 'label' | 'axis' | 'due' | 'resp' | 'qui' | 'attend' | 'apres' | 'parent' | `cle:${string}`
 /** Les changements d'une tâche (#161) : un champ absent ne change pas, une valeur vide retire le champ. */
 export type TaskEdit = Partial<Record<EditField, string>>
 
@@ -4723,7 +4745,7 @@ function fieldOfProblem(why: string, cles: Readonly<Record<string, readonly stri
  * L'ordre de la grammaire, où se place un champ que la ligne n'avait pas (#161) ; `*` : les clés
  * déclarées par le projet, et toute clé inconnue.
  */
-const EDIT_ORDER = ['id', 'resp', 'qui', 'attend', 'branche', 'verrou', 'ouvert', 'due', 'parent', 'après', 'prio', 'tous', 'relance', 'feedback', '*', 'spec', 'fiche', 'pj', 'src']
+const EDIT_ORDER = ['id', 'nom', 'resp', 'qui', 'attend', 'branche', 'verrou', 'ouvert', 'due', 'parent', 'après', 'prio', 'tous', 'relance', 'feedback', '*', 'spec', 'fiche', 'pj', 'src']
 function editRank(field: string): number {
   const k = field.slice(0, Math.max(0, field.indexOf(':')))
   const at = EDIT_ORDER.indexOf(k)
@@ -4783,6 +4805,7 @@ export function editInTexts(
     if (name.startsWith('cle:') && (KEYS.includes(k) || !Object.prototype.hasOwnProperty.call(cles, k))) {
       return { error: `clé « ${k} » non déclarée par le projet (cles de .claude/roadmap.json)`, field: name }
     }
+    if (name === 'nom' && v.length > NAME_MAX) return { error: `nom: ${NAME_MAX} caractères au plus (${v.length}) : un nom court, clair`, field: 'nom' }
     if (name === 'due' && DATE_RE.test(v) && !isCalendarDate(v)) return { error: `due: « ${v} » n'est pas une date du calendrier (AAAA-MM-JJ)`, field: 'due' }
     if (task.id !== undefined && name === 'parent' && v.replace(/^#/, '') === task.id) return { error: `parent:${v} : la tâche elle-même`, field: 'parent' }
     if (task.id !== undefined && name === 'apres' && (prereqNumbers(v) ?? []).includes(task.id)) return { error: `après:${v} : la tâche elle-même`, field: 'apres' }
@@ -4977,8 +5000,8 @@ export function editRoute(o: { ecriture?: Ecriture; cowork: boolean; task: { id?
 export type EditSpec = { field: EditField; name: string; card: 'mission' | 'avancement' | 'chaine' | 'details'; value: string; options?: string[] }
 
 /**
- * Les champs de la fiche en édition (#161, maquette C), dans l'ordre des cartes : la mission (le
- * libellé), l'attente, les prérequises et le parent, l'axe, le responsable (`resp:` en mode Projet,
+ * Les champs de la fiche en édition (#161, maquette C), dans l'ordre des cartes : la mission (le nom
+ * court, #235, puis le libellé), l'attente, les prérequises et le parent, l'axe, le responsable (`resp:` en mode Projet,
  * `qui:` en mode Code), les clés déclarées, l'échéance. Préremplis de la ligne brute (`après:-` reste
  * `-`, un parent montre son `due:` écrit, pas sa date calculée).
  */
@@ -4997,6 +5020,8 @@ export function editableFields(
   // #176 : « Responsable » est la personne qui porte la tâche ; `qui:`, la session qui la prend l'écrit.
   const resp = 'resp'
   return [
+    // Le nom court choisi à la main (#235), au-dessus du libellé : vide, le panneau tire le sien.
+    { field: 'nom', name: 'Nom', card: 'mission', value: value('nom') === '-' ? '' : value('nom') },
     { field: 'label', name: 'Mission', card: 'mission', value: m?.[2] ?? task.label },
     { field: 'attend', name: 'Attend', card: 'avancement', value: value('attend') },
     { field: 'apres', name: 'Après', card: 'chaine', value: value('après') },

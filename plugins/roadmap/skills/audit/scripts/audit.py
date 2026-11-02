@@ -490,11 +490,13 @@ def attente(dossier, ajouter=None, resoudre=(), jour=None, perso="~/.claude/road
 # ---------------------------------------------------------------- appliquer
 
 # L'ordre des champs d'une ligne écrite par l'audit : celui de la grammaire, puis les autres.
-ORDRE = ["id", "ouvert", "due", "resp", "parent", "après", "attend", "relance", "prio"]
+ORDRE = ["id", "nom", "ouvert", "due", "resp", "parent", "après", "attend", "relance", "prio"]
 # Ce qu'une proposition ne pose jamais dans `champs` : le numéro, la session, la clôture, et les
 # liens que l'audit écrit lui-même (`parent:` par découpage ou regroupement, `après:` par `apres`).
 CHAMPS_INTERDITS = {"id", "qui", "branche", "verrou", "fait", "parent", "après"}
 CLES_PANNEAU = set(im.CLES_GRAMMAIRE) | {"tous", "relance"}
+# Le nom court choisi à la main (#235) : 40 caractères au plus, comme le contrôle du panneau.
+NOM_MAX = 40
 NON_HERITES = {"id", "ouvert", "parent", "après", "qui", "branche", "verrou", "fait", "ref"}
 # Les clés permises dans proposals.json, par niveau : une faute de frappe perdrait un choix validé.
 # Le contrat est en anglais, comme la skill (#159) ; le code garde le vocabulaire de l'audit.
@@ -539,6 +541,10 @@ class _Tache:
             if c == k:
                 self.champs[n] = (k, v)
                 return
+        # Le nom court (#235) se place juste après id:.
+        if k == "nom" and self.champs and self.champs[0][0] == "id":
+            self.champs.insert(1, (k, v))
+            return
         self.champs.append((k, v))
 
     def texte(self):
@@ -617,6 +623,8 @@ class _Preparation:
                 assert im.DATE.match(val)
             except (ValueError, AssertionError):
                 raise Erreur("%s : date invalide %s:%r (AAAA-MM-JJ)" % (quoi, k, val))
+        if k == "nom" and len(val) > NOM_MAX:
+            raise Erreur("%s : nom:%s dépasse %d caractères (un nom court, clair)" % (quoi, val, NOM_MAX))
         if k == "prio" and val not in ("1", "2", "3"):
             raise Erreur("%s : prio vaut 1, 2 ou 3, pas %r" % (quoi, val))
         if not val:
