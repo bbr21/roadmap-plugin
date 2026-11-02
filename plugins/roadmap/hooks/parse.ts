@@ -6653,6 +6653,13 @@ function resolvePath(base: string, path: string): string {
  */
 type ShellCommand = { words: string[]; before: string; after: string; odd?: boolean }
 
+/** Les `$` d'affilée qui finissent en `i`, sans un premier échappé : `$$` est le PID, et `$$'…'` un guillemet simple. */
+function dollarRun(line: string, i: number): number {
+  let start = i
+  while (start > 0 && line[start - 1] === '$') start--
+  return i - start + 1 - (line[start - 1] === '\\' ? 1 : 0)
+}
+
 /** Un séparateur après lequel la commande suivante tourne toujours, dans le même shell. */
 const sureSeparator = (op: string) => op === '' || op === ';' || op === '\n'
 
@@ -6690,12 +6697,13 @@ function shellCommands(line: string, home: string): ShellCommand[] {
         i += 4
       } else word = (word ?? '') + c
     } else if (c === '#' && word === undefined) {
+      // Un commentaire court jusqu'au retour à la ligne, que ni antislash ni guillemet n'allongent.
       commands[commands.length - 1]!.odd = true
-      word = c
+      while (i + 1 < line.length && line[i + 1] !== '\n') i++
     } else if (c === "'" || c === '"') {
       quote = c
       word = word ?? ''
-    } else if (c === '$' && (line[i + 1] === "'" || line[i + 1] === '"')) {
+    } else if (c === '$' && (line[i + 1] === "'" || line[i + 1] === '"') && dollarRun(line, i) % 2 === 1) {
       // `$'…'` (ses antislashs échappent) et `$"…"` (comme `"…"`) : la ligne ne suit plus ses variables.
       commands[commands.length - 1]!.odd = true
       quote = line[i + 1] === "'" ? "$'" : '"'

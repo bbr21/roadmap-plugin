@@ -671,6 +671,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.150.6 (2026-11-02)** : hooks : le garde-fou arrête un commentaire au retour à la ligne et lit $$' comme un guillemet simple (#226)
 - **0.150.5 (2026-11-02)** : hooks : le garde-fou lit l'antislash et les guillemets $'…' comme bash, une commande ne se cache plus dans une chaîne (#226, 5e relecture de sécurité)
 - **0.150.4 (2026-11-02)** : hooks : le garde-fou ne suit plus les variables d'une ligne qui a un antislash, un commentaire, eval, $[…] ou W[…] (#226, 3e et 4e relectures de sécurité)
 - **0.150.3 (2026-11-02)** : hooks : le garde-fou ne suit une variable que sur une ligne de commandes sûres (liste blanche), et lit 2>&1 comme une redirection (#226, seconde relecture de sécurité)
