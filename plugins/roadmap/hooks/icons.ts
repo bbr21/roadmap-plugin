@@ -298,6 +298,11 @@ export function archiveIcon(hex: string, size = 16, width: number = STROKE.base)
   return line(hex, size, width, '<rect x="3.5" y="4.5" width="17" height="4" rx="1"/><path d="M5.5 8.5v10a1 1 0 0 0 1 1h11a1 1 0 0 0 1-1v-10M10 12.5h4"/>')
 }
 
+/** Boîte d'archive à flèche montante : rouvrir la session archivée d'une tâche close (#206). */
+export function unarchiveIcon(hex: string, size = 16, width: number = STROKE.base): string {
+  return line(hex, size, width, '<rect x="3.5" y="4.5" width="17" height="4" rx="1"/><path d="M5.5 8.5v10a1 1 0 0 0 1 1h11a1 1 0 0 0 1-1v-10"/><path d="M12 17v-5.5M9.5 14l2.5-2.5 2.5 2.5"/>')
+}
+
 export function checkIcon(hex: string, size = 16, width: number = STROKE.check): string {
   return line(hex, size, width, '<path d="M5 12.5l4.5 4.5L19 7.5"/>')
 }

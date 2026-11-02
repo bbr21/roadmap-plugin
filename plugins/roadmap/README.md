@@ -654,6 +654,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.140.0 (2026-11-02)** : panneau : « Rouvrir la session » au pied de la carte Fin d'une tâche close, désarchive et ouvre sa session (#206)
 - **0.139.0 (2026-11-02)** : panneau : la carte Étapes de la fiche en fil, l'étape en cours mise en avant, sans tableau (#214)
 - **0.138.0 (2026-11-02)** : panneau : mission et carte Fin en fondu avec flèche (#205), Completed en étiquette (#207), boutons Fichiers à 20 px (#208)
 - **0.137.0 (2026-11-02)** : panneau : bande de Maestro resserrée, numéro sans case fixe, jauge puis étape, état en icône et en mot (#211)

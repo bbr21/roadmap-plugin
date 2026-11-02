@@ -45,6 +45,7 @@ import {
   documentIcon,
   imageIcon,
   archiveIcon,
+  unarchiveIcon,
   pencilIcon,
   clockIcon,
   gearIcon,
@@ -263,6 +264,9 @@ import {
   searchTasks,
   sessionTitleId,
   sessionTitleKind,
+  taskSessionRow,
+  reopenOutcome,
+  type TaskSessionRow,
   sessionTitleIn,
   sessionParentIn,
   oneTaskStep,
@@ -525,6 +529,7 @@ const SHOW_PANE_TOOL = 'mcp__ccd_view__show_pane'
 const GET_SESSION_TOOL = 'mcp__ccd_session_mgmt__get_session'
 const OPEN_SESSION_TOOL = 'mcp__ccd_window__open_session_in'
 const ARCHIVE_SESSION_TOOL = 'mcp__ccd_session_mgmt__archive_session'
+const UNARCHIVE_SESSION_TOOL = 'mcp__ccd_session_mgmt__unarchive_session'
 /** Lignes de tâches faites qui portent les boutons de leur session (2 zones de clic chacune). */
 const SESSION_ROWS = 4
 // Celui qui liste les autres sessions de l'app.
@@ -3068,6 +3073,58 @@ async function archiveSession($: EngineInterface, key: string, entry: LiveEntry)
     await setView($, () => ({ openNote: `Archivage impossible : ${err instanceof Error ? err.message : String(err)}` }))
     return false
   }
+}
+
+/**
+ * La session d'une tâche close, archivée comprise (#206) : lue à l'ouverture de sa fiche, une fois par
+ * minute au plus, par une liste qui demande les archivées (la relecture de 3 s ne les demande pas). Un
+ * refus, une panne ou une réponse illisible : rien, et pas de bouton.
+ */
+const taskSessions = new Map<string, { row?: TaskSessionRow; at: number }>()
+const taskSessionsAsked = new Set<string>()
+const TASK_SESSION_MS = 60_000
+const TASK_SESSION_LIMIT = 200
+
+function taskSessionOf($: EngineInterface, source: Source, t: Task, now: number): TaskSessionRow | undefined {
+  if (!t.done || !t.id) return undefined
+  const key = `${source.name}:${t.id}`
+  const kept = taskSessions.get(key)
+  if ((!kept || now - kept.at > TASK_SESSION_MS) && !taskSessionsAsked.has(key)) {
+    taskSessionsAsked.add(key)
+    void (async () => {
+      let row: TaskSessionRow | undefined
+      try {
+        const ran = await $.tool.call({ tool: LIST_SESSIONS_TOOL, include_archived: true, limit: TASK_SESSION_LIMIT })
+        const rows: unknown = ran.deny === undefined && !ran.isError ? JSON.parse(ran.text ?? '[]') : []
+        row = Array.isArray(rows) ? taskSessionRow(t, rows, source.match) : undefined
+      } catch {
+        // outil absent ou réponse illisible : pas de bouton
+      }
+      taskSessions.set(key, { ...(row ? { row } : {}), at: now })
+      taskSessionsAsked.delete(key)
+      await update($, liveVersionAtom, v => v + 1).catch(() => undefined)
+    })()
+  }
+  return kept?.row
+}
+
+/**
+ * « Rouvrir la session » d'une tâche close (#206, maquette A) : désarchive sa session, puis l'ouvre comme
+ * « Ouvrir la session » (le lien, quand l'app ne la range pas d'ici). Un refus s'écrit sous la fiche.
+ */
+async function reopenSession($: EngineInterface, source: Source, t: Task, row: TaskSessionRow, now: number): Promise<void> {
+  await setView($, () => ({ openNote: '' }))
+  let outcome: ReturnType<typeof reopenOutcome>
+  try {
+    outcome = reopenOutcome(await $.tool.call({ tool: UNARCHIVE_SESSION_TOOL, session_id: row.sessionId }))
+  } catch (err) {
+    outcome = { open: false, note: `Réouverture impossible : ${err instanceof Error ? err.message : String(err)}` }
+  }
+  if (!outcome.open) return void (await setView($, () => ({ openNote: outcome.note })))
+  archivedSessionIds.delete(row.sessionId)
+  taskSessions.set(`${source.name}:${t.id}`, { row: { ...row, isArchived: false }, at: now })
+  await update($, liveVersionAtom, v => v + 1)
+  await openSession($, { sessionId: row.sessionId, startedAt: now, title: row.title, ...(row.link ? { link: row.link } : {}) })
 }
 
 /** Un /compact lancé par la bande et pas encore répondu : un second clic n'en lance pas un autre (#197). */
@@ -5924,6 +5981,9 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     const due = current.due && !current.done ? dueLabel(current.due, today) : undefined
     const live = liveOf(current)
     const kept = doneSessionOf(current)
+    // Close, sa session archivée (#206) : « Rouvrir la session » au pied de la carte Fin.
+    const archivedRow = !kept ? taskSessionOf($, source, current, now) : undefined
+    const reopenRow = archivedRow?.isArchived ? archivedRow : undefined
     const abandoned = isAbandoned(current)
     const asking = cancelAsk === taskKey(current)
     const pre = prereqFor(current)
@@ -6123,7 +6183,17 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
             </Box>
           ))}
           {canOpen && !fades && moreLink('fin', opened ? 'Replier' : 'Tout voir', toggleFin)}
-          {canOpen && fades && !lastCut && foldedRow('fin', opened, palette.bg, toggleFin)}
+          {canOpen && fades && !lastCut && !reopenRow && foldedRow('fin', opened, palette.bg, toggleFin)}
+          {/* Close, sa session archivée (#206, maquette A) : le bouton au pied, la flèche du pli à droite. */}
+          {reopenRow && (
+            <Box key="fin-reopen" flexDirection="column" gap={SPACE.tight}>
+              {ruleAbove}
+              <Box flexDirection="row" alignItems="center" justifyContent="space-between">
+                {reopenButton(reopenRow)}
+                {canOpen && fades && !lastCut && foldArrow('fin', opened, palette.bg, toggleFin)}
+              </Box>
+            </Box>
+          )}
         </Box>,
         {
           before: fin.emoji && <Text>{fin.emoji}</Text>,
@@ -6239,6 +6309,19 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
         <Button key={key} plain label={label} onPress={onPress} />,
       )
     }
+    // « Rouvrir la session » (#206, maquette A) : un bouton secondaire, l'icône et le mot, fond `btn` ; au terminal, le mot.
+    const reopenButton = (row: TaskSessionRow) =>
+      pressable(
+        'reopen-session',
+        () => void reopenSession($, source, current, row, now),
+        <Box flexDirection="row" alignItems="center" gap={SPACE.row} paddingX={SPACE.indent} backgroundColor={palette.btn} hover={{ backgroundColor: palette.btnHover }}>
+          {corners(RADIUS.control, palette.bg)}
+          {strut(SIZE.strut.row)}
+          {Svg && <Svg source={unarchiveIcon(palette.text, SIZE.icon.sm)} alt="Rouvrir la session" width={SIZE.icon.sm} height={SIZE.icon.sm} />}
+          <Text>Rouvrir la session</Text>
+        </Box>,
+        <Button key="reopen-session" plain label="Rouvrir la session" onPress={() => void reopenSession($, source, current, row, now)} />,
+      )
     // La fiche (#142, maquette C) : l'en-tête Voies, la mission dans son cadre, puis les cartes que
     // l'état rend utiles (`ficheCards`), dans sa session comme au clic dans la roadmap.
     const children = allTasks.filter(x => x !== current && current.id !== undefined && x.parent === current.id)
@@ -6737,6 +6820,8 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
                 field(`${k.charAt(0).toUpperCase()}${k.slice(1)}`, plain(current.extra?.[k]?.join(', ')), `cle:${k}`),
               )}
               {field('Qui', plain(current.qui))}
+              {/* Sans carte Fin, « Rouvrir la session » sous Qui (#206). */}
+              {!fin && reopenRow && field('Session', reopenButton(reopenRow))}
               {field('Branche', mono(current.branche))}
               {field(
                 'Échéance',

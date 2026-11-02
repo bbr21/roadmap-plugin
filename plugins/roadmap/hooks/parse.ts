@@ -2695,6 +2695,49 @@ export function sessionTitleKind(title: string): 'check' | 'work' {
   return m && CHECK_MARK.test(title.slice(m[0].length)) ? 'check' : 'work'
 }
 
+/** La session d'une tâche retrouvée dans la liste de l'app (#206), archivée ou non. */
+export type TaskSessionRow = { sessionId: string; title: string; link?: string; isArchived: boolean }
+
+/**
+ * La session qui a mené une tâche (#206), parmi les rangées de `list_sessions` (archivées comprises) :
+ * seules comptent les sessions du projet (`cwd` sous l'un des préfixes, même si le dossier n'existe plus),
+ * car d'autres projets portent les mêmes numéros. Le numéro du titre (« #N · ») fait foi, la `branche:` de
+ * la ligne en secours ; plusieurs : la réalisation avant la vérification, puis la plus récente.
+ */
+export function taskSessionRow(task: { id?: string; branche?: string }, rows: readonly unknown[], prefixes: readonly string[]): TaskSessionRow | undefined {
+  type Row = { sessionId: string; title: string; branch?: unknown; link?: unknown; isArchived?: unknown; lastActivityAt?: unknown }
+  const mine = rows.filter((r): r is Row => {
+    const o = r as { sessionId?: unknown; title?: unknown; cwd?: unknown } | null
+    return typeof o === 'object' && o !== null && typeof o.sessionId === 'string' && typeof o.title === 'string'
+      && typeof o.cwd === 'string' && prefixes.some(p => (o.cwd as string).startsWith(p))
+  })
+  const byTitle = task.id !== undefined ? mine.filter(r => sessionTitleId(r.title) === task.id) : []
+  const found = byTitle.length > 0 ? byTitle : task.branche !== undefined ? mine.filter(r => r.branch === task.branche) : []
+  const at = (r: Row) => (typeof r.lastActivityAt === 'string' ? Date.parse(r.lastActivityAt) || 0 : 0)
+  const best = [...found].sort((a, b) => {
+    const kind = Number(sessionTitleKind(a.title) === 'check') - Number(sessionTitleKind(b.title) === 'check')
+    return kind !== 0 ? kind : at(b) - at(a)
+  })[0]
+  if (!best) return undefined
+  return {
+    sessionId: best.sessionId,
+    title: best.title,
+    ...(typeof best.link === 'string' ? { link: best.link } : {}),
+    isArchived: best.isArchived === true,
+  }
+}
+
+/**
+ * Ce que dit la réponse d'`unarchive_session` (#206, essai) : un refus des réglages revient en `deny`,
+ * une erreur de l'app en `isError` ; « is not archived » (un double clic, une session déjà rouverte)
+ * vaut succès : la session est là, on l'ouvre.
+ */
+export function reopenOutcome(ran: { deny?: string; isError?: boolean; text?: string }): { open: true } | { open: false; note: string } {
+  if (ran.deny !== undefined) return { open: false, note: `Réouverture refusée : ${ran.deny || 'sans motif'}` }
+  if (ran.isError && !/is not archived/i.test(ran.text ?? '')) return { open: false, note: `Réouverture impossible : ${ran.text || 'sans motif'}` }
+  return { open: true }
+}
+
 /** Le titre d'une session qui vérifie une tâche : « #47 · Vérifier · <titre court> », 58 caractères au plus. */
 export function checkTitleFor(task: Task, shortTitle: string): string {
   return sessionTitleFor(task, `Vérifier · ${shortTitle}`)
