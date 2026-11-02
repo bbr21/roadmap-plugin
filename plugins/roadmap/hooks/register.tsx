@@ -8067,8 +8067,11 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
       // Par jour, la mère repliée garde sous elle son étape du jour (#189, maquette B) ; « + N étapes »,
       // ses autres étapes ouvertes, la déplie.
       const others = focus ? block.tasks.filter(t => t !== focus).length : 0
+      // L'espace du bloc tient à ses filles montrées (#231, retour de Bertrand) : repliée sans elles,
+      // la mère prend le pas serré d'une tâche seule.
+      const kidsShown = isOpen || focus !== undefined
       return (
-        <Box key={`section:${id}`} flexDirection="column" paddingTop="xs">
+        <Box key={`section:${id}`} flexDirection="column" {...(kidsShown ? { paddingTop: 'xs' as const } : {})}>
           <Box key={`hit:group:${id}`} flexDirection="column">
             {row(mother, undefined, { kind: 'head', id, open: isOpen, ghost: block.ghost, block })}
           </Box>
