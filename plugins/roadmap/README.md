@@ -663,6 +663,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.147.1 (2026-11-02)** : panneau : une mère lancée par Maestro ne vide plus le panneau (zone de clic posée deux fois) (#220)
 - **0.147.0 (2026-11-02)** : hooks : les tests lourds passent un par un par projet (one-at-a-time.sh), le hook Bash met en file claude plugin test, release.py check et npm test (#222)
 - **0.146.0 (2026-11-02)** : réglages : le choix Compte (Auto, Perso, Team / Enterprise) remplace « Hooks classiques », sans ligne grise dès la première session sur un compte Team (#223)
 - **0.145.0 (2026-11-02)** : panneau : la jauge fine de contexte de chaque session revient sous sa jauge d'étapes dans la bande de Maestro (#217)

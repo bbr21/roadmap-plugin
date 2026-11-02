@@ -6164,6 +6164,12 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   // Les numéros cliquables (tâche avec une session) : une zone chacun, dans ce qui reste sous
   // ZONE_LIMIT après la légende, les états et les boutons de session des faites.
   let numberZones = new Set<string>()
+  // Les zones de clic déjà posées dans ce dessin : l'app refuse tout l'arbre qui dessine deux fois la même
+  // (« Client "press-…" is drawn twice »), et le panneau restait vide. Chez Caroline, une mère lancée par
+  // Maestro, dans le bloc « En cours » et en tête de ses sous-tâches dans la liste (#220) : la seconde
+  // fois, son numéro est un texte, et toute zone répétée ne se pose pas.
+  const drawnZones = new Set<string>()
+  const firstZone = (id: string) => !drawnZones.has(id) && (drawnZones.add(id), true)
   // Colonnes des chiffres de la légende : 6 et 7 unités ; dans un panneau étroit (moins de 46
   // colonnes, ~360 px), 4 et 5, pour laisser au nom (« Attend un tiers ») la place d'être lu.
   const narrow = ((e.props as { bodyColumns?: number }).bodyColumns ?? 76) < 46
@@ -6179,23 +6185,29 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   // Le numéro d'une tâche devant son titre : petit, discret, suivi d'un point de séparation. Hors du
   // bouton, qui imposerait sa couleur au texte.
   // `open` : la tâche a une session ouverte, et un clic sur son numéro y mène.
-  const taskNumber = (id: string, open?: () => void, done = false) => (
-    // Sa colonne de NUMBER_CELLS (#198), calée à droite, sur toutes les lignes : les tags, l'échéance et
-    // le titre suivent, alignés. Un numéro cliquable est un bouton au terminal ; sur le bureau, un texte
-    // et sa zone de clic (un bouton imposait sa taille de texte, 2026-10-23). Une faite : gris clair, barré.
-    <Box key={`n:${id}`} width={NUMBER_CELLS} flexDirection="row" justifyContent="flex-end" alignItems="center" flexShrink={0}>
-      {open && !graphic ? (
-        <Button key={`num:${id}`} plain dimColor onPress={open}>{`#${id}`}</Button>
-      ) : (
-        <Text size="caption" tabular color={done ? palette.text3 : palette.text2} {...(done ? { strikethrough: true } : {})} {...(open && numberZones.has(id) ? { hover: { underline: true } } : {})}>{`#${id}`}</Text>
-      )}
-      {open && numberZones.has(id) && hit(`num:${id}`, open, 1)}
-    </Box>
-  )
+  const taskNumber = (id: string, open?: () => void, done = false) => {
+    // Une fois cliquable par dessin (#220) : la même tâche dessinée deux fois n'a qu'un numéro qui ouvre.
+    const opens = open && (graphic ? numberZones.has(id) : true) && firstZone(`num:${id}`) ? open : undefined
+    return (
+      // Sa colonne de NUMBER_CELLS (#198), calée à droite, sur toutes les lignes : les tags, l'échéance et
+      // le titre suivent, alignés. Un numéro cliquable est un bouton au terminal ; sur le bureau, un texte
+      // et sa zone de clic (un bouton imposait sa taille de texte, 2026-10-23). Une faite : gris clair, barré.
+      <Box key={`n:${id}`} width={NUMBER_CELLS} flexDirection="row" justifyContent="flex-end" alignItems="center" flexShrink={0}>
+        {opens && !graphic ? (
+          <Button key={`num:${id}`} plain dimColor onPress={opens}>{`#${id}`}</Button>
+        ) : (
+          <Text size="caption" tabular color={done ? palette.text3 : palette.text2} {...(done ? { strikethrough: true } : {})} {...(opens ? { hover: { underline: true } } : {})}>{`#${id}`}</Text>
+        )}
+        {opens && hitOnce(`num:${id}`, opens, 1)}
+      </Box>
+    )
+  }
   // `rows` : la hauteur de la zone en lignes de texte (20 px). Sans elle, la zone prend la hauteur
   // de ce qu'elle couvre — sous une ligne (une icône de 16 px), elle tombait à zéro et ne
   // recevait aucun clic (2026-10-23).
-  const hit = (id: string, onPress: () => void, rows?: number) => {
+  const hit = (id: string, onPress: () => void, rows?: number) => (firstZone(id) ? hitOnce(id, onPress, rows) : null)
+  // `hit` sans le contrôle du doublon, pour qui l'a déjà fait (`taskNumber`).
+  const hitOnce = (id: string, onPress: () => void, rows?: number) => {
     if (!graphic || !Client) return null
     pressHandlers.set(id, onPress)
     return rows === undefined ? (
@@ -6518,7 +6530,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     // Un bouton dessiné (Box et Svg), recouvert d'une zone de clic : un bouton de l'app ne porte
     // que du texte et ne s'étire pas. Au terminal, sans Svg, le bouton de l'app.
     const pressable = (id: string, onPress: () => void, look: RenderElement, fallback: RenderElement, grow = false) => {
-      if (!Client || !Svg) return fallback
+      if (!Client || !Svg || !firstZone(id)) return fallback
       pressHandlers.set(id, onPress)
       return (
         <Box key={`pressable:${id}`} flexGrow={grow ? 1 : 0} flexShrink={0}>
