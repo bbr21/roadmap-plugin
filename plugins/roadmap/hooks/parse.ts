@@ -2009,7 +2009,7 @@ export type AxisItem = { kind: 'mother'; block: TreeBlock; focus?: Task } | { ki
 /** Une section d'axe de l'arbre (#168) : son axe, ses ouvertes comptées, ses lignes rangées. */
 export type AxisSection = { axis: string; count: number; items: AxisItem[] }
 /** Une section d'un rangement de l'arbre (#189) : sa clé, son nom, ses ouvertes comptées, ses lignes. */
-export type TreeSection = { key: string; label: string; count: number; late?: boolean; items: AxisItem[] }
+export type TreeSection = { key: string; label: string; count: number; late?: boolean; items: AxisItem[]; /** Le jour d'une section de la vue Done par jour (#203). */ day?: string }
 /** Un arbre entier (#189) : sa racine, puis les blocs de ses filles mères. Aucun rangement ne le coupe. */
 export type TreeUnit = { root: AxisItem; items: AxisItem[] }
 
@@ -2204,6 +2204,133 @@ export function numberTree(blocks: readonly TreeBlock[]): TreeSection[] {
     .sort((a, b) => b.num - a.num)
     .flatMap(p => p.items)
   return items.length === 0 ? [] : [{ key: 'numero', label: 'Récentes', count: items.reduce((n, i) => n + itemCount(i), 0), items }]
+}
+
+/** Le préfixe des clés des mères de la vue Done (#203) : repliées par défaut, sans toucher aux mêmes mères des ouvertes. */
+export const DONE_TREE_PREFIX = 'fait:'
+
+/** Un jour dit court (#203) : « auj. », « hier », sinon la date. */
+function dayWord(day: string, today: string): string {
+  return day === today ? 'auj.' : daysBetween(day, today) === 1 ? 'hier' : shortDate(day)
+}
+
+/**
+ * Les faites en familles (#203, maquette C choisie par Bertrand le 2026-11-01) : une sous-tâche reste
+ * sous sa mère, quel que soit le rangement. Une famille se range au jour de la clôture la plus récente
+ * de ses faites (par jour) ou au sujet de sa racine (par sujet) ; dans une section, la famille close le
+ * plus récemment d'abord ; dans une famille, les filles aussi. Une mère pas dans la liste (ouverte, ou
+ * hors du filtre) paraît grise en tête ; une fille dont la mère est introuvable est seule. `done` : les
+ * faites montrées, `all` : toutes les tâches, pour trouver les mères et compter « 2/3 ».
+ */
+export function doneTree(
+  done: readonly Task[],
+  all: readonly Task[],
+  by: 'day' | 'subject',
+  today: string,
+  titleOf: (t: Task) => string,
+  subjectOf: (t: Task) => string,
+): TreeSection[] {
+  const listed = new Set(done)
+  const byId = new Map<string, Task>()
+  for (const t of [...done, ...all]) if (t.id !== undefined && !byId.has(t.id)) byId.set(t.id, t)
+  const parentOf = (t: Task) => (t.parent === undefined || t.parent === t.id ? undefined : byId.get(t.parent))
+  const directOf = new Map<string, Task[]>()
+  for (const x of all) if (x.parent !== undefined && x.parent !== x.id) directOf.set(x.parent, [...(directOf.get(x.parent) ?? []), x])
+  const recent = (a: Task, b: Task) => (b.fait ?? '').localeCompare(a.fait ?? '')
+  // Les filles montrées de chaque mère ; une mère fantôme ne remonte pas plus haut.
+  const kids = new Map<Task, Task[]>()
+  for (const t of done) {
+    const p = parentOf(t)
+    if (p !== undefined && p !== t) kids.set(p, [...(kids.get(p) ?? []), t])
+  }
+  const rootOf = (t: Task) => {
+    let top = t
+    const path = new Set([t])
+    for (let p = parentOf(top); p !== undefined && listed.has(top) && !path.has(p) && kids.has(p); p = parentOf(top)) {
+      path.add(p)
+      top = p
+    }
+    return top
+  }
+  const units = new Map<Task, Task[]>()
+  for (const t of done) {
+    const root = rootOf(t)
+    units.set(root, [...(units.get(root) ?? []), t])
+  }
+  const itemsOf = (root: Task): AxisItem[] => {
+    if (!kids.has(root)) return [{ kind: 'alone', task: root }]
+    const out: AxisItem[] = []
+    const grow = (head: Task, seen: Set<Task>) => {
+      if (seen.has(head)) return
+      seen.add(head)
+      const children = [...(kids.get(head) ?? [])].sort(recent)
+      const rows = children.filter(c => !kids.has(c))
+      const direct = head.id === undefined ? [] : (directOf.get(head.id) ?? []).filter(x => x !== head)
+      out.push({
+        kind: 'mother',
+        block: {
+          key: `${DONE_TREE_PREFIX}arbre:${head.id ? `#${head.id}` : head.label}`,
+          label: `${head.id ? `#${head.id} ` : ''}${titleOf(head)}`,
+          head,
+          ghost: !listed.has(head),
+          tasks: [],
+          // Le rang suit la clôture : `treeSteps` les montre la plus récente d'abord.
+          rank: new Map(rows.map((r, i) => [r, i + 1])),
+          done: direct.filter(x => x.done).length,
+          total: direct.length,
+          doneTasks: rows,
+          closed: false,
+        },
+      })
+      for (const c of children) if (kids.has(c)) grow(c, seen)
+    }
+    grow(root, new Set())
+    return out
+  }
+  const placed = [...units.entries()].map(([root, members]) => {
+    const last = members.map(t => t.fait ?? '').sort().pop() ?? ''
+    const key = by === 'day' ? last.slice(0, 10) : subjectOf(root)
+    return { key, last, count: members.length, items: itemsOf(root) }
+  })
+  const keys = [...new Set(placed.map(p => p.key))]
+  const ordered =
+    by === 'day'
+      ? keys.sort((a, b) => b.localeCompare(a))
+      : keys
+          .map(k => [k, placed.filter(p => p.key === k).reduce((n, p) => n + p.count, 0)] as const)
+          .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+          .map(([k]) => k)
+  return ordered.map(k => {
+    const mine = placed.filter(p => p.key === k).sort((a, b) => b.last.localeCompare(a.last))
+    const label = by === 'subject' ? k : k === '' ? 'Sans date' : k === today ? "Aujourd'hui" : daysBetween(k, today) === 1 ? 'Hier' : shortDate(k)
+    return {
+      key: `${by === 'day' ? 'fait-jour' : 'fait-sujet'}:${k || 'sans'}`,
+      label,
+      count: mine.reduce((n, p) => n + p.count, 0),
+      items: mine.flatMap(p => p.items),
+      ...(by === 'day' && k !== '' ? { day: k } : {}),
+    }
+  })
+}
+
+/**
+ * Le texte de droite d'une faite (#203) : ce que le rangement ne dit pas. Par jour, `fallback` (son
+ * sujet), ou le jour de sa clôture quand ce n'est pas celui de sa section ; par sujet, ce jour.
+ */
+export function doneRight(t: Task, by: 'day' | 'subject', sectionDay: string | undefined, today: string, fallback: string): string {
+  const day = t.fait?.slice(0, 10)
+  if (day === undefined || day === '') return by === 'day' ? fallback : ''
+  return by === 'day' && day === sectionDay ? fallback : dayWord(day, today)
+}
+
+/**
+ * Le bouton des sous-tâches (#203, choix de Bertrand du 2026-11-01) : « Déplier » tant qu'une mère
+ * de la vue est repliée, sinon « Replier » ; `open`, l'état à poser au clic. Sans mère, pas de bouton.
+ */
+export function subtaskFold(motherKeys: readonly string[], isOpen: (key: string) => boolean): { label: 'Déplier les sous-tâches' | 'Replier les sous-tâches'; open: boolean } | undefined {
+  if (motherKeys.length === 0) return undefined
+  const open = motherKeys.some(k => !isOpen(k))
+  return { label: open ? 'Déplier les sous-tâches' : 'Replier les sous-tâches', open }
 }
 
 /** Le résumé de la ligne de filtre : « Mcp · attend Martial · 4 tâches », ou le total sans filtre. */

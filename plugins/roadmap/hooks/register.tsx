@@ -132,7 +132,9 @@ import {
   type EditSpec,
   type TaskEdit,
   taskBrandOf,
-  doneByDay,
+  DONE_TREE_PREFIX,
+  doneRight,
+  doneTree,
   groupingOf,
   nextGrouping,
   groupingLabel,
@@ -329,6 +331,7 @@ import {
   treeSteps,
   treeDepartment,
   foldAllView,
+  subtaskFold,
   duePill,
   abandonBilan,
   doneBilan,
@@ -6838,10 +6841,12 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     void setView($, () => ({ axis: 'all', attend: 'all', who: 'all', showDone: false, closedGroups: [], moreGroups: [] }))
   }
   // Sous un filtre tout est déplié et l'on replie ; sans filtre tout est replié et l'on déplie.
-  const isOpenGroup = (name: string) => (filtered ? !closedGroups.includes(name) : openGroups.includes(name))
+  // Une mère de la vue Done (#203, maquette C) : repliée tant qu'on ne l'a pas dépliée, filtre ou non.
+  const doneMother = (name: string) => name.startsWith(DONE_TREE_PREFIX)
+  const isOpenGroup = (name: string) => (filtered && !doneMother(name) ? !closedGroups.includes(name) : openGroups.includes(name))
   const toggleIn = (list: string[], name: string) => (list.includes(name) ? list.filter(g => g !== name) : [...list, name])
   const toggleGroup = (name: string) => () =>
-    void setView($, v => (filtered ? { closedGroups: toggleIn(v.closedGroups, name) } : { openGroups: toggleIn(v.openGroups, name) }))
+    void setView($, v => (filtered && !doneMother(name) ? { closedGroups: toggleIn(v.closedGroups, name) } : { openGroups: toggleIn(v.openGroups, name) }))
 
   // Une ligne de légende : l'icône, le nom (cliquable), le nombre et la part alignés à droite.
   // Pas de fond : sous un filtre, les autres lignes du groupe s'estompent.
@@ -7062,7 +7067,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
         </Button>
       </Box>
     ) : null
-    const right = tree ? (t.done ? 'fait' : days === undefined ? '' : ageLabel(days)) : t.done ? axisLabel(t.axis) : days === undefined ? '' : ageLabel(days)
+    const right = doneRights.get(t) ?? (tree ? (t.done ? 'fait' : days === undefined ? '' : ageLabel(days)) : t.done ? axisLabel(t.axis) : days === undefined ? '' : ageLabel(days))
     // Une tâche faite dont la session reste ouverte : y retourner, ou l'archiver, d'un clic.
     const kept = sessionRows.has(taskKey(t)) ? doneSessionOf(t) : undefined
     const inSession = isLive(t) || block !== undefined
@@ -7360,11 +7365,15 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   const doneShown = doneTasks
     .filter(t => matches(t, axis, 'all', me))
     .sort((a, b) => (b.fait ?? '').localeCompare(a.fait ?? ''))
-  const doneBySubject = () =>
-    countBy(doneShown, t => (short(t).sujet === '…' ? 'À classer' : short(t).sujet)).map(([name]) => ({
-      name,
-      tasks: doneShown.filter(t => (short(t).sujet === '…' ? 'À classer' : short(t).sujet) === name),
-    }))
+  // Les faites en familles (#203, maquette C) : une sous-tâche sous sa mère, par jour ou par sujet ;
+  // à droite, ce que le rangement ne dit pas (le sujet, ou le jour de clôture).
+  const doneMode = by === 'subject' ? 'subject' : 'day'
+  const doneSections = showDone && !searching ? doneTree(doneShown, allTasks, doneMode, today, t => short(t).titre, t => (short(t).sujet === '…' ? 'À classer' : short(t).sujet)) : []
+  const doneRights = new Map<Task, string>()
+  for (const sec of doneSections)
+    for (const it of sec.items)
+      for (const t of it.kind === 'alone' ? [it.task] : [it.block.head as Task, ...it.block.doneTasks])
+        doneRights.set(t, doneRight(t, doneMode, sec.day, today, axisLabel(t.axis)))
   // La recherche : ouvertes puis faites, toutes, quels que soient les filtres.
   const titleOf = (t: Task) => titles[hashLabel(t.label)]?.titre
   const foundOpen = searching ? sortTasks(searchTasks(openTasks.filter(t => !inBlock(t)), search, titleOf), sortOrder) : []
@@ -7462,9 +7471,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
         ...(foundDoneShown.length > 0 ? [{ name: 'Done', tasks: foundDoneShown }] : []),
       ]
     : showDone
-    ? by === 'subject'
-      ? doneBySubject()
-      : doneByDay(doneShown, today).map(day => ({ name: day.label, tasks: day.tasks }))
+    ? doneSections.flatMap(sec => sectionGroups(sec.key, sec.label, sec.count, sec.items))
     : attend === 'relaunch'
     ? // À relancer (#99) : les attentes les plus vieilles en haut.
       [{ name: 'À relancer', tasks: [...shown].sort((x, y) => (waitDays(y, today, me) ?? 0) - (waitDays(x, today, me) ?? 0)) }]
@@ -7508,8 +7515,8 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   const names = allGroups.filter(g => !g.band && !g.bare).map(idOf)
   const bandIds = !searching && !showDone && names.length === 0 ? allGroups.filter(g => g.band).map(idOf) : []
   // Les mères de l'arbre (#163) : « Tout replier » les ferme toutes, « Tout déplier » les rouvre.
-  const motherKeys = !searching && !showDone ? groups.filter(g => g.block?.head !== undefined).map(idOf) : []
-  const mothersOpen = motherKeys.some(isOpenGroup)
+  const motherKeys = !searching ? groups.filter(g => g.block?.head !== undefined).map(idOf) : []
+  const subtasks = subtaskFold(motherKeys, isOpenGroup)
   const allOpen = bandIds.length > 0 ? bandIds.every(b => !closedGroups.includes(b)) : names.length > 0 && names.every(n => openGroups.includes(n))
   const action = searching
     ? { label: 'Effacer', run: () => void update($, searchAtom, () => '') }
@@ -7877,24 +7884,21 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
               ? `${foundCount} résultat${foundCount > 1 ? 's' : ''}${foundCount > SEARCH_MAX ? ` (${SEARCH_MAX} affichés)` : ''}`
               : filterSummary({ axis, attend, showDone, shown: shown.length, doneShown: doneShown.length, groupBy: by, who })}
           </Text>
-          {/* En arbre sous un filtre (#163, choix de Bertrand) : replier ou déplier d'un coup toutes les
-              mères, à côté de « Tout afficher » ; hors filtre, l'action de la liste le fait déjà. */}
-          {motherKeys.length > 0 && filtered ? (
-            <Box flexDirection="row" gap={SPACE.row} flexShrink={0}>
+          {/* Le bouton des sous-tâches (#203, choix de Bertrand du 2026-11-01) : dans toutes les vues dès
+              qu'une mère est dessinée, Done compris, il les déplie ou les replie toutes, à côté de l'action
+              de la liste. Les mères Done se tiennent dans `openGroups`, filtre ou non. */}
+          <Box flexDirection="row" gap={SPACE.row} flexShrink={0}>
+            {subtasks && (
               <Button
-                key="tree-fold"
+                key="subtasks-fold"
                 plain
                 dimColor
-                label={mothersOpen ? 'Tout replier' : 'Tout déplier'}
-                onPress={() => void setView($, v => foldAllView(v, filtered, motherKeys, !mothersOpen))}
+                label={subtasks.label}
+                onPress={() => void setView($, v => foldAllView(v, filtered && !showDone, motherKeys, subtasks.open))}
               />
-              <Button key="list-action" plain dimColor label={action.label} onPress={action.run} />
-            </Box>
-          ) : (
-            <Box flexShrink={0}>
-              <Button key="list-action" plain dimColor label={action.label} onPress={action.run} />
-            </Box>
-          )}
+            )}
+            <Button key="list-action" plain dimColor label={action.label} onPress={action.run} />
+          </Box>
         </Box>
       </Box>
 

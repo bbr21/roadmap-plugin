@@ -359,9 +359,10 @@ filtres, « Qui », les rangements) vaut dans tout projet.
   `ecriture` (#164) : la case n'écrit pas, après le tag elle le demande à Claude (« Coche
   #N par la skill tasks », « Rouvre #N … »). Une mère cochée aujourd'hui garde son
   bloc jusqu'au lendemain. Un dossier Cowork ne
-  rouvre pas : `cowork.py` ne le sait pas, le toast le dit. « Tout replier » / « Tout déplier »,
-  à droite au-dessus de la liste (sous un filtre, à côté de « Tout afficher »), replie ou déplie
-  toutes les mères. Une mère bloquée dit « après #12 » à la place de sa date ; les tâches seules
+  rouvre pas : `cowork.py` ne le sait pas, le toast le dit. « Déplier les sous-tâches » /
+  « Replier les sous-tâches », à droite au-dessus de la liste, à côté de l'action de la liste,
+  déplie ou replie toutes les mères, dans toutes les vues (#203). En vue Done, une sous-tâche
+  reste sous sa mère, par jour comme par sujet, et la mère s'ouvre repliée avec « 3/3 ». Une mère bloquée dit « après #12 » à la place de sa date ; les tâches seules
   ont la même ligne, sans fil. Une mère hors du filtre reste
   en tête, en gris, sans case ; les tâches sans mère ni étape sous « Tâches seules ». Hors de
   l'arbre, une pastille dit le responsable quand ce n'est pas « moi » ; « À moi » compte `resp:` ; le détail montre responsable, parent, sous-tâches,
@@ -651,6 +652,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.133.0 (2026-11-01)** : panneau : vue Done en familles, sous-tâche sous sa mère, mères repliées, bouton « Déplier les sous-tâches » (#203)
 - **0.132.1 (2026-11-01)** : panneau : à 0 tâche ouverte, le panneau s'ouvre sur les Done par jour, barre verte (#202)
 - **0.132.0 (2026-11-01)** : panneau : au-delà de 65 % de contexte, le pourcentage de la bande de Maestro passe en rouge et une pastille « Compacter » lance /compact (#197)
 - **0.131.0 (2026-11-01)** : reglages-session : messages de travail plus fournis (Fait · Trouvé · Suite sous la carte d'étape), fiche de fin de session à verdict en tête, due aussi quand la session est bloquée (#128)
