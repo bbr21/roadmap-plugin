@@ -263,6 +263,9 @@ import {
   taskForSessionTitle,
   searchTasks,
   sessionTitleId,
+  pickTaskSource,
+  taskIdIn,
+  discoveredSource,
   sessionTitleKind,
   taskSessionRow,
   reopenOutcome,
@@ -1232,7 +1235,7 @@ async function repoOf($: EngineInterface, dir: string): Promise<{ main: string; 
  * 3. un `ROADMAP.md` à la racine du dossier principal du projet, puis du worktree.
  * Rien de tout ça : pas de panneau.
  */
-async function currentSource($: EngineInterface): Promise<Source | undefined> {
+async function localSource($: EngineInterface): Promise<Source | undefined> {
   try {
     const cwd = await $.session.cwd()
     const root = await $.session.root()
@@ -1255,6 +1258,109 @@ async function currentSource($: EngineInterface): Promise<Source | undefined> {
       if (await $.fs.exists(`${base}/ROADMAP.md`)) return await withWork($, { ...defaults, match: [base], dir: base, subjects: [] }, bases[0]!)
     }
     return undefined
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * La source de la session : celle de son dossier, sauf pour une session « #N · … » (pas un Maestro)
+ * dont la tâche vit dans la roadmap d'un autre projet (#213 : la #266 de Splitmybill, lancée par Maestro
+ * dans un worktree de Roadmap) ; c'est alors la roadmap de ce projet, celle où elle travaille.
+ */
+async function currentSource($: EngineInterface): Promise<Source | undefined> {
+  const local = await localSource($)
+  // Le titre déjà lu, sans appel : un message ne relit pas la fiche de la session ; le panneau, qui la
+  // lit, relance la source quand le titre change (`sourceTitle`).
+  sourceTitle = ownSession?.title
+  if (!ownSession) return local
+  try {
+    const own = ownSession
+    const id = sessionTitleId(own.title)
+    if (id === undefined || isMaestroSession(own.title) || (own.id !== undefined && (await loadMaestros($))[own.id] !== undefined)) return local
+    return (await taskSource($, id, own.title, local)) ?? local
+  } catch {
+    return local
+  }
+}
+
+/**
+ * Où vit la tâche #N d'une session (#213) : trouvée, gardée pour la session ; absente partout, relue
+ * au plus toutes les 15 s, et `missingSearch` dit les roadmaps lues (l'alerte « #N introuvable »).
+ */
+let taskSourceMemo: { key: string; source: Source | null } | undefined
+let sourceTitle: string | undefined
+let missingSearch: { id: string; names: string[]; at: number } | undefined
+const MISSING_RETRY_MS = 15_000
+
+async function taskSource($: EngineInterface, id: string, title: string, local: Source | undefined): Promise<Source | undefined> {
+  const key = `${id}\u0000${title}\u0000${local?.dir ?? ''}`
+  if (taskSourceMemo?.key === key) return taskSourceMemo.source ?? undefined
+  const now = await $.clock.now()
+  if (missingSearch?.id === id && now - missingSearch.at < MISSING_RETRY_MS) return undefined
+  const has = async (s: Source) => {
+    const texts = await Promise.all(Object.values(files(s)).map(path => readOr($, path)))
+    return texts.some(text => text !== undefined && taskIdIn(text, id))
+  }
+  if (local && (await has(local))) {
+    taskSourceMemo = { key, source: null }
+    return undefined
+  }
+  const candidates: { source: Source; tasks: Task[] }[] = []
+  for (const s of await otherSources($, local)) {
+    if (!(await has(s))) continue
+    const { open, done } = files(s)
+    const [a, b] = await Promise.all([load($, open, 'ROADMAP.md'), load($, done, 'ROADMAP-fait.md')])
+    candidates.push({ source: s, tasks: [...(typeof a === 'string' ? [] : a), ...(typeof b === 'string' ? [] : b)] })
+  }
+  const root = await $.session.root()
+  const ran = await $.process.run(['git', '-C', root, 'branch', '--show-current']).catch(() => undefined)
+  const branch = ran?.exitCode === 0 ? ran.stdout.trim() : undefined
+  const found = pickTaskSource({ id, title, ...(branch ? { branch } : {}), candidates })
+  if (!found) {
+    const others = (await otherSources($, local)).map(s => s.name)
+    missingSearch = { id, names: [...(local ? [local.name] : []), ...others], at: now }
+    return undefined
+  }
+  missingSearch = undefined
+  const source = await withWork($, found, mainCheckout(found.root ?? found.dir))
+  taskSourceMemo = { key, source }
+  return source
+}
+
+/**
+ * Les autres roadmaps du Mac (#213) : celles de `~/.claude/roadmap-perso.json`, puis les projets voisins
+ * du dossier principal qui en ont une (`.claude/roadmap.json` ou `ROADMAP.md`), sans les copies de
+ * travail (leur `.git` est un fichier), réduites à leur roadmap et à leurs clés (`discoveredSource`).
+ */
+async function otherSources($: EngineInterface, local: Source | undefined): Promise<Source[]> {
+  const perso = await readPerso($)
+  const home = mainCheckout(await $.session.root())
+  const parent = home.replace(/\/[^/]+\/?$/, '')
+  const me = settings.me.length > 0 ? settings.me : perso.me
+  const found: Source[] = [...perso.sources]
+  const entries = parent === '' ? [] : await $.fs.list(parent).catch(() => [])
+  for (const entry of entries) {
+    if (entry.kind !== 'dir' || entry.name.startsWith('.')) continue
+    const base = `${parent}/${entry.name}`
+    if (base === home) continue
+    const git = await $.fs.stat(`${base}/.git`).catch(() => undefined)
+    if (git?.kind === 'file') continue
+    const config = `${base}/.claude/roadmap.json`
+    const parsed = (await $.fs.exists(config)) ? parseProjectConfigSafe(await readOr($, config), base, { name: baseName(base), me }) : undefined
+    // Un voisin que personne n'a déclaré : sa roadmap, pas ses consignes.
+    const declared = parsed && discoveredSource(parsed, base)
+    if (parsed && !declared) continue
+    if (declared) found.push(declared)
+    else if (await $.fs.exists(`${base}/ROADMAP.md`)) found.push({ name: baseName(base), me, match: [base], dir: base, subjects: [] })
+  }
+  const seen = new Set(local ? [local.dir] : [])
+  return found.filter(s => !seen.has(s.dir) && (seen.add(s.dir), true))
+}
+
+function parseProjectConfigSafe(text: string | undefined, base: string, defaults: { name: string; me: string[] }): Source | undefined {
+  try {
+    return text === undefined ? undefined : parseProjectConfig(text, base, defaults)
   } catch {
     return undefined
   }
@@ -4052,6 +4158,9 @@ export const register: Register = (on, options) => {
   // Un chargement neuf relit tout : les données gardées en mémoire viennent du chargement d'avant.
   paneCache = undefined
   knownSource = undefined
+  taskSourceMemo = undefined
+  missingSearch = undefined
+  sourceTitle = undefined
   // La session et le droit de lister les sessions se relisent aussi (un refus de la liste ne survit pas).
   ownSession = null
   listDenied = false
@@ -5701,7 +5810,9 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     </Box>
   )
 
-  const source = knownSource === undefined ? await sourceNow($) : (knownSource ?? undefined)
+  // La source se relit quand le titre de la session arrive ou change : « #N · … » cherche sa tâche (#213).
+  const ownTitle = (await readOwnSession($)).title
+  const source = knownSource === undefined || sourceTitle !== ownTitle ? await sourceNow($) : (knownSource ?? undefined)
   if (!source) {
     // Pas de roadmap pour le dossier de la session : ce qui en déclare une.
     const p = await paletteOf($)
@@ -5768,9 +5879,42 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   }
   const done = data.done
 
-  // Dans une session « #N · … » : la fiche de sa tâche plutôt que toute la roadmap (#137, #142).
+  // Dans une session « #N · … » : la fiche de sa tâche plutôt que toute la roadmap (#137, #142) ; Maestro,
+  // toujours la liste ; sa tâche introuvable partout, l'alerte, jamais la liste en silence (#213).
   const ownBrand = await sessionBrandOf($)
-  const focusBrand = ownBrand?.brand.kind === 'task' && paneFocus(ownBrand.brand, view) === 'task' ? ownBrand.brand : undefined
+  const own = await readOwnSession($)
+  const titleId = sessionTitleId(own.title)
+  const isMaestro = isMaestroSession(own.title) || (own.id !== undefined && (await loadMaestros($))[own.id] !== undefined)
+  const focus = paneFocus(ownBrand?.brand, view, { ...(titleId !== undefined ? { titleId } : {}), isMaestro })
+  const focusBrand = ownBrand?.brand.kind === 'task' && focus === 'task' ? ownBrand.brand : undefined
+  if (focus === 'missing' && titleId !== undefined) {
+    const others = (missingSearch?.id === titleId ? missingSearch.names : [source.name]).filter(n => n !== source.name)
+    const where = others.length > 0 ? `absente de la roadmap de ${source.name} et des autres projets (${others.join(', ')})` : `absente de la roadmap de ${source.name}`
+    const retryMissing = () => {
+      missingSearch = undefined
+      void sourceNow($).then(() => update($, retryAtom, v => v + 1))
+    }
+    return (
+      <Box flexDirection="column" gap={SPACE.block} paddingX={SPACE.screen} paddingTop="sm">
+        <Box flexDirection="row" alignItems="center" gap={SPACE.row}>
+          {SvgEl ? <SvgEl source={alertIcon(palette.late)} alt="introuvable" width={SIZE.icon.md} height={SIZE.icon.md} /> : <Text color="error">!</Text>}
+          <Text weight="semibold">{`#${titleId} introuvable`}</Text>
+        </Box>
+        <Text color={palette.text2} wrap="wrap">{`Cette session travaille sur #${titleId}, ${where}.`}</Text>
+        <Box flexDirection="row" alignItems="center" gap={SPACE.textButtons} marginTop="sm">
+          <Box key="missing-retry-row" paddingX={SPACE.indent} paddingY="xs" alignItems="center" backgroundColor={palette.btn} hover={{ backgroundColor: palette.btnHover }}>
+            {corners(RADIUS.control, palette.bg)}
+            <Button key="missing-retry" plain label="Réessayer" onPress={retryMissing} />
+          </Box>
+          <Box key="missing-whole-row" paddingX={SPACE.indent} paddingY="xs" alignItems="center" backgroundColor={palette.btn} hover={{ backgroundColor: palette.btnHover }}>
+            {corners(RADIUS.control, palette.bg)}
+            <Button key="missing-whole" plain label="Toute la roadmap" onPress={() => void setView($, () => ({ whole: true }))} />
+          </Box>
+        </Box>
+        <Text size="caption" color={palette.text2}>Nouvel essai seul toutes les 15 s</Text>
+      </Box>
+    )
+  }
 
   // La date d'un parent est celle de son enfant ouvert le plus proche (#125) : filtres, tri et pastilles la lisent.
   const openTasks = withParentDates(open.filter(t => !t.done))
@@ -5948,7 +6092,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
         : drawnPill({ text, bg: palette.sel, fg: palette.text2, height: SIZE.pill.detail, weight: TEXT.weight.soft })
 
   // --- La fiche d'une tâche (#142) : celle de la session, ou celle du clic ---------
-  // Sa tâche introuvable (ligne retirée), la session voit toute la roadmap.
+  // Sa tâche introuvable, la session a vu l'alerte plus haut (#213).
   const ownTask = focusBrand ? allTasks.find(t => t.id === focusBrand.id) : undefined
   const inSession = ownTask !== undefined
   const current = ownTask ?? findSelected([...openTasks, ...doneTasks], selected)

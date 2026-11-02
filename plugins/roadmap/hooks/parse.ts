@@ -6123,9 +6123,72 @@ export function brandText(
 /**
  * Ce que montre le panneau d'une session (#137) : sa tâche, dans une session « #N · … », tant qu'aucune
  * tâche n'est ouverte en détail et que la flèche retour de la fiche n'a pas été pressée (#165) ; sinon la roadmap.
+ * Une session « #N · … » dont la tâche reste introuvable voit l'alerte (`missing`), jamais la liste en
+ * silence ; Maestro voit toujours la liste, même titré « #N · … » (#213).
  */
-export function paneFocus(brand: Brand | undefined, view: { selected: string; whole?: boolean }): 'task' | 'roadmap' {
-  return brand?.kind === 'task' && view.selected === '' && view.whole !== true ? 'task' : 'roadmap'
+export function paneFocus(
+  brand: Brand | undefined,
+  view: { selected: string; whole?: boolean },
+  o: { titleId?: string; isMaestro?: boolean } = {},
+): 'task' | 'missing' | 'roadmap' {
+  if (o.isMaestro || brand?.kind === 'maestro' || view.selected !== '' || view.whole === true) return 'roadmap'
+  if (brand?.kind === 'task') return 'task'
+  return o.titleId !== undefined ? 'missing' : 'roadmap'
+}
+
+/** La ligne de #N dans le texte d'une roadmap (#213) : son `id:N` dans le bloc de clés, pas un numéro cité ailleurs. */
+export function taskIdIn(text: string, id: string): boolean {
+  return new RegExp(`[[|]\\s*id:${id}\\s*[|\\]]`).test(text)
+}
+
+/** Les mots qui comptent d'un titre ou d'un libellé, sans accents, réduits à leurs cinq premières lettres (« jointe », « joindre »). */
+function titleWords(text: string): Set<string> {
+  const plain = text.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase()
+  return new Set(plain.split(/[^a-z0-9]+/).filter(w => w.length >= 4 && !TITLE_STOPWORDS.has(w)).map(w => w.slice(0, 5)))
+}
+const TITLE_STOPWORDS = new Set(['dans', 'pour', 'avec', 'sans', 'plus', 'tout', 'toute', 'tous', 'depuis', 'quand', 'leur', 'cette', 'entre', 'sous', 'vers', 'chez'])
+
+/**
+ * La roadmap où vit la tâche d'une session « #N · … » lancée hors de son projet (#213, la #266 de
+ * Splitmybill partie d'un worktree de Roadmap) : parmi celles qui ont #N, celle dont la ligne porte la
+ * branche de la session, puis celle dont le libellé partage le plus de mots avec le titre. Aucun mot
+ * commun ou une égalité : aucune, plutôt qu'un pari.
+ */
+export function pickTaskSource(o: {
+  id: string
+  title: string
+  branch?: string
+  candidates: readonly { source: Source; tasks: readonly Task[] }[]
+}): Source | undefined {
+  const words = titleWords(o.title.replace(SESSION_PREFIX, ''))
+  const scored = o.candidates.flatMap(c => {
+    const task = c.tasks.find(t => t.id === o.id)
+    if (!task) return []
+    const branch = o.branch !== undefined && o.branch !== '' && (task.qui === o.branch || task.branche === o.branch) ? 1000 : 0
+    const common = [...titleWords(task.label)].filter(w => words.has(w)).length
+    return [{ source: c.source, score: branch + common }]
+  })
+  const best = Math.max(0, ...scored.map(s => s.score))
+  const top = scored.filter(s => s.score === best)
+  return best > 0 && top.length === 1 ? top[0]!.source : undefined
+}
+
+/**
+ * La source d'un projet voisin trouvé sans avoir été déclaré (#213) : sa roadmap et ses clés, pour la lire
+ * et contrôler ses lignes, mais aucun de ses textes qui deviennent des consignes (`ecriture`, `regles`,
+ * `preuves`, `design`, `rangement`, `publier`) ; une roadmap hors de son dossier ne se suit pas.
+ */
+export function discoveredSource(source: Source, base: string): Source | undefined {
+  const inside = (path: string) => (path === base || path.startsWith(`${base}/`)) && !/(^|\/)\.\.(\/|$)/.test(path)
+  if (!inside(source.dir) || (source.root !== undefined && !inside(source.root))) return undefined
+  const kept: Source = { ...source }
+  delete kept.ecriture
+  delete kept.regles
+  delete kept.preuves
+  delete kept.design
+  delete kept.rangement
+  delete kept.publier
+  return kept
 }
 
 /** L'écart d'une branche avec sa base : `git rev-list --left-right --count <base>...HEAD` et `git diff --name-only <base>...HEAD`. */
