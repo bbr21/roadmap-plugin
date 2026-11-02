@@ -228,6 +228,7 @@ export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
       { field: 'autoOpen', name: 'Toujours ouvert', def: 'On' },
       { field: 'axisPill', name: 'Axe en pastille', def: 'Off' },
       { field: 'theme', name: 'Thème', def: 'auto' },
+      { field: 'dateFormat', name: 'Format des dates', def: 'us' },
     ],
   },
 ]

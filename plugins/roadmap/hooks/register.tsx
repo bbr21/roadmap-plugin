@@ -164,7 +164,7 @@ import {
   fallbackTitle,
   openedLabel,
   selectionOf,
-  frDate,
+  shortDate,
   doneLabel,
   firstPrereq,
   prereqsOf,
@@ -237,6 +237,7 @@ import {
   taskKey,
   parseRoadmap,
   parsePerso,
+  setDateFormat,
   setPerson,
   person,
   Person,
@@ -589,7 +590,7 @@ function axisCount(tasks: Task[], axis: string): number {
 }
 
 /** Les réglages du plugin (userConfig), relus à chaque chargement du module. */
-let settings = { me: [] as string[], autoOpen: true, titleModel: 'sonnet', capture: true, theme: 'auto', launchEffort: 'high', launchBypass: false, axisPill: false }
+let settings = { me: [] as string[], autoOpen: true, titleModel: 'sonnet', capture: true, theme: 'auto', launchEffort: 'high', launchBypass: false, axisPill: false, dateFormat: 'us' }
 
 /**
  * La palette du panneau. Le mod ne reçoit pas l'apparence de l'app : il lit le thème de Claude
@@ -1077,7 +1078,7 @@ async function checkRoadmap($: EngineInterface, c: Capture, before?: { open?: st
     if (after === undefined || after === c.seen[key]) continue
     const old = new Set((c.seen[key] ?? '').split('\n').map(l => l.replace(/\r$/, '')))
     const { requis, requiredOn, cles } = projectSettings(c.source)
-    const problems = [...newProblems(c.seen[key], after, done, { requis, requiredOn, cles }), ...ids[key].filter(p => !old.has(p.text))]
+    const problems = [...newProblems(c.seen[key], after, done, { requis, requiredOn, cles, today: todayOf(Date.now()) }), ...ids[key].filter(p => !old.has(p.text))]
     if (problems.length > 0) notes.push(problemsText(file, problems))
     if (!done) {
       const added = addedOpenTasks((before ?? c.seen).open, after)
@@ -3144,7 +3145,7 @@ async function closeTask(
   const out = closeWithParentInTexts(await $.fs.read(open), doneText, task, moment, kind, reason, projectSettings(source).cles)
   if ('error' in out) return out
   const closedParent = out.parent !== undefined && out.parent.next === undefined ? out.parent.id : undefined
-  const parentNote = out.parent === undefined ? undefined : out.parent.next !== undefined ? `parent #${out.parent.id} reconduit au ${frDate(out.parent.next)}` : `parent #${out.parent.id} fait aussi`
+  const parentNote = out.parent === undefined ? undefined : out.parent.next !== undefined ? `parent #${out.parent.id} reconduit au ${shortDate(out.parent.next)}` : `parent #${out.parent.id} fait aussi`
   // Les faites d'abord : une ligne perdue entre les deux écritures ne se retrouve pas.
   await $.fs.write(done, out.done)
   await $.fs.write(open, out.open)
@@ -3969,7 +3970,9 @@ export const register: Register = (on, options) => {
     launchEffort: typeof options.launchEffort === 'string' && options.launchEffort !== '' ? options.launchEffort : 'high',
     launchBypass: options.launchBypass === true,
     axisPill: typeof options.axisPill === 'boolean' ? options.axisPill : false,
+    dateFormat: options.dateFormat === 'fr' ? 'fr' : 'us',
   }
+  setDateFormat(settings.dateFormat)
 
   // Le thème de Claude Code a changé : le panneau se redessine dans l'autre palette.
   on('config.set', { key: 'theme' }, async ($, e, next) => {
@@ -6334,7 +6337,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
                 'Échéance',
                 current.due !== undefined && (
                   <Box flexDirection="row" alignItems="center" gap={SPACE.row}>
-                    {strong(frDate(current.due))}
+                    {strong(shortDate(current.due))}
                     {due && current.due && tag(due.text, due.late ? 'late' : isDueSoon(current, today) ? 'soon' : 'soft')}
                   </Box>
                 ),
@@ -6354,7 +6357,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
               field(
                 'Ouverte le',
                 <Box key="opened" flexDirection="row" alignItems="center" gap={SPACE.row}>
-                  <Text weight="semibold" tabular>{frDate(current.ouvert)}</Text>
+                  <Text weight="semibold" tabular>{shortDate(current.ouvert)}</Text>
                   {days !== undefined && <Text color={palette.text2}>{`· ${openedLabel(days)}`}</Text>}
                 </Box>,
               )}

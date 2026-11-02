@@ -617,6 +617,10 @@ de Maestro ou le filtre, où le carré d'axe suffit et le titre garde sa place),
 quand les sections se rangent par axe en attendant les titres, ni dans un projet qui montre ses propres
 clés (`cles_visibles`). L'arbre suit le même réglage ; la fiche d'une tâche et l'en-tête de sa session
 gardent leur axe. Allumée, le panneau dessine 20 lignes d'un coup au lieu de 40, puis « Voir les N autres ».
+`dateFormat` (« Format des dates », défaut `us` ; #201) : `us` écrit les dates du panneau, de la fiche
+et de l'en-tête d'une session à l'américaine, « Nov 4 », l'heure sur 12 h (« Nov 1 à 8:11 PM ») ; `fr`
+à la française, « 04/11 », « 4 nov. » et « 01/11 à 20:11 ». Les mots (aujourd'hui, hier, dans 4 j)
+restent en français ; les fichiers de la roadmap gardent leurs dates en AAAA-MM-JJ.
 `capture` éteint coupe tous les contrôles et rappels de la roadmap : la grammaire, et en fin de tour
 le travail à inscrire, le bilan d'une tâche cochée, son rangement et l'archivage de la session,
 l'idée à coder sans ligne, et après un commit les tests, les skills de méthode et les maquettes ; la
@@ -644,6 +648,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.128.0 (2026-11-01)** : panneau : dates à l'américaine par défaut (« Nov 4 », heure sur 12 h), réglage dateFormat us | fr ; le contrôle refuse une date fait: ou ouvert: dans le futur, comptée à l'heure locale (#201)
 - **0.127.0 (2026-11-01)** : reglages-session : l'en-tête du mode ADHD devient une carte d'étape (icône d'état, étape N/total, nom, barre ▰▱, état en mots), le constat dessous (#196)
 - **0.126.0 (2026-11-01)** : panneau : une tâche de code n'est finie qu'une fois fusionnée : étape « Fusionner » (et « Publier » avec la clé publier) cochée par git, état « à fusionner » à la place de « t'attend » dans la fiche, la bande et le bloc En cours (#191)
 - **0.125.0 (2026-11-01)** : panneau : « Ranger › Par numéro » range les arbres par le numéro de leur tâche racine, le plus récent en haut ; le filtre « Récentes » quitte « Plus › » (#192)

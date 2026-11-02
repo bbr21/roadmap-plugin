@@ -296,6 +296,8 @@ export type LintRules = {
   /** `launched` : les champs exigés ne valent que sur une ligne qui porte `qui:` ou `branche:` (#80). */
   requiredOn: RequiredOn
   cles: Readonly<Record<string, readonly string[]>>
+  /** Aujourd'hui, à l'heure locale (#201) : `fait:` et `ouvert:` ne tombent pas après ; sans lui, rien n'est comparé. */
+  today?: string
 }
 
 /** L'exemple d'un champ exigé absent : ce qu'il faut écrire. */
@@ -360,6 +362,8 @@ export function lintRoadmap(text: string, done: boolean, rules: Partial<LintRule
       else if (k === 'resp' && v === '-') say('resp: un nom, pas - (réservé à parent: et après:)')
       else if (k === 'après' && v.includes(',') && prereqNumbers(v) === undefined) say(`après: des numéros séparés par des virgules, ou - (« ${v} »)`)
       else if (k === 'fait' && !DONE_RE.test(v)) say(`fait: n'est pas une date AAAA-MM-JJ, ou AAAA-MM-JJ HH:MM (« ${v} »)`)
+      else if ((k === 'fait' || k === 'ouvert') && rules.today !== undefined && v.slice(0, 10) > rules.today)
+        say(`${k}:${v} : date dans le futur (aujourd'hui : ${rules.today}, heure locale)`)
       else if (k === 'id' && !ID_RE.test(v)) say(`id: n'est pas un numéro (« ${v} ») : un entier, sans #`)
       else if (k === 'prio' && !PRIO_RE.test(v)) say(`prio: vaut 1, 2 ou 3 (« ${v} »)`)
       else if (k === 'tous' && !(RECURRENCES as readonly string[]).includes(v)) say(`tous: vaut semaine, 2semaines, mois, trimestre ou an (« ${v} »)`)
@@ -1155,13 +1159,11 @@ export function finCard(o: { recap?: StoredRecap; task: Task; bilan?: Bilan; due
     if (bilan.corrections !== '' && n !== 0) push(more, 'Corrections', Number.isNaN(n) ? bilan.corrections : `${n} correction${n > 1 ? 's' : ''}`)
     if (recap?.atoi !== undefined) push(more, 'Note', note)
   }
-  const two = (n: number) => String(n).padStart(2, '0')
-  const d = recap ? new Date(recap.at) : undefined
   return {
     ...(c ? { emoji: c.emoji } : {}),
     ...(bilan && bilan.ressenti !== '' ? { ressenti: bilan.ressenti } : {}),
     missing: task.done && !bilan && o.due,
-    when: d ? `${two(d.getDate())}/${two(d.getMonth() + 1)} ${two(d.getHours())}:${two(d.getMinutes())}` : 'tiré de la roadmap',
+    when: recap ? stampLabel(recap.at) : 'tiré de la roadmap',
     rows,
     more,
   }
@@ -1370,16 +1372,45 @@ export function axisOrder(open: Task[], done: Task[]): string[] {
   return order
 }
 
-/** « 2026-10-16 » → « 16/10 ». */
-export function frDate(iso: string): string {
-  const [, m, d] = iso.slice(0, 10).split('-')
-  return d && m ? `${d}/${m}` : iso
+// Le format des dates du panneau (#201, choix de Bertrand) : `us` par défaut, « Nov 4 » et l'heure
+// sur 12 h ; `fr`, « 04/11 » et 24 h. Les mots restent en français ; les fichiers, en AAAA-MM-JJ.
+// Posé par register.tsx depuis le réglage `dateFormat`. État du module, comme `person()`.
+export type DateFormat = 'us' | 'fr'
+let dateFormat: DateFormat = 'us'
+
+/** Le réglage `dateFormat` ; une valeur inconnue vaut `us`. */
+export function setDateFormat(value: unknown): void {
+  dateFormat = value === 'fr' ? 'fr' : 'us'
 }
 
-/** La clôture d'une tâche : « 22/10 à 03:41 », ou la date seule quand l'heure n'est pas connue. */
+const US_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+
+/** « 2026-10-16 » → « Oct 16 » (us) ou « 16/10 » (fr). */
+export function shortDate(iso: string): string {
+  const [, m, d] = iso.slice(0, 10).split('-')
+  if (!d || !m) return iso
+  const month = US_MONTHS[Number(m) - 1]
+  return dateFormat === 'fr' || !month ? `${d}/${m}` : `${month} ${Number(d)}`
+}
+
+/** « 20:11 » → « 8:11 PM » (us), ou tel quel (fr). */
+function clockLabel(hhmm: string): string {
+  if (dateFormat === 'fr') return hhmm
+  const h = Number(hhmm.slice(0, 2))
+  return `${h % 12 === 0 ? 12 : h % 12}:${hhmm.slice(3, 5)} ${h < 12 ? 'AM' : 'PM'}`
+}
+
+/** La clôture d'une tâche : « Oct 22 à 3:41 AM » (« 22/10 à 03:41 »), ou la date seule quand l'heure n'est pas connue. */
 export function doneLabel(fait: string): string {
   const time = fait.slice(11, 16)
-  return time ? `${frDate(fait)} à ${time}` : frDate(fait)
+  return time ? `${shortDate(fait)} à ${clockLabel(time)}` : shortDate(fait)
+}
+
+/** Un instant, à l'heure locale : « Nov 2 8:11 PM » (« 02/11 20:11 »). */
+export function stampLabel(ms: number): string {
+  const d = new Date(ms)
+  const two = (n: number) => String(n).padStart(2, '0')
+  return `${shortDate(todayOf(ms))} ${clockLabel(`${two(d.getHours())}:${two(d.getMinutes())}`)}`
 }
 
 /** L'âge d'une tâche, à droite de sa ligne : « auj. », « hier », « 13 j ». */
@@ -1445,7 +1476,7 @@ export function byDay(tasks: readonly Task[], today: string, dateOf: (t: Task) =
   const dayOf = (t: Task) => (dateOf(t) ?? '').slice(0, 10)
   const days = [...new Set(tasks.map(dayOf))].sort((a, b) => b.localeCompare(a))
   return days.map(day => ({
-    label: day === '' ? 'Sans date' : day === today ? "Aujourd'hui" : daysBetween(day, today) === 1 ? 'Hier' : frDate(day),
+    label: day === '' ? 'Sans date' : day === today ? "Aujourd'hui" : daysBetween(day, today) === 1 ? 'Hier' : shortDate(day),
     tasks: tasks.filter(t => dayOf(t) === day),
   }))
 }
@@ -2065,7 +2096,7 @@ const LATE = 'En retard'
  * quand c'est une sous-tâche, est le `focus` de sa ligne.
  */
 export function dayTree(blocks: readonly TreeBlock[], today: string, isLive: (t: Task) => boolean): TreeSection[] {
-  const label = (day: string) => (day === today ? "Aujourd'hui" : daysBetween(today, day) === 1 ? 'Demain' : frDate(day))
+  const label = (day: string) => (day === today ? "Aujourd'hui" : daysBetween(today, day) === 1 ? 'Demain' : shortDate(day))
   return unitSections(
     blocks,
     isLive,
@@ -3528,9 +3559,9 @@ export function listPills(task: Task, today: string, me: readonly string[]): Pil
 /** La pastille d'échéance (#99) : rouge en retard avec le retard, orange dans les 7 jours, grise au-delà. */
 export function duePill(due: string, today: string): Pill {
   const days = daysBetween(today, due)
-  if (days < 0) return { kind: 'late', text: `${frDate(due)} · ${-days} j` }
-  if (days <= 7) return { kind: 'soon', text: days === 0 ? 'auj.' : days === 1 ? 'demain' : frDate(due) }
-  return { kind: 'due', text: frDate(due) }
+  if (days < 0) return { kind: 'late', text: `${shortDate(due)} · ${-days} j` }
+  if (days <= 7) return { kind: 'soon', text: days === 0 ? 'auj.' : days === 1 ? 'demain' : shortDate(due) }
+  return { kind: 'due', text: shortDate(due) }
 }
 
 const RECUR_LABELS: Record<Recurrence, string> = { semaine: 'hebdo', '2semaines': '2 sem.', mois: 'mensuel', trimestre: 'trimestriel', an: 'annuel' }
@@ -5741,21 +5772,22 @@ const BRAND_STATE_WORD: Record<BrandTask['state'], string> = { wait: "t'attend",
 
 const FR_MONTHS = ['janv.', 'févr.', 'mars', 'avr.', 'mai', 'juin', 'juil.', 'août', 'sept.', 'oct.', 'nov.', 'déc.']
 
-/** « 6 nov. », « 1er déc. » : une date AAAA-MM-JJ comme on la dit. */
-function frDay(iso: string): string {
+/** « Nov 6 » (us) ; « 6 nov. », « 1er déc. » (fr) : une date AAAA-MM-JJ comme on la dit. */
+function spokenDate(iso: string): string {
+  if (dateFormat !== 'fr') return shortDate(iso)
   const [, m, d] = iso.slice(0, 10).split('-')
   const day = Number(d)
   const month = FR_MONTHS[Number(m) - 1]
   return month && day ? `${day === 1 ? '1er' : day} ${month}` : iso
 }
 
-/** L'échéance d'une tâche en clair : « 6 nov., dans 4 jours » ; sans date du jour, la date seule. */
-function dueWords(due: string, today: string): string {
-  if (!today) return frDay(due)
+/** L'échéance d'une tâche en clair : « Nov 6, dans 4 jours » ; sans date du jour, la date seule. */
+export function dueWords(due: string, today: string): string {
+  if (!today) return spokenDate(due)
   const days = daysBetween(today, due)
   const plural = (n: number) => `${n} jour${n > 1 ? 's' : ''}`
   const rel = days < 0 ? `en retard de ${plural(-days)}` : days === 0 ? "aujourd'hui" : days === 1 ? 'demain' : `dans ${plural(days)}`
-  return `${frDay(due)}, ${rel}`
+  return `${spokenDate(due)}, ${rel}`
 }
 
 /**
@@ -6269,7 +6301,7 @@ export const MAESTRO_STUCK_MS = STUCK_MS
 
 function maestroTaskLine(t: Task, title: string, today: string, extra: string[] = []): string {
   const bits = [
-    ...(t.due ? [`${isOverdue(t, today) ? 'en retard, ' : ''}échéance ${frDate(t.due)}`] : []),
+    ...(t.due ? [`${isOverdue(t, today) ? 'en retard, ' : ''}échéance ${shortDate(t.due)}`] : []),
     ...(t.attend ? [`attend ${shortAttend(t.attend)}`] : []),
     ...extra,
   ]

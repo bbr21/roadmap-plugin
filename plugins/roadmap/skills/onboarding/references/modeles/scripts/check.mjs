@@ -126,6 +126,9 @@ const isDone = (s) => {
   const m = s.match(/^(\S+)(?: ([01]\d|2[0-3]):[0-5]\d)?$/);
   return Boolean(m) && isDate(m[1]);
 };
+// Aujourd'hui à l'heure locale du poste, jamais en UTC (#201) : le soir à New York, l'UTC est déjà demain.
+const now = new Date();
+const TODAY = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
 
 // Les clés que le projet déclare dans .claude/roadmap.json (`cles` : clé → valeurs admises, liste vide : libre).
 function declaredKeys() {
@@ -196,6 +199,8 @@ check('Grammaire de ROADMAP.md et ROADMAP-fait.md', (err) => {
         found.set(key, value.trim());
         if ((key === 'ouvert' || key === 'due' || key === 'relance') && !isDate(value)) err(at, `${key}:${value} : date AAAA-MM-JJ attendue`);
         if (key === 'fait' && !isDone(value)) err(at, `fait:${value} : date AAAA-MM-JJ (et heure HH:MM) attendue`);
+        // Une date de clôture ou d'ouverture n'est jamais après aujourd'hui (#201).
+        if ((key === 'ouvert' || key === 'fait') && value.trim().slice(0, 10) > TODAY && isDone(value.trim())) err(at, `${key}:${value.trim()} : date dans le futur (aujourd'hui : ${TODAY}, heure locale)`);
         if (key === 'prio' && !/^[123]$/.test(value.trim())) err(at, `prio:${value} : 1, 2 ou 3 attendu`);
         if (key === 'tous' && !['semaine', '2semaines', 'mois', 'trimestre', 'an'].includes(value.trim())) err(at, `tous:${value} : semaine, 2semaines, mois, trimestre ou an attendu`);
         // parent: le numéro de la tâche mère (#12 compris), ou - ; après: un libellé, ou des numéros séparés par des virgules, ou -.

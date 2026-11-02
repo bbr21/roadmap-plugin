@@ -1,6 +1,6 @@
 {
   "name": "roadmap",
-  "version": "0.127.0",
+  "version": "0.128.0",
   "description": "Panneau Claude Code à côté du chat : la roadmap du projet de la session, filtrable, avec le détail d'une tâche et son lancement dans une nouvelle session",
   "author": {
     "name": "Bertrand Fargheon"
@@ -51,6 +51,16 @@
         "auto",
         "sombre",
         "clair"
+      ]
+    },
+    "dateFormat": {
+      "type": "string",
+      "title": "Format des dates",
+      "description": "« us » écrit les dates du panneau à l'américaine, « Nov 4 », l'heure sur 12 h (« Nov 1 à 8:11 PM ») ; « fr » à la française, « 04/11 » et « 01/11 à 20:11 ». Les mots restent en français, et la roadmap garde ses dates en AAAA-MM-JJ.",
+      "default": "us",
+      "options": [
+        "us",
+        "fr"
       ]
     },
     "launchEffort": {
