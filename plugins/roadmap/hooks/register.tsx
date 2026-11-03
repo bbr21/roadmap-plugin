@@ -25,7 +25,9 @@ import {
   treeChildRowIcon,
   treeAloneRowIcon,
   TREE_CHILD_PX,
-  axisBandIcon,
+  TREE_MARK_PX,
+  axisHeadIcon,
+  sectionRuleIcon,
   bandGlyphIcon,
   progressIcon,
   bubbleIcon,
@@ -161,6 +163,7 @@ import {
   byTree,
   axisTree,
   bandLook,
+  bandQuiet,
   dayTree,
   deadlineTree,
   ownerTree,
@@ -7123,7 +7126,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
           <Box key={`chain-row:${x.key}`} flexDirection="row" alignItems="center" gap={SPACE.row} {...(here ? { backgroundColor: palette.sel } : {})}>
             <Box flexShrink={0}>
               {Svg ? (
-                <Svg source={x.done ? fade(mark, true) : mark} alt={o.mother ? 'mère' : x.done ? 'faite' : x.axis} width={o.mother ? 32 : TREE_CHILD_PX} height={24} />
+                <Svg source={x.done ? fade(mark, true) : mark} alt={o.mother ? 'mère' : x.done ? 'faite' : x.axis} width={o.mother ? TREE_MARK_PX : TREE_CHILD_PX} height={24} />
               ) : (
                 <Text color={palette.text3}>{o.mother ? '⌄' : o.last ? '└' : '├'}</Text>
               )}
@@ -8538,10 +8541,18 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   // montrées ; un enfant de l'arbre ne reprend pas celles de son parent) et l'échéance à part, chacun
   // dans sa colonne. Une faite ou une mère grise n'en a aucune ; en session ou bloquée, ni échéance ni
   // responsable : la roue ou le cadenas le disent. Dans l'arbre, une seule clé : le département (#163).
+  // La section de chaque ligne dessinée (#265) : rempli avec les groupes, lu par `rowParts`.
+  const sectionOf = new Map<Task, string>()
   const rowParts = (t: Task, o: { tree: boolean; ghost: boolean; inSession: boolean; locked: boolean; parent?: Parameters<typeof keyPills>[3] }) => {
     if (o.ghost || t.done) return { feedback: false, keys: [] as PillSpec[], tags: [] as PillSpec[], due: undefined as PillSpec | undefined }
     const feedback = t.feedback !== undefined
-    const listed: { due?: Pill; tags: Pill[] } = !o.inSession && !o.locked ? splitRowPills(listPills(t, today, me)) : { tags: [] }
+    // Une ligne ne redit pas sa tête (#265) : ni le jour de sa section, ni la personne de sa section.
+    const quiet = bandQuiet(sectionOf.get(t), t)
+    const split: { due?: Pill; tags: Pill[] } = !o.inSession && !o.locked ? splitRowPills(listPills(t, today, me)) : { tags: [] }
+    const listed: { due?: Pill; tags: Pill[] } = {
+      ...(split.due && !quiet.due ? { due: split.due } : {}),
+      tags: quiet.who ? split.tags.filter(p => p.kind !== 'owner') : split.tags,
+    }
     const keys: PillSpec[] = !clesVisibles
       ? []
       : o.tree
@@ -8648,17 +8659,19 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     // La vue de référence (#258, maquette A) : la flèche de la mère sort de son carré, grise, devant le # ;
     // une tâche seule garde sa place vide, une fille pose son carré sous le # de sa mère. Hors de l'arbre aussi
     // (#259 : recherche, « À relancer », bloc « En cours ») : la place vide, pour que les # s'alignent.
+    // Dans l'arbre, la marque rapprochée (#265) : 24 px, une fille 45 ; hors de lui, 32 (#259).
+    const markWidth = child ? TREE_CHILD_PX : tree ? TREE_MARK_PX : 32
     const drawn = head
       ? treeMotherRowIcon(axisHex(t.axis), head.open, palette.text2)
       : child
         ? treeChildRowIcon(markSource, child.last, palette.border)
         : chain
           ? chainRowIcon(markSource, chain.pos, chain.step, palette.text3, palette.text2)
-          : treeAloneRowIcon(markSource)
+          : treeAloneRowIcon(markSource, markWidth)
     const markAlt = `${isAbandoned(t) ? 'annulée' : t.done ? 'faite' : t.axis}${armed ? ', armée' : ''}${chain ? `, étape ${chain.step}` : ''}${head ? (head.open ? ', replier' : ', déplier') : ''}`
     const checkKey = `check:${t.id ?? keyPart(t.key)}`
     const mark = Svg ? (
-      <Svg source={ghost || (t.done && !checkedMark) ? fade(drawn, true) : drawn} alt={markAlt} width={child ? TREE_CHILD_PX : 32} height={24} {...(moving !== undefined ? { isInteractive: true } : {})} />
+      <Svg source={ghost || (t.done && !checkedMark) ? fade(drawn, true) : drawn} alt={markAlt} width={markWidth} height={24} {...(moving !== undefined ? { isInteractive: true } : {})} />
     ) : head ? (
       <Text color={axisTheme(t.axis)}>{head.open ? '⌄' : '›'}</Text>
     ) : checkable ? (
@@ -8670,15 +8683,17 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     // Sur le bureau, un bouton sans encre couvre le carré : un bouton ne porte pas de dessin, et une
     // zone de clic par ligne dépasserait ZONE_LIMIT (#180). Peint après le carré, il reçoit le clic ;
     // derrière un trait de chaîne, il se décale sur le carré (16 px, deux cellules) ; derrière un coude, sous
-    // le # de la mère (#258 : 40 px, cinq cellules).
+    // le # de la mère (#258, #265 : 32 px, quatre cellules).
     const squareHit = checkable && Svg ? (
-      <Box position="absolute" top={0} left={child ? 5 : chain ? 2 : 0}>
+      <Box position="absolute" top={0} left={child ? 4 : chain ? 2 : 0}>
         <Button key={checkKey} plain onPress={() => void armCheck($, t)}>
           {CHECK_OVERLAY}
         </Button>
       </Box>
     ) : null
-    const right = doneRights.get(t) ?? (tree ? (t.done ? 'fait' : days === undefined ? '' : ageLabel(days)) : t.done ? axisLabel(t.axis) : days === undefined ? '' : ageLabel(days))
+    // Une date tue sous sa tête (#265) ne laisse pas l'âge prendre sa place : le bout reste vide.
+    const dueQuiet = !t.done && bandQuiet(sectionOf.get(t), t).due
+    const right = dueQuiet ? '' : doneRights.get(t) ?? (tree ? (t.done ? 'fait' : days === undefined ? '' : ageLabel(days)) : t.done ? axisLabel(t.axis) : days === undefined ? '' : ageLabel(days))
     // Une tâche faite dont la session reste ouverte : y retourner, ou l'archiver, d'un clic.
     const kept = block === undefined && sessionRows.has(taskKey(t)) ? doneSessionOf(t) : undefined
     const inSession = isLive(t) || block !== undefined
@@ -8717,7 +8732,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
               inset: 4,
               steps: gaugeCells + dueCells + departmentCells,
               pills: parts.tags.map(spec => pxCells(pillIcon(spec).width)),
-              mark: child ? TREE_CHILD_PX : 32,
+              mark: markWidth,
               number: treeNumCells,
             }).kept,
           )
@@ -8729,7 +8744,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
               inset: 6,
               steps: stepsCells.columns + (block ? blockEndCells : 0),
               pills: parts.tags.map(spec => pxCells(pillIcon(spec).width)),
-              mark: child ? TREE_CHILD_PX : 32,
+              mark: markWidth,
               number: treeNumCells,
             }).kept,
           )
@@ -9103,51 +9118,43 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
       })
   const bandOpen = (id: string) => !closedGroups.includes(id)
   const toggleBand = (id: string) => () => void setView($, v => ({ closedGroups: toggleIn(v.closedGroups, id) }))
-  // Le bandeau d'une section hors sujet (#238, maquette C) : fond teinté du ton de la section, son
-  // icône et son nom dans son encre, le compte, la flèche au bout ; toute la bande replie.
-  const toneInk = (tone: BandLookOf['tone']) =>
+  // La tête d'une section (#265, maquette B3 choisie par Bertrand) : sa marque dans la colonne des carrés
+  // (le carré de l'axe par sujet, l'icône du ton ailleurs), son nom en demi-gras, son compte au bout, et
+  // dessous le trait stylé à sa couleur ; ni fond ni flèche, toute la tête replie la section.
+  const toneColors = (tone: BandLookOf['tone']) =>
     tone === 'neutral'
-      ? { tint: palette.sel, ink: palette.text2 }
+      ? { ink: palette.text2, accent: palette.text3 }
       : tone === 'mine'
-      ? { tint: palette.liveTint, ink: palette.liveOn }
-      : { tint: palette[`${tone}Tint`], ink: palette[`${tone}On`] }
-  const lookRow = (id: string, name: string, count: number, look: BandLookOf) => {
-    const { tint, ink } = toneInk(look.tone)
-    return (
-      <Box key={`band:${id}`} paddingX={SPACE.indent} paddingTop="sm">
-        <Box key={`hit:bande:${keyPart(name)}`} flexDirection="row" justifyContent="space-between" alignItems="center" paddingX={SPACE.indent} backgroundColor={tint}>
-          <Box flexDirection="row" alignItems="center" gap={SPACE.row} flexShrink={1} minWidth={0}>
-            {Svg && <Svg source={bandGlyphIcon(look.glyph, ink)} alt="" width={16} height={24} />}
-            {headZones ? (
-              <Text weight="semibold" color={ink} wrap="truncate-end">{name}</Text>
-            ) : (
-              <Button key={`bande:${keyPart(name)}`} plain label={name} onPress={toggleBand(id)} />
-            )}
-          </Box>
-          <Box flexDirection="row" alignItems="center" gap={SPACE.row} flexShrink={0}>
-            {countPill(count, false, palette.text2)}
-            {Svg && <Svg source={rowMark(chevronIcon(palette.text3, bandOpen(id)))} alt={bandOpen(id) ? 'replier' : 'déplier'} width={16} height={24} />}
-          </Box>
-          {headZones && hit(`band:${id}`, toggleBand(id))}
-        </Box>
-      </Box>
-    )
-  }
-  const bandRow = (id: string, name: string, count: number, lead?: RenderElement, axisOf?: string, look?: BandLookOf) =>
-    look && Svg ? lookRow(id, name, count, look) : (
-    <Box key={`band:${id}`} flexDirection="row" justifyContent="space-between" alignItems="center" paddingX={SPACE.indent} paddingTop="sm">
-      {/* Une section d'axe (#168) : la flèche dans le carré de l'axe, aligné sur ceux des lignes ; le carré et le nom la replient. */}
-      {axisOf !== undefined && Svg ? (
+      ? { ink: palette.liveOn, accent: palette.live }
+      : { ink: palette[`${tone}On`], accent: palette[tone] }
+  const headRow = (id: string, name: string, count: number, mark: string, nameInk: string, accent: string) => (
+    <Box key={`band:${id}`} flexDirection="column" paddingX={SPACE.indent} paddingTop="md" paddingBottom="xs">
+      <Box key={`hit:bande:${keyPart(name)}`} flexDirection="row" justifyContent="space-between" alignItems="center">
         <Box flexDirection="row" alignItems="center" gap={SPACE.row} flexShrink={1} minWidth={0}>
-          <Box flexShrink={0}>
-            <Svg source={axisBandIcon(axisHex(axisOf), bandOpen(id), palette.onAxis)} alt={bandOpen(id) ? 'replier' : 'déplier'} width={16} height={24} />
-            {headZones && hit(`band:${id}`, toggleBand(id), 1)}
-          </Box>
-          <Button key={`bande:${keyPart(name)}`} plain label={name} onPress={toggleBand(id)} />
+          {Svg && <Svg source={mark} alt="" width={16} height={24} />}
+          {headZones ? (
+            <Text weight="semibold" color={nameInk} wrap="truncate-end">{name}</Text>
+          ) : (
+            <Button key={`bande:${keyPart(name)}`} plain label={name} onPress={toggleBand(id)} />
+          )}
         </Box>
-      ) : (
-        <Button key={`bande:${keyPart(name)}`} plain label={`${bandOpen(id) ? '⌄' : '›'} ${name}`} onPress={toggleBand(id)} />
-      )}
+        <Box flexDirection="row" alignItems="center" flexShrink={0}>
+          {countPill(count, false, palette.text2)}
+        </Box>
+        {headZones && hit(`band:${id}`, toggleBand(id))}
+      </Box>
+      {Svg && <Svg source={sectionRuleIcon(accent, palette.border, wide)} alt="trait" height={2} />}
+    </Box>
+  )
+  const bandRow = (id: string, name: string, count: number, lead?: RenderElement, axisOf?: string, look?: BandLookOf) =>
+    Svg && axisOf !== undefined
+      ? headRow(id, name, count, axisHeadIcon(axisHex(axisOf)), palette.text, axisHex(axisOf))
+      : Svg && look
+      ? headRow(id, name, count, bandGlyphIcon(look.glyph, toneColors(look.tone).ink), toneColors(look.tone).ink, toneColors(look.tone).accent)
+      : (
+    <Box key={`band:${id}`} flexDirection="row" justifyContent="space-between" alignItems="center" paddingX={SPACE.indent} paddingTop="sm">
+      {/* Au terminal, sans dessin : la flèche en texte devant le nom. */}
+      <Button key={`bande:${keyPart(name)}`} plain label={`${bandOpen(id) ? '⌄' : '›'} ${name}`} onPress={toggleBand(id)} />
       <Box flexDirection="row" alignItems="center" gap={SPACE.row} flexShrink={0}>
         {lead}
         {countPill(count, false, palette.text2)}
@@ -9174,7 +9181,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
         const id = `jour:${g.label}`
         const lead = g.label === 'En retard' ? lateLead() : undefined
         return [
-          { key: id, name: g.label, tasks: [], band: { count: g.tasks.length, ...(lead ? { lead } : {}) } },
+          { key: id, name: g.label, tasks: [], band: { count: g.tasks.length, look: bandLook(id, today, me), ...(lead ? { lead } : {}) } },
           ...byTree(g.tasks, allTasks, t => short(t).titre, prereqsFor, today, false).map(b => ({ key: `${id}:${b.key}`, name: b.label, tasks: b.tasks, block: b, under: id })),
         ]
       })
@@ -9185,6 +9192,8 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   // au seuil où le panneau gèle (2026-10-23).
   // Les groupes d'une bande repliée ne se dessinent pas, et ne prennent rien au budget.
   const groups = allGroups.filter(g => g.under === undefined || bandOpen(g.under))
+  for (const g of groups)
+    if (g.under !== undefined) for (const t of [...(g.block?.head ? [g.block.head as Task] : []), ...g.tasks, ...(g.focus ? [g.focus] : [])]) sectionOf.set(t, g.under)
   // Par sujet, la bande d'axe tait la pastille d'axe : le budget plein (#168).
   let budget = settings.axisPill && attend !== 'live' && !showDone && !clesVisibles?.length && axis === 'all' && (by !== 'subject' || rangerPar) ? ROW_BUDGET_AXIS_PILL : ROW_BUDGET
   const rowsOf = new Map<string, number>()

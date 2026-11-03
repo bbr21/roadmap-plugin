@@ -2582,7 +2582,8 @@ export type BandGlyph = 'clock' | 'sun' | 'calendar' | 'list' | 'person' | 'spar
  * Le bandeau d'une section hors sujet (#238, maquette C choisie par Bertrand le 2026-11-02), d'après
  * sa clé : en retard (rouge, horloge), aujourd'hui (bleu, soleil), demain et cette semaine (orange,
  * calendrier), une date et plus tard (gris, calendrier), « Sans … » (gris, liste), une personne
- * (bleu si c'est moi, silhouette), Récentes (violet, étoile).
+ * (bleu si c'est moi, silhouette), Récentes (violet, étoile). Les sections de Ma journée aussi (#265) :
+ * « Aujourd'hui et demain » (bleu, soleil), « Récurrentes qui tombent » (orange, calendrier).
  */
 export function bandLook(key: string, today: string, me: readonly string[]): { tone: BandTone; glyph: BandGlyph } {
   const cut = key.indexOf(':')
@@ -2592,9 +2593,24 @@ export function bandLook(key: string, today: string, me: readonly string[]): { t
   if (value === 'late' || value === LATE) return { tone: 'late', glyph: 'clock' }
   if (value === 'sans' || value.startsWith('Sans ')) return { tone: 'neutral', glyph: 'list' }
   if (kind === 'resp') return { tone: me.includes(value) ? 'mine' : 'neutral', glyph: 'person' }
-  if (kind === 'jour' && value === today) return { tone: 'live', glyph: 'sun' }
-  if ((kind === 'jour' && daysBetween(today, value) === 1) || value === 'Cette semaine') return { tone: 'block', glyph: 'calendar' }
+  if ((kind === 'jour' && value === today) || value === "Aujourd'hui et demain") return { tone: 'live', glyph: 'sun' }
+  if ((kind === 'jour' && daysBetween(today, value) === 1) || value === 'Cette semaine' || value === 'Récurrentes qui tombent') return { tone: 'block', glyph: 'calendar' }
   return { tone: 'neutral', glyph: 'calendar' }
+}
+
+/**
+ * Ce qu'une ligne tait sous la tête de sa section (#265, choix de Bertrand) : par jour, son échéance quand
+ * c'est le jour de la section (un retard se dit encore : il dit de combien) ; par responsable, la pastille
+ * de la personne de la section. `sectionKey` est la clé de la section (`jour:2026-11-04`, `resp:Linda`).
+ */
+export function bandQuiet(sectionKey: string | undefined, task: Pick<Task, 'due' | 'resp'>): { due: boolean; who: boolean } {
+  const cut = sectionKey?.indexOf(':') ?? -1
+  const kind = sectionKey === undefined || cut < 0 ? '' : sectionKey.slice(0, cut)
+  const value = sectionKey === undefined || cut < 0 ? '' : sectionKey.slice(cut + 1)
+  return {
+    due: kind === 'jour' && /^\d{4}-\d{2}-\d{2}$/.test(value) && task.due === value,
+    who: kind === 'resp' && task.resp !== undefined && attendWho(task.resp) === value,
+  }
 }
 
 /** Les arbres par échéance (#76, #189) : en retard, cette semaine (7 jours), plus tard, sans échéance, au jour de l'arbre. */

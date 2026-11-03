@@ -670,21 +670,30 @@ function innerChevron(cx: number, cy: number, half: number, open: boolean, inkHe
 }
 
 /**
- * Une mère de l'arbre par axe (#168), 32 × 24 : le carré de son axe, seul, puis sa flèche de dépli,
- * grise, hors du carré (#258, vue de référence, maquette A) : posée devant le #, à 16 px plus un écart,
- * elle s'aligne à gauche sur le nom de la section.
+ * La largeur de la marque d'une ligne de l'arbre (#265, retouche de Bertrand sur la maquette B) : le carré
+ * (3-13), puis la flèche, à mi-chemin du carré et du #. Hors de l'arbre, une ligne garde 32 px (#259).
+ */
+export const TREE_MARK_PX = 24
+
+/**
+ * Une mère de l'arbre par axe (#168), `TREE_MARK_PX` × 24 : le carré de son axe, seul, puis sa flèche de
+ * dépli, grise, hors du carré (#258, vue de référence, maquette A), centrée à 21,5 px : le même écart du
+ * carré à la flèche que de la flèche au # (#265).
  */
 export function treeMotherRowIcon(hex: string, open: boolean, chevronHex: string): string {
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="32" height="24" viewBox="0 0 32 24"><rect x="3" y="7" width="10" height="10" rx="${RADIUS.square}" fill="${hex}"/>${innerChevron(26, 12, 3, open, chevronHex)}</svg>`
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${TREE_MARK_PX}" height="24" viewBox="0 0 ${TREE_MARK_PX} 24"><rect x="3" y="7" width="10" height="10" rx="${RADIUS.square}" fill="${hex}"/>${innerChevron(21.5, 12, 3, open, chevronHex)}</svg>`
 }
 
-/** Une tâche seule de l'arbre (#258), 32 × 24 : sa marque, puis la place vide de la flèche ; son # s'aligne sur celui des mères. */
-export function treeAloneRowIcon(mark: string): string {
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="32" height="24" viewBox="0 0 32 24">${mark.replace(/^<svg /, '<svg x="0" y="0" ')}</svg>`
+/**
+ * Une tâche seule (#258), `width` × 24 : sa marque, puis la place vide de la flèche ; son # s'aligne sur
+ * celui des mères. Dans l'arbre, `TREE_MARK_PX` (#265) ; hors de lui, 32, comme une marque de chaîne (#259).
+ */
+export function treeAloneRowIcon(mark: string, width: number = TREE_MARK_PX): string {
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="24" viewBox="0 0 ${width} 24">${mark.replace(/^<svg /, '<svg x="0" y="0" ')}</svg>`
 }
 
-/** La largeur d'une fille de l'arbre (#258) : son carré sous le # de sa mère (32 px et un écart d'une cellule). */
-export const TREE_CHILD_PX = 53
+/** La largeur d'une fille de l'arbre (#258, #265) : son carré sous le # de sa mère (`TREE_MARK_PX` et un écart d'une cellule). */
+export const TREE_CHILD_PX = 45
 
 /**
  * Une fille de l'arbre par axe (#168), `TREE_CHILD_PX` × 24 : le coude (├, └ pour la dernière) part du
@@ -692,8 +701,25 @@ export const TREE_CHILD_PX = 53
  * de Bertrand sur la maquette A).
  */
 export function treeChildRowIcon(mark: string, last: boolean, lineHex: string): string {
-  const inner = mark.replace(/^<svg /, '<svg x="37" y="0" ')
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${TREE_CHILD_PX}" height="24" viewBox="0 0 ${TREE_CHILD_PX} 24"><path d="M8 0V${last ? 12 : 24}M8 12H39" fill="none" stroke="${lineHex}" stroke-width="1.2"/>${inner}</svg>`
+  const inner = mark.replace(/^<svg /, '<svg x="29" y="0" ')
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${TREE_CHILD_PX}" height="24" viewBox="0 0 ${TREE_CHILD_PX} 24"><path d="M8 0V${last ? 12 : 24}M8 12H31" fill="none" stroke="${lineHex}" stroke-width="1.2"/>${inner}</svg>`
+}
+
+/**
+ * La marque d'une tête de section par sujet (#265, maquette B3) : le carré de l'axe, 14 × 14 sur 16 × 24,
+ * sans flèche ; la flèche ne reste qu'aux mères.
+ */
+export function axisHeadIcon(hex: string): string {
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="24" viewBox="0 0 16 24"><rect x="1" y="5" width="14" height="14" rx="3" fill="${hex}"/></svg>`
+}
+
+/**
+ * Le trait sous une tête de section (#265, maquette B3 choisie par Bertrand) : un accent de 56 px et 2 px à
+ * la couleur de la section (l'axe, le ton), prolongé d'un filet de 1 px jusqu'au bout. Dessiné pleine
+ * largeur, l'app le ramène à celle du panneau.
+ */
+export function sectionRuleIcon(accentHex: string, lineHex: string, width = BAR_WIDTH): string {
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="2" viewBox="0 0 ${width} 2" preserveAspectRatio="none"><rect x="56" y="1" width="${Math.max(0, width - 56)}" height="1" fill="${lineHex}"/><rect width="56" height="2" rx="1" fill="${accentHex}"/></svg>`
 }
 
 /** L'icône du bandeau d'une section hors sujet (#238, maquette C), au trait, centrée sur 16 × 24. */
