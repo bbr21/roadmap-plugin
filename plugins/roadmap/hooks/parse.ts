@@ -4138,7 +4138,7 @@ export function childAlertText(alerts: readonly ChildAlert[]): string | undefine
   ]
   if (archive.length > 0) {
     lines.push(
-      `- Les finies : propose de les archiver d'un seul clic, dans ce tour même et pas au message suivant, par ta boîte de fin (wrap_up) avec la question « Archiver ${childShortList(archive.map(a => a.child))} ? » et un bouton de réponse « Archive-les ». Cette question passe avant toute autre question de ta boîte de fin : une autre décision va dans un formulaire (AskUserQuestion). Juste avant de la poser, relis list_sessions avec {"linked": true} : ${person()} a pu archiver une session depuis sa propre boîte de fin, et une session archivée n'y figure plus ; ne propose que celles qui y sont encore, et aucune question s'il n'en reste pas. Au clic de ${person()}, archive_session pour chacune (son identifiant entre parenthèses), puis dis en une ligne ce qui est archivé ou refusé. Sans son clic, n'archive rien.`,
+      `- Les finies : ${person()} les archive d'un clic sur leur icône d'archive, dans la bande au-dessus de la saisie (#267). Dis-le en une ligne, « ${childShortList(archive.map(a => a.child))} ${archive.length > 1 ? "finies : leur icône d'archive est" : "finie : son icône d'archive est"} dans la bande », et ne pose aucune question d'archivage dans ta boîte de fin : elle cacherait la bande. Si ${person()} te demande d'archiver, archive_session pour chacune (son identifiant entre parenthèses), puis dis en une ligne ce qui est archivé ou refusé. Sans sa demande, n'archive rien.`,
     )
   }
   // #151 : la réponse a pu arriver dans la session depuis la note ; un rappel, jamais la question reposée.
@@ -4159,38 +4159,19 @@ export function childAlertText(alerts: readonly ChildAlert[]): string | undefine
 }
 
 /**
- * Archiver des deux côtés, sans doublon (#110, Bertrand, 2026-10-29) : une session finie propose son
- * archivage dans sa boîte de fin, et Maestro le propose aussi. Les nouvelles de Maestro sont lues au début
- * de son tour ; s'il pose sa question à la fin, Bertrand a pu archiver entre-temps depuis la session
- * (#103 et #104 : archivées à 21:20:31 et 21:20:43, reproposées à 21:20:49). Les « #N » et les
- * `local_…` qu'une question d'archivage nomme encore, parmi les sessions lancées par `parentId` et
- * déjà archivées, sans autre session ouverte sur la même tâche.
+ * La bande au-dessus de la saisie reste visible (#267, Bertrand, 2026-11-03) : l'app la remplace tant
+ * que la boîte de fin pose une question (#147). Une boîte qui demande d'archiver d'autres sessions
+ * (« Archiver #76 ? », « Archive-les ») n'a plus lieu d'être : l'icône d'archive de la bande les archive
+ * d'un clic. Seule « Archiver cette session ? », qui porte sur la session elle-même, reste.
  */
-export function archivedInAsk(ask: string, rows: readonly unknown[], parentId: string): string[] {
-  if (!/archiv/i.test(ask)) return []
-  type Row = { sessionId?: unknown; title?: unknown; startedBy?: unknown; isArchived?: unknown }
-  const own = rows.filter((r): r is Row => typeof r === 'object' && r !== null && (r as Row).startedBy === parentId)
-  const idOf = (r: Row) => (typeof r.title === 'string' ? sessionTitleId(r.title) : undefined)
-  const open = new Set(own.filter(r => r.isArchived === false).map(idOf).filter(Boolean))
-  // Où la question nomme `needle`, -1 sinon : « #1030 » ne nomme pas #103.
-  const where = (needle: string) => ask.search(new RegExp(`${needle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\w-])`))
-  const out: { at: number; name: string }[] = []
-  for (const r of own) {
-    const id = idOf(r)
-    if (r.isArchived !== true || (id && open.has(id))) continue
-    const sid = typeof r.sessionId === 'string' ? r.sessionId : ''
-    const at = [id ? `#${id}` : '', sid].filter(Boolean).map(where).filter(i => i >= 0)
-    const name = id ? `#${id}` : sid
-    if (at.length > 0 && !out.some(o => o.name === name)) out.push({ at: Math.min(...at), name })
-  }
-  return out.sort((a, b) => a.at - b.at).map(o => o.name)
+export function othersArchiveAsk(ask: unknown): boolean {
+  if (typeof ask !== 'string' || !/archiv/i.test(ask)) return false
+  return !/archiver cette session/i.test(ask)
 }
 
-/** Le refus de la boîte de fin de Maestro qui nomme une session déjà archivée (#110). */
-export function archivedAskRefusal(names: readonly string[]): string {
-  const list = names.length > 1 ? `${names.slice(0, -1).join(', ')} et ${names[names.length - 1]}` : (names[0] ?? '')
-  const done = names.length > 1 ? 'sont déjà archivées' : 'est déjà archivée'
-  return `Plugin roadmap : ${list} ${done} (${person()} l'a fait depuis leur propre boîte de fin) : ne les propose plus. Repose ta boîte de fin sans elles, après avoir relu list_sessions avec {"linked": true} ; s'il ne reste aucune session à archiver, sans la question d'archivage. Dis-le en une ligne.`
+/** Le refus de cette boîte de fin (#267). */
+export function othersArchiveRefusal(): string {
+  return `Plugin roadmap : pas de question d'archivage d'autres sessions dans ta boîte de fin : elle cacherait la bande au-dessus de la saisie, où ${person()} les archive d'un clic sur leur icône d'archive. Dis en une ligne « #<id> finie : son icône d'archive est dans la bande », puis repose ta boîte sans cette question (ou ne la pose pas). Si ${person()} te demande d'archiver, archive_session pour chacune.`
 }
 
 /** Le verbe d'une question de lancement : lancer, démarrer, start ; « relance » n'en est pas une (#122). */

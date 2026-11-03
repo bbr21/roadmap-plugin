@@ -128,8 +128,8 @@ import {
   durationLabel,
   sessionIdIn,
   sessionState,
-  archivedInAsk,
-  archivedAskRefusal,
+  othersArchiveAsk,
+  othersArchiveRefusal,
   isLaunchAsk,
   launchInBox,
   launchBoxRefusal,
@@ -895,10 +895,10 @@ async function ideaNote($: EngineInterface, c: Capture, last: string | undefined
 }
 
 /** Ce que dit une boîte de fin : récap, question, boutons. */
-function boxText(e: unknown): string {
+function boxText(e: unknown, withRecap = true): string {
   const box = e as { recap?: unknown; ask?: unknown; actions?: unknown }
   const actions = Array.isArray(box.actions) ? (box.actions as { label?: unknown; message?: unknown }[]) : []
-  const texts = [box.recap, box.ask, ...actions.flatMap(a => [a?.label, a?.message])]
+  const texts = [withRecap ? box.recap : undefined, box.ask, ...actions.flatMap(a => [a?.label, a?.message])]
   return texts.filter((t): t is string => typeof t === 'string').join('\n')
 }
 
@@ -952,7 +952,7 @@ async function reportNote($: EngineInterface): Promise<string | undefined> {
  * Le tour en cours de cette session, pour le bloc de fin de tour (#85) : hors de `Capture`, il vaut
  * dans tout projet, roadmap ou non. Un tour de travail a appelé la boîte de fin ou la liste d'étapes.
  */
-let closingTurn = { work: false, box: '', wake: false, maestro: false }
+let closingTurn = { work: false, box: '', asked: '', wake: false, maestro: false }
 /**
  * La liste d'étapes de cette session telle que l'app la montre (#133) : chez Maestro, une boîte de fin
  * sans question la cocherait toute. Une boîte acceptée la coche ici aussi.
@@ -995,7 +995,7 @@ async function closingNote($: EngineInterface, last: string | undefined, rangeme
   const line = await ownLine($).catch(() => undefined)
   // Maestro finit sur le tableau de ses tâches (#136).
   const maestro = await maestroHere($)
-  const gaps = closingBlockGaps(last, closingTurn.box, line, maestro).filter(g => !(rangementPending && (g === 'archiver' || g === 'conclusion' || g === 'etat-close' || g === 'taches')))
+  const gaps = closingBlockGaps(last, closingTurn.asked, line, maestro).filter(g => !(rangementPending && (g === 'archiver' || g === 'conclusion' || g === 'etat-close' || g === 'taches')))
   return gaps.length === 0 ? undefined : closingBlockReminder(gaps, line, maestro)
 }
 
@@ -2448,25 +2448,6 @@ async function archivedOpen($: EngineInterface, archived: readonly ChildRow[], l
     out.push({ child, ...(merged !== undefined ? { merged } : {}) })
   }
   return out
-}
-
-/**
- * La question d'archivage d'un Maestro relue au moment de la poser (#110) : ses nouvelles datent du début
- * du tour, et Bertrand a pu archiver une session depuis sa propre boîte de fin entre-temps. Le refus
- * nomme celles déjà archivées ; une question qui n'archive rien, ou une liste illisible, passe.
- */
-async function archivedAsk($: EngineInterface, ask: unknown): Promise<string | undefined> {
-  if (typeof ask !== 'string' || !/archiv/i.test(ask) || !/#\d|local_/.test(ask)) return undefined
-  try {
-    const listed = await $.tool.call({ tool: LIST_SESSIONS_TOOL, linked: true, include_archived: true, limit: LIST_LIMIT })
-    if (listed.deny !== undefined || listed.isError) return undefined
-    const rows: unknown = JSON.parse(listed.text ?? '[]')
-    const id = Array.isArray(rows) ? (await readOwnSession($)).id : undefined
-    const names = Array.isArray(rows) && id ? archivedInAsk(ask, rows, id) : []
-    return names.length > 0 ? archivedAskRefusal(names) : undefined
-  } catch {
-    return undefined
-  }
 }
 
 /**
@@ -5054,7 +5035,7 @@ export const register: Register = (on, options) => {
   })
   on('tool.call', { tool: WRAP_UP_TOOL }, async ($, e, next) => {
     const ask = (e as { ask?: unknown }).ask
-    const refusal = fromAgent(e) ? undefined : ((await archivedAsk($, ask)) ?? (await unsentAsk($, ask)) ?? (await openLineAsk($, ask)) ?? (await launchAsk($, e as never)) ?? (await pendingAsk($, ask)))
+    const refusal = fromAgent(e) ? undefined : ((othersArchiveAsk(ask) ? othersArchiveRefusal() : undefined) ?? (await unsentAsk($, ask)) ?? (await openLineAsk($, ask)) ?? (await launchAsk($, e as never)) ?? (await pendingAsk($, ask)))
     if (refusal !== undefined) return { deny: refusal }
     // #244 : le compte rendu du tour ; des questions sans formulaire refusent la boîte, une fois par tour.
     const report = fromAgent(e) ? undefined : await turnReport($).catch(() => undefined)
@@ -5067,7 +5048,7 @@ export const register: Register = (on, options) => {
     if (!fromAgent(e) && closingTurn.maestro && openListBox(ownSteps, ask)) return { deny: openListRefusal() }
     if (!fromAgent(e)) ownSteps = boxSteps(ownSteps)
     noteBox(e)
-    if (!fromAgent(e)) closingTurn = { ...closingTurn, work: true, box: boxText(e) }
+    if (!fromAgent(e)) closingTurn = { ...closingTurn, work: true, box: boxText(e), asked: boxText(e, false) }
     // La question de Maestro attend la personne : un réveil ne la reposera pas (#133).
     if (!fromAgent(e) && closingTurn.maestro && typeof ask === 'string' && ask.trim() !== '') {
       await update($, pendingAsksAtom, asks => (asks.includes(ask) ? asks : [...asks, ask])).catch(() => undefined)
@@ -5143,7 +5124,7 @@ export const register: Register = (on, options) => {
       // qui fait tomber les questions en attente.
       const maestro = await maestroHere($)
       const wake = maestro && wakeTurn(e.text)
-      closingTurn = { work: false, box: '', wake, maestro }
+      closingTurn = { work: false, box: '', asked: '', wake, maestro }
       maestroExec = []
       wakeRefused = false
       if (maestro && !wake) await update($, pendingAsksAtom, () => []).catch(() => undefined)

@@ -216,7 +216,7 @@ to it.
     person (its answer arrives at the end of its turn, #133); still at the same point afterwards,
     silent or not, it is a blocker: tell the person in one line, without restarting it;
   - **ready** (all its steps done, not yet merged or closed): § 5 and 6;
-  - **to archive** (§ 6), to offer in this very turn: a sub-session's end note arrives through a
+  - **to archive** (§ 6), said in one line in this very turn, its archive icon in the band: a sub-session's end note arrives through a
     turn of its own, and its news with it.
   No table of all the children each turn: Maestro looks only at what is stuck.
 - **Keep Maestro's list** (#104): the app's step list (`update_plan`), pinned under the last
@@ -389,20 +389,19 @@ The merge itself:
   branch, `main` without it, or pushed, or, without a line, its branch merged and its step list
   done; nothing uncommitted in its worktree; no question; no open session of its own; in Projet
   mode, the line alone; a remote session cannot be checked from here) and calls it « à archiver ».
-  A pinned session does not appear there: `archive_session` refuses it. Maestro offers to archive
-  them all in a single click: end box with « Archiver #A et #B ? » and a reply button
-  « Archive-les »; on the click, `archive_session` for each, then one line on what is archived or
-  refused. Only the person's click archives.
-- **Archive on both sides, without duplicates** (#110): the finished sub-session also offers its
-  own archiving (« Archiver cette session ? »), and the person can click there. So:
-  - **without delay**: Maestro asks « Archiver #A ? » in the very turn where the session is called
-    to archive, not at the next message; this question comes before any other in its end box
-    (another decision goes into an `AskUserQuestion` form);
-  - **check before asking**: right before, reread `list_sessions` with `{"linked": true}`; an
-    archived session no longer appears there, and Maestro offers only those still there, no
-    question if none remain;
-  - **the panel guarantees it**: a Maestro end box that still names an already archived session is
-    refused, with the numbers to remove; Maestro posts it again without them.
+  A pinned session does not appear there: `archive_session` refuses it. Maestro asks no
+  archiving question (#267, the person's choice of 2026-11-03): the app hides the band above the
+  prompt while the end box asks a question (#147), and the band already shows each finished
+  session with its archive icon next to « Completed ». So Maestro says it in one line, in the very
+  turn where the session is called to archive, and its end box carries no archiving question:
+  « #A et #B finies : leur icône d'archive est dans la bande ». Asked by the person to archive,
+  `archive_session` for each, then one line on what is archived or refused. Without that request,
+  nothing is archived.
+- **The finished sub-session keeps its own question** (#110, #267): it ends on its end box
+  « Archiver cette session ? » (it archives itself), and the person can click there or on the
+  band's icon. The panel refuses any end box that asks to archive other sessions (« Archiver
+  #A ? », « Archive-les »), Maestro's included; Maestro then posts its box again without it, or
+  none.
 - **Archiving closes nothing, and loses nothing** (#124): a task's line is ticked only by Maestro,
   after the merge. A sub-session whose line is still open does not offer its archiving (the panel
   refuses its end box), and its conclusion says « #N close par Maestro le AAAA-MM-JJ » once the
@@ -467,7 +466,7 @@ The merge itself:
   end box without a question while Maestro's step list has an open step (it would tick all of it).
   On the person's turns, its ADHD-mode reminder asks for the stable marker
   « Maestro · N en cours · N t'attend ».
-- It refuses Maestro's end box that offers to archive an already archived session (§ 6, #110).
+- It refuses any end box that asks to archive other sessions (« Archiver #A ? »): the band archives them (§ 6, #267).
 - It does not restart a sub-session with the reminder « la roadmap n'a pas bougé »: Maestro keeps
   its line (#124). It refuses its end box « Archiver cette session ? » while its line is open, and
   gives it the « close » sentence for its conclusion once closed; it flags to Maestro a sub-session archived before its

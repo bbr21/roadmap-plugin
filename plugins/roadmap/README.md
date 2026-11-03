@@ -194,8 +194,8 @@ et la liste des enfants à archiver, vérifiés finis (ligne close et commits ar
 fusionnée et liste d'étapes faite ; rien de non commité, aucune question ni session ouverte ; dans un dossier sans code, la ligne seule) ; rien quand tout avance. Une session épinglée n'est pas proposée à
 l'archivage, une session distante n'est jamais dite finie d'ici, et la branche de base est celle de
 la session (`main` sans elle) ; les notes de plus de 30 jours sortent du store (#90). Il relance une fois un enfant silencieux
-(pas encore s'il a répondu sans changer d'étape), et propose d'archiver les finis d'un seul clic
-(« Archive-les »). Toute session reçoit aussi la consigne de tenir sa liste d'étapes, et un
+(pas encore s'il a répondu sans changer d'étape), et dit les finis en une ligne, que Bertrand archive
+par leur icône dans la bande, sans question dans la boîte de fin, qui cacherait la bande (#267). Toute session reçoit aussi la consigne de tenir sa liste d'étapes, et un
 rappel en fin de tour quand elle travaille sans (#98, #104) ; le parent tient la sienne, une étape
 par session lancée, son état en mots (#104). Il n'y a plus de carte HTML de Maestro. La liste d'étapes
 native est le seul affichage des étapes : la bande que le plugin dessinait au-dessus de la saisie
@@ -676,6 +676,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.175.0 (2026-11-03)** : maestro : plus de question d'archivage d'autres sessions dans la boîte de fin, qui cachait la bande au-dessus de la saisie ; les finies s'archivent par leur icône dans la bande (#267)
 - **0.174.0 (2026-11-03)** : panneau, maestro : une carte de session au #N faux, clos ou déjà pris est refusée, le titre se tire de la ligne écrite (nom:), et la bande comme le panneau disent le nom du titre de la session (#263)
 - **0.173.0 (2026-11-03)** : panneau : la tête de section B3 dans tous les rangements et Ma journée (marque dans la colonne des carrés, nom, compte au bout, trait de couleur dessous), les lignes ne redisent plus le jour ni la personne de leur section, ligne de l'arbre rapprochée (#265)
 - **0.172.1 (2026-11-03)** : panneau : un jeton de pièce jointe du brouillon n'ouvre qu'un document dont le chemin réel reste dans le projet, lien symbolique refusé (#264)
