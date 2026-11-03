@@ -3,7 +3,7 @@
 // Couleurs et mesures : tokens.ts (#108) ; dessins du handoff de design (README « Icônes »). Un SVG
 // dessiné en image ne connaît pas `currentColor`, d'où la couleur passée à chaque dessin.
 
-import type { BandGlyph, ContextView, StepSegment, TodoIcon } from './parse'
+import type { BandGlyph, ContextView, SisterState, StepSegment, TodoIcon } from './parse'
 import { FONT, MIX, PALETTES, RADIUS, SIZE, STROKE, TEXT, type Palette, type ThemeName } from './tokens'
 
 // Les palettes et les traits sont des tokens du design system (#108) ; on les sert aussi d'ici.
@@ -724,6 +724,26 @@ export function treeHeadIcon(o: { open: boolean; chevronHex: string }): string {
 export function progressIcon(done: number, total: number, okHex: string, trackHex: string): string {
   const w = total === 0 ? 0 : Math.round((34 * done * 10) / total) / 10
   return `<svg xmlns="http://www.w3.org/2000/svg" width="34" height="4" viewBox="0 0 34 4"><rect width="34" height="4" rx="2" fill="${trackHex}"/>${w > 0 ? `<rect width="${w}" height="4" rx="2" fill="${okHex}"/>` : ''}</svg>`
+}
+
+/**
+ * La jauge des sœurs de la carte Chaîne (#246, maquette B) : une case de 8 px de haut par sœur, dans l'ordre
+ * reçu, de la couleur de son état ; la case `index` cerclée. Écart de 3 px, de 1 px quand les cases passent
+ * sous 4 px ; une case garde au moins 1 px. Hauteur 12, la place du cercle.
+ */
+export function sisterGaugeIcon(states: readonly SisterState[], index: number, colors: Record<SisterState | 'ring', string>, width: number): string {
+  const n = Math.max(1, states.length)
+  const pad = 2
+  const room = (gap: number) => (width - 2 * pad - gap * (n - 1)) / n
+  const gap = room(3) >= 4 ? 3 : 1
+  const cell = Math.max(1, Math.floor(room(gap) * 10) / 10)
+  const x = (i: number) => Math.round((pad + i * (cell + gap)) * 10) / 10
+  const cells = states.map((s, i) => `<rect x="${x(i)}" y="2" width="${cell}" height="8" rx="1.5" fill="${colors[s]}"/>`).join('')
+  const ring =
+    index >= 0 && index < states.length
+      ? `<rect x="${x(index) - 1.25}" y="0.75" width="${cell + 2.5}" height="10.5" rx="2.5" fill="none" stroke="${colors.ring}" stroke-width="1.5"/>`
+      : ''
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="12" viewBox="0 0 ${width} 12">${cells}${ring}</svg>`
 }
 
 /** Les tâches nées d'un retour de l'app (`feedback:`) : une bulle de parole, pleine, sur 16 px. */

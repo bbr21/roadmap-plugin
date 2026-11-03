@@ -2058,13 +2058,67 @@ export type TreeBlock = {
  * encore (`lingers`, #182) garde sa place d'échéance le temps de son mouvement.
  */
 export function treeSteps(block: TreeBlock, isLive: (t: Task) => boolean = () => false, lingers: (t: Task) => boolean = () => false): Task[] {
+  return orderSteps(block.tasks, block.doneTasks, isLive, lingers)
+}
+
+/** L'ordre des filles de #238, sur des ouvertes et des faites quelconques : celui de `treeSteps`, et de la carte Chaîne (#246). */
+export function orderSteps(
+  open: readonly Task[],
+  doneTasks: readonly Task[],
+  isLive: (t: Task) => boolean = () => false,
+  lingers: (t: Task) => boolean = () => false,
+): Task[] {
   const num = (t: Task) => (t.id === undefined ? Number.MAX_SAFE_INTEGER : Number(t.id))
   const byDue = (a: Task, b: Task) => (a.due ?? '9999').localeCompare(b.due ?? '9999') || num(a) - num(b)
-  const held = block.doneTasks.filter(lingers)
-  const todo = [...block.tasks.filter(t => !isLive(t)), ...held].sort(byDue)
-  const live = block.tasks.filter(isLive).sort((a, b) => num(a) - num(b))
-  const done = block.doneTasks.filter(t => !held.includes(t)).sort((a, b) => (b.fait ?? '').localeCompare(a.fait ?? '') || num(a) - num(b))
+  const held = doneTasks.filter(lingers)
+  const todo = [...open.filter(t => !isLive(t)), ...held].sort(byDue)
+  const live = open.filter(isLive).sort((a, b) => num(a) - num(b))
+  const done = doneTasks.filter(t => !held.includes(t)).sort((a, b) => (b.fait ?? '').localeCompare(a.fait ?? '') || num(a) - num(b))
   return [...todo, ...live, ...done]
+}
+
+/** L'état d'une sœur dans la jauge de la carte Chaîne (#246) : bloquée, une de ses prérequises est ouverte. */
+export type SisterState = 'done' | 'cancelled' | 'live' | 'blocked' | 'todo'
+
+/** La chaîne d'une fille (#246) : sa mère, ses sœurs (elle comprise) dans l'ordre de #238, l'état de chacune. */
+export type SisterChain = { mother: Task; sisters: { task: Task; state: SisterState }[]; index: number; done: number; total: number }
+
+/**
+ * La place d'une fille parmi ses sœurs (#246, maquette B) : sa mère, ouverte ou close ; toutes ses sœurs,
+ * elle comprise, dans l'ordre de la mère dans la liste (#238), toutes les faites comprises (pas le filtre du
+ * jour de #240) ; l'avancement de la mère, comme la liste (filles directes faites sur toutes). Rien pour une
+ * tâche seule, une mère introuvable ou une tâche qui se nomme mère.
+ */
+export function chainOf(
+  task: Task,
+  all: readonly Task[],
+  o: { isLive: (t: Task) => boolean; prereqsOf: (t: Task) => readonly Task[] },
+): SisterChain | undefined {
+  if (task.parent === undefined || task.parent === task.id) return undefined
+  const others = all.filter(t => t !== task)
+  const mother = others.find(t => t.id === task.parent && !t.done) ?? others.find(t => t.id === task.parent)
+  if (!mother) return undefined
+  const kids = [task, ...others.filter(t => t !== mother && t.parent === task.parent && !(task.id !== undefined && t.id === task.id))]
+  const ordered = orderSteps(
+    kids.filter(t => !t.done),
+    kids.filter(t => t.done),
+    o.isLive,
+  )
+  const stateOf = (t: Task): SisterState =>
+    t.done ? (isAbandoned(t) ? 'cancelled' : 'done') : o.isLive(t) ? 'live' : o.prereqsOf(t).some(p => !p.done) ? 'blocked' : 'todo'
+  const sisters = ordered.map(t => ({ task: t, state: stateOf(t) }))
+  const done = kids.filter(t => t.done).length
+  return { mother, sisters, index: ordered.indexOf(task), done, total: kids.length }
+}
+
+/** La légende sous la jauge (#246) : « à faire » à gauche si elle commence à faire ou bloquée, « ici · 3e sur 6 », « faites » à droite si elle finit close. */
+export function gaugeCaption(states: readonly SisterState[], index: number): { left: string; mid: string; right: string } {
+  const closed = (s: SisterState | undefined) => s === 'done' || s === 'cancelled'
+  return {
+    left: states[0] === 'todo' || states[0] === 'blocked' ? 'à faire' : '',
+    mid: `ici · ${index + 1}${index === 0 ? 're' : 'e'} sur ${states.length}`,
+    right: closed(states[states.length - 1]) ? 'faites' : '',
+  }
 }
 
 /**
@@ -6901,7 +6955,20 @@ export function toggleFold(
 /** Le résumé d'une ligne sur la tête d'une carte de la fiche (#199) : ce qu'elle garde, repliée. */
 export function cardSummary(
   card: FicheCard | 'fin' | 'etapes',
-  o: { steps?: { count: string; age: string }; branch?: string[]; attend?: string; after?: string[]; unlocks?: string[]; parent?: string; details?: number; when?: string; attachments?: number; deliverables?: number },
+  o: {
+    steps?: { count: string; age: string }
+    branch?: string[]
+    attend?: string
+    after?: string[]
+    unlocks?: string[]
+    parent?: string
+    /** La mère d'une fille et son avancement (#246) : « #549 · 3/6 », avant tout le reste. */
+    mother?: { id: string; done: number; total: number }
+    details?: number
+    when?: string
+    attachments?: number
+    deliverables?: number
+  },
 ): string {
   const files = (n?: number) => (n ? `${n} fichier${n > 1 ? 's' : ''}` : '')
   if (card === 'pj') return files(o.attachments)
@@ -6910,6 +6977,7 @@ export function cardSummary(
   if (card === 'avancement') return o.branch?.[0] ?? (o.attend ? `attend ${o.attend}` : '')
   if (card === 'chaine') {
     const ids = (list: string[]) => list.map(n => `#${n}`).join(', ')
+    if (o.mother) return `#${o.mother.id} · ${o.mother.done}/${o.mother.total}`
     if (o.after?.length) return `après ${ids(o.after)}`
     if (o.unlocks?.length) return `débloque ${ids(o.unlocks)}`
     return o.parent ? `parent #${o.parent}` : ''

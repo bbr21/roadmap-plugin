@@ -85,6 +85,8 @@ export type View = {
   conclusionOpen: string
   /** Tâche dont le cadre de la mission montre, sous le récap de fin de sa session, le libellé entier de sa ligne (clé `<fichier>:<ligne>`, #144) ; vide ou absente sinon. */
   missionOpen?: string
+  /** Tâche dont la carte Chaîne déplie « Les N sœurs » (clé `<fichier>:<ligne>`, #246) ; vide ou absente sinon. */
+  sistersOpen?: string
   /** Tâche dont le bloc Brouillon montre le corps entier (« Voir tout », clé `<fichier>:<ligne>`, #236) ; vide ou absente sinon. */
   draftOpen?: string
   /** Tâche dont le bloc Brouillon est replié à son bandeau (clé `<fichier>:<ligne>`, #236) ; vide ou absente sinon. */

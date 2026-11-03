@@ -26,6 +26,7 @@ import {
   axisBandIcon,
   bandGlyphIcon,
   progressIcon,
+  sisterGaugeIcon,
   bubbleIcon,
   squareCheckRowIcon,
   squareArmedRowIcon,
@@ -135,6 +136,8 @@ import {
   findSelected,
   cardFolded,
   cardSummary,
+  chainOf,
+  gaugeCaption,
   ficheCards,
   missionCut,
   finCard,
@@ -200,6 +203,7 @@ import {
   chainHead,
   chainSteps,
   type ChainStep,
+  type SisterState,
   type TreeBlock,
   type Mode,
   type Travail,
@@ -6369,7 +6373,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   ])
   const {
     axis: axisRaw, attend: attendRaw, who: whoRaw = 'all', moreFilters = false, showDone: doneChosen, groupBy, selected, openGroups, closedGroups, moreGroups,
-    launchNote, launched, openNote, conclusionOpen, missionOpen = '', draftOpen = '', draftFolded = '', cancelAsk = '', closeKind = 'abandon', cancelNote = '',
+    launchNote, launched, openNote, conclusionOpen, missionOpen = '', sistersOpen = '', draftOpen = '', draftFolded = '', cancelAsk = '', closeKind = 'abandon', cancelNote = '',
     editing: editingKey = '', editNote = '', editField = '', editCount = 0, foldedCards = [], openedCards = [],
   } = view
   const data = await paneData($, source, [stamp, titlesVersion, themeStamp, retry, liveVersion].join('|'))
@@ -6714,31 +6718,33 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
         : drawnPill({ text: 'Completed', bg: palette.finishedTint, fg: palette.finishedOn, mark: 'check', height: SIZE.pill.detail })
     // Un lien vers une tâche enchaînée : carré d'axe, titre (cliquable), et son état. Le titre rétrécit et
     // se coupe, l'état garde sa largeur : un titre long poussait la carte hors du panneau (#173).
-    const link = (x: Task) => (
+    // `here` : la tâche de la fiche elle-même, en gras et sans lien (#246) ; `end` : ce qui remplace l'état au bout.
+    const link = (x: Task, o: { here?: boolean; strong?: boolean; end?: RenderElement } = {}) => (
       <Box key={`link-row:${x.key}`} flexDirection="row" alignItems="center" gap={SPACE.row} flexShrink={1} minWidth={0}>
         {icon(squareIcon(axisHex(x.axis)), x.axis, 16, '■', axisTheme(x.axis))}
         {x.id && taskNumber(x.id)}
         <Box key={`link-title:${x.key}`} flexShrink={1} minWidth={0}>
           {/* Chez un enfant de Maestro, le titre se lit sans mener à sa fiche (#233). */}
-          {inSession && child ? (
-            <Text wrap="truncate-end">{short(x).titre}</Text>
+          {o.here || (inSession && child) ? (
+            <Text wrap="truncate-end" {...(o.here || o.strong ? { weight: 'semibold' as const } : {})}>{short(x).titre}</Text>
           ) : (
             <Button key={`link:${x.key}`} plain hover={{ underline: true }} onPress={select(selectionOf(x))}>
-              <Text wrap="truncate-end">{short(x).titre}</Text>
+              <Text wrap="truncate-end" {...(o.strong ? { weight: 'semibold' as const } : {})}>{short(x).titre}</Text>
             </Button>
           )}
         </Box>
-        <Box key={`link-state:${x.key}`} flexShrink={0}>
-          {x.done ? (
-            donePill(x)
-          ) : isLive(x) ? (
-            drawnPill({ text: 'en session', bg: palette.liveTint, fg: palette.liveOn, mark: 'spinner', height: SIZE.pill.detail })
-          ) : (
-            drawnPill({ text: 'à faire', bg: palette.sel, fg: palette.text2, height: SIZE.pill.detail, weight: TEXT.weight.soft })
-          )}
+        <Box key={`link-state:${x.key}`} flexShrink={0} flexDirection="row" alignItems="center" gap={SPACE.row}>
+          {o.end ??
+            (x.done
+              ? donePill(x)
+              : isLive(x)
+                ? drawnPill({ text: 'en session', bg: palette.liveTint, fg: palette.liveOn, mark: 'spinner', height: SIZE.pill.detail })
+                : drawnPill({ text: 'à faire', bg: palette.sel, fg: palette.text2, height: SIZE.pill.detail, weight: TEXT.weight.soft }))}
         </Box>
       </Box>
     )
+    // Sa place parmi ses sœurs (#246, maquette B) : la mère, la jauge, « ici · 3e sur 6 » ; rien pour une tâche seule.
+    const sisters = chainOf(current, allTasks, { isLive, prereqsOf: prereqsFor })
     // « Tout voir », « Replier » d'un cadre (#173) : sur le bureau, un texte aligné sur le reste de la carte et
     // sa zone de clic ; le bouton de l'app, même `plain`, y est natif et sa marge le décalait. Au terminal, le bouton.
     const moreLink = (id: string, label: string, onPress: () => void) => (
@@ -6842,6 +6848,64 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
       ) : null
     const plain = (text: string | undefined) => text !== undefined && text !== '' && <Text wrap="truncate-end">{text}</Text>
     const strong = (text: string) => <Text weight="semibold" tabular>{text}</Text>
+    // La carte Chaîne d'une fille (#246, maquette B choisie par BBR) : sa mère, son titre en gras, sa barre et
+    // « 3/6 » ; la jauge d'une case par sœur dans l'ordre de la liste (#238), sa case cerclée, et sa légende ;
+    // Avant, Ici, Ensuite ; « Les 6 sœurs » repliées, dépliées une ligne chacune ; ses sous-tâches.
+    const sisterCard = (c: NonNullable<typeof sisters>) => {
+      const states = c.sisters.map(x => x.state)
+      const caption = gaugeCaption(states, c.index)
+      const hue: Record<SisterState | 'ring', string> = {
+        done: palette.ok,
+        cancelled: palette.text3,
+        live: palette.live,
+        blocked: palette.block,
+        todo: palette.sel,
+        ring: palette.text,
+      }
+      const open = sistersOpen === current.key
+      const toggle = () => void setView($, v => ({ sistersOpen: v.sistersOpen === current.key ? '' : current.key }))
+      const missing = missingPrereqs(current, allTasks)
+      const before = prereqsFor(current)
+      return (
+        <Box flexDirection="column">
+          <Box key="sisters-mother" flexDirection="row" alignItems="center">
+            {strut(SIZE.strut.field)}
+            {link(c.mother, {
+              strong: true,
+              end: (
+                <Box flexDirection="row" alignItems="center" gap={SPACE.row}>
+                  {Svg ? <Svg source={progressIcon(c.done, c.total, palette.ok, palette.sel)} alt={`${c.done}/${c.total}`} width={34} height={4} /> : null}
+                  <Text size="caption" tabular color={palette.text2}>{`${c.done}/${c.total}`}</Text>
+                </Box>
+              ),
+            })}
+          </Box>
+          {Svg ? (
+            <Svg key="sisters-gauge" source={sisterGaugeIcon(states, c.index, hue, fullWidth((e.props as { bodyColumns?: number }).bodyColumns ?? 48))} alt={caption.mid} height={12} />
+          ) : (
+            <Box key="sisters-gauge" flexDirection="row">
+              {states.map((st, i) => (
+                <Text key={`g:${i}`} color={hue[st]}>{i === c.index ? '◆' : '■'}</Text>
+              ))}
+            </Box>
+          )}
+          <Box key="sisters-caption" flexDirection="row" justifyContent="space-between">
+            <Text size="caption" color={palette.text3}>{caption.left}</Text>
+            <Text size="caption" weight="semibold">{caption.mid}</Text>
+            <Text size="caption" color={palette.text3}>{caption.right}</Text>
+          </Box>
+          {before.map((x, i) => field(i === 0 ? 'Avant' : '', link(x), `Avant:${x.key}`))}
+          {missing.map((n, i) => field(i === 0 && before.length === 0 ? 'Avant' : '', plain(`#${n} introuvable`), `Avant:#${n}`))}
+          {field('Ici', link(current, { here: true }), 'Ici')}
+          {unlocks.map((d, i) => field(i === 0 ? 'Ensuite' : '', link(d), `Ensuite:${d.key}`))}
+          {field('', moreLink('sisters', `${open ? '▾' : '▸'} Les ${c.sisters.length} sœurs`, toggle), 'sisters')}
+          {open && c.sisters.map(({ task: x }) => field('', link(x, { here: x === current }), `Sœur:${x.key}`))}
+          {allTasks
+            .filter(x => x !== current && current.id !== undefined && x.parent === current.id)
+            .map((x, i) => field(i === 0 ? 'Sous-tâches' : '', link(x), `Sous-tâches:${x.key}`))}
+        </Box>
+      )
+    }
     // La carte Fin (#150, maquette C) : la Conclusion (#264) et le récap de fin de sa session (#144) fondus,
     // tirés de la roadmap et du bilan quand la session n'a pas gardé sa fiche de fin.
     const bilan = current.done && current.id ? bilanData.bilans.get(current.id) : undefined
@@ -7223,6 +7287,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
       }),
       lancer: '',
       chaine: cardSummary('chaine', {
+        ...(sisters?.mother.id ? { mother: { id: sisters.mother.id, done: sisters.done, total: sisters.total } } : {}),
         after: prereqsFor(current).flatMap(x => (x.id ? [x.id] : [])),
         unlocks: unlocks.flatMap(x => (x.id ? [x.id] : [])),
         ...(current.parent !== undefined ? { parent: current.parent } : {}),
@@ -7665,6 +7730,9 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
           'chaine',
           'Chaîne',
           summaries.chaine,
+          sisters ? (
+            sisterCard(sisters)
+          ) : (
           <Box flexDirection="column">
               {prereqsFor(current).map((x, i) => field(i === 0 ? 'Après' : '', link(x), `Après:${x.key}`))}
               {missingPrereqs(current, allTasks).map((n, i) =>
@@ -7683,7 +7751,8 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
               {allTasks
                 .filter(x => x !== current && current.id !== undefined && x.parent === current.id)
                 .map((x, i) => field(i === 0 ? 'Sous-tâches' : '', link(x), `Sous-tâches:${x.key}`))}
-          </Box>,
+          </Box>
+          ),
         ),
       details: () =>
         card(
