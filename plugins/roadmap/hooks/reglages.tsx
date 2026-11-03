@@ -361,7 +361,7 @@ export async function drawSettings($: EngineInterface, e: RenderInput<'Pane'>, p
     <Box key={`section:${id}`} flexDirection="column" gap={SPACE.block}>
       {!first && Svg && <Svg source={ruleIcon(palette.border, wide)} alt="séparateur" height={1} />}
       <Box flexDirection="column" paddingX={SPACE.indent}>
-        <Text weight="semibold">{title}</Text>
+        <Text size="footnote" weight="semibold" color={palette.text2}>{title}</Text>
         <Text size="caption" color={palette.text3}>
           {scope}
         </Text>

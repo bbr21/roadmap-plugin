@@ -5398,7 +5398,7 @@ function welcomeTree(
         {w.actions.map(a => (
           <Button
             key={`welcome:${a.key}`}
-            {...(a.primary ? { variant: 'primary' as const } : {})}
+            {...(a.primary ? { variant: 'primary' as const } : { plain: true, dimColor: true })}
             label={a.n !== undefined ? `${a.label} ${a.n}` : a.label}
             onPress={() => void submitWelcome($, a.message)}
           />
@@ -5723,6 +5723,10 @@ async function sessionBrandOf($: EngineInterface): Promise<{ brand: Brand; data:
   }
 }
 
+// La bande au-dessus de la saisie garde ses mesures et ses mots d'avant #254 (Bertrand : « je ne veux rien
+// changer pour Above the prompt ») : sa pastille reste à 18 px, sa close dit « Completed ».
+const BAND_PILL = 18
+
 /**
  * L'arbre de Maestro dans la bande au-dessus de la saisie (#147, style C retouché) : sur le fond du
  * panneau, « Maestro » et ses sessions ; puis une ligne par tâche, sans voies : le point de son état, le
@@ -5730,6 +5734,7 @@ async function sessionBrandOf($: EngineInterface): Promise<{ brand: Brand; data:
  * maquette D : l'étape après la jauge, les icônes du bloc « En cours ») ; une seule jauge par ligne (#152).
  * Colonnes de largeur fixe à droite, la ligne s'éclaire au survol. Au terminal, le texte seul.
  */
+
 function maestroBandTree(
   $: EngineInterface,
   e: RenderInput<'AbovePrompt'>,
@@ -5783,7 +5788,7 @@ function maestroBandTree(
     if (!Svg || !Client) return <Button key={id} plain label="Compacter" onPress={act.compact} />
     pressHandlers.set(id, act.compact)
     zoneDrawn(zones, 'press-hit', now)
-    const pill = pillIcon({ text: 'Compacter', bg: palette.lateTint, fg: palette.lateOn, height: SIZE.pill.row })
+    const pill = pillIcon({ text: 'Compacter', bg: palette.lateTint, fg: palette.lateOn, height: BAND_PILL })
     return (
       <Box key={id} flexDirection="row" alignItems="center">
         <Svg source={pill.source} alt="Compacter" width={pill.width} height={pill.height} />
@@ -5873,7 +5878,7 @@ function maestroBandTree(
           return (
             <Box key={`band-row:${keyPart(t.id)}`} flexDirection="row" alignItems="center" gap={SPACE.row} paddingX={1} hover={{ backgroundColor: palette.hover }}>
               {strut}
-              {Svg && <Svg source={discIcon(dot, 12)} alt={words.states[i] ?? ''} width={12} height={12} />}
+              {Svg && <Svg source={discIcon(dot, 12)} alt={t.state === 'done' ? bandState(t).word : (words.states[i] ?? '')} width={12} height={12} />}
               {/* Le numéro à sa largeur, à un écart du titre : plus de case de 5 cellules (#211). */}
               <Box flexShrink={0}>
                 <Text size="caption" tabular color={palette.text3}>{`#${t.id}`}</Text>
@@ -6757,12 +6762,12 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     const steps = chain.length > 1 ? chainSteps(sortTasks(chain, sortOrder), prereqFor) : new Map<Task, ChainStep>()
     const stepOf = steps.get(current)
     const lastStep = Math.max(0, ...[...steps.values()].map(x => x.step))
-    // L'état d'une close en étiquette, la forme de « en session » (#207) : « Completed » violette et sa coche,
+    // L'état d'une close en étiquette, la forme de « en session » (#207) : « Done » violette et sa coche (#254),
     // « annulée » grise et son cercle barré ; dans la Chaîne comme dans les Détails.
     const donePill = (x: Task) =>
       isAbandoned(x)
         ? drawnPill({ text: 'annulée', bg: palette.sel, fg: palette.text2, mark: 'cancel', height: SIZE.pill.detail })
-        : drawnPill({ text: 'Completed', bg: palette.finishedTint, fg: palette.finishedOn, mark: 'check', height: SIZE.pill.detail })
+        : drawnPill({ text: stateBand({ state: 'done' }).word, bg: palette.finishedTint, fg: palette.finishedOn, mark: 'check', height: SIZE.pill.detail })
     // Un lien vers une tâche enchaînée : carré d'axe, titre (cliquable), et son état. Le titre rétrécit et
     // se coupe, l'état garde sa largeur : un titre long poussait la carte hors du panneau (#173).
     // `here` : la tâche de la fiche elle-même, en gras et sans lien (#246) ; `end` : ce qui remplace l'état au bout.
@@ -6854,7 +6859,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
             {strut(SIZE.strut.row)}
             <Svg source={chevronIcon(palette.text2, !closed, SIZE.icon.sm)} alt={closed ? 'replié' : 'déplié'} width={SIZE.icon.sm} height={SIZE.icon.sm} />
             {o.before}
-            <Text size="footnote" weight="semibold">{name}</Text>
+            <Text size="footnote" weight="semibold" color={palette.text2}>{name}</Text>
             {o.after}
             <Box flexGrow={1} flexShrink={1} minWidth={0} flexDirection="row" justifyContent="flex-end">
               {summary !== '' && <Text size="caption" color={palette.text3} wrap="truncate-end">{summary}</Text>}
@@ -7237,7 +7242,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
                     </Box>
                   </Box>
                 )}
-                <Text size="heading" weight="semibold" wrap="wrap">{p?.title ?? draft.name}</Text>
+                <Text weight="semibold" wrap="wrap">{p?.title ?? draft.name}</Text>
                 {draft.tooBig ? (
                   <Text size="footnote" color={palette.text2}>trop long pour l'aperçu</Text>
                 ) : p === undefined ? (
@@ -7456,7 +7461,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
                   'Dossier',
                   <Box flexDirection="row" gap={SPACE.row}>
                     {docs.map(d => (
-                      <Button key={`focus-doc:${d.label}`} label={d.label} onPress={() => void openFile($, d.path)} />
+                      <Button key={`focus-doc:${d.label}`} plain dimColor label={d.label} onPress={() => void openFile($, d.path)} />
                     ))}
                   </Box>,
                 )}
@@ -7647,7 +7652,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
                     bouton de l'app, sans zone de clic : le dessin en compte au plus ZONE_LIMIT. */}
                 {!current.done && !live && !launched.includes(taskKey(current)) && (
                   <Box key="check-row" flexDirection="row" alignItems="center">
-                    <Button key="check" label="Vérifier" onPress={() => void launchSession($, source, current, s.titre, launchExtra, 'check')} />
+                    <Button key="check" plain dimColor label="Vérifier" onPress={() => void launchSession($, source, current, s.titre, launchExtra, 'check')} />
                   </Box>
                 )}
               </Box>
@@ -8279,7 +8284,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
       : o.tree
         ? [treeDepartment(t, { enabled: settings.axisPill, axisFilter: axis, clesVisibles })].filter((x): x is string => x !== undefined).map(text => ({ text, bg: palette.sel, fg: palette.text2, weight: 600 as const }))
         : keyPills(t, clesVisibles, cles, o.parent).map(p => ({ text: p.text, bg: palette.sel, fg: palette.text2, weight: 600 as const }))
-    const tags: PillSpec[] = [...(feedback ? [{ text: 'Feedback', bg: palette.waitTint, fg: palette.waitOn, weight: TEXT.weight.soft }] : []), ...listed.tags.map(rowPillSpec), ...keys]
+    const tags: PillSpec[] = [...(feedback ? [{ text: 'Retour', bg: palette.waitTint, fg: palette.waitOn, weight: TEXT.weight.soft }] : []), ...listed.tags.map(rowPillSpec), ...keys]
     return { feedback, keys, tags, due: listed.due }
   }
 
@@ -8296,7 +8301,8 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   // Une session close du bloc (#218) : « Completed » et l'icône d'archivage après la colonne des étapes,
   // dans une case que toutes les lignes du bloc gardent, pour que les barres restent alignées.
   const blockDone = [...blockOf.values()].some(bt => bt.state === 'done')
-  const completedWord = bandState({ state: 'done' }).word
+  // Le mot du panneau, « Done » (#254) ; la bande au-dessus de la saisie garde le sien.
+  const completedWord = stateBand({ state: 'done' }).word
   const blockEndCells = blockDone ? [...completedWord].length + 1 + 2 : 0
   const blockEnd = (t: Task, block: BrandTask) => {
     if (!blockDone) return null
@@ -9127,7 +9133,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
             <Button key="live-fold" plain dimColor label={liveOpen ? '⌄' : '›'} onPress={toggleLive} />
           )}
           <Box flexGrow={1} flexShrink={1} minWidth={0}>
-            <Text weight="semibold">En cours</Text>
+            <Text size="footnote" weight="semibold" color={palette.text2}>En cours</Text>
           </Box>
           <Box flexShrink={0}>
             {drawnPill({ text: `${blockTasks.length} session${blockTasks.length > 1 ? 's' : ''}`, bg: palette.liveTint, fg: palette.liveOn, weight: TEXT.weight.soft })}

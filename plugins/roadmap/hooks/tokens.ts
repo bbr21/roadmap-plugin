@@ -166,13 +166,13 @@ export const MIX = {
   spinnerTrack: 0.25,
 } as const
 
-/** Rayons, en px : boutons et cartes, puce de chemin, pastille d'axe, carré d'axe, barre. Une pastille a le rayon de sa demi-hauteur. */
-export const RADIUS = { control: 8, chip: 6, axisPill: 6, square: 2.5, bar: 3 } as const
+/** Rayons, en px : boutons et cartes, puce de chemin, pastille d'axe (ronde, la demi-hauteur de ses 20 px, #254), carré d'axe, barre. Une pastille a le rayon de sa demi-hauteur. */
+export const RADIUS = { control: 8, chip: 6, axisPill: 10, square: 2.5, bar: 3 } as const
 
 /** Mesures fixes, en px. */
 export const SIZE = {
-  /** Hauteur des pastilles : compte de section, ligne, détail, axe. */
-  pill: { count: 16, row: 18, detail: 20, axis: 22 },
+  /** Hauteur des pastilles : compte de section, puis toutes les autres à 20 px (#254) : ligne, détail, axe et filtre. */
+  pill: { count: 16, row: 20, detail: 20, axis: 20 },
   /** Côté des icônes. */
   icon: { xs: 12, chip: 13, sm: 14, md: 16, lg: 24 },
   /** Hauteurs tenues par une cale : bouton dans une ligne de champ (#208), ligne, champ du détail, bouton et bandeau. */

@@ -468,7 +468,7 @@ export const pillIcon = memo(pillIconRaw)
 
 /**
  * Une pastille de filtre (#149, maquette C′) : l'icône de trait de sa ligne d'avant, son nom, son compte,
- * sur une rangée qui remplace les lignes de « À traiter ». 22 px de haut, texte de 13 px.
+ * sur une rangée qui remplace les lignes de « À traiter ». 20 px de haut comme toute pastille (#254), texte de 13 px.
  */
 function filterPillIconRaw(o: {
   icon: TodoIcon
@@ -537,14 +537,14 @@ function percentIconRaw(text: string, hex: string): { source: string; width: num
 
 export const percentIcon = memo(percentIconRaw)
 
-/** La pastille d'axe du détail : 22 px, rayon 6, carré de 10, nom de l'axe en gras de 13 px. */
+/** La pastille d'axe du détail : 20 px, ronde comme les autres (#254), carré de 10, nom de l'axe en gras de 13 px. */
 function axisPillIconRaw(o: { name: string; hex: string; bg: string; fg: string }): { source: string; width: number; height: number } {
   const height = SIZE.pill.axis
   const width = 6 + 10 + 6 + textWidth(o.name, TEXT.axis, true) + 8
   return {
     source:
       `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">` +
-      `<rect width="${width}" height="${height}" rx="${RADIUS.axisPill}" fill="${o.bg}"/>` +
+      `<rect width="${width}" height="${height}" rx="${height / 2}" fill="${o.bg}"/>` +
       `<rect x="6" y="6" width="10" height="10" rx="${RADIUS.square}" fill="${o.hex}"/>` +
       `<text x="22" y="11" dominant-baseline="central" font-family="${FONT}" font-size="${TEXT.axis}" font-weight="${TEXT.weight.strong}" fill="${o.fg}">${escapeXml(o.name)}</text></svg>`,
     width,

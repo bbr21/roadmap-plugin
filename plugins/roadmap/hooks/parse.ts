@@ -1652,24 +1652,22 @@ function clockLabel(hhmm: string): string {
   return `${h % 12 === 0 ? 12 : h % 12}:${hhmm.slice(3, 5)} ${h < 12 ? 'AM' : 'PM'}`
 }
 
-/** La clôture d'une tâche : « Oct 22 à 3:41 AM » (« 22/10 à 03:41 »), ou la date seule quand l'heure n'est pas connue. */
+/** La clôture d'une tâche : « Oct 22, 3:41 AM » (« 22/10, 03:41 »), la forme du relevé (#254), ou la date seule quand l'heure n'est pas connue. */
 export function doneLabel(fait: string): string {
   const time = fait.slice(11, 16)
-  return time ? `${shortDate(fait)} à ${clockLabel(time)}` : shortDate(fait)
+  return time ? `${shortDate(fait)}, ${clockLabel(time)}` : shortDate(fait)
 }
 
 /** Un instant, à l'heure locale : « Nov 2 8:11 PM » (« 02/11 20:11 »). */
 export function stampLabel(ms: number): string {
   const d = new Date(ms)
   const two = (n: number) => String(n).padStart(2, '0')
-  return `${shortDate(todayOf(ms))} ${clockLabel(`${two(d.getHours())}:${two(d.getMinutes())}`)}`
+  return `${shortDate(todayOf(ms))}, ${clockLabel(`${two(d.getHours())}:${two(d.getMinutes())}`)}`
 }
 
-/** L'âge d'une tâche, à droite de sa ligne : « auj. », « hier », « 13 j ». */
+/** L'âge d'une tâche, à droite de sa ligne : les mots de l'ouverture de la fiche, « il y a 13 j » (#254). */
 export function ageLabel(days: number): string {
-  if (days <= 0) return 'auj.'
-  if (days === 1) return 'hier'
-  return `${days} j`
+  return openedLabel(days)
 }
 
 export type SortOptions = {
@@ -2693,7 +2691,7 @@ export function openedLabel(days: number): string {
 /** La pastille de l'échéance, au détail : « en retard de 6 j », sinon « aujourd'hui », « demain », « dans 2 j ». */
 export function dueLabel(due: string, today: string): { late: boolean; text: string } {
   const days = daysBetween(today, due)
-  if (days < 0) return { late: true, text: `en retard de ${-days} j` }
+  if (days < 0) return { late: true, text: `${-days} j de retard` }
   if (days === 0) return { late: false, text: "aujourd'hui" }
   if (days === 1) return { late: false, text: 'demain' }
   return { late: false, text: `dans ${days} j` }
@@ -4198,7 +4196,7 @@ export function listPills(task: Task, today: string, me: readonly string[]): Pil
 /** La pastille d'échéance (#99) : rouge en retard avec le retard, orange dans les 7 jours, grise au-delà. */
 export function duePill(due: string, today: string): Pill {
   const days = daysBetween(today, due)
-  if (days < 0) return { kind: 'late', text: `${shortDate(due)} · ${-days} j` }
+  if (days < 0) return { kind: 'late', text: `${shortDate(due)} · ${-days} j de retard` }
   if (days <= 7) return { kind: 'soon', text: days === 0 ? 'auj.' : days === 1 ? 'demain' : shortDate(due) }
   return { kind: 'due', text: shortDate(due) }
 }
@@ -6421,7 +6419,8 @@ export function welcomeText(f: WelcomeFacts, o: { person: string; now: Date }): 
   return {
     hello: `${greet} ${o.person}, on est ${FR_WEEKDAYS[o.now.getDay()]}.`,
     sub: 'Maestro est là : je lance tes tâches, je suis tes sessions.',
-    counts: `${nWord(f.done, 'faite')} sur ${f.total}`,
+    // Le compte de la tête de la liste, « 1 Done sur 4 » (#254).
+    counts: `${f.done} Done sur ${f.total}`,
     progress: { done: f.done, total: f.total, pct: f.pct },
     ...(week ? { week } : {}),
     pills: pills.length > 0 ? pills : [{ tone: 'none', text: "Rien d'urgent aujourd'hui" }],
@@ -6695,7 +6694,8 @@ export function bandState(t: Pick<BrandTask, 'state' | 'finished'>): { icon: 'sp
   if (t.state === 'live') return { icon: 'spinner', word: 'en cours' }
   if (t.state === 'wait') return { icon: 'hand', word: BRAND_STATE_WORD.wait }
   if (t.state === 'merge') return { icon: 'merge', word: BRAND_STATE_WORD.merge }
-  return { icon: 'check', word: BRAND_STATE_WORD.done }
+  // La bande au-dessus de la saisie garde son mot (#254 : Bertrand n'y veut rien changer).
+  return { icon: 'check', word: 'Completed' }
 }
 
 /** Les tâches des sessions lancées par Maestro, par création de leur session, par numéro en secours (#143). */
@@ -6736,7 +6736,7 @@ export function maestroBrandTasks(
 }
 
 // « Completed » et « Done » (#174, Bertrand) : les mots d'état affichés dans le panneau ; les textes pour Claude restent en français.
-const BRAND_STATE_WORD: Record<BrandTask['state'], string> = { wait: "t'attend", live: 'en session', merge: 'à fusionner', done: 'Completed' }
+const BRAND_STATE_WORD: Record<BrandTask['state'], string> = { wait: "t'attend", live: 'en session', merge: 'à fusionner', done: 'Done' }
 
 const FR_MONTHS = ['janv.', 'févr.', 'mars', 'avr.', 'mai', 'juin', 'juil.', 'août', 'sept.', 'oct.', 'nov.', 'déc.']
 
@@ -6749,13 +6749,11 @@ function spokenDate(iso: string): string {
   return month && day ? `${day === 1 ? '1er' : day} ${month}` : iso
 }
 
-/** L'échéance d'une tâche en clair : « Nov 6, dans 4 jours » ; sans date du jour, la date seule. */
+/** L'échéance d'une tâche en clair : « Nov 6 · dans 4 j », « Oct 30 · 2 j de retard » (#254) ; sans date du jour, la date seule. */
 export function dueWords(due: string, today: string): string {
   if (!today) return spokenDate(due)
   const days = daysBetween(today, due)
-  const plural = (n: number) => `${n} jour${n > 1 ? 's' : ''}`
-  const rel = days < 0 ? `en retard de ${plural(-days)}` : days === 0 ? "aujourd'hui" : days === 1 ? 'demain' : `dans ${plural(days)}`
-  return `${spokenDate(due)}, ${rel}`
+  return `${spokenDate(due)} · ${days < 0 ? `${-days} j de retard` : dueLabel(due, today).text}`
 }
 
 /**
@@ -7003,7 +7001,7 @@ export function stateBand(o: { state: 'wait' | 'live' | 'merge' | 'done'; questi
     const commits = o.ahead ? `${o.ahead} commit${o.ahead > 1 ? 's' : ''}, ` : ''
     return { word: 'à fusionner', why: `${commits}Maestro fusionne`, mark: 'merge', tone: 'merge' }
   }
-  return { word: 'Completed', why: o.fait ? `close le ${shortDate(o.fait)}` : '', mark: 'check', tone: 'done' }
+  return { word: 'Done', why: o.fait ? `close le ${shortDate(o.fait)}` : '', mark: 'check', tone: 'done' }
 }
 
 /** Les cartes repliées d'office (#210) : sur une tâche Done, ses étapes toutes cochées n'apprennent plus rien. */
