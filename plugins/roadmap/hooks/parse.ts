@@ -1516,6 +1516,18 @@ export function heldByOther(task: Task, me: readonly string[]): boolean {
   return task.resp !== undefined && !me.includes(attendWho(task.resp))
 }
 
+/**
+ * Un tiers (#245) : `attend:` nomme une personne ou une organisation qui n'est ni un de mes noms, ni
+ * une tâche (`id:N`, `#N`). `attend:BBR` n'est pas un tiers : la tâche est à nous.
+ */
+export function isThirdParty(attend: string | undefined, me: readonly string[]): boolean {
+  if (attend === undefined) return false
+  const who = attendWho(attend)
+  if (who === '' || who === '-' || /^(?:id:|#)\d+$/.test(who)) return false
+  const fold = (x: string) => x.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase()
+  return !me.some(m => fold(m) === fold(who))
+}
+
 /** Cette semaine (#99) : ouverte, pas en retard, l'échéance dans les 7 jours. */
 export function isDueSoon(task: Task, today: string): boolean {
   return !task.done && task.due !== undefined && !isOverdue(task, today) && daysBetween(today, task.due) <= 7
@@ -3271,6 +3283,44 @@ function maestroMockups(where: string): string {
 const maestroAutonome = (): string =>
   `Avec le réglage autonome, Maestro te donne la main seul, sans attendre ${person()} : une fois la main reçue, fais le geste (la publication comprise) et publie sans redemander, puis dis en une ligne ce que tu as publié.`
 
+/**
+ * La clôture partielle (#245, Bertrand, 2026-11-02) : notre part d'une tâche faite, un tiers encore
+ * attendu, la ligne ne reste pas ouverte. Une écriture de la skill `tasks` (opération `handoff`) clôt
+ * #A et ouvre sa suite #B chez le tiers. `who` dit qui écrit : Maestro, une de ses sessions, une session seule.
+ */
+export function partialCloseRule(who: 'maestro' | 'child' | 'solo'): string {
+  const rule =
+    `Clôture partielle (#245) : quand notre part d'une tâche est faite mais que sa ligne attend encore un tiers (attend: vers une personne ou une organisation, ni ${person()} ni une tâche), elle ne reste pas ouverte. ` +
+    "En une seule écriture (skill roadmap:tasks, opération handoff) : #A se clôt sur ce qui est fait (fait: à la date de la preuve, le livré en fin de libellé, son bilan) et sa suite #B s'ouvre chez le tiers (même parent, après:#A, attend:<tiers>, src: le message qui lui a fait la demande, même fiche:) ; les renvois des autres lignes ouvertes passent à #B, jamais ceux des closes. " +
+    "La preuve est le message parti au tiers : pas de clôture partielle avant qu'il soit parti. Puis une ligne : « #A close, la suite chez <tiers> passe en #B »."
+  if (who === 'maestro') return `${rule} Chez toi, Maestro : écris les deux lignes toi-même, à la fusion de sa branche en mode Code, aussitôt en mode Projet.`
+  if (who === 'child') return `${rule} ${PARTIAL_CLOSE_CHILD}`
+  return `${rule} Fais-le toi-même, dans ce tour.`
+}
+
+/** Le geste d'une session de Maestro (#245) : elle propose, Maestro écrit. Une ligne de sa clause. */
+const PARTIAL_CLOSE_CHILD =
+  "Clôture partielle (#245) : ta part est faite mais ta ligne attend encore un tiers (un vendor, un client : une validation, une activation, une réponse) ? Ne coche pas : la première phrase de ton compte rendu dit « clôture partielle proposée : #A, suite chez <tiers> », avec la preuve (le message parti au tiers, et où) et ce qui a été livré ; Maestro écrit les deux lignes (skill roadmap:tasks, opération handoff)."
+
+/**
+ * Le rappel de fin de tour d'une session (#245) : elle se dit finie (ou prête) alors que sa ligne #N
+ * attend encore un tiers. Rien quand elle propose déjà la clôture partielle, n'est pas finie, ou
+ * n'attend personne d'autre.
+ */
+export function partialCloseNote(o: { id: string; attend: string | undefined; me: readonly string[]; maestro: boolean; recap?: string; answer?: string }): string | undefined {
+  if (!isThirdParty(o.attend, o.me)) return undefined
+  const w = childWake({ ...(o.recap !== undefined ? { recap: o.recap } : {}), ...(o.answer !== undefined ? { answer: o.answer } : {}) })
+  const said = `${o.recap ?? ''}\n${o.answer ?? ''}`
+  if (w.kind === 'partial') return undefined
+  if (w.kind !== 'done' && w.kind !== 'ready' && !/t[âa]che finie|pr[êe]te? (?:à|a) clore/iu.test(said)) return undefined
+  const tiers = attendWho(o.attend ?? '')
+  const lead = `Roadmap — tu dis ta tâche finie, mais ta ligne #${o.id} attend encore ${tiers} (attend:${o.attend}).`
+  if (o.maestro) {
+    return `${lead} ${PARTIAL_CLOSE_CHILD} Ici : « clôture partielle proposée : #${o.id}, suite chez ${tiers} ». Notre part pas encore faite (le message au tiers pas parti) : dis-le, ta tâche n'est pas finie.`
+  }
+  return `${lead} ${partialCloseRule('solo')} Ici : clos #${o.id} et ouvre sa suite chez ${tiers}, puis dis « #${o.id} close, la suite chez ${tiers} passe en #<suite> ». Notre part pas encore faite : dis-le, ta tâche n'est pas finie.`
+}
+
 export function maestroClause(maestro: string, travail: Travail = 'code'): string[] {
   // Sans code (#76, #176) : ni branche, ni PR, ni fusion ; la session se dit « prête à clore ».
   if (travail === 'projet') {
@@ -3282,6 +3332,7 @@ export function maestroClause(maestro: string, travail: Travail = 'code'): strin
       '- La première phrase de chaque compte rendu de fin de tour dit ton état, avec ton étape : « en cours : étape 3/7 … », « prête à clore », « attend une réponse : … » ou « bloquée : … ». Tiens ta liste d\'étapes (update_plan) : c\'est par elle que Maestro voit où tu en es.',
       `- ${maestroMockups('à côté du document')}`,
       '- Ne coche pas ta ligne : Maestro la coche, avec son bilan. Ton dernier compte rendu dit ce qui a été fait et le souci rencontré.',
+      `- ${PARTIAL_CLOSE_CHILD}`,
       `- ${maestroClauseEnd()}`,
       "- Dès qu'une idée neuve ou une action hors de ta tâche apparaît (suite, idée, défaut), pose ta carte dans le tour même, sans attendre qu'on te la demande et sans écrire sa ligne (#216). Une tâche que tu proposes, ou un lancement que " + person() + " te demande, remonte à Maestro : pose ta carte comme d'habitude (ou lance comme demandé), le panneau Roadmap la lui transmet au lieu de la laisser dans ton transcript, que " + person() + " ne regarde pas, et pour que la session créée soit sa fille directe ; Maestro ouvre sa ligne et pose la carte.",
     ]
@@ -3296,6 +3347,7 @@ export function maestroClause(maestro: string, travail: Travail = 'code'): strin
     '- Maestro peut te demander de mettre ta branche à jour après une autre fusion : merge de main dans ta branche, jamais de rebase d\'une branche poussée.',
     `- ${maestroMockups('dans le dossier du chantier, `docs/plans/<type>-<slug>/maquettes.html`')}`,
     '- Ne coche pas ta ligne : Maestro la coche à la fusion, avec son bilan. Ton dernier compte rendu dit ce qui a été fait et le souci rencontré.',
+    `- ${PARTIAL_CLOSE_CHILD}`,
     `- ${maestroClauseEnd()} Rien de non commité ne doit rester dans ton worktree.`,
     "- Dès qu'une idée neuve ou une action hors de ta tâche apparaît (suite, idée, défaut), pose ta carte dans le tour même, sans attendre qu'on te la demande et sans écrire sa ligne (#216). Une tâche que tu proposes, ou un lancement que " + person() + " te demande, remonte à Maestro : pose ta carte comme d'habitude (ou lance comme demandé), le panneau Roadmap la lui transmet au lieu de la laisser dans ton transcript, que " + person() + " ne regarde pas, et pour que la session créée soit sa fille directe ; Maestro ouvre sa ligne et pose la carte.",
   ]
@@ -3395,7 +3447,7 @@ export function proposalRetryNote(maestro: string, reason: 'offer' | 'fork', ini
 
 /** L'état d'une fin de tour de session, dit à Maestro : son genre, sa phrase, et la clé qui évite le doublon. */
 export type ChildWake = {
-  kind: 'ready' | 'blocked' | 'waiting' | 'answer' | 'question' | 'done' | 'stopped' | 'other'
+  kind: 'ready' | 'partial' | 'blocked' | 'waiting' | 'answer' | 'question' | 'done' | 'stopped' | 'other'
   said: string
   key: string
 }
@@ -3427,6 +3479,8 @@ export function childWake(o: { recap?: string; ask?: string; answer?: string; qu
   if (o.question !== undefined) return make('question', clip(o.question, 200))
   const said = firstSentence(o.recap?.trim() ? o.recap : (o.answer ?? ''))
   const s = said.toLowerCase()
+  // #245 : la session propose une clôture partielle ; Maestro écrit les deux lignes.
+  if (/^\W*cl[ôo]ture partielle/u.test(s)) return make('partial', said)
   if (/^\W*pr[êe]te?s? (à|a) fusionner/u.test(s)) return make('ready', said)
   if (/^\W*bloqu[ée]/u.test(s)) return make('blocked', said)
   if (/^\W*(?:attend (une|ta|sa) réponse\b|j'ai besoin de toi\b)/u.test(s) || (o.ask !== undefined && o.ask.trim() !== '' && !/archiver cette session/i.test(o.ask))) return make('answer', said)
@@ -3442,6 +3496,8 @@ function wakeTodo(w: ChildWake, id: string | undefined): string {
   switch (w.kind) {
     case 'ready':
       return `relis son diff, puis fusionne-la si ses tests sont verts sur sa branche à jour de main (§ 5), et préviens aussitôt les sessions dont la ligne porte ${after}.`
+    case 'partial':
+      return `vérifie sa preuve (le message parti au tiers), puis écris les deux lignes par la skill roadmap:tasks, opération handoff : à la fusion de sa branche en mode Code (§ 5), aussitôt en mode Projet ; dis « #A close, la suite chez <tiers> passe en #B ». ${partialCloseRule('maestro')}`
     case 'blocked':
     case 'waiting':
       return `débloque-la d'abord (§ 3) : donne-lui la main sur la ressource si elle est libre, réponds-lui par message si le code, la roadmap ou les règles tranchent ; ce qui ne revient qu'à ${person()} (un secret, un accès), dis-le-lui en une ligne, avec son lien.`
@@ -3460,6 +3516,7 @@ function wakeTodo(w: ChildWake, id: string | undefined): string {
 
 const WAKE_STATE = (): Record<ChildWake['kind'], string> => ({
   ready: 'prête à fusionner',
+  partial: 'clôture partielle proposée',
   blocked: 'bloquée',
   waiting: 'en attente',
   answer: `attend la réponse de ${person()}`,
@@ -3812,8 +3869,10 @@ export function archivedOpenText(list: readonly ArchivedOpen[]): string | undefi
 
 /** Un enfant que le parent doit voir : à archiver, sa question qui attend Bertrand, prêt, ou silencieux. */
 export type ChildAlert = {
-  kind: 'archive' | 'question' | 'ready' | 'silent'
+  kind: 'archive' | 'question' | 'partial' | 'ready' | 'silent'
   child: ChildRow
+  /** Sa ligne `#N` encore ouverte (#245), et le tiers qu'elle attend. */
+  line?: { id: string; tiers?: string }
   /** Depuis combien de temps (ms) : sa question, sinon sa dernière activité. */
   since: number
   step?: string
@@ -3828,7 +3887,7 @@ export type ChildAlert = {
 /** Une relance faite par le parent : l'attente relancée (`lastActivityAt`) et l'étape de l'enfant à ce moment. */
 export type ChildRelaunch = { at: number; step?: string }
 
-const ALERT_ORDER: readonly ChildAlert['kind'][] = ['archive', 'question', 'ready', 'silent']
+const ALERT_ORDER: readonly ChildAlert['kind'][] = ['archive', 'question', 'partial', 'ready', 'silent']
 
 /**
  * Les enfants qui coincent ou sont finis, rien pour ceux qui avancent : fini vérifié, à archiver tout
@@ -3842,6 +3901,9 @@ export function childAlerts(o: {
   finished: Readonly<Record<string, { ok: boolean; why?: string } | undefined>>
   alerted: Readonly<Record<string, ChildRelaunch | undefined>>
   now: number
+  /** La ligne `#N` de chaque enfant quand elle est encore ouverte (#245), avec son `attend:`. */
+  lines?: Readonly<Record<string, { id: string; attend?: string } | undefined>>
+  me?: readonly string[]
 }): ChildAlert[] {
   const out: ChildAlert[] = []
   for (const child of o.children) {
@@ -3862,9 +3924,14 @@ export function childAlerts(o: {
     } else if (question) {
       const waited = o.now - question.since
       if (waited >= STUCK_MS) out.push({ ...base, kind: 'question', since: waited, question: question.text })
-    } else if (!child.running && idle >= STUCK_MS) {
+    } else if (!child.running) {
       const ready = steps.length > 0 && steps.every(s => s.status === 'completed')
-      out.push(ready ? { ...base, kind: 'ready', since: idle, ...(finished?.why ? { why: finished.why } : {}) } : { ...base, kind: 'silent', since: idle })
+      const open = o.lines?.[child.id]
+      const tiers = open && isThirdParty(open.attend, o.me ?? []) ? attendWho(open.attend ?? '') : undefined
+      const line = open ? { line: { id: open.id, ...(tiers ? { tiers } : {}) } } : {}
+      // #245 : finie, sa ligne attend un tiers : la clôture partielle tout de suite, sans attendre 15 min.
+      if (ready && tiers) out.push({ ...base, ...line, kind: 'partial', since: idle })
+      else if (idle >= STUCK_MS) out.push(ready ? { ...base, ...line, kind: 'ready', since: idle, ...(finished?.why ? { why: finished.why } : {}) } : { ...base, kind: 'silent', since: idle })
     }
   }
   return out.sort((a, b) => ALERT_ORDER.indexOf(a.kind) - ALERT_ORDER.indexOf(b.kind) || b.since - a.since)
@@ -3903,7 +3970,8 @@ export function childAlertText(alerts: readonly ChildAlert[]): string | undefine
       const name = `- ${childName(a.child)} — `
       const step = a.step ? `, ${a.step}` : ''
       if (a.kind === 'question') return `${name}attend la réponse de ${person()} depuis ${durationLabel(a.since)}${step} : « ${a.question ?? ''} »${a.child.link ? ` — ${a.child.link}` : ''}`
-      if (a.kind === 'ready') return `${name}prête${step}, depuis ${durationLabel(a.since)}${a.why ? ` : ${a.why}` : ''}`
+      if (a.kind === 'partial') return `${name}finie${step}, sa ligne #${a.line?.id ?? '?'} attend encore ${a.line?.tiers ?? 'un tiers'} : clôture partielle`
+      if (a.kind === 'ready') return `${name}prête${step}, depuis ${durationLabel(a.since)}${a.why ? ` : ${a.why}` : ''}${a.line && !a.why ? ` ; ligne #${a.line.id} encore ouverte` : ''}`
       const relaunch = a.relaunched ? (a.answered ? ', relancée, a répondu, toujours au même point' : ', déjà relancée sans réponse') : ''
       return `${name}silencieuse depuis ${durationLabel(a.since)}${step || ', état inconnu'}${relaunch}`
     }),
@@ -3919,6 +3987,8 @@ export function childAlertText(alerts: readonly ChildAlert[]): string | undefine
   // #151 : la réponse a pu arriver dans la session depuis la note ; un rappel, jamais la question reposée.
   if (rest.some(a => a.kind === 'question')) lines.push('- Une question attend ' + person() + ', qui y répond dans la session elle-même : relis d\'abord qu\'elle attend encore (get_session : isRunning ; list_events : son dernier message) ; elle tourne, ou la réponse est déjà là : rien à dire. Sinon rappelle-la-lui en une ligne, avec le lien, sans reposer la question ; ne relance pas la session.')
   if (rest.some(a => a.kind === 'ready')) lines.push('- Prête : lis son dernier compte rendu, puis fusionne ou clos (skill roadmap:maestro, § 5 et 6).')
+  // #245 : une session finie dont la ligne reste ouverte (15 min), ou dont la ligne attend un tiers.
+  if (rest.some(a => a.kind === 'partial' || (a.kind === 'ready' && a.line !== undefined))) lines.push(`- ${partialCloseRule('maestro')}`)
   if (rest.some(a => a.kind === 'silent' && !a.relaunched)) {
     lines.push(
       "- Silencieuse, pas encore relancée. Écris-lui une fois (SendMessage à son identifiant) : « Où en es-tu, qu'est-ce qui te bloque, de quoi as-tu besoin ? », puis dis à " + person() + " en une ligne que tu l'as relancée : sa réponse t'arrivera à la fin de son tour, ne l'attends pas.",
@@ -8048,6 +8118,8 @@ export type ReportData = {
   ajoutees: { id: string; libelle: string; parent: string | null; due: string | null }[]
   mises_a_jour: { id: string; libelle: string; change: string }[]
   t_attendent: Waiting[]
+  /** Les clôtures partielles du tour (#245) : « #A close, la suite chez <tiers> passe en #B », sous le titre. */
+  suites?: { close: string; suite: string; tiers: string }[]
 }
 /** Une question qui attend la personne, au format du compte rendu. */
 export type Waiting = { id: string | null; question: string; raison: string; recommande: string }
@@ -8085,6 +8157,7 @@ export function renderReport(data: ReportData, etat: 'ecrit' | 'essai' | 'outil'
     ["T'attendent", ['#', 'Question', 'Raison', 'Recommandé'], data.t_attendent.map(q => [q.id ? `#${q.id}` : '–', q.question, q.raison, q.recommande])],
   ]
   const blocks = [`### Compte rendu de la roadmap · ${ddmm(day)} · ${said}`]
+  for (const s of data.suites ?? []) blocks.push(`#${s.close} close, la suite chez ${s.tiers} passe en #${s.suite}`)
   for (const [name, head, rows] of sections) {
     blocks.push(rows.length > 0 ? `#### ${name} (${rows.length})\n\n${table(head, rows)}` : `#### ${name}\n\nrien`)
   }
@@ -8155,9 +8228,19 @@ export function changeText(before?: Task, after?: Task): string | undefined {
   return parts.length > 0 ? parts.join(' ; ') : undefined
 }
 
-/** La donnée du compte rendu : les tâches neuves ouvertes dans Ajoutées, les autres changements dans Mises à jour. */
-export function reportOf(changes: TaskChange[], waiting: Waiting[]): ReportData {
+/**
+ * La donnée du compte rendu : les tâches neuves ouvertes dans Ajoutées, les autres changements dans Mises à jour ;
+ * une tâche cochée dans le tour dont une neuve vient après et attend un tiers (`me` : mes noms) est une clôture partielle (#245).
+ */
+export function reportOf(changes: TaskChange[], waiting: Waiting[], me: readonly string[] = []): ReportData {
   const data: ReportData = { ajoutees: [], mises_a_jour: [], t_attendent: [...waiting] }
+  const closed = new Set(changes.flatMap(c => (c.before && !c.before.done && c.after?.done && c.after.id ? [c.after.id] : [])))
+  const suites = changes.flatMap(c => {
+    const t = c.after
+    if (c.before !== undefined || !t || t.done || !t.id || !isThirdParty(t.attend, me)) return []
+    return (t.apres ?? '').split(',').map(n => n.trim().replace(/^#/, '')).filter(n => closed.has(n)).map(n => ({ close: n, suite: t.id as string, tiers: attendWho(t.attend ?? '') }))
+  })
+  if (suites.length > 0) data.suites = suites
   for (const c of changes) {
     const t = c.after ?? c.before!
     const id = t.id ?? '?'

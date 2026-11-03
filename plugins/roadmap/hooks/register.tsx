@@ -279,6 +279,7 @@ import {
   idProblems,
   taskKey,
   parseRoadmap,
+  partialCloseNote,
   parsePerso,
   setDateFormat,
   setPerson,
@@ -911,7 +912,8 @@ async function turnReport($: EngineInterface): Promise<{ markdown: string; waiti
   const fromFile = reportTurn.touched ? newQuestions(reportTurn.questionsAtTurn, await readOr($, questionsPath(capture.source))) : []
   if (reportTurn.changes.length === 0 && fromFile.length === 0) return undefined
   const waiting = [...reportTurn.fromTasks, ...fromFile.filter(q => !reportTurn.fromTasks.some(w => w.question === q.question))]
-  const data = reportOf(reportTurn.changes, waiting)
+  // #245 : une close et sa suite chez un tiers, dites en une ligne ; le tiers se juge par les noms `me` du projet.
+  const data = reportOf(reportTurn.changes, waiting, capture.source.me)
   if (data.ajoutees.length + data.mises_a_jour.length + data.t_attendent.length === 0) return undefined
   let now = Date.now()
   try {
@@ -979,6 +981,22 @@ async function closingNote($: EngineInterface, last: string | undefined, rangeme
   const maestro = await maestroHere($)
   const gaps = closingBlockGaps(last, closingTurn.box, line, maestro).filter(g => !(rangementPending && (g === 'archiver' || g === 'conclusion' || g === 'etat-close' || g === 'taches')))
   return gaps.length === 0 ? undefined : closingBlockReminder(gaps, line, maestro)
+}
+
+/**
+ * Le rappel de clôture partielle d'une session (#245) : elle se dit finie, et sa ligne `#N`, encore
+ * ouverte, attend un tiers. Sous Maestro elle la propose, seule elle l'écrit.
+ */
+async function partialNote($: EngineInterface, last: string | undefined): Promise<string | undefined> {
+  const c = capture
+  if (!c || closingTurn.wake) return undefined
+  const title = (await readOwnSession($)).title
+  const id = sessionTitleId(title)
+  if (id === undefined || sessionTitleKind(title) === 'check') return undefined
+  const open = await load($, files(c.source).open, 'ROADMAP.md')
+  const task = typeof open === 'string' ? undefined : open.find(t => t.id === id && !t.done)
+  if (!task) return undefined
+  return partialCloseNote({ id, attend: task.attend, me: c.source.me, maestro: await parentIsMaestro($), ...(wakeBox.recap !== undefined ? { recap: wakeBox.recap } : {}), ...(last !== undefined ? { answer: last } : {}) })
 }
 
 /**
@@ -1204,6 +1222,14 @@ async function endOfTurnBlock($: EngineInterface, last: string | undefined, acti
       notes.push(await ideaNote($, c, last))
     } catch {
       // pas de rappel d'idée
+    }
+  }
+  // La clôture partielle (#245) : finie, sa ligne attend encore un tiers.
+  if (settings.capture && c) {
+    try {
+      notes.push(await partialNote($, last))
+    } catch {
+      // roadmap illisible : pas de rappel de clôture partielle
     }
   }
   // La liste d'étapes (#98, #104) : dans tout projet ; après une fusion ou une publication (#136).
@@ -2090,7 +2116,7 @@ function fromAgent(e: unknown): boolean {
 }
 
 /** Ce que le parent lit de sa roadmap pour juger ses enfants : les numéros ouverts et clos, le `mode` qui force, ses dossiers. */
-type ParentLines = { open: Set<string>; done: Set<string>; mode?: Mode; match: string[] }
+type ParentLines = { open: Set<string>; done: Set<string>; mode?: Mode; match: string[]; attend: Map<string, string | undefined>; me: string[] }
 
 /** git lit le dossier d'un enfant en 5 s au plus : le message de Bertrand attend la réponse (#90). */
 const GIT_TIMEOUT_MS = 5_000
@@ -2233,7 +2259,10 @@ async function childAlertContext($: EngineInterface): Promise<string | undefined
       const source = await sourceNow($)
       if (!source) return undefined
       const ids = (tasks: Task[] | string) => new Set(typeof tasks === 'string' ? [] : tasks.flatMap(t => (t.id ? [t.id] : [])))
-      return { open: ids(await load($, files(source).open, 'ROADMAP.md')), done: ids(await load($, files(source).done, 'ROADMAP-fait.md')), ...(source.mode ? { mode: source.mode } : {}), match: source.match }
+      const open = await load($, files(source).open, 'ROADMAP.md')
+      // #245 : l'`attend:` de chaque ligne ouverte, pour la clôture partielle.
+      const attend = new Map(typeof open === 'string' ? [] : open.flatMap(t => (t.id && !t.done ? [[t.id, t.attend] as const] : [])))
+      return { open: ids(open), done: ids(await load($, files(source).done, 'ROADMAP-fait.md')), ...(source.mode ? { mode: source.mode } : {}), match: source.match, attend, me: [...source.me] }
     })()
     return known
   }
@@ -2264,7 +2293,25 @@ async function childAlertContext($: EngineInterface): Promise<string | undefined
       if (typeof v === 'object' && v !== null && typeof (v as ChildRelaunch).at === 'number') alerted[k] = v as ChildRelaunch
     }
   }
-  const alerts = childAlerts({ children, statuses, finished, alerted, now: await $.clock.now() })
+  // #245 : la ligne encore ouverte de chaque enfant au repos qui a fini ses étapes, pour la clôture partielle.
+  const openLines: Record<string, { id: string; attend?: string }> = {}
+  let me: string[] = []
+  const resting = children.filter(c => !c.running && (statuses[c.id]?.steps.length ?? 0) > 0 && (statuses[c.id]?.steps ?? []).every(s => s.status === 'completed'))
+  if (resting.length > 0) {
+    try {
+      const known = await lines()
+      if (known) {
+        me = known.me
+        for (const c of resting) {
+          const n = sessionTitleId(c.title)
+          if (n && known.attend.has(n) && !known.done.has(n)) openLines[c.id] = { id: n, ...(known.attend.get(n) ? { attend: known.attend.get(n) as string } : {}) }
+        }
+      }
+    } catch {
+      // roadmap illisible : les nouvelles d'avant, sans la clôture partielle
+    }
+  }
+  const alerts = childAlerts({ children, statuses, finished, alerted, now: await $.clock.now(), lines: openLines, me })
   // Les relances de cette fois s'ajoutent, avec l'étape de l'enfant ; un enfant qui n'est plus listé sort.
   const next: Record<string, ChildRelaunch> = {}
   for (const child of children) if (alerted[child.id] !== undefined) next[child.id] = alerted[child.id] as ChildRelaunch

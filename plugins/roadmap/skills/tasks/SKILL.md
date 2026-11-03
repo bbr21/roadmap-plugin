@@ -1,6 +1,6 @@
 ---
 name: tasks
-description: "Keeps the roadmap of a roadmap-plugin project up to date day to day, with or without code (#176: the folder says which): adds, updates, reschedules, marks done on proof or drops a task, after matching it against the tasks on the same subject (never a new task for a subject that already has one). Reads what the project declares in .claude/roadmap.json: its own rules (regles), which win, its writing tool (ecriture) and where to look for proof that a task is done (preuves). A script writes all or nothing, dry run first. Triggers on « ajoute ça à la roadmap », « rappelle-moi de… », « mets une tâche pour… », « coche », « c'est fait », « marque #12 faite », « redate », « décale à lundi », « abandonne cette tâche », add this to the roadmap, mark it done, and on its own when a new idea or action comes out of the exchange (#216). Not for auditing the whole roadmap (audit), setting up a project (onboarding), checking it is wired (doctor), nor a folder keeping its roadmap by its own skill without .claude/roadmap.json."
+description: "Keeps the roadmap of a roadmap-plugin project up to date day to day, with or without code: adds, updates, reschedules, marks done on proof (or partially: follow-up at the third party it waits on) or drops a task, after matching it against the tasks on the same subject (never a new task for a subject that already has one). Reads what the project declares in .claude/roadmap.json: its own rules (regles), which win, its writing tool (ecriture) and where to look for proof that a task is done (preuves). Writes all or nothing, dry run first. Triggers on « ajoute ça à la roadmap », « rappelle-moi de… », « mets une tâche pour… », « coche », « c'est fait », « marque #12 faite », « redate », « décale à lundi », « abandonne cette tâche », add this to the roadmap, mark it done, and on its own when a new idea or action comes out (#216). Not for auditing the roadmap (audit), setting up a project (onboarding), checking it is wired (doctor), nor a folder keeping its roadmap by its own skill without .claude/roadmap.json."
 ---
 
 # Keep the roadmap
@@ -119,7 +119,8 @@ Write `<scratchpad>/operations.json`:
     {"op": "reschedule", "id": "18", "due": "2026-11-05"},
     {"op": "done", "id": "12", "date": "2026-10-30", "proof": "email envoyé à Jason le 30/10 (40-deliverables/emails/…)"},
     {"op": "drop", "id": "7", "reason": "remplacée par le vendor agreement"},
-    {"op": "pause", "id": "22", "until": "2026-11-30", "reason": "budget gelé jusqu'à la clôture"}
+    {"op": "pause", "id": "22", "until": "2026-11-30", "reason": "budget gelé jusqu'à la clôture"},
+    {"op": "handoff", "id": "529", "date": "2026-11-02", "proof": "récap envoyé à DaVinci le 02/11 (40-deliverables/emails/…)", "delivered": "preview contrôlée, récap envoyé à DaVinci", "key": "s1", "label": "Recevoir de DaVinci l'activation du qualifier et la correction du 300x250", "waiting": "Navneet", "src": "40-deliverables/emails/2026-11-02-…-navneet.md", "fields": {"due": "2026-11-06"}}
   ],
   "questions": [
     {"key": "conflict-18", "task": "18", "kind": "conflict",
@@ -170,6 +171,16 @@ Write `<scratchpad>/operations.json`:
   « (en pause depuis le JJ/MM : <reason>) », and a task without a parent moves to « Plus tard »; a
   child stays under its parent. Refused on a line taken by a session and on a parent with an open
   child.
+- **handoff** (#245, « Partial closure » below): `date` and `proof` as for `done`, `delivered`
+  (what was delivered, added at the end of the closed label: « ; livré : … »), and the follow-up:
+  `key`, `label` (only what remains with the third party), `waiting` (the third party: its
+  `attend:`), `src` (the message that asked the third party), `fields` (`due`, `nom`…; never
+  `après`, `parent`, `attend`, `src`, `fiche`, which the operation sets). In one write: the task
+  moves to `ROADMAP-fait.md` with its bilan row (« Faite : <proof> ; suite chez <tiers> en #B »),
+  the follow-up opens in its place (same parent, same axis, `après:` the closed task, same
+  `fiche:`, the project's inherited keys), and in every other **open** line `après:`, `parent:` and
+  « #A » in the label or note point to the follow-up; closed lines are never touched. Refused when
+  `waiting` is not a third party, on a task with an open child, and on a recurring task.
 
 Then the **dry run**, always:
 
@@ -225,6 +236,27 @@ Then:
    `operations.json`, then `write` again (dry run, then `--apply`), which prints a new report.
    « T'attendent » says « rien »: no form. The roadmap plugin refuses the end-of-turn box once
    while « T'attendent » has rows and no form was asked (#244).
+
+## Partial closure (#245)
+
+When our part of a task is done but its label still waits on a **third party** (a validation, an
+activation, an answer, a fix at a vendor or a client), the line does not stay open: close it on
+what is done and open, in the same turn, a follow-up that carries only the wait (`handoff`).
+
+- **A third party**: `attend:` names someone who is neither one of the project's `me` names
+  (`.claude/roadmap.json`, then `~/.claude/roadmap-perso.json`) nor a task (`id:N`). `attend:BBR`
+  is not a third party: the task is ours, it stays open or is marked done.
+- **Triggers**: a session that reports its task finished while its line still has `attend:` to a
+  third party; or the panel, which reminds Maestro of a finished session whose line stays open
+  after 15 min, and reminds the session at the end of its turn.
+- **Proof**: the message sent to the third party (it is often the proof itself). A communication
+  not sent yet is not a proof: no partial closure before it leaves.
+- **Under Maestro**, a session does not tick its line: its report says « clôture partielle
+  proposée : #A, suite chez <tiers> », with the proof and the request's message; Maestro writes
+  both lines (at the merge with code, right away without code). Outside Maestro, the session
+  writes them itself.
+- **Said in one line**, which the report prints under its title: « #A close, la suite chez
+  <tiers> passe en #B ». The plugin's report (#244) prints it too, from the turn's changes.
 
 ## What gets asked, and nothing else
 

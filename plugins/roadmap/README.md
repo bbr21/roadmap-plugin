@@ -667,6 +667,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.162.0 (2026-11-02)** : tasks, maestro : la clôture partielle, notre part close et sa suite ouverte chez le tiers en une écriture (handoff), proposée par les sessions et rappelée en fin de tour (#245)
 - **0.161.1 (2026-11-02)** : panneau : la pastille du responsable reprend une couleur (teinte d'attente) et l'icône personne (#247)
 - **0.161.0 (2026-11-02)** : format-adhd : les messages s'ouvrent sur une phrase de tête qui dit où on en est, une conclusion à part en fin de session ; fin du gabarit carte d'étape, Fait/Trouvé/Suite et bloc État/À toi/Session (#243)
 - **0.160.0 (2026-11-02)** : panneau : la carte Chaîne d'une fille montre sa mère et son avancement, la jauge de ses sœurs, Avant, Ici, Ensuite (#246)

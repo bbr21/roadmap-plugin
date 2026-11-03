@@ -329,6 +329,15 @@ The merge itself:
 
 - **After the merge**, Maestro ticks the line (`fait:`, what was delivered, the PR), moves it to the
   top of `ROADMAP-fait.md` and writes its bilan from the sub-session's last report.
+- **Partial closure** (#245): when our part of a task is done but its line still waits on a third
+  party (`attend:` to a vendor, a client: neither the person nor a task), the line does not stay
+  open. The sub-session does not tick it: it reports « clôture partielle proposée : #A, suite
+  chez <tiers> », with the proof (the message sent to the third party) and what was delivered.
+  Maestro checks the proof, then writes both lines in one go with the `tasks` skill (`handoff`:
+  #A closed with its bilan, its follow-up #B opened under the same parent, `après:A`,
+  `attend:<tiers>`, `src:` the request's message, same `fiche:`, every reference of the other open
+  lines moved to #B), at the merge with code, right away without code, and says « #A close, la
+  suite chez <tiers> passe en #B ». A message to the third party not sent yet is no proof (#242).
 - **The finished sub-session**: the panel checks it (its line closed and its commits in its base
   branch, `main` without it, or pushed, or, without a line, its branch merged and its step list
   done; nothing uncommitted in its worktree; no question; no open session of its own; in Projet
@@ -389,6 +398,12 @@ The merge itself:
 - Each sub-session records its step list, its pending question and its last recap; at each of the
   person's messages, Maestro receives the children stuck for 15 min and those to archive (§ 3,
   "Check in").
+- Partial closure (#245, § 6): in the children's news, a finished sub-session whose line still
+  waits on a third party comes at once (« clôture partielle »), and one ready for 15 min whose line
+  is still open recalls the rule; the state « clôture partielle proposée » of a sub-session's
+  message asks Maestro to write both lines; the Maestro clause gives the rule to the sub-session,
+  and its end-of-turn reminder recalls it when it says its task finished while its line waits on
+  a third party.
 - Each sub-session notifies Maestro by message of the status in which it ends its turn, and of its
   form question, once per status, even while others are still running (§ 3,
   "Act on its message", #131).

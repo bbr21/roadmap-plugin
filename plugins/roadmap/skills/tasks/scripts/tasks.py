@@ -42,12 +42,16 @@ OPS = {
     "done": {"op", "id", "date", "proof"},
     "drop": {"op", "id", "reason"},
     "pause": {"op", "id", "until", "reason"},
+    "handoff": {"op", "id", "date", "proof", "delivered", "key", "label", "waiting", "src", "fields"},
 }
 # La section où part une tâche en pause (#159) : sa date de reprise la range, aucune clé nouvelle.
 SECTION_PAUSE = "Plus tard"
 # Ce que `fields` ne pose jamais : le numéro, la session, la clôture ; `parent` d'un ajout passe par `parent`.
 INTERDITS_AJOUT = {"id", "qui", "branche", "verrou", "fait", "parent"}
 INTERDITS_COMPLETER = {"id", "qui", "branche", "verrou", "fait"}
+# La suite d'une clôture partielle (#245) : l'opération pose elle-même son parent, son ordre, le tiers,
+# la demande et la fiche.
+INTERDITS_SUITE = INTERDITS_AJOUT | {"après", "attend", "src", "fiche"}
 # Les questions qui attendent la personne (#232), au format de l'audit (#159) : leur genre, et sa raison dite.
 RAISONS = {"conflict": "conflit", "undated": "date manquante", "late": "en retard", "partial_proof": "preuve partielle",
            "rhythm": "rythme", "reopen": "réouverture", "prio_on_child": "priorité sur un enfant", "structure": "structure"}
@@ -61,6 +65,19 @@ def _lire(chemin):
 
 def _sans_parent(t):
     return (t.get("parent") or "-").lstrip("#")
+
+
+def qui_attend(attend):
+    """Qui une tâche attend, sans la précision entre parenthèses : « Jason (devis) » → « Jason »."""
+    return re.sub(r"\s*\([^)]*\)?", "", attend or "").strip()
+
+
+def est_un_tiers(attend, me):
+    """Un tiers (#245) : une personne ou une organisation qui n'est ni un des noms `me`, ni une tâche."""
+    qui = qui_attend(attend)
+    if qui in ("", "-") or re.match(r"^(id:|#)\d+$", qui):
+        return False
+    return audit._sans_accents(qui).lower() not in {audit._sans_accents(m).lower() for m in me}
 
 
 def _jj_mm(iso):
@@ -94,7 +111,10 @@ def contexte(dossier, jour=None, perso="~/.claude/roadmap-perso.json"):
     cfg = audit._cfg(c["dossier"])
     cles = cfg.get("cles") if isinstance(cfg.get("cles"), dict) else {}
     closes = [t for t in im.lire_checklist(texte_o)[0] if t["fait"]] + im.lire_checklist(texte_f)[0]
+    me_projet = cfg.get("me")
+    me_projet = [me_projet] if isinstance(me_projet, str) else [m for m in me_projet or [] if isinstance(m, str)]
     c.update({
+        "me": list(dict.fromkeys(list(c.get("me") or []) + me_projet)),
         "prochain_id": max(ids or [0]) + 1,
         "axes": ob._axes_declares(texte_o),
         "sections": [l[3:].strip() for l in texte_o.split("\n")
@@ -168,9 +188,11 @@ class _Tenue(audit._Preparation):
         self.sections = ctx.get("sections") or []
         self.notes = []
         self.tenue = {"ajoutees": [], "completees": [], "redatees": [], "cochees": [], "abandonnees": [],
-                      "en_pause": []}
-        # Le compte rendu (#232) : une entrée par tâche ajoutée, une par changement d'une tâche.
-        self.compte = {"ajoutees": [], "mises_a_jour": [], "t_attendent": []}
+                      "en_pause": [], "suites": []}
+        # Le compte rendu (#232) : une entrée par tâche ajoutée, une par changement d'une tâche ; les
+        # clôtures partielles (#245) en une ligne chacune, sous son titre.
+        self.compte = {"ajoutees": [], "mises_a_jour": [], "t_attendent": [], "suites": self.tenue["suites"]}
+        self.me = ctx.get("me") or []
         self.closes = {c["id"]: c["libelle"] for c in ctx.get("closes") or []}
         self.blanc_apres = set()  # ancres d'une section vide : une ligne vide après les tâches posées
         self.section_de = {t["ligne"]: t["section"] for t in im.lire_checklist(self.texte_o)[0]}
@@ -364,6 +386,85 @@ class _Tenue(audit._Preparation):
         self.tenue["cochees"].append(mere.id)
         self.changer(mere, "close avec son dernier enfant #%s, le %s" % (t.id, _jj_mm(date)))
 
+    def passer_la_main(self, op):
+        """La clôture partielle (#245) : #A close sur ce qui est fait, sa suite #B ouverte chez le tiers
+        attendu (même parent, après:A, attend:, src:, même fiche:), à la place de #A, et les renvois
+        des lignes ouvertes à #A passés à #B ; jamais dans les lignes closes."""
+        t = self.tache(op.get("id"), "clôture partielle")
+        quoi = "clôture partielle de #%s" % t.id
+        date = _date(op.get("date"), quoi, "date")
+        dits = {k: audit._propre(op.get(k)) for k in ("proof", "delivered", "label", "src", "waiting")}
+        for k, ce in (("proof", "la preuve (le message parti au tiers, et où)"), ("delivered", "ce qui a été livré"),
+                      ("label", "le libellé de la suite"), ("src", "src (le message qui a fait la demande au tiers)")):
+            if not dits[k]:
+                raise Erreur("%s : %s manque" % (quoi, ce))
+        tiers = dits["waiting"]
+        if not est_un_tiers(tiers, self.me):
+            raise Erreur("%s : attend:%s n'est pas un tiers (ni %s, ni une tâche) : coche la tâche (done) ou "
+                         "laisse-la ouverte" % (quoi, tiers or "(vide)", ", ".join(self.me) or "toi"))
+        ouverts = self.enfants_ouverts(t)
+        if ouverts:
+            raise Erreur("%s : #%s a un enfant ouvert (#%s) : notre part n'est pas faite" % (quoi, t.id, ouverts[0].id))
+        if t.get("tous"):
+            raise Erreur("%s : tâche récurrente (tous:%s) : le bouton « Marquer faite » du panneau la reconduit"
+                         % (quoi, t.get("tous")))
+        champs = {k: self.champ_propose(k, v, quoi, INTERDITS_SUITE) for k, v in (op.get("fields") or {}).items()}
+        champs.update({"attend": tiers, "src": dits["src"]})
+        if t.get("fiche"):
+            champs["fiche"] = t.get("fiche")
+        champs.setdefault("ouvert", self.jour)
+        p = _sans_parent(t)
+        mere = self.taches.get(p) or self.cles.get(p) if p != "-" else None
+        if p != "-":
+            champs["parent"] = p
+        elif "parent" in self.requis:
+            champs["parent"] = "-"
+        for k in self.heritage + ([] if mere else ["prio"]):
+            if k not in champs and t.get(k):
+                champs[k] = t.get(k)
+        self.completer(champs, t, quoi)
+        champs["après"] = t.id
+        champs["id"] = self.numero(op.get("key"))
+        suite = audit._Tache(id=champs["id"], libelle=dits["label"], axe=t.axe, champs=audit._ordonnes(champs))
+        self.cles[op["key"]] = suite
+        if t.ligne is not None:
+            self.apres_ligne.setdefault(t.ligne, []).append(suite)
+        else:
+            self.placer(suite, mere, None, quoi)
+        self.bilan["enfants"] += 1
+        chez = qui_attend(tiers)
+        self.fermer_tache(t, date, " ; livré : %s" % dits["delivered"],
+                          "Faite : %s ; suite chez %s en #%s" % (dits["proof"], chez, suite.id))
+        self.tenue["cochees"].append(t.id)
+        self.tenue["ajoutees"].append(suite.id)
+        self.tenue["suites"].append({"close": t.id, "suite": suite.id, "tiers": chez})
+        self.changer(t, "close le %s : %s ; suite chez %s en #%s" % (_jj_mm(date), dits["proof"], chez, suite.id))
+        self.compte["ajoutees"].append({"id": suite.id, "libelle": _court(suite.libelle),
+                                        "parent": p if p != "-" else None, "due": suite.get("due")})
+        self.remplacer_renvois(t.id, suite)
+
+    def remplacer_renvois(self, ancien, suite):
+        """Dans les lignes ouvertes, `parent:`, `après:` et « #ancien » du libellé et de la note mènent à la suite."""
+        motif = re.compile(r"#%s(?!\d)" % ancien)
+        for o in self.ouvertes():
+            if o is suite:
+                continue
+            avant = (o.libelle, o.note, o.get("parent"), o.get("après"))
+            for k in ("parent", "après"):
+                v = o.get(k)
+                if not v or ancien not in [x.strip() for x in v.split(",")]:
+                    continue
+                nums = []
+                for x in v.split(","):
+                    x = suite.id if x.strip() == ancien else x.strip()
+                    if x not in nums and x != o.id:
+                        nums.append(x)
+                o.set(k, ",".join(nums) or "-")
+            o.libelle, o.note = motif.sub("#" + suite.id, o.libelle), motif.sub("#" + suite.id, o.note)
+            if (o.libelle, o.note, o.get("parent"), o.get("après")) != avant:
+                o.touche = True
+                self.changer(o, "renvoi à #%s remplacé par #%s" % (ancien, suite.id))
+
     def abandonner(self, op):
         t = self.tache(op.get("id"), "abandon")
         quoi = "abandon de #%s" % t.id
@@ -477,7 +578,8 @@ def preparer(ctx, props):
     for op in operations:
         _verifier_operation(op)
         {"add": prep.ajouter, "update": prep.completer_tache, "reschedule": prep.redater,
-         "done": prep.cocher, "drop": prep.abandonner, "pause": prep.mettre_en_pause}[op["op"]](op)
+         "done": prep.cocher, "drop": prep.abandonner, "pause": prep.mettre_en_pause,
+         "handoff": prep.passer_la_main}[op["op"]](op)
     questions = props.get("questions") or []
     if not isinstance(questions, list):
         raise Erreur("questions : une liste de questions (le format de l'audit)")
@@ -560,6 +662,9 @@ def rendre_compte_rendu(cr, etat, jour, outil=None, sauvegarde=None):
          [("#" + q["id"] if q["id"] else "–", q["question"], q["raison"], q["recommande"]) for q in cr["t_attendent"]]),
     ]
     blocs = ["### Compte rendu de la roadmap · %s · %s" % (_jj_mm(jour), dit)]
+    # La clôture partielle (#245), dite en une ligne chacune.
+    for s in cr.get("suites") or []:
+        blocs.append("#%s close, la suite chez %s passe en #%s" % (s["close"], s["tiers"], s["suite"]))
     for nom, entete, rangs in rubriques:
         if rangs:
             blocs.append("#### %s (%d)\n\n%s" % (nom, len(rangs), _tableau(entete, rangs)))

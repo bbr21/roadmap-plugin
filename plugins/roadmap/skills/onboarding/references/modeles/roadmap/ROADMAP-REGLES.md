@@ -18,6 +18,7 @@ Ce fichier dit **quoi** relever dans la roadmap ; la skill `tasks` du plugin roa
 ## Règles du projet
 
 - _Les règles propres à {{NOM}} : les axes et ce qu'ils couvrent, les préfixes, le jour d'une revue, qui tranche quoi. Une ligne chacune._
+- Clôture partielle : une tâche faite de notre côté mais dont la ligne attend encore un tiers (validation, activation, réponse, correction chez un vendor ou un client) se clôt sur ce qui est fait, et sa suite, qui ne porte que l'attente du tiers, s'ouvre dans le même tour (skill `tasks`, opération `handoff`) ; on le dit en une ligne, « #A close, la suite chez <tiers> passe en #B ».
 
 ## Preuves
 
