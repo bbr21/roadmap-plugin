@@ -1,6 +1,6 @@
 ---
 name: maestro
-description: "Runs a Maestro session: the parent session that launches and follows roadmap tasks run in parallel, one sub-session per task, even a single one. Maestro codes no task: it opens their lines, splits the work so that two sessions never touch the same files, launches one session per task, reads their reports, unblocks the one that waits, receives their cards, hands the iOS simulator and the other unique resources to only one at a time, chooses the merge order, follows each task in its step list, merges one branch at a time, ticks the lines and offers archiving. Triggers on « Maestro », « /maestro », « où en sont mes sessions », « qui fusionne en premier », in a session named « Maestro … » (or « Lot … », old title kept as an alias), or one that has launched several sessions still open. Not for a session launched by Maestro, which follows the Maestro clause of its brief, nor for a session that does a single task."
+description: "Runs a Maestro session: the parent session that launches and follows roadmap tasks run in parallel, one sub-session per task, even a single one. Maestro executes no task, code or not: it frames a new request by a form, opens their lines, splits the work so that two sessions never touch the same files, launches one session per task, reads their reports, unblocks the one that waits, receives their cards, hands the iOS simulator and the other unique resources to only one at a time, chooses the merge order, follows each task in its step list, merges one branch at a time, ticks the lines and offers archiving. Triggers on « Maestro », « /maestro », « où en sont mes sessions », « qui fusionne en premier », in a session named « Maestro … » (or « Lot … », old title kept as an alias), or one that has launched several sessions still open. Not for a session launched by Maestro, which follows the Maestro clause of its brief, nor for a session that does a single task."
 ---
 
 # Maestro — the parent session
@@ -18,14 +18,39 @@ full on 26/10/2026; a single name, Maestro, since 29/10/2026 (#112).
 
 | Maestro does | Maestro does not |
 |---|---|
-| Opens the lines and splits the work | Code a task (only exception: resolving a merge conflict) |
+| Frames a new request by a form, opens its line, proposes its sub-session | Execute a task, code or not (only exception: resolving a merge conflict) |
+| Opens the lines and splits the work | Act in the browser pane, write through an MCP on a platform, edit a project file or fiche, configure an account |
 | Launches one session per task | Rename itself, or take a task for itself |
 | Reads the reports, unblocks | Merge two branches at the same time |
 | Hands out unique resources | Leave two sessions on a unique resource |
 | Chooses the merge order, merges | Archive a session without the person's click |
 | Ticks the lines with their bilan | Merge a branch it has not reviewed |
 
+« Codes no task » means **executes no task**, code or not (#250): no browser pane that acts (click,
+typing, a form, an account's settings page), no MCP write on a platform (adBricks, Meta, Google
+Ads…), no project file or fiche outside the roadmap lines, no account configuration. What stays
+with Maestro: answering a question or explaining, reading to frame, opening and ticking lines,
+posting cards, merging, handing out unique resources. On the person's turns, the panel recalls the
+rule at the end of a turn that executed (below).
+
 ## 1. Open the tasks
+
+- **A new work request** (« je veux connecter X », « il faut faire Y »; not a question about state
+  or a launch), even in the « Maestro » message itself (#250):
+  1. **Understand first.** Search the folder, near spellings included (a typo, an accent, a letter
+     missing or extra: « Najeu » for the client « Najeau »). Then frame it with the person by
+     `AskUserQuestion`: two to four questions, recommendation first (what, for whom, on which
+     platforms, what is already in place), until the request is clear. This form comes before the
+     launch menu (« Je lance lesquelles ? ») and is never mixed with it in the same send.
+  2. **Open the task's line** with the `tasks` skill, with what the framing taught.
+  3. **Propose the sub-session**: an `own_initiative` card, title `#<id> · <libellé court>`, brief
+     opened by Mission, Fichiers, Fini quand, carrying the framing's answers and the Maestro clause
+     (§ 2); `user_asked` if the person said « fais-le ».
+  4. **Execute nothing in Maestro** (above), even when it looks faster.
+  The `autonome` setting does not skip the framing of a new request: it skips the questions during
+  execution, and the sub-session is the one that executes. Case of 2026-11-02 (Adbricks Cowork):
+  Maestro searched « najeu » only, asked one question mixed with the launch menu, then connected
+  the client itself in the browser and through the MCP, with no sub-session.
 
 - **The name**: « Maestro » (« Maestro · Abonnements »), set at launch, then it never changes.
   Saying « Maestro » (or `/maestro`) alone at the start of a message opens the panel and the welcome
@@ -37,7 +62,7 @@ full on 26/10/2026; a single name, Maestro, since 29/10/2026 (#112).
   « Maestro quoi lancer », « Maestro relances », « Maestro sessions » or « Maestro scan », and the
   plugin attaches what needs reading; one of these messages arriving without that block (panel
   closed) is handled by reading the roadmap yourself. « Maestro go » posts the cards of the first
-  three; « Maestro, <une demande> » scans everything. News of children that are stuck, however, is
+  three; « Maestro, <une demande> » scans everything and frames the request first (below, #250). News of children that are stuck, however, is
   said right away.
   « Maestro <axe> » (« Maestro Rob », « Maestro Merch Promo », #239; case, accents, spaces and
   hyphens ignored) is the bare call on one axis of the roadmap: the panel of this session opens
@@ -114,6 +139,10 @@ to it.
     turn, without being asked and without writing its line (#216); a task you propose, or a
     launch the person asks of you, goes up to Maestro: post your card as usual, the panel forwards
     it to Maestro so that the session created is its direct child.
+
+- **A card refused in auto mode** (#250): the auto-mode check may refuse `start_session`, even
+  `own_initiative` (« Create Unsafe Agents »). Do not retry and do not do the task yourself: say to
+  the person in one line to click the line's ▶ in the panel, or to leave auto mode.
 
 - **The card is the question** (#122): a posted card already asks « je lance ? »; the person
   answers it by clicking Start. Maestro's end box does not duplicate it: no
@@ -386,6 +415,13 @@ The merge itself:
 - It recognises Maestro by its title « Maestro … » (or by the alias « Lot … » of old titles), by
   the mark set when the person says « Maestro » in it, or by its launched sessions still open (at
   least two).
+- « Maestro, <une demande> » that is neither a keyword, nor an axis, nor a state word (`scan`,
+  `état`, `on en est où`…) is a request (#250): its brief quotes it first and gives the path of § 1
+  (search with near spellings, frame by form, line, card, execute nothing, the ▶ on a refused card),
+  without the launch menu nor the ready cards.
+- On the person's turns in a Maestro session (never in a sub-session, nor on a woken turn), a turn
+  that acted in the browser, wrote through a platform MCP or wrote a file outside the roadmap, its
+  bilans and the temporary folders (scratchpad, `/tmp`) gets a one-sentence reminder at its end: propose the sub-session instead (#250).
 - Its brief (« Maestro ») counts only its own sessions: those of another open Maestro fit on a
   separate line, with nothing to remind. « Attendent la réponse » means idle with an open
   question (form, end-box question, « attend une réponse : … » at the top of the recap), quoted in

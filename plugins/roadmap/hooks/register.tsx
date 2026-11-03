@@ -214,6 +214,8 @@ import {
   maestroCall,
   maestroAxisNote,
   maestroContext,
+  maestroExecAction,
+  maestroExecReminder,
   maestroDayContext,
   maestroIntro,
   maestroRelaunchContext,
@@ -1077,6 +1079,16 @@ function rangementNote(c: Capture | undefined, last: string | undefined, active:
  * `update_plan` des nouvelles des enfants, #84), et les outils du tour en cours, ceux de la session seule.
  */
 let stepList = { planned: false, tools: 0 }
+/** Les gestes d'exécution d'un tour de la personne chez Maestro (#250) : redits une fois en fin de tour. */
+let maestroExec: string[] = []
+
+/** Le rappel « Maestro n'exécute pas » (#250), une fois par tour qui a exécuté. */
+function maestroExecNote(): string | undefined {
+  if (maestroExec.length === 0) return undefined
+  const text = maestroExecReminder(maestroExec)
+  maestroExec = []
+  return text
+}
 /**
  * Les cartes de session posées pendant le tour (leur « #N ») et le refus déjà donné (#122) : une boîte de
  * fin qui redemande de les lancer est refusée une fois par tour, jamais deux, pour ne pas enfermer le modèle.
@@ -1233,6 +1245,8 @@ async function endOfTurnBlock($: EngineInterface, last: string | undefined, acti
   // La liste d'étapes (#98, #104) : dans tout projet ; après une fusion ou une publication (#136).
   notes.push(stepListNote())
   notes.push(deliveryNote())
+  // Maestro qui a exécuté lui-même (#250) : la session fille à la place.
+  notes.push(maestroExecNote())
   // Le bloc de fin de tour (#85) : dans tout projet.
   try {
     notes.push(await closingNote($, last, settings.capture && c !== undefined && rangementWaiting(c) !== undefined))
@@ -3169,7 +3183,7 @@ async function briefFound($: EngineInterface, source: Source, task: Task): Promi
  * orienté objectif — les sessions qui attendent Bertrand, celles qui tournent, et les tâches à
  * lancer, la plus utile d'abord, avec leur carte prête. Rien n'est lancé ni écrit ici.
  */
-async function maestroText($: EngineInterface, go: boolean, only?: 'launch' | 'sessions'): Promise<string> {
+async function maestroText($: EngineInterface, go: boolean, only?: 'launch' | 'sessions', request?: string): Promise<string> {
   const source = await sourceNow($)
   if (!source) {
     return `${Person()} a dit « Maestro », mais ce projet (${await $.session.root()}) n'a pas de roadmap : dis-le en une phrase, et propose la skill roadmap:onboarding, qui la pose dans le dépôt (et peut la reconstituer depuis son historique).`
@@ -3256,6 +3270,7 @@ async function maestroText($: EngineInterface, go: boolean, only?: 'launch' | 's
     ...(othersLate > 0 ? { othersLate } : {}),
     ...(LAUNCH_EFFORTS.has(settings.launchEffort) ? { launchEffort: settings.launchEffort } : {}),
     ...(only ? { only } : {}),
+    ...(request !== undefined ? { request } : {}),
   })
   return withAxisNote(context, only === 'sessions' ? undefined : axis)
 }
@@ -4806,7 +4821,7 @@ export const register: Register = (on, options) => {
         }
       }
       try {
-        texts.push(call.action ? await maestroActionText($, call.action) : call.scan ? await maestroText($, call.go) : await maestroIntroText($, call.axis))
+        texts.push(call.action ? await maestroActionText($, call.action) : call.scan ? await maestroText($, call.go, undefined, call.request) : await maestroIntroText($, call.axis))
       } catch (err) {
         texts.push(`${Person()} a dit « Maestro », mais l'état de la roadmap n'a pas pu être lu (${err instanceof Error ? err.message : String(err)}) : dis-le en une phrase.`)
       }
@@ -4919,6 +4934,11 @@ export const register: Register = (on, options) => {
   on('tool.call', ($, e, next) => {
     const tool = (e as { tool?: unknown }).tool
     if (next.origin.plugin === 'engine' && !fromAgent(e) && tool !== UPDATE_PLAN_TOOL && tool !== WRAP_UP_TOOL) stepList.tools += 1
+    // Maestro n'exécute pas (#250) : à un tour de la personne, un geste d'exécution se note pour la fin du tour.
+    if (next.origin.plugin === 'engine' && !fromAgent(e) && closingTurn.maestro && !closingTurn.wake && typeof tool === 'string') {
+      const done = maestroExecAction(tool, e, capture ? [questionsPath(capture.source)] : [])
+      if (done !== undefined && !maestroExec.includes(done)) maestroExec.push(done)
+    }
     return next(e)
   })
   // Garde-fou du dossier principal (#87) : une commande git interdite n'est pas lancée.
@@ -4957,6 +4977,7 @@ export const register: Register = (on, options) => {
       const maestro = await maestroHere($)
       const wake = maestro && wakeTurn(e.text)
       closingTurn = { work: false, box: '', wake, maestro }
+      maestroExec = []
       wakeRefused = false
       if (maestro && !wake) await update($, pendingAsksAtom, () => []).catch(() => undefined)
     }

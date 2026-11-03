@@ -668,6 +668,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.167.0 (2026-11-03)** : maestro : une demande de travail neuve se cadre par formulaire puis se délègue à une session fille, et la garde de fin de tour rappelle à Maestro de ne rien exécuter lui-même (#250)
 - **0.166.1 (2026-11-03)** : bande de Maestro : la jauge de contexte se tient à 2 px sous la jauge d'étapes (#241)
 - **0.166.0 (2026-11-03)** : panneau : toutes les vues suivent la vue de référence (marque sur 32 px, # serré, retard seul), la carte Chaîne d'une fille devient l'arbre de la liste (#259)
 - **0.165.0 (2026-11-03)** : messages : une ligne d'état en italique et un journal court à glyphes, le compte rendu de la roadmap fondu dedans, plus de second message ni de tableau, une tâche abandonnée dite « annulée » (#261)

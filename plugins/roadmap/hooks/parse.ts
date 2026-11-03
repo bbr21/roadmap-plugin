@@ -6271,7 +6271,7 @@ const withoutReminders = (prompt: string) => prompt.replace(/^(?:\s*<system-remi
  * `scan` : il veut l'état de la roadmap. L'appel nu ne scanne pas (#126) : le panneau s'ouvre et Maestro
  * propose le scan ; « Maestro scan », « Maestro go » ou une demande après « Maestro » scannent.
  */
-export function maestroCall(prompt: string, axes: readonly string[] = []): { go: boolean; scan: boolean; action?: MaestroAction; axis?: string } | undefined {
+export function maestroCall(prompt: string, axes: readonly string[] = []): { go: boolean; scan: boolean; action?: MaestroAction; axis?: string; request?: string } | undefined {
   // « /maestro » (et « /roadmap:maestro ») lance la skill du même nom : il vaut « Maestro » (#112).
   const m = /^\s*(?:\/(?:roadmap:)?)?maestro\b[\s,.:!?-]*(.*)$/is.exec(withoutReminders(prompt))
   if (!m) return undefined
@@ -6283,8 +6283,13 @@ export function maestroCall(prompt: string, axes: readonly string[] = []): { go:
   const named = /^axe\s+(.+)$/i.exec(rest)
   const axis = go || (action && !named) ? undefined : axisNamed(named?.[1] ?? rest, axes)
   if (axis !== undefined) return { go: false, scan: false, axis }
-  return { go, scan: rest !== '', ...(action ? { action } : {}) }
+  // « Maestro, <une demande> » (#250) : ni un mot-clé ni un mot d'état, le reste est une demande à cadrer.
+  const request = !go && !action && rest !== '' && !MAESTRO_STATE.test(rest) ? rest : undefined
+  return { go, scan: rest !== '', ...(action ? { action } : {}), ...(request ? { request } : {}) }
 }
+
+/** Les mots d'état après « Maestro » (#250) : un scan, pas une demande de travail. */
+const MAESTRO_STATE = /^(?:tout\s+)?scan(?:ne|ner)?\b|^[ée]tat\b|^statut\b|^status\b|^(?:le\s+)?point\b|^o[uù]\s+en\b|^on\s+en\s+est\b|^quoi\s+de\s+neuf\b/i
 
 /** Un nom d'axe comparable (#239) : sans casse ni accent, espaces, tirets et soulignés confondus en un tiret. */
 export function axisKey(name: string): string {
@@ -7829,6 +7834,83 @@ function maestroTaskLine(t: Task, title: string, today: string, extra: string[] 
 const MAESTRO_CARD_IS_QUESTION =
   "la carte est la question, ta boîte de fin ne demande pas laquelle lancer et n'a pas de bouton « Lance … » : le récap seul ; une tâche qui a déjà sa session ouverte (list_sessions avec {\"linked\": true}) ne reçoit pas de nouvelle carte."
 
+/**
+ * Une demande de travail neuve faite à Maestro (#250) : il cherche, cadre par formulaire, ouvre la ligne et
+ * propose la session fille ; il n'exécute rien lui-même, même hors code. Le Maestro d'Adbricks Cowork, le
+ * 2026-11-02, avait cherché « najeu » sans « Najeau », puis connecté le client lui-même dans le navigateur.
+ */
+function maestroRequestLines(request: string, card: string): string[] {
+  return [
+    '',
+    `Le message de ${person()} porte une demande : « ${request} ». Une demande de travail neuve (pas une question d'état ni de lancement) ne se fait pas ici : tu la cadres puis tu la délègues (skill roadmap:maestro, § 1).`,
+    `1. Comprends d'abord : cherche dans le dossier, graphies voisines comprises (faute de frappe, accent, lettre en trop ou en moins : « Najeu » pour « Najeau ») ; puis cadre avec ${person()} par AskUserQuestion, deux à quatre questions, ta recommandation en premier (quoi, pour qui, sur quelles plateformes, ce qui est déjà en place), jusqu'à ce que la demande soit claire. Ce formulaire est le seul de ton envoi, sans menu de lancement mêlé ; le réglage autonome ne dispense pas de ce cadrage : il dispense des questions pendant l'exécution, que fait la session fille.`,
+    `2. Ouvre sa ligne par la skill roadmap:tasks, avec ce que le cadrage a appris.`,
+    `3. Propose la session fille : sa carte (${card}), titre « #<id> · <libellé court> », brief ouvert par Mission, Fichiers, Fini quand, avec les réponses du cadrage et la clause de Maestro ; en user_asked si ${person()} t'a dit de la faire.`,
+    `4. N'exécute rien dans Maestro, code ou non : ni volet navigateur (clic, saisie, page de réglages d'un compte), ni écriture MCP sur une plateforme, ni fiche ou fichier du projet hors roadmap, ni configuration d'un compte. Restent à toi : répondre, expliquer, lire pour cadrer, ouvrir et cocher les lignes, poser les cartes, fusionner, donner les ressources uniques.`,
+    `- Ta carte refusée par le contrôle du mode auto (« Create Unsafe Agents », agent non sûr) : ne réessaie pas et ne fais pas la tâche toi-même ; dis à ${person()} en une ligne de cliquer le ▶ de sa ligne dans le panneau, ou de quitter le mode auto.`,
+    `- Si le message n'est qu'une question d'état ou de lancement, réponds-y avec l'état ci-dessous.`,
+  ]
+}
+
+/** Les navigateurs que Maestro ne pilote pas (#250) : le volet de l'app, Chrome, l'écran du Mac. */
+const BROWSER_TOOL = /^mcp__(?:Claude_Browser|claude-in-chrome|computer-use)__(.+)$/
+/** Les actions de `computer` qui ne font que regarder. */
+const LOOK_ACTIONS = new Set(['screenshot', 'zoom', 'scroll', 'scroll_to', 'wait', 'hover'])
+/** Les outils d'un navigateur qui agissent sur la page, quels que soient leurs arguments. */
+const BROWSER_ACTS = /^(?:form_input|javascript_tool|file_upload|upload_image|shortcuts_execute|app_click|app_type|app_key|app_drag|app_menu|computer_batch|teach_batch|teach_step|write_clipboard)$/
+/** Une page de réglages d'un compte : y aller, c'est déjà le configurer. */
+const SETTINGS_URL = /settings|config|admin|setup|integrations?|tokens?|credentials|connect|r[ée]glages|business\.facebook|ads\.google\.com\/aw\/(?:account|settings)/i
+/** Les outils MCP de l'app elle-même (sessions, liste d'étapes, volets) : le travail de Maestro. */
+const APP_MCP = /^mcp__(?:ccd_[a-z_]+|visualize|terminal|mcp-registry|scheduled-tasks-read)__/
+/** Un verbe d'écriture dans le nom d'un outil MCP : `create`, `update`, `send`… */
+const MCP_WRITE = /(?:^|_)(?:create|update|delete|set|add|remove|mutate|execute|apply|import|activate|clone|copy|duplicate|upload|send|reply|forward|trash|publish|run|invite|assign|record|acknowledge|reconnect|restore|rename|reconfigure|start|move|link|associate|approve|pause|finalize|label|unlabel|mark|schedule|share|write|post|submit|connect)(?:_|$)/i
+
+/** L'action d'un appel du navigateur, s'il agit ; `undefined` s'il ne fait que lire ou regarder. */
+function browserActs(name: string, input: Record<string, unknown>): boolean {
+  if (BROWSER_ACTS.test(name)) return true
+  if (name === 'computer') return typeof input.action === 'string' && !LOOK_ACTIONS.has(input.action)
+  if (name === 'navigate') return typeof input.url === 'string' && SETTINGS_URL.test(input.url)
+  if (name === 'browser_batch' && Array.isArray(input.actions)) {
+    return input.actions.some(a => {
+      const item = (a ?? {}) as { name?: unknown; input?: unknown }
+      return typeof item.name === 'string' && browserActs(item.name, (item.input ?? {}) as Record<string, unknown>)
+    })
+  }
+  return false
+}
+
+/**
+ * Un geste d'exécution fait dans Maestro (#250), pour la garde de fin de tour : son libellé, ou `undefined`.
+ * Le navigateur qui agit (clic, saisie, formulaire, script, page de réglages d'un compte), une écriture MCP
+ * sur une plateforme (un verbe d'écriture dans le nom de l'outil, hors outils de l'app), un fichier écrit
+ * hors de la roadmap, de ses bilans, de `keep`, de la mémoire et des dossiers temporaires. Lire, chercher, lancer une commande : rien.
+ */
+export function maestroExecAction(tool: string, input: unknown, keep: readonly string[] = []): string | undefined {
+  const args = (input && typeof input === 'object' ? input : {}) as Record<string, unknown>
+  const browser = BROWSER_TOOL.exec(tool)
+  if (browser) return browserActs(browser[1]!, args) ? 'un clic dans le navigateur' : undefined
+  if (tool.startsWith('mcp__')) {
+    if (APP_MCP.test(tool)) return undefined
+    const name = tool.split('__').slice(2).join('__')
+    return MCP_WRITE.test(name) ? `l'écriture MCP ${name}` : undefined
+  }
+  if (tool === 'Edit' || tool === 'Write' || tool === 'NotebookEdit') {
+    const path = typeof args.file_path === 'string' ? args.file_path : typeof args.notebook_path === 'string' ? args.notebook_path : undefined
+    if (path === undefined || keep.includes(path)) return undefined
+    const base = path.split('/').pop() ?? path
+    if (/^ROADMAP[^/]*\.md$/i.test(base) || /bilans?/i.test(base) || /\/\.claude\/projects\/[^/]+\/memory\//.test(path)) return undefined
+    // Un fichier temporaire (scratchpad, /tmp) : les petits scripts de Maestro pour écrire sa roadmap (#255).
+    if (/^\/(?:private\/)?tmp\/|^\/var\/folders\//.test(path)) return undefined
+    return `l'écriture de ${base}`
+  }
+  return undefined
+}
+
+/** Le rappel de fin de tour quand Maestro a exécuté lui-même (#250) : une phrase, la session fille à la place. */
+export function maestroExecReminder(actions: readonly string[]): string {
+  return `Maestro n'exécute pas (skill roadmap:maestro, § 1) : ce tour a fait ${actions.join(', ')}. Arrête-toi là et propose la session fille à la place : la ligne de la tâche par la skill roadmap:tasks, puis sa carte (start_session, own_initiative, titre « #<id> · <libellé court> », brief ouvert par Mission, Fichiers, Fini quand, avec ce qui est déjà fait) ; la carte refusée en mode auto, dis à ${person()} de cliquer le ▶ de la ligne dans le panneau, ou de quitter le mode auto.`
+}
+
 /** Le contexte que reçoit Claude quand Bertrand dit « Maestro ». */
 export function maestroContext(o: {
   source: Source
@@ -7851,6 +7933,8 @@ export function maestroContext(o: {
   othersLate?: number
   /** Une action de l'accueil (#141) : `launch` saute les sessions, `sessions` ne lance rien. */
   only?: 'launch' | 'sessions'
+  /** « Maestro, <une demande> » (#250) : la demande à cadrer puis déléguer, sans menu de lancement. */
+  request?: string
 }): string {
   const waiting = [...o.waiting].sort((a, b) => b.since - a.since)
   const stuck = waiting.filter(w => w.since >= MAESTRO_STUCK_MS)
@@ -7879,11 +7963,13 @@ export function maestroContext(o: {
   ]
   const lines: string[] = [
     header,
+    // Une demande neuve passe avant l'état (#250) : cadrer puis déléguer.
+    ...(o.request === undefined ? [] : maestroRequestLines(o.request, cardTool(o.launchEffort, projectSettings(o.source).travail))),
     // Une action de l'accueil (#141) ne montre que sa part : les sessions, ou ce qu'on peut lancer.
     ...(o.only === 'launch' ? [] : sessionLines),
     ...(o.only === 'sessions' ? [] : launchLines),
     '',
-    "Ce que tu fais, sans rien coder ni écrire dans la roadmap (sauf la ligne d'une tâche que propose une de tes sessions) :",
+    `Ce que tu fais, sans rien coder ni écrire dans la roadmap (sauf la ligne d'une tâche que propose une de tes sessions${o.request === undefined ? '' : ', ou celle de la demande'}) :`,
     `- Ouvre ta réponse par une phrase de verdict : ce qui avance, ce qui coince${stuck.length > 0 ? ` (${stuck.length} session${stuck.length > 1 ? 's' : ''} coincée${stuck.length > 1 ? 's' : ''} depuis plus de ${durationLabel(MAESTRO_STUCK_MS)} : dis lesquelles et ${o.autonome ? 'réponds d\'abord toi-même à celles qui ne reviennent pas à ' + person() + ' (plus bas) ; les autres, à ' + person() + ' d\'y répondre d\'abord' : 'qu\'il revient à ' + person() + ' d\'y répondre d\'abord'}, avec leur lien)` : ''}.`,
   ]
   // Plus de relais (#151) : la personne répond dans la session ; une réponse a pu y arriver depuis cette liste (#121).
@@ -7893,7 +7979,9 @@ export function maestroContext(o: {
   // Maestro suit ses sessions par sa liste d'étapes (#104), dans les deux modes.
   lines.push(MAESTRO_STEP_LIST)
   const card = `pose sa carte de session (${cardTool(o.launchEffort, projectSettings(o.source).travail)}) avec le titre et le brief donnés ci-dessous, sans la lancer toi-même`
-  if (o.only === 'sessions') {
+  if (o.request !== undefined) {
+    lines.push(`- Pas de menu de lancement ni de carte des tâches à lancer dans ce tour : la demande d'abord ; elles restent au panneau (▶ devant chaque tâche).`)
+  } else if (o.only === 'sessions') {
     lines.push(`- Puis dis où en est chacune et laquelle débloquer d'abord ; ne lance rien ici (« Maestro quoi lancer » pour ça).`)
   } else if (o.candidates.length === 0) {
     lines.push('- Rien à lancer : dis-le en une phrase, et ce qui le débloquerait.')
@@ -7924,7 +8012,7 @@ export function maestroContext(o: {
     // Sans mode ADHD (#128), rien ne bride la longueur de la réponse.
     ...(o.adhd === false ? [] : ['- Mode ADHD et réponses courtes : pas de tableau, pas de récapitulatif.']),
   )
-  if (o.candidates.length > 0 && o.only !== 'sessions') {
+  if (o.candidates.length > 0 && o.only !== 'sessions' && o.request === undefined) {
     lines.push('', 'Les cartes prêtes, une par tâche à lancer :')
     for (const c of o.candidates.slice(0, o.go || o.autonome ? 3 : MAESTRO_MENU)) {
       lines.push('', `### ${c.task.id ? `#${c.task.id}` : c.title}`, `Titre : ${c.brief.title}`, 'Brief :', c.brief.prompt, `Contexte : ${c.brief.background}`)
