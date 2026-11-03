@@ -893,16 +893,19 @@ export function stepsBarIcon(
 export function contextBarIcon(
   palette: Palette,
   view: ContextView,
-  opts: { width: number; height: number },
+  opts: { width: number; height: number; top?: number },
 ): { source: string; width: number; height: number } {
   const { width, height } = opts
+  // `top` : des px transparents au-dessus de la barre, l'écart sous la jauge d'étapes de la bande (#241).
+  const top = opts.top ?? 0
+  const full = height + top
   const rx = Math.min(RADIUS.bar, height / 2)
   const used = (Math.min(100, Math.max(0, view.percent)) * width) / 100
   const fill = view.tone === 'full' ? palette.late : view.tone === 'high' ? palette.block : palette.live
   return {
-    source: `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}"><rect x="0" y="0" width="${width}" height="${height}" rx="${rx}" fill="${palette.sel}"/>${used > 0 ? `<rect x="0" y="0" width="${used.toFixed(1)}" height="${height}" rx="${rx}" fill="${fill}"/>` : ''}</svg>`,
+    source: `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${full}" viewBox="0 0 ${width} ${full}"><rect x="0" y="${top}" width="${width}" height="${height}" rx="${rx}" fill="${palette.sel}"/>${used > 0 ? `<rect x="0" y="${top}" width="${used.toFixed(1)}" height="${height}" rx="${rx}" fill="${fill}"/>` : ''}</svg>`,
     width,
-    height,
+    height: full,
   }
 }
 

@@ -5880,8 +5880,9 @@ function maestroBandTree(
           const [dot, word] = hue(t)
           const bar = view && Svg ? stepsBarIcon(palette, view.segments, { width: BAND_GAUGE.row, height: 4, waiting: t.state === 'wait', merging: t.state === 'merge', finished: t.finished === true }) : undefined
           // Le contexte de la session en jauge fine sous sa jauge d'étapes (#157, revenu par #217) ; sans mesure, rien.
+          // L'écart entre les deux est dessiné dans l'image, à BAND_GAUGE.gap px (#241).
           const ctx = contexts.rows[i]
-          const ctxBar = ctx && Svg ? contextBarIcon(palette, ctx, { width: bar?.width ?? BAND_GAUGE.row, height: 2 }) : undefined
+          const ctxBar = ctx && Svg ? contextBarIcon(palette, ctx, { width: bar?.width ?? BAND_GAUGE.row, height: 2, top: BAND_GAUGE.gap }) : undefined
           const mark = marks[i] ?? bandState(t)
           const step = stepOf(t, i)
           return (
@@ -5899,7 +5900,7 @@ function maestroBandTree(
               {/* Jauge, compte et état à largeur fixe, sur chaque ligne (#172) : les barres partent de la même
                   colonne, quels que soient le titre, l'étape ou le compte (« 5/7 », « 7/7 Done »). */}
               {Svg && (
-                <Box key={`band-gauge:${keyPart(t.id)}`} width={BAND_COLUMNS.gauge} flexShrink={0} flexDirection="column" gap={SPACE.tight}>
+                <Box key={`band-gauge:${keyPart(t.id)}`} width={BAND_COLUMNS.gauge} flexShrink={0} flexDirection="column" gap={0}>
                   {bar && <Svg source={bar.source} alt={`étapes ${view?.count ?? ''}`} width={bar.width} height={bar.height} />}
                   {ctxBar && ctx && <Svg source={ctxBar.source} alt={`contexte ${ctx.text}`} width={ctxBar.width} height={ctxBar.height} />}
                 </Box>
@@ -5937,8 +5938,8 @@ function maestroBandTree(
   )
 }
 
-/** La largeur des jauges d'une ligne de la bande de Maestro, étapes et contexte, en px (#147, #217) ; celle de Maestro est partie (#174). */
-const BAND_GAUGE = { row: 64 }
+/** La largeur des jauges d'une ligne de la bande de Maestro, étapes et contexte, en px (#147, #217) ; celle de Maestro est partie (#174). `gap` : l'écart en px entre les deux, dessiné dans la jauge de contexte (#241). */
+const BAND_GAUGE = { row: 64, gap: 2 }
 
 /**
  * La case de la jauge de la bande de Maestro, en cellules de l'app (~7,8 px, #172) : 64 px tiennent dans
