@@ -5011,6 +5011,22 @@ export function bilanConfig(cowJson: string): BilanConfig | undefined {
   return undefined
 }
 
+/** Ce que dit `cowork.json` d'un dossier Cowork qui confie sa roadmap au plugin (#262), comme `cowork.py` 1.6.0. */
+const COWORK_PLUGIN = 'plugin-roadmap'
+
+/**
+ * `_cowork/cowork.py` écrit la roadmap du dossier (clôture, édition) : il est là, et `cowork.json` ne la
+ * confie pas au plugin (`"roadmap": "plugin-roadmap"`, #262). Un `cowork.json` illisible laisse la main à cowork.py.
+ */
+export function coworkPyWrites(tool: boolean, cowJson: string | undefined): boolean {
+  if (!tool) return false
+  try {
+    return (JSON.parse(cowJson ?? '{}') as { roadmap?: unknown }).roadmap !== COWORK_PLUGIN
+  } catch {
+    return true
+  }
+}
+
 /** Le bilan d'une roadmap : celui de son cowork.json, sinon le journal par défaut. */
 export function bilanConfigFor(cowJson: string | undefined): BilanConfig {
   return (cowJson === undefined ? undefined : bilanConfig(cowJson)) ?? DEFAULT_BILAN

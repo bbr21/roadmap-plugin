@@ -14,7 +14,9 @@ Python 3.9 et plus, bibliothèque standard seulement. Hérite du moteur d'écrit
 lisent et écrivent une ligne de la même façon.
 """
 
+import csv
 import datetime
+import io
 import json
 import os
 import re
@@ -40,11 +42,21 @@ OPS = {
     "add": {"op", "key", "label", "axis", "section", "parent", "note", "fields"},
     "update": {"op", "id", "fields"},
     "reschedule": {"op", "id", "due"},
-    "done": {"op", "id", "date", "proof"},
-    "drop": {"op", "id", "reason"},
+    "done": {"op", "id", "date", "proof", "bilan"},
+    "drop": {"op", "id", "reason", "bilan"},
     "pause": {"op", "id", "until", "reason"},
-    "handoff": {"op", "id", "date", "proof", "delivered", "key", "label", "waiting", "src", "fields"},
+    "handoff": {"op", "id", "date", "proof", "delivered", "key", "label", "waiting", "src", "fields", "bilan"},
 }
+# Le bilan d'une clôture (#262), au contrat de `cowork.py roadmap close --bilan-b64` : ses colonnes, les
+# valeurs admises du journal par défaut, la borne d'une ligne de conclusion.
+BILAN_COLS = ("date", "id", "fait", "souci", "ressenti", "cause", "corrections", "note")
+BILAN_CLES = {"fait", "souci", "ressenti", "cause", "corrections", "note"}
+JOURNAL_DEFAUT = "ROADMAP-bilans.csv"
+RESSENTIS = ["fluide", "accroché", "bloqué"]
+CAUSES = ["aucune", "spec-floue", "attente-tiers", "bug-outil", "refait", "périmètre-élargi", "autre"]
+CONCLUSION_MAX = 140
+# Un dossier Cowork dont `cowork.json` confie la roadmap au plugin (`"roadmap": "plugin-roadmap"`, #262).
+COWORK_PLUGIN = "plugin-roadmap"
 # La section où part une tâche en pause (#159) : sa date de reprise la range, aucune clé nouvelle.
 SECTION_PAUSE = "Plus tard"
 # Ce que `fields` ne pose jamais : le numéro, la session, la clôture ; `parent` d'un ajout passe par `parent`.
@@ -100,6 +112,40 @@ def _court(libelle, n=LIBELLE_COURT):
     if len(libelle) <= n:
         return libelle
     return libelle[:n].rsplit(" ", 1)[0].rstrip(" ,;:") + "…"
+
+
+def _cowork(dossier):
+    """Le `cowork.json` du dossier, ou None."""
+    try:
+        with open(os.path.join(dossier, "cowork.json"), encoding="utf-8") as f:
+            cfg = json.load(f)
+        return cfg if isinstance(cfg, dict) else None
+    except (OSError, ValueError):
+        return None
+
+
+def journal_de_bilan(dossier, rdir):
+    """Le journal des bilans (#262) : `bilan.log` de `cowork.json`, à côté de lui, et les valeurs
+    admises de ses colonnes ; sinon `ROADMAP-bilans.csv` à côté de la roadmap. `exige` : un dossier
+    Cowork qui confie sa roadmap au plugin demande un bilan à chaque clôture, comme `cowork.py`."""
+    cfg = _cowork(dossier) or {}
+    out = {"chemin": os.path.join(rdir, JOURNAL_DEFAUT), "ressentis": RESSENTIS, "causes": CAUSES,
+           "exige": cfg.get("roadmap") == COWORK_PLUGIN}
+    b = cfg.get("bilan")
+    if isinstance(b, dict) and isinstance(b.get("log"), str) and b["log"].strip():
+        log = b["log"].strip()
+        racine = os.path.realpath(dossier)
+        chemin = os.path.realpath(os.path.join(racine, log))
+        if os.path.isabs(log) or ".." in log.replace("\\", "/").split("/") or not chemin.startswith(racine + os.sep):
+            raise Erreur("le journal des bilans « %s » de cowork.json sort du dossier : rien ne s'écrit" % log)
+        out["chemin"] = os.path.join(dossier, log)
+        spec = (cfg.get("logs") or {}).get(b["log"]) if isinstance(cfg.get("logs"), dict) else None
+        colonnes = spec.get("columns") if isinstance(spec, dict) else None
+        for cle, nom in (("ressentis", "ressenti"), ("causes", "cause")):
+            enum = next((c.get("enum") for c in colonnes or [] if isinstance(c, dict) and c.get("name") == nom), None)
+            if isinstance(enum, list) and enum:
+                out[cle] = [str(x) for x in enum]
+    return out
 
 
 # ---------------------------------------------------------------- envoi d'une communication (#242)
@@ -244,6 +290,18 @@ def _date(v, quoi, cle):
     return val
 
 
+def _date_fait(v, quoi, cle):
+    """Une date de clôture : AAAA-MM-JJ, ou AAAA-MM-JJ HH:MM (#262)."""
+    val = audit._propre(v)
+    if im.DATE_FAIT.match(val) and im.DATE.match(val[:10]):
+        try:
+            datetime.date.fromisoformat(val[:10])
+            return val
+        except ValueError:
+            pass
+    raise Erreur("%s : date invalide %s:%r (AAAA-MM-JJ, ou AAAA-MM-JJ HH:MM)" % (quoi, cle, val))
+
+
 def _refs(v, quoi):
     if isinstance(v, str):
         v = [x for x in v.split(",") if x.strip() not in ("", "-")]
@@ -255,8 +313,10 @@ def _refs(v, quoi):
 class _Tenue(audit._Preparation):
     """La préparation de l'audit, avec les opérations du quotidien et leurs règles (#125, #158)."""
 
-    def __init__(self, ctx):
+    def __init__(self, ctx, maintenant=None):
         super().__init__(ctx, {})
+        self.maintenant = maintenant
+        self.journal = journal_de_bilan(ctx["dossier"], os.path.dirname(ctx["roadmap"]))
         self.cles_valeurs = ctx.get("cles_valeurs") or {}
         self.axes = ctx.get("axes") or []
         self.sections = ctx.get("sections") or []
@@ -430,29 +490,90 @@ class _Tenue(audit._Preparation):
         self.tenue["redatees"].append(t.id)
         self.changer(t, "redatée au %s" % _jj_mm(t.get("due")))
 
-    def fermer_tache(self, t, date, suffixe, souci, raison=""):
+    def moment(self, date):
+        """`fait:` porte l'heure de la clôture (#262) quand elle a lieu le jour même ; une date passée
+        reste sans heure inventée."""
+        if len(date) == 10 and self.maintenant is not None and date == self.maintenant.date().isoformat():
+            return "%s %s" % (date, self.maintenant.strftime("%H:%M"))
+        return date
+
+    def bilan_de(self, op, quoi):
+        """Le bilan entier d'une clôture (#262), contrôlé comme `cowork.py` ; exigé dans un dossier
+        Cowork qui confie sa roadmap au plugin."""
+        b = op.get("bilan")
+        if b is None:
+            if self.journal["exige"]:
+                raise Erreur("%s : ce dossier demande un bilan à chaque clôture : bilan {fait, souci, ressenti (%s), "
+                             "cause (%s), corrections, note}" % (quoi, "|".join(self.journal["ressentis"]),
+                                                                 "|".join(self.journal["causes"])))
+            return None
+        if not isinstance(b, dict):
+            raise Erreur("%s : le bilan est un objet {fait, souci, ressenti, cause, corrections, note}" % quoi)
+        inconnues = set(b) - BILAN_CLES
+        if inconnues:
+            raise Erreur("%s : bilan, clé inconnue %s (admises : %s)" % (quoi, ", ".join(sorted(inconnues)),
+                                                                        ", ".join(sorted(BILAN_CLES))))
+        r = {k: str(b.get(k) if b.get(k) is not None else "").strip() for k in BILAN_CLES}
+        for k, admises in (("ressenti", self.journal["ressentis"]), ("cause", self.journal["causes"])):
+            if r[k] not in admises:
+                raise Erreur("%s : bilan, %s « %s » hors des valeurs admises (%s)" % (quoi, k, r[k], ", ".join(admises)))
+        fluide = r["ressenti"] == "fluide"
+        if fluide != (r["cause"] == "aucune"):
+            raise Erreur("%s : bilan, ressenti « fluide » va avec cause « aucune », et seulement lui" % quoi)
+        for k in ("fait", "souci"):
+            if "\n" in r[k] or "\r" in r[k]:
+                raise Erreur("%s : bilan, %s tient en une ligne" % (quoi, k))
+            if len(r[k]) > CONCLUSION_MAX:
+                raise Erreur("%s : bilan, %s fait %d caractères, %d au plus" % (quoi, k, len(r[k]), CONCLUSION_MAX))
+        if not r["fait"]:
+            raise Erreur("%s : bilan, fait manque (ce qui a été fait, une ligne)" % quoi)
+        if not r["souci"] and not fluide:
+            raise Erreur("%s : bilan, souci manque : un ressenti %s dit un souci, en une ligne" % (quoi, r["ressenti"]))
+        if not r["corrections"].isdigit():
+            raise Erreur("%s : bilan, corrections est un nombre entier, 0 ou plus" % quoi)
+        if not r["note"]:
+            raise Erreur("%s : bilan, note manque (une phrase)" % quoi)
+        return r
+
+    def fermer_tache(self, t, date, suffixe, souci, raison="", bilan=None):
         t.retiree = True
-        champs = [(k, v) for k, v in t.champs if k not in ("fait", "attend")] + [("fait", date)]
+        fait = self.moment(date)
+        champs = [(k, v) for k, v in t.champs if k not in ("fait", "attend")] + [("fait", fait)]
         note = (t.note + " " + raison).strip() if raison else t.note
         self.vers_fait.append(im.rendre_ligne(True, t.libelle + suffixe, t.axe, champs, note))
-        self.bilans.append([date, t.id, t.libelle, souci, "", "", "", ""])
+        rang = dict(bilan) if bilan else {"fait": t.libelle, "souci": souci}
+        rang.update(date=fait[:10], id=t.id)
+        self.bilans.append(rang)
         self.bilan["fermetures"] += 1
+
+    def rendre_bilans(self, chemin):
+        """Les bilans au bout du journal, rangés par ses colonnes (#262) ; un journal absent ne se crée
+        que quand le dossier exige le bilan."""
+        texte = audit._lire_fichier(chemin)
+        if not self.bilans or (texte is None and not self.journal["exige"]):
+            return texte
+        texte = texte if texte is not None else ",".join(BILAN_COLS) + "\n"
+        entete = next(csv.reader(io.StringIO(texte)), None) or list(BILAN_COLS)
+        sortie = io.StringIO()
+        csv.writer(sortie, lineterminator="\n").writerows([[r.get(c, "") for c in entete] for r in self.bilans])
+        return texte + ("" if texte.endswith("\n") or not texte else "\n") + sortie.getvalue()
 
     def cocher(self, op):
         t = self.tache(op.get("id"), "clôture")
         quoi = "clôture de #%s" % t.id
-        date = _date(op.get("date"), quoi, "date")
+        date = _date_fait(op.get("date"), quoi, "date")
         preuve = audit._propre(op.get("proof"))
         if not preuve:
             raise Erreur("%s : la preuve manque (ce qui prouve que c'est fait, et où)" % quoi)
         self.refuser_sans_envoi(t, quoi)
+        bilan = self.bilan_de(op, quoi)
         ouverts = self.enfants_ouverts(t)
         if ouverts:
             raise Erreur("%s : #%s a un enfant ouvert (#%s)" % (quoi, t.id, ouverts[0].id))
         if t.get("tous"):
             raise Erreur("%s : tâche récurrente (tous:%s) : le bouton « Marquer faite » du panneau la reconduit"
                          % (quoi, t.get("tous")))
-        self.fermer_tache(t, date, "", "Faite : %s" % preuve)
+        self.fermer_tache(t, date, "", "Faite : %s" % preuve, bilan=bilan)
         self.tenue["cochees"].append(t.id)
         self.changer(t, "cochée le %s : %s" % (_jj_mm(date), preuve))
         p = _sans_parent(t)
@@ -465,7 +586,8 @@ class _Tenue(audit._Preparation):
             self.changer(mere, "reste ouverte (récurrente, tous:%s) : ajouter les étapes de la période suivante"
                          % mere.get("tous"))
             return
-        self.fermer_tache(mere, date, "", "Close avec son dernier enfant #%s" % t.id)
+        dernier = "Close avec son dernier enfant #%s" % t.id
+        self.fermer_tache(mere, date, "", dernier, bilan=dict(bilan, fait=dernier) if bilan else None)
         self.tenue["cochees"].append(mere.id)
         self.changer(mere, "close avec son dernier enfant #%s, le %s" % (t.id, _jj_mm(date)))
 
@@ -475,7 +597,7 @@ class _Tenue(audit._Preparation):
         des lignes ouvertes à #A passés à #B ; jamais dans les lignes closes."""
         t = self.tache(op.get("id"), "clôture partielle")
         quoi = "clôture partielle de #%s" % t.id
-        date = _date(op.get("date"), quoi, "date")
+        date = _date_fait(op.get("date"), quoi, "date")
         dits = {k: audit._propre(op.get(k)) for k in ("proof", "delivered", "label", "src", "waiting")}
         for k, ce in (("proof", "la preuve (le message parti au tiers, et où)"), ("delivered", "ce qui a été livré"),
                       ("label", "le libellé de la suite"), ("src", "src (le message qui a fait la demande au tiers)")):
@@ -492,6 +614,7 @@ class _Tenue(audit._Preparation):
         if t.get("tous"):
             raise Erreur("%s : tâche récurrente (tous:%s) : le bouton « Marquer faite » du panneau la reconduit"
                          % (quoi, t.get("tous")))
+        bilan = self.bilan_de(op, quoi)
         champs = {k: self.champ_propose(k, v, quoi, INTERDITS_SUITE) for k, v in (op.get("fields") or {}).items()}
         champs.update({"attend": tiers, "src": dits["src"]})
         if t.get("fiche"):
@@ -518,7 +641,7 @@ class _Tenue(audit._Preparation):
         self.bilan["enfants"] += 1
         chez = qui_attend(tiers)
         self.fermer_tache(t, date, " ; livré : %s" % dits["delivered"],
-                          "Faite : %s ; suite chez %s en #%s" % (dits["proof"], chez, suite.id))
+                          "Faite : %s ; suite chez %s en #%s" % (dits["proof"], chez, suite.id), bilan=bilan)
         self.tenue["cochees"].append(t.id)
         self.tenue["ajoutees"].append(suite.id)
         self.tenue["suites"].append({"close": t.id, "suite": suite.id, "tiers": chez})
@@ -560,7 +683,8 @@ class _Tenue(audit._Preparation):
         if ouverts:
             raise Erreur("%s : #%s a un enfant ouvert (#%s) : abandonne ou coche d'abord ses enfants"
                          % (quoi, t.id, ouverts[0].id))
-        self.fermer_tache(t, self.jour, " (abandonné)", "Abandonnée : %s" % raison, raison)
+        bilan = self.bilan_de(op, quoi)
+        self.fermer_tache(t, self.jour, " (abandonné)", "Abandonnée : %s" % raison, raison, bilan)
         self.tenue["abandonnees"].append(t.id)
         self.changer(t, "annulée : %s" % raison)
 
@@ -650,15 +774,16 @@ def _verifier_operation(op):
         raise Erreur("%s : fields est un objet" % nom)
 
 
-def preparer(ctx, props):
-    """Les fichiers préparés ({chemin: texte}) et le bilan ; `Erreur` au premier écart, rien d'écrit."""
+def preparer(ctx, props, maintenant=None):
+    """Les fichiers préparés ({chemin: texte}) et le bilan ; `Erreur` au premier écart, rien d'écrit.
+    `maintenant` donne l'heure d'une clôture du jour (`fait:AAAA-MM-JJ HH:MM`, #262)."""
     rdir = os.path.dirname(ctx["roadmap"])
     if audit.empreinte(rdir) != ctx.get("empreinte"):
         raise Erreur("la roadmap a changé depuis le contexte : relance tasks.py context, puis refais les opérations")
     operations = props.get("operations")
     if not isinstance(operations, list):
         raise Erreur("operations : une liste d'opérations")
-    prep = _Tenue(ctx)
+    prep = _Tenue(ctx, maintenant)
     for op in operations:
         _verifier_operation(op)
         {"add": prep.ajouter, "update": prep.completer_tache, "reschedule": prep.redater,
@@ -676,7 +801,7 @@ def preparer(ctx, props):
     fichiers = {ctx["roadmap"]: apres_o}
     if apres_f is not None:
         fichiers[ctx["fait"]] = apres_f
-    chemin_bilans = os.path.join(rdir, "ROADMAP-bilans.csv")
+    chemin_bilans = prep.journal["chemin"]
     bilans = prep.rendre_bilans(chemin_bilans)
     if bilans is not None:
         fichiers[chemin_bilans] = bilans
@@ -702,7 +827,7 @@ def ecrire(dossier, chemin_ops, appliquer=False, maintenant=None, en_json=False)
     if os.path.realpath(os.path.dirname(ctx["roadmap"])) != os.path.realpath(rdir):
         raise Erreur("le contexte porte sur %s, pas sur la roadmap de %s" % (ctx["roadmap"], dossier))
     decl = ob.declarations(ctx["dossier"])
-    fichiers, bilan = preparer(ctx, props)
+    fichiers, bilan = preparer(ctx, props, maintenant)
     bilan.update(ecrit=False, sauvegarde=None)
     if appliquer:
         if decl["ecriture_illisible"]:
@@ -712,7 +837,8 @@ def ecrire(dossier, chemin_ops, appliquer=False, maintenant=None, en_json=False)
             raise Erreur("ce projet écrit sa roadmap par %s (%s) : passe-lui les lignes de l'essai à blanc"
                          % (decl["ecriture"]["outil"], decl["ecriture"]["consigne"]))
         if fichiers:
-            bilan["sauvegarde"] = audit._sauvegarder(rdir, maintenant, fichiers, prefixe="sauvegarde-tasks-")
+            lieu = audit.lieu_de_sauvegarde(ctx["dossier"], rdir)
+            bilan["sauvegarde"] = audit._sauvegarder(lieu, maintenant, fichiers, prefixe="sauvegarde-tasks-")
             im._ecrire_tout(fichiers)
             bilan["ecrit"] = True
     outil = decl["ecriture"]["outil"] if decl["ecriture"] else None

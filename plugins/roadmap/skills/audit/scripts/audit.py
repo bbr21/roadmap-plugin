@@ -1025,6 +1025,23 @@ def preparer(releve, props):
     return {p: t for p, t in fichiers.items() if _lire_fichier(p) != t}, prep.bilan
 
 
+# Où va la sauvegarde d'un dossier Cowork sans `_to_delete/` : hors du dossier, où son doctor la
+# prendrait pour une fiche (#262).
+SAUVEGARDES = "~/.claude/roadmap-sauvegardes"
+
+
+def lieu_de_sauvegarde(dossier, rdir):
+    """Où se sauvegarde la roadmap avant d'écrire (audit, tasks ; #262) : `_to_delete/` s'il existe ;
+    hors du dossier pour un dossier Cowork (un `cowork.json`), dont le doctor prendrait la sauvegarde
+    pour une fiche ; sinon à côté d'elle."""
+    corbeille = os.path.join(dossier, "_to_delete")
+    if os.path.isdir(corbeille):
+        return corbeille
+    if os.path.isfile(os.path.join(dossier, "cowork.json")):
+        return os.path.join(os.path.expanduser(SAUVEGARDES), os.path.basename(os.path.normpath(dossier)))
+    return rdir
+
+
 def _sauvegarder(rdir, maintenant, chemins, prefixe="sauvegarde-audit-"):
     base = os.path.join(rdir, prefixe + maintenant.strftime("%Y-%m-%d-%H%M%S"))
     sauvegarde, n = base, 1
@@ -1059,7 +1076,7 @@ def appliquer(dossier, chemin_props, maintenant=None):
     bilan.update(sauvegarde=None, ecrit=False, ecriture=decl["ecriture"],
                  lignes={os.path.basename(p): lignes_changees(_lire_fichier(p), t) for p, t in fichiers.items()})
     if fichiers and not decl["ecriture"]:
-        bilan["sauvegarde"] = _sauvegarder(rdir, maintenant, fichiers)
+        bilan["sauvegarde"] = _sauvegarder(lieu_de_sauvegarde(projet, rdir), maintenant, fichiers)
         im._ecrire_tout(fichiers)
         bilan["ecrit"] = True
     afficher_bilan(bilan)

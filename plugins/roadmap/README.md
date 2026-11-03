@@ -65,7 +65,8 @@ les sessions toutes les 3 s (le dossier de la roadmap toutes les 15 s), et montr
   liste les valeurs admises ; « N changements », puis « Enregistrer » réécrit la seule ligne, les
   autres champs et la note gardés à leur place, contrôlée par les règles du projet : un refus nomme
   le champ, rien n'est écrit, la saisie reste ; « Annuler » ne touche à rien. L'écriture suit celle
-  de « Marquer faite » : `cowork.py roadmap update` dans un dossier Cowork, sinon, avec `ecriture`,
+  de « Marquer faite » : `cowork.py roadmap update` dans un dossier Cowork (sauf celui dont `cowork.json`
+  confie la roadmap au plugin, `"roadmap": "plugin-roadmap"`, #262), sinon, avec `ecriture`,
   la demande à Claude (#164, voir « Les règles du projet »), sinon le panneau écrit ROADMAP.md, sur
   main seulement dans git, puis `roadmap: edit #N`, commit et push ;
 - dans la fiche d'une tâche, la flèche retour `←` en tête, à la place de la marque (#165) : elle
@@ -80,7 +81,8 @@ les sessions toutes les 3 s (le dossier de la roadmap toutes les 15 s), et montr
   ne l'efface pas : après une confirmation et une raison facultative, elle est cochée
   « (abandonné) » et descend en tête de ROADMAP-fait.md avec son bilan (« Annulée : <raison> ») ;
   les deux passent par `cowork.py roadmap close` (`--abandon` pour une annulation) dans un dossier
-  Cowork (Python isolé, `-I`) ; ailleurs le panneau écrit les deux fichiers et le journal, et dans
+  Cowork (Python isolé, `-I`), sauf quand son `cowork.json` confie la roadmap au plugin
+  (`"roadmap": "plugin-roadmap"`, #262) ; ailleurs le panneau écrit les deux fichiers et le journal, et dans
   git il ne le fait que sur main, sans modification en attente sur ces fichiers, puis les committe
   seuls (`roadmap: done #N` ou `roadmap: abandon #N`) et les pousse ; le détail la montre « faite »
   ou « annulée » ; une tâche faite s'ouvre sur sa boîte « Conclusion » (#264) : une
@@ -674,6 +676,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.171.0 (2026-11-03)** : cowork : le plugin écrit seul la roadmap d'un dossier Cowork qui la lui confie (cowork.json « roadmap »: « plugin-roadmap ») : clôture par le panneau et tasks.py done avec bilan entier et heure, sauvegardes de tasks.py et audit.py hors de la racine (#262)
 - **0.170.0 (2026-11-03)** : lancement : en mode auto, le ▶ passe droit par Claude sans demander le bypass, et une carte refusée propose « Passer en bypass » (#248)
 - **0.169.0 (2026-11-03)** : clôture : une tâche dont un livrable est une communication pas encore partie (email, message, invitation) ne se coche ni ne s'archive avant son « Statut : envoyé » (#242)
 - **0.168.0 (2026-11-03)** : tests : la file des tests lourds attend que la charge du Mac retombe, et tools/rejouer_delais.py rejoue seuls les tests tombés en délai dépassé (#249)

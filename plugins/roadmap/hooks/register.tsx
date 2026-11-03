@@ -273,6 +273,7 @@ import {
   matches,
   newProblems,
   bilanConfigFor,
+  coworkPyWrites,
   conclusionOf,
   parseBilans,
   doneIds,
@@ -1291,7 +1292,8 @@ type BilanData = { config: BilanConfig; bilans: Map<string, Bilan>; viaCowork: b
 
 /**
  * Le bilan de clôture de la roadmap : sa configuration (cowork.json « bilan », sinon le journal par
- * défaut), les bilans déjà écrits, et si `_cowork/cowork.py` est là pour les écrire.
+ * défaut), les bilans déjà écrits, et si `_cowork/cowork.py` les écrit (pas quand cowork.json confie
+ * la roadmap au plugin, #262).
  */
 async function loadBilan($: EngineInterface, source: Source): Promise<BilanData> {
   const [cow, tool] = await Promise.all([
@@ -1299,7 +1301,7 @@ async function loadBilan($: EngineInterface, source: Source): Promise<BilanData>
     $.fs.exists(`${source.dir}/_cowork/cowork.py`).catch(() => false),
   ])
   const config = bilanConfigFor(cow)
-  return { config, bilans: parseBilans((await readOr($, `${source.dir}/${config.log}`)) ?? ''), viaCowork: tool }
+  return { config, bilans: parseBilans((await readOr($, `${source.dir}/${config.log}`)) ?? ''), viaCowork: coworkPyWrites(tool, cow) }
 }
 
 /** Les tasks cochées depuis `before` (texte de ROADMAP-fait.md) qui n'ont pas leur bilan : le rappel, ou rien. */
@@ -3770,6 +3772,15 @@ async function runPython($: EngineInterface, args: string[], cwd: string): Promi
   }
 }
 
+/** `_cowork/cowork.py` écrit la roadmap de ce dossier, sauf quand son `cowork.json` la confie au plugin (#262). */
+async function coworkPyFor($: EngineInterface, source: Source): Promise<boolean> {
+  const [tool, cow] = await Promise.all([
+    $.fs.exists(`${source.dir}/_cowork/cowork.py`).catch(() => false),
+    readOr($, `${source.dir}/cowork.json`),
+  ])
+  return coworkPyWrites(tool, cow)
+}
+
 /**
  * Clôt une tâche ouverte : faite (« Marquer faite », #73) ou annulée (« Annuler la tâche », décision
  * de Bertrand du 2026-10-26, cochée « (abandonné) »), en tête de ROADMAP-fait.md, avec son bilan.
@@ -3795,7 +3806,7 @@ async function closeTask(
   if (unsent !== undefined) return { error: unsent }
   const bilan = abandon ? abandonBilan(reason) : doneBilan()
   const closed = abandon ? 'Annulée' : 'Faite'
-  if (await $.fs.exists(`${source.dir}/_cowork/cowork.py`).catch(() => false)) {
+  if (await coworkPyFor($, source)) {
     // cowork.py ne ferme pas le parent d'un dernier enfant (#125) : la note le dit.
     const alone = abandon ? undefined : parentLeftAlone(await readOr($, files(source).open) ?? '', task)
     const out = await runPython(
@@ -3875,7 +3886,7 @@ async function confirmClose($: EngineInterface, source: Source, task: Task, kind
     // #242 : la route par Claude aussi attend l'envoi.
     const unsent = kind === 'done' ? await unsentClose($, source, task) : undefined
     if (unsent !== undefined) return void (await setView($, () => ({ cancelNote: unsent })))
-    const cowork = await $.fs.exists(`${source.dir}/_cowork/cowork.py`).catch(() => false)
+    const cowork = await coworkPyFor($, source)
     const route = closeRoute({ ecriture: source.ecriture, cowork, task, kind, reason: kind === 'abandon' ? cancelReason : '' })
     if (route.via === 'claude') {
       cancelReason = ''
@@ -3917,7 +3928,7 @@ async function confirmClose($: EngineInterface, source: Source, task: Task, kind
  * n'a pas de réouverture dans `cowork.py` : rien ne s'écrit, la note le dit.
  */
 async function reopenTask($: EngineInterface, source: Source, task: Task): Promise<{ id?: string; note?: string } | { error: string }> {
-  if (await $.fs.exists(`${source.dir}/_cowork/cowork.py`).catch(() => false)) {
+  if (await coworkPyFor($, source)) {
     return { error: `cowork.py ne sait pas rouvrir une tâche : demande-le à Claude (« rouvre #${task.id ?? ''} »). Rien n'a été écrit.` }
   }
   const day = (task.fait ?? '').slice(0, 10)
@@ -3973,7 +3984,7 @@ let checking = false
  * elle le demande à Claude par la boîte d'envoi, comme « Marquer faite ». Rend `true` si c'est fait.
  */
 async function checkByClaude($: EngineInterface, source: Source, task: Task, action: 'done' | 'reopen' | 'family', open = 0): Promise<boolean> {
-  const cowork = await $.fs.exists(`${source.dir}/_cowork/cowork.py`).catch(() => false)
+  const cowork = await coworkPyFor($, source)
   const route = checkRoute({ ecriture: source.ecriture, cowork, task, action, open })
   if (route.via !== 'claude') return false
   queueSubmit($, route.text)
@@ -4162,7 +4173,7 @@ async function saveEdit(
   const settings = projectSettings(source)
   const rules = { requis: settings.requis, requiredOn: settings.requiredOn, cles: settings.cles }
   const { open } = files(source)
-  const cowork = await $.fs.exists(`${source.dir}/_cowork/cowork.py`).catch(() => false)
+  const cowork = await coworkPyFor($, source)
   const route = editRoute({ ecriture: source.ecriture, cowork, task, edit })
   if (route.via === 'claude') {
     // `ecriture` (#164) : la ligne se contrôle ici, puis Claude l'écrit par l'outil du projet ; refusée, rien ne part.

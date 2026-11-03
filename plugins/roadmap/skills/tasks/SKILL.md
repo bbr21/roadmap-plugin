@@ -126,7 +126,7 @@ Write `<scratchpad>/operations.json`:
     {"op": "add", "key": "n3", "parent": "n1", "label": "Envoyer la Deal Request à Linda", "fields": {"après": ["n2"]}},
     {"op": "update", "id": "41", "fields": {"attend": "Jason", "dept": "Bidding"}},
     {"op": "reschedule", "id": "18", "due": "2026-11-05"},
-    {"op": "done", "id": "12", "date": "2026-10-30", "proof": "email envoyé à Jason le 30/10 (40-deliverables/emails/…)"},
+    {"op": "done", "id": "12", "date": "2026-10-30", "proof": "email envoyé à Jason le 30/10 (40-deliverables/emails/…)", "bilan": {"fait": "Plan envoyé à Jason", "souci": "", "ressenti": "fluide", "cause": "aucune", "corrections": 0, "note": "Envoyé du premier coup."}},
     {"op": "drop", "id": "7", "reason": "remplacée par le vendor agreement"},
     {"op": "pause", "id": "22", "until": "2026-11-30", "reason": "budget gelé jusqu'à la clôture"},
     {"op": "handoff", "id": "529", "date": "2026-11-02", "proof": "récap envoyé à DaVinci le 02/11 (40-deliverables/emails/…)", "delivered": "preview contrôlée, récap envoyé à DaVinci", "key": "s1", "label": "Recevoir de DaVinci l'activation du qualifier et la correction du 300x250", "waiting": "Navneet", "src": "40-deliverables/emails/2026-11-02-…-navneet.md", "fields": {"due": "2026-11-06"}}
@@ -171,11 +171,23 @@ Write `<scratchpad>/operations.json`:
   words that say what the task is about (« DCO Veterans Prospects »); `null` removes it and the
   panel draws its own again. It is written right after `id:` and stays when the label changes.
 - **reschedule**: `due`.
-- **done**: `date` (the date of the proof), `proof` (what proves it, and where). The line moves to
-  the top of `ROADMAP-fait.md`, its bilan row to `ROADMAP-bilans.csv` (« Faite : <proof> »). A
-  recurring standalone task (`tous:`) is marked done with the panel's « Marquer faite » button,
-  which carries it over.
-- **drop**: `reason`; « (abandonné) » at the end of the label, like the panel's « Annuler la tâche ».
+- **done**: `date` (the date of the proof, `AAAA-MM-JJ` or `AAAA-MM-JJ HH:MM`), `proof` (what
+  proves it, and where), `bilan` (#262). The line moves to the top of `ROADMAP-fait.md` with
+  `fait:AAAA-MM-JJ HH:MM` (the time of the write when the date is today; a past date gets no
+  invented time), its bilan row to the bilan journal. A recurring standalone task (`tous:`) is
+  marked done with the panel's « Marquer faite » button, which carries it over.
+- **bilan** (#262, on `done`, `drop` and `handoff`), the contract of `cowork.py roadmap close
+  --bilan-b64`: `fait` (one line, 140 characters at most: what was done), `souci` (one line: the
+  problem met, empty only with `fluide`), `ressenti` (`fluide`, `accroché`, `bloqué`), `cause`
+  (`aucune` with `fluide` and only with it, else `spec-floue`, `attente-tiers`, `bug-outil`,
+  `refait`, `périmètre-élargi`, `autre`), `corrections` (the number of rework requests from the
+  person, 0 or more), `note` (one sentence). Written by the journal's own columns. The journal is
+  `bilan.log` of the folder's `cowork.json` (its allowed values come from that log's columns),
+  else `ROADMAP-bilans.csv` next to the roadmap. **Required** in a Cowork folder whose
+  `cowork.json` says `"roadmap": "plugin-roadmap"` (Adbricks Cowork, AAFES Cowork): its doctor
+  checks every row. Elsewhere optional: without it, the row says the label and « Faite : <proof> ».
+  A parent closed with its last child gets the child's bilan, its `fait` naming that child.
+- **drop**: `reason`, `bilan`; « (abandonné) » at the end of the label, like the panel's « Annuler la tâche ».
 - **pause** (#159): `until` (the resume date), `reason`. `due:` becomes `until`, the note gets
   « (en pause depuis le JJ/MM : <reason>) », and a task without a parent moves to « Plus tard »; a
   child stays under its parent. Refused on a line taken by a session and on a parent with an open
@@ -207,7 +219,9 @@ again). Fix the operations, or ask the missing question, and run it again.
 Then:
 
 - **without `ecriture`**: run again with `--apply`. It backs the files up in
-  `sauvegarde-tasks-…/` next to the roadmap, then writes everything in one go;
+  `sauvegarde-tasks-…/` (in the folder's `_to_delete/` when it has one; for a Cowork folder without it, outside it,
+  in `~/.claude/roadmap-sauvegardes/<folder>/`, where its doctor does not take it for a fiche;
+  else next to the roadmap, #262), then writes everything in one go;
 - **with `ecriture`**: `--apply` is refused. Hand the dry run's lines to the project's tool
   (`ecriture.outil`), as `ecriture.consigne` says (at Blur: `patch.py <spec>`, dry run then
   `--apply`, the note, the fiches and the roadmap in one go).
