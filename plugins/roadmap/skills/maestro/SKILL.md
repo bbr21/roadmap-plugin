@@ -42,8 +42,10 @@ rule at the end of a turn that executed (below).
      `AskUserQuestion`: two to four questions, recommendation first (what, for whom, on which
      platforms, what is already in place), until the request is clear. This form comes before the
      launch menu (« Je lance lesquelles ? ») and is never mixed with it in the same send.
-  2. **Open the task's line** with the `tasks` skill, with what the framing taught.
-  3. **Propose the sub-session**: an `own_initiative` card, title `#<id> · <libellé court>`, brief
+  2. **Open the task's line** with the `tasks` skill, with what the framing taught, and its short
+     name in `nom:` (40 characters at most, #263).
+  3. **Propose the sub-session**: an `own_initiative` card, title `#<id> · <nom>` copied from the
+     line as written (§ « The title comes from the written line »), brief
      opened by Mission, Fichiers, Fini quand, carrying the framing's answers and the Maestro clause
      (§ 2); `user_asked` if the person said « fais-le ».
   4. **Execute nothing in Maestro** (above), even when it looks faster.
@@ -99,7 +101,16 @@ to it.
   - `Fini quand : …`: what done means, tests included (under Maestro: the branch pushed, ready to
     merge);
   - then `---`, then the detailed brief (the line to reread, the context, the Maestro clause).
-- **The panel's ▶**: title `#<id> · <libellé court>`, full brief opened by its mission, and the
+- **The title comes from the written line** (#263): reread the line after writing it and take its
+  `id:` and its `nom:` from the file, never a number foreseen before writing (Adbricks Cowork,
+  2026-11-03: « #420 · Récap Slack à Martial » while #420 was the Meta renaming and the recap had
+  received id:421). Every line Maestro opens or takes carries its `nom:`, the name of its session's
+  title: the panel, the band above the prompt and the app's side list then say the same name. The
+  panel refuses a card whose title has no `#N ·`, whose #N is closed or absent from ROADMAP.md, whose
+  name is not the line's `nom:` (or, without one, shares no word with its label), or whose #N is
+  already held by an open session of the same kind; its refusal gives the title to post. A session's
+  title never changes: an open session with a wrong name is not renamed, the screen shows its title.
+- **The panel's ▶**: title `#<id> · <nom>`, full brief opened by its mission, and the
   Maestro clause added by itself.
 - **The tree's context** (#237): every brief, the ▶'s and a hand-written card alike, ends its
   detail with « Contexte de l'arbre de la tâche #N »: the parent task, the sisters and their state,
@@ -277,7 +288,7 @@ to it.
   make a grandchild of Maestro, and the person wants only one level under Maestro. The panel sends
   it up to the root Maestro: by message (« Tâche proposée… » or « Lancement demandé… »), otherwise
   at the person's next message. Maestro opens its line (or attaches it to a line that covers it),
-  then proposes it from Maestro: an `own_initiative` card, title `#<id> · <libellé court>`, full
+  then proposes it from Maestro: an `own_initiative` card, title `#<id> · <nom>`, full
   brief, Maestro clause and the settings of the original card, then says in one line which session
   proposes it and that the person clicks Start. A launch the person asked for counts as consent:
   the card is posted in this turn, without asking them again whether they want it; it is a card and
@@ -286,7 +297,7 @@ to it.
 - **Propose a task** (#216, Caroline): a new idea or an action to do that comes out of the
   exchange with the person, outside the tasks in progress, becomes a proposed task in the same
   turn, without waiting to be asked: Maestro opens its line through the `tasks` skill (after
-  matching), then posts the card (`own_initiative`, title `#<id> · <libellé court>`, brief opened
+  matching), then posts the card (`own_initiative`, title `#<id> · <nom>`, brief opened
   by its mission, Maestro clause). Work done elsewhere: the line alone, said in one line. Nothing
   for a reflection, an answered question, a decision without an action (the project's memory), a
   subject that already has its task (enrich it, one line); the project's rules (`regles`) win.

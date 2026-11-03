@@ -294,6 +294,8 @@ import {
   addedOpenTasks,
   writesRoadmap,
   taskForSessionTitle,
+  launchTitleRefusal,
+  sessionName,
   searchTasks,
   sessionTitleId,
   pickTaskSource,
@@ -2516,6 +2518,22 @@ async function purgeChildNotes($: EngineInterface): Promise<void> {
   }
 }
 
+/**
+ * Le nom montré d'une tâche (#263) : celui du titre de sa session ouverte (`sessionName`), que dit la liste
+ * latérale de l'app, sinon son titre court (`taskTitle`). Le titre d'une session ne change jamais : c'est
+ * l'écran qui s'aligne sur lui (AAFES Cowork, 2026-11-03 : la bande disait « Campagne DCO 26… » pour
+ * « #565 · Lancer la Weekly Deals »).
+ */
+function shownTitle(task: Task, titles: Readonly<Record<string, { titre: string }>>, sessionTitle = sessionMatches.get(taskKey(task))?.title): string {
+  return sessionName(sessionTitle ?? '') ?? taskTitle(task, titles)
+}
+
+/** Le titre d'une session parmi les rangées lues de l'app. */
+function rowTitle(sessionId: string): string | undefined {
+  const row = sessionRows.find(r => (r as { sessionId?: unknown } | null)?.sessionId === sessionId) as { title?: unknown } | undefined
+  return typeof row?.title === 'string' ? row.title : undefined
+}
+
 /** Le titre court d'une tâche : son `nom:` (#235), sinon celui du cache, sinon les premiers mots du libellé. */
 async function shortTitleOf($: EngineInterface, task: Task): Promise<string> {
   return taskTitle(task, await loadTitles($))
@@ -3095,6 +3113,12 @@ async function launchSession($: EngineInterface, source: Source, task: Task, sho
   const brief = extra.trim() === '' ? base : { ...base, prompt: `${base.prompt}\n\nMessage additionnel :\n${extra.trim()}` }
   // Un refus net de l'app ou une panne : rien n'est parti, le bouton redevient cliquable.
   const release = () => setView($, v => ({ launched: v.launched.filter(k => k !== key) }))
+  // #263 : le titre vient de la ligne, mais une session ouverte (endormie, le ▶ revenu) peut déjà porter son #N.
+  const titleRefused = await launchRefusal($, { title: brief.title })
+  if (titleRefused !== undefined) {
+    await setView($, v => ({ launched: v.launched.filter(k => k !== key), launchNote: `Lancement impossible : ${titleRefused}` }))
+    return
+  }
   // Ce que l'app a répondu à chaque essai : la note en tire sa cause, le relevé le garde tel quel.
   const refusals: string[] = []
   const reasonOf = (r: ToolCallResult) => (r.deny ?? r.text ?? 'sans motif').replace(/\s+/g, ' ').trim()
@@ -3241,6 +3265,40 @@ async function withTree($: EngineInterface, e: unknown): Promise<unknown> {
     return prompt === card.prompt ? e : { ...(e as object), prompt }
   } catch {
     return e
+  }
+}
+
+/** Les sessions ouvertes (non archivées) du projet, parmi les rangées de `list_sessions`. */
+function openProjectSessions(rows: readonly unknown[], match: readonly string[]): { sessionId: string; title: string }[] {
+  return rows.flatMap(r => {
+    const o = r as { sessionId?: unknown; title?: unknown; cwd?: unknown; isArchived?: unknown } | null
+    if (typeof o !== 'object' || o === null || typeof o.sessionId !== 'string' || typeof o.title !== 'string') return []
+    if (o.isArchived === true || typeof o.cwd !== 'string' || !match.some(p => (o.cwd as string).startsWith(p))) return []
+    return [{ sessionId: o.sessionId, title: o.title }]
+  })
+}
+
+/**
+ * Le refus d'une carte de session dont le titre ne vient pas de la ligne écrite, ou dont le #N tient
+ * déjà une session ouverte (#263, `launchTitleRefusal`) : la roadmap et la liste relues à l'instant.
+ * Sans roadmap, roadmap illisible ou sans numéros, lancement ailleurs, proposition à démarrer : rien.
+ */
+async function launchRefusal($: EngineInterface, e: unknown): Promise<string | undefined> {
+  const card = e as Record<string, unknown>
+  if (typeof card.title !== 'string' || card.proposal_id !== undefined) return undefined
+  if (ELSEWHERE_OPTIONS.some(k => card[k] !== undefined)) return undefined
+  try {
+    const source = await sourceNow($)
+    if (!source) return undefined
+    const [open, done] = await Promise.all([load($, files(source).open, 'ROADMAP.md'), load($, files(source).done, 'ROADMAP-fait.md')])
+    if (typeof open === 'string') return undefined
+    const closed = typeof done === 'string' ? [] : done
+    if (![...open, ...closed].some(t => t.id !== undefined)) return undefined
+    const titles = await loadTitles($)
+    const sessions = openProjectSessions((await readListRows($)).rows, source.match)
+    return launchTitleRefusal({ title: card.title, open, done: closed, sessions, titleOf: t => cachedTitle(t, titles) })
+  } catch {
+    return undefined
   }
 }
 
@@ -4935,9 +4993,18 @@ export const register: Register = (on, options) => {
   on('tool.call', { tool: START_SESSION_TOOL }, async ($, raw, next) => {
     // Une carte du modèle reçoit la section de l'arbre, comme le ▶ (#237).
     const e = next.origin.plugin === 'engine' && !fromAgent(raw) ? ((await withTree($, raw)) as typeof raw) : raw
-    const ran = await forwardProposal($, e, next.origin.plugin, () =>
-      next.origin.plugin === 'engine' ? launchWithMode($, e, card => next(card as typeof e)) : next(e),
-    )
+    // #263 : la carte qui se pose ici (pas remontée à Maestro) part seulement si son titre vient de la ligne écrite.
+    let titleRefused = false
+    const ran = await forwardProposal($, e, next.origin.plugin, async () => {
+      if (next.origin.plugin !== 'engine') return next(e)
+      const refusal = await launchRefusal($, e)
+      if (refusal !== undefined) {
+        titleRefused = true
+        return { deny: refusal }
+      }
+      return launchWithMode($, e, card => next(card as typeof e))
+    })
+    if (titleRefused) return ran
     // La carte de Claude refusée par le mode auto : la fiche le dit tout de suite, avec le geste (#248).
     if (next.origin.plugin === 'engine' && (ran.deny !== undefined || ran.isError) && isAutoModeRefusal(ran.deny ?? ran.text ?? '')) {
       await setView($, () => ({ launchNote: AUTO_BLOCKED }))
@@ -5450,7 +5517,8 @@ async function maestroTasksOf(
   return maestroBrandTasks(
     found.map(({ task: t, sessionId: sid }) => ({
       id: t.id as string,
-      label: short(t),
+      // #263 : le nom du titre de sa session, celui de la liste latérale de l'app.
+      label: sessionName(rowTitle(sid) ?? '') ?? short(t),
       running: runningBySession.get(sid) ?? false,
       // Avant la première relecture des sessions, une session suivie compte pour ouverte.
       open: !archivedSessionIds.has(sid) && (openSessionIds.size === 0 || openSessionIds.has(sid)),
@@ -5475,7 +5543,7 @@ async function brandData($: EngineInterface) {
   if (typeof data.open === 'string') return undefined
   const tasks = [...data.open, ...data.done]
   const own = await readOwnSession($)
-  const short = (t: Task) => taskTitle(t, data.titles)
+  const short = (t: Task) => shownTitle(t, data.titles)
   // Le titre court d'une tâche à la place de son libellé : la carte se lit d'un coup d'œil.
   const shorten = (brand: Brand | undefined): Brand | undefined => {
     if (brand?.kind !== 'task') return brand
@@ -6721,7 +6789,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   const settling = doneTasks.filter(t => checkLingers(checkMoves.get(taskKey(t)), now)).length
   const showDone = doneViewOn(doneChosen, openTasks.length + settling, doneTasks.length)
   // Le nom posé à la main (`nom:`, #235) l'emporte sur le titre tiré ; le sujet vient toujours du modèle.
-  const short = (t: Task): ShortTitle => ({ sujet: '…', ...titles[hashLabel(t.label)], titre: taskTitle(t, titles) })
+  const short = (t: Task): ShortTitle => ({ sujet: '…', ...titles[hashLabel(t.label)], titre: shownTitle(t, titles) })
   const age = (t: Task): number | undefined => (t.ouvert ? daysBetween(t.ouvert, today) : undefined)
   // Une tâche en session : lancée depuis le panneau, session pas archivée. Sans fiche lisible
   // (outil absent ou refusé), on la croit en session 12 heures, sans le garantir.

@@ -3571,7 +3571,7 @@ export function maestroProposalText(proposals: readonly MaestroProposal[]): stri
     '',
     items.join('\n\n'),
     '',
-    "À toi : ouvre sa ligne dans la roadmap (ou rattache-la à une ligne qui la couvre déjà), puis propose-la à " + person() + " depuis Maestro, par une carte (start_session, initiation own_initiative), titrée « #<id> · <libellé court> », avec un brief complet et la clause de Maestro. Ne la code pas toi-même. Puis dis-le à " + person() + " en une ligne : quelle session la propose, quoi, et qu'il clique Start sur ta carte pour la lancer.",
+    "À toi : ouvre sa ligne dans la roadmap (ou rattache-la à une ligne qui la couvre déjà), puis propose-la à " + person() + " depuis Maestro, par une carte (start_session, initiation own_initiative), titrée « #<id> · <nom> », tirés de la ligne écrite (son nom:), avec un brief complet et la clause de Maestro. Ne la code pas toi-même. Puis dis-le à " + person() + " en une ligne : quelle session la propose, quoi, et qu'il clique Start sur ta carte pour la lancer.",
     ...(asked ? [`Un lancement que ${person()} a demandé : sa demande vaut accord, pose la carte dans ce tour sans lui redemander s'il la veut. Une carte, pas un lancement direct : l'app refuse user_asked sur un tour qu'a réveillé le message d'une session.`] : []),
   ].join('\n')
 }
@@ -4313,6 +4313,76 @@ export function taskForSessionTitle(title: string, tasks: readonly Task[], title
   if (scored.length === 0) return undefined
   if (scored.length > 1 && scored[1]!.hits === scored[0]!.hits) return undefined
   return scored[0]!.t
+}
+
+/**
+ * Le nom d'une session de tâche (#263) : ce qui suit « #N · » (ou « Roadmap · »), sans la marque
+ * « Vérifier · ». C'est le nom que montre la liste latérale de l'app : la bande et le panneau le
+ * reprennent, pour qu'une session n'ait qu'un nom.
+ */
+export function sessionName(title: string): string | undefined {
+  const m = SESSION_PREFIX.exec(title)
+  if (!m) return undefined
+  const name = title.slice(m[0].length).replace(CHECK_MARK, '').trim()
+  return name === '' ? undefined : name
+}
+
+/**
+ * Le refus d'une carte de session dont le titre ne vient pas de la ligne écrite (#263, Adbricks Cowork
+ * le 2026-11-03 : « #420 · Récap Slack à Martial » quand #420 était le renommage Meta et le récap #421).
+ * Dans l'ordre : pas de « #N · » ; #N absent des ouvertes (clos ou inconnu) ; un nom qui n'est pas
+ * celui de la ligne (égal à son `nom:`, ou un mot de sens en commun avec son libellé sans `nom:`) ; un
+ * #N déjà porté par une session ouverte du même genre. `sessions` : les sessions ouvertes du projet.
+ * Rend la raison et le titre à reposer, ou rien quand la carte peut partir.
+ */
+export function launchTitleRefusal(o: {
+  title: string
+  open: readonly Task[]
+  done: readonly Task[]
+  sessions: readonly { title: string }[]
+  titleOf: (t: Task) => string | undefined
+}): string | undefined {
+  const head = 'Carte refusée (#263, une session, un #N) :'
+  const tail = 'Le titre se tire de la ligne écrite : relis la ligne dans ROADMAP.md, puis repose la carte.'
+  const titled = (t: Task) => `« ${sessionTitleFor(t, t.nom ?? o.titleOf(t) ?? fallbackTitle(t.label))} »`
+  const id = sessionTitleId(o.title)
+  if (id === undefined) {
+    return `${head} le titre « ${o.title} » ne commence pas par « #N · ». Ouvre d'abord la ligne de la tâche (elle reçoit son id:), puis titre la carte « #<id> · <son nom:> ». ${tail}`
+  }
+  const task = o.open.find(t => t.id === id)
+  if (!task) {
+    const closed = o.done.some(t => t.id === id)
+    return `${head} #${id} ${closed ? 'est close (ROADMAP-fait.md)' : "n'existe pas dans ROADMAP.md"}. Un numéro prévu ne vaut pas : celui de la ligne écrite fait foi. ${tail}`
+  }
+  const name = sessionName(o.title) ?? ''
+  const same = (a: string, b: string) => {
+    const x = normalizeTitle(a)
+    const y = normalizeTitle(b)
+    if (x === y) return true
+    // Un titre coupé par « … » (58 caractères au plus) vaut s'il est le début du nom.
+    const cut = /…\s*$/.test(a) ? normalizeTitle(a.replace(/…\s*$/, '')) : ''
+    return cut !== '' && y.startsWith(cut)
+  }
+  const fits = task.nom !== undefined
+    ? same(name, task.nom)
+    : (() => {
+        const words = meaningfulWords(name)
+        if (words.length === 0) return true
+        const own = new Set(meaningfulWords(`${task.label} ${o.titleOf(task) ?? ''}`))
+        return words.some(w => own.has(w))
+      })()
+  if (!fits) {
+    const other = taskForSessionTitle(`Roadmap · ${name}`, o.open.filter(t => t !== task), o.titleOf)
+    const owner = other?.id !== undefined ? ` Ce nom est celui de #${other.id} : ${titled(other)}.` : ''
+    const written = task.nom !== undefined ? `porte nom:${task.nom}` : `est « ${clip(task.label, 80)} »`
+    return `${head} « ${name} » n'est pas le nom de #${id}, dont la ligne ${written} : son titre est ${titled(task)}.${owner} ${tail}`
+  }
+  const kind = sessionTitleKind(o.title)
+  const taken = o.sessions.find(s => sessionTitleId(s.title) === id && sessionTitleKind(s.title) === kind)
+  if (taken) {
+    return `${head} #${id} est déjà porté par la session ouverte « ${taken.title} ». Une tâche n'a qu'une session : reprends celle-là (SendMessage), ou archive-la avant d'en lancer une autre.`
+  }
+  return undefined
 }
 
 /** Le nom d'un axe à l'écran : un sigle de 3 lettres au plus en capitales (MCP), sinon une capitale initiale (Produit). */
@@ -6137,8 +6207,8 @@ function proposeRule(): string {
 
 function proposeHow(kind: ProposeKind): string {
   if (kind === 'child') return "Tu travailles pour Maestro : pose ta carte `own_initiative` dans le tour même et n'écris pas la ligne : le panneau la remonte à Maestro, qui ouvre la ligne et la repropose."
-  if (kind === 'maestro') return 'Chez toi, Maestro : ouvre la ligne par la skill `tasks` (après rapprochement), puis pose la carte `own_initiative`, titre `#<id> · <libellé court>`, brief ouvert par Mission, Fichiers, Fini quand, avec la clause de Maestro ; un travail fait ailleurs (autre dépôt, autre personne) : la ligne seule, dite en une ligne.'
-  return 'Ouvre la ligne par la skill `tasks` (après rapprochement), puis pose la carte `own_initiative`, titre `#<id> · <libellé court>`, brief complet.'
+  if (kind === 'maestro') return 'Chez toi, Maestro : ouvre la ligne par la skill `tasks` (après rapprochement), puis pose la carte `own_initiative`, titre `#<id> · <nom>`, tirés de la ligne écrite (son `nom:`), brief ouvert par Mission, Fichiers, Fini quand, avec la clause de Maestro ; un travail fait ailleurs (autre dépôt, autre personne) : la ligne seule, dite en une ligne.'
+  return 'Ouvre la ligne par la skill `tasks` (après rapprochement), puis pose la carte `own_initiative`, titre `#<id> · <nom>`, tirés de la ligne écrite (son `nom:`), brief complet.'
 }
 
 /** La règle entière, avec la variante de la session, jointe à chaque message d'un projet à roadmap (#216). */
@@ -8009,7 +8079,7 @@ function maestroRequestLines(request: string, card: string): string[] {
     `Le message de ${person()} porte une demande : « ${request} ». Une demande de travail neuve (pas une question d'état ni de lancement) ne se fait pas ici : tu la cadres puis tu la délègues (skill roadmap:maestro, § 1).`,
     `1. Comprends d'abord : cherche dans le dossier, graphies voisines comprises (faute de frappe, accent, lettre en trop ou en moins : « Najeu » pour « Najeau ») ; puis cadre avec ${person()} par AskUserQuestion, deux à quatre questions, ta recommandation en premier (quoi, pour qui, sur quelles plateformes, ce qui est déjà en place), jusqu'à ce que la demande soit claire. Ce formulaire est le seul de ton envoi, sans menu de lancement mêlé ; le réglage autonome ne dispense pas de ce cadrage : il dispense des questions pendant l'exécution, que fait la session fille.`,
     `2. Ouvre sa ligne par la skill roadmap:tasks, avec ce que le cadrage a appris.`,
-    `3. Propose la session fille : sa carte (${card}), titre « #<id> · <libellé court> », brief ouvert par Mission, Fichiers, Fini quand, avec les réponses du cadrage et la clause de Maestro ; en user_asked si ${person()} t'a dit de la faire.`,
+    `3. Propose la session fille : sa carte (${card}), titre « #<id> · <nom> », tirés de la ligne écrite (son nom:), brief ouvert par Mission, Fichiers, Fini quand, avec les réponses du cadrage et la clause de Maestro ; en user_asked si ${person()} t'a dit de la faire.`,
     `4. N'exécute rien dans Maestro, code ou non : ni volet navigateur (clic, saisie, page de réglages d'un compte), ni écriture MCP sur une plateforme, ni fiche ou fichier du projet hors roadmap, ni configuration d'un compte. Restent à toi : répondre, expliquer, lire pour cadrer, ouvrir et cocher les lignes, poser les cartes, fusionner, donner les ressources uniques.`,
     `- Ta carte refusée par le contrôle du mode auto (« Create Unsafe Agents », agent non sûr) : ne réessaie pas et ne fais pas la tâche toi-même ; dis à ${person()} en une ligne de cliquer le ▶ de sa ligne dans le panneau, ou de quitter le mode auto.`,
     `- Si le message n'est qu'une question d'état ou de lancement, réponds-y avec l'état ci-dessous.`,
@@ -8072,7 +8142,7 @@ export function maestroExecAction(tool: string, input: unknown, keep: readonly s
 
 /** Le rappel de fin de tour quand Maestro a exécuté lui-même (#250) : une phrase, la session fille à la place. */
 export function maestroExecReminder(actions: readonly string[]): string {
-  return `Maestro n'exécute pas (skill roadmap:maestro, § 1) : ce tour a fait ${actions.join(', ')}. Arrête-toi là et propose la session fille à la place : la ligne de la tâche par la skill roadmap:tasks, puis sa carte (start_session, own_initiative, titre « #<id> · <libellé court> », brief ouvert par Mission, Fichiers, Fini quand, avec ce qui est déjà fait) ; la carte refusée en mode auto, dis à ${person()} de cliquer le ▶ de la ligne dans le panneau, ou de quitter le mode auto.`
+  return `Maestro n'exécute pas (skill roadmap:maestro, § 1) : ce tour a fait ${actions.join(', ')}. Arrête-toi là et propose la session fille à la place : la ligne de la tâche par la skill roadmap:tasks, puis sa carte (start_session, own_initiative, titre « #<id> · <nom> », tirés de la ligne écrite (son nom:), brief ouvert par Mission, Fichiers, Fini quand, avec ce qui est déjà fait) ; la carte refusée en mode auto, dis à ${person()} de cliquer le ▶ de la ligne dans le panneau, ou de quitter le mode auto.`
 }
 
 /** Le contexte que reçoit Claude quand Bertrand dit « Maestro ». */

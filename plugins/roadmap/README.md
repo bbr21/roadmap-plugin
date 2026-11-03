@@ -676,6 +676,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.174.0 (2026-11-03)** : panneau, maestro : une carte de session au #N faux, clos ou déjà pris est refusée, le titre se tire de la ligne écrite (nom:), et la bande comme le panneau disent le nom du titre de la session (#263)
 - **0.173.0 (2026-11-03)** : panneau : la tête de section B3 dans tous les rangements et Ma journée (marque dans la colonne des carrés, nom, compte au bout, trait de couleur dessous), les lignes ne redisent plus le jour ni la personne de leur section, ligne de l'arbre rapprochée (#265)
 - **0.172.1 (2026-11-03)** : panneau : un jeton de pièce jointe du brouillon n'ouvre qu'un document dont le chemin réel reste dans le projet, lien symbolique refusé (#264)
 - **0.172.0 (2026-11-03)** : panneau : l'aperçu d'un email montre l'objet, À, Cc, les pièces jointes en jetons et le corps à puces, titre # et étiquettes en gras compris (#264)
