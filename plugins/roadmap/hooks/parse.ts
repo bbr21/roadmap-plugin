@@ -2889,8 +2889,12 @@ export function addedOpenTasks(before: string | undefined, after: string): Task[
  * dossier sans le nommer. Une autre commande n'ajoute aucune ligne de la session : celle qui
  * apparaît pendant qu'elle tourne vient d'une autre session (#89).
  */
-export function writesRoadmap(command: string): boolean {
-  return /roadmap\.md|cowork\.py/i.test(command)
+export function writesRoadmap(command: string, tool?: string): boolean {
+  // #244 : aussi les scripts du plugin qui l'écrivent sans la nommer, ses questions en attente, et
+  // l'outil que le projet déclare par `ecriture` (`patch.py` chez Caroline).
+  if (/roadmap\.md|cowork\.py|tasks\.py|audit\.py|roadmap-questions\.json/i.test(command)) return true
+  const name = tool?.split('/').pop()?.trim()
+  return name !== undefined && name !== '' && command.includes(name)
 }
 
 const STOP_WORDS = new Set(['dans', 'pour', 'avec', 'sans', 'plus', 'apres', 'avant', 'cette', 'leur', 'leurs', 'entre', 'sous', 'vers', 'chez', 'tout', 'tous', 'toute', 'faire'])
@@ -7956,4 +7960,200 @@ export function queuedCommand(command: string, root: string): string | undefined
   const label = flat.length > QUEUE_LABEL_MAX ? `${flat.slice(0, QUEUE_LABEL_MAX - 1)}…` : flat
   const script = shellQuote(`${root}/scripts/one-at-a-time.sh`)
   return `${script} take $$ ${shellQuote(label)}; {\n${command}\n}; __roadmap_rc=$?; ${script} give $$; (exit $__roadmap_rc)`
+}
+
+// ---------------------------------------------------------------- compte rendu des écritures (#244)
+
+/**
+ * Le compte rendu fixe d'une écriture de la roadmap (#232), aux noms de `tasks.py` : le plugin le
+ * calcule par différence et le rend lui-même, quelle que soit la skill qui a écrit (#244).
+ */
+export type ReportData = {
+  ajoutees: { id: string; libelle: string; parent: string | null; due: string | null }[]
+  mises_a_jour: { id: string; libelle: string; change: string }[]
+  t_attendent: Waiting[]
+}
+/** Une question qui attend la personne, au format du compte rendu. */
+export type Waiting = { id: string | null; question: string; raison: string; recommande: string }
+/** Les deux fichiers de la roadmap à un instant donné. */
+export type RoadmapState = { open?: string; done?: string }
+/** Une tâche qui a changé : `before` absente, elle est neuve ; `after` absente, elle est retirée. */
+export type TaskChange = { ref: string; before?: Task; after?: Task }
+
+/** Le libellé dans le compte rendu : coupé au mot au-delà de 60 caractères, comme `_court` de `tasks.py`. */
+export function shortLabel(label: string, n = 60): string {
+  const chars = Array.from(label)
+  if (chars.length <= n) return label
+  const cut = chars.slice(0, n).join('')
+  const space = cut.lastIndexOf(' ')
+  return `${(space < 0 ? cut : cut.slice(0, space)).replace(/[ ,;:]+$/, '')}…`
+}
+
+const ddmm = (iso: string) => `${iso.slice(8, 10)}/${iso.slice(5, 7)}`
+const cell = (text: string) => text.replace(/\|/g, '\\|').replace(/\n/g, ' ')
+
+function table(head: string[], rows: string[][]): string {
+  const lines = [`| ${head.join(' | ')} |`, `|${'---|'.repeat(head.length)}`]
+  return [...lines, ...rows.map(r => `| ${r.map(cell).join(' | ')} |`)].join('\n')
+}
+
+/**
+ * Le gabarit de `rendre_compte_rendu` de `tasks.py`, au caractère près (cas partagé :
+ * `tests/compte-rendu-cas.ts`) : trois rubriques, toujours dans cet ordre, une rubrique vide « rien ».
+ */
+export function renderReport(data: ReportData, etat: 'ecrit' | 'essai' | 'outil', day: string, outil?: string): string {
+  const said = { ecrit: 'écrit', essai: 'essai à blanc', outil: `à passer à ${outil ?? ''}` }[etat]
+  const sections: [string, string[], string[][]][] = [
+    ['Ajoutées', ['#', 'Tâche', 'Sous', 'Échéance'], data.ajoutees.map(a => [`#${a.id}`, a.libelle, a.parent ? `#${a.parent}` : '–', a.due ? ddmm(a.due) : '–'])],
+    ['Mises à jour', ['#', 'Tâche', 'Ce qui change'], data.mises_a_jour.map(m => [`#${m.id}`, m.libelle, m.change])],
+    ["T'attendent", ['#', 'Question', 'Raison', 'Recommandé'], data.t_attendent.map(q => [q.id ? `#${q.id}` : '–', q.question, q.raison, q.recommande])],
+  ]
+  const blocks = [`### Compte rendu de la roadmap · ${ddmm(day)} · ${said}`]
+  for (const [name, head, rows] of sections) {
+    blocks.push(rows.length > 0 ? `#### ${name} (${rows.length})\n\n${table(head, rows)}` : `#### ${name}\n\nrien`)
+  }
+  return blocks.join('\n\n')
+}
+
+const changeRef = (t: Task) => (t.id ? `#${t.id}` : `l:${normalizeTitle(t.label)}`)
+const taskSig = (t: Task | undefined) => (t === undefined ? '' : JSON.stringify({ ...t, key: undefined }))
+
+/** Les tâches des deux fichiers, par référence : celle des faites l'emporte. */
+function tasksByRef(state: RoadmapState): Map<string, Task> {
+  const all = [...parseRoadmap(state.open ?? '', 'ROADMAP.md'), ...parseRoadmap(state.done ?? '', 'ROADMAP-fait.md')]
+  return new Map(all.map(t => [changeRef(t), t]))
+}
+
+/** Les tâches qui diffèrent entre deux états de la roadmap (une tâche se reconnaît à `id:`, sinon à son libellé). */
+export function roadmapChanges(before: RoadmapState, after: RoadmapState): TaskChange[] {
+  const b = tasksByRef(before)
+  const a = tasksByRef(after)
+  const refs = [...a.keys(), ...[...b.keys()].filter(r => !a.has(r))]
+  return refs.filter(r => taskSig(b.get(r)) !== taskSig(a.get(r))).map(ref => ({ ref, ...(b.has(ref) ? { before: b.get(ref) } : {}), ...(a.has(ref) ? { after: a.get(ref) } : {}) }))
+}
+
+/** Le cumul des écritures d'un tour : une tâche garde son premier avant et son dernier après ; revenue à l'identique, elle sort. */
+export function mergeChanges(acc: TaskChange[], changes: TaskChange[]): TaskChange[] {
+  const out = acc.map(c => ({ ...c }))
+  for (const c of changes) {
+    const seen = out.find(o => o.ref === c.ref)
+    if (seen === undefined) out.push({ ...c })
+    else {
+      delete seen.after
+      if (c.after !== undefined) seen.after = c.after
+    }
+  }
+  return out.filter(c => taskSig(c.before) !== taskSig(c.after))
+}
+
+/** Les clés écrites d'une tâche, hors libellé, section, échéance et clôture, à plat. */
+function fieldsOf(t: Task): Map<string, string> {
+  const skip = new Set(['key', 'done', 'label', 'axis', 'section', 'note', 'due', 'fait', 'isParent', 'ownDue', 'extra'])
+  const out = new Map<string, string>()
+  for (const [k, v] of Object.entries(t)) {
+    if (skip.has(k) || v === undefined) continue
+    out.set(k === 'apres' ? 'après' : k, Array.isArray(v) ? v.join(',') : String(v))
+  }
+  for (const [k, v] of Object.entries(t.extra ?? {})) out.set(k, v.join(','))
+  return out
+}
+
+/** Ce qui change d'une tâche, dans les mots de `tasks.py` (#232), joints par « ; » ; rien si rien ne change. */
+export function changeText(before?: Task, after?: Task): string | undefined {
+  if (after === undefined) return before === undefined ? undefined : 'retirée'
+  const closed = after.fait ? `le ${ddmm(after.fait)}` : ''
+  if (before === undefined) return after.done ? `ajoutée et cochée ${closed}`.trim() : undefined
+  if (!before.done && after.done) return `cochée ${closed}`.trim()
+  const parts: string[] = []
+  if (before.done && !after.done) parts.push('rouverte')
+  if (before.due !== after.due) parts.push(after.due ? `redatée au ${ddmm(after.due)}` : 'due retiré')
+  const b = fieldsOf(before)
+  const a = fieldsOf(after)
+  const set = [...a].filter(([k, v]) => b.get(k) !== v).map(([k, v]) => `${k}:${v}`)
+  if (set.length > 0) parts.push(`complétée : ${set.join(', ')}`)
+  for (const k of b.keys()) if (!a.has(k)) parts.push(`${k} retiré`)
+  if (before.axis !== after.axis) parts.push(`axe ${after.axis}`)
+  if (before.label !== after.label) parts.push('libellé changé')
+  if (before.note !== after.note) parts.push('note changée')
+  if (before.section !== after.section && !after.done) parts.push(`déplacée vers ${after.section}`)
+  return parts.length > 0 ? parts.join(' ; ') : undefined
+}
+
+/** La donnée du compte rendu : les tâches neuves ouvertes dans Ajoutées, les autres changements dans Mises à jour. */
+export function reportOf(changes: TaskChange[], waiting: Waiting[]): ReportData {
+  const data: ReportData = { ajoutees: [], mises_a_jour: [], t_attendent: [...waiting] }
+  for (const c of changes) {
+    const t = c.after ?? c.before!
+    const id = t.id ?? '?'
+    if (c.before === undefined && c.after !== undefined && !c.after.done) {
+      data.ajoutees.push({ id, libelle: shortLabel(t.label), parent: t.parent ?? null, due: t.ownDue ?? t.due ?? null })
+      continue
+    }
+    const change = changeText(c.before, c.after)
+    if (change !== undefined) data.mises_a_jour.push({ id, libelle: shortLabel(t.label), change })
+  }
+  return data
+}
+
+/** Les raisons d'une question, comme `RAISONS` de `tasks.py`. */
+const REASONS: Record<string, string> = {
+  conflict: 'conflit', undated: 'date manquante', late: 'en retard', partial_proof: 'preuve partielle',
+  rhythm: 'rythme', reopen: 'réouverture', prio_on_child: 'priorité sur un enfant', structure: 'structure',
+}
+
+type PendingQuestion = { key?: unknown; kind?: unknown; task?: unknown; question?: unknown; options?: { label?: unknown }[] }
+
+function pendingQuestions(text: string | undefined): PendingQuestion[] {
+  if (text === undefined) return []
+  try {
+    const data = JSON.parse(text) as { questions?: unknown }
+    return Array.isArray(data?.questions) ? (data.questions as PendingQuestion[]) : []
+  } catch {
+    return []
+  }
+}
+
+/** Les questions ajoutées à `ROADMAP-questions.json` (#159) entre deux lectures, au format du compte rendu. */
+export function newQuestions(before: string | undefined, after: string | undefined): Waiting[] {
+  const old = new Set(pendingQuestions(before).map(q => q.key))
+  const out: Waiting[] = []
+  for (const q of pendingQuestions(after)) {
+    const label = Array.isArray(q.options) ? q.options[0]?.label : undefined
+    if (typeof q.key !== 'string' || old.has(q.key) || typeof q.question !== 'string' || typeof q.kind !== 'string' || typeof label !== 'string') continue
+    const task = typeof q.task === 'string' || typeof q.task === 'number' ? String(q.task).replace(/^#/, '') : ''
+    out.push({ id: task === '' ? null : task, question: q.question, raison: REASONS[q.kind] ?? q.kind, recommande: label.replace('(recommandé)', '').trim() })
+  }
+  return out
+}
+
+/** Les questions du tableau « T'attendent » qu'imprime `tasks.py write` (#232) : sa sortie relue. */
+export function reportQuestions(stdout: string): Waiting[] {
+  const at = stdout.indexOf("#### T'attendent")
+  if (at < 0) return []
+  const rows = stdout.slice(at).split('\n').slice(1).filter(l => l.startsWith('| '))
+  return rows.slice(1).flatMap(row => {
+    const cells = row.slice(2, -2).split(/ (?<!\\)\| /).map(c => c.replace(/\\\|/g, '|'))
+    if (cells.length !== 4) return []
+    const [id, question, raison, recommande] = cells as [string, string, string, string]
+    return [{ id: id === '–' ? null : id.replace(/^#/, ''), question, raison, recommande }]
+  })
+}
+
+const REPORT_LEAD = 'Plugin roadmap (#244) : la roadmap a changé pendant ce tour.'
+const REPORT_COPY = "Recopie tel quel ce compte rendu dans ton message de fin ; il remplace celui d'une skill (tasks.py write, une skill de mémoire), qui ne se recopie pas en plus :"
+
+/** Le compte rendu remis au modèle avec la boîte de fin, ou par le rappel de fin de tour. */
+export function reportReminder(markdown: string): string {
+  return `${REPORT_LEAD} ${REPORT_COPY}\n\n${markdown}`
+}
+
+/** Le refus, une fois par tour, d'une boîte de fin dont « T'attendent » n'est passé par aucun formulaire. */
+export function reportRefusal(markdown: string): string {
+  return [
+    `${REPORT_LEAD} Sa rubrique « T'attendent » n'est pas vide, et aucun formulaire ne l'a posée à la personne.`,
+    "Pose d'abord ces questions par AskUserQuestion, en un seul formulaire, ta recommandation en premier, puis rappelle la boîte de fin. Sans personne pour répondre (tâche planifiée), rappelle-la telle quelle et dis que ces questions attendent.",
+    REPORT_COPY,
+    '',
+    markdown,
+  ].join('\n')
 }

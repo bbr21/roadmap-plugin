@@ -22,6 +22,9 @@ French, as the roadmap does. Only this skill is in English.
 - **A task is marked done on proof**, at the date of the proof, with its bilan row.
 - **The same report after every write** (#232): the script prints it, in three fixed sections
   (Ajoutées, Mises à jour, T'attendent); it is copied as is, then one form settles what waits.
+  With the roadmap plugin (#244), the plugin computes that report itself from what the turn wrote,
+  whatever wrote it, and hands it with the end-of-turn box: copy the plugin's report then, not the
+  script's as well.
 
 **The model** (#125): a task is **standalone**, **parent** (a subject: short title, keys, rhythm,
 priority, no action) or **child** (a step, `parent:N`), two levels at most. `après:` links two
@@ -210,7 +213,9 @@ Then:
    Its title says the state: « écrit » (after `--apply`), « essai à blanc », or « à passer à
    <outil> » (with `ecriture`: copy the report once the project's tool has written the lines). A
    caller that keeps a conclusion file (a catch-up, a dispatch) writes that same block in it, or
-   the `--json` output (`compte_rendu`, `markdown`) when it wants the data. Before the report, in
+   the `--json` output (`compte_rendu`, `markdown`) when it wants the data. When the roadmap
+   plugin hands its own report (#244, same title and sections, computed from every write of the
+   turn, the script's « T'attendent » included), copy that one instead, once. Before the report, in
    one line each, what the table cannot say: an action written nowhere (« rien : déjà couverte
    par #M », « déjà faite », excluded by the `regles` file).
 4. **Then one form for « T'attendent »**, and nothing else (« What gets asked » below): one
@@ -218,7 +223,8 @@ Then:
    `options` (the recommendation first), four questions at most per round; more than four, the
    next round right after the answers. The chosen options' `operations` go into a new
    `operations.json`, then `write` again (dry run, then `--apply`), which prints a new report.
-   « T'attendent » says « rien »: no form.
+   « T'attendent » says « rien »: no form. The roadmap plugin refuses the end-of-turn box once
+   while « T'attendent » has rows and no form was asked (#244).
 
 ## What gets asked, and nothing else
 

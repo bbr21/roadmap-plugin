@@ -671,6 +671,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.159.0 (2026-11-02)** : panneau : le plugin rend lui-même le compte rendu de toute écriture de la roadmap, quelle que soit la skill, et refuse une fois la boîte de fin tant que ce qui attend n'est pas passé par un formulaire (#244)
 - **0.158.1 (2026-11-02)** : panneau : sous une tâche mère, seules les filles faites aujourd'hui restent visibles, le compte de la mère les comptant toutes (#240)
 - **0.158.0 (2026-11-02)** : maestro : « Maestro <axe> » ouvre le panneau, l'accueil et les briefs de la session sur cet axe, gardé par défaut ; « Maestro » seul rouvre tout (#239)
 - **0.157.0 (2026-11-02)** : brief : toute session lancée sur une tâche reçoit le contexte de son arbre (parente, sœurs, prérequises et ce qu'elles ont livré, suites, closes qui la citent, sessions passées), au ▶ comme dans les cartes de Maestro (#237)

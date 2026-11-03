@@ -456,6 +456,16 @@ import {
   type WaitNote,
   type Armed,
   type CheckMove,
+  mergeChanges,
+  newQuestions,
+  renderReport,
+  reportOf,
+  reportQuestions,
+  reportRefusal,
+  reportReminder,
+  roadmapChanges,
+  type TaskChange,
+  type Waiting,
 } from './parse'
 
 const PANE = PANE_ID
@@ -880,6 +890,43 @@ function noteBox(e: unknown): void {
 }
 
 /**
+ * Le compte rendu du tour (#244), quelle que soit la skill qui écrit : les tâches que les écritures
+ * de la session ont changées (relues juste avant et juste après chaque outil, #70), les questions de
+ * `ROADMAP-questions.json` au début du tour et celles qu'a imprimées `tasks.py write`, le formulaire
+ * posé, la boîte déjà refusée, et le compte rendu déjà remis au modèle.
+ */
+type ReportTurn = { changes: TaskChange[]; touched: boolean; questionsAtTurn?: string; fromTasks: Waiting[]; asked: boolean; refused: boolean; given: string }
+const freshReport = (): ReportTurn => ({ changes: [], touched: false, fromTasks: [], asked: false, refused: false, given: '' })
+let reportTurn: ReportTurn = freshReport()
+
+const questionsPath = (source: Source) => files(source).open.replace(/[^/]*$/, 'ROADMAP-questions.json')
+
+/** Le compte rendu du tour, ou rien quand le tour n'a écrit ni la roadmap ni une question. */
+async function turnReport($: EngineInterface): Promise<{ markdown: string; waiting: number } | undefined> {
+  if (!settings.capture || !capture) return undefined
+  const fromFile = reportTurn.touched ? newQuestions(reportTurn.questionsAtTurn, await readOr($, questionsPath(capture.source))) : []
+  if (reportTurn.changes.length === 0 && fromFile.length === 0) return undefined
+  const waiting = [...reportTurn.fromTasks, ...fromFile.filter(q => !reportTurn.fromTasks.some(w => w.question === q.question))]
+  const data = reportOf(reportTurn.changes, waiting)
+  if (data.ajoutees.length + data.mises_a_jour.length + data.t_attendent.length === 0) return undefined
+  let now = Date.now()
+  try {
+    now = await $.clock.now()
+  } catch {
+    // horloge du moteur illisible : celle du module
+  }
+  return { markdown: renderReport(data, 'ecrit', todayOf(now)), waiting: data.t_attendent.length }
+}
+
+/** Le rappel de fin de tour qui porte le compte rendu, s'il n'a pas déjà été remis tel quel. */
+async function reportNote($: EngineInterface): Promise<string | undefined> {
+  const report = await turnReport($)
+  if (report === undefined || report.markdown === reportTurn.given) return undefined
+  reportTurn.given = report.markdown
+  return reportReminder(report.markdown)
+}
+
+/**
  * Le tour en cours de cette session, pour le bloc de fin de tour (#85) : hors de `Capture`, il vaut
  * dans tout projet, roadmap ou non. Un tour de travail a appelé la boîte de fin ou la liste d'étapes.
  */
@@ -1135,6 +1182,11 @@ async function endOfTurnBlock($: EngineInterface, last: string | undefined, acti
   // Les rappels de la roadmap : seulement dans un projet qui en a une, capture allumée.
   if (settings.capture && c) {
     try {
+      notes.push(await reportNote($))
+    } catch {
+      // roadmap ou questions illisibles : pas de compte rendu
+    }
+    try {
       notes.push(await roadmapBlock($, c))
     } catch {
       // roadmap illisible : pas de rappel de roadmap
@@ -1249,7 +1301,18 @@ async function written($: EngineInterface, run: () => Promise<ToolCallResult>, p
   const before = own ? await reread() : undefined
   const ran = await run()
   // Une commande en lecture seule n'écrit rien : rien à relire.
-  return ran.isReadOnly === true ? ran : afterWrite($, ran, path, own ? before : await reread())
+  if (ran.isReadOnly === true) return ran
+  const done = await afterWrite($, ran, path, own ? before : await reread())
+  // #244 : ce que cette écriture-ci a changé, ajouté au compte rendu du tour ; `seen` vient d'être relu.
+  if (own && before !== undefined && capture && ran.deny === undefined && ran.isError !== true) {
+    try {
+      reportTurn.changes = mergeChanges(reportTurn.changes, roadmapChanges(before, capture.seen))
+      if (path === undefined || /roadmap-questions\.json$/i.test(path)) reportTurn.touched = true
+    } catch {
+      // roadmap illisible : cette écriture manque au compte rendu
+    }
+  }
+  return done
 }
 
 /** Ce que l'outil Bash donne d'un appel : la commande, et son délai (ms) au premier plan. */
@@ -4734,6 +4797,8 @@ export const register: Register = (on, options) => {
   }
   on('tool.call', { tool: ASK_TOOL }, async ($, e, next) => {
     if (fromAgent(e)) return next(e)
+    // « T'attendent » passe par ce formulaire (#244).
+    reportTurn.asked = true
     if (capture && isMockupCall(ASK_TOOL, e)) capture.mockupShown = true
     const first = (e as { questions?: { question?: unknown }[] }).questions?.[0]?.question
     const text = clip(typeof first === 'string' ? first : '', 160)
@@ -4750,6 +4815,13 @@ export const register: Register = (on, options) => {
     const ask = (e as { ask?: unknown }).ask
     const refusal = fromAgent(e) ? undefined : ((await archivedAsk($, ask)) ?? (await openLineAsk($, ask)) ?? (await launchAsk($, e as never)) ?? (await pendingAsk($, ask)))
     if (refusal !== undefined) return { deny: refusal }
+    // #244 : le compte rendu du tour ; des questions sans formulaire refusent la boîte, une fois par tour.
+    const report = fromAgent(e) ? undefined : await turnReport($).catch(() => undefined)
+    if (report !== undefined && report.waiting > 0 && !reportTurn.asked && !reportTurn.refused) {
+      reportTurn.refused = true
+      reportTurn.given = report.markdown
+      return { deny: reportRefusal(report.markdown) }
+    }
     // Chez Maestro, la boîte sans question cocherait sa liste ouverte : refusée à chaque fois (#133).
     if (!fromAgent(e) && closingTurn.maestro && openListBox(ownSteps, ask)) return { deny: openListRefusal() }
     if (!fromAgent(e)) ownSteps = boxSteps(ownSteps)
@@ -4776,6 +4848,11 @@ export const register: Register = (on, options) => {
     if (!fromAgent(e) && ran.deny === undefined && ran.isError !== true) {
       await noteChild($, s => ({ ...s, steps: boxSteps(s.steps) }))
     }
+    // Le message de fin suit la boîte : le compte rendu à recopier vient avec elle (#244).
+    if (report !== undefined && report.markdown !== reportTurn.given && ran.deny === undefined) {
+      reportTurn.given = report.markdown
+      return { ...ran, context: [...(ran.context ?? []), reportReminder(report.markdown)] }
+    }
     return ran
   })
   // Les outils du tour, ceux du modèle de la session seule (ni sous-agent, ni appel d'un plugin) :
@@ -4789,8 +4866,13 @@ export const register: Register = (on, options) => {
   on('tool.call', { tool: 'Bash' }, async ($, e, next) => {
     const refusal = await guardBash($, (e as { command?: unknown }).command)
     if (refusal !== undefined) return { deny: refusal }
-    const ran = await written($, () => next(inQueue($, e)), undefined, writesRoadmap(e.command))
+    const ran = await written($, () => next(inQueue($, e)), undefined, writesRoadmap(e.command, capture?.source.ecriture?.outil))
     if (fromAgent(e) || ran.deny !== undefined || ran.isError === true) return ran
+    // #244 : les questions que `tasks.py write` a imprimées attendent la personne ; la dernière sortie l'emporte.
+    if (/tasks\.py\b.*\bwrite\b/.test(e.command)) {
+      const stdout = (ran.result as { stdout?: unknown } | undefined)?.stdout
+      if (typeof stdout === 'string') reportTurn.fromTasks = reportQuestions(stdout)
+    }
     // Une fusion sur main ou une publication (#136) : la liste d'étapes se renvoie avant la commande suivante.
     try {
       const kinds = await deliveredBy($, e.command)
@@ -4825,6 +4907,10 @@ export const register: Register = (on, options) => {
     // Un vrai message (de Maestro ou de Bertrand) relance la session : sa réponse sera une nouvelle à dire (#131).
     if (e.agentId === undefined) wakeBox = {}
     if (e.agentId === undefined) toldMaestro = undefined
+    if (e.agentId === undefined) {
+      reportTurn = freshReport()
+      if (settings.capture && capture) reportTurn.questionsAtTurn = await readOr($, questionsPath(capture.source))
+    }
     if (e.agentId === undefined && settings.capture && capture) {
       capture.wroteThisTurn = false
       capture.gitAtTurn = await gitState($)
