@@ -6276,10 +6276,16 @@ const OPENABLE_ATTACHMENT_RE = /\.(pdf|png|jpe?g|gif|webp|heic|svg|docx?|xlsx?|p
 async function openWritten($: EngineInterface, source: Source, written: string): Promise<void> {
   const inside = !written.startsWith('/') && !written.startsWith('~') && !written.split(/[\\/]/).includes('..')
   if (!inside || !OPENABLE_ATTACHMENT_RE.test(written)) return void (await setView($, () => ({ openNote: `Pas ouvert depuis l'aperçu : ${written}` })))
-  const candidates = pathCandidates(source, written)
-  for (const path of candidates) {
+  const rel = written.replace(/^\.\//, '')
+  for (const path of pathCandidates(source, written)) {
     try {
-      if ((await $.fs.stat(path)).kind === 'file') return void (await openFile($, path))
+      // Ni lien, ni chemin réel hors du dossier ou qui n'est plus un document (un dossier parent lien compris).
+      const st = await $.fs.stat(path, { resolve: true })
+      const base = (await $.fs.stat(path.slice(0, path.length - rel.length - 1), { resolve: true })).realPath
+      const real = st.realPath
+      if (st.kind !== 'file' || st.isLink || base === undefined || real === undefined) continue
+      if (!real.startsWith(`${base}/`) || !OPENABLE_ATTACHMENT_RE.test(real)) continue
+      return void (await openFile($, path))
     } catch {
       // absent ici : le suivant
     }

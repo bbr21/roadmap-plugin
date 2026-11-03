@@ -676,6 +676,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.172.1 (2026-11-03)** : panneau : un jeton de pièce jointe du brouillon n'ouvre qu'un document dont le chemin réel reste dans le projet, lien symbolique refusé (#264)
 - **0.172.0 (2026-11-03)** : panneau : l'aperçu d'un email montre l'objet, À, Cc, les pièces jointes en jetons et le corps à puces, titre # et étiquettes en gras compris (#264)
 - **0.171.0 (2026-11-03)** : cowork : le plugin écrit seul la roadmap d'un dossier Cowork qui la lui confie (cowork.json « roadmap »: « plugin-roadmap ») : clôture par le panneau et tasks.py done avec bilan entier et heure, sauvegardes de tasks.py et audit.py hors de la racine (#262)
 - **0.170.0 (2026-11-03)** : lancement : en mode auto, le ▶ passe droit par Claude sans demander le bypass, et une carte refusée propose « Passer en bypass » (#248)
