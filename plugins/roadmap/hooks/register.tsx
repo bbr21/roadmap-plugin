@@ -46,8 +46,6 @@ import {
   playIcon,
   externalIcon,
   envelopeTile,
-  initialsIcon,
-  stripIcon,
   documentIcon,
   imageIcon,
   archiveIcon,
@@ -240,7 +238,6 @@ import {
   unsentRefusal,
   unsentNote,
   isPreviewable,
-  recipientOf,
   PREVIEW,
   type DraftPreview,
   pathCandidates,
@@ -6266,6 +6263,30 @@ async function readAttachments($: EngineInterface, source: Source, task: Task, n
   return list
 }
 
+/** La colonne des étiquettes d'en-tête du brouillon (« À », « Cc », « Cci », « PJ », #264), en cellules. */
+const DRAFT_LABEL_CELLS = 3
+
+/** Les pièces jointes qu'un clic ouvre (#264) : des documents, jamais un script ni une app que `open` lancerait. */
+const OPENABLE_ATTACHMENT_RE = /\.(pdf|png|jpe?g|gif|webp|heic|svg|docx?|xlsx?|pptx?|csv|txt|md|markdown|key|numbers|pages|mp4|mov)$/i
+
+/**
+ * Un chemin tel qu'écrit dans un fichier du projet (une pièce jointe, #264) : le premier candidat qui existe,
+ * ouvert. Le chemin vient du texte d'un brouillon : seul un document rangé sous le dossier du projet s'ouvre.
+ */
+async function openWritten($: EngineInterface, source: Source, written: string): Promise<void> {
+  const inside = !written.startsWith('/') && !written.startsWith('~') && !written.split(/[\\/]/).includes('..')
+  if (!inside || !OPENABLE_ATTACHMENT_RE.test(written)) return void (await setView($, () => ({ openNote: `Pas ouvert depuis l'aperçu : ${written}` })))
+  const candidates = pathCandidates(source, written)
+  for (const path of candidates) {
+    try {
+      if ((await $.fs.stat(path)).kind === 'file') return void (await openFile($, path))
+    } catch {
+      // absent ici : le suivant
+    }
+  }
+  await setView($, () => ({ openNote: `Introuvable : ${written}` }))
+}
+
 /** Le brouillon que montre la fiche (#236) : le plus récent des livrables texte trouvés, son aperçu, ou trop gros pour être lu. */
 type DraftRead = { path: string; name: string; mtime: number; preview?: DraftPreview; tooBig?: true }
 /** L'aperçu lu, gardé par chemin et date de modification : un fichier inchangé ne se relit pas. */
@@ -7361,9 +7382,10 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
         <Button key="reopen-session" plain label="Rouvrir la session" onPress={() => void reopenSession($, source, current, row, now)} />,
       )
     // Le bloc Brouillon (#236, maquette A1 « L'enveloppe », choix de BBR) : sous la bande d'état, le plus
-    // récent des livrables texte. Un bandeau teinté (tuile, mot, fraîcheur) qui replie le bloc au clic ; le
-    // destinataire en pastille d'initiales, l'objet, le corps tenu par un filet et coupé, sa dernière ligne
-    // grise ; « Ouvrir », « Voir tout · +N lignes », le statut. Au terminal, du texte et des boutons.
+    // récent des livrables texte. Un bandeau teinté (tuile, mot, fraîcheur) qui replie le bloc au clic ;
+    // l'objet, puis une ligne par champ (À, Cc, Cci, PJ en jetons qui ouvrent le fichier : maquette B1 de
+    // #264, sans filet), le corps coupé à puces « • » en retrait pendant, sa dernière ligne grise ;
+    // « Ouvrir », « Voir tout · +N lignes », le statut. Au terminal, du texte et des boutons.
     const draftBlock = () => {
       if (!draft || editing) return null
       const p = draft.preview
@@ -7377,11 +7399,39 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
       const openIt = () => void openFile($, draft.path)
       const toggleOpen = () => void setView($, v => ({ draftOpen: v.draftOpen === key ? '' : key }))
       const toggleFold = () => void setView($, v => ({ draftFolded: v.draftFolded === key ? '' : key }))
-      const to = p?.fields.to ? recipientOf(p.fields.to) : undefined
-      const who = to ? [to.role, p?.fields.cc ? `cc ${p.fields.cc}` : undefined].filter(Boolean).join(' · ') : ''
       const lines = p ? (opened ? p.body : p.short).split('\n') : []
       const dimLast = !opened && (p?.more ?? 0) > 0
-      const avatarHex = to ? axisColor(palette, [...to.name].reduce((n, c) => n + c.charCodeAt(0), 0)) : palette.live
+      const headerRow = (id: string, label: string, value: RenderElement | RenderElement[]) => (
+        <Box key={`draft-${id}`} flexDirection="row" gap={SPACE.tight}>
+          <Box width={DRAFT_LABEL_CELLS} flexShrink={0}>
+            <Text size="footnote" color={palette.text3}>{label}</Text>
+          </Box>
+          <Box flexDirection="row" flexWrap="wrap" gap={SPACE.tight} flexShrink={1} minWidth={0}>
+            {value}
+          </Box>
+        </Box>
+      )
+      const people = (
+        [
+          ['to', 'À', p?.fields.to],
+          ['cc', 'Cc', p?.fields.cc],
+          ['bcc', 'Cci', p?.fields.bcc],
+        ] as const
+      ).flatMap(([id, label, value]) =>
+        value ? [headerRow(id, label, <Text size="footnote" wrap="wrap" {...(id === 'to' ? {} : { color: palette.text2 })}>{value}</Text>)] : [],
+      )
+      const files = (p?.attachments ?? []).map((written, i) =>
+        pressable(
+          `brouillon:pj:${i}`,
+          () => void openWritten($, source, written),
+          <Box flexDirection="row" alignItems="center" gap={SPACE.tight} paddingX={SPACE.tight} backgroundColor={palette.btn} hover={{ backgroundColor: palette.btnHover }} minWidth={0}>
+            {corners(RADIUS.chip, palette.bg)}
+            {Svg && <Svg source={documentIcon(palette.text2, SIZE.icon.xs)} alt="pièce jointe" width={SIZE.icon.xs} height={SIZE.icon.xs} />}
+            <Text size="caption" wrap="truncate-end">{written.split('/').pop() || written}</Text>
+          </Box>,
+          <Button key={`brouillon:pj:${i}`} plain label={written.split('/').pop() || written} onPress={() => void openWritten($, source, written)} />,
+        ),
+      )
       const statusPill = p?.status && (
         <Box key="draft-status" flexDirection="row" alignItems="center" paddingX={SPACE.tight} backgroundColor={sent ? palette.sel : palette.blockTint}>
           {corners(RADIUS.chip, palette.bg)}
@@ -7402,11 +7452,25 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
           </Box>,
           <Button key={id} plain label={text} onPress={onPress} />,
         )
-      const bodyText = lines.map((l, i) => (
-        <Text key={`draft-line:${i}`} size="footnote" wrap="wrap" {...(dimLast && i === lines.length - 1 ? { color: palette.text3 } : {})}>
-          {l === '' ? ' ' : l}
-        </Text>
-      ))
+      const bodyText = lines.map((l, i) => {
+        const dim = dimLast && i === lines.length - 1 ? { color: palette.text3 } : {}
+        // Une puce (#264) : « • » à part, le texte qui déborde s'aligne sous le texte, pas sous la puce.
+        const bullet = /^(\s*)• (.*)$/.exec(l)
+        if (bullet)
+          return (
+            <Box key={`draft-line:${i}`} flexDirection="row" gap={SPACE.tight} paddingLeft={bullet[1]!.length > 0 ? SPACE.indent : undefined}>
+              <Text size="footnote" color={palette.text2}>•</Text>
+              <Box flexShrink={1} minWidth={0}>
+                <Text size="footnote" wrap="wrap" {...dim}>{bullet[2]!}</Text>
+              </Box>
+            </Box>
+          )
+        return (
+          <Text key={`draft-line:${i}`} size="footnote" wrap="wrap" {...dim}>
+            {l === '' ? ' ' : l}
+          </Text>
+        )
+      })
       return (
         <Box key="draft" paddingX={SPACE.indent}>
           <Box flexDirection="column" flexGrow={1} minWidth={0} borderStyle="round" borderColor={mixOver(palette.live, palette.border, MIX.draftBorder)}>
@@ -7420,16 +7484,13 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
             </Box>
             {!folded && (
               <Box key="draft-body" flexDirection="column" gap={SPACE.block} paddingX={SPACE.indent} paddingY="sm">
-                {to && (
-                  <Box key="draft-to" flexDirection="row" alignItems="center" gap={SPACE.row}>
-                    {Svg && <Svg source={initialsIcon(to.initials, avatarHex, palette.onAxis, 32)} alt={to.name} width={32} height={32} />}
-                    <Box flexDirection="column" flexShrink={1} minWidth={0}>
-                      <Text weight="semibold" wrap="truncate-end">{to.name}</Text>
-                      {who !== '' && <Text size="caption" color={palette.text2} wrap="truncate-end">{who}</Text>}
-                    </Box>
+                <Text weight="semibold" wrap="wrap">{p?.title ?? draft.name}</Text>
+                {(people.length > 0 || files.length > 0) && (
+                  <Box key="draft-head" flexDirection="column" gap={SPACE.tight}>
+                    {people}
+                    {files.length > 0 && headerRow('pj', 'PJ', files)}
                   </Box>
                 )}
-                <Text weight="semibold" wrap="wrap">{p?.title ?? draft.name}</Text>
                 {draft.tooBig ? (
                   <Text size="footnote" color={palette.text2}>trop long pour l'aperçu</Text>
                 ) : p === undefined ? (
@@ -7437,12 +7498,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
                 ) : p.body === '' ? (
                   <Text size="footnote" color={palette.text2}>{p.kind === 'email' ? '(corps vide)' : 'fichier vide'}</Text>
                 ) : (
-                  <Box key="draft-text" flexDirection="column" paddingX={SPACE.indent}>
-                    {Svg && (
-                      <Box position="absolute" top={0} bottom={0} left={0} overflow="hidden">
-                        <Svg source={stripIcon(palette.live, 4000)} alt="filet" width={3} height={4000} />
-                      </Box>
-                    )}
+                  <Box key="draft-text" flexDirection="column">
                     {bodyText}
                   </Box>
                 )}

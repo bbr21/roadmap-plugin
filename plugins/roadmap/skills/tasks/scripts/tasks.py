@@ -76,8 +76,14 @@ MOTS_COMM = {"email", "emails", "mail", "mails", "message", "messages", "msg", "
              "invites", "courrier", "courriers", "lettre", "lettres", "letter", "letters", "slack", "sms", "dm"}
 ETIQUETTES = {"a": "to", "to": "to", "destinataire": "to", "destinataires": "to", "objet": "subject",
               "sujet": "subject", "subject": "subject", "statut": "status", "status": "status"}
-EN_TETE = re.compile(r"^\s*(?:\*\*|__)?([^\W\d_][^\W\d_ -]{0,24}?)\s*:\s*(?:\*\*|__)?\s*(.*)$")
-NON_PARTI = re.compile(r"\b(?:non|pas|not)\s+(?:encore\s+|yet\s+)?(?:envoye|sent)\b|\bunsent\b|\bbrouillon\b|\bdraft\b")
+# Toutes les étiquettes d'un en-tête d'email, pour couper une ligne de plusieurs champs (#264).
+ETIQUETTES_TOUTES = set(ETIQUETTES) | {"cc", "cci", "bcc", "de", "from", "pieces jointes", "piece jointe", "pj",
+                                       "attachments", "attachment"}
+# Une étiquette d'en-tête, un nom de script compris (« Contrôle email_check.py --recap : OK », #264).
+EN_TETE = re.compile(r"^\s*(?:\*\*|__)?([^\W\d_][\w .-]{0,40}?)\s*:\s*(?:\*\*|__)?\s*(.*)$")
+# Plusieurs champs sur une ligne (« **À :** … · **Cc :** … », #264).
+SEP_CHAMPS = re.compile(r"\s+·\s+")
+NON_PARTI = re.compile(r"\b(?:non|pas|not)\s+(?:encore\s+|yet\s+)?(?:envoye|sent)\b|\bunsent\b")
 PARTI = re.compile(r"\b(?:envoye|sent)\b")
 LISIBLE = (".md", ".markdown", ".txt")
 LISIBLE_MAX = 262144
@@ -156,12 +162,17 @@ def _plie(texte):
 
 
 def _en_tetes(texte):
-    """Les en-têtes d'un brouillon (#236) : front matter, ou lignes « Étiquette : valeur » en tête."""
+    """Les en-têtes d'un brouillon (#236) : front matter, ou lignes « Étiquette : valeur » en tête, un titre `#`
+    avant elles toléré, plusieurs champs sur une ligne séparés par « · » (#264)."""
     lignes = texte.replace("\r\n", "\n").replace("\r", "\n").split("\n")
     vus = {}
     i = 0
     while i < len(lignes) and not lignes[i].strip():
         i += 1
+    if i < len(lignes) and re.match(r"#\s+", lignes[i]):
+        i += 1
+        while i < len(lignes) and not lignes[i].strip():
+            i += 1
     if i < len(lignes) and lignes[i].strip() == "---":
         fin = next((k for k in range(i + 1, len(lignes)) if lignes[k].strip() == "---"), None)
         bloc = lignes[i + 1:fin] if fin is not None else []
@@ -171,7 +182,10 @@ def _en_tetes(texte):
         for l in lignes[i:]:
             if l.strip() and not EN_TETE.match(l):
                 break
-            bloc.append(l)
+            morceaux = SEP_CHAMPS.split(l)
+            plusieurs = len(morceaux) > 1 and all(
+                (m := EN_TETE.match(x)) and _plie(m.group(1)) in ETIQUETTES_TOUTES for x in morceaux)
+            bloc.extend(morceaux if plusieurs else [l])
     for l in bloc:
         m = motif.match(l)
         cle = ETIQUETTES.get(_plie(m.group(1))) if m else None
@@ -190,6 +204,7 @@ def etat_envoi(ecrit, texte, existe):
     if not nomme and "to" not in vus and "subject" not in vus:
         return "none"
     statut = _plie(vus.get("status", ""))
+    # « brouillon » ou « draft » sans « envoyé » : pas parti ; avec, il est cité (« corps identique au brouillon », #264).
     return "sent" if statut and not NON_PARTI.search(statut) and PARTI.search(statut) else "unsent"
 
 

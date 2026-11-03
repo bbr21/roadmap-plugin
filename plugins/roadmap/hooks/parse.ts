@@ -248,6 +248,8 @@ export type DraftField = 'to' | 'cc' | 'bcc' | 'from' | 'subject'
 export type DraftPreview = {
   kind: 'email' | 'text'
   fields: Partial<Record<Exclude<DraftField, 'subject'>, string>>
+  /** Les pièces jointes nommées en en-tête (« Pièces jointes : `a.pdf`, `b.pdf` », #264), telles qu'écrites. */
+  attachments?: string[]
   status?: { text: string; tone: 'todo' | 'sent' | 'plain' }
   /** L'objet d'un email, le titre `#` d'un texte. */
   title?: string
@@ -260,30 +262,46 @@ export type DraftPreview = {
 }
 
 /** Les étiquettes d'en-tête d'un email, sans casse ni accent (#236). */
-const DRAFT_LABELS: Record<string, DraftField | 'status'> = {
+const DRAFT_LABELS: Record<string, DraftField | 'status' | 'attachments'> = {
   a: 'to', to: 'to', destinataire: 'to', destinataires: 'to',
   cc: 'cc', cci: 'bcc', bcc: 'bcc',
   de: 'from', from: 'from',
   objet: 'subject', sujet: 'subject', subject: 'subject',
   statut: 'status', status: 'status',
+  'pieces jointes': 'attachments', 'piece jointe': 'attachments', pj: 'attachments', attachments: 'attachments', attachment: 'attachments',
 }
-const HEADER_LINE_RE = /^\s*(?:\*\*|__)?([\p{L}][\p{L} -]{0,24}?)\s*:\s*(?:\*\*|__)?\s*(.*)$/u
+/** Une ligne d'en-tête : « Étiquette : valeur », l'étiquette en gras ou non, un nom de script compris (« Contrôle email_check.py --recap : OK », #264). */
+const HEADER_LINE_RE = /^\s*(?:\*\*|__)?([\p{L}][\p{L}\p{N} ._-]{0,40}?)\s*:\s*(?:\*\*|__)?\s*(.*)$/u
+/** Le « · » qui sépare plusieurs champs sur une ligne (« **À :** … · **Cc :** … », #264). */
+const FIELD_SEP_RE = /\s+·\s+/
 const foldLabel = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim()
 
-/** « non envoyé », « pas encore envoyé », « not sent », un brouillon : pas parti. « à envoyer » ne dit pas « envoyé ». */
-const UNSENT_RE = /\b(?:non|pas|not)\s+(?:encore\s+|yet\s+)?(?:envoye|sent)\b|\bunsent\b|\bbrouillon\b|\bdraft\b/
+/** « non envoyé », « pas encore envoyé », « not sent » : pas parti. « à envoyer » ne dit pas « envoyé ». */
+const UNSENT_RE = /\b(?:non|pas|not)\s+(?:encore\s+|yet\s+)?(?:envoye|sent)\b|\bunsent\b/
 /** « envoyé » où qu'il soit (« Rédigé le 02/11, envoyé le 03/11 », #242). */
 const SENT_RE = /\b(?:envoye|sent)\b/
+/** Un brouillon, sans « envoyé » : pas parti. Avec, il est cité (« corps identique au brouillon », #264). */
+const DRAFT_RE = /\bbrouillon\b|\bdraft\b/
 
 function draftStatus(text: string): NonNullable<DraftPreview['status']> {
   const f = foldLabel(text)
-  const tone = UNSENT_RE.test(f) ? 'todo' : SENT_RE.test(f) ? 'sent' : 'plain'
+  const tone = UNSENT_RE.test(f) ? 'todo' : SENT_RE.test(f) ? 'sent' : DRAFT_RE.test(f) ? 'todo' : 'plain'
   return { text, tone }
 }
+
+/** Les chemins d'une ligne « Pièces jointes » (#264) : ceux entre accents graves, sinon séparés par des virgules. */
+function attachmentList(value: string): string[] {
+  const quoted = [...value.matchAll(/`([^`]+)`/g)].map(m => m[1]!.trim())
+  return (quoted.length > 0 ? quoted : value.split(/\s*,\s*/)).filter(v => v !== '')
+}
+
+/** Une puce de liste Markdown (`- `, `* `, `+ `) en « • », son retrait gardé (#264). */
+const BULLET_RE = /^(\s*)[-*+]\s+/
 
 /** Le Markdown ôté de ce qui se lit mal en texte brut : gras, italique, `#` d'un titre, lien. */
 function plainLine(line: string): string {
   return line
+    .replace(BULLET_RE, '$1• ')
     .replace(/^#{1,6}\s+/, '')
     .replace(/\*\*(.+?)\*\*/g, '$1')
     .replace(/__(.+?)__/g, '$1')
@@ -321,9 +339,19 @@ function cutDraft(body: string): { short: string; more: number } {
   return { short: short.join('\n'), more: lines.length - short.length }
 }
 
-/** Les en-têtes d'un brouillon (#236) : front matter, ou bloc de lignes « Étiquette : valeur » en tête ; `rest`, la ligne du corps. */
-function draftHeaders(lines: readonly string[]): { fields: DraftPreview['fields']; subject?: string; status?: DraftPreview['status']; rest: number } {
+/**
+ * Les en-têtes d'un brouillon (#236) : front matter, ou bloc de lignes « Étiquette : valeur » en tête, un titre
+ * `#` avant lui toléré, plusieurs champs sur une ligne séparés par « · » (#264) ; `rest`, la ligne du corps.
+ */
+function draftHeaders(lines: readonly string[]): {
+  fields: DraftPreview['fields']
+  attachments?: string[]
+  subject?: string
+  status?: DraftPreview['status']
+  rest: number
+} {
   const fields: DraftPreview['fields'] = {}
+  let attachments: string[] | undefined
   let subject: string | undefined
   let status: DraftPreview['status'] | undefined
   let rest = 0
@@ -332,10 +360,27 @@ function draftHeaders(lines: readonly string[]): { fields: DraftPreview['fields'
     if (key === undefined || value.trim() === '') return
     if (key === 'subject') subject = value.trim()
     else if (key === 'status') status = draftStatus(value.trim())
+    else if (key === 'attachments') attachments = attachmentList(value)
     else fields[key] = value.trim()
+  }
+  /** Une ligne d'en-tête, ou plusieurs champs qu'un « · » sépare, chacun d'une étiquette connue ; `false` : pas un en-tête. */
+  const header = (l: string): boolean => {
+    const parts = l.split(FIELD_SEP_RE).map(part => HEADER_LINE_RE.exec(part))
+    if (parts.length > 1 && parts.every(m => m && DRAFT_LABELS[foldLabel(m[1]!)] !== undefined)) {
+      for (const m of parts) take(m![1]!, m![2]!)
+      return true
+    }
+    const m = HEADER_LINE_RE.exec(l)
+    if (m) take(m[1]!, m[2]!)
+    return m !== null
   }
   let i = 0
   while (i < lines.length && lines[i]!.trim() === '') i++
+  if (/^#\s+/.test(lines[i] ?? '')) {
+    // Le titre du fichier avant ses en-têtes (#264) : un email le tait, une note le reprend de son côté.
+    i++
+    while (i < lines.length && lines[i]!.trim() === '') i++
+  }
   if (lines[i]?.trim() === '---') {
     // Un front matter : `clé: valeur` jusqu'au `---` qui le ferme.
     const end = lines.findIndex((l, k) => k > i && l.trim() === '---')
@@ -352,13 +397,11 @@ function draftHeaders(lines: readonly string[]): { fields: DraftPreview['fields'
     for (; k < lines.length; k++) {
       const l = lines[k]!
       if (l.trim() === '') continue
-      const m = HEADER_LINE_RE.exec(l)
-      if (!m) break
-      take(m[1]!, m[2]!)
+      if (!header(l)) break
     }
     rest = k
   }
-  return { fields, ...(subject !== undefined ? { subject } : {}), ...(status ? { status } : {}), rest }
+  return { fields, ...(attachments ? { attachments } : {}), ...(subject !== undefined ? { subject } : {}), ...(status ? { status } : {}), rest }
 }
 
 /**
@@ -367,7 +410,7 @@ function draftHeaders(lines: readonly string[]): { fields: DraftPreview['fields'
  */
 export function draftPreview(text: string): DraftPreview {
   const lines = text.replace(/\r\n?/g, '\n').split('\n')
-  const { fields, subject, status: read, rest } = draftHeaders(lines)
+  const { fields, attachments, subject, status: read, rest } = draftHeaders(lines)
   let status = read
   const email = fields.to !== undefined || subject !== undefined
   let bodyLines: string[]
@@ -395,6 +438,7 @@ export function draftPreview(text: string): DraftPreview {
   return {
     kind: email ? 'email' : 'text',
     fields,
+    ...(email && attachments ? { attachments } : {}),
     ...(status ? { status } : {}),
     ...(title ? { title } : {}),
     body,
