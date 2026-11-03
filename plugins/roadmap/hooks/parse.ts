@@ -8180,10 +8180,12 @@ export function waitNote(kind: 'titles' | 'launched'): WaitNote {
 /**
  * Les débuts de commande d'une suite de tests lourde (#222) : chacune occupe le processeur de 2 à 6 min,
  * et plusieurs en même temps ont porté la charge du Mac à 380 pour 10 cœurs. Un test ciblé
- * (`npm test -- <fichier>`, `node --test`, un `test_*.py`) et `check.mjs` n'en sont pas.
+ * (`npm test -- <fichier>`, `node --test`, un `test_*.py`) et `check.mjs` n'en sont pas. `rejouer_delais.py`
+ * en est une : il lance la suite lui-même, puis en rejoue les délais dépassés (#249).
  */
 const HEAVY_TESTS: readonly RegExp[] = [
   /^claude\s+plugin\s+test(?=\s|$)/,
+  /^(?:\S*python3?\s+(?:-\S+\s+)*)?(?:\S*\/)?rejouer_delais\.py(?=\s|$)/,
   /^(?:\S*python3?\s+(?:-\S+\s+)*)?(?:\S*\/)?release\.py\s+(?:check|release)(?=\s|$)/,
   /^npm\s+(?:test|t|run\s+test(?::\S+)?)(?=\s|$)(?!.*\s--(?:\s|$))/,
   /^(?:\S*\/)?test\.sh(?=\s|$)/,

@@ -8,8 +8,14 @@
 #
 # <pid> est le shell de l'outil Bash ($$) : il vit tant que la commande tourne. Un verrou dont le PID
 # n'existe plus, ou tenu depuis plus de 30 min, se lève seul. Détail : docs/plans/feat-tests-un-par-un/.
+#
+# Sa place prise, la suite attend encore que la charge du Mac retombe sous le seuil, 5 min au plus (#249) :
+# la file ne sérialise que les suites d'un projet, et le délai de 5000 ms par test du kit tombe sous charge.
+# Détail : docs/plans/fix-tests-sous-charge/.
 # Réglages (tests) : ROADMAP_QUEUE=off, ROADMAP_QUEUE_KEY, ROADMAP_LOCKS_DIR, ROADMAP_QUEUE_POLL (s),
-# ROADMAP_QUEUE_SAY (s), ROADMAP_QUEUE_MAX_AGE (s).
+# ROADMAP_QUEUE_SAY (s), ROADMAP_QUEUE_MAX_AGE (s), ROADMAP_QUEUE_MAX_LOAD (défaut 2 × cœurs),
+# ROADMAP_QUEUE_LOAD_WAIT (s, défaut 300, 0 coupe l'attente), ROADMAP_QUEUE_LOAD_FILE (la charge lue
+# dans un fichier, pour les tests).
 set -u
 
 usage() {
@@ -88,6 +94,51 @@ lift_stale() {
   echo "roadmap : verrou des tests lourds levé ($reason)."
 }
 
+# La charge du Mac sur 1 min, arrondie ; vide si illisible.
+load_now() {
+  local raw=""
+  if [[ -n "${ROADMAP_QUEUE_LOAD_FILE:-}" ]]; then
+    raw="$(awk '{ print $1; exit }' "$ROADMAP_QUEUE_LOAD_FILE" 2>/dev/null)"
+  elif raw="$(sysctl -n vm.loadavg 2>/dev/null)" && [[ -n "$raw" ]]; then
+    raw="$(printf '%s' "$raw" | tr -d '{}' | awk '{ print $1 }')"
+  elif [[ -r /proc/loadavg ]]; then
+    raw="$(awk '{ print $1 }' /proc/loadavg)"
+  fi
+  [[ "$raw" =~ ^[0-9]+([.][0-9]+)?$ ]] && awk -v l="$raw" 'BEGIN { printf "%d", l + 0.5 }'
+}
+
+cores() {
+  local n
+  n="$(sysctl -n hw.ncpu 2>/dev/null || getconf _NPROCESSORS_ONLN 2>/dev/null)"
+  [[ "$n" =~ ^[0-9]+$ && "$n" -gt 0 ]] && echo "$n" || echo 4
+}
+
+# Place prise : attendre que la charge passe sous le seuil, au plus load_wait secondes, en le disant.
+wait_for_calm() {
+  local ncpu max wait_max load began polls=0 said=0
+  ncpu="$(cores)"
+  max="${ROADMAP_QUEUE_MAX_LOAD:-}"
+  [[ "$max" =~ ^[0-9]+$ ]] || max=$(( 2 * ncpu ))
+  wait_max="${ROADMAP_QUEUE_LOAD_WAIT:-300}"
+  [[ "$wait_max" =~ ^[0-9]+$ ]] || wait_max=300
+  (( wait_max > 0 )) || return 0
+  began="$(now)"
+  while load="$(load_now)" && [[ -n "$load" ]] && (( load > max )); do
+    if (( $(now) - began >= wait_max )); then
+      echo "roadmap : le Mac reste chargé (charge $load) après $(span $(( $(now) - began ))) : tests lourds lancés quand même ; un « timed out after 5000 ms » vient sans doute de la charge, le test se rejoue seul."
+      return 0
+    fi
+    if (( polls % say_polls == 0 )); then
+      echo "roadmap : le Mac est chargé (charge $load pour $ncpu cœurs, seuil $max), tests lourds en attente depuis $(span $(( $(now) - began )))."
+      said=1
+    fi
+    polls=$(( polls + 1 ))
+    sleep "$poll"
+  done
+  (( said )) && echo "roadmap : la charge est retombée (${load:-?}), tests lourds lancés après $(span $(( $(now) - began )))."
+  return 0
+}
+
 start="$(now)"
 say_polls="$(awk -v s="$say_every" -v p="$poll" 'BEGIN { n = int(s / p + 0.999); print (n < 1 ? 1 : n) }')"
 polls=0
@@ -107,6 +158,7 @@ while :; do
       rm -f "$ticket"
       trap - EXIT
       (( said )) && echo "roadmap : tests lourds, à ton tour après $(span $(( $(now) - start )))."
+      wait_for_calm
       exit 0
     fi
   fi
