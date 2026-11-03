@@ -621,6 +621,8 @@ qui lance ; une carte refusée avec son effort est reposée sans lui ; « hérit
 que pose Claude, Maestro compris, demandent le mode bypass ; l'app ne l'accorde que depuis une session déjà en bypass, sinon
 la carte est reposée sans lui et la session lancée demande elle-même le bypass à son démarrage, par
 la carte d'approbation de l'app ; il faut d'abord activer le bypass dans Réglages → Claude Code).
+Depuis une session en mode auto, l'option ne vaut pas (#248) : le contrôle du mode auto refuse un agent
+qui doit se relever en bypass, la carte part donc sans le mode ni la consigne.
 `axisPill` (« Axe en pastille », défaut non depuis #177 ; #156) : allumé, chaque tâche ouverte de la
 liste porte son axe en pastille grise, à droite du titre, avant l'âge ; jamais dans « En cours » (le bloc
 de Maestro ou le filtre, où le carré d'axe suffit et le titre garde sa place), ni sous un axe choisi, ni
@@ -653,7 +655,11 @@ worktrees, le plugin refuse dans le dossier principal `git reset --hard`, `git c
 `git checkout <branche>`, `git add -A`, `git commit -a` et un `push` forcé, et partout un `push`
 forcé vers `main`.
 Un refus du mode auto ne tient pas à l'effort : la carte n'est pas reposée, Claude la pose dans la
-conversation, et les lancements des 30 minutes suivantes passent droit par lui. Le détail le dit en
+conversation, et les lancements des 30 minutes suivantes passent droit par lui. Une session en mode
+auto (fiche de la session, `permissionMode`) n'essaie même pas depuis le panneau : le ▶ va droit à Claude,
+une seule ligne « Lancement de #N… » dans la conversation (#248). Si le mode auto refuse encore la carte
+de Claude, la fiche le dit aussitôt, avec le bouton « Passer en bypass » (la carte d'approbation de
+l'app ; refusé, la note dit le sélecteur de mode sous la saisie), puis on relance avec ▶. Le détail le dit en
 une phrase, qui s'efface dès que la session tourne ; le refus brut de l'app va au relevé `perf`
 (rangée `kind: 'launch'`), jamais à l'écran.
 
@@ -668,6 +674,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.170.0 (2026-11-03)** : lancement : en mode auto, le ▶ passe droit par Claude sans demander le bypass, et une carte refusée propose « Passer en bypass » (#248)
 - **0.169.0 (2026-11-03)** : clôture : une tâche dont un livrable est une communication pas encore partie (email, message, invitation) ne se coche ni ne s'archive avant son « Statut : envoyé » (#242)
 - **0.168.0 (2026-11-03)** : tests : la file des tests lourds attend que la charge du Mac retombe, et tools/rejouer_delais.py rejoue seuls les tests tombés en délai dépassé (#249)
 - **0.167.0 (2026-11-03)** : maestro : une demande de travail neuve se cadre par formulaire puis se délègue à une session fille, et la garde de fin de tour rappelle à Maestro de ne rien exécuter lui-même (#250)

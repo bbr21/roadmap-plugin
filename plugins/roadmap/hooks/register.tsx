@@ -305,6 +305,7 @@ import {
   type TaskSessionRow,
   sessionTitleIn,
   sessionParentIn,
+  sessionModeIn,
   oneTaskStep,
   isMaestroSession,
   maestroSessionIds,
@@ -398,6 +399,9 @@ import {
   isInsideRelative,
   isAutoModeRefusal,
   viaClaudeNote,
+  AUTO_VIA_CLAUDE,
+  AUTO_BLOCKED,
+  autoBypassNote,
   maestroParentOf,
   maestroRootOf,
   PROPOSAL_OPTIONS,
@@ -434,6 +438,7 @@ import {
   BYPASS_MODE,
   withBypassClause,
   bypassCard,
+  wantsBypass,
   isModeRefusal,
   forbiddenGit,
   queuedCommand,
@@ -579,6 +584,7 @@ const AUTO_MODE_SKIP_MS = 30 * 60_000
 const SHOW_PANE_TOOL = 'mcp__ccd_view__show_pane'
 // Ceux qui lisent la fiche d'une session et la montrent.
 const GET_SESSION_TOOL = 'mcp__ccd_session_mgmt__get_session'
+const SET_MODE_TOOL = 'mcp__ccd_session_mgmt__set_session_permission_mode'
 const OPEN_SESSION_TOOL = 'mcp__ccd_window__open_session_in'
 const ARCHIVE_SESSION_TOOL = 'mcp__ccd_session_mgmt__archive_session'
 const UNARCHIVE_SESSION_TOOL = 'mcp__ccd_session_mgmt__unarchive_session'
@@ -1850,6 +1856,34 @@ async function readOwnSession($: EngineInterface, fresh = false): Promise<{ id: 
   return ownSession
 }
 
+/**
+ * Le mode de permission de cette session, relu à chaque fois : la personne le change sous la saisie.
+ * Fiche refusée ou illisible : `undefined`, et rien ne change (#248).
+ */
+async function ownMode($: EngineInterface): Promise<string | undefined> {
+  try {
+    const ran = await $.tool.call({ tool: GET_SESSION_TOOL, session_id: 'self' })
+    return ran.deny === undefined && !ran.isError ? sessionModeIn(ran.text ?? '') : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * « Passer en bypass » (#248) : la carte refusée par le mode auto, la fiche propose ce geste. L'app
+ * montre sa carte d'approbation ; accordé, le ▶ de la tâche revient, sinon la note dit le sélecteur.
+ */
+async function switchToBypass($: EngineInterface, key: string): Promise<void> {
+  let granted = false
+  try {
+    const ran = await $.tool.call({ tool: SET_MODE_TOOL, session_id: 'self', mode: BYPASS_MODE })
+    granted = ran.deny === undefined && !ran.isError
+  } catch {
+    // outil absent : la note dit le geste à faire à la main
+  }
+  await setView($, v => ({ launchNote: autoBypassNote(granted), launched: granted ? v.launched.filter(k => k !== key) : v.launched }))
+}
+
 async function ownAppSession($: EngineInterface): Promise<string | undefined> {
   return (await readOwnSession($)).id
 }
@@ -2005,9 +2039,10 @@ async function forwardProposal(
  * elle-même. Tout autre refus (Bertrand refuse la carte, le mode auto) revient tel quel : la carte
  * n'est pas reposée (relecture de sécurité du 2026-10-29).
  */
-async function launchWithMode(e: unknown, post: (card: Record<string, unknown>) => Promise<ToolCallResult>): Promise<ToolCallResult> {
+async function launchWithMode($: EngineInterface, e: unknown, post: (card: Record<string, unknown>) => Promise<ToolCallResult>): Promise<ToolCallResult> {
   const card = e as Record<string, unknown>
-  const changed = settings.launchBypass ? bypassCard(card) : undefined
+  // Depuis le mode auto, pas de bypass : son contrôle refuserait la carte (#248).
+  const changed = settings.launchBypass && wantsBypass(true, await ownMode($)) ? bypassCard(card) : undefined
   if (!changed) return post(card)
   const ran = await post(changed.card)
   const refused = ran.deny !== undefined || ran.isError === true
@@ -3074,6 +3109,15 @@ async function launchSession($: EngineInterface, source: Source, task: Task, sho
     })
     perfFlush?.()
   }
+  // En mode auto, le panneau n'essaie pas : son contrôle refuse un appel qu'aucun message de la
+  // personne ne demande (un clic lui est invisible), et l'essai coûtait ~40 s avant le repli (#248).
+  const mode = await ownMode($)
+  if (mode === 'auto') {
+    noteLaunch('claude', true)
+    await askClaude($, brief, [], AUTO_VIA_CLAUDE)
+    if ((await read($, viewAtom)).launchNote.startsWith('Lancement impossible')) await release()
+    return
+  }
   // Le mode auto vient de refuser la carte du panneau : elle passe droit par Claude.
   if (autoModeRefusal && tick() - autoModeRefusal.at < AUTO_MODE_SKIP_MS) {
     refusals.push(autoModeRefusal.text)
@@ -3095,7 +3139,7 @@ async function launchSession($: EngineInterface, source: Source, task: Task, sho
       // lance pas. La consigne n'entre que dans la carte : envoyée dans la conversation qui lance
       // (repli par Claude), elle aurait pu y relever cette session-ci ; là, le crochet l'ajoute à la
       // carte que pose Claude (relecture de sécurité du 2026-10-29).
-      prompt: settings.launchBypass ? withBypassClause(brief.prompt) : brief.prompt,
+      prompt: wantsBypass(settings.launchBypass, mode) ? withBypassClause(brief.prompt) : brief.prompt,
       background: brief.background,
     } as const
     // Les champs que l'app peut refuser, dans l'ordre où ils tombent, un par refus : le mode (#87 :
@@ -3105,7 +3149,7 @@ async function launchSession($: EngineInterface, source: Source, task: Task, sho
     // hérite de la session qui lance.
     const effort = LAUNCH_EFFORTS.has(settings.launchEffort) ? settings.launchEffort : undefined
     const optional: [field: string, value: unknown, note: string][] = []
-    if (settings.launchBypass) optional.push(['permission_mode', BYPASS_MODE, `en ${BYPASS_MODE}`])
+    if (wantsBypass(settings.launchBypass, mode)) optional.push(['permission_mode', BYPASS_MODE, `en ${BYPASS_MODE}`])
     if (effort) optional.push(['effort', effort, `avec effort ${effort}`])
     if (projet) optional.push(['use_worktree', false, 'sans worktree'])
     const withFields = () => ({ ...card, ...Object.fromEntries(optional.map(([field, value]) => [field, value])) })
@@ -3501,10 +3545,10 @@ async function submitWelcome($: EngineInterface, text: string): Promise<void> {
 }
 
 /** Sans outil de lancement utilisable, la demande part à Claude dans la conversation en cours. */
-async function askClaude($: EngineInterface, brief: { title: string; prompt: string; background: string }, refusals: readonly string[] = []): Promise<void> {
+async function askClaude($: EngineInterface, brief: { title: string; prompt: string; background: string }, refusals: readonly string[] = [], note = viaClaudeNote(refusals)): Promise<void> {
   try {
     const source = await sourceNow($)
-    await submitLaunch($, brief, viaClaudeNote(refusals), source ? projectSettings(source).travail : 'code')
+    await submitLaunch($, brief, note, source ? projectSettings(source).travail : 'code')
   } catch (err) {
     await setView($, () => ({ launchNote: `Lancement impossible : ${err instanceof Error ? err.message : String(err)}` }))
   }
@@ -4881,8 +4925,12 @@ export const register: Register = (on, options) => {
     // Une carte du modèle reçoit la section de l'arbre, comme le ▶ (#237).
     const e = next.origin.plugin === 'engine' && !fromAgent(raw) ? ((await withTree($, raw)) as typeof raw) : raw
     const ran = await forwardProposal($, e, next.origin.plugin, () =>
-      next.origin.plugin === 'engine' ? launchWithMode(e, card => next(card as typeof e)) : next(e),
+      next.origin.plugin === 'engine' ? launchWithMode($, e, card => next(card as typeof e)) : next(e),
     )
+    // La carte de Claude refusée par le mode auto : la fiche le dit tout de suite, avec le geste (#248).
+    if (next.origin.plugin === 'engine' && (ran.deny !== undefined || ran.isError) && isAutoModeRefusal(ran.deny ?? ran.text ?? '')) {
+      await setView($, () => ({ launchNote: AUTO_BLOCKED }))
+    }
     // Une carte posée (ou remontée à Maestro) : l'idée du tour a sa suite (#83).
     if (capture && !ran.isError) capture.cardThisTurn = true
     // Sa carte est la question de lancement : la boîte de fin du tour ne la redemande pas (#122).
@@ -7828,6 +7876,10 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
                 </Box>
               ) : (
                 launchNote !== '' && launchNote !== LAUNCHING && <Text color={palette.text2}>{launchNote}</Text>
+              )}
+              {/* La carte refusée par le mode auto : le geste qui passe la session en bypass (#248). */}
+              {!live && launchNote === AUTO_BLOCKED && (
+                <Button key="auto-bypass" label="Passer en bypass" onPress={() => void switchToBypass($, taskKey(current))} />
               )}
               {/* « Marquer faite » (#73) et « Annuler la tâche » : la tâche ne s'efface pas, elle descend en
                   tête des faites, avec son bilan ; une confirmation d'abord (décisions de Bertrand du

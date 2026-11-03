@@ -2807,6 +2807,16 @@ export function sessionTitleIn(text: string): string {
   }
 }
 
+/** Le mode de permission d'une session sur sa fiche (`permissionMode`) ; `undefined` s'il n'y est pas, ou fiche illisible (#248). */
+export function sessionModeIn(text: string): string | undefined {
+  try {
+    const mode = (JSON.parse(text) as { permissionMode?: unknown } | null)?.permissionMode
+    return typeof mode === 'string' && mode !== '' ? mode : undefined
+  } catch {
+    return undefined
+  }
+}
+
 /** Le parent d'une session sur sa fiche (`parentSessionId`) : `null` sans parent, `undefined` si la fiche est illisible. */
 export function sessionParentIn(text: string): string | null | undefined {
   try {
@@ -3307,6 +3317,19 @@ export function viaClaudeNote(refusals: readonly string[]): string {
   if (refusals.some(isAutoModeRefusal)) return `${base} (le mode auto bloque le panneau).`
   if (refusals.length > 0) return `${base} (l'app a refusé au panneau).`
   return `${base}.`
+}
+
+/** La note quand la session est en mode auto : le panneau n'essaie pas, Claude pose la carte (#248). */
+export const AUTO_VIA_CLAUDE = 'Carte demandée à Claude dans la conversation : en mode auto, seul Claude peut la poser.'
+
+/** La carte refusée par le mode auto : la fiche le dit aussitôt, le bouton « Passer en bypass » sous la note (#248). */
+export const AUTO_BLOCKED = 'Le mode auto de cette session refuse la carte. Passe la session en bypass, puis relance avec ▶.'
+
+/** Ce que dit la fiche après le bouton « Passer en bypass » : accordé, ou refusé (le geste à faire à la main). */
+export function autoBypassNote(granted: boolean): string {
+  return granted
+    ? 'Session passée en bypass : relance avec ▶.'
+    : 'Bascule refusée : choisis « Bypass permissions » dans le sélecteur de mode sous la saisie, puis relance avec ▶.'
 }
 
 /** La note au modèle quand une session Maestro ouvre des lignes : elle ne les code pas, elle les lance. */
@@ -7265,6 +7288,16 @@ export function bypassClause(): string {
     "Déjà en bypass, rien ne s'affiche ; sinon l'app montre à " + person() + " sa carte d'approbation : attends son clic. Refusé ou indisponible : continue dans ton mode, et dis-le en une ligne.",
     'En bypass, plus rien ne te demande de permission : les règles du projet sont tes seules limites, et le plugin refuse les commandes git interdites dans le dossier principal.',
   ].join(' ')
+}
+
+/**
+ * L'option « Lancer en bypass » vaut-elle pour cette session (#248) ? Pas depuis le mode auto : son
+ * contrôle refuse un agent qui doit se relever en bypass (« Create Unsafe Agents », « Self-Modification » :
+ * transcripts du 2026-11-01 au 03, expérience du 2026-11-03), et l'app n'accorde le bypass que depuis une
+ * session déjà en bypass. Un mode inconnu (fiche illisible) garde l'option.
+ */
+export function wantsBypass(option: boolean, mode: string | undefined): boolean {
+  return option && mode !== 'auto'
 }
 
 /** Le brief avec la consigne de bypass, une seule fois : un brief qui l'a déjà reste tel quel. */
