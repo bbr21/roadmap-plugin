@@ -9096,7 +9096,8 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   // Les axes toujours dépliés (#160) : plus de ligne repliée (#149) ; les faites s'ouvrent par le lien de l'en-tête (#152).
   // Les zones fixes : le compte des faites, les axes, le chevron du bloc « En cours », la roue, les
   // pastilles cliquables et « Plus › » (#115), les boutons de session des faites.
-  const liveOpen = !(view.liveFolded ?? false)
+  // Replié tant que Bertrand ne l'a pas déplié (#251) : la bande au-dessus de la saisie redit ses sessions.
+  const liveOpen = !(view.liveFolded ?? true)
   // La ligne armée pose une zone de plus, celle de son tag « Confirmer » (#198).
   const armedView = armedOf(view)
   const armedZone = armedView !== undefined && armShown(armedView, armedView.key, now) ? 1 : 0
@@ -9112,8 +9113,8 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
 
   // Le bloc « En cours » de Maestro (#160, maquette A) : encadré, en tête des filtres, ses sessions en
   // lignes de la liste (roue ou main, barre, compte) ; toujours là, quels que soient filtre, axe ou recherche.
-  // Son chevron, centré sur le titre, le replie.
-  const toggleLive = () => void setView($, v => ({ liveFolded: !(v.liveFolded ?? false) }))
+  // Son chevron, centré sur le titre, le déplie ; il s'ouvre replié (#251).
+  const toggleLive = () => void setView($, v => ({ liveFolded: !(v.liveFolded ?? true) }))
   const liveBlock =
     blockTasks.length > 0 ? (
       <Box flexDirection="column" borderStyle="round" borderColor={palette.border} paddingY="xs">

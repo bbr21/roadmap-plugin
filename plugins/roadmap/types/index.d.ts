@@ -111,7 +111,7 @@ export type View = {
   foldedCards?: string[]
   /** Les cartes dépliées à la main (#210) quand la fiche les replierait d'office (les Étapes d'une Done), par nom ; absent : aucune. */
   openedCards?: string[]
-  /** Le bloc « En cours » de Maestro replié par son chevron (#160) ; absent, déplié. */
+  /** Le bloc « En cours » de Maestro replié par son chevron (#160) ; absent, replié (#251) : la bande au-dessus de la saisie redit ses sessions. */
   liveFolded?: boolean
   /** La ligne dont le rond est armé (#179, clé `taskKey`) : son encart attend sa confirmation ; vide ou absente : aucune. */
   armed?: string
