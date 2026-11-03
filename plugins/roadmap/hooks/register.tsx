@@ -28,7 +28,6 @@ import {
   axisBandIcon,
   bandGlyphIcon,
   progressIcon,
-  sisterGaugeIcon,
   bubbleIcon,
   squareCheckRowIcon,
   squareArmedRowIcon,
@@ -139,7 +138,6 @@ import {
   cardFolded,
   cardSummary,
   chainOf,
-  gaugeCaption,
   ficheCards,
   missionCut,
   finCard,
@@ -205,7 +203,6 @@ import {
   chainHead,
   chainSteps,
   type ChainStep,
-  type SisterState,
   type TreeBlock,
   type Mode,
   type Travail,
@@ -377,7 +374,6 @@ import {
   checkLingers,
   CHECK_HOLD_MS,
   pressDisarms,
-  NUMBER_CELLS,
   treeNumberCells,
   AGE_CELLS,
   splitRowPills,
@@ -6438,7 +6434,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   ])
   const {
     axis: axisRaw, attend: attendRaw, who: whoRaw = 'all', moreFilters = false, showDone: doneChosen, groupBy, selected, openGroups, closedGroups, moreGroups,
-    launchNote, launched, openNote, conclusionOpen, missionOpen = '', sistersOpen = '', draftOpen = '', draftFolded = '', cancelAsk = '', closeKind = 'abandon', cancelNote = '',
+    launchNote, launched, openNote, conclusionOpen, missionOpen = '', draftOpen = '', draftFolded = '', cancelAsk = '', closeKind = 'abandon', cancelNote = '',
     editing: editingKey = '', editNote = '', editField = '', editCount = 0, foldedCards = [], openedCards = [],
   } = view
   const data = await paneData($, source, [stamp, titlesVersion, themeStamp, retry, liveVersion].join('|'))
@@ -6637,14 +6633,15 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   // Le numéro d'une tâche devant son titre : petit, discret, suivi d'un point de séparation. Hors du
   // bouton, qui imposerait sa couleur au texte.
   // `open` : la tâche a une session ouverte, et un clic sur son numéro y mène.
-  const taskNumber = (id: string, open?: () => void, done = false, cells = NUMBER_CELLS) => {
+  const taskNumber = (id: string, open?: () => void, done = false) => {
     // Une fois cliquable par dessin (#220) : la même tâche dessinée deux fois n'a qu'un numéro qui ouvre.
     const opens = open && (graphic ? numberZones.has(id) : true) && firstZone(`num:${id}`) ? open : undefined
     return (
-      // Sa colonne de NUMBER_CELLS (#198), calée à droite, sur toutes les lignes : les tags, l'échéance et
-      // le titre suivent, alignés. Un numéro cliquable est un bouton au terminal ; sur le bureau, un texte
-      // et sa zone de clic (un bouton imposait sa taille de texte, 2026-10-23). Une faite : gris clair, barré.
-      <Box key={`n:${id}`} width={cells} flexDirection="row" justifyContent="flex-end" alignItems="center" flexShrink={0}>
+      // Sa colonne (#198), calée à droite, sur toutes les lignes : les tags, l'échéance et le titre suivent,
+      // alignés ; à la largeur du plus long numéro (#258), dans la liste comme dans la fiche (#259). Un
+      // numéro cliquable est un bouton au terminal ; sur le bureau, un texte et sa zone de clic (un bouton
+      // imposait sa taille de texte, 2026-10-23). Une faite : gris clair, barré.
+      <Box key={`n:${id}`} width={treeNumCells} flexDirection="row" justifyContent="flex-end" alignItems="center" flexShrink={0}>
         {opens && !graphic ? (
           <Button key={`num:${id}`} plain dimColor onPress={opens}>{`#${id}`}</Button>
         ) : (
@@ -6915,58 +6912,69 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
       ) : null
     const plain = (text: string | undefined) => text !== undefined && text !== '' && <Text wrap="truncate-end">{text}</Text>
     const strong = (text: string) => <Text weight="semibold" tabular>{text}</Text>
-    // La carte Chaîne d'une fille (#246, maquette B choisie par BBR) : sa mère, son titre en gras, sa barre et
-    // « 3/6 » ; la jauge d'une case par sœur dans l'ordre de la liste (#238), sa case cerclée, et sa légende ;
-    // Avant, Ici, Ensuite ; « Les 6 sœurs » repliées, dépliées une ligne chacune ; ses sous-tâches.
+    // La carte Chaîne d'une fille (#259, maquette A choisie par BBR) : l'arbre de la liste, à la ligne de la vue
+    // de référence (#258). La mère : sa flèche grise, son # serré, son titre en gras et sa jauge juste après ;
+    // ses sœurs dans l'ordre de la liste (#238), leur coude, leur carré sous le # de la mère, au bout leur
+    // retard seul, leur prérequise ou « fait » ; la ligne de la fiche surlignée. Avant et Ensuite ne gardent que
+    // les tâches hors des sœurs ; puis ses sous-tâches. Plus de jauge de cases ni de « Les 6 sœurs » (#246).
     const sisterCard = (c: NonNullable<typeof sisters>) => {
-      const states = c.sisters.map(x => x.state)
-      const caption = gaugeCaption(states, c.index)
-      const hue: Record<SisterState | 'ring', string> = {
-        done: palette.ok,
-        cancelled: palette.text3,
-        live: palette.live,
-        blocked: palette.block,
-        todo: palette.sel,
-        ring: palette.text,
-      }
-      const open = sistersOpen === current.key
-      const toggle = () => void setView($, v => ({ sistersOpen: v.sistersOpen === current.key ? '' : current.key }))
+      const kin = new Set<Task>([c.mother, ...c.sisters.map(x => x.task)])
       const missing = missingPrereqs(current, allTasks)
-      const before = prereqsFor(current)
-      return (
-        <Box flexDirection="column">
-          <Box key="sisters-mother" flexDirection="row" alignItems="center">
-            {strut(SIZE.strut.field)}
-            {link(c.mother, {
-              strong: true,
-              end: (
-                <Box flexDirection="row" alignItems="center" gap={SPACE.row}>
+      const before = prereqsFor(current).filter(x => !kin.has(x))
+      const after = unlocks.filter(x => !kin.has(x))
+      const treeLine = (x: Task, o: { mother?: boolean; last?: boolean }) => {
+        const here = x === current
+        const square = x.done ? squareCheckRowIcon(axisHex(x.axis), palette.onAxis) : squareRowIcon(axisHex(x.axis))
+        const mark = o.mother ? treeMotherRowIcon(axisHex(x.axis), true, palette.text2) : treeChildRowIcon(square, o.last === true, palette.border)
+        const blocker = x.done || o.mother ? undefined : blockerFor(x)
+        const due = !x.done && !o.mother && blocker === undefined && x.due !== undefined ? duePill(x.due, today, { short: true }) : undefined
+        const end = x.done ? (isAbandoned(x) ? 'annulée' : 'fait') : blocker?.pre ? `${blocker.parent ? 'parent ' : ''}après ${blocker.pre.id ? `#${blocker.pre.id}` : short(blocker.pre).titre}` : undefined
+        const strong = o.mother || here
+        const title = <Text wrap="truncate-end" {...(strong ? { weight: 'semibold' as const } : {})} {...(x.done ? { strikethrough: true, color: palette.text3 } : {})}>{short(x).titre}</Text>
+        return (
+          <Box key={`chain-row:${x.key}`} flexDirection="row" alignItems="center" gap={SPACE.row} {...(here ? { backgroundColor: palette.sel } : {})}>
+            <Box flexShrink={0}>
+              {Svg ? (
+                <Svg source={x.done ? fade(mark, true) : mark} alt={o.mother ? 'mère' : x.done ? 'faite' : x.axis} width={o.mother ? 32 : TREE_CHILD_PX} height={24} />
+              ) : (
+                <Text color={palette.text3}>{o.mother ? '⌄' : o.last ? '└' : '├'}</Text>
+              )}
+            </Box>
+            {x.id && taskNumber(x.id, undefined, x.done)}
+            <Box key={`chain-lead:${x.key}`} flexDirection="row" alignItems="center" flexGrow={1} flexShrink={1} minWidth={0}>
+              {/* Chez un enfant de Maestro, le titre se lit sans mener à sa fiche (#233). */}
+              {here || (inSession && child) ? title : (
+                <Button key={`link:${x.key}`} plain hover={{ underline: true }} onPress={select(selectionOf(x))}>
+                  {title}
+                </Button>
+              )}
+              {o.mother && (
+                <Box key={`chain-gauge:${x.key}`} flexDirection="row" alignItems="center" gap={SPACE.row} flexShrink={0} paddingLeft={SPACE.row}>
                   {Svg ? <Svg source={progressIcon(c.done, c.total, palette.ok, palette.sel)} alt={`${c.done}/${c.total}`} width={34} height={SIZE.bar} /> : null}
                   <Text size="caption" tabular color={palette.text2}>{`${c.done}/${c.total}`}</Text>
                 </Box>
-              ),
-            })}
-          </Box>
-          {Svg ? (
-            <Svg key="sisters-gauge" source={sisterGaugeIcon(states, c.index, hue, fullWidth((e.props as { bodyColumns?: number }).bodyColumns ?? 48))} alt={caption.mid} height={12} />
-          ) : (
-            <Box key="sisters-gauge" flexDirection="row">
-              {states.map((st, i) => (
-                <Text key={`g:${i}`} color={hue[st]}>{i === c.index ? '◆' : '■'}</Text>
-              ))}
+              )}
             </Box>
-          )}
-          <Box key="sisters-caption" flexDirection="row" justifyContent="space-between">
-            <Text size="caption" color={palette.text3}>{caption.left}</Text>
-            <Text size="caption" weight="semibold">{caption.mid}</Text>
-            <Text size="caption" color={palette.text3}>{caption.right}</Text>
+            {due && (
+              <Box key={`chain-due:${x.key}`} flexShrink={0}>
+                <Text size="caption" tabular color={dueInk(due.kind, palette)} wrap="end">{due.text}</Text>
+              </Box>
+            )}
+            {end !== undefined && (
+              <Box key={`chain-end:${x.key}`} flexShrink={0}>
+                <Text size="caption" color={x.done ? palette.text3 : palette.text2} wrap="end">{end}</Text>
+              </Box>
+            )}
           </Box>
+        )
+      }
+      return (
+        <Box flexDirection="column">
+          {treeLine(c.mother, { mother: true })}
+          {c.sisters.map(({ task: x }, i) => treeLine(x, { last: i === c.sisters.length - 1 }))}
           {before.map((x, i) => field(i === 0 ? 'Avant' : '', link(x), `Avant:${x.key}`))}
           {missing.map((n, i) => field(i === 0 && before.length === 0 ? 'Avant' : '', plain(`#${n} introuvable`), `Avant:#${n}`))}
-          {field('Ici', link(current, { here: true }), 'Ici')}
-          {unlocks.map((d, i) => field(i === 0 ? 'Ensuite' : '', link(d), `Ensuite:${d.key}`))}
-          {field('', moreLink('sisters', `${open ? '▾' : '▸'} Les ${c.sisters.length} sœurs`, toggle), 'sisters')}
-          {open && c.sisters.map(({ task: x }) => field('', link(x, { here: x === current }), `Sœur:${x.key}`))}
+          {after.map((d, i) => field(i === 0 ? 'Ensuite' : '', link(d), `Ensuite:${d.key}`))}
           {allTasks
             .filter(x => x !== current && current.id !== undefined && x.parent === current.id)
             .map((x, i) => field(i === 0 ? 'Sous-tâches' : '', link(x), `Sous-tâches:${x.key}`))}
@@ -8307,8 +8315,8 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
         ? [treeDepartment(t, { enabled: settings.axisPill, axisFilter: axis, clesVisibles })].filter((x): x is string => x !== undefined).map(text => ({ text, bg: palette.sel, fg: palette.text2, weight: 600 as const }))
         : keyPills(t, clesVisibles, cles, o.parent).map(p => ({ text: p.text, bg: palette.sel, fg: palette.text2, weight: 600 as const }))
     const tags: PillSpec[] = [...(feedback ? [{ text: 'Retour', bg: palette.waitTint, fg: palette.waitOn, weight: TEXT.weight.soft }] : []), ...listed.tags.map(rowPillSpec), ...keys]
-    // Dans l'arbre (#258, vue de référence) : un retard se dit seul, « 1 j de retard », sans la date.
-    const due = o.tree && listed.due !== undefined && t.due !== undefined ? duePill(t.due, today, { short: true }) : listed.due
+    // Comme dans l'arbre (#258, vue de référence), dans toute vue (#259) : un retard se dit seul, « 1 j de retard ».
+    const due = listed.due !== undefined && t.due !== undefined ? duePill(t.due, today, { short: true }) : listed.due
     return { feedback, keys, tags, due }
   }
 
@@ -8405,20 +8413,19 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
             : squareRowIcon(axisHex(t.axis))
     // L'arbre par axe (#168) : la mère porte sa flèche dans son carré, une fille son coude.
     // La vue de référence (#258, maquette A) : la flèche de la mère sort de son carré, grise, devant le # ;
-    // une tâche seule garde sa place vide, une fille pose son carré sous le # de sa mère.
+    // une tâche seule garde sa place vide, une fille pose son carré sous le # de sa mère. Hors de l'arbre aussi
+    // (#259 : recherche, « À relancer », bloc « En cours ») : la place vide, pour que les # s'alignent.
     const drawn = head
       ? treeMotherRowIcon(axisHex(t.axis), head.open, palette.text2)
       : child
         ? treeChildRowIcon(markSource, child.last, palette.border)
         : chain
           ? chainRowIcon(markSource, chain.pos, chain.step, palette.text3, palette.text2)
-          : tree
-            ? treeAloneRowIcon(markSource)
-            : markSource
+          : treeAloneRowIcon(markSource)
     const markAlt = `${isAbandoned(t) ? 'annulée' : t.done ? 'faite' : t.axis}${armed ? ', armée' : ''}${chain ? `, étape ${chain.step}` : ''}${head ? (head.open ? ', replier' : ', déplier') : ''}`
     const checkKey = `check:${t.id ?? keyPart(t.key)}`
     const mark = Svg ? (
-      <Svg source={ghost || (t.done && !checkedMark) ? fade(drawn, true) : drawn} alt={markAlt} width={child ? TREE_CHILD_PX : chain || tree ? 32 : 16} height={24} {...(moving !== undefined ? { isInteractive: true } : {})} />
+      <Svg source={ghost || (t.done && !checkedMark) ? fade(drawn, true) : drawn} alt={markAlt} width={child ? TREE_CHILD_PX : 32} height={24} {...(moving !== undefined ? { isInteractive: true } : {})} />
     ) : head ? (
       <Text color={axisTheme(t.axis)}>{head.open ? '⌄' : '›'}</Text>
     ) : checkable ? (
@@ -8463,14 +8470,19 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     // la jauge de la mère, le département et l'échéance comptent dans ce qui ne rétrécit pas.
     const gaugeCells = head ? pxCells(34) + 1 + pxCells(7.3 * `${head.block.done}/${head.block.total}`.length) + 1 : 0
     const dueCells = parts.due ? Math.max(AGE_CELLS, pxCells(6.5 * [...parts.due.text].length)) : AGE_CELLS
+    // Jamais dans « En cours » (#177) : le bloc de Maestro ou le filtre ; le carré d'axe suffit.
+    const department = ghost ? undefined : axisPillText(t, { enabled: settings.axisPill, axisFilter: axis, live: block !== undefined || attend === 'live', groupedByAxis: tree !== undefined && !rangerPar && (by === 'subject' || attend === 'today'), clesVisibles })
+    // Le département ne part pas : il compte dans ce qui ne rétrécit pas (#259, la recherche le montre).
+    const departmentCells = department !== undefined && Svg ? pxCells(pillIcon({ text: department, bg: palette.sel, fg: palette.text2, weight: 600 }).width) + 1 : 0
+    // Hors de l'arbre (#259), la même ligne : la marque de 32 px et le # serré, en session comme hors session.
     const shownTags =
-      tree && !inSession && Svg
+      !inSession && Svg
         ? parts.tags.slice(
             0,
             fitRowPills({
               columns: (e.props as { bodyColumns?: number }).bodyColumns ?? 56,
               inset: 4,
-              steps: gaugeCells + dueCells,
+              steps: gaugeCells + dueCells + departmentCells,
               pills: parts.tags.map(spec => pxCells(pillIcon(spec).width)),
               mark: child ? TREE_CHILD_PX : 32,
               number: treeNumCells,
@@ -8484,6 +8496,8 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
               inset: 6,
               steps: stepsCells.columns + (block ? blockEndCells : 0),
               pills: parts.tags.map(spec => pxCells(pillIcon(spec).width)),
+              mark: child ? TREE_CHILD_PX : 32,
+              number: treeNumCells,
             }).kept,
           )
         : parts.tags
@@ -8496,9 +8510,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
         </Text>
       </Box>
     ) : null
-    const number = t.id ? taskNumber(t.id, rowSession ? () => void openSession($, rowSession.entry) : undefined, t.done, tree ? treeNumCells : NUMBER_CELLS) : undefined
-    // Jamais dans « En cours » (#177) : le bloc de Maestro ou le filtre ; le carré d'axe suffit.
-    const department = ghost ? undefined : axisPillText(t, { enabled: settings.axisPill, axisFilter: axis, live: block !== undefined || attend === 'live', groupedByAxis: tree !== undefined && !rangerPar && (by === 'subject' || attend === 'today'), clesVisibles })
+    const number = t.id ? taskNumber(t.id, rowSession ? () => void openSession($, rowSession.entry) : undefined, t.done) : undefined
     // Le tag de la ligne armée (#198, maquette A) : au bout de la ligne, à la place de l'âge et du ▶,
     // orange plein ; une zone de clic, la seule de la liste (comptée sous ZONE_LIMIT). Sans zone, un bouton.
     const confirm = armed ? armTag(t.done ? 'reopen' : 'done') : undefined
