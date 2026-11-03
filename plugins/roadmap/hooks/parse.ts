@@ -6106,14 +6106,50 @@ const withoutReminders = (prompt: string) => prompt.replace(/^(?:\s*<system-remi
  * `scan` : il veut l'état de la roadmap. L'appel nu ne scanne pas (#126) : le panneau s'ouvre et Maestro
  * propose le scan ; « Maestro scan », « Maestro go » ou une demande après « Maestro » scannent.
  */
-export function maestroCall(prompt: string): { go: boolean; scan: boolean; action?: MaestroAction } | undefined {
+export function maestroCall(prompt: string, axes: readonly string[] = []): { go: boolean; scan: boolean; action?: MaestroAction; axis?: string } | undefined {
   // « /maestro » (et « /roadmap:maestro ») lance la skill du même nom : il vaut « Maestro » (#112).
   const m = /^\s*(?:\/(?:roadmap:)?)?maestro\b[\s,.:!?-]*(.*)$/is.exec(withoutReminders(prompt))
   if (!m) return undefined
   const rest = (m[1] ?? '').trim()
   const go = /^(go|lance|lancer|vas-y|vas y|start|démarre|demarre)\b/i.test(rest)
   const action = go ? undefined : MAESTRO_ACTIONS.find(([, re]) => re.test(rest))?.[0]
+  // « Maestro Rob » (#239) : le reste entier est un axe de la roadmap ; les mots-clés passent avant,
+  // « axe <nom> » force un axe qui porte le nom d'un mot-clé (« Maestro axe sessions »).
+  const named = /^axe\s+(.+)$/i.exec(rest)
+  const axis = go || (action && !named) ? undefined : axisNamed(named?.[1] ?? rest, axes)
+  if (axis !== undefined) return { go: false, scan: false, axis }
   return { go, scan: rest !== '', ...(action ? { action } : {}) }
+}
+
+/** Un nom d'axe comparable (#239) : sans casse ni accent, espaces, tirets et soulignés confondus en un tiret. */
+export function axisKey(name: string): string {
+  return name
+    .normalize('NFD')
+    .replace(/\p{M}/gu, '')
+    .toLowerCase()
+    .trim()
+    .replace(/[\s_-]+/g, '-')
+}
+
+/** L'axe de `axes` que nomme `text`, ponctuation finale ôtée, tel qu'écrit dans la roadmap. */
+function axisNamed(text: string, axes: readonly string[]): string | undefined {
+  const key = axisKey(text.replace(/[\s.,:;!?]+$/, ''))
+  return key === '' ? undefined : axes.find(a => axisKey(a) === key)
+}
+
+/** Les axes que portent les lignes de la roadmap, ouvertes et faites, une fois chacun, dans leur ordre (#239). */
+export function roadmapAxes(tasks: readonly Task[]): string[] {
+  return [...new Set(tasks.map(t => t.axis).filter(a => a !== ''))]
+}
+
+/** La vue d'ouverture du panneau (#188), sur l'axe que « Maestro <axe> » a posé pour la session (#239). */
+export function openingView(axis?: string): Omit<typeof OPENING_VIEW, 'axis'> & { axis: string } {
+  return { ...OPENING_VIEW, axis: axis || OPENING_VIEW.axis }
+}
+
+/** La tête d'un brief de Maestro limité à l'axe de la session (#239) : ce qu'il compte, et comment tout revoir. */
+export function maestroAxisNote(axis: string): string {
+  return `Maestro est ouvert sur l'axe ${axisLabel(axis)} (« Maestro ${axis} ») : ce brief ne compte que ses tâches ; les sessions, elles, se disent toutes. « Maestro » seul rouvre tous les axes.`
 }
 
 /** Les actions de l'accueil (#141) : ce que lit chaque bouton, à la place du scan entier. */
@@ -6879,7 +6915,7 @@ export function cardSummary(
  * tout autre message garde sa rangée, « Maestro scan » du bouton de #126 compris.
  */
 export function openingBrand(o: { text: string; source: Source; tasks: readonly Task[]; maestroTasks: BrandTask[] }): Brand | undefined {
-  const call = maestroCall(o.text)
+  const call = maestroCall(o.text, roadmapAxes(o.tasks))
   if (call && (!call.scan || call.go)) return { kind: 'maestro', project: o.source.name, tasks: o.maestroTasks }
   const brief = briefTaskOf(o.text)
   return brief ? taskBrand(brief.id, o.source, o.tasks, brief.maestro) : undefined

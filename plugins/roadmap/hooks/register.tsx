@@ -209,6 +209,7 @@ import {
   unlockedBy,
   launchable,
   maestroCall,
+  maestroAxisNote,
   maestroContext,
   maestroDayContext,
   maestroIntro,
@@ -303,6 +304,8 @@ import {
   maestroTasksNote,
   liveBlockRows,
   OPENING_VIEW,
+  openingView,
+  roadmapAxes,
   doneViewOn,
   moreFiltersForced,
   otherTaskNote,
@@ -627,6 +630,12 @@ const pendingAsksAtom = atom({ plugin: 'roadmap', key: 'pendingAsks' } as const,
 const contextSeenAtom = atom({ plugin: 'roadmap', key: 'contextSeen' } as const, 0)
 /** Le contexte de cette session à la fin de son dernier tour (#157), pour l'en-tête de la bande de Maestro. */
 const bandContextAtom = atom({ plugin: 'roadmap', key: 'bandContext' } as const, null as ContextUse | null)
+/**
+ * L'axe que « Maestro <axe> » a posé pour cette session (#239), vide pour tous : le filtre du panneau à
+ * chaque ouverture et la portée des briefs de Maestro, jusqu'au prochain « Maestro <axe> » ou « Maestro »
+ * seul. Un atome est l'état de la session : deux Maestro sur deux axes ne se gênent pas.
+ */
+const maestroAxisAtom = atom({ plugin: 'roadmap', key: 'maestroAxis' } as const, '')
 
 /**
  * Change l'état d'un clic en une écriture : `patch` dit les champs qui changent, d'après l'état
@@ -3087,8 +3096,10 @@ async function maestroText($: EngineInterface, go: boolean, only?: 'launch' | 's
   const { waiting, running, others } = maestroSplit({ tracked: followed, ...(me ? { me } : {}), openSessions: openSessionIds, statuses, now })
   // #76, #176 : une tâche qu'une autre personne porte (`resp:`) ne se lance pas, elle se relance.
   const projet = projectSettings(source).travail === 'projet'
+  // Les candidates de l'axe de la session (#239) ; les sessions, elles, se disent toutes.
+  const axis = await sessionAxis($)
   const ready = launchable(open, { prereqOf: prereq, isLive: t => tracked(t) !== undefined, me: source.me }).filter(
-    t => !view.launched.includes(taskKey(t)) && !heldByOther(t, source.me),
+    t => !view.launched.includes(taskKey(t)) && !heldByOther(t, source.me) && (!axis || t.axis === axis),
   )
   const openTasks = open.filter(t => !t.done)
   const othersLate = openTasks.filter(t => heldByOther(t, source.me) && isOverdue(t, todayOf(now))).length
@@ -3108,7 +3119,7 @@ async function maestroText($: EngineInterface, go: boolean, only?: 'launch' | 's
       brief: await workBrief($, source, t, titleOf(t)),
     })),
   )
-  return maestroContext({
+  const context = maestroContext({
     source,
     today: todayOf(now),
     waiting,
@@ -3124,6 +3135,7 @@ async function maestroText($: EngineInterface, go: boolean, only?: 'launch' | 's
     ...(LAUNCH_EFFORTS.has(settings.launchEffort) ? { launchEffort: settings.launchEffort } : {}),
     ...(only ? { only } : {}),
   })
+  return withAxisNote(context, only === 'sessions' ? undefined : axis)
 }
 
 /** Sans roadmap dans ce projet, « Maestro » propose l'onboarding. */
@@ -3135,11 +3147,12 @@ async function noRoadmapText($: EngineInterface): Promise<string> {
  * L'accueil de Maestro (#141), compté sur la roadmap seule : la carte et le contexte de « Maestro »
  * le partagent. Rien des sessions n'est relu (#126) : seules les tâches de Maestro déjà connues comptent.
  */
-async function welcomeOf($: EngineInterface, data: NonNullable<Awaited<ReturnType<typeof brandData>>>): Promise<Welcome> {
+async function welcomeOf($: EngineInterface, data: NonNullable<Awaited<ReturnType<typeof brandData>>>, axis?: string): Promise<Welcome> {
   const ms = await $.clock.now()
   const settings = projectSettings(data.source)
   const facts = welcomeFacts({
-    tasks: data.tasks,
+    // « Maestro <axe> » compte sur son axe (#239).
+    tasks: onAxis(data.tasks, axis),
     today: todayOf(ms),
     me: data.source.me ?? [],
     relanceDays: settings.relanceDays,
@@ -3152,13 +3165,38 @@ async function welcomeOf($: EngineInterface, data: NonNullable<Awaited<ReturnTyp
  * « Maestro » seul (#126, #141) : le panneau s'ouvre, la carte d'accueil porte les chiffres et les
  * boutons, et Maestro ne dit que l'encouragement ; rien n'est lu des sessions avant un clic.
  */
-async function maestroIntroText($: EngineInterface): Promise<string> {
+async function maestroIntroText($: EngineInterface, axis?: string): Promise<string> {
   const source = await sourceNow($)
   if (!source) return noRoadmapText($)
   void openPane($, source)
   const data = await brandData($)
   if (!data) throw new Error('roadmap illisible')
-  return maestroIntro({ source, welcome: await welcomeOf($, data), cardShown: welcomeCardShown(await loadWelcomeCard($)) })
+  return withAxisNote(maestroIntro({ source, welcome: await welcomeOf($, data, axis), cardShown: welcomeCardShown(await loadWelcomeCard($)) }), axis)
+}
+
+/** Les tâches d'un axe ; sans axe, toutes (#239). */
+function onAxis<T extends { axis: string }>(tasks: readonly T[], axis: string | undefined): T[] {
+  return axis ? tasks.filter(t => t.axis === axis) : [...tasks]
+}
+
+/** Un brief limité à l'axe de la session le dit en tête (#239). */
+function withAxisNote(text: string, axis: string | undefined): string {
+  return axis ? `${maestroAxisNote(axis)}\n\n${text}` : text
+}
+
+/** L'axe de la session (#239) ; état illisible : tous. */
+async function sessionAxis($: EngineInterface): Promise<string | undefined> {
+  return (await read($, maestroAxisAtom).catch(() => '')) || undefined
+}
+
+/** Les axes de la roadmap, pour reconnaître « Maestro <axe> » (#239) ; roadmap illisible : aucun. */
+async function knownAxes($: EngineInterface): Promise<string[]> {
+  try {
+    const data = await brandData($)
+    return data ? roadmapAxes(data.tasks) : []
+  } catch {
+    return []
+  }
 }
 
 /** Ce que la carte d'accueil a vu sur cette machine ; store illisible : la carte compte pour vue. */
@@ -3274,9 +3312,12 @@ async function maestroActionText($: EngineInterface, action: MaestroAction): Pro
   if (!data) throw new Error('roadmap illisible')
   const today = todayOf(await $.clock.now())
   const me = source.me ?? []
-  if (action === 'journee') return maestroDayContext({ source, sections: todaySections(data.tasks, today, me), titleOf: data.short, today })
+  // La journée et les relances de l'axe de la session (#239).
+  const axis = await sessionAxis($)
+  const tasks = onAxis(data.tasks, axis)
+  if (action === 'journee') return withAxisNote(maestroDayContext({ source, sections: todaySections(tasks, today, me), titleOf: data.short, today }), axis)
   const relanceDays = projectSettings(source).relanceDays
-  return maestroRelaunchContext({ source, tasks: data.tasks.filter(t => isToRelaunch(t, today, me, relanceDays)), titleOf: data.short, today, me })
+  return withAxisNote(maestroRelaunchContext({ source, tasks: tasks.filter(t => isToRelaunch(t, today, me, relanceDays)), titleOf: data.short, today, me }), axis)
 }
 
 /**
@@ -4324,7 +4365,10 @@ async function openPane($: EngineInterface, source: Source) {
   // arbre, « Plus › » replié ; ouvert, il garde le filtre choisi. Liste des volets illisible (le kit de
   // test ne la donne pas) : rien ne change.
   try {
-    if (!(await $.ui.panes()).some(p => p.id === PANE && p.isPlaced)) await setView($, () => ({ ...OPENING_VIEW }))
+    if (!(await $.ui.panes()).some(p => p.id === PANE && p.isPlaced)) {
+      const axis = await read($, maestroAxisAtom).catch(() => '')
+      await setView($, () => openingView(axis))
+    }
   } catch {
     // liste des volets illisible
   }
@@ -4621,15 +4665,26 @@ export const register: Register = (on, options) => {
       // store illisible : les vieilles notes attendent le prochain chargement
     }
     // « Maestro » seul accueille (#126, #141) ; un bouton de l'accueil lit sa part ; une demande ou « Maestro go » scannent.
-    const call = maestroCall(e.text)
+    // « Maestro <axe> » (#239) : les axes de la roadmap départagent un axe d'une demande.
+    const call = maestroCall(e.text) && maestroCall(e.text, await knownAxes($))
     if (call) {
       try {
         await markMaestro($)
       } catch {
         // fiche ou store illisible : le titre et la famille jugent seuls
       }
+      // L'appel nu ou d'axe pose l'axe de la session, et le panneau ouvert bascule tout de suite.
+      if (!call.scan) {
+        try {
+          const axis = call.axis ?? ''
+          await update($, maestroAxisAtom, () => axis)
+          await setView($, () => ({ axis: axis || 'all', attend: 'all', showDone: false, closedGroups: [], moreGroups: [] }))
+        } catch {
+          // état de session illisible : le panneau garde sa vue
+        }
+      }
       try {
-        texts.push(call.action ? await maestroActionText($, call.action) : call.scan ? await maestroText($, call.go) : await maestroIntroText($))
+        texts.push(call.action ? await maestroActionText($, call.action) : call.scan ? await maestroText($, call.go) : await maestroIntroText($, call.axis))
       } catch (err) {
         texts.push(`${Person()} a dit « Maestro », mais l'état de la roadmap n'a pas pu être lu (${err instanceof Error ? err.message : String(err)}) : dis-le en une phrase.`)
       }
@@ -4944,16 +4999,18 @@ export const register: Register = (on, options) => {
     // L'app confie ses messages au plugin : la carte d'accueil peut paraître ici (#153).
     void noteWelcomeCard($, 'reachedAt')
     if (!maestroCall(e.props.text) && !briefTaskOf(e.props.text)) return next(e)
-    const welcomeCall = maestroCall(e.props.text)
+    let welcomeCall = maestroCall(e.props.text)
     try {
       const data = await brandData($)
+      // « Maestro <axe> » (#239) : l'axe du message lui-même, pas celui de la session à cette heure.
+      if (data) welcomeCall = maestroCall(e.props.text, roadmapAxes(data.tasks))
       const opened = data?.shorten(openingBrand({ text: e.props.text, source: data.source, tasks: data.tasks, maestroTasks: data.maestroTasks }))
       if (!data || !opened) {
         if (welcomeCall && !welcomeCall.scan) void noteWelcomeCard($, 'failedAt', data ? 'pas de carte' : 'roadmap illisible')
         return next(e)
       }
-      // « Maestro » seul ouvre l'accueil (#141) : le bonjour, les chiffres et les boutons.
-      const brand = opened.kind === 'maestro' && !maestroCall(e.props.text)?.scan ? { ...opened, welcome: await welcomeOf($, data) } : opened
+      // « Maestro » seul ouvre l'accueil (#141) : le bonjour, les chiffres et les boutons ; « Maestro <axe> », compté sur l'axe.
+      const brand = opened.kind === 'maestro' && welcomeCall && !welcomeCall.scan ? { ...opened, welcome: await welcomeOf($, data, welcomeCall.axis) } : opened
       const card = brandTree($, e, brand, data.palette, 'card', todayOf(await $.clock.now()))
       if ('welcome' in brand && brand.welcome) void noteWelcomeCard($, 'drawnAt')
       if (!e.props.isExpanded || brand.kind === 'maestro') return card

@@ -38,6 +38,8 @@ declare module 'claude-code' {
       bandContext: { tokens: number; window: number } | null
       /** Les questions des boîtes de fin de Maestro depuis le dernier message de la personne (#133) : un réveil ne les repose pas. */
       pendingAsks: readonly string[]
+      /** L'axe que « Maestro <axe> » a posé pour la session (#239), vide pour tous : le filtre du panneau à chaque ouverture et la portée des briefs. */
+      maestroAxis: string
       /** L'explication ouverte dans le volet Réglages (#118) : la clé de sa ligne (`pref:adhd`, `opt:theme`), vide sinon. */
       settingsInfo: string
       /** Ce qu'a donné le dernier « Rafraîchir » du pied du panneau (#138) : les versions comparées ; `none` avant le premier clic. */

@@ -39,6 +39,15 @@ full on 26/10/2026; a single name, Maestro, since 29/10/2026 (#112).
   closed) is handled by reading the roadmap yourself. « Maestro go » posts the cards of the first
   three; « Maestro, <une demande> » scans everything. News of children that are stuck, however, is
   said right away.
+  « Maestro <axe> » (« Maestro Rob », « Maestro Merch Promo », #239; case, accents, spaces and
+  hyphens ignored) is the bare call on one axis of the roadmap: the panel of this session opens
+  filtered on it (the other axes stay one click away), and that axis stays the session's default
+  (each panel reopening) until another « Maestro <axe> » or « Maestro » alone, which reopens all
+  axes. The welcome counts on the axis, and the briefs that list tasks (« Ma journée », « Quoi
+  lancer », « À relancer », the scan's candidates) list only that axis and say so in their first
+  line; sessions are always all said. The keywords win over an axis of the same name
+  (« Maestro sessions » is the action); « Maestro axe sessions » opens the axis. A word that is not
+  an axis keeps its usual meaning.
   The Roadmap panel recognises Maestro by that title, by the mark set when the person says
   « Maestro » in it, or by its having launched at least two sessions still open; an old title
   « Lot … » is still recognised (alias of the sessions opened before #112). It never marks it
