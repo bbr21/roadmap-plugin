@@ -5734,7 +5734,6 @@ const BAND_PILL = 18
  * maquette D : l'étape après la jauge, les icônes du bloc « En cours ») ; une seule jauge par ligne (#152).
  * Colonnes de largeur fixe à droite, la ligne s'éclaire au survol. Au terminal, le texte seul.
  */
-
 function maestroBandTree(
   $: EngineInterface,
   e: RenderInput<'AbovePrompt'>,
@@ -6926,7 +6925,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
               strong: true,
               end: (
                 <Box flexDirection="row" alignItems="center" gap={SPACE.row}>
-                  {Svg ? <Svg source={progressIcon(c.done, c.total, palette.ok, palette.sel)} alt={`${c.done}/${c.total}`} width={34} height={4} /> : null}
+                  {Svg ? <Svg source={progressIcon(c.done, c.total, palette.ok, palette.sel)} alt={`${c.done}/${c.total}`} width={34} height={SIZE.bar} /> : null}
                   <Text size="caption" tabular color={palette.text2}>{`${c.done}/${c.total}`}</Text>
                 </Box>
               ),
@@ -7105,7 +7104,8 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
       )
     }
     // `tone` : d'autres couleurs que `pri` (le bleu de la carte d'une session), et le fond qui
-    // l'entoure pour ses coins.
+    // l'entoure pour ses coins. L'encart de confirmation ouvert, son « Confirmer » est le seul plein :
+    // le bouton plein passe en texte gris le temps de répondre (#256, maquette A).
     const primary = (
       id: string,
       mark: string,
@@ -7113,7 +7113,9 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
       onPress: () => void,
       tone: { bg: string; fg: string; around: string } = { bg: palette.pri, fg: palette.priText, around: palette.bg },
     ) =>
-      pressable(
+      asking && !current.done ? (
+        <Button key={id} plain dimColor label={label} onPress={onPress} />
+      ) : pressable(
         id,
         onPress,
         <Box
@@ -7607,12 +7609,14 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
                           {closeKind === 'done' ? (
                             <Button
                               key="done-confirm"
+                              variant="primary"
                               label={cancelNote === CANCEL_BUSY ? 'Écriture…' : kidsOpen > 0 ? 'Tout clore' : 'Confirmer'}
                               onPress={kidsOpen > 0 ? closeAll : () => void confirmClose($, source, current, 'done')}
                             />
                           ) : (
                             <Button
                               key="cancel-confirm"
+                              variant="primary"
                               label={cancelNote === CANCEL_BUSY ? 'Annulation…' : "Confirmer l'annulation"}
                               onPress={() => void confirmClose($, source, current, 'abandon')}
                             />
@@ -7753,12 +7757,14 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
                     {closeKind === 'done' ? (
                       <Button
                         key="done-confirm"
+                        variant="primary"
                         label={cancelNote === CANCEL_BUSY ? 'Écriture…' : kidsOpen > 0 ? 'Tout clore' : 'Confirmer'}
                         onPress={kidsOpen > 0 ? closeAll : () => void confirmClose($, source, current, 'done')}
                       />
                     ) : (
                       <Button
                         key="cancel-confirm"
+                        variant="primary"
                         label={cancelNote === CANCEL_BUSY ? 'Annulation…' : "Confirmer l'annulation"}
                         onPress={() => void confirmClose($, source, current, 'abandon')}
                       />
@@ -8567,7 +8573,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
         {/* L'avancement de la mère (#163) : sa barre et ses filles faites sur leur total. */}
         {head && (
           <Box flexDirection="row" alignItems="center" gap={SPACE.row} flexShrink={0}>
-            {Svg ? <Svg source={progressIcon(head.block.done, head.block.total, palette.ok, palette.sel)} alt={`${head.block.done}/${head.block.total}`} width={34} height={4} /> : null}
+            {Svg ? <Svg source={progressIcon(head.block.done, head.block.total, palette.ok, palette.sel)} alt={`${head.block.done}/${head.block.total}`} width={34} height={SIZE.bar} /> : null}
             <Text size="caption" tabular color={palette.text2}>{`${head.block.done}/${head.block.total}`}</Text>
           </Box>
         )}

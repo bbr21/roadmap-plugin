@@ -720,10 +720,11 @@ export function treeHeadIcon(o: { open: boolean; chevronHex: string }): string {
   return `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="30" viewBox="0 0 16 30">${chevron}</svg>`
 }
 
-/** La barre d'avancement d'une mère de l'arbre (#163), 34 × 4 : le fond `trackHex`, la part faite en `okHex`. */
+/** La barre d'avancement d'une mère (#163), 34 px de large : la jauge de 6 px du panneau (#256), le fond `trackHex`, la part faite en `okHex`. */
 export function progressIcon(done: number, total: number, okHex: string, trackHex: string): string {
   const w = total === 0 ? 0 : Math.round((34 * done * 10) / total) / 10
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="34" height="4" viewBox="0 0 34 4"><rect width="34" height="4" rx="2" fill="${trackHex}"/>${w > 0 ? `<rect width="${w}" height="4" rx="2" fill="${okHex}"/>` : ''}</svg>`
+  const h = SIZE.bar
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="34" height="${h}" viewBox="0 0 34 ${h}"><rect width="34" height="${h}" rx="${RADIUS.bar}" fill="${trackHex}"/>${w > 0 ? `<rect width="${w}" height="${h}" rx="${RADIUS.bar}" fill="${okHex}"/>` : ''}</svg>`
 }
 
 /**

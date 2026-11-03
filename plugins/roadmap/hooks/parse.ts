@@ -1385,7 +1385,7 @@ export function finCard(o: { recap?: StoredRecap; task: Task; bilan?: Bilan; due
   const atoi = recap?.atoi !== undefined ? cellMarkdown(recap.atoi) : note
   const rows: FinRow[] = []
   const push = (to: FinRow[], name: string, md: string | undefined, tone?: FinRow['tone']) => {
-    if (md !== undefined && md !== '') to.push({ name, md, ...(tone ? { tone } : {}) })
+    if (md !== undefined && md !== '') to.push({ name, md: isoDays(md), ...(tone ? { tone } : {}) })
   }
   push(rows, 'Fait', c?.fait)
   push(rows, 'Livré', livre)
@@ -1638,6 +1638,17 @@ export function setDateFormat(value: unknown): void {
 const US_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 
 /** « 2026-10-16 » → « Oct 16 » (us) ou « 16/10 » (fr). */
+/**
+ * Les dates ISO qu'une session écrit dans son compte rendu (« close le 2026-10-21 »), montrées comme
+ * les autres dates du panneau, « Oct 21 » (#256) ; dans le code (`fait:2026-10-21`), telles quelles.
+ */
+export function isoDays(md: string): string {
+  return md
+    .split(/(`[^`]*`)/)
+    .map((part, i) => (i % 2 === 1 ? part : part.replace(/(?<![\d-])\d{4}-\d{2}-\d{2}(?![\d-])/g, shortDate)))
+    .join('')
+}
+
 export function shortDate(iso: string): string {
   const [, m, d] = iso.slice(0, 10).split('-')
   if (!d || !m) return iso
@@ -2521,9 +2532,9 @@ export function numberTree(blocks: readonly TreeBlock[]): TreeSection[] {
 /** Le préfixe des clés des mères de la vue Done (#203) : repliées par défaut, sans toucher aux mêmes mères des ouvertes. */
 export const DONE_TREE_PREFIX = 'fait:'
 
-/** Un jour dit court (#203) : « auj. », « hier », sinon la date. */
+/** Un jour dit court (#203) : « aujourd'hui » (en toutes lettres, comme l'âge d'une ligne, #256), « hier », sinon la date. */
 function dayWord(day: string, today: string): string {
-  return day === today ? 'auj.' : daysBetween(day, today) === 1 ? 'hier' : shortDate(day)
+  return day === today ? "aujourd'hui" : daysBetween(day, today) === 1 ? 'hier' : shortDate(day)
 }
 
 /**

@@ -667,6 +667,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.163.1 (2026-11-03)** : panneau : fin de la cohérence du design, jauges de 6 px partout, « aujourd'hui » dans la vue Done, dates des comptes rendus en « Oct 21 », un seul bouton plein quand l'encart de confirmation est ouvert (#256)
 - **0.163.0 (2026-11-03)** : panneau : la cohérence du design, parti A (un seul dessin par rôle : compte « N Done sur M », dates « Nov 5 · dans 4 j », têtes de bloc, pastilles de 20 px, un seul bouton plein, jauge de 6 px), bande au-dessus de la saisie inchangée (#252, #253, #254)
 - **0.162.1 (2026-11-02)** : panneau : le bloc « En cours » de Maestro s'ouvre replié, la bande au-dessus de la saisie redit ses sessions (#251)
 - **0.162.0 (2026-11-02)** : tasks, maestro : la clôture partielle, notre part close et sa suite ouverte chez le tiers en une écriture (handoff), proposée par les sessions et rappelée en fin de tour (#245)
