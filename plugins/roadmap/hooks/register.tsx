@@ -8166,7 +8166,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     )
   }
 
-  // Une pastille : échéance dépassée (horloge), échéance à venir, tiers attendu (personne), « à revoir ».
+  // Une pastille : échéance dépassée (horloge), échéance à venir, tiers attendu et responsable (personne), « à revoir ».
   const pillColors: Record<Pill['kind'], { bg: string; fg: string; strong: boolean }> = {
     late: { bg: palette.lateTint, fg: palette.lateOn, strong: true },
     due: { bg: palette.sel, fg: palette.text2, strong: false },
@@ -8178,8 +8178,9 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     waitAging: { bg: palette.blockTint, fg: palette.blockOn, strong: true },
     waitOld: { bg: palette.lateTint, fg: palette.lateOn, strong: true },
     stale: { bg: palette.sel, fg: palette.text2, strong: false },
-    // Le responsable quand ce n'est pas moi (#76) : gris, comme les autres tags (#224, maquette #212 C).
-    owner: { bg: palette.sel, fg: palette.text2, strong: false },
+    // Le responsable quand ce n'est pas moi (#76) : la teinte d'une attente, sans gras, avec la personne
+    // (#247, BBR : « remettre de la couleur sur la personne », grise depuis #224).
+    owner: { bg: palette.waitTint, fg: palette.waitOn, strong: false },
   }
   // La roue d'une tâche en session ; elle tourne dans un Svg interactif, qui porte aussi l'infobulle.
   // Une session ouverte qui ne tourne pas : son tour est fini, elle attend la réponse de Bertrand.
@@ -8214,7 +8215,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   // Le dessin d'une pastille de la liste ; sa largeur compte aussi dans les colonnes (#198).
   const rowPillSpec = (p: Pill) => {
     const c = pillColors[p.kind]
-    const mark: PillMark | undefined = p.kind === 'late' ? 'clock' : p.kind === 'wait' || p.kind === 'waitAging' || p.kind === 'waitOld' ? 'person' : undefined
+    const mark: PillMark | undefined = p.kind === 'late' ? 'clock' : p.kind === 'wait' || p.kind === 'waitAging' || p.kind === 'waitOld' || p.kind === 'owner' ? 'person' : undefined
     return { text: p.text, bg: c.bg, fg: c.fg, ...(mark ? { mark } : {}), weight: (c.strong ? 600 : 500) as 500 | 600 }
   }
   type PillSpec = Parameters<typeof drawnPill>[0]
