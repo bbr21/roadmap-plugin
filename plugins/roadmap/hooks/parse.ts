@@ -1637,7 +1637,6 @@ export function setDateFormat(value: unknown): void {
 
 const US_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 
-/** « 2026-10-16 » → « Oct 16 » (us) ou « 16/10 » (fr). */
 /**
  * Les dates ISO qu'une session écrit dans son compte rendu (« close le 2026-10-21 »), montrées comme
  * les autres dates du panneau, « Oct 21 » (#256) ; dans le code (`fait:2026-10-21`), telles quelles.
@@ -1649,6 +1648,7 @@ export function isoDays(md: string): string {
     .join('')
 }
 
+/** « 2026-10-16 » → « Oct 16 » (us) ou « 16/10 » (fr). */
 export function shortDate(iso: string): string {
   const [, m, d] = iso.slice(0, 10).split('-')
   if (!d || !m) return iso
@@ -4204,11 +4204,14 @@ export function listPills(task: Task, today: string, me: readonly string[]): Pil
   return rowPills(task, today, me).filter(p => p.kind !== 'wait' && p.kind !== 'waitAging' && p.kind !== 'waitOld')
 }
 
-/** La pastille d'échéance (#99) : rouge en retard avec le retard, orange dans les 7 jours, grise au-delà. */
+/**
+ * La pastille d'échéance (#99) : rouge en retard avec le retard, orange dans les 7 jours, grise au-delà.
+ * Le jour même et le lendemain s'écrivent en toutes lettres, sans date (#257).
+ */
 export function duePill(due: string, today: string): Pill {
   const days = daysBetween(today, due)
   if (days < 0) return { kind: 'late', text: `${shortDate(due)} · ${-days} j de retard` }
-  if (days <= 7) return { kind: 'soon', text: days === 0 ? 'auj.' : days === 1 ? 'demain' : shortDate(due) }
+  if (days <= 7) return { kind: 'soon', text: days === 0 ? "aujourd'hui" : days === 1 ? 'demain' : shortDate(due) }
   return { kind: 'due', text: shortDate(due) }
 }
 
