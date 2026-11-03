@@ -7,7 +7,7 @@ python3 tasks.py context FOLDER [--day YYYY-MM-DD] > context.json
 python3 tasks.py match FOLDER --text "…" [--text "…"]
 python3 tasks.py write FOLDER --operations operations.json [--apply] [--json]
 
-`write` finit par le compte rendu fixe (#232) : Ajoutées, Mises à jour, T'attendent.
+`write` finit par le compte rendu (#232), en lignes de journal depuis #261 : une puce par tâche, son glyphe devant.
 
 Python 3.9 et plus, bibliothèque standard seulement. Hérite du moteur d'écriture de l'audit
 (`audit._Preparation`) et lit la grammaire par l'import de la skill onboarding : les trois skills
@@ -478,7 +478,7 @@ class _Tenue(audit._Preparation):
                          % (quoi, t.id, ouverts[0].id))
         self.fermer_tache(t, self.jour, " (abandonné)", "Abandonnée : %s" % raison, raison)
         self.tenue["abandonnees"].append(t.id)
-        self.changer(t, "abandonnée : %s" % raison)
+        self.changer(t, "annulée : %s" % raison)
 
     def mettre_en_pause(self, op):
         """En pause (#159) : `due:` devient la date de reprise, la note le dit, et la tâche passe en
@@ -639,40 +639,41 @@ def ecrire(dossier, chemin_ops, appliquer=False, maintenant=None, en_json=False)
     return bilan
 
 
-def _case(texte):
-    return str(texte).replace("|", "\\|").replace("\n", " ")
+def _plat(texte):
+    return str(texte).replace("\n", " ")
 
 
-def _tableau(entete, rangs):
-    lignes = ["| %s |" % " | ".join(entete), "|%s" % ("---|" * len(entete))]
-    return "\n".join(lignes + ["| %s |" % " | ".join(_case(c) for c in r) for r in rangs])
+def _glyphe(change):
+    """Le glyphe d'une mise à jour dans le journal (#261) : ✓ close, ✕ annulée ou retirée, ↻ le reste."""
+    if re.match(r"(cochée|close|ajoutée et cochée)\b", change):
+        return "✓"
+    if re.match(r"(annulée|abandonnée|retirée)\b", change):
+        return "✕"
+    return "↻"
 
 
 def rendre_compte_rendu(cr, etat, jour, outil=None, sauvegarde=None):
-    """Le compte rendu fixe d'une écriture (#232, maquette A) : trois rubriques, toujours dans cet
-    ordre, un tableau chacune, une rubrique vide écrite « rien »."""
-    dit = {"ecrit": "écrit", "essai": "essai à blanc", "outil": "à passer à %s" % outil}[etat]
-    rubriques = [
-        ("Ajoutées", ["#", "Tâche", "Sous", "Échéance"],
-         [("#" + a["id"], a["libelle"], "#" + a["parent"] if a["parent"] else "–",
-           _jj_mm(a["due"]) if a["due"] else "–") for a in cr["ajoutees"]]),
-        ("Mises à jour", ["#", "Tâche", "Ce qui change"],
-         [("#" + m["id"], m["libelle"], m["change"]) for m in cr["mises_a_jour"]]),
-        ("T'attendent", ["#", "Question", "Raison", "Recommandé"],
-         [("#" + q["id"] if q["id"] else "–", q["question"], q["raison"], q["recommande"]) for q in cr["t_attendent"]]),
-    ]
-    blocs = ["### Compte rendu de la roadmap · %s · %s" % (_jj_mm(jour), dit)]
-    # La clôture partielle (#245), dite en une ligne chacune.
-    for s in cr.get("suites") or []:
-        blocs.append("#%s close, la suite chez %s passe en #%s" % (s["close"], s["tiers"], s["suite"]))
-    for nom, entete, rangs in rubriques:
-        if rangs:
-            blocs.append("#### %s (%d)\n\n%s" % (nom, len(rangs), _tableau(entete, rangs)))
-        else:
-            blocs.append("#### %s\n\nrien" % nom)
+    """Le compte rendu d'une écriture en lignes de journal (#261, parti B, après #232) : une puce par
+    tâche, son glyphe devant ; ni titre, ni rubrique, ni « rien ». `jour` reste pour la signature."""
+    suites = cr.get("suites") or []
+    closes = {s["close"] for s in suites}
+    lignes = ["- ✓ #%s close, la suite chez %s passe en #%s" % (s["close"], s["tiers"], s["suite"]) for s in suites]
+    for a in cr["ajoutees"]:
+        extra = [x for x in ("sous #" + a["parent"] if a["parent"] else "",
+                             "due " + _jj_mm(a["due"]) if a["due"] else "") if x]
+        lignes.append("- ＋ #%s ajoutée — %s%s" % (a["id"], _plat(a["libelle"]), " (%s)" % ", ".join(extra) if extra else ""))
+    for m in cr["mises_a_jour"]:
+        if m["id"] not in closes:
+            lignes.append("- %s #%s %s — %s" % (_glyphe(m["change"]), m["id"], _plat(m["change"]), _plat(m["libelle"])))
+    for q in cr["t_attendent"]:
+        lignes.append("- ? %s%s (%s) — recommandé : %s" % ("#%s " % q["id"] if q["id"] else "", _plat(q["question"]),
+                                                       q["raison"], _plat(q["recommande"])))
+    corps = "\n".join(lignes) if lignes else "Roadmap : rien ne change."
+    tete = {"ecrit": "", "essai": "Essai à blanc, rien n'est écrit :", "outil": "À passer à %s :" % outil}[etat]
+    md = "%s\n\n%s" % (tete, corps) if tete and lignes else corps
     if sauvegarde:
-        blocs.append("Sauvegarde : `%s`" % sauvegarde)
-    return "\n\n".join(blocs)
+        md += "\n\nSauvegarde : `%s`" % sauvegarde
+    return md
 
 
 def afficher(bilan, decl, en_json=False):

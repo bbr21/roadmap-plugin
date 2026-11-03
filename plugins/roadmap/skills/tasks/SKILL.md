@@ -20,11 +20,11 @@ French, as the roadmap does. Only this skill is in English.
 - **All or nothing.** The script prepares in memory, checks, shows (dry run), then writes in one go
   after a backup, or hands the lines to the project's tool.
 - **A task is marked done on proof**, at the date of the proof, with its bilan row.
-- **The same report after every write** (#232): the script prints it, in three fixed sections
-  (Ajoutées, Mises à jour, T'attendent); it is copied as is, then one form settles what waits.
-  With the roadmap plugin (#244), the plugin computes that report itself from what the turn wrote,
-  whatever wrote it, and hands it with the end-of-turn box: copy the plugin's report then, not the
-  script's as well.
+- **The same report after every write** (#232): the script prints it as journal lines (#261),
+  one bullet per task with its glyph; they go as is into the journal of the answer, then one form
+  settles what waits. With the roadmap plugin (#244), the plugin computes those lines itself from
+  what the turn wrote, whatever wrote it, and hands them with the write's result: put the plugin's
+  lines then, not the script's as well, and never in a second message.
 
 **The model** (#125): a task is **standalone**, **parent** (a subject: short title, keys, rhythm,
 priority, no action) or **child** (a step, `parent:N`), two levels at most. `après:` links two
@@ -210,32 +210,34 @@ Then:
 2. In a repository: a commit of the roadmap files only (`ROADMAP.md`, `ROADMAP-fait.md`,
    `ROADMAP-bilans.csv`), on `main` in the main checkout with code, then push. The backup is
    not committed.
-3. **The report, copied as is** (#232). The last block `write` prints, from « ### Compte rendu de
-   la roadmap » to its end, is the report: copy it into the answer **without rewriting, reordering
-   or summing it up**. It always has three sections in this order, each a table, an empty one
-   written « rien »:
+3. **The report, as journal lines** (#232, #261). The last block `write` prints, after the
+   changed lines, is the report: one bullet per task, its glyph first, and it goes into the
+   journal of the answer (ADHD mode, after the state line) **without rewriting, reordering or
+   summing it up**, with no title and no table:
 
-   - **Ajoutées**: `#N`, short label, parent (`Sous`), due date;
-   - **Mises à jour**: `#N`, short label, what changed: completed, rescheduled, done on proof,
-     paused, dropped, closed with its last child, recurring parent left open;
-   - **T'attendent**: `#N` (or « – » for an action with no task), the question, the reason
-     (conflict, missing date, partial proof, rhythm, reopening), the recommendation.
+   - `- ＋ #N ajoutée — <short label> (sous #P, due JJ/MM)`;
+   - `- ✓ #N cochée le JJ/MM … — <short label>` (closed), `- ✕ #N annulée … — …` (dropped or
+     removed), `- ↻ #N <what changed> — …` (completed, rescheduled, paused, recurring parent left
+     open);
+   - `- ? #N <question> (<reason>) — recommandé : <option>` for what waits (« T'attendent »:
+     conflict, missing date, partial proof, rhythm, reopening; no `#N` for an action with no
+     task).
 
-   Its title says the state: « écrit » (after `--apply`), « essai à blanc », or « à passer à
-   <outil> » (with `ecriture`: copy the report once the project's tool has written the lines). A
-   caller that keeps a conclusion file (a catch-up, a dispatch) writes that same block in it, or
-   the `--json` output (`compte_rendu`, `markdown`) when it wants the data. When the roadmap
-   plugin hands its own report (#244, same title and sections, computed from every write of the
-   turn, the script's « T'attendent » included), copy that one instead, once. Before the report, in
-   one line each, what the table cannot say: an action written nowhere (« rien : déjà couverte
-   par #M », « déjà faite », excluded by the `regles` file).
+   Nothing changed: « Roadmap : rien ne change. ». A dry run starts with « Essai à blanc, rien
+   n'est écrit : », a project tool with « À passer à <outil> : » (with `ecriture`: give the lines
+   once the project's tool has written them). A caller that keeps a conclusion file (a catch-up, a
+   dispatch) writes that same block in it, or the `--json` output (`compte_rendu`, `markdown`)
+   when it wants the data. When the roadmap plugin hands its own lines (#244, computed from every
+   write of the turn, the script's questions included), use those instead, once. Before them, in
+   one line each, what they cannot say: an action written nowhere (« rien : déjà couverte par
+   #M », « déjà faite », excluded by the `regles` file).
 4. **Then one form for « T'attendent »**, and nothing else (« What gets asked » below): one
    multiple-choice form (`AskUserQuestion`), one question per row, the row's own `question` and
    `options` (the recommendation first), four questions at most per round; more than four, the
    next round right after the answers. The chosen options' `operations` go into a new
    `operations.json`, then `write` again (dry run, then `--apply`), which prints a new report.
-   « T'attendent » says « rien »: no form. The roadmap plugin refuses the end-of-turn box once
-   while « T'attendent » has rows and no form was asked (#244).
+   No `- ?` line: no form. The roadmap plugin refuses the end-of-turn box once while questions
+   wait and no form was asked (#244).
 
 ## Partial closure (#245)
 

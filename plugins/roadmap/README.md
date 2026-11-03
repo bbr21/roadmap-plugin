@@ -234,8 +234,8 @@ la fusion et la publication attendent le clic de Bertrand.
 **Le récap au fil des fusions** (#136) : après chaque `git merge` réussi dans le dossier principal
 et chaque `release.py release`, le panneau rappelle dans le résultat de la commande de renvoyer la
 liste d'étapes entière avant la suivante ; chez Maestro, l'étape de la tâche dit `· livrée <version>`,
-et un tour lancé par Bertrand dit aussi une ligne par tâche livrée (`#N livrée · version · ce qui
-change`), un tour réveillé par une session rien de plus (#133). Liste toujours pas renvoyée à la fin du tour : le rappel
+et un tour lancé par Bertrand met aussi une ligne par tâche livrée dans son journal
+(`- ✓ #N livrée <version> — ce qui change`, #261), un tour réveillé par une session rien de plus (#133). Liste toujours pas renvoyée à la fin du tour : le rappel
 revient une fois. Plusieurs branches prêtes se fusionnent à la suite, une à la fois, avec une
 publication par fusion. Maestro finit sur la fiche de fin de #123 suivie du tableau de ses tâches
 (`| Tâche | Livré | Version | État |`, maquette B), que le contrôle de fin de tour réclame.
@@ -502,17 +502,18 @@ remplaçant le précédent (#119) :
   diff) s'ouvre par la session elle-même (`preview_start`, `mcp__ccd_view__show_pane`), depuis le
   28/10/2026 (#74). Éteint, Maestro pose aussi son menu « Je lance lesquelles ? » dans son message,
   sans formulaire (#119) ;
-- `adhd` (refait par #243, maquette A choisie par Bertrand) : chaque message d'une tâche s'ouvre
-  sur sa phrase de tête, en gras, qui dit seule où on en est, l'état en mots d'abord
-  (« **En cours, étape 4/6 : …** », « **⚠️ Détour : …** », « **J'ai besoin de toi pour une
-  chose : …** », « **Prête à fusionner : tests verts, branche poussée.** » puis « Ce qui change
-  pour toi : »), puis deux ou trois phrases ou puces au plus ; « **À toi :** » en dernière ligne
-  seulement quand quelque chose revient à Bertrand. La liste d'étapes native reste le seul repère
+- `adhd` (refait par #261, parti B choisi par Bertrand : ligne d'état et journal) : chaque message
+  d'une tâche s'ouvre sur sa ligne d'état, en italique, l'état en mots puis l'étape
+  (« *En cours · étape 4/6* », « *Détour · …* », « *J'ai besoin de toi · …* », « *Prête à
+  fusionner · tests verts, branche poussée* »), puis un journal court, une puce par fait avec son
+  glyphe (✓ fait, ✕ annulé, ＋ ajouté, ↻ changé, ? question, → **À toi :** ce qui revient à
+  Bertrand) ; ni titre ni tableau, et rien de répété d'un message à l'autre. Les lignes de la
+  roadmap changée vont dans ce journal, dans le même message. La liste d'étapes native reste le seul repère
   d'avancement : plus de carte d'étape, de rubriques Fait / Trouvé / Suite ni de bloc
   État / À toi / Session. À la fin de la session (ligne close, ou bloquée), une conclusion à part :
   `---`, `### ✅ #N · <la tâche> : c'est livré` (ou `### ⛔ … : bloquée`), une phrase, puis un
-  tableau Livré, À essayer, En route (bloquée : Fait, Bloque, À toi). Maestro garde son repère
-  compté et finit sur sa conclusion et le tableau de ses tâches. Une ligne de rappel accompagne
+  tableau Livré, À essayer, En route (bloquée : Fait, Bloque, À toi). Maestro garde sa ligne d'état
+  comptée, écrite seulement quand elle change, et finit sur sa conclusion et le tableau de ses tâches. Une ligne de rappel accompagne
   chaque message de Bertrand (hook `prompt.submit` depuis #116). Éteint, rien ne bride la longueur
   des réponses, celles de Maestro comprises (#128) ;
 - `francais` : réponses en français ;
@@ -667,6 +668,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.165.0 (2026-11-03)** : messages : une ligne d'état en italique et un journal court à glyphes, le compte rendu de la roadmap fondu dedans, plus de second message ni de tableau, une tâche abandonnée dite « annulée » (#261)
 - **0.164.0 (2026-11-03)** : panneau : la liste Par sujet devient la vue de référence (flèche de dépli devant le #, jauge et x/x après le titre, « 1 j de retard » seul) (#258)
 - **0.163.2 (2026-11-03)** : panneau : l'échéance du jour s'écrit « aujourd'hui » au bout d'une ligne de la liste (#257)
 - **0.163.1 (2026-11-03)** : panneau : fin de la cohérence du design, jauges de 6 px partout, « aujourd'hui » dans la vue Done, dates des comptes rendus en « Oct 21 », un seul bouton plein quand l'encart de confirmation est ouvert (#256)

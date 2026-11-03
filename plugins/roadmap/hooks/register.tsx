@@ -927,7 +927,10 @@ async function turnReport($: EngineInterface): Promise<{ markdown: string; waiti
   return { markdown: renderReport(data, 'ecrit', todayOf(now)), waiting: data.t_attendent.length }
 }
 
-/** Le rappel de fin de tour qui porte le compte rendu, s'il n'a pas déjà été remis tel quel. */
+/**
+ * Le journal du tour remis avec le résultat d'une écriture (#261), s'il n'a pas déjà été remis tel quel :
+ * le modèle l'a avant d'écrire son message, et le rappel de fin de tour ne le relance plus pour un second.
+ */
 async function reportNote($: EngineInterface): Promise<string | undefined> {
   const report = await turnReport($)
   if (report === undefined || report.markdown === reportTurn.given) return undefined
@@ -1204,13 +1207,9 @@ async function endOfTurnBlock($: EngineInterface, last: string | undefined, acti
   // Deuxième arrêt du même tour : le modèle a déjà eu le rappel, il a tranché.
   if (active || blocked) return undefined
   const notes: (string | undefined)[] = []
-  // Les rappels de la roadmap : seulement dans un projet qui en a une, capture allumée.
+  // Les rappels de la roadmap : seulement dans un projet qui en a une, capture allumée. Le compte rendu
+  // n'en est plus (#261) : remis avec l'écriture, il ne relance plus le modèle pour un second message.
   if (settings.capture && c) {
-    try {
-      notes.push(await reportNote($))
-    } catch {
-      // roadmap ou questions illisibles : pas de compte rendu
-    }
     try {
       notes.push(await roadmapBlock($, c))
     } catch {
@@ -1329,10 +1328,17 @@ async function afterWrite(
  * `own` faux, l'outil n'écrit pas la roadmap (un Bash qui ne la nomme pas) : elle se relit après
  * lui, et une ligne apparue pendant qu'il tournait reste à la session qui l'a écrite (#89).
  */
-async function written($: EngineInterface, run: () => Promise<ToolCallResult>, path: string | undefined, own = true): Promise<ToolCallResult> {
+async function written(
+  $: EngineInterface,
+  run: () => Promise<ToolCallResult>,
+  path: string | undefined,
+  own = true,
+  read?: (ran: ToolCallResult) => void,
+): Promise<ToolCallResult> {
   const reread = async () => (settings.capture && capture ? await roadmapNow($, capture.source) : undefined)
   const before = own ? await reread() : undefined
   const ran = await run()
+  if (ran.deny === undefined && ran.isError !== true) read?.(ran)
   // Une commande en lecture seule n'écrit rien : rien à relire.
   if (ran.isReadOnly === true) return ran
   const done = await afterWrite($, ran, path, own ? before : await reread())
@@ -1341,6 +1347,9 @@ async function written($: EngineInterface, run: () => Promise<ToolCallResult>, p
     try {
       reportTurn.changes = mergeChanges(reportTurn.changes, roadmapChanges(before, capture.seen))
       if (path === undefined || /roadmap-questions\.json$/i.test(path)) reportTurn.touched = true
+      // #261 : le journal du tour, cumulé, vient avec l'écriture.
+      const note = await reportNote($)
+      if (note !== undefined) return { ...done, context: [...(done.context ?? []), note] }
     } catch {
       // roadmap illisible : cette écriture manque au compte rendu
     }
@@ -4920,13 +4929,15 @@ export const register: Register = (on, options) => {
   on('tool.call', { tool: 'Bash' }, async ($, e, next) => {
     const refusal = await guardBash($, (e as { command?: unknown }).command)
     if (refusal !== undefined) return { deny: refusal }
-    const ran = await written($, () => next(inQueue($, e)), undefined, writesRoadmap(e.command, capture?.source.ecriture?.outil))
-    if (fromAgent(e) || ran.deny !== undefined || ran.isError === true) return ran
     // #244 : les questions que `tasks.py write` a imprimées attendent la personne ; la dernière sortie l'emporte.
-    if (/tasks\.py\b.*\bwrite\b/.test(e.command)) {
-      const stdout = (ran.result as { stdout?: unknown } | undefined)?.stdout
+    // Relues avant le journal que l'écriture remet (#261).
+    const tasksOut = (r: ToolCallResult) => {
+      if (fromAgent(e) || !/tasks\.py\b.*\bwrite\b/.test(e.command)) return
+      const stdout = (r.result as { stdout?: unknown } | undefined)?.stdout
       if (typeof stdout === 'string') reportTurn.fromTasks = reportQuestions(stdout)
     }
+    const ran = await written($, () => next(inQueue($, e)), undefined, writesRoadmap(e.command, capture?.source.ecriture?.outil), tasksOut)
+    if (fromAgent(e) || ran.deny !== undefined || ran.isError === true) return ran
     // Une fusion sur main ou une publication (#136) : la liste d'étapes se renvoie avant la commande suivante.
     try {
       const kinds = await deliveredBy($, e.command)

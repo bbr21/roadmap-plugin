@@ -1025,7 +1025,7 @@ export function lineOpenRefusal(id: string, file: string, maestro: boolean): str
   if (maestro) {
     return [
       head,
-      `Maestro la coche à la fusion, avec son bilan ; ta conclusion et la question d'archivage viendront une fois ta ligne close. D'ici là, ta phrase de tête dit où tu en es (« Prête à fusionner : … ») et ta boîte de fin n'a pas la question d'archivage.`,
+      `Maestro la coche à la fusion, avec son bilan ; ta conclusion et la question d'archivage viendront une fois ta ligne close. D'ici là, ta ligne d'état dit où tu en es (« *Prête à fusionner · …* ») et ta boîte de fin n'a pas la question d'archivage.`,
     ].join('\n')
   }
   return [
@@ -6001,7 +6001,7 @@ export function sessionPrefsText(prefs: SessionPrefs, error?: string, project?: 
   }
   if (prefs.adhd) {
     lines.push(
-      "- **Mode ADHD** (#243, maquette A) : chaque message d'une tâche s'ouvre sur sa phrase de tête, une phrase en gras qui dit seule où on en est, l'état en mots d'abord : en cours, `**En cours, étape 4/6 : le filtre est écrit, je lance les tests.**` ; détour (erreur, retour en arrière), `**⚠️ Détour : un test casse sur le compte de la mère.**` ; question, `**J'ai besoin de toi pour une chose : la vue des faites.**`, puis le formulaire ; prête, `**Prête à fusionner : tests verts (…), branche poussée.**`, puis « Ce qui change pour toi : » en une à trois puces. Derrière, deux ou trois phrases ou puces au plus, le pourquoi compris, des mots simples, jamais de paragraphe dense. Les étapes restent dans la liste d'étapes de l'app (`update_plan`) : le message ne la recopie pas, l'étape se dit dans la phrase de tête (« étape 4/6 »), sous le nom de la liste. Pas de rubriques fixes ni de bloc final de trois lignes. En dernière ligne, `**À toi :** …` seulement quand il reste une action ou une décision qui revient à " + person() + " (et seulement elle, avec où et comment), jamais un geste qu'un outil fait à ta place. Une question ou une réponse courte hors tâche : pas de phrase de tête imposée. Une explication que " + person() + " demande prend la place qu'il faut pour être comprise, avec un exemple concret. À la fin de la session, une seule fois, la conclusion, d'une autre mise en page : au dernier tour (ta ligne close, lue dans ROADMAP-fait), ou au tour où la session s'arrête bloquée. Un `---`, puis un titre `### ✅ #<id> · <la tâche> : c'est livré`, une phrase sur ce qui change pour " + person() + ", puis un tableau de deux colonnes, `| Livré | <version>, close le AAAA-MM-JJ |` (« close par Maestro le » pour une session qu'il a lancée), `|---|---|`, `| À essayer | où et quoi |`, et `| En route | le souci rencontré |` s'il y en a eu un ; puis la boîte de fin « Archiver cette session ? » avec le bouton de réponse « Oui, archiver ». Bloquée : `### ⛔ #<id> · <la tâche> : bloquée`, la phrase, puis `| Fait | … |`, `|---|---|`, `| Bloque | ce qui bloque, qui débloque, ce qui suit |`, `| À toi | … |`, sans question d'archivage. Un tour qui attend une réponse de " + person() + " n'est pas bloqué. Ta ligne #<id> encore ouverte, pas de conclusion ni d'archivage. Maestro garde son repère compté (`⏳ **Maestro · 2 en cours · 1 t'attend**`) ; sa conclusion, `### ✅ Maestro · <le lot> : tout est livré`, une phrase, le tableau `| Tâche | Ce qui change | Version |`, une ligne par tâche lancée (`| #<id> <nom court> | … | X.Y.Z |`), puis `**À essayer :** …` ; à chaque tâche livrée, l'étape de sa liste dit `· livrée <version>`. Si un rappel ne réclame que le bouton de la boîte, pose la boîte seule, sans réécrire le message.",
+      "- **Mode ADHD** (#261, parti B : ligne d'état et journal) : un message de tâche s'ouvre sur sa ligne d'état, en italique, sans gras ni emoji : l'état en mots, puis l'étape ou le détail après un point médian. En cours, `*En cours · étape 4/6*` ; détour (erreur, retour en arrière), `*Détour · un test casse sur le compte de la mère*` ; question, `*J'ai besoin de toi · la vue des faites*`, puis le formulaire ; prête, `*Prête à fusionner · tests verts (…), branche poussée*`. Puis le journal : une puce par fait, son glyphe devant, quelques mots après un tiret long, le pourquoi compris (`- ✓ filtre écrit — les tests passent`) : ✓ fait, ✕ annulé ou cassé, ＋ ajouté, ↻ changé ou en cours, ? une question pour " + person() + ", et `- → **À toi :** …` pour une action ou une décision qui revient à " + person() + " (et seulement elle, avec où et comment), jamais un geste qu'un outil fait à ta place. Trois à cinq lignes au plus : ni titre, ni tableau, ni rubrique, ni paragraphe. Rien de répété d'un message à l'autre : un fait, une question ou un « À toi » déjà dit ne revient pas. Les étapes restent dans la liste d'étapes de l'app (`update_plan`) : le journal ne la recopie pas, l'étape se dit dans la ligne d'état, sous le nom de la liste. Une question ou une réponse courte hors tâche : pas de ligne d'état imposée. Une explication que " + person() + " demande prend la place qu'il faut pour être comprise, avec un exemple concret. À la fin de la session, une seule fois, la conclusion, d'une autre mise en page : au dernier tour (ta ligne close, lue dans ROADMAP-fait), ou au tour où la session s'arrête bloquée. Un `---`, puis un titre `### ✅ #<id> · <la tâche> : c'est livré`, une phrase sur ce qui change pour " + person() + ", puis un tableau de deux colonnes, `| Livré | <version>, close le AAAA-MM-JJ |` (« close par Maestro le » pour une session qu'il a lancée), `|---|---|`, `| À essayer | où et quoi |`, et `| En route | le souci rencontré |` s'il y en a eu un ; puis la boîte de fin « Archiver cette session ? » avec le bouton de réponse « Oui, archiver ». Bloquée : `### ⛔ #<id> · <la tâche> : bloquée`, la phrase, puis `| Fait | … |`, `|---|---|`, `| Bloque | ce qui bloque, qui débloque, ce qui suit |`, `| À toi | … |`, sans question d'archivage. Un tour qui attend une réponse de " + person() + " n'est pas bloqué. Ta ligne #<id> encore ouverte, pas de conclusion ni d'archivage. Maestro : sa ligne d'état compte sa liste d'étapes (`*Maestro · 2 en cours · 1 t'attend*`, `*Maestro · tout est livré*` quand rien ne reste), et ne s'écrit que quand elle a changé depuis son message d'avant ; sa conclusion, `### ✅ Maestro · <le lot> : tout est livré`, une phrase, le tableau `| Tâche | Ce qui change | Version |`, une ligne par tâche lancée (`| #<id> <nom court> | … | X.Y.Z |`), puis `**À essayer :** …` ; à chaque tâche livrée, l'étape de sa liste dit `· livrée <version>` et son journal `- ✓ #<id> livrée <version> — ce qui change`. Si un rappel ne réclame que le bouton de la boîte, pose la boîte seule, sans réécrire le message.",
     )
   }
   if (prefs.francais) lines.push('- **Langue** : réponds en français, comptes rendus, récaps et boîte de fin compris.')
@@ -6012,7 +6012,7 @@ export function sessionPrefsText(prefs: SessionPrefs, error?: string, project?: 
   }
   // La liste d'étapes (#84) : dite à toute session, comme les gestes ; le parent la lit pour prendre des nouvelles.
   lines.push(
-    "- **Liste d'étapes** (avec ou sans code) : une tâche de plus d'un geste tient sa liste d'étapes (`update_plan` dans l'app), posée dès le premier geste. C'est le seul affichage des étapes : jamais recopiée dans le message, ni en liste ni en widget. Elle se lit d'un coup d'œil : trois à sept étapes, chacune nommée par un verbe et son objet, 2 à 4 mots qui disent le geste (« Écrire le plan », pas « Plan » ni une phrase), les mêmes noms que la phrase de tête du mode ADHD quand elle dit l'étape, jamais renommées (une étape nouvelle s'ajoute) ; mise à jour à chaque changement, une étape cochée dès qu'elle finit, une seule en cours. C'est par elle que la session qui t'a lancée voit où tu en es, sans ouvrir ta conversation. Maestro tient la sienne pour ses sessions : une étape par tâche lancée, son état en mots.",
+    "- **Liste d'étapes** (avec ou sans code) : une tâche de plus d'un geste tient sa liste d'étapes (`update_plan` dans l'app), posée dès le premier geste. C'est le seul affichage des étapes : jamais recopiée dans le message, ni en liste ni en widget. Elle se lit d'un coup d'œil : trois à sept étapes, chacune nommée par un verbe et son objet, 2 à 4 mots qui disent le geste (« Écrire le plan », pas « Plan » ni une phrase), les mêmes noms que la ligne d'état du mode ADHD quand elle dit l'étape, jamais renommées (une étape nouvelle s'ajoute) ; mise à jour à chaque changement, une étape cochée dès qu'elle finit, une seule en cours. C'est par elle que la session qui t'a lancée voit où tu en es, sans ouvrir ta conversation. Maestro tient la sienne pour ses sessions : une étape par tâche lancée, son état en mots.",
   )
   lines.push(gesturesText(prefs.autonome))
   lines.push(mockupText(design))
@@ -6111,7 +6111,7 @@ export function prefsChangedLead(): string {
 // s'effaçait au fil d'une longue session (fil absent 3 messages sur 4). Une ligne la redit à chaque message.
 export function sessionPrefsReminder(prefs: SessionPrefs): string | undefined {
   if (!prefs.adhd) return undefined
-  return "Mode ADHD : ouvre un message de tâche par sa phrase de tête, une phrase en gras qui dit seule où on en est, l'état en mots d'abord (« **En cours, étape 4/6 : …** », « **⚠️ Détour : …** », « **J'ai besoin de toi pour une chose : …** », « **Prête à fusionner : tests verts, branche poussée.** », puis « Ce qui change pour toi : »), puis deux ou trois phrases ou puces au plus, le pourquoi compris ; « **À toi :** … » en dernière ligne seulement quand il reste une action ou une décision qui revient à " + person() + ". Pas de rubriques ni de bloc fixes ; la liste d'étapes de l'app dit l'avancement. En fin de session (ligne close, ou bloquée), la conclusion à part : `---`, `### ✅ #<id> · <la tâche> : c'est livré` (ou `### ⛔ … : bloquée`), une phrase, puis le tableau Livré, À essayer, En route (bloquée : Fait, Bloque, À toi)."
+  return "Mode ADHD : ouvre un message de tâche par sa ligne d'état en italique, l'état en mots puis l'étape (« *En cours · étape 4/6* », « *Détour · …* », « *J'ai besoin de toi · …* », « *Prête à fusionner · tests verts, branche poussée* »), puis ton journal, une puce par fait avec son glyphe (✓ fait, ✕ annulé ou cassé, ＋ ajouté, ↻ changé, ? une question, - → **À toi :** une action ou une décision qui revient à " + person() + "), quelques mots après le tiret ; ni titre, ni tableau, ni rubrique, et rien de répété d'un message à l'autre. En fin de session (ligne close, ou bloquée), la conclusion à part : `---`, `### ✅ #<id> · <la tâche> : c'est livré` (ou `### ⛔ … : bloquée`), une phrase, puis le tableau Livré, À essayer, En route (bloquée : Fait, Bloque, À toi)."
 }
 
 // --- Fil de Maestro (#133) -----------------------------------------------------------------------
@@ -6156,7 +6156,7 @@ export function maestroWakeReminder(pending: readonly string[]): string {
 /** Le rappel du mode ADHD chez Maestro, aux tours que lance la personne : un en-tête stable. */
 export function maestroPrefsReminder(prefs: SessionPrefs): string | undefined {
   if (!prefs.adhd) return undefined
-  return `Mode ADHD, chez Maestro (#243) : ouvre le message par un repère stable en gras, compté sur ta liste d'étapes, ⏳ **Maestro · 2 en cours · 1 t'attend · 1 à fusionner** (« t'attend » : une question pour ${person()} ; « à fusionner » : une branche finie qui attend ta fusion ; ✅ **Maestro · tout est livré** quand rien ne reste), jamais l'étape d'une tâche. Puis ce qui attend ${person()} en premier, court, en « **À toi :** » (ses besoins : ${NEEDS}) ; le détail reste chez les sessions enfants ; pas de bloc de fin. Ta conclusion, au tour où tu proposes ton archivage : \`---\`, \`### ✅ Maestro · <le lot> : tout est livré\`, une phrase, puis \`| Tâche | Ce qui change | Version |\`, une ligne par tâche lancée, et « **À essayer :** ». Pas de boîte de fin sans question tant qu'une étape de ta liste reste ouverte : l'app cocherait toute la liste, le seul repère de ${person()} sur ses sessions ; après une boîte avec question, repose ta liste entière (items) au tour suivant.`
+  return `Mode ADHD, chez Maestro (#261, parti B) : ta ligne d'état en tête, en italique, sans gras ni emoji, comptée sur ta liste d'étapes, *Maestro · 2 en cours · 1 t'attend · 1 à fusionner* (« t'attend » : une question pour ${person()} ; « à fusionner » : une branche finie qui attend ta fusion ; *Maestro · tout est livré* quand rien ne reste), seulement quand elle a changé depuis ton message d'avant, jamais l'étape d'une tâche. Puis ton journal, une puce par fait avec son glyphe (✓ fait, ✕ annulé, ＋ ajouté, ↻ changé), et « - → **À toi :** … » pour un besoin de ${person()} (${NEEDS}), une seule fois : un besoin déjà dit ne revient pas, même reformulé. Le détail reste chez les sessions enfants ; ni titre, ni tableau, ni bloc de fin. Ta conclusion, au tour où tu proposes ton archivage : \`---\`, \`### ✅ Maestro · <le lot> : tout est livré\`, une phrase, puis \`| Tâche | Ce qui change | Version |\`, une ligne par tâche lancée, et « **À essayer :** ». Pas de boîte de fin sans question tant qu'une étape de ta liste reste ouverte : l'app cocherait toute la liste, le seul repère de ${person()} sur ses sessions ; après une boîte avec question, repose ta liste entière (items) au tour suivant.`
 }
 
 /**
@@ -6202,8 +6202,8 @@ export const SESSION_PREF_INFO: readonly { key: PrefKey; name: string; detail: s
     key: 'adhd',
     name: 'Mode ADHD',
     detail:
-      "La première ligne de chaque message, en gras, dit où on en est (en cours et l'étape, détour, j'ai besoin de toi, prête à fusionner), puis deux ou trois phrases au plus ; « À toi » seulement quand quelque chose te revient. La liste d'étapes de l'app montre l'avancement. À la fin de la session, une conclusion à part : un titre (c'est livré, ou bloquée), une phrase, puis ce qui a été livré, ce que tu peux essayer et le souci rencontré.",
-    off: 'Des messages libres, sans phrase de tête ni conclusion.',
+      "La première ligne de chaque message, une ligne d'état en italique, dit où on en est (en cours et l'étape, détour, j'ai besoin de toi, prête à fusionner) ; puis un journal court, une ligne par fait avec son glyphe (✓ fait, ✕ annulé, ＋ ajouté, ↻ changé, ? question, → à toi), sans titre ni tableau, et rien de répété d'un message à l'autre. La liste d'étapes de l'app montre l'avancement. À la fin de la session, une conclusion à part : un titre (c'est livré, ou bloquée), une phrase, puis ce qui a été livré, ce que tu peux essayer et le souci rencontré.",
+    off: "Des messages libres, sans ligne d'état ni conclusion.",
   },
   {
     key: 'francais',
@@ -7780,7 +7780,7 @@ export function deliveryReminder(kinds: readonly Delivery['kind'][], maestro: bo
     lines.push(
       wake
         ? "Ce tour est réveillé par une session : rien de plus à l'utilisateur (#133), la liste le lui montre."
-        : "Puis dis, dans ton message, une ligne de récap par tâche livrée, sans emoji : `#N livrée · version · ce qui change`, ce qui change en quelques mots.",
+        : "Puis mets dans le journal de ton message une ligne par tâche livrée : `- ✓ #N livrée <version> — ce qui change` (sans publication, `fusionnée`), ce qui change en quelques mots.",
     )
   }
   return lines.join('\n')
@@ -8162,30 +8162,35 @@ export function shortLabel(label: string, n = 60): string {
 }
 
 const ddmm = (iso: string) => `${iso.slice(8, 10)}/${iso.slice(5, 7)}`
-const cell = (text: string) => text.replace(/\|/g, '\\|').replace(/\n/g, ' ')
+const flat = (text: string) => text.replace(/\n/g, ' ')
 
-function table(head: string[], rows: string[][]): string {
-  const lines = [`| ${head.join(' | ')} |`, `|${'---|'.repeat(head.length)}`]
-  return [...lines, ...rows.map(r => `| ${r.map(cell).join(' | ')} |`)].join('\n')
+/** Le glyphe d'une mise à jour dans le journal (#261) : ✓ close, ✕ annulée ou retirée, ↻ tout autre changement. */
+function changeGlyph(change: string): string {
+  if (/^(?:cochée|close|ajoutée et cochée)\b/.test(change)) return '✓'
+  if (/^(?:annulée|abandonnée|retirée)\b/.test(change)) return '✕'
+  return '↻'
 }
 
 /**
  * Le gabarit de `rendre_compte_rendu` de `tasks.py`, au caractère près (cas partagé :
- * `tests/compte-rendu-cas.ts`) : trois rubriques, toujours dans cet ordre, une rubrique vide « rien ».
+ * `tests/compte-rendu-cas.ts`) : des lignes de journal (#261, parti B), une par tâche, son glyphe
+ * devant ; ni titre, ni rubrique, ni « rien ». `day` reste pour la signature de `tasks.py`.
  */
 export function renderReport(data: ReportData, etat: 'ecrit' | 'essai' | 'outil', day: string, outil?: string): string {
-  const said = { ecrit: 'écrit', essai: 'essai à blanc', outil: `à passer à ${outil ?? ''}` }[etat]
-  const sections: [string, string[], string[][]][] = [
-    ['Ajoutées', ['#', 'Tâche', 'Sous', 'Échéance'], data.ajoutees.map(a => [`#${a.id}`, a.libelle, a.parent ? `#${a.parent}` : '–', a.due ? ddmm(a.due) : '–'])],
-    ['Mises à jour', ['#', 'Tâche', 'Ce qui change'], data.mises_a_jour.map(m => [`#${m.id}`, m.libelle, m.change])],
-    ["T'attendent", ['#', 'Question', 'Raison', 'Recommandé'], data.t_attendent.map(q => [q.id ? `#${q.id}` : '–', q.question, q.raison, q.recommande])],
+  void day
+  const closes = new Set((data.suites ?? []).map(s => s.close))
+  const lines = [
+    ...(data.suites ?? []).map(s => `- ✓ #${s.close} close, la suite chez ${s.tiers} passe en #${s.suite}`),
+    ...data.ajoutees.map(a => {
+      const extra = [a.parent ? `sous #${a.parent}` : '', a.due ? `due ${ddmm(a.due)}` : ''].filter(x => x !== '')
+      return `- ＋ #${a.id} ajoutée — ${flat(a.libelle)}${extra.length > 0 ? ` (${extra.join(', ')})` : ''}`
+    }),
+    ...data.mises_a_jour.filter(m => !closes.has(m.id)).map(m => `- ${changeGlyph(m.change)} #${m.id} ${flat(m.change)} — ${flat(m.libelle)}`),
+    ...data.t_attendent.map(q => `- ? ${q.id ? `#${q.id} ` : ''}${flat(q.question)} (${q.raison}) — recommandé : ${flat(q.recommande)}`),
   ]
-  const blocks = [`### Compte rendu de la roadmap · ${ddmm(day)} · ${said}`]
-  for (const s of data.suites ?? []) blocks.push(`#${s.close} close, la suite chez ${s.tiers} passe en #${s.suite}`)
-  for (const [name, head, rows] of sections) {
-    blocks.push(rows.length > 0 ? `#### ${name} (${rows.length})\n\n${table(head, rows)}` : `#### ${name}\n\nrien`)
-  }
-  return blocks.join('\n\n')
+  const body = lines.length > 0 ? lines.join('\n') : 'Roadmap : rien ne change.'
+  const lead = { ecrit: '', essai: "Essai à blanc, rien n'est écrit :", outil: `À passer à ${outil ?? ''} :` }[etat]
+  return lead === '' || lines.length === 0 ? body : `${lead}\n\n${body}`
 }
 
 const changeRef = (t: Task) => (t.id ? `#${t.id}` : `l:${normalizeTitle(t.label)}`)
@@ -8236,7 +8241,8 @@ export function changeText(before?: Task, after?: Task): string | undefined {
   if (after === undefined) return before === undefined ? undefined : 'retirée'
   const closed = after.fait ? `le ${ddmm(after.fait)}` : ''
   if (before === undefined) return after.done ? `ajoutée et cochée ${closed}`.trim() : undefined
-  if (!before.done && after.done) return `cochée ${closed}`.trim()
+  // #261 : une tâche abandonnée est « annulée », jamais « cochée ».
+  if (!before.done && after.done) return `${isAbandoned(after) ? 'annulée' : 'cochée'} ${closed}`.trim()
   const parts: string[] = []
   if (before.done && !after.done) parts.push('rouverte')
   if (before.due !== after.due) parts.push(after.due ? `redatée au ${ddmm(after.due)}` : 'due retiré')
@@ -8309,21 +8315,17 @@ export function newQuestions(before: string | undefined, after: string | undefin
   return out
 }
 
-/** Les questions du tableau « T'attendent » qu'imprime `tasks.py write` (#232) : sa sortie relue. */
+/** Les questions « - ? » du journal qu'imprime `tasks.py write` (#232, #261) : sa sortie relue. */
 export function reportQuestions(stdout: string): Waiting[] {
-  const at = stdout.indexOf("#### T'attendent")
-  if (at < 0) return []
-  const rows = stdout.slice(at).split('\n').slice(1).filter(l => l.startsWith('| '))
-  return rows.slice(1).flatMap(row => {
-    const cells = row.slice(2, -2).split(/ (?<!\\)\| /).map(c => c.replace(/\\\|/g, '|'))
-    if (cells.length !== 4) return []
-    const [id, question, raison, recommande] = cells as [string, string, string, string]
-    return [{ id: id === '–' ? null : id.replace(/^#/, ''), question, raison, recommande }]
+  return stdout.split('\n').flatMap(line => {
+    const m = /^- \? (?:#(\S+) )?(.*) \(([^()]*)\) — recommandé : (.*)$/.exec(line)
+    if (!m) return []
+    return [{ id: m[1] ?? null, question: m[2] as string, raison: m[3] as string, recommande: m[4] as string }]
   })
 }
 
 const REPORT_LEAD = 'Plugin roadmap (#244) : la roadmap a changé pendant ce tour.'
-const REPORT_COPY = "Recopie tel quel ce compte rendu dans ton message de fin, après ta phrase de tête (mode ADHD, #243), qui reste sa première ligne ; il remplace celui d'une skill (tasks.py write, une skill de mémoire), qui ne se recopie pas en plus :"
+const REPORT_COPY = "Mets ces lignes telles quelles dans le journal de ton message de fin (mode ADHD, #261), avec tes autres faits, après ta ligne d'état, qui reste sa première ligne : ni titre ni tableau, et pas de second message pour elles. Elles remplacent le compte rendu d'une skill (tasks.py write, une skill de mémoire), qui ne se recopie pas en plus :"
 
 /** Le compte rendu remis au modèle avec la boîte de fin, ou par le rappel de fin de tour. */
 export function reportReminder(markdown: string): string {
