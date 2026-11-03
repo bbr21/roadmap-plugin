@@ -965,8 +965,8 @@ async function pendingAsk($: EngineInterface, ask: unknown): Promise<string | un
 }
 
 /**
- * Le rappel du bloc de fin de tour : mode ADHD, tour de travail, une ligne ou le bouton d'archivage
- * manquant. Rangement en attente (#101) : le bouton d'archivage ne se réclame pas.
+ * Le rappel de la fin de session (#85, #243) : mode ADHD, tour de travail, la conclusion ou le bouton
+ * d'archivage manquant. Rangement en attente (#101) : ni l'un ni l'autre ne se réclament.
  */
 async function closingNote($: EngineInterface, last: string | undefined, rangementPending = false): Promise<string | undefined> {
   if (!closingTurn.work) return undefined
@@ -977,7 +977,7 @@ async function closingNote($: EngineInterface, last: string | undefined, rangeme
   const line = await ownLine($).catch(() => undefined)
   // Maestro finit sur le tableau de ses tâches (#136).
   const maestro = await maestroHere($)
-  const gaps = closingBlockGaps(last, closingTurn.box, line, maestro).filter(g => !(rangementPending && (g === 'archiver' || g === 'mission' || g === 'etat-close' || g === 'taches')))
+  const gaps = closingBlockGaps(last, closingTurn.box, line, maestro).filter(g => !(rangementPending && (g === 'archiver' || g === 'conclusion' || g === 'etat-close' || g === 'taches')))
   return gaps.length === 0 ? undefined : closingBlockReminder(gaps, line, maestro)
 }
 

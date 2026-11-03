@@ -444,12 +444,13 @@ chaque projet qui a une roadmap :
   ne propose jamais le bouton d'app `archive`, #87), ou de dire ce qui reste. Sur ce clic, et sur
   lui seul, le modèle appelle `archive_session` (`self`). Le rappel du bilan passe d'abord ; une
   seule fois par tâche.
-- **bloc de fin de tour** (règle du 28/10/2026, #85, dans tout projet, roadmap ou non) : en mode
-  ADHD, un tour de travail (le tour a appelé la boîte de fin ou la liste d'étapes) dont la
-  dernière réponse n'a pas ses trois lignes `État`, `À toi`, `Session` (sans casse, accents, gras,
-  puces, citation ni emoji de tête, chacune en début de ligne et suivie de « : »), ou dont la ligne Session dit « à
-  archiver » sans le bouton « Oui, archiver » dans la boîte, bloque l'arrêt une fois ; le rappel
-  nomme ce qui manque et redonne le format. Les étiquettes comptent, pas leurs valeurs ;
+- **conclusion de fin de session** (règle du 28/10/2026, #85, refaite par #243, dans tout projet,
+  roadmap ou non) : en mode ADHD, un tour de travail ordinaire n'est plus contrôlé. Une fin de
+  session (la boîte de fin propose « Archiver cette session ? », ou la réponse porte une conclusion
+  `### ✅ #N · … : c'est livré`) bloque l'arrêt une fois quand il manque la conclusion, le tableau
+  des tâches de Maestro, le bouton « Oui, archiver » dans la boîte, ou, ligne close, « close » dans
+  la conclusion ; une conclusion bloquée (`### ⛔ … : bloquée`) sans sa ligne `| Bloque |` aussi.
+  Le rappel nomme ce qui manque et redonne le format ;
 - **méthode** (2026-10-23) : le brief d'une session lancée du panneau dit quelle skill superpowers
   appelle quelle situation (`writing-plans` pour un lot de plusieurs fichiers,
   `test-driven-development` pour un changement de comportement, `systematic-debugging` pour un
@@ -501,24 +502,19 @@ remplaçant le précédent (#119) :
   diff) s'ouvre par la session elle-même (`preview_start`, `mcp__ccd_view__show_pane`), depuis le
   28/10/2026 (#74). Éteint, Maestro pose aussi son menu « Je lance lesquelles ? » dans son message,
   sans formulaire (#119) ;
-- `adhd` : chaque message d'une tâche s'ouvre sur sa carte d'étape (#196), un tableau markdown
-  d'une colonne que l'app dessine en bande grise : `| ⏳ Étape 2/4 · Écrire le plan · ▰▱▱▱ en cours |`,
-  `|---|`, puis la phrase de constat dans la case dessous ; l'icône et le mot disent l'état (⏳ en
-  cours, ✅ faite, ⚠️ détour avec ↳ sa raison, 🎉 tâche finie), la barre l'avancement (▰ par étape
-  finie) ; les étapes sont celles de la liste d'étapes native, même ordre, même nom (un verbe et son
-  objet, « Écrire le plan », jamais renommé) ; pas de carte pour une réponse courte hors tâche, puis, s'il en reste une, la seule
-  action ou décision qui revient à Bertrand, listes et gras, pas de pavé. Donnée seulement au démarrage, la consigne s'effaçait au
-  fil d'une longue session : depuis le 24/10/2026, une ligne de rappel l'accompagne à chaque
-  message de Bertrand (hook `prompt.submit` depuis #116). Depuis le 29/10/2026 (#85), un tour de travail
-  (boîte de fin ou liste d'étapes) se termine, après la boîte de fin, par le **bloc de fin de
-  tour**, trois lignes sans emoji depuis #123 : `**État**` (fini, pas fini, bloqué) et une phrase,
-  `**À toi**` (rien, ou une à trois actions avec où et comment), `**Session**` (à archiver, avec
-  la boîte « Archiver cette session ? » et le bouton de réponse « Oui, archiver » ; à garder, et
-  pourquoi). Sous la ligne d'étape, un tour de travail dit **Fait**, **Trouvé**, **Suite**, en
-  puces d'une phrase, le pourquoi compris (#128). À toute fin de session, au dernier tour ou bloquée,
-  une fiche en tableau remplace les trois lignes (#123, #128) : État en tête (✅ Tout est bon,
-  ou ⛔ Bloqué), Mission, Livré (ou Fait), Bloque si bloquée, À toi, Session. Éteint, rien ne
-  bride la longueur des réponses, celles de Maestro comprises (#128) ;
+- `adhd` (refait par #243, maquette A choisie par Bertrand) : chaque message d'une tâche s'ouvre
+  sur sa phrase de tête, en gras, qui dit seule où on en est, l'état en mots d'abord
+  (« **En cours, étape 4/6 : …** », « **⚠️ Détour : …** », « **J'ai besoin de toi pour une
+  chose : …** », « **Prête à fusionner : tests verts, branche poussée.** » puis « Ce qui change
+  pour toi : »), puis deux ou trois phrases ou puces au plus ; « **À toi :** » en dernière ligne
+  seulement quand quelque chose revient à Bertrand. La liste d'étapes native reste le seul repère
+  d'avancement : plus de carte d'étape, de rubriques Fait / Trouvé / Suite ni de bloc
+  État / À toi / Session. À la fin de la session (ligne close, ou bloquée), une conclusion à part :
+  `---`, `### ✅ #N · <la tâche> : c'est livré` (ou `### ⛔ … : bloquée`), une phrase, puis un
+  tableau Livré, À essayer, En route (bloquée : Fait, Bloque, À toi). Maestro garde son repère
+  compté et finit sur sa conclusion et le tableau de ses tâches. Une ligne de rappel accompagne
+  chaque message de Bertrand (hook `prompt.submit` depuis #116). Éteint, rien ne bride la longueur
+  des réponses, celles de Maestro comprises (#128) ;
 - `francais` : réponses en français ;
 - `autonome` (#77, #105, avec ou sans code, éteint par défaut) : Claude suit sa
   recommandation au lieu de poser la question, sauf pour une question d'architecture, c'est-à-dire
@@ -671,6 +667,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.161.0 (2026-11-02)** : format-adhd : les messages s'ouvrent sur une phrase de tête qui dit où on en est, une conclusion à part en fin de session ; fin du gabarit carte d'étape, Fait/Trouvé/Suite et bloc État/À toi/Session (#243)
 - **0.160.0 (2026-11-02)** : panneau : la carte Chaîne d'une fille montre sa mère et son avancement, la jauge de ses sœurs, Avant, Ici, Ensuite (#246)
 - **0.159.0 (2026-11-02)** : panneau : le plugin rend lui-même le compte rendu de toute écriture de la roadmap, quelle que soit la skill, et refuse une fois la boîte de fin tant que ce qui attend n'est pas passé par un formulaire (#244)
 - **0.158.1 (2026-11-02)** : panneau : sous une tâche mère, seules les filles faites aujourd'hui restent visibles, le compte de la mère les comptant toutes (#240)

@@ -104,7 +104,7 @@ to it.
     turn: the person answers in the session itself, Maestro does not relay it (#151);
   - do not tick your line: your last report says what was done and the problem met;
   - your line closed (read in `ROADMAP-fait.md`, never assumed) and nothing left pending, your last
-    turn ends on « fini, rien en attente », your État line says
+    turn ends on « fini, rien en attente », then your conclusion (#243), whose Livré row says
     « fini : #N close par Maestro le AAAA-MM-JJ », then « Archiver cette session ? » and the reply
     button « Oui, archiver » (the app
     does not offer the `archive` app button); on that click, `archive_session` (`self`); if the
@@ -126,7 +126,7 @@ to it.
 ## 3. Follow: Maestro is the only one that sees everything
 
 - **Talk to the person only when they need to** (#133): the detail lives in the child sessions
-  (their report, their closing sheet); Maestro moves things forward and stays quiet. A need of the
+  (their report, their conclusion); Maestro moves things forward and stays quiet. A need of the
   person is only: a question only they can settle (architecture, visual choice), Maestro's own,
   never a sub-session's question, which they answer in that session (#151); a gesture of theirs
   that no tool does (sending an email, a secret, a login); a click that is theirs (launching a
@@ -143,7 +143,8 @@ to it.
     click).
   - **Turn started by the person**: a stable marker at the top, counted from the step list,
     `⏳ **Maestro · 2 en cours · 1 t'attend**` (`✅ **Maestro · tout est livré**`), never a task's
-    step; then what waits for them first, short; the block whose « À toi » lists their needs.
+    step; then what waits for them first, short, as « **À toi :** » with their needs; no end
+    block (#243).
 - **Read**: each end of turn of a sub-session reaches Maestro (the start of its report);
   `list_sessions` with `linked: true` gives the status of all of them (running, waiting, PR). A note
   is not proof: reread the branch's diff and tests before calling it ready.
@@ -348,18 +349,20 @@ The merge itself:
     refused, with the numbers to remove; Maestro posts it again without them.
 - **Archiving closes nothing, and loses nothing** (#124): a task's line is ticked only by Maestro,
   after the merge. A sub-session whose line is still open does not offer its archiving (the panel
-  refuses its end box), and its closing sheet says « #N close par Maestro le AAAA-MM-JJ » once the
+  refuses its end box), and its conclusion says « #N close par Maestro le AAAA-MM-JJ » once the
   line is closed. Archived anyway (sidebar, click too early), it appears in Maestro's news for 7
   days: « archivée avant la clôture de sa ligne », with its branch merged or not. Merged, Maestro
   ticks the line with its bilan (the last report stays readable through
   `search_session_transcripts`); not merged, its branch stays: Maestro reviews it and merges it
   (§ 5), or unarchives it (`unarchive_session`) if it has work left.
-- **Maestro's final sheet** (#136, mockup B): on the turn where it offers its archiving, in ADHD
-  mode, its answer ends on the closing sheet of #123 (`| Fin | Maestro · <le lot> |`, Mission,
-  Livré, État, À toi, Session), then the table of its tasks, one row per task it launched:
-  `| Tâche | Livré | Version | État |` (`| #130 Sans priorités | plus de pastille P1/P2/P3 | 0.78.0 |
-  close |`). The panel refuses Maestro's « à archiver » end of turn without that table. A task still
-  open is not « close » in it: the sheet is posted only once all its lines are ticked.
+- **Maestro's conclusion** (#136, then #243 mockup A): on the turn where it offers its archiving,
+  in ADHD mode, its answer ends on its conclusion: `---`, then the title
+  `### ✅ Maestro · <le lot> : tout est livré`, one sentence (how many tasks, from the first
+  version to the last), then the table of its
+  tasks, one row per task it launched: `| Tâche | Ce qui change | Version |`
+  (`| #130 Sans priorités | plus de pastille P1/P2/P3 | 0.78.0 |`), then `**À essayer :** …`. The
+  panel refuses Maestro's end box that offers archiving without that table. The conclusion is
+  posted only once all its lines are ticked.
 - **Maestro finishes** when all its lines are ticked: end box (`wrap_up`) with the question
   « Archiver cette session ? » and the reply button « Oui, archiver » first
   (`actions: [{"label": "Oui, archiver", "message": "Oui, archive cette session."}]`: the app does
@@ -398,7 +401,7 @@ The merge itself:
 - It refuses Maestro's end box that offers to archive an already archived session (§ 6, #110).
 - It does not restart a sub-session with the reminder « la roadmap n'a pas bougé »: Maestro keeps
   its line (#124). It refuses its end box « Archiver cette session ? » while its line is open, and
-  gives it the État sentence once closed; it flags to Maestro a sub-session archived before its
+  gives it the « close » sentence for its conclusion once closed; it flags to Maestro a sub-session archived before its
   line was closed (§ 6).
 - It refuses once the end box that asks again to launch a card posted in the turn or a linked
   session already running (§ 2, #122).
