@@ -669,18 +669,31 @@ function innerChevron(cx: number, cy: number, half: number, open: boolean, inkHe
   return `<path d="${d}" fill="none" stroke="${inkHex}" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>`
 }
 
-/** Le carré d'une mère de l'arbre par axe (#168), 16 × 24 : le carré de son axe, sa flèche dedans. */
-export function treeMotherRowIcon(hex: string, open: boolean, inkHex: string): string {
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="24" viewBox="0 0 16 24"><rect x="2" y="6" width="12" height="12" rx="${RADIUS.square}" fill="${hex}"/>${innerChevron(8, 12, 3, open, inkHex)}</svg>`
+/**
+ * Une mère de l'arbre par axe (#168), 32 × 24 : le carré de son axe, seul, puis sa flèche de dépli,
+ * grise, hors du carré (#258, vue de référence, maquette A) : posée devant le #, à 16 px plus un écart,
+ * elle s'aligne à gauche sur le nom de la section.
+ */
+export function treeMotherRowIcon(hex: string, open: boolean, chevronHex: string): string {
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="32" height="24" viewBox="0 0 32 24"><rect x="3" y="7" width="10" height="10" rx="${RADIUS.square}" fill="${hex}"/>${innerChevron(26, 12, 3, open, chevronHex)}</svg>`
 }
 
+/** Une tâche seule de l'arbre (#258), 32 × 24 : sa marque, puis la place vide de la flèche ; son # s'aligne sur celui des mères. */
+export function treeAloneRowIcon(mark: string): string {
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="32" height="24" viewBox="0 0 32 24">${mark.replace(/^<svg /, '<svg x="0" y="0" ')}</svg>`
+}
+
+/** La largeur d'une fille de l'arbre (#258) : son carré sous le # de sa mère (32 px et un écart d'une cellule). */
+export const TREE_CHILD_PX = 53
+
 /**
- * Une fille de l'arbre par axe (#168), 32 × 24 : le coude (├, └ pour la dernière) sous le carré de
- * sa mère, puis sa marque (carré d'axe ou coche) un cran à droite.
+ * Une fille de l'arbre par axe (#168), `TREE_CHILD_PX` × 24 : le coude (├, └ pour la dernière) part du
+ * carré de sa mère, puis sa marque (carré d'axe ou coche) se pose sous le # de la mère (#258, retouche
+ * de Bertrand sur la maquette A).
  */
 export function treeChildRowIcon(mark: string, last: boolean, lineHex: string): string {
-  const inner = mark.replace(/^<svg /, '<svg x="16" y="0" ')
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="32" height="24" viewBox="0 0 32 24"><path d="M8 0V${last ? 12 : 24}M8 12H15" fill="none" stroke="${lineHex}" stroke-width="1.2"/>${inner}</svg>`
+  const inner = mark.replace(/^<svg /, '<svg x="37" y="0" ')
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${TREE_CHILD_PX}" height="24" viewBox="0 0 ${TREE_CHILD_PX} 24"><path d="M8 0V${last ? 12 : 24}M8 12H39" fill="none" stroke="${lineHex}" stroke-width="1.2"/>${inner}</svg>`
 }
 
 /** L'icône du bandeau d'une section hors sujet (#238, maquette C), au trait, centrée sur 16 × 24. */

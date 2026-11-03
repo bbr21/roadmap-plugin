@@ -1989,6 +1989,16 @@ export function rowStepsCells(counts: readonly string[]): { count: number; colum
 
 /** La colonne du numéro d'une ligne (#198) : « #198 » calé à droite, un numéro cliquable (bouton) compris. */
 export const NUMBER_CELLS = 6
+
+/**
+ * La colonne du # dans l'arbre (#258, retouche de Bertrand) : à la largeur du plus long numéro de la
+ * liste, pour que le # vienne contre la flèche ; un chiffre et le « # » comptent ~7,3 px en légende.
+ */
+export function treeNumberCells(ids: readonly string[]): number {
+  const digits = Math.max(2, ...ids.map(id => id.length))
+  return pxCells(7.3 * (1 + digits))
+}
+
 /** La colonne de l'âge d'une ligne, au moins (#198) : « 12 j » calé à droite ; « fait » ou un axe la dépassent. */
 export const AGE_CELLS = 4
 
@@ -2017,9 +2027,10 @@ export const ROW_TITLE_MIN = 6
  * sont celles qui laissent au titre au moins `ROW_TITLE_MIN` ; les autres partent, avant que le compte
  * ne soit coupé. `fixed` : la largeur de ce qui ne rétrécit pas ; `title` : ce qui reste au titre.
  */
-export function fitRowPills(o: { columns: number; inset: number; steps: number; pills: readonly number[] }): { kept: number; fixed: number; title: number } {
+export function fitRowPills(o: { columns: number; inset: number; steps: number; pills: readonly number[]; mark?: number; number?: number }): { kept: number; fixed: number; title: number } {
   // Sans pastille, le numéro entre dans le bloc du titre, sans écart (#156) : carré, titre, session, ▶.
-  const base = o.inset + pxCells(16) + 6 + o.steps + 3 + 3
+  // Dans l'arbre (#258), la marque (32 px, 53 pour une fille) et le # (sa colonne serrée) changent de largeur.
+  const base = o.inset + pxCells(o.mark ?? 16) + (o.number ?? 6) + o.steps + 3 + 3
   let fixed = base
   let kept = 0
   for (const w of o.pills) {
@@ -4206,11 +4217,12 @@ export function listPills(task: Task, today: string, me: readonly string[]): Pil
 
 /**
  * La pastille d'échéance (#99) : rouge en retard avec le retard, orange dans les 7 jours, grise au-delà.
- * Le jour même et le lendemain s'écrivent en toutes lettres, sans date (#257).
+ * Le jour même et le lendemain s'écrivent en toutes lettres, sans date (#257). `short` (une ligne de
+ * l'arbre, la vue de référence de #258) : le retard seul, « 1 j de retard », sans la date.
  */
-export function duePill(due: string, today: string): Pill {
+export function duePill(due: string, today: string, o?: { short?: boolean }): Pill {
   const days = daysBetween(today, due)
-  if (days < 0) return { kind: 'late', text: `${shortDate(due)} · ${-days} j de retard` }
+  if (days < 0) return { kind: 'late', text: o?.short ? `${-days} j de retard` : `${shortDate(due)} · ${-days} j de retard` }
   if (days <= 7) return { kind: 'soon', text: days === 0 ? "aujourd'hui" : days === 1 ? 'demain' : shortDate(due) }
   return { kind: 'due', text: shortDate(due) }
 }
