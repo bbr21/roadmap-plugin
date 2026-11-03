@@ -671,6 +671,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.158.1 (2026-11-02)** : panneau : sous une tâche mère, seules les filles faites aujourd'hui restent visibles, le compte de la mère les comptant toutes (#240)
 - **0.158.0 (2026-11-02)** : maestro : « Maestro <axe> » ouvre le panneau, l'accueil et les briefs de la session sur cet axe, gardé par défaut ; « Maestro » seul rouvre tout (#239)
 - **0.157.0 (2026-11-02)** : brief : toute session lancée sur une tâche reçoit le contexte de son arbre (parente, sœurs, prérequises et ce qu'elles ont livré, suites, closes qui la citent, sessions passées), au ▶ comme dans les cartes de Maestro (#237)
 - **0.156.0 (2026-11-02)** : panneau : les vues de la liste remises à plat : par sujet partout à l'ouverture (clé vue retirée), bandeaux à icône hors sujet, filles à faire par échéance, puis en cours, puis faites barrées (#238)

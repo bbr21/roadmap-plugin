@@ -2106,6 +2106,8 @@ const ALONE_LABEL = 'Tâches seules'
  * reçu ; un enfant qui en a ouvre son propre bloc, juste après. Un parent ouvert hors de `tasks`
  * dont un enfant y est reste en tête, `ghost`. Les tâches sans parent ni enfant, et celles dont le
  * parent est fait ou introuvable, vont dans « Tâches seules ». Un cycle s'arrête où il boucle.
+ * Avec `today`, un bloc ne garde que les filles faites ce jour-là (#240), son compte les comptant
+ * toutes ; `closedMothers` y ajoute les mères closes ce jour-là (#163), que « Ma journée » ne veut pas.
  */
 export function byTree(
   tasks: readonly Task[],
@@ -2113,8 +2115,11 @@ export function byTree(
   titleOf: (t: Task) => string,
   prereqsOf: (t: Task) => readonly Task[] = () => [],
   today?: string,
+  closedMothers = true,
 ): TreeBlock[] {
   const listed = new Set(tasks)
+  // Les filles faites montrées sous leur mère : celles du jour seulement, quand on le sait (#240).
+  const shownDone = (kids: readonly Task[]) => kids.filter(x => x.done && (today === undefined || x.fait?.startsWith(today)))
   // Une table par numéro, la première tâche ouverte qui le porte : les parents possibles.
   const openById = new Map<string, Task>()
   for (const t of [...tasks, ...all]) if (!t.done && t.id !== undefined && !openById.has(t.id)) openById.set(t.id, t)
@@ -2160,7 +2165,7 @@ export function byTree(
         rank: siblingRanks(direct, prereqsOf),
         done: direct.filter(x => x.done).length,
         total: direct.length,
-        doneTasks: direct.filter(x => x.done),
+        doneTasks: shownDone(direct),
         ...nextOf(rows),
         closed: false,
       })
@@ -2189,7 +2194,7 @@ export function byTree(
   // Ce qui reste n'a été atteint par aucune racine : un cycle de parents.
   for (const t of tasks) if (!seen.has(t)) grow(t)
   // Une mère faite aujourd'hui avec ses filles garde son bloc, barré : on la décoche encore (#163).
-  if (today !== undefined) {
+  if (today !== undefined && closedMothers) {
     for (const m of all) {
       const kids = m.id === undefined ? [] : (directOf.get(m.id) ?? []).filter(x => x !== m)
       if (!m.done || !m.fait?.startsWith(today) || kids.length === 0 || kids.some(x => !x.done)) continue
@@ -2203,7 +2208,7 @@ export function byTree(
         rank: siblingRanks(kids, prereqsOf),
         done: kids.length,
         total: kids.length,
-        doneTasks: kids,
+        doneTasks: shownDone(kids),
         closed: true,
       })
     }

@@ -8675,7 +8675,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
         const lead = g.label === 'En retard' ? lateLead() : undefined
         return [
           { key: id, name: g.label, tasks: [], band: { count: g.tasks.length, ...(lead ? { lead } : {}) } },
-          ...byTree(g.tasks, allTasks, t => short(t).titre, prereqsFor).map(b => ({ key: `${id}:${b.key}`, name: b.label, tasks: b.tasks, block: b, under: id })),
+          ...byTree(g.tasks, allTasks, t => short(t).titre, prereqsFor, today, false).map(b => ({ key: `${id}:${b.key}`, name: b.label, tasks: b.tasks, block: b, under: id })),
         ]
       })
     : treeGroups
