@@ -270,9 +270,14 @@ const DRAFT_LABELS: Record<string, DraftField | 'status'> = {
 const HEADER_LINE_RE = /^\s*(?:\*\*|__)?([\p{L}][\p{L} -]{0,24}?)\s*:\s*(?:\*\*|__)?\s*(.*)$/u
 const foldLabel = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim()
 
+/** « non envoyé », « pas encore envoyé », « not sent », un brouillon : pas parti. « à envoyer » ne dit pas « envoyé ». */
+const UNSENT_RE = /\b(?:non|pas|not)\s+(?:encore\s+|yet\s+)?(?:envoye|sent)\b|\bunsent\b|\bbrouillon\b|\bdraft\b/
+/** « envoyé » où qu'il soit (« Rédigé le 02/11, envoyé le 03/11 », #242). */
+const SENT_RE = /\b(?:envoye|sent)\b/
+
 function draftStatus(text: string): NonNullable<DraftPreview['status']> {
   const f = foldLabel(text)
-  const tone = f.includes('non envoye') || f.includes('brouillon') || f.includes('not sent') ? 'todo' : f.startsWith('envoye') || f.startsWith('sent') ? 'sent' : 'plain'
+  const tone = UNSENT_RE.test(f) ? 'todo' : SENT_RE.test(f) ? 'sent' : 'plain'
   return { text, tone }
 }
 
@@ -316,12 +321,8 @@ function cutDraft(body: string): { short: string; more: number } {
   return { short: short.join('\n'), more: lines.length - short.length }
 }
 
-/**
- * L'aperçu d'un brouillon (#236) : un email (en-têtes « À : », « Objet : »… en tête, ou un front matter)
- * ou un texte (son titre `#`), et le corps nettoyé et coupé. Le détail : spec de feat-apercu-brouillon.
- */
-export function draftPreview(text: string): DraftPreview {
-  const lines = text.replace(/\r\n?/g, '\n').split('\n')
+/** Les en-têtes d'un brouillon (#236) : front matter, ou bloc de lignes « Étiquette : valeur » en tête ; `rest`, la ligne du corps. */
+function draftHeaders(lines: readonly string[]): { fields: DraftPreview['fields']; subject?: string; status?: DraftPreview['status']; rest: number } {
   const fields: DraftPreview['fields'] = {}
   let subject: string | undefined
   let status: DraftPreview['status'] | undefined
@@ -357,6 +358,17 @@ export function draftPreview(text: string): DraftPreview {
     }
     rest = k
   }
+  return { fields, ...(subject !== undefined ? { subject } : {}), ...(status ? { status } : {}), rest }
+}
+
+/**
+ * L'aperçu d'un brouillon (#236) : un email (en-têtes « À : », « Objet : »… en tête, ou un front matter)
+ * ou un texte (son titre `#`), et le corps nettoyé et coupé. Le détail : spec de feat-apercu-brouillon.
+ */
+export function draftPreview(text: string): DraftPreview {
+  const lines = text.replace(/\r\n?/g, '\n').split('\n')
+  const { fields, subject, status: read, rest } = draftHeaders(lines)
+  let status = read
   const email = fields.to !== undefined || subject !== undefined
   let bodyLines: string[]
   let title: string | undefined
@@ -388,6 +400,48 @@ export function draftPreview(text: string): DraftPreview {
     body,
     ...cutDraft(body),
   }
+}
+
+/** Les mots d'un chemin qui en font une communication (#242) : un segment entier (`emails/`, `message-martial.md`). */
+const COMM_WORDS = new Set(['email', 'emails', 'mail', 'mails', 'message', 'messages', 'msg', 'invitation', 'invitations', 'invite', 'invites', 'courrier', 'courriers', 'lettre', 'lettres', 'letter', 'letters', 'slack', 'sms', 'dm'])
+
+/**
+ * Un livrable et son envoi (#242) : `none`, ce n'est pas une communication (ou on ne sait pas la lire) ;
+ * `unsent`, un email (en-têtes « À : », « Objet : ») ou un fichier nommé comme un message, une
+ * invitation…, dont le « Statut : » ne dit pas « envoyé » (ou pas encore écrit) ; `sent`, parti.
+ * `text` : le contenu lu, `undefined` s'il ne se lit pas ; `exists` : le fichier est là.
+ */
+export function commState(written: string, text: string | undefined, exists: boolean): 'none' | 'sent' | 'unsent' {
+  const named = foldLabel(written.split('/').slice(-2).join('/')).split(/[^a-z0-9]+/).some(w => COMM_WORDS.has(w))
+  if (text === undefined) return named && !exists ? 'unsent' : 'none'
+  const head = draftHeaders(text.replace(/\r\n?/g, '\n').split('\n'))
+  if (!named && head.fields.to === undefined && head.subject === undefined) return 'none'
+  return head.status?.tone === 'sent' ? 'sent' : 'unsent'
+}
+
+/** « `a`, `b` ». */
+const codeList = (paths: readonly string[]) => paths.map(p => `\`${p}\``).join(', ')
+
+/**
+ * La garde de l'envoi (#242) : un livrable de la tâche est une communication pas encore partie. Ni
+ * l'archivage (`archive`) ni la clôture de la ligne (`close`) tant que son « Statut : » ne dit pas envoyé.
+ */
+export function unsentRefusal(id: string | undefined, unsent: readonly string[], gesture: 'archive' | 'close'): string {
+  const task = id ? `ta tâche #${id}` : 'ta tâche'
+  const what = unsent.length > 1 ? `ces communications ne sont pas encore parties : ${codeList(unsent)}` : `${codeList(unsent)} n'est pas encore parti`
+  const head =
+    gesture === 'archive'
+      ? `Plugin roadmap : ${task} a un livrable à envoyer, ${what} : ne propose pas l'archivage de cette session.`
+      : `Plugin roadmap : ${task} a un livrable à envoyer, ${what} : ne coche pas sa ligne avant l'envoi ; rouvre-la si tu viens de la cocher.`
+  return [
+    head,
+    "Une fois parti (l'envoi se demande toujours d'abord), écris en tête du fichier « Statut : envoyé le AAAA-MM-JJ (par où) » : c'est la preuve d'envoi que lisent le panneau, les hooks et la skill `tasks`. Pas encore envoyé : dis en une phrase ce qui reste et qui l'envoie.",
+  ].join('\n')
+}
+
+/** Ce que dit le panneau d'une tâche dont une communication n'est pas partie (#242), à « Marquer faite ». */
+export function unsentNote(unsent: readonly string[]): string {
+  return `Pas encore parti : ${unsent.join(', ')}. Une fois envoyé, écris « Statut : envoyé le AAAA-MM-JJ » en tête du fichier, puis coche.`
 }
 
 /** Un destinataire en pastille (#236) : son nom, son rôle entre parenthèses, ses initiales. */
@@ -4677,6 +4731,7 @@ const PROJECT_METHOD: readonly string[] = [
 export function draftClause(): readonly string[] {
   return [
     "Un brouillon (email, message, note) s'écrit dans un fichier du projet (un email commence par « À : » et « Objet : »), se rattache à la ligne comme livrable (`livrable:`), où le panneau en montre l'aperçu ; avant toute question de validation (« je le pose tel quel ? »), montre-le en entier dans ton message, avec son chemin, puis pose la question.",
+    "Un livrable qui part chez un tiers (email, message, invitation) porte en tête « Statut : brouillon » jusqu'à son envoi, puis « Statut : envoyé le AAAA-MM-JJ (par où) » : tant qu'il n'est pas parti, ne coche pas ta ligne et ne propose pas « Archiver cette session ? » (#242).",
   ]
 }
 

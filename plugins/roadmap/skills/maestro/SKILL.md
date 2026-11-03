@@ -361,6 +361,10 @@ The merge itself:
 
 - **After the merge**, Maestro ticks the line (`fait:`, what was delivered, the PR), moves it to the
   top of `ROADMAP-fait.md` and writes its bilan from the sub-session's last report.
+- **No closing before the send** (#242): a line whose deliverable is a communication (email, message,
+  invitation: `livrable:` with « À : » / « Objet : » headers, or named so) is not ticked, not handed
+  off, and its session not offered for archiving, until the file's « Statut : » says
+  « envoyé le … ». Sending is asked of the person; the `tasks` skill refuses `done` before it.
 - **Partial closure** (#245): when our part of a task is done but its line still waits on a third
   party (`attend:` to a vendor, a client: neither the person nor a task), the line does not stay
   open. The sub-session does not tick it: it reports « clôture partielle proposée : #A, suite

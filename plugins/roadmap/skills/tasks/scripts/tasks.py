@@ -19,6 +19,7 @@ import json
 import os
 import re
 import sys
+import unicodedata
 
 ICI = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(ICI, "..", "..", "onboarding", "scripts"))
@@ -57,6 +58,17 @@ RAISONS = {"conflict": "conflit", "undated": "date manquante", "late": "en retar
            "rhythm": "rythme", "reopen": "réouverture", "prio_on_child": "priorité sur un enfant", "structure": "structure"}
 # Le libellé d'une tâche dans le compte rendu : coupé au mot au-delà.
 LIBELLE_COURT = 60
+# Une communication (#242) : un segment du chemin qui la nomme (`emails/`, `message-martial.md`), ou des
+# en-têtes d'email ; partie quand son « Statut : » dit « envoyé ». La même règle que `commState` du panneau.
+MOTS_COMM = {"email", "emails", "mail", "mails", "message", "messages", "msg", "invitation", "invitations", "invite",
+             "invites", "courrier", "courriers", "lettre", "lettres", "letter", "letters", "slack", "sms", "dm"}
+ETIQUETTES = {"a": "to", "to": "to", "destinataire": "to", "destinataires": "to", "objet": "subject",
+              "sujet": "subject", "subject": "subject", "statut": "status", "status": "status"}
+EN_TETE = re.compile(r"^\s*(?:\*\*|__)?([^\W\d_][^\W\d_ -]{0,24}?)\s*:\s*(?:\*\*|__)?\s*(.*)$")
+NON_PARTI = re.compile(r"\b(?:non|pas|not)\s+(?:encore\s+|yet\s+)?(?:envoye|sent)\b|\bunsent\b|\bbrouillon\b|\bdraft\b")
+PARTI = re.compile(r"\b(?:envoye|sent)\b")
+LISIBLE = (".md", ".markdown", ".txt")
+LISIBLE_MAX = 262144
 
 
 def _lire(chemin):
@@ -88,6 +100,68 @@ def _court(libelle, n=LIBELLE_COURT):
     if len(libelle) <= n:
         return libelle
     return libelle[:n].rsplit(" ", 1)[0].rstrip(" ,;:") + "…"
+
+
+# ---------------------------------------------------------------- envoi d'une communication (#242)
+
+
+def _plie(texte):
+    return "".join(c for c in unicodedata.normalize("NFD", texte) if not unicodedata.combining(c)).lower().strip()
+
+
+def _en_tetes(texte):
+    """Les en-têtes d'un brouillon (#236) : front matter, ou lignes « Étiquette : valeur » en tête."""
+    lignes = texte.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    vus = {}
+    i = 0
+    while i < len(lignes) and not lignes[i].strip():
+        i += 1
+    if i < len(lignes) and lignes[i].strip() == "---":
+        fin = next((k for k in range(i + 1, len(lignes)) if lignes[k].strip() == "---"), None)
+        bloc = lignes[i + 1:fin] if fin is not None else []
+        motif = re.compile(r"^\s*([^\W\d_][^\W\d_ -]*?)\s*:\s*(.*)$")
+    else:
+        bloc, motif = [], EN_TETE
+        for l in lignes[i:]:
+            if l.strip() and not EN_TETE.match(l):
+                break
+            bloc.append(l)
+    for l in bloc:
+        m = motif.match(l)
+        cle = ETIQUETTES.get(_plie(m.group(1))) if m else None
+        valeur = m.group(2).strip().strip("\"'") if m else ""
+        if cle and valeur:
+            vus[cle] = valeur
+    return vus
+
+
+def etat_envoi(ecrit, texte, existe):
+    """`none` (pas une communication, ou illisible), `unsent` ou `sent` : la règle de `commState`."""
+    nomme = any(w in MOTS_COMM for w in re.split(r"[^a-z0-9]+", _plie("/".join(ecrit.split("/")[-2:]))))
+    if texte is None:
+        return "unsent" if nomme and not existe else "none"
+    vus = _en_tetes(texte)
+    if not nomme and "to" not in vus and "subject" not in vus:
+        return "none"
+    statut = _plie(vus.get("status", ""))
+    return "sent" if statut and not NON_PARTI.search(statut) and PARTI.search(statut) else "unsent"
+
+
+def envois_en_attente(livrables, bases):
+    """Les livrables (`livrable:` d'une ligne) qui sont des communications pas encore parties."""
+    attente = []
+    for ecrit in [x.strip() for x in (livrables or "").split(",") if x.strip()]:
+        texte, existe = None, False
+        for base in ([""] if os.path.isabs(ecrit) else bases):
+            chemin = os.path.join(base, ecrit)
+            if os.path.isfile(chemin):
+                existe = True
+                if chemin.lower().endswith(LISIBLE) and os.path.getsize(chemin) <= LISIBLE_MAX:
+                    texte = _lire(chemin)
+                break
+        if etat_envoi(ecrit, texte, existe) == "unsent":
+            attente.append(ecrit)
+    return attente
 
 
 # ---------------------------------------------------------------- contexte et rapprochement
@@ -229,6 +303,14 @@ class _Tenue(audit._Preparation):
         if _sans_parent(t) != "-" and t.get("prio"):
             raise Erreur("%s : prio se pose sur le parent #%s, jamais sur un enfant" % (quoi, _sans_parent(t)))
 
+    def refuser_sans_envoi(self, t, quoi):
+        """#242 : ni clôture ni clôture partielle tant qu'une communication de la tâche n'est pas partie."""
+        attente = envois_en_attente(t.get("livrable"), list(dict.fromkeys([self.r.get("dossier") or self.rdir, self.rdir])))
+        if attente:
+            raise Erreur("%s : %s pas encore parti (%s) : envoie-le d'abord (l'envoi se demande à la personne), puis "
+                         "écris en tête du fichier « Statut : envoyé le AAAA-MM-JJ (par où) », la preuve d'envoi"
+                         % (quoi, "livrable" if len(attente) == 1 else "livrables", ", ".join(attente)))
+
     def changer(self, t, change):
         self.compte["mises_a_jour"].append({"id": t.id, "libelle": _court(t.libelle), "change": change})
 
@@ -363,6 +445,7 @@ class _Tenue(audit._Preparation):
         preuve = audit._propre(op.get("proof"))
         if not preuve:
             raise Erreur("%s : la preuve manque (ce qui prouve que c'est fait, et où)" % quoi)
+        self.refuser_sans_envoi(t, quoi)
         ouverts = self.enfants_ouverts(t)
         if ouverts:
             raise Erreur("%s : #%s a un enfant ouvert (#%s)" % (quoi, t.id, ouverts[0].id))
@@ -398,6 +481,7 @@ class _Tenue(audit._Preparation):
                       ("label", "le libellé de la suite"), ("src", "src (le message qui a fait la demande au tiers)")):
             if not dits[k]:
                 raise Erreur("%s : %s manque" % (quoi, ce))
+        self.refuser_sans_envoi(t, quoi)
         tiers = dits["waiting"]
         if not est_un_tiers(tiers, self.me):
             raise Erreur("%s : attend:%s n'est pas un tiers (ni %s, ni une tâche) : coche la tâche (done) ou "

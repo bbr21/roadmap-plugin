@@ -104,6 +104,15 @@ for it where `preuves` says:
 
 The `date` is **the date of the proof**, not today. A partial proof is asked about.
 
+**A communication not sent yet is never done** (#242). A deliverable of the line (`livrable:`) that
+is an email (« À : » or « Objet : » headers), or whose path names a message, an invitation, a letter,
+Slack or SMS (`emails/`, `message-martial.md`), keeps the task open until its « Statut : » header says
+it left: `Statut : envoyé le AAAA-MM-JJ (par où)`. That line, in the file itself, is the proof of
+sending that the panel, the end-of-turn hooks and `write` read. Sending is always asked of the person
+first; once it is sent, write the `Statut :` line, then mark the task done. `write` refuses `done` and
+`handoff` on such a task (« pas encore parti »), the panel's « Marquer faite » says so, and the session
+does not offer « Archiver cette session ? ». `drop` is never held back.
+
 ## 4. Write
 
 Write `<scratchpad>/operations.json`:
@@ -192,7 +201,7 @@ It shows the rendered lines, then the report (step 5), and writes nothing. A ref
 and names the problem: missing required field, undeclared key or value outside its list, unknown
 axis or section, a child's axis other than its parent's, wrong date, third level, `prio:` on a child, `après:` to another parent's child
 or in a loop, a line taken by a session (`qui:` and `branche:`, which can only be rescheduled or
-marked done), a parent with an open child, the roadmap changed since the context (run `context`
+marked done), a parent with an open child, a communication deliverable not sent yet (#242), the roadmap changed since the context (run `context`
 again). Fix the operations, or ask the missing question, and run it again.
 
 Then:

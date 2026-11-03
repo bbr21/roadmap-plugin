@@ -668,6 +668,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.169.0 (2026-11-03)** : clôture : une tâche dont un livrable est une communication pas encore partie (email, message, invitation) ne se coche ni ne s'archive avant son « Statut : envoyé » (#242)
 - **0.168.0 (2026-11-03)** : tests : la file des tests lourds attend que la charge du Mac retombe, et tools/rejouer_delais.py rejoue seuls les tests tombés en délai dépassé (#249)
 - **0.167.0 (2026-11-03)** : maestro : une demande de travail neuve se cadre par formulaire puis se délègue à une session fille, et la garde de fin de tour rappelle à Maestro de ne rien exécuter lui-même (#250)
 - **0.166.1 (2026-11-03)** : bande de Maestro : la jauge de contexte se tient à 2 px sous la jauge d'étapes (#241)

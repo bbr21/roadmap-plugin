@@ -236,6 +236,9 @@ import {
   attachmentKind,
   fileLinks,
   draftPreview,
+  commState,
+  unsentRefusal,
+  unsentNote,
   isPreviewable,
   recipientOf,
   PREVIEW,
@@ -1055,6 +1058,27 @@ async function openLineAsk($: EngineInterface, ask: unknown): Promise<string | u
   }
 }
 
+/**
+ * La garde de l'envoi à la boîte de fin (#242) : « Archiver cette session ? » alors qu'un livrable de sa
+ * tâche, ouverte ou close, est une communication pas encore partie. Roadmap illisible : passe.
+ */
+async function unsentAsk($: EngineInterface, ask: unknown): Promise<string | undefined> {
+  const c = capture
+  if (typeof ask !== 'string' || !/archiver cette session/i.test(ask) || !settings.capture || !c) return undefined
+  try {
+    const title = (await readOwnSession($)).title
+    const id = sessionTitleId(title)
+    if (id === undefined || sessionTitleKind(title) === 'check') return undefined
+    const now = await roadmapNow($, c.source)
+    const task = [...parseRoadmap(now.done ?? '', 'ROADMAP-fait.md'), ...parseRoadmap(now.open ?? '', 'ROADMAP.md')].find(t => t.id === id)
+    if (task === undefined) return undefined
+    const unsent = await unsentDeliverables($, c.source, task)
+    return unsent.length > 0 ? unsentRefusal(id, unsent, 'archive') : undefined
+  } catch {
+    return undefined
+  }
+}
+
 /** Une tâche de la session dont le rangement a été rappelé et dont l'archivage attend encore (#101). */
 const rangementWaiting = (c: Capture) => (c.rangeSeen ? undefined : [...c.rangementAsked].find(id => !c.archiveAsked.has(id)))
 
@@ -1309,6 +1333,15 @@ async function checkRoadmap($: EngineInterface, c: Capture, before?: { open?: st
   }
   const bilan = await bilanNote($, c.source, c.seen.done, now.done)
   if (bilan) notes.push(bilan)
+  // #242 : une ligne cochée dont une communication n'est pas partie.
+  if (now.done !== undefined && now.done !== c.seen.done) {
+    const before = doneIds(c.seen.done)
+    for (const t of parseRoadmap(now.done, 'ROADMAP-fait.md')) {
+      if (!t.done || t.id === undefined || before.has(t.id)) continue
+      const unsent = await unsentDeliverables($, c.source, t).catch(() => [])
+      if (unsent.length > 0) notes.push(unsentRefusal(t.id, unsent, 'close'))
+    }
+  }
   c.seen = now
   return notes
 }
@@ -3713,6 +3746,9 @@ async function closeTask(
   const day = todayOf(now.getTime())
   const moment = `${day} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`
   const abandon = kind === 'abandon'
+  // #242 : pas de clôture tant qu'une communication de la tâche n'est pas partie.
+  const unsent = abandon ? undefined : await unsentClose($, source, task)
+  if (unsent !== undefined) return { error: unsent }
   const bilan = abandon ? abandonBilan(reason) : doneBilan()
   const closed = abandon ? 'Annulée' : 'Faite'
   if (await $.fs.exists(`${source.dir}/_cowork/cowork.py`).catch(() => false)) {
@@ -3792,6 +3828,9 @@ async function confirmClose($: EngineInterface, source: Source, task: Task, kind
   try {
     // Un projet qui écrit sa roadmap par son propre outil (`ecriture`, #164) : le panneau n'écrit pas,
     // il demande à Claude, par la boîte d'envoi (#140), pour passer par les hooks du plugin.
+    // #242 : la route par Claude aussi attend l'envoi.
+    const unsent = kind === 'done' ? await unsentClose($, source, task) : undefined
+    if (unsent !== undefined) return void (await setView($, () => ({ cancelNote: unsent })))
     const cowork = await $.fs.exists(`${source.dir}/_cowork/cowork.py`).catch(() => false)
     const route = closeRoute({ ecriture: source.ecriture, cowork, task, kind, reason: kind === 'abandon' ? cancelReason : '' })
     if (route.via === 'claude') {
@@ -3997,6 +4036,8 @@ async function checkTask($: EngineInterface, source: Source, task: Task, openKid
   if (checking) return
   checking = true
   try {
+    const unsent = task.done ? undefined : await unsentClose($, source, task)
+    if (unsent !== undefined) return void (await afterCheck($, { error: unsent }, ''))
     if (await checkByClaude($, source, task, task.done ? 'reopen' : 'done')) return
     const out = task.done
       ? await reopenTask($, source, task).catch((err: unknown) => ({ error: `Réouverture impossible : ${err instanceof Error ? err.message : String(err)}` }))
@@ -4887,7 +4928,7 @@ export const register: Register = (on, options) => {
   })
   on('tool.call', { tool: WRAP_UP_TOOL }, async ($, e, next) => {
     const ask = (e as { ask?: unknown }).ask
-    const refusal = fromAgent(e) ? undefined : ((await archivedAsk($, ask)) ?? (await openLineAsk($, ask)) ?? (await launchAsk($, e as never)) ?? (await pendingAsk($, ask)))
+    const refusal = fromAgent(e) ? undefined : ((await archivedAsk($, ask)) ?? (await unsentAsk($, ask)) ?? (await openLineAsk($, ask)) ?? (await launchAsk($, e as never)) ?? (await pendingAsk($, ask)))
     if (refusal !== undefined) return { deny: refusal }
     // #244 : le compte rendu du tour ; des questions sans formulaire refusent la boîte, une fois par tour.
     const report = fromAgent(e) ? undefined : await turnReport($).catch(() => undefined)
@@ -6171,6 +6212,17 @@ type DraftRead = { path: string; name: string; mtime: number; preview?: DraftPre
 /** L'aperçu lu, gardé par chemin et date de modification : un fichier inchangé ne se relit pas. */
 let draftRead: { key: string; preview: DraftPreview } | undefined
 
+/** Le dernier texte lu de chaque livrable, par chemin et date de modification : l'aperçu (#236) et la garde de l'envoi (#242) le partagent, un fichier inchangé ne se relit pas. */
+const textRead = new Map<string, { mtime: number; text: string }>()
+
+async function readText($: EngineInterface, path: string, mtime: number): Promise<string> {
+  const kept = textRead.get(path)
+  if (kept && kept.mtime === mtime) return kept.text
+  const text = await $.fs.read(path)
+  textRead.set(path, { mtime, text })
+  return text
+}
+
 async function readDraft($: EngineInterface, list: readonly Attachment[]): Promise<DraftRead | undefined> {
   let best: { path: string; name: string; mtime: number; size: number } | undefined
   for (const a of list) {
@@ -6189,12 +6241,39 @@ async function readDraft($: EngineInterface, list: readonly Attachment[]): Promi
   const key = `${best.path}|${best.mtime}`
   if (draftRead?.key !== key) {
     try {
-      draftRead = { key, preview: draftPreview(await $.fs.read(best.path)) }
+      draftRead = { key, preview: draftPreview(await readText($, best.path, best.mtime)) }
     } catch {
       return head
     }
   }
   return { ...head, preview: draftRead.preview }
+}
+
+/** Les livrables de la tâche qui sont des communications pas encore parties (#242), tels qu'écrits sur la ligne. */
+async function unsentDeliverables($: EngineInterface, source: Source, task: Task): Promise<string[]> {
+  const unsent: string[] = []
+  for (const written of task.livrable ?? []) {
+    let state: ReturnType<typeof commState> | undefined
+    for (const path of pathCandidates(source, written)) {
+      try {
+        const st = await $.fs.stat(path)
+        if (st.kind !== 'file') continue
+        const text = isPreviewable(path) && st.size <= PREVIEW.bytes ? await readText($, path, st.mtimeMs) : undefined
+        state = commState(written, text, true)
+        break
+      } catch {
+        // absent ici : le candidat suivant
+      }
+    }
+    if ((state ?? commState(written, undefined, false)) === 'unsent') unsent.push(written)
+  }
+  return unsent
+}
+
+/** La garde de l'envoi au panneau (#242) : la clôture d'une tâche dont une communication n'est pas partie. */
+async function unsentClose($: EngineInterface, source: Source, task: Task): Promise<string | undefined> {
+  const unsent = await unsentDeliverables($, source, task).catch(() => [])
+  return unsent.length > 0 ? unsentNote(unsent) : undefined
 }
 
 /** Les chemins de fichiers écrits dans les champs de la fiche (#234) et le fichier trouvé pour chacun, relus au plus toutes les 30 s. */
@@ -6751,6 +6830,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     const attachments = await readAttachments($, ficheSource, current, now)
     const deliverables = await readAttachments($, ficheSource, current, now, 'livrable')
     const draft = await readDraft($, deliverables)
+    const unsentNow = current.done ? undefined : await unsentClose($, ficheSource, current)
     const noteForLinks = current.done ? livreOfNote(current.note).rest : current.note
     const fileHits = await readLinks($, ficheSource, [current.attend, noteForLinks, current.src], now)
     const storedRecap = current.id ? recapOf(await $.store.get(recapKey(ficheSource.name, current.id)).catch(() => undefined)) : undefined
@@ -7636,6 +7716,9 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
                         {(live || launched.includes(taskKey(current))) && (
                           <Text size="caption" color={palette.lateOn} wrap="wrap">Une session tient cette tâche : elle peut encore l'écrire.</Text>
                         )}
+                        {closeKind === 'done' && unsentNow !== undefined && cancelNote !== unsentNow && (
+                          <Text size="caption" color={palette.lateOn} wrap="wrap">{unsentNow}</Text>
+                        )}
                         {closeKind === 'abandon' && Input && (
                           <Input
                             key={`cancel-reason:${current.key}`}
@@ -7783,6 +7866,9 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
                   </Text>
                   {(live || launched.includes(taskKey(current))) && (
                     <Text size="caption" color={palette.lateOn} wrap="wrap">Une session tient cette tâche : elle peut encore l'écrire.</Text>
+                  )}
+                  {closeKind === 'done' && unsentNow !== undefined && cancelNote !== unsentNow && (
+                    <Text size="caption" color={palette.lateOn} wrap="wrap">{unsentNow}</Text>
                   )}
                   {closeKind === 'abandon' && Input && (
                     <Input
