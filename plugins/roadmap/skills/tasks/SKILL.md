@@ -22,8 +22,9 @@ French, as the roadmap does. Only this skill is in English.
 - **All or nothing.** The script prepares in memory, checks, shows (dry run), then writes in one go
   after a backup, or hands the lines to the project's tool.
 - **A task is marked done on proof**, at the date of the proof, with its bilan row.
-- **The same report after every write** (#232): the script prints it as journal lines (#261),
-  one bullet per task with its glyph; they go as is into the journal of the answer, then one form
+- **The same report after every write** (#232): the script prints it as plain lines (#275),
+  one `- Roadmap :` bullet per task, each question in its own quote; they go as is under the
+  verdict of the answer, then one form
   settles what waits. With the roadmap plugin (#244), the plugin computes those lines itself from
   what the turn wrote, whatever wrote it, and hands them with the write's result: put the plugin's
   lines then, not the script's as well, and never in a second message.
@@ -247,18 +248,19 @@ Then:
 2. In a repository: a commit of the roadmap files only (`ROADMAP.md`, `ROADMAP-fait.md`,
    `ROADMAP-bilans.csv`), on `main` in the main checkout with code, then push. The backup is
    not committed.
-3. **The report, as journal lines** (#232, #261). The last block `write` prints, after the
-   changed lines, is the report: one bullet per task, its glyph first, and it goes into the
-   journal of the answer (ADHD mode, after the state line) **without rewriting, reordering or
-   summing it up**, with no title and no table:
+3. **The report, under the verdict** (#232, #275). The last block `write` prints, after the
+   changed lines, is the report: one bullet per task, `- Roadmap :` first, no glyph, and it goes
+   into the answer (ADHD mode, after the verdict) **without rewriting, reordering or summing it
+   up**, with no title and no table:
 
-   - `- ＋ #N ajoutée — <short label> (sous #P, due JJ/MM)`;
-   - `- ✓ #N cochée le JJ/MM … — <short label>` (closed), `- ✕ #N annulée … — …` (dropped or
-     removed), `- ↻ #N <what changed> — …` (completed, rescheduled, paused, recurring parent left
-     open);
-   - `- ? #N <question> (<reason>) — recommandé : <option>` for what waits (« T'attendent »:
-     conflict, missing date, partial proof, rhythm, reopening; no `#N` for an action with no
-     task).
+   - `- Roadmap : #N ajoutée — <short label> (sous #P, due JJ/MM)`;
+   - `- Roadmap : #N cochée le JJ/MM … — <short label>` (closed), `- Roadmap : #N annulée … — …`
+     (dropped or removed), `- Roadmap : #N <what changed> — …` (completed, rescheduled, paused,
+     recurring parent left open); « complétée » names the keys only (`complétée : qui, branche`),
+     never their raw values;
+   - `> **Une question :** #N <question> (<reason>) — recommandé : <option>`, each its own quote
+     after the lines, for what waits (« T'attendent »: conflict, missing date, partial proof,
+     rhythm, reopening; no `#N` for an action with no task).
 
    Nothing changed: « Roadmap : rien ne change. ». A dry run starts with « Essai à blanc, rien
    n'est écrit : », a project tool with « À passer à <outil> : » (with `ecriture`: give the lines

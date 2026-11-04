@@ -544,7 +544,8 @@ class _Tenue(audit._Preparation):
             self.poser_apres(t, apres, quoi)
         self.refuser_prio_enfant(t, quoi)
         self.tenue["completees"].append(t.id)
-        dit = ["%s retiré" % k if v is None else "%s:%s" % (k, t.get(k)) for k, v in (op.get("fields") or {}).items()]
+        # #275 : les noms des clés, jamais leurs valeurs brutes (un src: de trois lignes dans le compte rendu).
+        dit = ["%s retiré" % k if v is None else k for k, v in (op.get("fields") or {}).items()]
         self.changer(t, "complétée : %s" % ", ".join(dit))
 
     def redater(self, op):
@@ -917,32 +918,25 @@ def _plat(texte):
     return str(texte).replace("\n", " ")
 
 
-def _glyphe(change):
-    """Le glyphe d'une mise à jour dans le journal (#261) : ✓ close, ✕ annulée ou retirée, ↻ le reste."""
-    if re.match(r"(cochée|close|ajoutée et cochée)\b", change):
-        return "✓"
-    if re.match(r"(annulée|abandonnée|retirée)\b", change):
-        return "✕"
-    return "↻"
-
-
 def rendre_compte_rendu(cr, etat, jour, outil=None, sauvegarde=None):
-    """Le compte rendu d'une écriture en lignes de journal (#261, parti B, après #232) : une puce par
-    tâche, son glyphe devant ; ni titre, ni rubrique, ni « rien ». `jour` reste pour la signature."""
+    """Le compte rendu d'une écriture, sous le verdict du message (#275, parti A, après #261 et #232) :
+    une ligne « - Roadmap : #N … » par tâche, sans glyphe ; chaque question à part, en citation
+    « > **Une question :** … ». Ni titre, ni rubrique, ni « rien ». `jour` reste pour la signature."""
     suites = cr.get("suites") or []
     closes = {s["close"] for s in suites}
-    lignes = ["- ✓ #%s close, la suite chez %s passe en #%s" % (s["close"], s["tiers"], s["suite"]) for s in suites]
+    lignes = ["- Roadmap : #%s close, la suite chez %s passe en #%s" % (s["close"], s["tiers"], s["suite"]) for s in suites]
     for a in cr["ajoutees"]:
         extra = [x for x in ("sous #" + a["parent"] if a["parent"] else "",
                              "due " + _jj_mm(a["due"]) if a["due"] else "") if x]
-        lignes.append("- ＋ #%s ajoutée — %s%s" % (a["id"], _plat(a["libelle"]), " (%s)" % ", ".join(extra) if extra else ""))
+        lignes.append("- Roadmap : #%s ajoutée — %s%s" % (a["id"], _plat(a["libelle"]), " (%s)" % ", ".join(extra) if extra else ""))
     for m in cr["mises_a_jour"]:
         if m["id"] not in closes:
-            lignes.append("- %s #%s %s — %s" % (_glyphe(m["change"]), m["id"], _plat(m["change"]), _plat(m["libelle"])))
-    for q in cr["t_attendent"]:
-        lignes.append("- ? %s%s (%s) — recommandé : %s" % ("#%s " % q["id"] if q["id"] else "", _plat(q["question"]),
-                                                       q["raison"], _plat(q["recommande"])))
-    corps = "\n".join(lignes) if lignes else "Roadmap : rien ne change."
+            lignes.append("- Roadmap : #%s %s — %s" % (m["id"], _plat(m["change"]), _plat(m["libelle"])))
+    questions = ["> **Une question :** %s%s (%s) — recommandé : %s" % ("#%s " % q["id"] if q["id"] else "", _plat(q["question"]),
+                                                                      q["raison"], _plat(q["recommande"])) for q in cr["t_attendent"]]
+    blocs = (["\n".join(lignes)] if lignes else []) + questions
+    lignes = blocs
+    corps = "\n\n".join(lignes) if lignes else "Roadmap : rien ne change."
     tete = {"ecrit": "", "essai": "Essai à blanc, rien n'est écrit :", "outil": "À passer à %s :" % outil}[etat]
     md = "%s\n\n%s" % (tete, corps) if tete and lignes else corps
     if sauvegarde:

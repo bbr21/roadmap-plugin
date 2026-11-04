@@ -191,13 +191,13 @@ to it.
     panel refuses once the end box that asks one while another is waiting; a truly new question
     passes on the second send. Pending questions drop at the person's first message (or button
     click).
-  - **Turn started by the person** (#261, option B): a state line at the top, in italics, no bold
-    or emoji, counted from the step list, `*Maestro · 2 en cours · 1 t'attend*`
-    (`*Maestro · tout est livré*`), never a task's step, and only when it changed since the
-    previous message; then a short journal, one bullet per fact with its glyph (✓ ✕ ＋ ↻), and
-    `- → **À toi :** …` for a need of theirs, once: a need already said does not come back; no
-    title, no table, no end block. The roadmap lines the plugin hands go into that journal, in the
-    same message, never a second one.
+  - **Turn started by the person** (#275, option A): a verdict at the top, in bold, no emoji,
+    counted from the step list, `**Maestro · 2 en cours · 1 t'attend**`
+    (`**Maestro · tout est livré**`), never a task's step, and only when it changed since the
+    previous message; then the proof, one plain bullet of words per fact, no glyph, and
+    `> **À toi :** …` as a quote at the end for a need of theirs, once: a need already said does
+    not come back; no title, no table, no end block. The roadmap lines the plugin hands go under
+    that verdict, in the same message, never a second one.
 - **Read**: each end of turn of a sub-session reaches Maestro (the start of its report);
   `list_sessions` with `linked: true` gives the status of all of them (running, waiting, PR). A note
   is not proof: reread the branch's diff and tests before calling it ready.
@@ -247,7 +247,7 @@ to it.
   - **After each merge or publication, before the next command** (#136): send the whole list
     again, the delivered task ticked with its version (`#130 Sans priorités · livrée 0.78.0`;
     without publication, `· fusionnée`), the next one in progress. In a turn started by the person,
-    also put the journal line in the message: `- ✓ #<id> livrée <version> — <ce qui change>`; in a
+    also put the line under the verdict: `- #<id> livrée <version> : <ce qui change>`; in a
     turn woken by a session, nothing more (#133): the list shows it.
     Four merges in a turn means four lists: the box above the input must never call « en cours » a
     task already on `main`. **The panel reminds of it**: it adds the instruction to the result of a

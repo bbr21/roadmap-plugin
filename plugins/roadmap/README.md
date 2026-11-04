@@ -241,7 +241,7 @@ la fusion et la publication attendent le clic de Bertrand.
 et chaque `release.py release`, le panneau rappelle dans le résultat de la commande de renvoyer la
 liste d'étapes entière avant la suivante ; chez Maestro, l'étape de la tâche dit `· livrée <version>`,
 et un tour lancé par Bertrand met aussi une ligne par tâche livrée dans son journal
-(`- ✓ #N livrée <version> — ce qui change`, #261), un tour réveillé par une session rien de plus (#133). Liste toujours pas renvoyée à la fin du tour : le rappel
+(`- #N livrée <version> : ce qui change`, #275), un tour réveillé par une session rien de plus (#133). Liste toujours pas renvoyée à la fin du tour : le rappel
 revient une fois. Plusieurs branches prêtes se fusionnent à la suite, une à la fois, avec une
 publication par fusion. Maestro finit sur la fiche de fin de #123 suivie du tableau de ses tâches
 (`| Tâche | Livré | Version | État |`, maquette B), que le contrôle de fin de tour réclame.
@@ -515,18 +515,19 @@ remplaçant le précédent (#119) :
   diff) s'ouvre par la session elle-même (`preview_start`, `mcp__ccd_view__show_pane`), depuis le
   28/10/2026 (#74). Éteint, Maestro pose aussi son menu « Je lance lesquelles ? » dans son message,
   sans formulaire (#119) ;
-- `adhd` (refait par #261, parti B choisi par Bertrand : ligne d'état et journal) : chaque message
-  d'une tâche s'ouvre sur sa ligne d'état, en italique, l'état en mots puis l'étape
-  (« *En cours · étape 4/6* », « *Détour · …* », « *J'ai besoin de toi · …* », « *Prête à
-  fusionner · tests verts, branche poussée* »), puis un journal court, une puce par fait avec son
-  glyphe (✓ fait, ✕ annulé, ＋ ajouté, ↻ changé, ? question, → **À toi :** ce qui revient à
-  Bertrand) ; ni titre ni tableau, et rien de répété d'un message à l'autre. Les lignes de la
-  roadmap changée vont dans ce journal, dans le même message. La liste d'étapes native reste le seul repère
-  d'avancement : plus de carte d'étape, de rubriques Fait / Trouvé / Suite ni de bloc
-  État / À toi / Session. À la fin de la session (ligne close, ou bloquée), une conclusion à part :
-  `---`, `### ✅ #N · <la tâche> : c'est livré` (ou `### ⛔ … : bloquée`), une phrase, puis un
-  tableau Livré, À essayer, En route (bloquée : Fait, Bloque, À toi). Maestro garde sa ligne d'état
-  comptée, écrite seulement quand elle change, et finit sur sa conclusion et le tableau de ses tâches. Une ligne de rappel accompagne
+- `adhd` (refait par #275, parti A choisi par Bertrand : le verdict, puis la preuve) : chaque
+  message d'une tâche s'ouvre sur son verdict, une phrase en gras qui dit l'état et ce qui en sort
+  (« **Tout concorde : …** », « **En cours, étape 4/6 : …** », « **J'ai besoin de toi : …** »,
+  « **Prête à fusionner : tests verts, branche poussée.** »), puis la preuve : un fait sûr en une
+  puce de mots, sans chiffre ni identifiant ; ce qui a été vérifié et chiffré en petit tableau
+  (l'objet, l'attendu, le vu) ; et à part, en fin de message, chacun sa citation : `> **À toi :**`,
+  `> **Une question :**`, `> **Hors de ma tâche :**`. Un lien par son nom, rien de répété d'un
+  message à l'autre. Les lignes de la roadmap changée (`- Roadmap : #N …`) vont sous le verdict,
+  dans le même message. La liste d'étapes native reste le seul repère d'avancement. À la fin de
+  la session (ligne close, ou bloquée), une conclusion à part : `---`, `### ✅ #N · <la tâche> :
+  c'est livré` (ou `### ⛔ … : bloquée`), une phrase, puis un tableau Livré, À essayer, En route
+  (bloquée : Fait, Bloque, À toi). Maestro garde son verdict
+  compté, écrit seulement quand il change, et finit sur sa conclusion et le tableau de ses tâches. Une ligne de rappel accompagne
   chaque message de Bertrand (hook `prompt.submit` depuis #116). Éteint, rien ne bride la longueur
   des réponses, celles de Maestro comprises (#128) ;
 - `francais` : réponses en français ;
@@ -687,6 +688,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.193.0 (2026-11-04)** : reglages-session : les messages du mode ADHD passent au verdict en gras, puis la preuve (faits en mots, chiffres en petit tableau, ce qui te revient en citation)
 - **0.192.1 (2026-11-04)** : panneau : les dates, résumés et compteurs en text3 lisibles (contraste 4,5:1 en sombre et en clair)
 - **0.192.0 (2026-11-04)** : mockups : avant une maquette, la nouvelle skill roadmap:mockups part du design system du projet ; frontend-design seulement sans lui
 - **0.191.1 (2026-11-04)** : panneau : le nom d'une section est aligné dans Toutes comme dans Ma journée (plus de bouton natif décalé, en-tête à chevron compris) ; la mère gardée pour ses filles sous un filtre n'est plus grisée (#295, #296)
