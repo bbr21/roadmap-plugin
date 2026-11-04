@@ -155,6 +155,13 @@ check('Grammaire de ROADMAP.md et ROADMAP-fait.md', (err) => {
     .flatMap((f) => [...read(f).matchAll(/[[|]\s*id:(\d+)\s*[|\]]/g)].map((m) => Number(m[1]))));
   // Les lignes ouvertes, pour comparer une sous-tâche à sa mère (#190).
   const open = [];
+  // #308 : une roadmap dont la grammaire en tête (son exemple en bloc de code, ou sa prose) dit prio:oui est
+  // migrée (#300) ; l'ancienne échelle y est une rechute.
+  let fence = false;
+  const migrated = read(OPEN).split('\n').some((l) => {
+    if (l.trimStart().startsWith('```')) fence = !fence;
+    return (fence || !l.startsWith('- [')) && l.includes('prio:oui');
+  });
 
   for (const file of [OPEN, DONE]) {
     const inDone = file === DONE;
@@ -203,6 +210,7 @@ check('Grammaire de ROADMAP.md et ROADMAP-fait.md', (err) => {
         if ((key === 'ouvert' || key === 'fait') && value.trim().slice(0, 10) > TODAY && isDone(value.trim())) err(at, `${key}:${value.trim()} : date dans le futur (aujourd'hui : ${TODAY}, heure locale)`);
         // #300 : prio:oui ; l'ancienne échelle 1, 2, 3 (#130) reste tolérée jusqu'à la migration (tasks.py prio-oui).
         if (key === 'prio' && !/^(oui|[123])$/.test(value.trim())) err(at, `prio:${value} : oui attendu`);
+        else if (key === 'prio' && !inDone && migrated && value.trim() !== 'oui') err(at, `prio:${value.trim()} : l'ancienne échelle, écrire prio:oui ou rien (#300)`);
         if (key === 'tous' && !['jour', 'ouvré', 'semaine', '2semaines', 'mois', 'trimestre', 'an'].includes(value.trim())) err(at, `tous:${value} : jour, ouvré, semaine, 2semaines, mois, trimestre ou an attendu`);
         if (key === 'skill' && !/^[a-z0-9][a-z0-9-]*(:[a-z0-9][a-z0-9-]*)?$/.test(value.trim())) err(at, `skill:${value} : nom de skill attendu (nom ou plugin:nom)`);
         // parent: le numéro de la tâche mère (#12 compris), ou - ; après: un libellé, ou des numéros séparés par des virgules, ou -.

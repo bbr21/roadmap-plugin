@@ -700,6 +700,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.199.1 (2026-11-04)** : tasks, onboarding : l'ancienne échelle de priorité (prio:1, 2, 3) est refusée à l'écriture et au contrôle, après la migration des roadmaps à prio:oui
 - **0.199.0 (2026-11-04)** : reglages-session : la conclusion de fin de session s'ouvre sur « Ce qu'on a fait » (le problème, ce qu'on a construit, ce que ça change), que la carte Fin de la fiche montre
 - **0.198.2 (2026-11-04)** : garde-fou git : moins de refus à tort (here-docs, clones d'essai, accolades, $ littéraux, texte entre guillemets), les vrais risques toujours refusés
 - **0.198.1 (2026-11-04)** : impact : la carte relève les symboles du code avant la doc, dit ce que son plafond coupe, cherche les noms banals par leur chemin et lit Swift, Kotlin et Rust

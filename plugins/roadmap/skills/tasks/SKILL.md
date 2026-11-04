@@ -358,6 +358,9 @@ that still carries them. `python3 scripts/tasks.py prio-oui <folder>` prints, as
 `id:`, or taken by a session); pass the operations to `write` like any others, dry run first, and
 say which lines were skipped. The grammar written at the top of the roadmap (`prio:1` in its
 example, the `**prio**` bullet) is edited by hand in the same go: `prio:oui`, yes or no, any task.
+Once the grammar says `prio:oui`, the roadmap is migrated and the old scale is refused (#308): the
+panel's write check refuses a line whose priority becomes `1`, `2` or `3`, `check.mjs` refuses one on
+an open task, and the doctor reports it as KO; a line that keeps its earlier value is let through.
 
 ## What the skill does not do
 

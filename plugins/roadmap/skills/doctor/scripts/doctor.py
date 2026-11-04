@@ -731,15 +731,30 @@ def parents_enfants(rdir):
     return ligne(OK, "Parents et enfants", "%d parent(s), %d enfant(s)" % (len([k for k in enfants if k in par_id]), nb_enfants))
 
 
+def _prio_migree(texte):
+    """#308 : la grammaire en tête (son exemple en bloc de code, ou sa prose) dit prio:oui : la roadmap est migrée (#300)."""
+    bloc = False
+    for l in texte.split("\n"):
+        if l.lstrip().startswith("```"):
+            bloc = not bloc
+        if (bloc or not l.startswith("- [")) and "prio:oui" in l:
+            return True
+    return False
+
+
 def priorites(rdir):
     """#300 : la priorité est oui ou non ; `prio:1`, `2`, `3` (l'échelle de #130) se migrent par la skill tasks."""
     try:
         with open(os.path.join(rdir, "ROADMAP.md"), encoding="utf-8") as f:
-            ouvertes = [_champs_de(l) for l in ob.lignes_de_taches(f.read()) if l.startswith("- [ ]")]
+            texte = f.read()
     except OSError:
-        ouvertes = []
+        texte = ""
+    ouvertes = [_champs_de(l) for l in ob.lignes_de_taches(texte) if l.startswith("- [ ]")]
     anciennes = sum(1 for c in ouvertes if c.get("prio") in ("1", "2", "3"))
     oui = sum(1 for c in ouvertes if c.get("prio") == "oui")
+    if anciennes and _prio_migree(texte):
+        return ligne(KO, "Priorités", "%d ligne(s) revenue(s) à l'ancienne échelle après la migration (la grammaire dit prio:oui)" % anciennes,
+                     "skill tasks : python3 scripts/tasks.py prio-oui <dossier>, puis write ; la ligne s'écrit prio:oui ou sans prio:")
     if anciennes:
         return ligne(VOIR, "Priorités", "%d ligne(s) à l'ancienne échelle prio:1, 2, 3 ; la priorité est oui ou non" % anciennes,
                      "skill tasks : python3 scripts/tasks.py prio-oui <dossier>, puis write (prio:1 devient oui, 2 et 3 s'effacent)")
