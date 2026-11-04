@@ -8274,9 +8274,10 @@ export function bypassCard(card: Record<string, unknown>): { card: Record<string
 /**
  * Une commande git qu'interdisent les règles du dossier principal partagé (#87) : son nom, son dossier,
  * et `anywhere` pour un push forcé vers `main`, refusé de tout dossier du dépôt. `loose` : trouvée par
- * la lecture large d'une ligne que le découpage ne comprend pas entière (#230).
+ * la lecture large d'une ligne que le découpage ne comprend pas entière (#230). `fresh` : son dossier est
+ * le clone que crée un `git clone` plus tôt dans la ligne, qui a réussi pour qu'elle tourne (#309).
  */
-export type GitHit = { rule: string; dir: string; anywhere: boolean; loose?: true }
+export type GitHit = { rule: string; dir: string; anywhere: boolean; loose?: true; fresh?: true }
 
 /** Un chemin sans `.`, `..` ni barre en trop. */
 function normalPath(path: string): string {
@@ -8302,19 +8303,60 @@ type ShellCommand = { words: string[]; splits: boolean[]; before: string; after:
 /**
  * Une ligne shell découpée. `read` faux : elle a une tournure hors de la grammaire du découpage
  * (antislash hors guillemets simples, `$'…'`, `$"…"`, commentaire, sous-shell, groupe, substitution,
- * here-doc, guillemet jamais fermé) ; elle ne suit plus ses variables et se relit largement (#230).
+ * here-doc dans un calcul, un sous-shell ou une substitution, ou dont le texte lance une commande,
+ * guillemet jamais fermé) ; elle ne suit plus ses variables et se relit largement (#230). `bodies` :
+ * le texte des here-docs qui n'est que du texte, `[début, fin)` dans la ligne (#309). `texts` : le
+ * contenu des chaînes entre `'…'` ou `"…"` sans `$(`, `$[` ni guillemet inversé, vide quand une chaîne
+ * peut être mal bornée (substitution entre guillemets doubles, `${…}` autre que `${NOM}`, here-doc non lu).
  */
-type ShellLine = { commands: ShellCommand[]; read: boolean }
+type ShellLine = { commands: ShellCommand[]; read: boolean; bodies: [number, number][]; texts: [number, number][] }
 
 /** Un séparateur après lequel la commande suivante tourne toujours, dans le même shell. */
 const sureSeparator = (op: string) => op === '' || op === ';' || op === '\n'
+
+/** Un here-doc ouvert par `<<` : son délimiteur, s'il est entre guillemets (texte tel quel), `<<-` (tabulations ôtées). */
+type HereDoc = { delim: string; quoted: boolean; strip: boolean }
+
+/**
+ * Le here-doc qu'ouvre le `<<` en `i` (#309) : son délimiteur, guillemets et antislashs ôtés, et l'indice
+ * qui le suit. Rien pour un délimiteur vide ou qui a un `$` ou un guillemet inversé : la ligne reste illisible.
+ */
+function hereDocAt(line: string, i: number): (HereDoc & { next: number }) | undefined {
+  let j = i + 2
+  const strip = line[j] === '-'
+  if (strip) j++
+  while (line[j] === ' ' || line[j] === '\t') j++
+  let delim = ''
+  let quoted = false
+  let quote = ''
+  for (; j < line.length; j++) {
+    const c = line[j]!
+    if (quote !== '') {
+      if (c === quote) quote = ''
+      else delim += c
+    } else if (c === "'" || c === '"') {
+      quote = c
+      quoted = true
+    } else if (c === '\\' && j + 1 < line.length) {
+      quoted = true
+      delim += line[++j]
+    } else if (/[\s;&|<>()]/.test(c)) break
+    else delim += c
+  }
+  if (quote !== '' || delim === '' || /[$`\n]/.test(delim)) return undefined
+  return { delim, quoted, strip, next: j }
+}
+
+/** Le texte d'un here-doc sans guillemets qui lance une commande ou change une variable : `$(…)`, `` `…` ``, `$[…]`, `${…}` autre que `${NOM}`. */
+const RUNS_IN_BODY = /\$\(|`|\$\[|\$\{(?![A-Za-z_][A-Za-z0-9_]*\})/
 
 /**
  * Les commandes d'une ligne shell, chacune en mots : guillemets retirés (`$'…'` et `$"…"` compris),
  * antislash lu comme bash le lit, `$$` lu comme un seul jeton, `$HOME` développé hors guillemets
  * simples, `~` en tête d'un mot sans guillemets ; coupées sur `&&`, `||`, `;`, `|`, `&` et les retours
  * à la ligne hors guillemets, chacune avec ses séparateurs (#226). Le découpage dit s'il a compris
- * toute la ligne (`read`, #230) : il ne cherche plus à lire juste ce qu'il ne comprend pas.
+ * toute la ligne (`read`, #230) : il ne cherche plus à lire juste ce qu'il ne comprend pas. Le texte
+ * d'un here-doc se saute, comme bash le lit, après la fin de sa ligne et jusqu'à son délimiteur (#309).
  */
 function shellCommands(line: string, home: string): ShellLine {
   const commands: ShellCommand[] = [{ words: [], splits: [], before: '', after: '' }]
@@ -8322,6 +8364,39 @@ function shellCommands(line: string, home: string): ShellLine {
   let word: string | undefined
   let splits = false
   let quote: '' | "'" | '"' | "$'" = ''
+  // #309 : les here-docs ouverts sur la ligne en cours, la profondeur des parenthèses et les guillemets inversés.
+  const pending: HereDoc[] = []
+  const bodies: [number, number][] = []
+  let depth = 0
+  let ticks = 0
+  // #309 : le contenu des chaînes sans substitution, et si leurs bornes sont sûres.
+  const texts: [number, number][] = []
+  let textsSure = true
+  let opened = -1
+  // Les here-docs en attente lus après le retour à la ligne en `i` : l'indice de la fin du dernier.
+  const readBodies = (i: number): number => {
+    let pos = i + 1
+    for (const doc of pending.splice(0)) {
+      const start = pos
+      let end = line.length
+      while (pos < line.length) {
+        const stop = line.indexOf('\n', pos)
+        const lineEnd = stop < 0 ? line.length : stop
+        const text = line.slice(pos, lineEnd)
+        pos = stop < 0 ? line.length : stop + 1
+        if ((doc.strip ? text.replace(/^\t+/, '') : text) === doc.delim) {
+          end = lineEnd
+          break
+        }
+      }
+      // Sans délimiteur, le here-doc court jusqu'au bout, comme bash le lit.
+      if (pos >= line.length) end = line.length
+      if (!doc.quoted && RUNS_IN_BODY.test(line.slice(start, end))) read = false
+      else bodies.push([start, end])
+    }
+    // Le retour à la ligne qui suit le dernier délimiteur reste un séparateur.
+    return pos >= line.length ? line.length - 1 : pos - 2
+  }
   const add = (text: string) => {
     word = (word ?? '') + text
   }
@@ -8349,16 +8424,31 @@ function shellCommands(line: string, home: string): ShellLine {
     if (c === '$' && line[i + 1] === '{' && (quote === '' || quote === '"')) {
       const close = line.indexOf('}', i)
       const inner = close < 0 ? '' : line.slice(i + 2, close)
-      if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(inner)) read = false
+      if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(inner)) {
+        read = false
+        // Un guillemet dans `${X:-"…"}` n'est pas suivi : les chaînes de la ligne peuvent être mal bornées.
+        textsSure = false
+      }
       if (quote === '') splits = true
       add(close < 0 ? line.slice(i) : line.slice(i, close + 1))
       i = close < 0 ? line.length : close
       continue
     }
-    if (c === '`' && quote !== "'" && quote !== "$'") read = false
+    if (c === '`' && quote !== "'" && quote !== "$'") {
+      read = false
+      ticks++
+    }
     if (quote !== '') {
-      if (c === (quote === "$'" ? "'" : quote)) quote = ''
-      else if (quote === '"' && c === '$' && line[i + 1] === '(') {
+      if (c === (quote === "$'" ? "'" : quote)) {
+        // #309 : une chaîne sans substitution n'est que du texte ; entre guillemets doubles, une
+        // substitution peut imbriquer d'autres guillemets, que le découpage ne suit pas.
+        if (opened >= 0) {
+          if (!/\$\(|`|\$\[/.test(line.slice(opened, i))) texts.push([opened, i])
+          else if (quote === '"') textsSure = false
+        }
+        opened = -1
+        quote = ''
+      } else if (quote === '"' && c === '$' && line[i + 1] === '(') {
         read = false
         add(c)
       } else if (quote === '"' && line.startsWith('$HOME', i)) {
@@ -8371,6 +8461,7 @@ function shellCommands(line: string, home: string): ShellLine {
       while (i + 1 < line.length && line[i + 1] !== '\n') i++
     } else if (c === "'" || c === '"') {
       quote = c
+      opened = i + 1
       word = word ?? ''
     } else if (c === '$' && line[i + 1] === '$') {
       // `$$` est le PID : bash le lit d'un bloc, de gauche à droite, et `$$'…'` ouvre un guillemet simple.
@@ -8382,9 +8473,18 @@ function shellCommands(line: string, home: string): ShellLine {
       quote = line[i + 1] === "'" ? "$'" : '"'
       word = word ?? ''
       i++
+    } else if (c === '<' && line[i + 1] === '<' && line[i + 2] !== '<' && depth === 0 && ticks % 2 === 0 && hereDocAt(line, i)) {
+      // Un here-doc (#309) : une redirection, son texte lu après la fin de la ligne.
+      const doc = hereDocAt(line, i)!
+      end()
+      pending.push(doc)
+      i = doc.next - 1
     } else if (c === '(' || c === ')' || c === '{' || c === '}' || (c === '<' && line[i + 1] === '<')) {
-      // Sous-shell, groupe, substitution, here-doc : hors de la grammaire du découpage.
+      // Sous-shell, groupe, substitution, calcul, here-string, here-doc qu'on ne lit pas : hors de la grammaire du découpage.
       read = false
+      if (c === '<') textsSure = false
+      if (c === '(') depth++
+      if (c === ')') depth = Math.max(0, depth - 1)
       add(c)
     } else if (c === ' ' || c === '\t') end()
     // `2>&1`, `>&2`, `&>fichier` : une redirection, pas un séparateur.
@@ -8401,6 +8501,7 @@ function shellCommands(line: string, home: string): ShellLine {
         last.after = op
         commands.push({ words: [], splits: [], before: op, after: '' })
       } else if (!sureSeparator(op)) last.before = op
+      if (c === '\n' && pending.length > 0) i = readBodies(i)
     } else if (line.startsWith('$HOME', i)) {
       add(home)
       i += 4
@@ -8412,7 +8513,7 @@ function shellCommands(line: string, home: string): ShellLine {
   }
   if (quote !== '') read = false
   end()
-  return { commands: commands.filter(command => command.words.length > 0), read }
+  return { commands: commands.filter(command => command.words.length > 0), read, bodies, texts: quote === '' && textsSure ? texts : [] }
 }
 
 /** Les options de `git commit` qui prennent une valeur : le message de `-m` n'est pas une option. */
@@ -8514,7 +8615,10 @@ function shellSteps(command: string, cwd: string, home: string, vars = new Map<s
   if (!read) line.read = false
   const plain = read && plainShell(commands)
   if (!plain) vars.clear()
+  // #309 : faux dès qu'un séparateur autre que `&&` sépare cette étape de la précédente.
+  let joined = true
   for (const { words: raw, splits, before, after } of commands) {
+    if (before !== '&&') joined = false
     // Un `$NOM` hors guillemets se coupe en mots une fois développé, comme bash le coupe (#230).
     const all = raw.flatMap((w, k) => {
       const value = expandVars(w, vars)
@@ -8553,19 +8657,59 @@ function shellSteps(command: string, cwd: string, home: string, vars = new Map<s
     // Il ne voit pas une variable non exportée : sa ligne se lit telle quelle, sans variable connue.
     if (['bash', 'sh', 'zsh'].includes(words[0] ?? '') && words[1] === '-c' && words[2] !== undefined) {
       steps.push(...shellSteps((all.length === raw.length ? raw[start + 2] : undefined) ?? words[2], dir, home, new Map(), line))
+      joined = false
       continue
     }
     if (words[0] === 'eval') {
       // Son corps se lit à son tour ; ce qu'il affecte n'en sort pas (ligne avec `eval` : variables illisibles).
       steps.push(...shellSteps(words.slice(1).join(' '), dir, home, new Map(vars), line))
+      joined = false
       continue
     }
-    steps.push({ dir, env, words })
+    steps.push({ dir, env, words, joined })
+    joined = true
   }
   return steps
 }
 
-type ShellStep = { dir: string; env: Map<string, string>; words: string[] }
+/**
+ * Une commande de la ligne : son dossier, ses variables en tête, ses mots. `joined` : elle ne tourne que
+ * si la précédente a réussi (rien que des `&&` entre elles, `cd` et affectations comprises, #309).
+ */
+type ShellStep = { dir: string; env: Map<string, string>; words: string[]; joined?: boolean }
+
+/** Les options de `git clone` qui ne changent ni le dossier ni la configuration du clone (#309). */
+const CLONE_FLAGS = new Set(['-q', '--quiet', '-v', '--verbose', '--no-hardlinks', '-l', '--local', '--no-local', '-n', '--no-checkout', '--single-branch', '--no-single-branch', '--no-tags', '--progress', '--no-progress'])
+const CLONE_VALUED = new Set(['-b', '--branch', '-o', '--origin', '--depth', '--filter', '--shallow-since', '--shallow-exclude', '-j', '--jobs'])
+
+/**
+ * Le dossier que crée un `git clone` (#309) : son second argument, sinon le nom du dépôt cloné
+ * (`/p/R/.git`, `…/roadmap.git` : `R`, `roadmap`). Rien pour une option hors de `CLONE_FLAGS` et
+ * `CLONE_VALUED` (`--separate-git-dir`, `-c`, `--template`, `--bare`…) ou un mot illisible.
+ */
+function cloneDest(call: GitCall): string | undefined {
+  if (call.sub !== 'clone') return undefined
+  const positional: string[] = []
+  for (let i = 0; i < call.args.length; i++) {
+    const arg = call.args[i]!
+    if (arg === '--') {
+      positional.push(...call.args.slice(i + 1))
+      break
+    }
+    if (CLONE_FLAGS.has(arg)) continue
+    const [option, inline] = arg.split(/=(.*)/s) as [string, string | undefined]
+    if (CLONE_VALUED.has(option)) {
+      if (inline === undefined) i++
+      continue
+    }
+    if (arg.startsWith('-')) return undefined
+    positional.push(arg)
+  }
+  if (positional.length < 1 || positional.length > 2) return undefined
+  const target = positional[1] ?? /([^/:]+?)(\.git)?$/.exec(positional[0]!.replace(/\/+$/, '').replace(/\/\.git$/, ''))?.[1]
+  if (target === undefined || target === '' || /[$`]/.test(target)) return undefined
+  return resolvePath(call.dir, target)
+}
 
 /** Une commande git, avec son dossier : `-C <chemin>`, `--work-tree`, `--git-dir`, sinon celui de la commande ; une autre commande, rien. */
 function gitCall({ dir, env, words }: ShellStep): GitCall | undefined {
@@ -8626,6 +8770,13 @@ function ansiQuoted(line: string, i: number): [string, number] {
   return [out, line.length]
 }
 
+/**
+ * Un mot de la lecture large qu'on ne sait pas lire (#309) : un guillemet inversé, ou un `$` que bash
+ * développe (suivi d'un nom, d'un chiffre, de `{`, `(`, `[` ou d'un paramètre spécial). Un `$` en fin de
+ * mot ou devant un autre signe (`pass$` d'une regex) reste un `$` pour bash.
+ */
+const illegible = (word: string) => /`|\$[A-Za-z0-9_{([@*#?$!-]/.test(word)
+
 /** Au-delà de ce nombre de dossiers, ou de mots nés d'une accolade, la lecture large compte le reste comme illisible. */
 const LOOSE_LIMIT = 64
 /** Au-delà de ce nombre de mots dans une ligne, ou de `git` dans ses morceaux, elle ne se lit plus au mot près. */
@@ -8635,7 +8786,7 @@ const LOOSE_GITS = 64
 /**
  * Les mots d'une expansion d'accolades (`re{set,base}` : `reset`, `rebase`), un niveau après l'autre ;
  * au-delà de `LOOSE_LIMIT` mots, ou avec une accolade qui reste (`{a..c}`), le mot reste tel quel,
- * marqué illisible (`$`).
+ * marqué illisible (`$_`).
  */
 function braceWords(word: string): string[] {
   let words = [word]
@@ -8647,8 +8798,10 @@ function braceWords(word: string): string[] {
       grew = true
       return m[2]!.split(',').map(alt => m[1]! + alt + m[3]!)
     })
-    if (!grew) return words.some(w => /(?<!\$)\{[^{}]*\}/.test(w)) ? [`$${word}`] : words
-    if (words.length > LOOSE_LIMIT) return [`$${word}`]
+    // Une accolade qui reste avec une virgule ou `..` (`{a..c}`, `{a,{b}}`) ne se développe pas ici ;
+    // sans, elle est littérale pour bash (`{}`, `{b}` d'un dict ou d'une f-string Python, #309).
+    if (!grew) return words.some(w => /(?<!\$)\{[^}]*(,|\.\.)/.test(w)) ? [`$_${word}`] : words
+    if (words.length > LOOSE_LIMIT) return [`$_${word}`]
   }
 }
 
@@ -8691,7 +8844,7 @@ function looseSegments(line: string, home: string): { words: string[]; afterSub:
     const words = piece.split(/\s+/).filter(w => w !== '' && w !== '{' && w !== '}').flatMap(w => {
       const value = /^[A-Za-z_][A-Za-z0-9_]*=(.*)$/s.exec(w)?.[1]
       return value === undefined ? braceWords(w) : value === '' ? [] : braceWords(value)
-    })
+    }).map(w => w.replaceAll(TEXT_BLANK, ' '))
     segments.push({ words, afterSub })
   }
   return segments
@@ -8740,13 +8893,13 @@ function looseHits(line: string, cwd: string, home: string): GitHit[] {
     for (const dir of bases) {
       const call = gitCall({ dir, env: new Map(), words: ['git', ...args] })
       if (!call) continue
-      if (/[$`]/.test(call.sub)) {
+      if (illegible(call.sub)) {
         push({ rule: 'commande construite', dir: call.dir, anywhere: false, loose: true })
         continue
       }
       const read = call.sub === 'commit' ? call.args.filter((_, k) => !COMMIT_VALUED.has(call.args[k - 1] ?? '')) : call.args
       const worst = WORST_RULE[call.sub]
-      const found = worst !== undefined && read.some(a => /[$`]/.test(a)) ? { rule: worst, anywhere: call.sub === 'push' } : gitRule(call.sub, call.args)
+      const found = worst !== undefined && read.some(illegible) ? { rule: worst, anywhere: call.sub === 'push' } : gitRule(call.sub, call.args)
       if (found) push({ ...found, dir: call.dir, loose: true })
     }
   }
@@ -8761,7 +8914,7 @@ function looseHits(line: string, cwd: string, home: string): GitHit[] {
     const words = all.slice(start)
     if (buildsCommands(words)) built()
     if (afterSub && words.length > 0) asGit(words)
-    else if (words[0]?.includes('$')) {
+    else if (illegible(words[0] ?? '')) {
       if (words.length === 1) built()
       else asGit(words.slice(1))
     }
@@ -8781,12 +8934,69 @@ function looseHits(line: string, cwd: string, home: string): GitHit[] {
 export function forbiddenGit(command: string, cwd: string, home: string): GitHit[] {
   const hits: GitHit[] = []
   const line = { read: true }
-  for (const step of shellSteps(command, cwd, home, new Map(), line)) {
+  const steps = shellSteps(command, cwd, home, new Map(), line)
+  // #309 : les clones créés plus tôt dans la ligne, tant que rien d'autre qu'un git réussi ne les suit.
+  let clones: string[] = []
+  for (const step of steps) {
     const call = gitCall(step)
+    if (!call || step.joined !== true) clones = []
     const found = call && gitRule(call.sub, call.args)
-    if (call && found) hits.push({ ...found, dir: call.dir })
+    if (call && found) hits.push({ ...found, dir: call.dir, ...(line.read && clones.includes(call.dir) ? { fresh: true as const } : {}) })
+    const dest = call && step.env.size === 0 ? cloneDest(call) : undefined
+    if (dest !== undefined) clones.push(dest)
   }
-  return line.read ? hits : [...hits, ...looseHits(command, cwd, home)]
+  return line.read ? hits : [...hits, ...looseHits(looseText(command, home), cwd, home)]
+}
+
+/** Le blanc d'une chaîne gardée d'un seul mot par `looseText`, rendu en espace dans les mots de `looseSegments` (#309). */
+const TEXT_BLANK = '␣'
+
+/** Les commandes qui lancent un texte comme un script : un shell, `source`, `eval`, `xargs`, `exec` (#309). */
+const SHELL_READERS = /^(ba|z|da|k|c|tc|fi)?sh$|^(source|eval|xargs|exec)$/
+
+/**
+ * La ligne a-t-elle une commande qui peut lancer un texte comme un script (#309) : un mot de
+ * `SHELL_READERS` où qu'il soit, ou, en tête d'un morceau (affectations, `env`, `export` et lanceurs
+ * sautés avec leurs options et nombres), `.`, un nom illisible, ou ce qui suit une substitution fermée.
+ */
+function runsText(text: string): boolean {
+  let afterSub = false
+  for (const piece of text.split(/([;&|\n()`])/)) {
+    if (piece.length === 1 && ';&|\n()`'.includes(piece)) {
+      afterSub = piece === ')' || piece === '`'
+      continue
+    }
+    const words = piece.replace(/["']/g, '').split(/\s+/).filter(Boolean)
+    if (words.some(w => SHELL_READERS.test(w.replace(/^.*\//, '')))) return true
+    let k = 0
+    let launched = false
+    while (k < words.length) {
+      const w = words[k]!
+      if (LAUNCHERS.has(w)) launched = true
+      else if (!(w === 'env' || w === 'export' || /^[A-Za-z_][A-Za-z0-9_]*=/.test(w) || (launched && /^(-|\d)/.test(w)))) break
+      k++
+    }
+    const first = words[k]
+    if (first !== undefined && (afterSub || first === '.' || illegible(first))) return true
+    afterSub = false
+  }
+  return false
+}
+
+/**
+ * Le texte qu'a la lecture large d'une ligne non comprise (#309). Si aucune de ses commandes ne peut
+ * lancer un texte comme un script (`runsText`), le texte de ses here-docs s'ôte, et chacune de ses
+ * chaînes sans substitution reste un seul mot, ni coupé ni pris pour une commande : ce n'est que du
+ * texte. Sinon la ligne se relit telle quelle.
+ */
+function looseText(command: string, home: string): string {
+  const { bodies, texts } = shellCommands(command, home)
+  if (bodies.length === 0 && texts.length === 0) return command
+  let text = command
+  // Une chaîne sans substitution reste un seul mot, comme pour bash : ses blancs et ses séparateurs deviennent `TEXT_BLANK`.
+  for (const [start, end] of texts) text = text.slice(0, start) + text.slice(start, end).replace(/[\s()|;&`]/g, TEXT_BLANK) + text.slice(end)
+  for (const [start, end] of [...bodies].reverse()) text = text.slice(0, start) + text.slice(end)
+  return runsText(text) ? command : text
 }
 
 /** Une livraison (#136) : une fusion (`git merge`, avec le dossier où elle tourne) ou une publication (`release.py release`). */
@@ -8842,8 +9052,15 @@ export function deliveryReminder(kinds: readonly Delivery['kind'][], maestro: bo
 export function guardText(hit: GitHit, main: string, unread = false): string {
   if (hit.loose) {
     return [
-      `Plugin roadmap, garde-fou du dossier principal : \`${hit.rule}\` est refusé, parce que la ligne a une tournure qu'il ne lit pas (antislash, \`$'…'\`, commentaire, sous-shell, substitution, here-doc, commande construite ou rangée dans une variable), et qu'elle peut agir dans ${unread ? `\`${hit.dir}\`, qu'il ne sait pas lire, alors que ce dépôt a un dossier principal partagé (${main})` : main}.`,
+      `Plugin roadmap, garde-fou du dossier principal : \`${hit.rule}\` est refusé, parce que la ligne a une tournure qu'il ne lit pas (antislash, \`$'…'\`, commentaire, sous-shell, substitution, here-doc lu par un shell ou qui lance une commande, commande construite ou rangée dans une variable), et qu'elle peut agir dans ${unread ? `\`${hit.dir}\`, qu'il ne sait pas lire, alors que ce dépôt a un dossier principal partagé (${main})` : main}.`,
       "Récris-la sans cette tournure, chaque commande git en clair (`git -C /chemin/du/worktree …`), ou fais-la depuis ton worktree.",
+    ].join(' ')
+  }
+  // #309 : un dossier écrit en clair qui n'est dans aucun dépôt (pas encore créé, ou hors de git).
+  if (unread && !/[$`]/.test(hit.dir)) {
+    return [
+      `Plugin roadmap, garde-fou du dossier principal : \`${hit.rule}\` est refusé, parce que son dossier, \`${hit.dir}\`, n'est dans aucun dépôt au moment du contrôle, et que ce dépôt a un dossier principal partagé (${main}).`,
+      "Pour un clone d'essai, crée-le dans la même ligne et enchaîne par `&&` (`git clone <dépôt> <dossier> && git -C <dossier> …`), ou crée-le d'abord, dans une commande à part.",
     ].join(' ')
   }
   if (unread) {

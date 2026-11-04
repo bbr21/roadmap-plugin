@@ -700,6 +700,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.198.2 (2026-11-04)** : garde-fou git : moins de refus à tort (here-docs, clones d'essai, accolades, $ littéraux, texte entre guillemets), les vrais risques toujours refusés
 - **0.198.1 (2026-11-04)** : impact : la carte relève les symboles du code avant la doc, dit ce que son plafond coupe, cherche les noms banals par leur chemin et lit Swift, Kotlin et Rust
 - **0.198.0 (2026-11-04)** : impact : nouvelle skill roadmap:impact, la carte de ce que touche une modification (fichiers, symboles, tests à lire d'abord), branchée au brief de code et à la fin de chantier
 - **0.197.0 (2026-11-04)** : reglages-session : toute session cadre au départ (zéro à quatre questions en un formulaire, puis l'accord en une ligne) avant d'avancer en autonome jusqu'à la fusion

@@ -1,14 +1,14 @@
-# roadmap 0.198.1 : SHA-256 de chaque fichier installé du plugin, chemins relatifs à son dossier.
-# Vérifier une copie installée (~/.claude/plugins/cache/roadmap/roadmap/0.198.1) : plugins/roadmap/SECURITE.md, « Vérifier que ta copie est une vraie version ».
-d340577d829aee7441c4edb13f4db7de05ce42578d161f8eb4860703c33a696b  .claude-plugin/plugin.json
-4b61e5c2577191f58652d82df61935c2a31c0428bbca1e2d19950021b040535f  README.md
-7993e12f5fa964e62a4a38435929623c2c04340e4c7d8ca5ea4b9f744505e762  SECURITE.md
+# roadmap 0.198.2 : SHA-256 de chaque fichier installé du plugin, chemins relatifs à son dossier.
+# Vérifier une copie installée (~/.claude/plugins/cache/roadmap/roadmap/0.198.2) : plugins/roadmap/SECURITE.md, « Vérifier que ta copie est une vraie version ».
+1acc50605eace73eef7ef1b3b601a3f4b8a09d9cdd45b4c784bb94cddca42122  .claude-plugin/plugin.json
+930edc3428b9714e7f704f4ab92ee270a00228ebb221ed6dd44b50b520143371  README.md
+b559238f9062931dafec9ef392639fc488efd7afee7f57de9f7a3a77012319cb  SECURITE.md
 bce019cb7147413a8e5f0687df59a41394fa92545568b5d37b1df8bd6d885e30  hooks/bar-hit.tsx
 d842d789476d67282d0f04b7e5fdc68a3d981ccec65dd79cfa2d11eed13fb828  hooks/hooks.json
 2b5b1b834d3df1e650a88876b5a313b2ab260332e7a444e96a96407dc4c47677  hooks/icons.ts
-d149c3c3a6e84e956250a69a9d78177ab8e74c75e713fc049bc5735f0bbc4a7f  hooks/parse.ts
+6c1b8ff2a7c08dd3233f161afd8c221ac5bb41b9600abf99f664407714dcaa5c  hooks/parse.ts
 a29e07be4f95c637c8f3ab377dc9a97cd16de11e8e7de7062311dd2888a0833f  hooks/press-hit.tsx
-6a47a4b0b6360e2448b94cf29bb535f5da2db80968e07a79263dc6baf65675ba  hooks/register.tsx
+d4a5a57465bba7e65c1af599ecfc53180cd465460f31d18e23a18ca8c7e95efe  hooks/register.tsx
 b95cd4120df48c4a28aa45cda925a6368edd13719edc50d7ae2bf24f63dd7e1c  hooks/reglages.tsx
 a60c99f6765f3920810c7d2acacabb77363b5b2bf9a65154c40ddd3411db29df  hooks/tokens.ts
 2c41c480ffe671321b91523191e8e36453f4a211957d90b91b4f3148a257da86  scripts/one-at-a-time.sh

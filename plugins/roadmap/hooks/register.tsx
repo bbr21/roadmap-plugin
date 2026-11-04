@@ -1612,6 +1612,8 @@ async function guardBash($: EngineInterface, command: unknown): Promise<string |
       if (repo.shared && (hit.anywhere || repo.top === repo.main)) return guardText(hit, repo.main)
       continue
     }
+    // Le clone qu'un `git clone` réussi vient de créer dans la ligne : un dépôt à lui (#309).
+    if (hit.fresh) continue
     // Un dossier qu'on ne sait pas lire (variable, hors dépôt) : refusé si le dépôt de la session
     // est partagé, plutôt que laissé passer (relecture de sécurité du 2026-10-29).
     const own = await repoOf($, cwd)
