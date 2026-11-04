@@ -679,6 +679,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.177.0 (2026-11-03)** : panneau, maestro : la carte « Ce qui a changé » dans la fiche (#269), les lignes de la liste gardent leur place au dépli et la tête de section respire sous son trait (#266), l'encart « Derniers travaux » à l'ouverture de Maestro (#270)
 - **0.176.0 (2026-11-03)** : roadmap : la page « Est-il sûr de l'installer ? » (SECURITE.md) tenue vraie par un test, et l'empreinte de chaque fichier installé (CHECKSUMS.txt) publiée avec le miroir, à chaque version (#271)
 - **0.175.0 (2026-11-03)** : maestro : plus de question d'archivage d'autres sessions dans la boîte de fin, qui cachait la bande au-dessus de la saisie ; les finies s'archivent par leur icône dans la bande (#267)
 - **0.174.0 (2026-11-03)** : panneau, maestro : une carte de session au #N faux, clos ou déjà pris est refusée, le titre se tire de la ligne écrite (nom:), et la bande comme le panneau disent le nom du titre de la session (#263)

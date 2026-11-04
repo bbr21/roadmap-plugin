@@ -148,6 +148,15 @@ import {
   parseEndFiche,
   recapKey,
   recapOf,
+  askedOf,
+  changeZones,
+  changesCard,
+  changesKey,
+  changesMissingNote,
+  changesOf,
+  mergeZones,
+  parseChangeBlock,
+  type ChangeZone,
   type FicheCard,
   type EditField,
   type EditSpec,
@@ -1054,6 +1063,55 @@ async function saveEndFiche($: EngineInterface, answer: string | undefined): Pro
 }
 
 /**
+ * Les zones du diff de la branche de cette session contre sa base (#269), et ses commits : capture allumée,
+ * pour une session qui porte le numéro de sa tâche (pas une vérification). Sans git (le mode Projet, le plus
+ * souvent), ou git en échec : rien, comme la ligne Branche de la fiche (`readFocusFacts`).
+ */
+async function branchZones($: EngineInterface): Promise<{ id: string; key: string; zones: ChangeZone[]; commits: number } | undefined> {
+  const c = capture
+  if (!settings.capture || !c) return undefined
+  const own = await readOwnSession($)
+  if (sessionTitleKind(own.title) === 'check') return undefined
+  const id = sessionTitleId(own.title)
+  if (id === undefined) return undefined
+  const root = await $.session.root()
+  const base = own.id ? (await childFiche($, own.id)).base : 'main'
+  const names = await gitIn($, root, 'diff', '--name-only', `${base}...HEAD`)
+  if (names.code !== 0) return undefined
+  const count = await gitIn($, root, 'rev-list', '--count', `${base}..HEAD`)
+  return { id, key: changesKey(c.source.name, id), zones: changeZones(names.out.split('\n')), commits: count.code === 0 ? Number(count.out.trim()) || 0 : 0 }
+}
+
+/**
+ * Le relevé « Ce qui a changé » de la tâche de cette session (#269), gardé à chaque fin de tour : les zones
+ * du diff, fondues avec le bloc de la session et les phrases d'avant. Une branche sans diff ni bloc : rien.
+ */
+async function saveChanges($: EngineInterface, answer: string | undefined): Promise<void> {
+  try {
+    const branch = await branchZones($)
+    if (!branch) return
+    const said = parseChangeBlock(answer ?? '')
+    if (branch.zones.length === 0 && !said) return
+    const prev = changesOf(await $.store.get(branch.key).catch(() => undefined))
+    const zones = mergeZones(branch.zones, said, prev?.zones)
+    if (zones.length === 0) return
+    await $.store.set(branch.key, { zones, commits: branch.commits, at: await $.clock.now() })
+  } catch {
+    // store ou git illisibles : la fiche garde le relevé d'avant
+  }
+}
+
+/** Le rappel du bloc « Ce qui a changé » (#269) : prête sans bloc, les zones de sa branche encore sans phrase. */
+async function changesNote($: EngineInterface, last: string | undefined): Promise<string | undefined> {
+  if (closingTurn.wake) return undefined
+  const branch = await branchZones($)
+  if (!branch || branch.zones.length === 0) return undefined
+  const prev = changesOf(await $.store.get(branch.key).catch(() => undefined))
+  const missing = mergeZones(branch.zones, undefined, prev?.zones).filter(z => !z.why)
+  return changesMissingNote({ zones: missing, ...(wakeBox.recap !== undefined ? { recap: wakeBox.recap } : {}), ...(last !== undefined ? { answer: last } : {}) })
+}
+
+/**
  * La garde de l'archivage à la boîte de fin (#124) : « Archiver cette session ? » alors que la ligne de
  * la session est encore ouverte. Une boîte sans cette question, ou une roadmap illisible, passe.
  */
@@ -1265,6 +1323,14 @@ async function endOfTurnBlock($: EngineInterface, last: string | undefined, acti
       notes.push(await ideaNote($, c, last))
     } catch {
       // pas de rappel d'idée
+    }
+  }
+  // Le bloc « Ce qui a changé » (#269) : prête sans lui, les zones de sa branche sans phrase.
+  if (settings.capture && c) {
+    try {
+      notes.push(await changesNote($, last))
+    } catch {
+      // git ou store illisibles : pas de rappel
     }
   }
   // La clôture partielle (#245) : finie, sa ligne attend encore un tiers.
@@ -3412,6 +3478,9 @@ async function welcomeOf($: EngineInterface, data: NonNullable<Awaited<ReturnTyp
     me: data.source.me ?? [],
     relanceDays: settings.relanceDays,
     sessions: data.maestroTasks.filter(t => t.state !== 'done').length,
+    // Les derniers travaux (#270) : le livré d'une ligne qui ne le dit pas vient de son bilan.
+    bilans: (await loadBilan($, data.source).catch(() => undefined))?.bilans ?? new Map(),
+    titleOf: data.short,
   })
   return welcomeText(facts, { person: Person(), now: new Date(ms) })
 }
@@ -5164,6 +5233,8 @@ export const register: Register = (on, options) => {
     await markOwnRunning($, false)
     // La fiche de fin de la session se garde pour la fiche de sa tâche (#144).
     if (!e.isAborted) await saveEndFiche($, e.answer)
+    // Et ce que la session a changé, zone par zone (#269).
+    if (!e.isAborted) await saveChanges($, e.answer)
     // Une session de Maestro prévient Maestro de l'état où elle s'arrête (#131) ; interrompue, la personne est là.
     if (!e.isAborted) await tellMaestro($, childWake({ ...wakeBox, answer: e.answer }))
     // Un réveil de Maestro ne laisse pas de rappel, qui ferait écrire son fil (#133).
@@ -5574,6 +5645,13 @@ function welcomeTree(
         <Text size="footnote" color={palette.text2}>Aujourd'hui</Text>
         {w.pills.map(p => pill(p.text, ...tone[p.tone]))}
       </Box>
+      {w.recent && (
+        // L'encart « Derniers travaux » (#270, maquette A) : la carte annonce, Maestro raconte sous elle.
+        <Box key="welcome:recent" flexDirection="row" alignItems="center" gap={SPACE.row} flexWrap="wrap">
+          <Text size="footnote" weight="semibold" color={palette.text2}>Derniers travaux</Text>
+          <Text size="caption" color={palette.text3}>{w.recent.counts}</Text>
+        </Box>
+      )}
       <Box flexDirection="row" alignItems="center" gap={SPACE.tight} flexWrap="wrap" paddingTop="xs">
         {w.actions.map(a => (
           <Button
@@ -6973,6 +7051,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     const fileHits = await readLinks($, ficheSource, [current.attend, noteForLinks, current.src], now)
     const storedRecap = current.id ? recapOf(await $.store.get(recapKey(ficheSource.name, current.id)).catch(() => undefined)) : undefined
     const frame = missionFrame(current.label, storedRecap)
+    const storedChanges = current.id ? changesOf(await $.store.get(changesKey(ficheSource.name, current.id)).catch(() => undefined)) : undefined
     // Le morceau « livré : … » de la note d'une close va dans la carte Fin (#150) ; le reste de la note reste.
     const noteShown = current.done ? livreOfNote(current.note).rest : current.note
     // Sans récap, une ligne longue tient en trois lignes, le reste derrière « Tout voir » (#146, maquette B).
@@ -7288,6 +7367,42 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
             </Box>
           ),
         },
+      )
+    }
+    // La carte « Ce qui a changé » (#269, maquette A) : la demande citée (mots de `src:`), puis une rangée par
+    // zone, son point vert, son nom, ses fichiers et la phrase de la session ; quatre zones, le reste déplié.
+    const changesShown = view.changesOpen === current.key
+    const changes = changesCard(storedChanges, { done: current.done, open: changesShown })
+    const toggleChanges = () => void setView($, v => ({ changesOpen: v.changesOpen === current.key ? '' : current.key }))
+    const changesBox = (): RenderElement | null => {
+      if (!changes) return null
+      const asked = askedOf(current.src)
+      const folds = changesShown && changes.shown.length > 4
+      return card(
+        'changes',
+        'Ce qui a changé',
+        changes.summary,
+        <Box key="changes-body" flexDirection="column" gap={SPACE.tight}>
+          {asked && <Text size="footnote" color={palette.text2} wrap="wrap">{asked}</Text>}
+          {changes.shown.map(z => (
+            <Box key={`changes-zone:${keyPart(z.name)}`} flexDirection="column">
+              {ruleAbove}
+              <Box flexDirection="row" alignItems="center" gap={SPACE.row} minWidth={0}>
+                {strut(SIZE.strut.row)}
+                <Text size="caption" color={z.why ? palette.ok : palette.text3}>●</Text>
+                <Text weight="semibold">{z.name}</Text>
+                {z.files.length > 0 && (
+                  <Box flexShrink={1} minWidth={0}>
+                    <Text size="caption" color={palette.text3} wrap="truncate-end">{z.files.join(', ')}</Text>
+                  </Box>
+                )}
+              </Box>
+              {z.why && <Text size="footnote" color={palette.text2} wrap="wrap">{z.why}</Text>}
+            </Box>
+          ))}
+          {changes.more > 0 && moreLink('changes-more', `${changes.more} autre${changes.more > 1 ? 's' : ''} zone${changes.more > 1 ? 's' : ''}`, toggleChanges)}
+          {folds && moreLink('changes-more', 'Replier', toggleChanges)}
+        </Box>,
       )
     }
     const mono = (text: string | undefined) =>
@@ -8361,6 +8476,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
           </Box>
         </Box>
         {finBox()}
+        {changesBox()}
         {stepsPart && card('etapes', 'Étapes', stepsPart.summary, stepsPart.body)}
         {layout.cards.map(c => (editCards[c] ?? cards[c])())}
         <Box flexDirection="column" gap={SPACE.block} paddingX={SPACE.indent}>
@@ -8987,11 +9103,11 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
       // Par jour, la mère repliée garde sous elle son étape du jour (#189, maquette B) ; « + N étapes »,
       // ses autres étapes ouvertes, la déplie.
       const others = focus ? block.tasks.filter(t => t !== focus).length : 0
-      // L'espace du bloc tient à ses filles montrées (#231, retour de Bertrand) : repliée sans elles,
-      // la mère prend le pas serré d'une tâche seule.
-      const kidsShown = isOpen || focus !== undefined
+      // La place fixe (#266, retour de Bertrand) : pliée ou dépliée, la mère garde sa place au pixel près,
+      // au pas serré d'une tâche seule (#231) ; ses filles viennent juste sous elle, et seul l'écart sous la
+      // dernière (la marge basse de leur boîte) s'ajoute, puis part au repli.
       return (
-        <Box key={`section:${id}`} flexDirection="column" {...(kidsShown ? { paddingTop: 'xs' as const } : {})}>
+        <Box key={`section:${id}`} flexDirection="column">
           <Box key={`hit:group:${id}`} flexDirection="column">
             {row(mother, undefined, { kind: 'head', id, open: isOpen, ghost: block.ghost, block })}
           </Box>
@@ -9170,6 +9286,9 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   // La tête d'une section (#265, maquette B3 choisie par Bertrand) : sa marque dans la colonne des carrés
   // (le carré de l'axe par sujet, l'icône du ton ailleurs), son nom en demi-gras, son compte au bout, et
   // dessous le trait stylé à sa couleur ; ni fond ni flèche, toute la tête replie la section.
+  // Le trait sous le nom (#266, choix de Bertrand) : le nom et son trait partagent une colonne à droite de la
+  // marque, si bien que le trait commence pile sous sa première lettre ; la rangée du nom ne tient plus la
+  // hauteur de la marque, et le nom remonte d'un rien ; `SIZE.headGap` d'air sépare le nom (et le carré) du trait.
   const toneColors = (tone: BandLookOf['tone']) =>
     tone === 'neutral'
       ? { ink: palette.text2, accent: palette.text3 }
@@ -9178,21 +9297,27 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
       : { ink: palette[`${tone}On`], accent: palette[tone] }
   const headRow = (id: string, name: string, count: number, mark: string, nameInk: string, accent: string) => (
     <Box key={`band:${id}`} flexDirection="column" paddingX={SPACE.indent} paddingTop="md" paddingBottom="xs">
-      <Box key={`hit:bande:${keyPart(name)}`} flexDirection="row" justifyContent="space-between" alignItems="center">
-        <Box flexDirection="row" alignItems="center" gap={SPACE.row} flexShrink={1} minWidth={0}>
-          {Svg && <Svg source={mark} alt="" width={16} height={24} />}
-          {headZones ? (
-            <Text weight="semibold" color={nameInk} wrap="truncate-end">{name}</Text>
-          ) : (
-            <Button key={`bande:${keyPart(name)}`} plain label={name} onPress={toggleBand(id)} />
-          )}
-        </Box>
-        <Box flexDirection="row" alignItems="center" flexShrink={0}>
-          {countPill(count, false, palette.text2)}
+      <Box key={`hit:bande:${keyPart(name)}`} flexDirection="row" alignItems="flex-start" gap={SPACE.row}>
+        {Svg && <Svg source={mark} alt="" width={16} height={24} />}
+        <Box flexDirection="column" flexGrow={1} flexShrink={1} minWidth={0}>
+          <Box flexDirection="row" justifyContent="space-between" alignItems="center">
+            <Box flexDirection="row" alignItems="center" flexShrink={1} minWidth={0}>
+              {headZones ? (
+                <Text weight="semibold" color={nameInk} wrap="truncate-end">{name}</Text>
+              ) : (
+                <Button key={`bande:${keyPart(name)}`} plain label={name} onPress={toggleBand(id)} />
+              )}
+            </Box>
+            <Box flexDirection="row" alignItems="center" flexShrink={0}>
+              {countPill(count, false, palette.text2)}
+            </Box>
+          </Box>
+          {/* L'air sous le nom (#266, retour de Bertrand) : les jambages et le bas du carré ne touchent plus le trait. */}
+          {Svg && <Svg source={`<svg xmlns="http://www.w3.org/2000/svg" width="1" height="${SIZE.headGap}"/>`} alt="espace" width={1} height={SIZE.headGap} />}
+          {Svg && <Svg source={sectionRuleIcon(accent, palette.border, wide)} alt="trait" height={2} />}
         </Box>
         {headZones && hit(`band:${id}`, toggleBand(id))}
       </Box>
-      {Svg && <Svg source={sectionRuleIcon(accent, palette.border, wide)} alt="trait" height={2} />}
     </Box>
   )
   const bandRow = (id: string, name: string, count: number, lead?: RenderElement, axisOf?: string, look?: BandLookOf) =>

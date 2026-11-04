@@ -59,8 +59,13 @@ rule at the end of a turn that executed (below).
   (#141): a card in place of the message, counted by the plugin without scanning anything (#126):
   the day's greeting, the tasks done out of the total, what is waiting today, and four buttons,
   « Ma journée », « Quoi lancer », « À relancer » when a third party is waited on, otherwise « Mes sessions » (#176),
-  hidden at zero, and « Tout scanner ». Maestro adds only one sentence of encouragement, with no end
-  box with buttons and no form: the buttons are the question. A click sends « Maestro journée »,
+  hidden at zero, and « Tout scanner ». When tasks were delivered yesterday or today, the card also
+  shows a line « Derniers travaux » and its count (« 19 aujourd'hui · 43 hier »), and the plugin hands
+  Maestro those tasks with what each delivered (#270): Maestro then writes, before its sentence, a short
+  **Derniers travaux** block, one bullet per task, four at most, most recent first, each a plain
+  sentence (« #267 · on a retiré… »), no jargon, the rest counted in one line; nothing when nothing was
+  delivered. Maestro adds only one sentence of encouragement, with no end box with buttons and no
+  form: the buttons are the question. A click sends « Maestro journée »,
   « Maestro quoi lancer », « Maestro relances », « Maestro sessions » or « Maestro scan », and the
   plugin attaches what needs reading; one of these messages arriving without that block (panel
   closed) is handled by reading the roadmap yourself. « Maestro go » posts the cards of the first

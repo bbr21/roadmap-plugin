@@ -181,6 +181,8 @@ export const SIZE = {
   percent: 32,
   /** Hauteur de la barre de composition. */
   bar: 6,
+  /** L'air entre le nom d'une tête de section et son trait (#266) : les jambages (j, g) et le bas du carré respirent. */
+  headGap: 6,
 } as const
 
 /** Texte des dessins SVG, en px, et ses deux graisses. Le texte de l'app passe par `size` (caption, footnote, body, heading, title). */

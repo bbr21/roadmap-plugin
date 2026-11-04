@@ -1507,6 +1507,162 @@ export function finCard(o: { recap?: StoredRecap; task: Task; bilan?: Bilan; due
   }
 }
 
+// --- Ce qui a changé (#269, maquette A) -------------------------------------------------------------
+// La fiche d'une tâche dit ce que sa session a changé, comme le « Recent work » de Floorplan : la
+// demande, puis chaque zone touchée et la phrase de la session qui dit en quoi elle sert la demande.
+
+/** Une zone touchée par la branche : son nom, ses fichiers (noms seuls), et la phrase de la session. */
+export type ChangeZone = { name: string; files: string[]; why?: string }
+/** Le relevé gardé dans le store à chaque fin de tour (#269) : il survit à la fusion et à l'archivage. */
+export type StoredChanges = { zones: ChangeZone[]; commits: number; at: number }
+
+/** Les fichiers de la roadmap et des versions : ils disent l'état du travail, pas le travail. */
+const NOT_A_ZONE = /(^|\/)(ROADMAP[^/]*\.md|ROADMAP-bilans\.csv|ROADMAP-questions\.json|plugin\.json|marketplace\.json)$/
+
+/** La zone d'un chemin du diff : skill, tests, dossier du chantier, docs, sinon son premier dossier ou son nom. */
+function zoneOf(path: string): string {
+  const skill = /(?:^|\/)skills\/([^/]+)\//.exec(path)
+  if (skill) return `Skill ${skill[1]}`
+  if (TEST_FILE.test(path)) return 'Tests'
+  if (/^docs\/plans\/[^/]+\//.test(path)) return 'Dossier du chantier'
+  if (path.startsWith('docs/')) return 'Docs'
+  const parts = path.replace(/^plugins\/[^/]+\//, '').replace(/^src\//, '').split('/')
+  const head = parts.length > 1 ? parts[0]! : parts[parts.length - 1]!
+  return parts.length > 1 ? head.charAt(0).toUpperCase() + head.slice(1) : head
+}
+
+/** Les chemins du diff de la branche regroupés en zones, dans l'ordre où elles paraissent (#269). */
+export function changeZones(paths: readonly string[]): ChangeZone[] {
+  const zones: ChangeZone[] = []
+  for (const path of paths.map(p => p.trim()).filter(p => p !== '' && !NOT_A_ZONE.test(p))) {
+    const name = zoneOf(path)
+    const file = path.split('/').pop()!
+    const zone = zones.find(z => z.name === name)
+    if (!zone) zones.push({ name, files: [file] })
+    else if (!zone.files.includes(file)) zone.files.push(file)
+  }
+  return zones
+}
+
+const CHANGE_HEAD = /^\s*(?:\*\*|__)?\s*ce qui a change\s*:?\s*(?:\*\*|__)?\s*:?\s*$/
+const CHANGE_ITEM = /^\s*[-*]\s+(?:\*\*|__)?([^*_(—:–]+?)(?:\*\*|__)?\s*(?:\(([^)]*)\))?\s*(?:[—–:]\s*(.*))?$/
+
+/**
+ * Le bloc « Ce qui a changé » d'un compte rendu (#269) : la ligne `**Ce qui a changé**`, puis une puce par
+ * zone, `- **Nom** (fichiers) — phrase` (« : » au lieu du tiret, gras et fichiers facultatifs). Le dernier
+ * bloc du texte compte ; une puce sans phrase tombe ; sans puce, rien.
+ */
+export function parseChangeBlock(text: string): ChangeZone[] | undefined {
+  const lines = text.split('\n')
+  let head = -1
+  for (let i = lines.length - 1; i >= 0 && head < 0; i--) if (CHANGE_HEAD.test(normalizeTitle(lines[i]!).toLowerCase())) head = i
+  if (head < 0) return undefined
+  const zones: ChangeZone[] = []
+  for (const line of lines.slice(head + 1)) {
+    if (line.trim() === '' && zones.length === 0) continue
+    const m = CHANGE_ITEM.exec(line)
+    if (!m) break
+    const why = (m[3] ?? '').replace(/\*\*|__/g, '').trim()
+    if (why === '') continue
+    const files = (m[2] ?? '').split(',').map(f => f.replace(/`/g, '').trim()).filter(f => f !== '')
+    zones.push({ name: m[1]!.trim(), files, why })
+  }
+  return zones.length > 0 ? zones : undefined
+}
+
+/**
+ * Les zones de la carte (#269) : celles que la session a nommées d'abord, dans son ordre (son bloc de ce
+ * tour, sinon les zones à phrase du relevé d'avant), avec les fichiers qu'elle cite ou ceux de la zone du
+ * diff du même nom ; puis les zones du diff qu'elles ne couvrent pas, sans phrase.
+ */
+export function mergeZones(diff: readonly ChangeZone[], said?: readonly ChangeZone[], prev?: readonly ChangeZone[]): ChangeZone[] {
+  const same = (a: string, b: string) => normalizeTitle(a).toLowerCase() === normalizeTitle(b).toLowerCase()
+  const lead = said ?? (prev ?? []).filter(p => p.why)
+  const out: ChangeZone[] = lead.map(z => {
+    const match = diff.find(d => same(d.name, z.name))
+    // Le bloc de ce tour cite ses fichiers ; un relevé d'avant reprend ceux du diff à jour.
+    const files = said && z.files.length > 0 ? z.files : (match?.files ?? z.files)
+    return { name: z.name, files: [...files], ...(z.why ? { why: z.why } : {}) }
+  })
+  const cited = new Set(out.flatMap(z => z.files))
+  for (const d of diff) {
+    if (out.some(z => same(z.name, d.name))) continue
+    if (d.files.length > 0 && d.files.every(f => cited.has(f))) continue
+    out.push({ name: d.name, files: [...d.files] })
+  }
+  return out
+}
+
+/** La clé du relevé d'une tâche dans le store (#269) : le store sert tous les projets. */
+export function changesKey(project: string, id: string): string {
+  return `changes:${project}#${id}`
+}
+
+/** Un relevé relu du store (#269) : au moins une zone nommée, un compte de commits et une heure ; le reste tombe. */
+export function changesOf(value: unknown): StoredChanges | undefined {
+  const v = value as Record<string, unknown> | null
+  if (typeof v !== 'object' || v === null || !Array.isArray(v.zones) || typeof v.commits !== 'number' || typeof v.at !== 'number') return undefined
+  const zones: ChangeZone[] = []
+  for (const z of v.zones as unknown[]) {
+    const r = z as Record<string, unknown> | null
+    if (typeof r !== 'object' || r === null || typeof r.name !== 'string' || r.name === '') continue
+    const files = Array.isArray(r.files) ? r.files.filter((f): f is string => typeof f === 'string') : []
+    zones.push({ name: r.name, files, ...(typeof r.why === 'string' && r.why !== '' ? { why: r.why } : {}) })
+  }
+  return zones.length > 0 ? { zones, commits: v.commits, at: v.at } : undefined
+}
+
+/**
+ * Ce qu'on avait demandé (#269) : la dernière citation de `src:`, celle des mots de la personne, ses
+ * guillemets intérieurs gardés (« le bouton « Tout voir » ») ; une capture citée avant ne compte pas.
+ */
+export function askedOf(src: string | undefined): string | undefined {
+  if (!src) return undefined
+  const close = src.lastIndexOf('»')
+  if (close < 0) return undefined
+  let depth = 0
+  for (let i = close; i >= 0; i--) {
+    if (src[i] === '»') depth++
+    else if (src[i] === '«' && --depth === 0) return src.slice(i, close + 1)
+  }
+  return undefined
+}
+
+/** Le bloc « Ce qui a changé » (#269), tel que le disent la clause de Maestro, le réglage ADHD et le rappel. */
+export const CHANGES_BLOCK_RULE =
+  "la ligne `**Ce qui a changé**`, puis une puce par zone touchée, `- **Zone** (fichiers) — en quoi le changement sert la demande`, une phrase courte qui ne recopie ni le récap ni le message de commit"
+
+/** Les zones montrées sans déplier (#269) : quatre, le reste derrière « N autres zones ». */
+const CHANGES_SHOWN = 4
+
+/**
+ * La carte « Ce qui a changé » (#269) : sa tête (« N zones » ; tant que la tâche est ouverte, « d'après la
+ * branche · N commits »), les zones montrées et le nombre de celles derrière le lien. Sans relevé, rien.
+ */
+export function changesCard(stored: StoredChanges | undefined, o: { done: boolean; open: boolean }): { summary: string; shown: ChangeZone[]; more: number } | undefined {
+  if (!stored || stored.zones.length === 0) return undefined
+  const n = stored.zones.length
+  const summary = o.done ? `${n} zone${n > 1 ? 's' : ''}` : `d’après la branche · ${stored.commits} commit${stored.commits > 1 ? 's' : ''}`
+  const shown = o.open ? stored.zones : stored.zones.slice(0, CHANGES_SHOWN)
+  return { summary, shown, more: n - shown.length }
+}
+
+/**
+ * Le rappel de fin de tour (#269) : la session se dit prête à fusionner (ou finie) sans le bloc « Ce qui a
+ * changé », alors que des zones de sa branche n'ont pas de phrase (`zones`) : le plugin les lui donne.
+ */
+export function changesMissingNote(o: { zones: readonly ChangeZone[]; answer?: string; recap?: string }): string | undefined {
+  if (o.zones.length === 0) return undefined
+  const kind = childWake({ ...(o.recap !== undefined ? { recap: o.recap } : {}), ...(o.answer !== undefined ? { answer: o.answer } : {}) }).kind
+  if (kind !== 'ready' && kind !== 'done') return undefined
+  if (parseChangeBlock(o.answer ?? '') !== undefined) return undefined
+  const list = o.zones.map(z => (z.files.length > 0 ? `${z.name} (${z.files.join(', ')})` : z.name)).join(' ; ')
+  return [
+    `Plugin roadmap (#269) : tu dis ta tâche prête, mais ton compte rendu n'a pas son bloc « Ce qui a changé », que la fiche de la tâche montre. Ces zones de ta branche n'ont pas encore leur phrase : ${list}.`,
+    `Termine ton message par ce bloc, sans réécrire le reste : ${CHANGES_BLOCK_RULE}. Regroupe ou renomme les zones si c'est plus clair (cite alors leurs fichiers entre parenthèses).`,
+  ].join('\n')
+}
+
 export function parseSources(text: string): Source[] {
   const data: unknown = JSON.parse(text)
   const list = (data as { sources?: unknown }).sources
@@ -3504,6 +3660,7 @@ export function maestroClause(maestro: string, travail: Travail = 'code'): strin
     '- Maestro peut te demander de mettre ta branche à jour après une autre fusion : merge de main dans ta branche, jamais de rebase d\'une branche poussée.',
     `- ${maestroMockups('dans le dossier du chantier, `docs/plans/<type>-<slug>/maquettes.html`')}`,
     '- Ne coche pas ta ligne : Maestro la coche à la fusion, avec son bilan. Ton dernier compte rendu dit ce qui a été fait et le souci rencontré.',
+    `- Ton compte rendu « prête à fusionner » finit par le bloc « Ce qui a changé », que la fiche de ta tâche montre (#269) : ${CHANGES_BLOCK_RULE}.`,
     `- ${PARTIAL_CLOSE_CHILD}`,
     `- ${maestroClauseEnd()} Rien de non commité ne doit rester dans ton worktree.`,
     "- Dès qu'une idée neuve ou une action hors de ta tâche apparaît (suite, idée, défaut), pose ta carte dans le tour même, sans attendre qu'on te la demande et sans écrire sa ligne (#216). Une tâche que tu proposes, ou un lancement que " + person() + " te demande, remonte à Maestro : pose ta carte comme d'habitude (ou lance comme demandé), le panneau Roadmap la lui transmet au lieu de la laisser dans ton transcript, que " + person() + " ne regarde pas, et pour que la session créée soit sa fille directe ; Maestro ouvre sa ligne et pose la carte.",
@@ -6206,7 +6363,7 @@ export function sessionPrefsText(prefs: SessionPrefs, error?: string, project?: 
   }
   if (prefs.adhd) {
     lines.push(
-      "- **Mode ADHD** (#261, parti B : ligne d'état et journal) : un message de tâche s'ouvre sur sa ligne d'état, en italique, sans gras ni emoji : l'état en mots, puis l'étape ou le détail après un point médian. En cours, `*En cours · étape 4/6*` ; détour (erreur, retour en arrière), `*Détour · un test casse sur le compte de la mère*` ; question, `*J'ai besoin de toi · la vue des faites*`, puis le formulaire ; prête, `*Prête à fusionner · tests verts (…), branche poussée*`. Puis le journal : une puce par fait, son glyphe devant, quelques mots après un tiret long, le pourquoi compris (`- ✓ filtre écrit — les tests passent`) : ✓ fait, ✕ annulé ou cassé, ＋ ajouté, ↻ changé ou en cours, ? une question pour " + person() + ", et `- → **À toi :** …` pour une action ou une décision qui revient à " + person() + " (et seulement elle, avec où et comment), jamais un geste qu'un outil fait à ta place. Trois à cinq lignes au plus : ni titre, ni tableau, ni rubrique, ni paragraphe. Rien de répété d'un message à l'autre : un fait, une question ou un « À toi » déjà dit ne revient pas. Les étapes restent dans la liste d'étapes de l'app (`update_plan`) : le journal ne la recopie pas, l'étape se dit dans la ligne d'état, sous le nom de la liste. Une question ou une réponse courte hors tâche : pas de ligne d'état imposée. Une explication que " + person() + " demande prend la place qu'il faut pour être comprise, avec un exemple concret. À la fin de la session, une seule fois, la conclusion, d'une autre mise en page : au dernier tour (ta ligne close, lue dans ROADMAP-fait), ou au tour où la session s'arrête bloquée. Un `---`, puis un titre `### ✅ #<id> · <la tâche> : c'est livré`, une phrase sur ce qui change pour " + person() + ", puis un tableau de deux colonnes, `| Livré | <version>, close le AAAA-MM-JJ |` (« close par Maestro le » pour une session qu'il a lancée), `|---|---|`, `| À essayer | où et quoi |`, et `| En route | le souci rencontré |` s'il y en a eu un ; puis la boîte de fin « Archiver cette session ? » avec le bouton de réponse « Oui, archiver ». Bloquée : `### ⛔ #<id> · <la tâche> : bloquée`, la phrase, puis `| Fait | … |`, `|---|---|`, `| Bloque | ce qui bloque, qui débloque, ce qui suit |`, `| À toi | … |`, sans question d'archivage. Un tour qui attend une réponse de " + person() + " n'est pas bloqué. Ta ligne #<id> encore ouverte, pas de conclusion ni d'archivage. Maestro : sa ligne d'état compte sa liste d'étapes (`*Maestro · 2 en cours · 1 t'attend*`, `*Maestro · tout est livré*` quand rien ne reste), et ne s'écrit que quand elle a changé depuis son message d'avant ; sa conclusion, `### ✅ Maestro · <le lot> : tout est livré`, une phrase, le tableau `| Tâche | Ce qui change | Version |`, une ligne par tâche lancée (`| #<id> <nom court> | … | X.Y.Z |`), puis `**À essayer :** …` ; à chaque tâche livrée, l'étape de sa liste dit `· livrée <version>` et son journal `- ✓ #<id> livrée <version> — ce qui change`. Si un rappel ne réclame que le bouton de la boîte, pose la boîte seule, sans réécrire le message.",
+      "- **Mode ADHD** (#261, parti B : ligne d'état et journal) : un message de tâche s'ouvre sur sa ligne d'état, en italique, sans gras ni emoji : l'état en mots, puis l'étape ou le détail après un point médian. En cours, `*En cours · étape 4/6*` ; détour (erreur, retour en arrière), `*Détour · un test casse sur le compte de la mère*` ; question, `*J'ai besoin de toi · la vue des faites*`, puis le formulaire ; prête, `*Prête à fusionner · tests verts (…), branche poussée*`. Puis le journal : une puce par fait, son glyphe devant, quelques mots après un tiret long, le pourquoi compris (`- ✓ filtre écrit — les tests passent`) : ✓ fait, ✕ annulé ou cassé, ＋ ajouté, ↻ changé ou en cours, ? une question pour " + person() + ", et `- → **À toi :** …` pour une action ou une décision qui revient à " + person() + " (et seulement elle, avec où et comment), jamais un geste qu'un outil fait à ta place. Trois à cinq lignes au plus : ni titre, ni tableau, ni rubrique, ni paragraphe (seule exception, le bloc « Ce qui a changé » du compte rendu « prête à fusionner », #269). Rien de répété d'un message à l'autre : un fait, une question ou un « À toi » déjà dit ne revient pas. Les étapes restent dans la liste d'étapes de l'app (`update_plan`) : le journal ne la recopie pas, l'étape se dit dans la ligne d'état, sous le nom de la liste. Une question ou une réponse courte hors tâche : pas de ligne d'état imposée. Une explication que " + person() + " demande prend la place qu'il faut pour être comprise, avec un exemple concret. À la fin de la session, une seule fois, la conclusion, d'une autre mise en page : au dernier tour (ta ligne close, lue dans ROADMAP-fait), ou au tour où la session s'arrête bloquée. Un `---`, puis un titre `### ✅ #<id> · <la tâche> : c'est livré`, une phrase sur ce qui change pour " + person() + ", puis un tableau de deux colonnes, `| Livré | <version>, close le AAAA-MM-JJ |` (« close par Maestro le » pour une session qu'il a lancée), `|---|---|`, `| À essayer | où et quoi |`, et `| En route | le souci rencontré |` s'il y en a eu un ; puis la boîte de fin « Archiver cette session ? » avec le bouton de réponse « Oui, archiver ». Bloquée : `### ⛔ #<id> · <la tâche> : bloquée`, la phrase, puis `| Fait | … |`, `|---|---|`, `| Bloque | ce qui bloque, qui débloque, ce qui suit |`, `| À toi | … |`, sans question d'archivage. Un tour qui attend une réponse de " + person() + " n'est pas bloqué. Ta ligne #<id> encore ouverte, pas de conclusion ni d'archivage. Maestro : sa ligne d'état compte sa liste d'étapes (`*Maestro · 2 en cours · 1 t'attend*`, `*Maestro · tout est livré*` quand rien ne reste), et ne s'écrit que quand elle a changé depuis son message d'avant ; sa conclusion, `### ✅ Maestro · <le lot> : tout est livré`, une phrase, le tableau `| Tâche | Ce qui change | Version |`, une ligne par tâche lancée (`| #<id> <nom court> | … | X.Y.Z |`), puis `**À essayer :** …` ; à chaque tâche livrée, l'étape de sa liste dit `· livrée <version>` et son journal `- ✓ #<id> livrée <version> — ce qui change`. Si un rappel ne réclame que le bouton de la boîte, pose la boîte seule, sans réécrire le message.",
     )
   }
   if (prefs.francais) lines.push('- **Langue** : réponds en français, comptes rendus, récaps et boîte de fin compris.')
@@ -6551,6 +6708,47 @@ export type WelcomeFacts = {
   day: number
   /** La 4e action : les relances d'un tiers s'il y en a, sinon les sessions de Maestro (#176) ; absente à zéro. */
   extra?: { kind: 'relances' | 'sessions'; n: number }
+  /** Les livrées d'hier et d'aujourd'hui (#270) ; absent quand rien n'a été livré. */
+  recent?: Recent
+}
+
+/** Une tâche livrée hier ou aujourd'hui (#270) : son #, son nom, le jour, et ce qu'elle a livré. */
+export type RecentWork = { id: string; name: string; when: 'today' | 'yesterday'; livre?: string }
+export type Recent = { today: number; yesterday: number; items: RecentWork[] }
+
+/** Le livré d'une close : le « livré : » de sa ligne (note, sinon src), sinon la ligne `fait` de son bilan. */
+function recentLivre(t: Task, bilan: Bilan | undefined): string | undefined {
+  const fromNote = livreOfNote(t.note).livre
+  if (fromNote) return fromNote
+  const m = t.src ? /\blivr[ée]e?s?\s*:\s*(.+)$/i.exec(t.src) : null
+  if (m) return m[1]!.trim()
+  return bilan?.fait.trim() || undefined
+}
+
+/**
+ * Les tâches livrées hier et aujourd'hui (#270), la plus récente d'abord (`fait:` et son heure, puis
+ * l'ordre du fichier) ; une mère, ouverte ou close, ne compte pas : ses filles le disent (#125). Rien
+ * livré : `undefined`.
+ */
+export function recentWork(o: {
+  tasks: readonly Task[]
+  today: string
+  bilans?: ReadonlyMap<string, Bilan>
+  titleOf?: (t: Task) => string
+}): Recent | undefined {
+  // Une mère close (avec sa dernière fille, #262) a des filles dans la liste : elles la disent.
+  const mothers = new Set(o.tasks.flatMap(t => (t.parent !== undefined && t.parent !== t.id ? [t.parent] : [])))
+  const picked = o.tasks
+    .map((t, i) => ({ t, i, days: t.done && t.fait && !t.isParent && !(t.id !== undefined && mothers.has(t.id)) ? daysBetween(t.fait.slice(0, 10), o.today) : -1 }))
+    .filter(x => x.days === 0 || x.days === 1)
+    .sort((a, b) => (b.t.fait! < a.t.fait! ? -1 : b.t.fait! > a.t.fait! ? 1 : a.i - b.i))
+  if (picked.length === 0) return undefined
+  const items = picked.map(({ t, days }): RecentWork => {
+    const id = t.id ?? ''
+    const livre = recentLivre(t, o.bilans?.get(id))
+    return { id, name: o.titleOf ? o.titleOf(t) : (t.nom ?? t.label), when: days === 0 ? 'today' : 'yesterday', ...(livre ? { livre } : {}) }
+  })
+  return { today: items.filter(i => i.when === 'today').length, yesterday: items.filter(i => i.when === 'yesterday').length, items }
 }
 
 /** Les jours écoulés depuis lundi : 0 un lundi, 6 un dimanche. */
@@ -6565,6 +6763,10 @@ export function welcomeFacts(o: {
   relanceDays: number
   /** Les tâches de Maestro qui tournent ou attendent. */
   sessions: number
+  /** Les bilans de la roadmap, pour le livré d'une ligne qui ne le dit pas (#270). */
+  bilans?: ReadonlyMap<string, Bilan>
+  /** Le nom court d'une tâche (#235) ; absent, `nom:` ou le libellé. */
+  titleOf?: (t: Task) => string
 }): WelcomeFacts {
   // Une mère n'est pas une action à elle (#125) : ses filles comptent, pas elle.
   const tasks = o.tasks.filter(t => !t.isParent)
@@ -6580,6 +6782,7 @@ export function welcomeFacts(o: {
   // #176 : les relances d'abord, sinon les sessions de Maestro.
   const relances = tasks.filter(t => isToRelaunch(t, o.today, o.me, o.relanceDays)).length
   const n = relances > 0 ? relances : o.sessions
+  const recent = recentWork({ tasks, today: o.today, ...(o.bilans ? { bilans: o.bilans } : {}), ...(o.titleOf ? { titleOf: o.titleOf } : {}) })
   return {
     total: tasks.length,
     done: done.length,
@@ -6589,6 +6792,7 @@ export function welcomeFacts(o: {
     soon: count("Aujourd'hui et demain"),
     day: sections.reduce((sum, g) => sum + g.tasks.length, 0),
     ...(n > 0 ? { extra: { kind: relances > 0 ? ('relances' as const) : ('sessions' as const), n } } : {}),
+    ...(recent ? { recent } : {}),
   }
 }
 
@@ -6599,7 +6803,13 @@ export const MAESTRO_SCAN_MESSAGE = 'Maestro scan'
 export type WelcomeKey = 'journee' | 'lancer' | 'relances' | 'sessions' | 'scan'
 export type WelcomeAction = { key: WelcomeKey; label: string; message: string; n?: number; primary?: boolean }
 export type WelcomePill = { tone: 'late' | 'soon' | 'wait' | 'live' | 'none'; text: string }
-export type Welcome = { hello: string; sub: string; counts: string; progress: { done: number; total: number; pct: number }; week?: string; pills: WelcomePill[]; actions: WelcomeAction[]; cheer: string }
+/** L'encart « Derniers travaux » (#270) : le compte de la carte, et ce que Maestro raconte (huit au plus, `more` en plus). */
+export type WelcomeRecent = { counts: string; items: RecentWork[]; more: number }
+export type Welcome = { hello: string; sub: string; counts: string; progress: { done: number; total: number; pct: number }; week?: string; pills: WelcomePill[]; actions: WelcomeAction[]; cheer: string; recent?: WelcomeRecent }
+
+/** Les livrées que Maestro reçoit au plus, et la longueur d'un livré (#270). */
+const RECENT_SHOWN = 8
+const RECENT_LIVRE_MAX = 240
 
 /** Le message que chaque bouton de l'accueil envoie au nom de la personne. */
 export const WELCOME_MESSAGES: Record<WelcomeKey, string> = {
@@ -6662,7 +6872,30 @@ export function welcomeText(f: WelcomeFacts, o: { person: string; now: Date }): 
     pills: pills.length > 0 ? pills : [{ tone: 'none', text: "Rien d'urgent aujourd'hui" }],
     actions,
     cheer,
+    ...(f.recent ? { recent: welcomeRecent(f.recent) } : {}),
   }
+}
+
+/** Le compte de la carte (« 19 aujourd’hui · 43 hier », une part à zéro se tait) et les huit plus récentes (#270). */
+function welcomeRecent(r: Recent): WelcomeRecent {
+  const counts = [...(r.today > 0 ? [`${r.today} aujourd’hui`] : []), ...(r.yesterday > 0 ? [`${r.yesterday} hier`] : [])].join(' · ')
+  const cut = (s: string) => (s.length > RECENT_LIVRE_MAX ? `${s.slice(0, RECENT_LIVRE_MAX).trimEnd()}…` : s)
+  const items = r.items.slice(0, RECENT_SHOWN).map(i => (i.livre ? { ...i, livre: cut(i.livre) } : i))
+  return { counts, items, more: r.items.length - items.length }
+}
+
+/**
+ * La consigne de l'encart « Derniers travaux » (#270, maquette A) : Maestro explique, sous la carte, chaque
+ * livrée d'une phrase simple ; le plugin lui donne la liste, il ne relit rien.
+ */
+function recentLines(r: WelcomeRecent): string[] {
+  const total = r.items.length + r.more
+  return [
+    `- Puis les derniers travaux, ${r.counts} (${total > 1 ? `${total} tâches livrées` : 'une tâche livrée'}) : un titre **Derniers travaux**, puis une puce par tâche, quatre au plus, les plus récentes d'abord, chacune « #<id> · on a … » : une phrase simple qui dit ce qui change pour ${person()} (« on a retiré… », « on a ajouté… »), sans jargon (ni fonction, ni fichier, ni version). ${total > 4 ? `Puis une ligne « Et ${total - 4} autres depuis hier », qui peut citer la plus notable.` : ''} Court : pas de tableau, pas de sous-titre.`.trimEnd(),
+    "  Les tâches livrées, comptées par le plugin (le livré est le texte de la ligne, pas une phrase à recopier) :",
+    ...r.items.map(i => `  - #${i.id} ${i.name} (${i.when === 'today' ? 'aujourd’hui' : 'hier'})${i.livre ? ` : ${i.livre}` : ''}`),
+    ...(r.more > 0 ? [`  - et ${r.more} autres`] : []),
+  ]
 }
 
 /**
@@ -6698,16 +6931,18 @@ export function maestroIntro(o: { source: Source; welcome: Welcome; cardShown?: 
       `Rien n'est scanné : avant le choix de ${person()}, ne lis ni la roadmap ni tes sessions (pas de list_sessions, pas de lecture de ROADMAP.md) ; les chiffres ci-dessous sont comptés par le plugin.`,
       "- Si le bloc « Roadmap — nouvelles de tes sessions enfants » est là, dis d'abord ces nouvelles et suis leurs consignes.",
       `- Puis dis l'accueil à la place de la carte, en trois lignes courtes : « ${w.hello} » ; ${w.counts}${w.week ? ` (${w.week})` : ''} ; aujourd'hui : ${w.pills.map(p => p.text).join(', ')}.`,
+      ...(w.recent ? recentLines(w.recent) : []),
       `- Puis cette phrase : « ${w.cheer} »`,
       `- Puis la boîte de fin (wrap_up) : un récap d'une ligne, la question « Par quoi on commence ? » et deux boutons de réponse, chacun envoyant son message tel quel : ${w.actions.slice(0, 2).map(a => `« ${a.label.replace(/^[^\p{L}]+/u, '')} » → « ${a.message} »`).join(', ')}. Pas de formulaire AskUserQuestion. Avant la boîte, une ligne dit ce qu'on peut aussi écrire : ${w.actions.slice(2).map(a => `« ${a.message} »`).join(', ') || '« Maestro go »'}.`,
       `- ${Person()} peut aussi écrire ce que les boutons envoient : ${typed}, ou « Maestro go » (les cartes des trois premières tâches à lancer).`,
     ].join('\n')
   }
   return [
-    `${Person()} a dit « Maestro » : le panneau de la roadmap ${o.source.name} vient de s'ouvrir, et la carte d'accueil s'affiche à la place de son message : « ${w.hello} », ${w.counts}${w.week ? ` (${w.week})` : ''}, aujourd'hui : ${w.pills.map(p => p.text).join(', ')}, et ses boutons ${w.actions.map(a => `« ${a.label} »`).join(', ')}. Tu es Maestro, l'orchestrateur : tu lances les tâches de la roadmap, une session par tâche, tu les suis et tu fusionnes pour elles (skill roadmap:maestro).`,
+    `${Person()} a dit « Maestro » : le panneau de la roadmap ${o.source.name} vient de s'ouvrir, et la carte d'accueil s'affiche à la place de son message : « ${w.hello} », ${w.counts}${w.week ? ` (${w.week})` : ''}, aujourd'hui : ${w.pills.map(p => p.text).join(', ')}${w.recent ? `, la ligne « Derniers travaux · ${w.recent.counts} »` : ''}, et ses boutons ${w.actions.map(a => `« ${a.label} »`).join(', ')}. Tu es Maestro, l'orchestrateur : tu lances les tâches de la roadmap, une session par tâche, tu les suis et tu fusionnes pour elles (skill roadmap:maestro).`,
     '',
     `Rien n'est scanné : avant le clic de ${person()} sur un bouton, ne lis ni la roadmap ni tes sessions (pas de list_sessions, pas de lecture de ROADMAP.md) ; la carte dit déjà les chiffres.`,
     "- Si le bloc « Roadmap — nouvelles de tes sessions enfants » est là, dis d'abord ces nouvelles et suis leurs consignes.",
+    ...(w.recent ? recentLines(w.recent) : []),
     `- Puis dis cette phrase, et rien d'autre : « ${w.cheer} »`,
     '- Les boutons de la carte sont la question : pas de boîte de fin à boutons, pas de formulaire AskUserQuestion. Ta boîte de fin, s\'il en faut une, n\'a que son récap.',
     `- ${Person()} peut aussi écrire ce que les boutons envoient : ${typed}, ou « Maestro go » (les cartes des trois premières tâches à lancer).`,
