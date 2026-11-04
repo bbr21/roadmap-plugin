@@ -899,8 +899,15 @@ export function isSwiftUISkill(name: string): boolean {
   return name.slice(name.lastIndexOf(':') + 1) === 'swiftui-pro'
 }
 
-/** Les skills de design (#292) : la direction visuelle d'une maquette ; le design system garde couleurs et composants. */
-const DESIGN_SKILLS = new Set(['frontend-design', 'web-design-guidelines', 'design-taste-frontend'])
+/**
+ * Les skills de design (#292) : lancée, l'une d'elles fait taire le rappel. `mockups`, la skill du plugin (#294),
+ * part du design system déclaré ; `frontend-design` donne la direction d'un projet qui n'en a pas.
+ */
+const DESIGN_SKILLS = new Set(['mockups', 'frontend-design', 'web-design-guidelines', 'design-taste-frontend'])
+
+/** La skill à lancer avant la première maquette (#294, choix de BBR sur maquettes) : selon que le projet a un design system. */
+const designLead = (system: boolean) =>
+  system ? '`roadmap:mockups` pour partir du design system du projet' : '`frontend-design:frontend-design` pour la direction visuelle'
 
 const skillTail = (name: string) => name.slice(name.lastIndexOf(':') + 1)
 
@@ -915,9 +922,9 @@ export function isMockupPage(path: string | undefined): boolean {
 }
 
 /** Le rappel de fin de tour d'une maquette dessinée sans skill de design (#292). */
-export function designReminder(what: string, declared: readonly string[] = []): string {
+export function designReminder(what: string, declared: readonly string[] = [], system = false): string {
   const own = declared.length > 0 ? ` ; à défaut, la skill de design du projet (${declared.map(d => `\`${d}\``).join(', ')})` : ''
-  return `Plugin roadmap : ce tour a dessiné une maquette (${what}) et la session n'a lancé aucune skill de design. Avant de la montrer à ${person()}, lance \`frontend-design:frontend-design\` par l'outil Skill pour la direction visuelle, puis relis les maquettes avec \`web-design-guidelines\`${own}, et refais-les si elles en sortent changées. Le design system du projet reste la source des couleurs, des polices et des composants. Si ce n'était pas une maquette, dis-le en une ligne.`
+  return `Plugin roadmap : ce tour a dessiné une maquette (${what}) et la session n'a lancé aucune skill de design. Avant de la montrer à ${person()}, lance ${designLead(system)} par l'outil Skill, puis relis les maquettes avec \`web-design-guidelines\`${own}, et refais-les si elles en sortent changées. Le design system du projet reste la source des couleurs, des polices et des composants. Si ce n'était pas une maquette, dis-le en une ligne.`
 }
 
 /** La skill du panneau, avec ou sans le préfixe de son plugin (`roadmap:roadmap-panel`) ; le filtre de ses hooks. */
@@ -6744,8 +6751,11 @@ function mockupText(design?: Design): string {
 /** La skill de design dans la règle des maquettes (#292) : avant la première maquette, puis la relecture. */
 function designSkillText(design?: Design): string {
   const own = designSkills(design)
-  const fallback = own.length > 0 ? `, ou la skill de design de ce projet (${listFr(own.map(s => `\`${s}\``))}) quand elles manquent` : ", ou, quand elles manquent, la skill de design que déclare le projet (`skill` d'une entrée de `design`)"
-  return `Avant la première maquette, lance une skill de design par l'outil Skill : \`frontend-design:frontend-design\` pour la direction visuelle, puis relis tes maquettes avec \`web-design-guidelines\`${fallback} ; le plugin le rappelle en fin de tour. La skill donne la direction visuelle, le design system les couleurs, les polices et les composants.`
+  if (Array.isArray(design)) {
+    const charter = own.length > 0 ? `, puis la skill de design de ce projet (${listFr(own.map(s => `\`${s}\``))}) pour sa charte` : ''
+    return `Avant la première maquette, lance par l'outil Skill ${designLead(true)}${charter} : elle reprend ses composants et ses motifs avant d'en créer un ; puis relis tes maquettes avec \`web-design-guidelines\` ; le plugin le rappelle en fin de tour. Le design system donne les couleurs, les polices et les composants, la skill la façon de composer avec eux.`
+  }
+  return `Avant la première maquette, lance par l'outil Skill ${designLead(false)}, puis relis tes maquettes avec \`web-design-guidelines\` ; le plugin le rappelle en fin de tour. La skill donne la direction visuelle, le design system du projet, s'il en a un, les couleurs, les polices et les composants.`
 }
 
 /** Le design system dans la règle des maquettes (#129) : celui que déclare le projet, son refus, ou la proposition d'en poser un. */

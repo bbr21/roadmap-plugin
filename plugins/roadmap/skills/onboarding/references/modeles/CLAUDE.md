@@ -58,7 +58,7 @@ Le verrou tombe quand la session le retire (commit sur `main`), au plus tard à 
 1. **Secrets.** L'agent ne saisit ni ne lit aucun jeton, clé ou secret : {{QUI}} les colle lui-même là où ils servent. {{REGLE_SECRETS}}
 2. **La doc suit le code dans le même commit.** Voir « Où écrire quoi ». Une règle tient en une ou deux phrases ici, avec un lien vers le détail.
 3. {{REGLE_LANGUE}}
-4. **Maquettes avant un choix visuel.** Un écran, une vue, un composant ou une mise en page passe par 2 ou 3 maquettes simples, la recommandation en premier, que {{QUI}} choisit avant qu'on le code. Elles s'appuient sur le design system que déclare `design` de `.claude/roadmap.json` ; sans lui, on propose d'en poser un (sauf maquette de démo). Avant la première maquette, une skill de design donne la direction visuelle : `frontend-design:frontend-design`, puis une relecture par `web-design-guidelines`.
+4. **Maquettes avant un choix visuel.** Un écran, une vue, un composant ou une mise en page passe par 2 ou 3 maquettes simples, la recommandation en premier, que {{QUI}} choisit avant qu'on le code. Elles s'appuient sur le design system que déclare `design` de `.claude/roadmap.json` ; sans lui, on propose d'en poser un (sauf maquette de démo). Avant la première maquette, une skill de design : `roadmap:mockups` quand le projet a un design system, qui compose à partir de lui, sinon `frontend-design:frontend-design` pour la direction visuelle ; puis une relecture par `web-design-guidelines`.
 
 ## Pièges
 

@@ -2,7 +2,7 @@
 
 Panneau Claude Code à côté du chat : la roadmap du projet de la session, filtrable, avec le détail d'une tâche et son lancement dans une nouvelle session
 
-C'est un mod Claude Code (module de hooks, `hooks/register.tsx`), avec sept skills, `roadmap-panel` pour y brancher un projet, `tasks` pour tenir sa roadmap au quotidien, `audit` pour en auditer le contenu, `onboarding` pour poser dans un dépôt de code sa structure et sa roadmap, `doctor` pour vérifier qu'un projet est branché, `reglages-session` pour les réglages de session et `maestro` pour tenir une session Maestro : il
+C'est un mod Claude Code (module de hooks, `hooks/register.tsx`), avec huit skills, `roadmap-panel` pour y brancher un projet, `mockups` pour dessiner les maquettes à partir du design system du projet, `tasks` pour tenir sa roadmap au quotidien, `audit` pour en auditer le contenu, `onboarding` pour poser dans un dépôt de code sa structure et sa roadmap, `doctor` pour vérifier qu'un projet est branché, `reglages-session` pour les réglages de session et `maestro` pour tenir une session Maestro : il
 dessine un panneau dans l'onglet Code de l'app de bureau (et dans le terminal). Il ne sert à rien
 dans Cowork ni dans le chat de claude.ai.
 
@@ -11,7 +11,7 @@ machine), vérifié à chaque version : [SECURITE.md](SECURITE.md).
 
 ## Contenu
 
-**7 skills**
+**8 skills**
 
 | Skill | Rôle |
 |---|---|
@@ -21,6 +21,7 @@ machine), vérifié à chaque version : [SECURITE.md](SECURITE.md).
 | `audit` | Le seul audit de la roadmap (#159) : la structure (paquets découpés en parent et enfants datés, dépendances, fusions de doublons, regroupements, trous), puis une question par tâche en retard ou sans date et par `prio:` posée sur un enfant, la recommandation en premier (redater, faite, en pause, abandonner), et les clôtures sur preuve là où le projet le dit (`preuves`). `scripts/audit.py` (`survey`, `apply`, `pending`) écrit la structure tout ou rien, sauvegardée, avec un bilan qui retrouve chaque fragment ; les réponses s'écrivent par la skill `tasks`, qui suit `ecriture`. En tâche planifiée, seule une clôture sur preuve nette s'écrit : le reste attend dans `ROADMAP-questions.json`, compté par priorité. Lancée en fin d'onboarding. |
 | `tasks` | Tient la roadmap au quotidien, avec ou sans code (#158) : rapproche chaque action des tâches du même sujet (jamais de tâche neuve sur un sujet qui en a une), puis ajoute, complète, redate, coche sur preuve (`fait:` à la date de la preuve, ligne de bilan), abandonne ou met en pause (#159), par `scripts/tasks.py` (`context`, `match`, `write`) : essai à blanc, puis écriture tout ou rien après sauvegarde, sur le moteur de l'audit. Lit `regles`, `ecriture` et `preuves` de `.claude/roadmap.json` ; avec `ecriture`, passe les lignes à l'outil du projet au lieu d'écrire. |
 | `reglages-session` | Lit et change les réglages de session (questions par formulaire, mode ADHD, français, mode autonome) de `~/.claude/reglages-session.json`, pour le projet de la session (#102). Lancée, elle ouvre aussi le volet Réglages ; tapée seule, `/roadmap:reglages-session` l'ouvre comme `/reglages`, d'une ligne. |
+| `mockups` | Dessine les maquettes d'un choix visuel à partir du design system que déclare le projet (`design` de `.claude/roadmap.json`) : inventaire de ses tokens, composants et motifs, deux ou trois partis qui réutilisent un motif avant d'en créer un, les ajouts nommés comme des propositions au design system, puis la critique (hiérarchie, cohérence, accessibilité) et la relecture par `web-design-guidelines`. Le réglage des maquettes la fait lancer quand le projet a un design system, `frontend-design` quand il n'en a pas (#294). |
 | `maestro` | Tient une session Maestro (`/maestro`), la session mère qui lance et suit des tâches menées en parallèle, même une seule : lignes et découpage, une session par tâche, lecture de leurs comptes rendus, main donnée sur le simulateur iOS et les autres ressources uniques, ordre des fusions calculé depuis git (`scripts/etat_maestro.py`), chaque tâche suivie dans la liste d'étapes de Maestro (une étape par tâche, son état en mots), une fusion à la fois. |
 
 Le panneau lit `ROADMAP.md` et `ROADMAP-fait.md` (grammaire des dossiers Cowork : une ligne par
@@ -686,6 +687,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.192.0 (2026-11-04)** : mockups : avant une maquette, la nouvelle skill roadmap:mockups part du design system du projet ; frontend-design seulement sans lui
 - **0.191.1 (2026-11-04)** : panneau : le nom d'une section est aligné dans Toutes comme dans Ma journée (plus de bouton natif décalé, en-tête à chevron compris) ; la mère gardée pour ses filles sous un filtre n'est plus grisée (#295, #296)
 - **0.191.0 (2026-11-04)** : maquettes : le réglage fait lancer frontend-design puis web-design-guidelines (ou la skill de design du projet) avant la première maquette, et le plugin rappelle en fin de tour une maquette dessinée sans skill de design (#292)
 - **0.190.0 (2026-11-04)** : check.mjs et le contrôle du hook refusent les fautes de structure que tasks refuse (troisième niveau, prio sur un enfant, après entre deux sujets, parent clos ou introuvable) ; une ligne neuve à plusieurs actions est signalée (#289)

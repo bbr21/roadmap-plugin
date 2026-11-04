@@ -129,9 +129,11 @@ proposes setting one up, except for a demo mockup.
 
 - `chemin`: relative to the project, absolute, or an `https://` address; a plain string counts as
   its path. `pour`: what the entry covers. An entry without a path is ignored.
-- `skill` (optional, #292): the project's own design skill (`plugin:skill`), named by the rule
-  as the fallback to `frontend-design:frontend-design` and `web-design-guidelines`, and counted by
-  the end-of-turn reminder that a mockup drawn without any design skill receives.
+- `skill` (optional, #292): the project's own design skill (`plugin:skill`), its charter, named by
+  the rule after `roadmap:mockups` (which a declared design system brings, #294) and counted by the
+  end-of-turn reminder that a mockup drawn without any design skill receives. Without a design
+  system, the rule names `frontend-design:frontend-design`; `web-design-guidelines` reviews in
+  both cases.
 - `"design": "aucun"`: the project does without one, the rule no longer proposes setting one up.
 - `onboarding.py design <dossier> --poser '<JSON>'` (skill `onboarding`) writes it; the doctor
   checks it.

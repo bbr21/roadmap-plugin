@@ -896,7 +896,7 @@ async function methodNote($: EngineInterface, c: Capture): Promise<string | unde
 /** Le rappel de design (#292) : une maquette dessinée pendant le tour, aucune skill de design dans la session. */
 function designNote(c: Capture): string | undefined {
   if (c.mockupDrawn === undefined || c.designUsed) return undefined
-  return designReminder(c.mockupDrawn, designSkills(c.source.design))
+  return designReminder(c.mockupDrawn, designSkills(c.source.design), Array.isArray(c.source.design))
 }
 
 /** Une maquette dessinée par le fil principal (#292) : une page `maquettes*.html` écrite, ou un widget du module `mockup`. */
