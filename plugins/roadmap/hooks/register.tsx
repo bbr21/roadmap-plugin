@@ -26,6 +26,10 @@ import {
   treeAloneRowIcon,
   TREE_CHILD_PX,
   TREE_MARK_PX,
+  TREE_FOLD_PX,
+  treeFoldIcon,
+  MARK_SQUARE_PX,
+  MARK_SQUARE_CENTER,
   axisHeadIcon,
   sectionRuleIcon,
   bandGlyphIcon,
@@ -77,6 +81,8 @@ import { MIX, RADIUS, SIZE, SPACE, TEXT } from './tokens'
 import { SETTINGS_PANE, drawSettings, openSettings, prefsFile, redrawSettings, sessionProject, watchSettings, type SettingsProject } from './reglages'
 import {
   CLASSIC_SKIPS_OFF,
+  squareHitWidth,
+  TREE_LEAD_CELLS,
   declaredAccount,
   ownOptions,
   type Account,
@@ -7084,7 +7090,9 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   // Le numéro d'une tâche devant son titre : petit, discret, suivi d'un point de séparation. Hors du
   // bouton, qui imposerait sa couleur au texte.
   // `open` : la tâche a une session ouverte, et un clic sur son numéro y mène.
-  const taskNumber = (id: string, open?: () => void, done = false) => {
+  // `fit` (#282), dans le groupe de l'arbre qui tient la colonne : `content`, à la largeur de son texte (après la
+  // flèche d'une mère) ; `grow`, il prend la place qui reste et se cale à droite (une tâche seule).
+  const taskNumber = (id: string, open?: () => void, done = false, fit?: 'content' | 'grow') => {
     // Une fois cliquable par dessin (#220) : la même tâche dessinée deux fois n'a qu'un numéro qui ouvre.
     const opens = open && (graphic ? numberZones.has(id) : true) && firstZone(`num:${id}`) ? open : undefined
     return (
@@ -7092,7 +7100,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
       // alignés ; à la largeur du plus long numéro (#258), dans la liste comme dans la fiche (#259). Un
       // numéro cliquable est un bouton au terminal ; sur le bureau, un texte et sa zone de clic (un bouton
       // imposait sa taille de texte, 2026-10-23). Une faite : gris clair, barré.
-      <Box key={`n:${id}`} width={treeNumCells} flexDirection="row" justifyContent="flex-end" alignItems="center" flexShrink={0}>
+      <Box key={`n:${id}`} {...(fit === 'grow' ? { flexGrow: 1 } : fit === 'content' ? {} : { width: treeNumCells })} flexDirection="row" justifyContent="flex-end" alignItems="center" flexShrink={0}>
         {opens && !graphic ? (
           <Button key={`num:${id}`} plain dimColor onPress={opens}>{`#${id}`}</Button>
         ) : (
@@ -9002,18 +9010,26 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     // une tâche seule garde sa place vide, une fille pose son carré sous le # de sa mère. Hors de l'arbre aussi
     // (#259 : recherche, « À relancer », bloc « En cours ») : la place vide, pour que les # s'alignent.
     // Dans l'arbre, la marque rapprochée (#265) : 24 px, une fille 45 ; hors de lui, 32 (#259).
-    const markWidth = child ? TREE_CHILD_PX : tree ? TREE_MARK_PX : 32
+    // Dans l'arbre, la mère et la tâche seule (#282) : la marque n'est que le carré (16 px) ; la flèche a son
+    // dessin, centré dans la place qui va de la marque au #, dans un groupe sans écart (`grouped`).
+    const grouped = tree !== undefined && !child && !chain && Svg !== undefined
+    const markWidth = child ? TREE_CHILD_PX : grouped ? MARK_SQUARE_PX : tree ? TREE_MARK_PX : 32
     const drawn = head
-      ? treeMotherRowIcon(axisHex(t.axis), head.open, palette.text2)
+      ? grouped
+        ? squareRowIcon(axisHex(t.axis))
+        : treeMotherRowIcon(axisHex(t.axis), head.open, palette.text2)
       : child
         ? treeChildRowIcon(markSource, child.last, palette.border)
         : chain
           ? chainRowIcon(markSource, chain.pos, chain.step, palette.text3, palette.text2)
-          : treeAloneRowIcon(markSource, markWidth)
+          : grouped
+            ? markSource
+            : treeAloneRowIcon(markSource, markWidth)
     const markAlt = `${isAbandoned(t) ? 'annulée' : t.done ? 'faite' : t.axis}${armed ? ', armée' : ''}${chain ? `, étape ${chain.step}` : ''}${head ? (head.open ? ', replier' : ', déplier') : ''}`
     const checkKey = `check:${t.id ?? keyPart(t.key)}`
+    const markFaded = ghost || (t.done && !checkedMark)
     const mark = Svg ? (
-      <Svg source={ghost || (t.done && !checkedMark) ? fade(drawn, true) : drawn} alt={markAlt} width={markWidth} height={24} {...(moving !== undefined ? { isInteractive: true } : {})} />
+      <Svg source={markFaded ? fade(drawn, true) : drawn} alt={markAlt} width={markWidth} height={24} {...(moving !== undefined ? { isInteractive: true } : {})} />
     ) : head ? (
       <Text color={axisTheme(t.axis)}>{head.open ? '⌄' : '›'}</Text>
     ) : checkable ? (
@@ -9023,16 +9039,28 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
       <Text color={axisTheme(t.axis)}>■</Text>
     )
     // Sur le bureau, un bouton sans encre couvre le carré : un bouton ne porte pas de dessin, et une
-    // zone de clic par ligne dépasserait ZONE_LIMIT (#180). Peint après le carré, il reçoit le clic ;
-    // derrière un trait de chaîne, il se décale sur le carré (16 px, deux cellules) ; derrière un coude, sous
-    // le # de la mère (#258, #265 : 32 px, quatre cellules).
+    // zone de clic par ligne dépasserait ZONE_LIMIT (#180). Peint après le carré, il reçoit le clic.
+    // Son survol tombe sur le carré (#282) : une Box en % de la marque, dont le centre est celui du carré
+    // (après un trait de chaîne, après un coude), le centre ; un décalage en cellules glissait d'une app à
+    // l'autre (une cellule de ~7,8 ou ~9 pt), et le bouton posé par la gauche débordait à droite.
+    const squareCenter = child ? MARK_SQUARE_CENTER.child : chain ? MARK_SQUARE_CENTER.chain : MARK_SQUARE_CENTER.mark
     const squareHit = checkable && Svg ? (
-      <Box position="absolute" top={0} left={child ? 4 : chain ? 2 : 0}>
+      <Box position="absolute" top={0} bottom={0} left={0} width={squareHitWidth(squareCenter, markWidth)} flexDirection="row" justifyContent="center" alignItems="center">
         <Button key={checkKey} plain onPress={() => void armCheck($, t)}>
           {CHECK_OVERLAY}
         </Button>
       </Box>
     ) : null
+    // Le repli d'une mère, sur sa marque : la zone de l'en-tête quand le dessin en a la place ; sans zone de
+    // clic (un gros projet, #224), un bouton sans encre posé dessus, centré dans l'arbre (#282).
+    const foldHit = (id: string, align: 'left' | 'center') =>
+      !Svg ? null : headZones ? hit(`group:${id}`, toggleGroup(id), 1) : (
+        <Box position="absolute" top={0} bottom={0} left={0} right={0} flexDirection="row" alignItems="center" justifyContent={align === 'center' ? 'center' : 'flex-start'}>
+          <Button key={`group:${keyPart(id)}`} plain onPress={toggleGroup(id)}>
+            {CHECK_OVERLAY}
+          </Button>
+        </Box>
+      )
     // Une date tue sous sa tête (#265) ne laisse pas l'âge prendre sa place : le bout reste vide.
     const dueQuiet = !t.done && (bandQuiet(sectionOf.get(t), t).due || dayQuiet(t))
     const right = dueQuiet ? '' : doneRights.get(t) ?? (tree ? (t.done ? 'fait' : days === undefined ? '' : ageLabel(days)) : t.done ? axisLabel(t.axis) : days === undefined ? '' : ageLabel(days))
@@ -9074,8 +9102,8 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
               inset: 4,
               steps: gaugeCells + dueCells + departmentCells,
               pills: parts.tags.map(spec => pxCells(pillIcon(spec).width)),
-              mark: markWidth,
-              number: treeNumCells,
+              mark: grouped ? 0 : markWidth,
+              number: grouped ? treeNumCells + TREE_LEAD_CELLS : treeNumCells,
             }).kept,
           )
         : inSession && Svg
@@ -9086,8 +9114,8 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
               inset: 6,
               steps: stepsCells.columns + (block ? blockEndCells : 0),
               pills: parts.tags.map(spec => pxCells(pillIcon(spec).width)),
-              mark: markWidth,
-              number: treeNumCells,
+              mark: grouped ? 0 : markWidth,
+              number: grouped ? treeNumCells + TREE_LEAD_CELLS : treeNumCells,
             }).kept,
           )
         : parts.tags
@@ -9100,7 +9128,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
         </Text>
       </Box>
     ) : null
-    const number = t.id ? taskNumber(t.id, rowSession ? () => void openSession($, rowSession.entry) : undefined, t.done) : undefined
+    const number = t.id ? taskNumber(t.id, rowSession ? () => void openSession($, rowSession.entry) : undefined, t.done, grouped ? (head ? 'content' : 'grow') : undefined) : undefined
     // Le tag de la ligne armée (#198, maquette A) : au bout de la ligne, à la place de l'âge et du ▶,
     // orange plein ; une zone de clic, la seule de la liste (comptée sous ZONE_LIMIT). Sans zone, un bouton.
     const confirm = armed ? armTag(t.done ? 'reopen' : 'done') : undefined
@@ -9136,23 +9164,40 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
           <Button key={`group:${keyPart(head.id)}`} plain dimColor onPress={toggleGroup(head.id)}>
             {head.open ? '⌄' : '›'}
           </Button>
+        ) : grouped ? (
+          // Dans l'arbre (#282) : le carré, la place de la flèche, puis le # calé à droite, sans écart entre eux.
+          // La place grandit jusqu'au # : la flèche y est centrée, au milieu du carré et du #, quelle que soit
+          // la largeur d'une cellule ou du numéro ; une tâche seule la garde vide. La mère se replie par le
+          // carré et la flèche.
+          // Une tâche seule : sa marque, puis son # qui prend la place qui reste, calé à droite (une Box de
+          // moins par ligne : le poids d'un dessin est borné).
+          <Box flexDirection="row" alignItems="center" flexShrink={0} width={treeNumCells + TREE_LEAD_CELLS}>
+            {head ? (
+              <Box flexDirection="row" alignItems="center" flexGrow={1} flexShrink={1}>
+                <Box flexShrink={0}>{mark}</Box>
+                <Box flexDirection="row" alignItems="center" flexGrow={1} justifyContent="center">
+                  <Svg source={fade(treeFoldIcon(head.open, palette.text2), markFaded)} alt={head.open ? 'Replier' : 'Déplier'} width={TREE_FOLD_PX} height={24} />
+                </Box>
+                {foldHit(head.id, 'center')}
+              </Box>
+            ) : (
+              <Box flexShrink={0}>
+                {mark}
+                {squareHit}
+              </Box>
+            )}
+            {number}
+          </Box>
         ) : (
           <Box flexShrink={0}>
             {mark}
-            {/* Sans zone de clic (un gros projet, #224), un bouton sans encre posé sur le carré le replie. */}
-            {head && Svg && (headZones ? hit(`group:${head.id}`, toggleGroup(head.id), 1) : (
-              <Box position="absolute" top={0} left={0}>
-                <Button key={`group:${keyPart(head.id)}`} plain onPress={toggleGroup(head.id)}>
-                  {CHECK_OVERLAY}
-                </Button>
-              </Box>
-            ))}
+            {head && foldHit(head.id, 'left')}
             {squareHit}
           </Box>
         )}
         {/* Le titre suit le numéro (#203, maquette C des étiquettes) : plus de colonne réservée devant
             lui ; les tags viennent à droite du titre, l'échéance au bout, en texte, à la place de l'âge. */}
-        {number}
+        {!grouped && number}
         <Box key={`lead:${t.key}`} flexDirection="row" alignItems="center" flexGrow={1} flexShrink={1} minWidth={0}>
           {/* Sur le bureau (#224, maquette C de #212), le titre est un texte : la mère en gras, une faite grise
               et barrée (#198), un titre provisoire estompé ; un bouton natif imposerait son encre, sa

@@ -693,6 +693,29 @@ export function treeMotherRowIcon(hex: string, open: boolean, chevronHex: string
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${TREE_MARK_PX}" height="24" viewBox="0 0 ${TREE_MARK_PX} 24"><rect x="3" y="7" width="10" height="10" rx="${RADIUS.square}" fill="${hex}"/>${innerChevron(21.5, 12, 3, open, chevronHex)}</svg>`
 }
 
+/** La largeur de la marque d'une ligne qui n'est que son carré (#282) : `squareRowIcon` et ses variantes. */
+export const MARK_SQUARE_PX = 16
+
+/**
+ * Le centre du carré dans la marque d'une ligne, en px depuis son bord gauche (#282) : seul (3-13), après le
+ * trait d'une chaîne (`chainRowIcon`, 16 px plus loin), après le coude d'une fille (`treeChildRowIcon`, 29).
+ * Le bouton qui coche s'y centre.
+ */
+export const MARK_SQUARE_CENTER = { mark: 8, chain: 24, child: 37 } as const
+
+/** La largeur du dessin de la flèche de dépli d'une mère (#282). */
+export const TREE_FOLD_PX = 12
+
+/**
+ * La flèche de dépli d'une mère (#282), son propre dessin de `TREE_FOLD_PX` × 24, grise : la ligne la pose
+ * dans une Box qui grandit entre la marque (16 px, le carré seul) et le #, et l'y centre. Le carré finit à
+ * 13 px, 3 avant le bord de sa marque : la flèche se dessine 1,5 px à gauche du milieu, pour tomber au
+ * milieu du carré et du #, quelle que soit la largeur d'une cellule (~7,8 ou ~9 pt selon l'app).
+ */
+export function treeFoldIcon(open: boolean, chevronHex: string): string {
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${TREE_FOLD_PX}" height="24" viewBox="0 0 ${TREE_FOLD_PX} 24">${innerChevron(TREE_FOLD_PX / 2 - 1.5, 12, 3, open, chevronHex)}</svg>`
+}
+
 /**
  * Une tâche seule (#258), `width` × 24 : sa marque, puis la place vide de la flèche ; son # s'aligne sur
  * celui des mères. Dans l'arbre, `TREE_MARK_PX` (#265) ; hors de lui, 32, comme une marque de chaîne (#259).

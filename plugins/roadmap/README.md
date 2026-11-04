@@ -686,6 +686,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.186.0 (2026-11-04)** : panneau : la case et la flèche d'une ligne alignées (survol de la case centré sur le carré, flèche au milieu entre le carré et le #) (#282)
 - **0.185.0 (2026-11-04)** : release : plus de clé types dans plugin.json, que le magasin claude.ai ôtait en avertissant ; check la refuse (#283)
 - **0.184.0 (2026-11-04)** : release : status et le panneau lisent le magasin du compte sous le nom du dépôt public, roadmap-plugin (#281)
 - **0.183.0 (2026-11-04)** : panneau : les étapes de journée passées avancent seules à la semaine suivante au démarrage (tous:semaine et 2semaines, a_preuve pour les coquilles qui attendent la preuve) (#277)

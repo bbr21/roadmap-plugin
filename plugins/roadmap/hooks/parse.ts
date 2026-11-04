@@ -2367,6 +2367,23 @@ export function pxCells(px: number): number {
   return Math.ceil(px / CELL_PX)
 }
 
+/**
+ * La largeur, en % de sa marque (`markPx`), de la Box qui centre le bouton de la case (#282) : posée à
+ * gauche de la marque, elle a pour centre `centerPx`, celui du carré. Le bouton natif, plus large qu'elle,
+ * déborde des deux côtés : son survol tombe sur le carré, quelle que soit la largeur d'une cellule.
+ */
+export function squareHitWidth(centerPx: number, markPx: number): string {
+  // Le moteur n'admet qu'un % entier (`/^\d{1,3}%$/`) : 164,4 % faisait refuser tout le panneau. Arrondi, le
+  // centre reste à 0,1 px près du carré (une fille : 164 % de 45 px, 36,9 au lieu de 37).
+  return `${Math.round(((2 * centerPx) / markPx) * 100)}%`
+}
+
+/**
+ * Dans l'arbre (#282), la mère et la tâche seule tiennent leur marque, la place de la flèche et leur # dans
+ * un groupe de `treeNumberCells` et de ces cellules : la marque de 24 px et l'écart d'une cellule d'avant.
+ */
+export const TREE_LEAD_CELLS = 4
+
 /** La colonne d'une ligne en session (#145), en cellules sauf la barre (px) : l'icône, la barre, le compte au moins. */
 export const ROW_STEPS = { icon: 2, bar: 56, count: 5 } as const
 
