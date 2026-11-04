@@ -458,10 +458,13 @@ import {
   guardText,
   type GitHit,
   isToday,
+  isDueTomorrow,
+  isRecurringSoon,
+  dayFilterQuiet,
+  relaunchSections,
   todaySections,
   isDueSoon,
   isToRelaunch,
-  waitDays,
   matchesWho,
   peopleOf,
   todoCounters,
@@ -512,6 +515,8 @@ const ZONE_LIMIT = 26
  * chaque section dit « Voir les N autres ». Une ligne pèse ~14 éléments et 1 à 3 Svg.
  */
 const ROW_BUDGET = 40
+/** La section à part des récurrentes qui tombent, au bas de Ma journée (#268). */
+const TODAY_RECURRING = 'jour:Récurrentes qui tombent'
 /** Le même budget quand chaque ligne porte sa pastille de département (#156) : un Svg de plus par ligne ; 20, choix de Bertrand (2026-10-31). */
 const ROW_BUDGET_AXIS_PILL = 20
 /**
@@ -8503,7 +8508,9 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   const who = people.includes(whoRaw) ? whoRaw : 'all'
   // Les compteurs et les états comptent la vue : l'axe et la personne choisis.
   const inAxis = openTasks.filter(t => matches(t, axis, 'all', me) && matchesWho(t, who, me))
-  const todayAll = inAxis.filter(t => isToday(t, today, me))
+  // Les filtres de temps (#268) : toute l'équipe, comme Cette semaine ; Ma journée et Demain, le seul jour.
+  const todayAll = inAxis.filter(t => isToday(t, today))
+  const tomorrowAll = inAxis.filter(t => isDueTomorrow(t, today))
   const soonAll = inAxis.filter(t => isDueSoon(t, today))
   const relaunchAll = inAxis.filter(t => isToRelaunch(t, today, me, relanceDays))
   const lateAll = inAxis.filter(t => isOverdue(t, today))
@@ -8556,6 +8563,8 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
       ? lateAll
       : attend === 'today'
         ? todayAll
+        : attend === 'tomorrow'
+        ? tomorrowAll
         : attend === 'soon'
           ? soonAll
           : attend === 'relaunch'
@@ -8577,7 +8586,10 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   // Les ouvertes sont toujours en arbre (#189) : le rangement trie des arbres entiers. L'arbre
   // garde les tâches en retard à leur place (une mère en retard garde ses filles) : la pastille de
   // retard reste sur la ligne. Sous une recherche, pas d'arbre : ses résultats n'ont pas de « ↳ » (#86).
-  const tree = !showDone && !searching ? byTree(sortTasks(shown, sortOrder), allTasks, t => short(t).titre, prereqsFor, today) : []
+  // Ma journée (#268) : ses récurrentes qui tombent quittent l'arbre pour leur section à part, au bas.
+  const recurringToday = attend === 'today' ? shown.filter(t => isRecurringSoon(t, today)) : []
+  const treeShown = recurringToday.length > 0 ? shown.filter(t => !recurringToday.includes(t)) : shown
+  const tree = !showDone && !searching ? byTree(sortTasks(treeShown, sortOrder), allTasks, t => short(t).titre, prereqsFor, today) : []
 
   const setAxis = (a: string) => () => pressAxis($, a)
   const toggleDone = () => pressDone($, showDone)
@@ -8708,11 +8720,14 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   // responsable : la roue ou le cadenas le disent. Dans l'arbre, une seule clé : le département (#163).
   // La section de chaque ligne dessinée (#265) : rempli avec les groupes, lu par `rowParts`.
   const sectionOf = new Map<Task, string>()
+  const dayQuiet = (t: Task) => !searching && !showDone && dayFilterQuiet(attend, today, t)
   const rowParts = (t: Task, o: { tree: boolean; ghost: boolean; inSession: boolean; locked: boolean; parent?: Parameters<typeof keyPills>[3] }) => {
     if (o.ghost || t.done) return { feedback: false, keys: [] as PillSpec[], tags: [] as PillSpec[], due: undefined as PillSpec | undefined }
     const feedback = t.feedback !== undefined
     // Une ligne ne redit pas sa tête (#265) : ni le jour de sa section, ni la personne de sa section.
     const quiet = bandQuiet(sectionOf.get(t), t)
+    // Sous Ma journée ou Demain (#268), le jour que le filtre dit déjà.
+    if (dayQuiet(t)) quiet.due = true
     const split: { due?: Pill; tags: Pill[] } = !o.inSession && !o.locked ? splitRowPills(listPills(t, today, me)) : { tags: [] }
     const listed: { due?: Pill; tags: Pill[] } = {
       ...(split.due && !quiet.due ? { due: split.due } : {}),
@@ -8857,7 +8872,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
       </Box>
     ) : null
     // Une date tue sous sa tête (#265) ne laisse pas l'âge prendre sa place : le bout reste vide.
-    const dueQuiet = !t.done && bandQuiet(sectionOf.get(t), t).due
+    const dueQuiet = !t.done && (bandQuiet(sectionOf.get(t), t).due || dayQuiet(t))
     const right = dueQuiet ? '' : doneRights.get(t) ?? (tree ? (t.done ? 'fait' : days === undefined ? '' : ageLabel(days)) : t.done ? axisLabel(t.axis) : days === undefined ? '' : ageLabel(days))
     // Une tâche faite dont la session reste ouverte : y retourner, ou l'archiver, d'un clic.
     const kept = block === undefined && sessionRows.has(taskKey(t)) ? doneSessionOf(t) : undefined
@@ -8884,7 +8899,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     const gaugeCells = head ? pxCells(34) + 1 + pxCells(7.3 * `${head.block.done}/${head.block.total}`.length) + 1 : 0
     const dueCells = parts.due ? Math.max(AGE_CELLS, pxCells(6.5 * [...parts.due.text].length)) : AGE_CELLS
     // Jamais dans « En cours » (#177) : le bloc de Maestro ou le filtre ; le carré d'axe suffit.
-    const department = ghost ? undefined : axisPillText(t, { enabled: settings.axisPill, axisFilter: axis, live: block !== undefined || attend === 'live', groupedByAxis: tree !== undefined && !rangerPar && (by === 'subject' || attend === 'today'), clesVisibles })
+    const department = ghost ? undefined : axisPillText(t, { enabled: settings.axisPill, axisFilter: axis, live: block !== undefined || attend === 'live', groupedByAxis: tree !== undefined && !rangerPar && (by === 'subject' || attend === 'relaunch'), clesVisibles })
     // Le département ne part pas : il compte dans ce qui ne rétrécit pas (#259, la recherche le montre).
     const departmentCells = department !== undefined && Svg ? pxCells(pillIcon({ text: department, bg: palette.sel, fg: palette.text2, weight: 600 }).width) + 1 : 0
     // Hors de l'arbre (#259), la même ligne : la marque de 32 px et le # serré, en session comme hors session.
@@ -9346,19 +9361,18 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     : showDone
     ? doneSections.flatMap(sec => sectionGroups(sec.key, sec.label, sec.count, sec.items))
     : attend === 'relaunch'
-    ? // À relancer (#99) : les attentes les plus vieilles en haut.
-      [{ name: 'À relancer', tasks: [...shown].sort((x, y) => (waitDays(y, today, me) ?? 0) - (waitDays(x, today, me) ?? 0)) }]
-    : attend === 'today'
-    ? // Ma journée (#99, #125) : ses sections en bandes, et dans chacune les blocs de ses tâches,
-      // leur parent en gris ; la clé d'un bloc porte sa section (un parent peut être dans deux).
-      todaySections(sortTasks(shown, sortOrder), today, me).flatMap(g => {
-        const id = `jour:${g.label}`
-        const lead = g.label === 'En retard' ? lateLead() : undefined
-        return [
-          { key: id, name: g.label, tasks: [], band: { count: g.tasks.length, look: bandLook(id, today, me), ...(lead ? { lead } : {}) } },
-          ...byTree(g.tasks, allTasks, t => short(t).titre, prereqsFor, today, false).map(b => ({ key: `${id}:${b.key}`, name: b.label, tasks: b.tasks, block: b, under: id })),
-        ]
-      })
+    ? // À relancer (#99, #268) : par sujet, quel que soit le rangement, les attentes les plus vieilles en haut.
+      relaunchSections(shown, order, today, me).flatMap(sec =>
+        sectionGroups(`axe:${sec.axis}`, axisLabel(sec.axis), sec.tasks.length, sec.tasks.map(task => ({ kind: 'alone' as const, task })), { axis: sec.axis }),
+      )
+    : attend === 'today' && recurringToday.length > 0
+    ? // Ma journée (#268) : rangée comme Cette semaine, puis ses récurrentes qui tombent, à part (choix de BBR).
+      [
+        ...treeGroups,
+        ...sectionGroups(TODAY_RECURRING, 'Récurrentes qui tombent', recurringToday.length, sortTasks(recurringToday, sortOrder).map(task => ({ kind: 'alone' as const, task })), {
+          look: bandLook(TODAY_RECURRING, today, me),
+        }),
+      ]
     : treeGroups
   // Le budget de lignes du dessin : les sections ouvertes, dans l'ordre, en prennent tant qu'il en
   // reste ; une section dépliée en entier (« Voir les N autres ») prend toutes les siennes. Sans
@@ -9451,6 +9465,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   const countOf: Record<string, number> = {
     all: inAxis.filter(t => !inBlock(t)).length,
     today: todayAll.length,
+    tomorrow: tomorrowAll.length,
     late: lateAll.length,
     soon: soonAll.length,
     relaunch: relaunchAll.length,
@@ -9780,7 +9795,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
       {scanNote !== '' && <Text color={palette.text2}>{scanNote}</Text>}
       {searching && foundCount === 0 && <Text color={palette.text2}>Aucune tâche ne correspond.</Text>}
       {!searching && !showDone && shown.length === 0 && (
-        <Text color={palette.text2}>{attend === 'today' ? "Rien d'urgent aujourd'hui." : 'Aucune tâche ouverte pour ce filtre.'}</Text>
+        <Text color={palette.text2}>{attend === 'today' ? "Rien d'urgent aujourd'hui." : attend === 'tomorrow' ? 'Rien de prévu demain.' : 'Aucune tâche ouverte pour ce filtre.'}</Text>
       )}
 
       <Box flexDirection="column">{groups.map(g => (g.band ? bandRow(idOf(g), g.name, g.band.count, g.band.lead, g.band.axis, g.band.look) : section(idOf(g), g.name, g.tasks, rowsOf.get(idOf(g)) ?? 0, g.lead, g.mark, g.block, g.bare, g.focus)))}</Box>

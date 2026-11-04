@@ -109,6 +109,11 @@ export function sunIcon(hex: string, size = 16, width: number = STROKE.base): st
   return line(hex, size, width, '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/>')
 }
 
+/** Demain (#268) : le soleil de Ma journée qui se lève sur l'horizon. */
+export function sunriseIcon(hex: string, size = 16, width: number = STROKE.base): string {
+  return line(hex, size, width, '<path d="M17 18a5 5 0 0 0-10 0"/><path d="M12 10V3M8 6l4-3 4 3M4.22 10.22l1.42 1.42M2 18h2M20 18h2M18.36 11.64l1.42-1.42M22 22H2"/>')
+}
+
 /** Cette semaine : un calendrier. */
 export function calendarIcon(hex: string, size = 16, width: number = STROKE.base): string {
   return line(hex, size, width, '<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M16 3v4M8 3v4M3 10h18"/>')
@@ -148,6 +153,8 @@ export function todoIcon(icon: TodoIcon, hex: string): string {
   switch (icon) {
     case 'sun':
       return sunIcon(hex)
+    case 'sunrise':
+      return sunriseIcon(hex)
     case 'clock':
       return clockIcon(hex, 16, STROKE.base)
     case 'calendar':

@@ -1,14 +1,14 @@
-# roadmap 0.177.0 : SHA-256 de chaque fichier installé du plugin, chemins relatifs à son dossier.
-# Vérifier une copie installée (~/.claude/plugins/cache/roadmap/roadmap/0.177.0) : plugins/roadmap/SECURITE.md, « Vérifier que ta copie est une vraie version ».
-4f2b482a78760ab5cbc5a990e83b3eac25556549992c830b20a6ba40a9b45235  .claude-plugin/plugin.json
-4d6c715b4e137b50a1ce2aba8dcb9a87ac416ffc7ed4306be501e6221754247d  README.md
-633ca93f32fc6bd037ee0a19a52e9f589b4a3755b5fe8c690e0495c3e82095f7  SECURITE.md
+# roadmap 0.178.0 : SHA-256 de chaque fichier installé du plugin, chemins relatifs à son dossier.
+# Vérifier une copie installée (~/.claude/plugins/cache/roadmap/roadmap/0.178.0) : plugins/roadmap/SECURITE.md, « Vérifier que ta copie est une vraie version ».
+c3f53fa51520bc74605212172046bf6c0e3222ce6146a5fccd87ca08dec97a64  .claude-plugin/plugin.json
+676801e53c9063fdf321d46e8502fcba11503986da85231df64806e890eca0f4  README.md
+48a7ef941b2cf3c835c3a4cedf53818ae6eaddaf471b6622a37cbea36702a96f  SECURITE.md
 bce019cb7147413a8e5f0687df59a41394fa92545568b5d37b1df8bd6d885e30  hooks/bar-hit.tsx
 d842d789476d67282d0f04b7e5fdc68a3d981ccec65dd79cfa2d11eed13fb828  hooks/hooks.json
-80c8831460134e9cb6a056bc1cea64a607095cca05314139adef66aa80e58428  hooks/icons.ts
-cd1f577a38b4ebbc2b9ecf3200bcc5cd006341e6c8cfdeeeda6a33fcbcc0ad54  hooks/parse.ts
+724adad60fd1842503663c54aa0827a5d5c8a27a5629092188a9bc37bc2c065f  hooks/icons.ts
+1045cb3b5d81bbd40570ccce367bf97994dbb71e784f15a506a4000304ac1314  hooks/parse.ts
 a29e07be4f95c637c8f3ab377dc9a97cd16de11e8e7de7062311dd2888a0833f  hooks/press-hit.tsx
-99fa4309e44dad6d6e144846f1d3006812d6625a441fbab3a1ff2951155627fa  hooks/register.tsx
+19c287b5911d643477f25fad3e7535c5672212d67438666bfb7e6bec8e8cac02  hooks/register.tsx
 86729624b8e907f49e1cd45a2221e04711011931e9c6ac4fbdbd1b3a94700243  hooks/reglages.tsx
 2045887e0a997e9f1f9cf347a592b19333196a8a5a00627cf80dc43e58f9a563  hooks/tokens.ts
 2c41c480ffe671321b91523191e8e36453f4a211957d90b91b4f3148a257da86  scripts/one-at-a-time.sh

@@ -1801,9 +1801,31 @@ function todayReason(task: Task, today: string, me: readonly string[]): string |
 
 const TODAY_SECTIONS = ['En retard', "Aujourd'hui et demain", 'Récurrentes qui tombent'] as const
 
-/** « Ma journée » (#99) : à moi, et en retard, due aujourd'hui ou demain, ou récurrente qui tombe dans les 2 jours ; la priorité n'y entre plus (#130). */
-export function isToday(task: Task, today: string, me: readonly string[]): boolean {
-  return todayReason(task, today, me) !== undefined
+/**
+ * Ma journée (#268, choix de BBR) : les tâches ouvertes dues aujourd'hui, de toute l'équipe, sauf un parent
+ * (#125 : ses enfants dus y entrent, pas lui), et les récurrentes qui tombent (`isRecurringSoon`), rangées à
+ * part. Le retard a En retard, demain a Demain. L'accueil de Maestro garde ses sections (`todaySections`).
+ */
+export function isToday(task: Task, today: string): boolean {
+  return (!task.done && !task.isParent && task.due === today) || isRecurringSoon(task, today)
+}
+
+/** Une récurrente qui tombe (#268) : ouverte, pas un parent (#125), `tous:`, due aujourd'hui ou demain ; Ma journée la range à part. */
+export function isRecurringSoon(task: Task, today: string): boolean {
+  if (task.done || task.isParent || task.tous === undefined || task.due === undefined) return false
+  const days = daysBetween(today, task.due)
+  return days >= 0 && days <= 1
+}
+
+/** Demain (#268) : les tâches ouvertes dues demain, de toute l'équipe, sauf un parent (#125). */
+export function isDueTomorrow(task: Task, today: string): boolean {
+  return !task.done && !task.isParent && task.due !== undefined && daysBetween(today, task.due) === 1
+}
+
+/** Ce qu'une ligne tait sous un filtre de jour (#268, comme #265) : « aujourd'hui » sous Ma journée, « demain » sous Demain. */
+export function dayFilterQuiet(attend: string, today: string, task: Pick<Task, 'due'>): boolean {
+  if (task.due === undefined) return false
+  return (attend === 'today' && task.due === today) || (attend === 'tomorrow' && daysBetween(today, task.due) === 1)
 }
 
 /** « Ma journée » en sections, chaque tâche dans la première qui la prend ; une section vide n'apparaît pas. */
@@ -1822,6 +1844,17 @@ export function waitDays(task: Task, today: string, me: readonly string[] = []):
 export function isToRelaunch(task: Task, today: string, me: readonly string[], days: number): boolean {
   const waited = task.done ? undefined : waitDays(task, today, me)
   return waited !== undefined && waited >= days
+}
+
+/**
+ * À relancer par sujet (#268) : une section par axe, dans l'ordre de la légende (les autres ensuite, par
+ * ordre alphabétique), et dans chacune les attentes les plus vieilles en haut.
+ */
+export function relaunchSections(tasks: readonly Task[], order: readonly string[], today: string, me: readonly string[]): { axis: string; tasks: Task[] }[] {
+  const axes = [...new Set(tasks.map(t => t.axis))]
+  const ranked = [...order.filter(a => axes.includes(a)), ...axes.filter(a => !order.includes(a)).sort((a, b) => a.localeCompare(b, 'fr'))]
+  const wait = (t: Task) => waitDays(t, today, me) ?? 0
+  return ranked.map(axis => ({ axis, tasks: tasks.filter(t => t.axis === axis).sort((x, y) => wait(y) - wait(x)) }))
 }
 
 /** Le filtre « Qui » (#99) : `all` prend tout, un de mes noms suit « À moi », un autre nom prend les tâches dont `resp:` ou `attend:` le nomme. */
@@ -2068,15 +2101,16 @@ export function nextGrouping(by: Grouping, data: GroupingData, showDone: boolean
 }
 
 /** L'icône d'une ligne de « À traiter » (#115), dessinée au trait dans icons.ts. */
-export type TodoIcon = 'sun' | 'clock' | 'calendar' | 'bell' | 'spin' | 'bubble' | 'list'
+export type TodoIcon = 'sun' | 'sunrise' | 'clock' | 'calendar' | 'bell' | 'spin' | 'bubble' | 'list'
 /** La couleur d'une ligne de « À traiter » : un ton de la palette, avec sa teinte (`<ton>Tint`) et son encre (`<ton>On`). */
 export type TodoTone = 'live' | 'late' | 'block' | 'wait' | 'neutral'
 export type TodoCounter = { key: string; name: string; icon: TodoIcon; tone: TodoTone }
 
 /**
  * Les filtres en pastilles sous les axes (#115, maquette C ; #149) : « Toutes » d'abord (#160), qui lève le
- * filtre d'état et garde l'axe ; puis, dans tout projet (#176, maquette A), Ma journée, ce qu'une session
- * travaille, les urgences d'échéance (#99), les relances et les retours. Le panneau cache une pastille à 0.
+ * filtre d'état et garde l'axe ; puis les cinq filtres de temps dans l'ordre de BBR (#268, maquette A) :
+ * Ma journée, Demain, Cette semaine, En retard, À relancer ; puis, hors de Maestro (#176), ce qu'une session
+ * travaille, et les retours. Le panneau cache une pastille à 0.
  */
 export function todoCounters(maestro = false): TodoCounter[] {
   // Chez Maestro (#149, #160), « En cours » est son bloc, au-dessus des filtres : elle ne se répète pas ici.
@@ -2084,10 +2118,11 @@ export function todoCounters(maestro = false): TodoCounter[] {
   return [
     { key: 'all', name: 'Toutes', icon: 'list', tone: 'neutral' },
     { key: 'today', name: 'Ma journée', icon: 'sun', tone: 'live' },
-    { key: 'live', name: 'En cours', icon: 'spin', tone: 'live' },
-    { key: 'late', name: 'En retard', icon: 'clock', tone: 'late' },
+    { key: 'tomorrow', name: 'Demain', icon: 'sunrise', tone: 'block' },
     { key: 'soon', name: 'Cette semaine', icon: 'calendar', tone: 'block' },
+    { key: 'late', name: 'En retard', icon: 'clock', tone: 'late' },
     { key: 'relaunch', name: 'À relancer', icon: 'bell', tone: 'wait' },
+    { key: 'live', name: 'En cours', icon: 'spin', tone: 'live' },
     { key: 'feedback', name: 'Retours', icon: 'bubble', tone: 'wait' },
   ]
 }
@@ -2953,13 +2988,15 @@ export function filterSummary(view: { axis: string; attend: string; showDone: bo
   const by = groupingOf(view.groupBy, view.showDone)
   if (view.showDone) return `${view.doneShown} Done, par ${by === 'subject' ? 'sujet' : 'jour'}`
   // Les ouvertes se rangent par sujet d'ordinaire (#168, #189) : seuls les autres rangements se disent.
-  const byDayNote = by === 'subject' || view.attend === 'today' ? '' : `, ${GROUPING_LABELS[by].toLowerCase()}`
+  // Ma journée suit le rangement choisi, comme Cette semaine ; À relancer est toujours par sujet (#268).
+  const byDayNote = by === 'subject' || view.attend === 'relaunch' ? '' : `, ${GROUPING_LABELS[by].toLowerCase()}`
   const who = view.who ?? 'all'
   if (view.axis === 'all' && view.attend === 'all' && who === 'all') return `${view.shown} tâche${view.shown > 1 ? 's' : ''} ouverte${view.shown > 1 ? 's' : ''}${byDayNote}`
   const parts: string[] = []
   if (view.axis !== 'all') parts.push(axisLabel(view.axis))
   if (view.attend === 'late') parts.push('en retard')
   else if (view.attend === 'today') parts.push('ma journée')
+  else if (view.attend === 'tomorrow') parts.push('demain')
   else if (view.attend === 'soon') parts.push('cette semaine')
   else if (view.attend === 'relaunch') parts.push('à relancer')
   else if (view.attend === 'mine') parts.push('à moi')
