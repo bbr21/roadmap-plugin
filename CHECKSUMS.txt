@@ -1,8 +1,8 @@
-# roadmap 0.184.0 : SHA-256 de chaque fichier installé du plugin, chemins relatifs à son dossier.
-# Vérifier une copie installée (~/.claude/plugins/cache/roadmap/roadmap/0.184.0) : plugins/roadmap/SECURITE.md, « Vérifier que ta copie est une vraie version ».
-d1ebc9efbab5bfb0da146b6819207f103d5d811acf0319fa4ed4e2be7e1e9298  .claude-plugin/plugin.json
-6834efc3deb56c94e8e7275a3cfbc836018a0e57d78572f746347615920c97a4  README.md
-91491b7d17e728adc60b37108d456c5d53cd38beb059683f0feed144bf803a3d  SECURITE.md
+# roadmap 0.185.0 : SHA-256 de chaque fichier installé du plugin, chemins relatifs à son dossier.
+# Vérifier une copie installée (~/.claude/plugins/cache/roadmap/roadmap/0.185.0) : plugins/roadmap/SECURITE.md, « Vérifier que ta copie est une vraie version ».
+a2a6bf0e73386e4a98ce9c8a42ca312109c0bbcff52edc35cef5b06608692580  .claude-plugin/plugin.json
+535c7ea4669400fb23655a71b43d8a609a785521c37eb9e4616d25ed8f26b09c  README.md
+2cb0798ce31ac8734b98ff9eec4c4263ccc0bfac92e5b9a636f8b560e62b4027  SECURITE.md
 bce019cb7147413a8e5f0687df59a41394fa92545568b5d37b1df8bd6d885e30  hooks/bar-hit.tsx
 d842d789476d67282d0f04b7e5fdc68a3d981ccec65dd79cfa2d11eed13fb828  hooks/hooks.json
 a6a85afac504d6dd6af8627a6a85570871f91ba54ae68a2d41bb6d67e93604d9  hooks/icons.ts
