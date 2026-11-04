@@ -154,6 +154,129 @@ def _jaccard(a, b):
     return len(a & b) / len(a | b) if a and b else 0.0
 
 
+# ---------------------------------------------------------------- #284 : regrouper par sujet
+
+# Un axe se regroupe à partir de ce nombre de tâches à plat (ni mère, ni enfant).
+MIN_A_PLAT = 4
+# Une expression portée par plus que cette part des tâches à plat de l'axe (et plus de PLAFOND_MIN)
+# est le thème de l'axe, pas un sujet (« écriture mcp » partout sur l'axe mcp).
+PART_MAX_SUJET = 0.25
+PLAFOND_MIN = 6
+# Une expression dans les TETE premiers mots signifiants du libellé dit le sujet : bonus.
+TETE = 6
+BONUS_TETE = 3
+# Des mots qui reviennent partout sans dire de sujet : jamais dans une expression.
+MOTS_GENERIQUES = frozenset("""
+qui quoi dont aujourd hui plus tout tous toute toutes chaque faire fait etre avoir comme une deux trois
+pas sans lors afin ainsi aussi deja encore puis tant fois
+""".split())
+CITATION = re.compile(r"(?:\bid:|#)(\d+)\b")
+# Le complément d'agent : « par » et ce qui le suit, article compris, jusqu'aux mots en majuscule.
+PAR_QUI = re.compile(r"\bpar\s+(?:(?:le|la|les)\s+|l['’]\s*)?[^\W\d_]+(?:\s+[A-Z][^\W_]*)*")
+
+
+def _jetons(libelle, noms):
+    """Les mots signifiants du sujet d'un libellé, dans l'ordre, avec leur place : (racine, début, fin).
+    Le premier fragment seul (le reste est contexte), parenthèses et code blanchis sans décaler le
+    texte ; un pluriel en -s ou -x ramené au singulier (« pages » = « page »)."""
+    texte = fragments(libelle)[0] if fragments(libelle) else ""
+    blanc = lambda m: " " * len(m.group(0))  # noqa: E731
+    texte = re.sub(r"\([^)]*\)|`[^`]*`", blanc, texte)
+    # « par Claude Code », « par le MCP » : qui le fait, pas le sujet.
+    vu = re.sub(PAR_QUI, blanc, texte)
+    sortie, en_tete = [], True
+    for m in re.finditer(r"[^\W_]+", vu):
+        mot = _sans_accents(m.group(0)).lower()
+        # Les verbes d'action en tête (« Faire construire… ») ne disent pas le sujet.
+        if en_tete and len(mot) > 3 and mot[-2:] in ("er", "ir", "re"):
+            continue
+        en_tete = False
+        if len(mot) <= 2 or mot.isdigit() or mot in MOTS_VIDES or mot in MOTS_GENERIQUES or mot in noms:
+            continue
+        if len(mot) > 4 and mot[-1] in "sx":
+            mot = mot[:-1]
+        sortie.append((mot, m.start(), m.end()))
+    return texte, sortie
+
+
+def _expressions(libelle, noms):
+    """{expression: (rang, nom tel qu'écrit)} : deux mots signifiants consécutifs du sujet."""
+    texte, jetons = _jetons(libelle, noms)
+    exp = {}
+    for k, (a, b) in enumerate(zip(jetons, jetons[1:])):
+        exp.setdefault(a[0] + " " + b[0], (k, texte[a[1]:b[2]]))
+    return exp
+
+
+def regroupements(taches, noms=frozenset()):
+    """Les tâches à plat d'un axe groupées par sujet : des pistes de mères, que Claude nomme et
+    valide. Un groupe naît d'une tâche citée par deux tâches à plat ou plus (« (id:213) » : elle en
+    est la mère), puis d'une expression partagée, la plus large d'abord (couverture gloutonne).
+    Jamais à cheval sur deux axes."""
+    ouvertes = {t["id"]: t for t in taches}
+    parent_de = {t["id"]: (t["parent"] or "").lstrip("#") or None for t in taches}
+    meres = {p for p in parent_de.values() if p}
+    a_plat = [t for t in taches if not parent_de[t["id"]] and t["id"] not in meres]
+    sortie = {"axes_a_plat": {}, "regroupements": [], "seules": {}}
+    for axe in sorted({t["axe"] for t in a_plat}):
+        plats = [t for t in a_plat if t["axe"] == axe]
+        if len(plats) < MIN_A_PLAT:
+            continue
+        sortie["axes_a_plat"][axe] = [t["id"] for t in plats]
+        ids_plats = {t["id"] for t in plats}
+        pris, groupes = set(), []
+        # Les citations : une tâche de l'axe citée par deux tâches à plat ou plus en est la mère.
+        citees = {}
+        for t in plats:
+            for n in set(CITATION.findall(t["libelle"] + " " + (t["note"] or ""))):
+                c = ouvertes.get(n)
+                if c and n != t["id"] and c["axe"] == axe and not parent_de[n]:
+                    citees.setdefault(n, []).append(t["id"])
+        for n in sorted(citees, key=lambda n: (-len(citees[n]), int(n))):
+            enfants = [i for i in citees[n] if i not in pris and i != n]
+            if len(enfants) < 2 or n in pris:
+                continue
+            pris.update(enfants + [n])
+            groupes.append({"sujet": None, "nom": None, "mere": n, "enfants": enfants})
+        # Les expressions partagées, la plus large d'abord.
+        exp = {t["id"]: _expressions(t["libelle"], noms) for t in plats}
+        plafond = max(PLAFOND_MIN, PART_MAX_SUJET * len(plats))
+        porteurs = {}
+        for t in plats:
+            for e in exp[t["id"]]:
+                porteurs.setdefault(e, []).append(t["id"])
+        candidates = {e: ids for e, ids in porteurs.items() if 2 <= len(ids) <= plafond}
+        while True:
+            meilleure = None
+            for e, ids in candidates.items():
+                libres = [i for i in ids if i not in pris]
+                if len(libres) < 2:
+                    continue
+                score = sum(1 + (BONUS_TETE if exp[i][e][0] < TETE else 0) for i in libres)
+                cle = (-score, -len(libres), e)
+                if meilleure is None or cle < meilleure[0]:
+                    meilleure = (cle, e, libres)
+            if meilleure is None:
+                break
+            _, e, libres = meilleure
+            pris.update(libres)
+            nom = exp[libres[0]][e][1]
+            mere = next((m for m in sorted(meres, key=lambda m: (len(m), m)) if m in ouvertes and ouvertes[m]["axe"] == axe
+                         and not parent_de[m] and e in _expressions(ouvertes[m]["libelle"], noms)), None)
+            groupes.append({"sujet": e, "nom": nom[:1].upper() + nom[1:], "mere": mere, "enfants": libres})
+        for g in groupes:
+            dedans = set(g["enfants"])
+            hors = []
+            for i in g["enfants"]:
+                for n in (ouvertes[i]["champs"].get("après") or "").split(","):
+                    n = n.strip().lstrip("#")
+                    if n in ouvertes and n not in dedans:
+                        hors.append({"id": i, "apres": n})
+            sortie["regroupements"].append(dict(g, axe=axe, apres_hors_groupe=hors))
+        sortie["seules"][axe] = [i for i in sorted(ids_plats - pris, key=int)]
+    return sortie
+
+
 def releve(dossier, jour=None, perso="~/.claude/roadmap-perso.json"):
     """Le relevé du contenu de la roadmap (le JSON de la spec). Lecture seule."""
     jour = jour or datetime.date.today().isoformat()
@@ -220,7 +343,10 @@ def releve(dossier, jour=None, perso="~/.claude/roadmap-perso.json"):
         notes = [(_jaccard(x[a["id"]], x[b["id"]]), x[a["id"]] & x[b["id"]]) for x in (corps, sujets)]
         score, communs = max(notes, key=lambda n: n[0])
         if score >= SEUIL_DOUBLON:
-            doublons.append({"a": a["id"], "b": b["id"], "score": round(score, 2), "mots": sorted(communs)})
+            # La plus précise se garde, l'autre se ferme : ses mots absents de la gardée sont à reprendre.
+            garde, part = (a, b) if len(corps[a["id"]]) >= len(corps[b["id"]]) else (b, a)
+            doublons.append({"a": a["id"], "b": b["id"], "score": round(score, 2), "mots": sorted(communs),
+                             "garder": garde["id"], "a_reprendre": sorted(corps[part["id"]] - corps[garde["id"]])})
     doublons.sort(key=lambda d: -d["score"])
 
     # Les clés qu'une sous-tâche reprend de sa mère, à valider : `fiche:` (où vit le sujet) et les clés
@@ -233,7 +359,7 @@ def releve(dossier, jour=None, perso="~/.claude/roadmap-perso.json"):
             heritage.add(k)
 
     pistes = pistes_preuve(taches, ob.declarations(dossier, cfg), dossier, jour, noms)
-    return {
+    return dict(regroupements(taches, noms), **{
         "roadmap": os.path.join(rdir, FICHIER_OUVERT), "fait": os.path.join(rdir, FICHIER_FAIT),
         "dossier": dossier, "jour": jour, "mode": mode, "requis": requis, "me": me, "relance": relance,
         "empreinte": empreinte(rdir), "taches": taches,
@@ -243,7 +369,7 @@ def releve(dossier, jour=None, perso="~/.claude/roadmap-perso.json"):
         "pistes_preuve": pistes,
         "questions": questions_par_tache(taches, trous, pistes, jour),
         "en_attente": _en_attente(_lire_questions(rdir), taches)[0],
-    }
+    })
 
 
 # ---------------------------------------------------------------- #159 : preuves et questions
@@ -507,9 +633,9 @@ SCHEMA = {
     "splits.children": {"key", "label", "note", "fragments", "fields"},
     "groups": {"parent", "children"},
     "groups.parent": {"key", "label", "note", "axis", "fields"},
-    "merges": {"keep", "drop", "label"},
+    "merges": {"keep", "drop", "label", "reason"},
     "closures": {"id"},
-    "after": {"id", "after"},
+    "after": {"id", "after", "drop"},
     "values": {"id", "field", "value"},
 }
 VALEURS_PERMISES = ("due", "resp", "relance", "attend", "prio", "ouvert", "parent")
@@ -587,6 +713,8 @@ class _Preparation:
         self.heritage = [k for k in props.get("inherit", releve.get("heritage") or []) if k not in NON_HERITES]
         self.declarees = set(releve.get("cles") or [])
         self.gardes = set()
+        # #284 : les tâches dont l'audit change `parent:` ou `après:`, pour le contrôle des fratries.
+        self.liens = set()
         self.texte_o = _lire_fichier(releve["roadmap"]) or ""
         self.texte_f = _lire_fichier(releve["fait"])
         self.lignes = self.texte_o.split("\n")
@@ -606,7 +734,7 @@ class _Preparation:
         self.cles = {}
         self.bilan = {"decoupages": 0, "enfants": 0, "fragments": {"verifies": 0, "total": 0},
                       "regroupements": 0, "nouvelles_meres": 0, "fusions": 0, "fermetures": 0, "apres": 0, "valeurs": 0,
-                      "ids_crees": []}
+                      "ids_crees": [], "non_repris": {}}
 
     # -- aides
 
@@ -724,6 +852,7 @@ class _Preparation:
         if manque:
             raise Erreur("%s : mot perdu « %s » du libellé ou de la note d'origine" % (quoi, sorted(manque)[0]))
         self.apres_ligne.setdefault(mere.ligne, []).extend(enfants)
+        self.liens.update(e.id for e in enfants)
         self.decoupees.add(mere.id)
         self.bilan["decoupages"] += 1
         self.bilan["enfants"] += len(enfants)
@@ -734,6 +863,14 @@ class _Preparation:
         m = g.get("parent")
         if isinstance(m, dict):
             quoi = "regroupement sous « %s »" % (m.get("label") or "")[:40]
+            enfants = [self.tache(e, quoi) for e in g.get("children") or []]
+            if not enfants:
+                raise Erreur("%s : aucun enfant" % quoi)
+            # #284 : sans axe donné, la mère nouvelle prend celui de ses enfants.
+            axes = sorted({e.axe for e in enfants if e.axe})
+            if not _propre(m.get("axis")) and len(axes) > 1:
+                raise Erreur("%s : enfants sur deux axes (%s) : donne l'axe de la mère (axis), "
+                             "ou regroupe-les à part" % (quoi, ", ".join(axes)))
             champs = self.champs_proposes(m.get("fields"), quoi)
             champs.setdefault("ouvert", self.jour)
             for k in ("parent", "après"):
@@ -742,11 +879,8 @@ class _Preparation:
             self.completer(champs, None, quoi)
             champs["id"] = self.numero(m.get("key"))
             mere = _Tache(id=champs["id"], libelle=_propre(m.get("label")), note=_propre(m.get("note")),
-                          axe=_propre(m.get("axis")) or "dossier", champs=_ordonnes(champs))
+                          axe=_propre(m.get("axis")) or (axes[0] if axes else "dossier"), champs=_ordonnes(champs))
             self.cles[m["key"]] = mere
-            enfants = [self.tache(e, quoi) for e in g.get("children") or []]
-            if not enfants:
-                raise Erreur("%s : aucun enfant" % quoi)
             ancre = min(t.ligne or t.ancre for t in enfants)
             self.avant_ligne.setdefault(ancre, []).append(mere)
             self.bilan["nouvelles_meres"] += 1
@@ -759,7 +893,12 @@ class _Preparation:
         for e in enfants:
             if e is mere:
                 raise Erreur("regroupement : #%s ne peut pas être sa propre mère" % e.id)
+            if e.axe and mere.axe and e.axe != mere.axe:
+                raise Erreur("regroupement sous #%s : #%s est sur l'axe %s, sa mère #%s sur %s : un enfant prend "
+                             "l'axe de sa mère (regroupe-le ailleurs, ou change son axe d'abord)"
+                             % (mere.id, e.id, e.axe, mere.id, mere.axe))
             e.set("parent", mere.id)
+            self.liens.add(e.id)
         self.bilan["regroupements"] += 1
 
     def _clore(self, t, suffixe, souci):
@@ -780,6 +919,10 @@ class _Preparation:
         if part.id in self.decoupees:
             raise Erreur("%s : #%s est déjà découpée" % (quoi, part.id))
         self.libre(part, quoi)
+        raison = _propre(f.get("reason"))
+        if not raison:
+            raise Erreur("%s : la raison manque (reason) : pourquoi #%s s'abandonne, écrite sur la tâche close "
+                         "et dans son bilan" % (quoi, part.id))
         if f.get("label"):
             nouveau = _propre(f["label"])
             manque = mots(garde.libelle) - mots(nouveau + " " + garde.note)
@@ -789,7 +932,12 @@ class _Preparation:
         dates = [d for d in (garde.get("ouvert"), part.get("ouvert")) if d]
         if dates and min(dates) != garde.get("ouvert"):
             garde.set("ouvert", min(dates))
-        self._clore(part, " (fusionnée dans #%s)" % garde.id, "Fusionnée dans #%s par l'audit" % garde.id)
+        # Ce que la close disait et que la gardée ne dit pas : à reprendre en l'étoffant (label), ou perdu.
+        perdus = sorted(_signifiants(part.libelle, 4, frozenset()) - mots(garde.texte()))
+        if perdus:
+            self.bilan["non_repris"][part.id] = perdus
+        self._clore(part, " (fusionnée dans #%s : %s)" % (garde.id, raison),
+                    "Fusionnée dans #%s par l'audit : %s" % (garde.id, raison))
         for t in self.ouvertes():
             for k in ("parent", "après"):
                 v = t.get(k)
@@ -801,6 +949,7 @@ class _Preparation:
                     if x not in nums and x != t.id:
                         nums.append(x)
                 t.set(k, ",".join(nums) or "-")
+                self.liens.add(t.id)
         self.gardes.add(garde.id)
         self.bilan["fusions"] += 1
 
@@ -829,7 +978,14 @@ class _Preparation:
                 raise Erreur("dépendance : #%s ne peut pas venir après elle-même" % t.id)
             if n not in nums:
                 nums.append(n)
+        # #284 : `drop` retire un lien (vers une tâche d'une autre fratrie, par exemple).
+        for ref in a.get("drop") or []:
+            n = self.cles[str(ref)].id if str(ref) in self.cles else str(ref).lstrip("#")
+            if n not in nums:
+                raise Erreur("dépendance : #%s n'est pas après #%s : rien à retirer" % (t.id, n))
+            nums.remove(n)
         t.set("après", ",".join(nums) or "-")
+        self.liens.add(t.id)
         self.bilan["apres"] += 1
 
     def valoir(self, v):
@@ -839,6 +995,8 @@ class _Preparation:
         if k not in VALEURS_PERMISES:
             raise Erreur("%s : seuls %s se posent par l'audit" % (quoi, ", ".join(VALEURS_PERMISES)))
         val = self.champ_propose(k, v.get("value"), quoi, interdits=set())
+        if k == "parent":
+            self.liens.add(t.id)
         if k == "parent" and val != "-":
             if val in self.ids_fait:
                 pass  # une mère close : permis, la tâche existe
@@ -876,6 +1034,20 @@ class _Preparation:
                     raise Erreur("boucle de parents : %s" % " → ".join("#" + y for y in vus + [x]))
                 vus.append(x)
                 x = parents[x]
+
+    def fratries(self):
+        """#125, #284 : `après:` relie deux sœurs, ou deux tâches sans parent. Contrôlé sur les liens que
+        l'audit pose ou change ; une tâche close ne compte plus."""
+        ouvertes = {t.id: t for t in self.ouvertes()}
+        parent = lambda t: (t.get("parent") or "-").lstrip("#")  # noqa: E731
+        for t in ouvertes.values():
+            for n in (t.get("après") or "-").split(","):
+                c = ouvertes.get(n.strip().lstrip("#"))
+                if c is None or not (t.id in self.liens or c.id in self.liens) or parent(t) == parent(c):
+                    continue
+                raise Erreur("après : #%s après #%s relierait l'enfant d'un sujet à une tâche d'un autre (après: "
+                             "relie deux sœurs, ou deux tâches sans parent) : rentre-les sous la même mère, ou "
+                             "retire le lien (after, drop)" % (t.id, c.id))
 
     # -- rendu et contrôles
 
@@ -947,7 +1119,7 @@ class _Preparation:
 
 LISTES = {"splits", "groups", "merges", "closures", "after", "values", "inherit",
           "splits.children", "splits.parent_fragments", "splits.children.fragments",
-          "groups.children", "after.after"}
+          "groups.children", "after.after", "after.drop"}
 DICOS = {"splits.parent", "splits.parent.fields", "splits.children.fields", "groups.parent.fields"}
 
 
@@ -1012,6 +1184,7 @@ def preparer(releve, props):
     for v in props.get("values") or []:
         prep.valoir(v)
     prep.boucles()
+    prep.fratries()
     apres_o = prep.rendre_ouvert()
     apres_f = prep.rendre_fait()
     prep.controler(apres_o, apres_f or "")
@@ -1092,6 +1265,8 @@ def afficher_bilan(bilan):
     for nom, c in bilan.get("comptes", {}).items():
         print("  %s : %d ouvertes, %d closes avant ; %d ouvertes, %d closes après" % (
             nom, c["avant"]["ouvertes"], c["avant"]["closes"], c["apres"]["ouvertes"], c["apres"]["closes"]))
+    for i, perdus in sorted(bilan.get("non_repris", {}).items()):
+        print("  Non repris de #%s (fusionnée) : %s" % (i, ", ".join(perdus)))
     if bilan["ids_crees"]:
         print("  Numéros créés : #%s" % ", #".join(bilan["ids_crees"]))
     print("  Numéros uniques, parents et dépendances valides, chaque ligne dans la grammaire.")

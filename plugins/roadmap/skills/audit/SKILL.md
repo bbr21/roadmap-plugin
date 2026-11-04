@@ -1,6 +1,6 @@
 ---
 name: audit
-description: "The single audit of a roadmap-plugin project's roadmap, with or without code (#176: the folder says which): structure (split bundles into a parent and dated children, two levels, après: dependencies, groupings, duplicates, gaps), then one question per late or undated task and per misplaced priority, the recommendation first (reschedule, done, pause, drop), and closing on proof where the project says (preuves). Writes through the tasks skill, which follows ecriture. Runs as a scheduled task too: only what is clear gets written, the rest waits in ROADMAP-questions.json, counted by priority. Triggers on « audite ma roadmap », « fais le ménage dans ma roadmap », « nettoie ma roadmap », « fais le doctor de ma roadmap », « découpe mes tâches », « cherche les doublons dans ma roadmap », « qu'est-ce qui est en retard », and at the end of onboarding. Not for the project's structure (doctor), importing a roadmap (onboarding), nor adding or marking done one named task (tasks)."
+description: "The single audit of a roadmap-plugin project's roadmap, with or without code (#176: the folder says which): structure (split bundles into a parent and dated children, two levels, après: dependencies, groupings, duplicates, gaps), then one question per late or undated task and per misplaced priority, the recommendation first (reschedule, done, pause, drop), and closing on proof where the project says (preuves). Writes through the tasks skill, which follows ecriture. Runs as a scheduled task too: only what is clear gets written, the rest waits in ROADMAP-questions.json, counted by priority. Triggers on « audite ma roadmap », « fais le ménage dans ma roadmap », « nettoie ma roadmap », « fais le doctor de ma roadmap », « découpe mes tâches », « cherche les doublons dans ma roadmap », « regroupe mes tâches par sujet », « qu'est-ce qui est en retard », and at the end of onboarding. Not for the project's structure (doctor), importing a roadmap (onboarding), nor adding or marking done one named task (tasks)."
 ---
 
 # Audit the roadmap
@@ -56,8 +56,9 @@ then stop.
 It returns (French keys, shared with `tasks`): each open task with its `fragments` (the label cut
 at « ; » outside parentheses), `paquets` (two fragments or more), `trous` by type (a parent with
 an open child is never `sans_due`), `doublons_possibles` (pairs with close words or subject,
-threshold 0.3: a lead, not a verdict), `heritage` (the keys a child takes from its parent),
-`pistes_preuve`, `questions` and `en_attente` (below).
+threshold 0.3: a lead, not a verdict; each says which one to keep, `garder`, and the other's words
+it lacks, `a_reprendre`), `axes_a_plat`, `regroupements` and `seules` (#284, below), `heritage`
+(the keys a child takes from its parent), `pistes_preuve`, `questions` and `en_attente` (below).
 
 ## 2. Pending questions first
 
@@ -89,9 +90,9 @@ Claude reads **all** the tasks of the survey, not only the computed pairs, and w
     ]
   }],
   "groups": [{"parent": "20", "children": ["21", "23"]}],
-  "merges": [{"keep": "12", "drop": "31", "label": null}],
+  "merges": [{"keep": "12", "drop": "31", "label": null, "reason": "même garde-fou sous deux noms"}],
   "closures": [{"id": "7"}],
-  "after": [{"id": "n3", "after": ["n2"]}],
+  "after": [{"id": "n3", "after": ["n2"]}, {"id": "40", "after": [], "drop": ["38"]}],
   "values": [{"id": "18", "field": "resp", "value": "Caroline"}]
 }
 ```
@@ -128,10 +129,38 @@ grammar or declared in `roadmap.json`. They never carry `id`, `qui`, `branche`, 
 **Dependencies**: those the text states (« puis », « après », « une fois… », « attendre … avant »),
 between siblings (two siblings without `après:` run in parallel) or between parents.
 
-**Groupings and duplicates**: two open tasks on the same subject → a **merge** (keep the more
-precise label; the other closes « (fusionnée dans #N) »); distinct tasks of one piece of work → a
-**group** under a parent, existing or new (`{"key", "label", "axis", "fields"}`). Two parallel
-tasks of different projects (ROB and DET) are not duplicates.
+**Groupings and duplicates**: two open tasks on the same subject → a **merge**: keep the more
+precise one (`garder`), enrich its label with what the other brings (`label`, the words of
+`a_reprendre` that matter), and give the reason the other is dropped (`reason`, required: it
+closes « (fusionnée dans #N : raison) » and goes into its bilan); the bilan names the words not
+taken over (`non_repris`). Distinct tasks of one piece of work → a **group** under a parent,
+existing or new (`{"key", "label", "axis", "fields"}`). Two parallel tasks of different projects
+(ROB and DET) are not duplicates.
+
+**Grouping a flat axis** (#284): an axis listed in `axes_a_plat` has many tasks that are neither
+parent nor child: nobody sees its subjects. Read **every** task of that axis, then propose one
+parent per subject, with its children:
+
+- Start from `regroupements`: each lead has its subject (`sujet`, `nom`: the expression as
+  written), its `enfants`, and a `mere` when a task is cited by the others (« (id:213) »: it
+  becomes the parent) or an existing parent carries the subject. These are leads (on the original
+  case, 3 of 4 proposed pairs were right, a third of the subjects were found): rename, merge two
+  leads that are one subject, split one that mixes two, and place the `seules` (tasks without a
+  shared expression) by reading them.
+- **Name the parent by its subject, never by an action**: « Carte de setup », « Pages d'arrivée »,
+  « Garde-fous des écritures MCP », not « Corriger la carte ». 2 to 8 children (the doctor flags
+  more than 8); a task that fits no subject stays standalone.
+- **The parent's axis is its children's**: never one group across two axes. `apply` gives a new
+  parent its children's axis and refuses a child of another axis.
+- **`après:` stays between siblings**: a lead's `apres_hors_groupe` lists the children whose
+  `après:` points at an open task outside the group. Bring that task into the same group, or link
+  the two parents instead and drop the child's link (`after` with `drop`); `apply` refuses an
+  `après:` it leaves between two open tasks of different parents.
+- **Look for duplicates inside each group**: two tasks of one subject that say the same thing under
+  two names (« kill switch par catégorie d'écriture » and « bouton Tout arrêter ») → a merge with
+  its reason, even when `doublons_possibles` missed the pair.
+- Validate one question per proposed parent (step 5), the preview listing the parent's name and
+  each child's label, then the merges.
 
 **Other gaps** (`sans_resp`, `a_relancer`, `parent_introuvable`): one value per task, taken from
 the text, in `values`. A parent whose children are all done goes in `closures`. Dates are not
@@ -184,8 +213,8 @@ answer in writing, and their answer corrects the proposal:
 5. **Dependencies** outside bundles, by group; the **other gaps**, one question per type.
 6. **The per-task questions** (step 4), in the survey's order.
 
-On a large roadmap (more than 40 bundles or 60 tasks), offer a scope first (an axis, the longest
-bundles, the late tasks); the scope the person names wins. Drop from the JSON what is refused,
+On a large roadmap (more than 40 bundles or 60 tasks), offer a scope first (an axis, a flat axis
+to group, the longest bundles, the late tasks); the scope the person names wins. Drop from the JSON what is refused,
 fix what is changed.
 
 ## 6. Write
@@ -198,7 +227,8 @@ python3 "<skill folder>/scripts/audit.py" apply <project folder> --proposals <sc
 
 A refusal (« Refusé : … ») leaves nothing written and names the problem: a fragment without a
 target, a lost word, the roadmap changed since the survey (run the survey again and redo the
-proposals), a line taken by a session, an unknown id, a loop, a wrong date. Fix and run again.
+proposals), a line taken by a session, an unknown id, a loop, a wrong date, a child on another
+axis than its parent, an `après:` between two families, a merge without its reason. Fix and run again.
 Otherwise it shows the bilan as is: bundles split and children created, fragments found (n of n),
 groups, merges, closures, dependencies, values, counts before and after, ids created, backup.
 When the project declares `ecriture`, it writes nothing and prints the lines: hand them to the

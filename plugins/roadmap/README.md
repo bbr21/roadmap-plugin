@@ -686,6 +686,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.187.0 (2026-11-04)** : audit : regroupe par sujet les tâches à plat d'un axe (mères proposées, axe et après: entre sœurs gardés, doublon à garder et mots à reprendre, fusion avec sa raison) (#284)
 - **0.186.0 (2026-11-04)** : panneau : la case et la flèche d'une ligne alignées (survol de la case centré sur le carré, flèche au milieu entre le carré et le #) (#282)
 - **0.185.0 (2026-11-04)** : release : plus de clé types dans plugin.json, que le magasin claude.ai ôtait en avertissant ; check la refuse (#283)
 - **0.184.0 (2026-11-04)** : release : status et le panneau lisent le magasin du compte sous le nom du dépôt public, roadmap-plugin (#281)
