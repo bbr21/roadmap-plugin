@@ -679,6 +679,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.181.0 (2026-11-04)** : doctor : signale un shim python3 posé par un plugin (modern-python), qui refuse les scripts des skills (#279)
 - **0.180.0 (2026-11-04)** : panneau : la mission de la fiche en puces ou en phrase, au choix du projet (réglage mission dans roadmap.json et le volet Réglages) (#278)
 - **0.179.0 (2026-11-03)** : tasks, maestro : la skill tasks ouvre une ligne quand qui: est exigé, le rapprochement pèse les mots rares (noms propres, codes), et Maestro est averti quand il écrit ROADMAP.md à la main (#255)
 - **0.178.0 (2026-11-03)** : panneau : les filtres de temps rangés comme la liste, Ma journée (le jour, toute l'équipe, récurrentes à part), Demain neuf, Cette semaine, En retard et À relancer par sujet (#268)

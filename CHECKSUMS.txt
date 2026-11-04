@@ -1,8 +1,8 @@
-# roadmap 0.180.0 : SHA-256 de chaque fichier installé du plugin, chemins relatifs à son dossier.
-# Vérifier une copie installée (~/.claude/plugins/cache/roadmap/roadmap/0.180.0) : plugins/roadmap/SECURITE.md, « Vérifier que ta copie est une vraie version ».
-aa06f1a53d56417cefd0d2a8b63e959c59c70a0b6906b9a391ee3120b7850164  .claude-plugin/plugin.json
-98862066d01604eb3defcc7388ae950012c4f60eb417c8b3b6d06002827bdc4c  README.md
-af13b56538cda553e9824ac41f72c89a52227ee6bd59f484c5a342ffc6e199b7  SECURITE.md
+# roadmap 0.181.0 : SHA-256 de chaque fichier installé du plugin, chemins relatifs à son dossier.
+# Vérifier une copie installée (~/.claude/plugins/cache/roadmap/roadmap/0.181.0) : plugins/roadmap/SECURITE.md, « Vérifier que ta copie est une vraie version ».
+b070dfe6dda6f8b9c0a2eb8aad90fdcbb490f8c805f5e788643b2feeb4afdcf8  .claude-plugin/plugin.json
+36384901d6b09d6df634b0dedcdaade3b13eb7e47e433bfb2284d98bc8ce324a  README.md
+aad405a4de30ede4a62424e8ee725474bc20df2c6293934ce6e8d8d266f32858  SECURITE.md
 bce019cb7147413a8e5f0687df59a41394fa92545568b5d37b1df8bd6d885e30  hooks/bar-hit.tsx
 d842d789476d67282d0f04b7e5fdc68a3d981ccec65dd79cfa2d11eed13fb828  hooks/hooks.json
 724adad60fd1842503663c54aa0827a5d5c8a27a5629092188a9bc37bc2c065f  hooks/icons.ts
@@ -14,9 +14,9 @@ a29e07be4f95c637c8f3ab377dc9a97cd16de11e8e7de7062311dd2888a0833f  hooks/press-hi
 2c41c480ffe671321b91523191e8e36453f4a211957d90b91b4f3148a257da86  scripts/one-at-a-time.sh
 3e41ae0248b4b9624b89c3c3cb96d484e2d5a7f222c989a211f6d3c5c4114b0b  skills/audit/SKILL.md
 1e5f77901f798994bc866ab8a04248326ee2b87f668ce0fd148e09962def597a  skills/audit/scripts/audit.py
-72854d22e033eaa9316779bc3e0d4d310be6859dd64f5d3eebd870a8b2f2423d  skills/doctor/SKILL.md
+45bc2e858cc29d066500acba4f2a63f00058df248604dc11c01a8b2aef66b7d7  skills/doctor/SKILL.md
 44d591f8999b245c9b184ee332336a58415f5c04c37d87411149f3ee6fb816a9  skills/doctor/references/requis.json
-200bf7c40f9a624c074867ebb7ec2814d05a9bb68c4ad8a8dcf2a6b75a325e13  skills/doctor/scripts/doctor.py
+cc73388f109e5c44766749c37591adfce10a6fb11c650609df1f501501ea20fb  skills/doctor/scripts/doctor.py
 1b1598ac3a0e7e8fdf1a6703fdf92cc80e9648d9a080dcf5102dc7de1a27bc84  skills/maestro/SKILL.md
 ef2caa713287dd923189b0fa351cc2587bf8b91b36a334cfa0c9eb954a63207a  skills/maestro/scripts/etat_maestro.py
 d9b12fec7c69227109764f9b8785c47c817d88445fbbf5d82e79d9fe7c7fd53d  skills/onboarding/SKILL.md

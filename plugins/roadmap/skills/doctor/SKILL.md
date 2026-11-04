@@ -16,6 +16,7 @@ changes nothing: neither the project nor the machine.
 | Item | OK when |
 |---|---|
 | Tools | `git`, `node`, `python3` and `gh` are there, and `gh` is logged in to an account |
+| Python | no plugin puts a `python3` shim at the head of the PATH: `modern-python` (trailofbits) enabled, or the `python3` found inside `~/.claude/plugins/`, is KO (#279): its shim refuses `python3 <script>`, the form of every skill of this plugin, and loops forever with pyenv set to « system ». No line when there is none |
 | Git repo | the main checkout is on `main` |
 | GitHub | `origin` points to GitHub, and `main` has nothing more and nothing less than `origin/main` (as of the last fetch) |
 | Roadmap | the panel finds it (`.claude/roadmap.json`, otherwise `ROADMAP.md` at the root), in the repo and therefore on GitHub |
@@ -43,6 +44,7 @@ In a folder without code (#76, #176: no git repository, a repository without cod
 | Item | OK when |
 |---|---|
 | Tools | `python3`; `git` only if the folder is a repo |
+| Python | as with code |
 | Roadmap | the panel finds it |
 | Work | as with code |
 | Structure | a `CLAUDE.md` with the rules of a folder without code, the roadmap, `ROADMAP-fait.md` and `ROADMAP-REGLES.md`, `id:` on every line |
@@ -73,6 +75,10 @@ Without a folder, it takes the current folder; from a worktree, it goes up to th
 `--json` gives the same diagnosis in JSON. Exit code 1 if there is a KO. The script is in
 `scripts/doctor.py`; it runs on the user's machine (terminal, Claude Code, or the
 « Control your Mac » tool), not in a container.
+
+If `python3` answers « Use `uv run python …` » or hangs, a plugin shim stands in front of it (#279):
+run the script with the first real interpreter of `which -a python3` (one outside `/shims/`, such as
+`/opt/homebrew/bin/python3` or `/usr/bin/python3`), and report that shim as the first KO.
 
 The plugins it judges are those the app loads: first its store
 (`~/Library/Application Support/Claude/local-agent-mode-sessions/<compte>/<org>/rpm/`, the one of

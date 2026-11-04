@@ -192,6 +192,23 @@ def _retirer(p):
     return "claude plugin uninstall %s --scope %s" % (p.get("id"), portee)
 
 
+def python_intercepte(plugins, which=None):
+    """Un shim `python3` posé par un plugin en tête du PATH (modern-python de trailofbits, #279) :
+    il refuse `python3 <script>`, la forme de toutes les skills du plugin roadmap, et avec pyenv
+    réglé sur « system » les deux shims se renvoient la main sans fin. `which` : la recherche du
+    `python3` de la machine, seulement quand le doctor juge les outils (sinon le PATH du test)."""
+    actifs = [p for p in plugins or [] if p.get("enabled") and _nom(p) == "modern-python"]
+    if actifs:
+        return ligne(KO, "Python", "%s pose un shim python3 qui refuse « python3 <script> » des skills, et se fige "
+                     "avec pyenv : le retirer" % ", ".join(str(p.get("id")) for p in actifs),
+                     " ; ".join(_retirer(p) for p in actifs))
+    trouve = which("python3") if which else None
+    if trouve and "/.claude/plugins/" in trouve.replace(os.sep, "/"):
+        return ligne(KO, "Python", "le python3 du PATH est le shim d'un plugin (%s) : les scripts des skills "
+                     "peuvent être refusés" % trouve, "retirer le plugin qui le pose (which -a python3)")
+    return None
+
+
 def roadmap_en_double(roadmap):
     """Deux copies actives du plugin roadmap (#229) : le moteur renomme alors leurs options
     roadmap@<source>.<champ> (#227). On garde celle du compte, que l'app met à jour elle-même,
@@ -758,6 +775,7 @@ def diagnostiquer(dossier, plugins="lire", home=None, avec_outils=True, gere=Non
         lignes += [l for l in [regles_du_projet(principal)] if l]
         lignes.append(design_system(principal))
         lignes += plugins_et_skills(requis, plugins, home, requis["projet"]["skills"], facultatif=True)
+        lignes += [l for l in [python_intercepte(plugins, shutil.which if avec_outils else None)] if l]
         lignes.append(sec_default(home, gere))
         lignes.append(nom_utilisateur(home))
         return {"dossier": principal, "lignes": lignes,
@@ -775,6 +793,7 @@ def diagnostiquer(dossier, plugins="lire", home=None, avec_outils=True, gere=Non
     lignes += [l for l in [regles_du_projet(main)] if l]
     lignes.append(design_system(main))
     lignes += plugins_et_skills(requis, plugins, home)
+    lignes += [l for l in [python_intercepte(plugins, shutil.which if avec_outils else None)] if l]
     lignes.append(sec_default(home, gere))
     lignes.append(nom_utilisateur(home))
     if est_ios(main):
