@@ -491,6 +491,7 @@ import {
   versionNote,
   LOCAL_UPDATE_REQUEST,
   localAppVersion,
+  STORE_MARKETS,
   updateLocalOutcome,
   waitNote,
   type WaitNote,
@@ -3048,7 +3049,8 @@ async function loadSessionVersion($: EngineInterface): Promise<string> {
 
 /**
  * La version de l'app, que prendra la prochaine session, et d'où elle la tient. D'abord le magasin du compte :
- * le `manifest.json` du dossier `rpm` qui contient ce plugin dit le dossier de l'entrée roadmap. Sinon le
+ * le `manifest.json` du dossier `rpm` qui contient ce plugin dit le dossier de l'entrée roadmap, rangée sous
+ * `roadmap` ou sous le dépôt public `roadmap-plugin` (`STORE_MARKETS`, #281). Sinon le
  * catalogue local de Claude Code (#178) : l'entrée `roadmap@roadmap` de `installed_plugins.json`.
  * Ni l'un ni l'autre (`--plugin-dir`, terminal) : rien.
  */
@@ -3056,7 +3058,7 @@ async function appVersion($: EngineInterface): Promise<{ version?: string; sourc
   const rpm = $.plugin.root.replace(/\/[^/]+\/?$/, '')
   try {
     const manifest = JSON.parse(await $.fs.read(`${rpm}/manifest.json`)) as { plugins?: { id?: unknown; name?: unknown; marketplaceName?: unknown }[] }
-    const entry = (manifest.plugins ?? []).find(p => p.name === 'roadmap' && p.marketplaceName === 'roadmap')
+    const entry = (manifest.plugins ?? []).find(p => p.name === 'roadmap' && STORE_MARKETS.includes(String(p.marketplaceName)))
     if (entry && typeof entry.id === 'string') return { version: await pluginVersionAt($, `${rpm}/${entry.id}`), source: 'store' }
   } catch {
     // pas de magasin : le catalogue local

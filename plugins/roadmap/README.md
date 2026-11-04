@@ -686,6 +686,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.184.0 (2026-11-04)** : release : status et le panneau lisent le magasin du compte sous le nom du dépôt public, roadmap-plugin (#281)
 - **0.183.0 (2026-11-04)** : panneau : les étapes de journée passées avancent seules à la semaine suivante au démarrage (tous:semaine et 2semaines, a_preuve pour les coquilles qui attendent la preuve) (#277)
 - **0.182.0 (2026-11-04)** : panneau : la récurrente d'un clic (tous:jour et tous:ouvré, skill: et fiche:, ▶ bleu qui coche, redate et lance la session du jour ; pastille rose de récurrence) (#280)
 - **0.181.0 (2026-11-04)** : doctor : signale un shim python3 posé par un plugin (modern-python), qui refuse les scripts des skills (#279)

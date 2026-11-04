@@ -8843,6 +8843,13 @@ export const LOCAL_UPDATE_COMMANDS = ['claude plugin marketplace update roadmap'
 /** Ce que « Mettre à jour » pose dans la saisie : une demande à Claude, qui lance les deux commandes. */
 export const LOCAL_UPDATE_REQUEST = `Mets à jour le plugin roadmap : lance \`${LOCAL_UPDATE_COMMANDS[0]}\` puis \`${LOCAL_UPDATE_COMMANDS[1]}\`.`
 
+/**
+ * Les noms sous lesquels le magasin du compte range roadmap (`marketplaceName` de son `manifest.json`) : le
+ * catalogue `roadmap`, ou le dépôt public `bbr21/roadmap-plugin` d'où claude.ai le synchronise (#281, comme
+ * `STORE_MARKETS` de `tools/release.py`).
+ */
+export const STORE_MARKETS: readonly string[] = ['roadmap', 'roadmap-plugin']
+
 /** La version de `roadmap@roadmap` dans `installed_plugins.json` : l'installation de l'utilisateur, sinon la plus récente. */
 export function localAppVersion(json: string): string | undefined {
   type Entry = { scope?: unknown; version?: unknown; lastUpdated?: unknown }
