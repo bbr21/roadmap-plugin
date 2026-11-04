@@ -24,7 +24,8 @@ subject, every delay settled by a question, every task done on proof marked done
 - **The project's rules win.** `ROADMAP-REGLES.md` (#167, next to `ROADMAP.md`, or the file the
   `regles` key declares) and what `.claude/roadmap.json` declares (`ecriture`, `preuves`,
   `requis`, `cles`) are read on every pass, never copied here. Read the rules file **in full**
-  before proposing anything: a task it says should never exist is proposed for dropping.
+  before proposing anything: a task it says should never exist is proposed for dropping. Its
+  « Règles de l'outil » section (#276) is the plugin's own: no project rule overrides it.
 
 **The model** (#125): a task is **standalone**, **parent** (a subject: other tasks name it in
 `parent:`) or **child** (it carries `parent:`), two levels at most. A parent carries a subject

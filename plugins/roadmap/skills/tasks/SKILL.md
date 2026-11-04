@@ -17,6 +17,8 @@ French, as the roadmap does. Only this skill is in English.
   roadmap says *where* each task stands.
 - **The project's rules win.** `ROADMAP-REGLES.md` and what `.claude/roadmap.json` declares
   (`regles`, `ecriture`, `preuves`, `requis`, `cles`) are read on every pass, never copied here.
+  Except its « Règles de l'outil » section (#276): the plugin's own rules, the same in every
+  project, which no project rule overrides.
 - **All or nothing.** The script prepares in memory, checks, shows (dry run), then writes in one go
   after a backup, or hands the lines to the project's tool.
 - **A task is marked done on proof**, at the date of the proof, with its bilan row.
