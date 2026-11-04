@@ -6,6 +6,9 @@ C'est un mod Claude Code (module de hooks, `hooks/register.tsx`), avec sept skil
 dessine un panneau dans l'onglet Code de l'app de bureau (et dans le terminal). Il ne sert à rien
 dans Cowork ni dans le chat de claude.ai.
 
+Ce que fait le plugin sur ta machine (hooks, programmes lancés, fichiers écrits, ce qui sort de la
+machine), vérifié à chaque version : [SECURITE.md](SECURITE.md).
+
 ## Contenu
 
 **7 skills**
@@ -676,6 +679,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.176.0 (2026-11-03)** : roadmap : la page « Est-il sûr de l'installer ? » (SECURITE.md) tenue vraie par un test, et l'empreinte de chaque fichier installé (CHECKSUMS.txt) publiée avec le miroir, à chaque version (#271)
 - **0.175.0 (2026-11-03)** : maestro : plus de question d'archivage d'autres sessions dans la boîte de fin, qui cachait la bande au-dessus de la saisie ; les finies s'archivent par leur icône dans la bande (#267)
 - **0.174.0 (2026-11-03)** : panneau, maestro : une carte de session au #N faux, clos ou déjà pris est refusée, le titre se tire de la ligne écrite (nom:), et la bande comme le panneau disent le nom du titre de la session (#263)
 - **0.173.0 (2026-11-03)** : panneau : la tête de section B3 dans tous les rangements et Ma journée (marque dans la colonne des carrés, nom, compte au bout, trait de couleur dessous), les lignes ne redisent plus le jour ni la personne de leur section, ligne de l'arbre rapprochée (#265)
