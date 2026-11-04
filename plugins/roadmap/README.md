@@ -11,7 +11,7 @@ machine), vérifié à chaque version : [SECURITE.md](SECURITE.md).
 
 ## Contenu
 
-**8 skills**
+**9 skills**
 
 | Skill | Rôle |
 |---|---|
@@ -23,6 +23,7 @@ machine), vérifié à chaque version : [SECURITE.md](SECURITE.md).
 | `reglages-session` | Lit et change les réglages de session (questions par formulaire, mode ADHD, français, mode autonome) de `~/.claude/reglages-session.json`, pour le projet de la session (#102). Lancée, elle ouvre aussi le volet Réglages ; tapée seule, `/roadmap:reglages-session` l'ouvre comme `/reglages`, d'une ligne. |
 | `mockups` | Dessine les maquettes d'un choix visuel à partir du design system que déclare le projet (`design` de `.claude/roadmap.json`) : inventaire de ses tokens, composants et motifs, deux ou trois partis qui réutilisent un motif avant d'en créer un, les ajouts nommés comme des propositions au design system, puis la critique (hiérarchie, cohérence, accessibilité) et la relecture par `web-design-guidelines`. Le réglage des maquettes la fait lancer quand le projet a un design system, `frontend-design` quand il n'en a pas (#294). |
 | `maestro` | Tient une session Maestro (`/maestro`), la session mère qui lance et suit des tâches menées en parallèle, même une seule : lignes et découpage, une session par tâche, lecture de leurs comptes rendus, main donnée sur le simulateur iOS et les autres ressources uniques, ordre des fusions calculé depuis git (`scripts/etat_maestro.py`), chaque tâche suivie dans la liste d'étapes de Maestro (une étape par tâche, son état en mots), une fusion à la fois. |
+| `impact` | La carte de ce que touche une modification (#305), avant de coder et sur le diff avant de dire fini : pour chaque fichier changé, ce qui le cite par son nom ou l'importe ; pour chaque symbole changé (fonction, type, constante, clé, cas d'enum Swift), ce qui le nomme ; les tests d'abord, rangés par le nombre de changements qui les touchent. `scripts/impact.py`, lecture seule, sans dépendance ni réseau. Le brief d'une session de code la demande. |
 
 Le panneau lit `ROADMAP.md` et `ROADMAP-fait.md` (grammaire des dossiers Cowork : une ligne par
 tâche, `[axe | attend:… | ouvert:… | due:… | src:… | fiche:… | après:… | prio:… | feedback:… | tous:… | relance:…]`), relit les fichiers et
@@ -699,6 +700,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.198.0 (2026-11-04)** : impact : nouvelle skill roadmap:impact, la carte de ce que touche une modification (fichiers, symboles, tests à lire d'abord), branchée au brief de code et à la fin de chantier
 - **0.197.0 (2026-11-04)** : reglages-session : toute session cadre au départ (zéro à quatre questions en un formulaire, puis l'accord en une ligne) avant d'avancer en autonome jusqu'à la fusion
 - **0.196.0 (2026-11-04)** : panneau : une priorité oui ou non (prio:oui), un drapeau dans un carré rouge devant le titre quand l'option Priorités est allumée (éteinte par défaut), posée d'un clic dans la fiche
 - **0.195.0 (2026-11-04)** : panneau : la fiche d'une tâche ouvre ses maquettes d'un clic dans le volet navigateur (bande « Voir les maquettes »), et sa ligne Dossier lit spec: à la racine du projet

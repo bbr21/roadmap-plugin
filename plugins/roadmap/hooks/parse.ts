@@ -5293,6 +5293,14 @@ export const FOLDER_MARK = 'Le dossier du projet'
 const FOLDER_MAX = 20
 
 /** Les règles et les cartes d'un dossier (#301), à sa racine : l'app ne charge d'elle-même que `CLAUDE.md`. */
+/**
+ * La carte d'impact d'une session de code (#305) : ce que cite chaque fichier et chaque symbole
+ * qu'elle change, par la skill `roadmap:impact` (un grep systématique : les oublis de #298 et de
+ * Splitmybill #245 n'étaient pas des appels de fonctions, `docs/plans/spike-carte-impact/`).
+ */
+const IMPACT_LINE =
+  "- Sa carte d'impact : avant ta première édition, lance la skill `roadmap:impact` sur les fichiers et les symboles que tu comptes changer ; elle dit les tests et le code qui les citent. Chaque test qu'elle nomme se lance ou se met à jour dans ton changement, et un symbole changé qu'aucun test ne nomme en reçoit un, rouge d'abord."
+
 const FOLDER_RULES = ['CLAUDE.md', 'AGENTS.md'] as const
 const FOLDER_MAPS = ['INDEX.md', 'docs/README.md', 'README.md'] as const
 
@@ -5329,6 +5337,7 @@ export function folderContext(o: { source: Source; found: BriefFound; entries?: 
     ...(maps.length > 0 ? [`- Sa carte : ${maps.join(', ')} (lis-la d'abord : elle dit où trouver chaque chose).`] : []),
     `- Sa roadmap : \`${source.dir}/ROADMAP.md\`, les tâches closes dans \`${source.dir}/ROADMAP-fait.md\`.`,
     ...(dirs.length > 0 ? [`- Sa structure : ${structure}`] : []),
+    ...(code ? [IMPACT_LINE] : []),
     "Dans ton premier compte rendu, juste après ta phrase d'état, une ligne « Lu : … » cite ce que tu as lu de ce bloc, de ta ligne et de l'arbre (règles, carte, fiche, chaîne) : c'est la preuve que ton contexte est chargé.",
   ]
 }
@@ -5386,7 +5395,7 @@ const CODE_METHOD: readonly string[] = [
   '- Un bug, un test en échec, un comportement inattendu : `superpowers:systematic-debugging` avant tout correctif.',
   '- Un écran ou une vue SwiftUI créé ou modifié : `swiftui-pro` sur les fichiers touchés, avant de dire fini.',
   '- Un choix visuel (écran, vue, panneau, composant, mise en page, graphique) : 2 ou 3 maquettes, sur le design system du projet (ou en proposant d\'en poser un), que je choisis avant de coder (règle « Maquettes avant un choix visuel »).',
-  '- Avant de dire la task finie et de cocher sa ligne : `superpowers:verification-before-completion`.',
+  '- Avant de dire la task finie et de cocher sa ligne : `roadmap:impact` relancée sur tout ton diff (chaque test qu\'elle nomme passe), puis `superpowers:verification-before-completion`.',
   '- `superpowers:brainstorming` seulement si je suis là pour répondre : il pose des questions.',
   'Une retouche de doc ou d\'une ligne s\'en passe.',
 ]

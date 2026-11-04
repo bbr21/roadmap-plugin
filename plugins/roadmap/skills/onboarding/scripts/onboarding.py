@@ -350,7 +350,8 @@ def variables(r, aujourdhui=None):
     # Finir un chantier
     etapes = []
     cmds_tests = ["`node scripts/check.mjs`"] + ["`%s`" % t["commande"] for t in tests if t.get("commande")]
-    etapes.append("Tests : %s." % ", ".join(cmds_tests))
+    etapes.append("Tests : %s ; avant eux, la carte d'impact (`roadmap:impact`) sur tout le diff de la branche : "
+                  "chaque test qu'elle nomme passe, et un symbole changé sans test en a reçu un (#305)." % ", ".join(cmds_tests))
     fusion = ("Fusion sur `main`, en le disant%s : `git -C %s pull --ff-only`, dans le worktree `git rebase main`, "
               "puis `git -C %s merge --ff-only <branche>`%s." % (
                   " (chaque push déploie)" if mode == "push" else "", dossier, dossier,
