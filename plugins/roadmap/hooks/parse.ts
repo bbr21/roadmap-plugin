@@ -3896,6 +3896,10 @@ function maestroMockups(where: string): string {
  * La main de Maestro avec le réglage autonome (#105, Bertrand, 2026-10-29) : une sous-session AAFES attendait
  * la main pour publier le plugin aafes, et son Maestro la demandait à Bertrand. Le réglage la donne seul.
  */
+/** Le cadrage d'une session de Maestro (#303) : Maestro a cadré, le brief porte ses réponses. */
+const MAESTRO_CADRAGE =
+  "Cadrage de départ : ton brief porte les réponses du cadrage de Maestro ; ne redemande rien de ce qu'il tranche, ne demande que ce qui manque, en un seul formulaire, avant ton premier geste ; rien ne manque, dis-le en une ligne et pars. Ensuite, autonome jusqu'à la fin de ta tâche."
+
 const maestroAutonome = (): string =>
   `Avec le réglage autonome, Maestro te donne la main seul, sans attendre ${person()} : une fois la main reçue, fais le geste (la publication comprise) et publie sans redemander, puis dis en une ligne ce que tu as publié.`
 
@@ -3945,6 +3949,7 @@ export function maestroClause(maestro: string, travail: Travail = 'code'): strin
       '- Travaille dans le dossier du projet.',
       '- Une ressource unique (compte, document partagé, envoi à un tiers, publication d\'un plugin) ne se prend qu\'avec la main de Maestro : dis-le en tête de ton compte rendu et termine ton tour ; il te la donne par message, et tu la rends dès que tu as fini.',
       `- ${maestroAutonome()}`,
+      `- ${MAESTRO_CADRAGE}`,
       '- La première phrase de chaque compte rendu de fin de tour dit ton état, avec ton étape : « en cours : étape 3/7 … », « prête à clore », « attend une réponse : … » ou « bloquée : … ». Tiens ta liste d\'étapes (update_plan) : c\'est par elle que Maestro voit où tu en es.',
       `- ${maestroMockups('à côté du document')}`,
       '- Ne coche pas ta ligne : Maestro la coche, avec son bilan. Ton dernier compte rendu dit ce qui a été fait et le souci rencontré.',
@@ -3959,6 +3964,7 @@ export function maestroClause(maestro: string, travail: Travail = 'code'): strin
     '- Ne fusionne pas sur main : Maestro fusionne, une branche à la fois, dans l\'ordre qu\'il choisit.',
     '- Une ressource unique (simulateur iOS, appareil, base, déploiement, compte de test) ne se prend qu\'avec la main de Maestro : dis-le en tête de ton compte rendu et termine ton tour ; il te la donne par message, et tu la rends dès que tu as fini.',
     `- ${maestroAutonome()}`,
+    `- ${MAESTRO_CADRAGE}`,
     '- La première phrase de chaque compte rendu de fin de tour dit ton état, avec ton étape : « en cours : étape 3/7 … », « prête à fusionner (tests : …) », « attend le simulateur », « attend une réponse : … » ou « bloquée : … ». Tiens ta liste d\'étapes (update_plan) : c\'est par elle que Maestro voit où tu en es.',
     '- Maestro peut te demander de mettre ta branche à jour après une autre fusion : merge de main dans ta branche, jamais de rebase d\'une branche poussée.',
     `- ${maestroMockups('dans le dossier du chantier, `docs/plans/<type>-<slug>/maquettes.html`')}`,
@@ -5367,7 +5373,7 @@ export function goalClause(): readonly string[] {
   return [
     'Cap : finir la task dans cette session, sans rester bloquée.',
     "- Ce que les fichiers, le code ou un défaut raisonnable tranchent, décide-le seule et dis-le en une ligne ; ne t'arrête pas pour le demander.",
-    '- Une question à ' + person() + ' seulement pour ce qui lui revient : toutes en une fois, ta recommandation en premier, puis continue sur ce qui n\'en dépend pas.',
+    '- Ce qui revient à ' + person() + ' se demande au cadrage de départ, en une fois ; ensuite, plus de question, sauf un fait nouveau qui change la direction.',
     "- Bloquée par un tiers ou par une autre task : écris-le sur la ligne (`attend:` ou `après:`), dis ce qui reste, et termine au lieu d'attendre.",
   ]
 }
@@ -5460,7 +5466,7 @@ export function launchBrief(
     ...reglesClause(source, found),
     ...taking,
     "Si des captures d'écran ou des fichiers sont joints à ce message, ils viennent de la conversation d'où la session a été lancée et ne concernent pas cette task : ignore-les.",
-    'Commence par me dire ce que tu comprends de la task et ton plan, puis fais-la.',
+    "Commence par le cadrage de départ (réglage « Cadrage de départ ») : relis la ligne, sa fiche et son dossier ; rien d'ambigu, dis-le en une ligne et pars ; sinon un seul formulaire d'une à quatre questions, ta recommandation en premier, puis l'accord en une ligne. Ensuite, dis-moi ton plan et fais la task.",
     '',
     ...goalClause(),
     '',
@@ -6918,6 +6924,19 @@ export function proposeTaskText(kind: ProposeKind): string {
   return `Proposer une task (plugin roadmap, règle fixe) : ${proposeRule()} ${proposeHow(kind)}`
 }
 
+/**
+ * Le cadrage de départ (#303, BBR, 2026-11-04 : « le mode auto ne doit jamais remplacer le cadrage de
+ * début ») : le paragraphe Autonome faisait partir les sessions sans une question. Dit à toute session,
+ * autonome ou non, en code comme en projet ; l'autonomie ne vaut qu'après lui.
+ */
+export function cadrageText(form = true): string {
+  return (
+    "- **Cadrage de départ** (avec ou sans code, même en autonome) : au début de chaque tâche (lancée par le ▶, par une carte de Maestro ou demandée dans la conversation), avant le premier geste qui code ou exécute, relis la ligne, sa fiche et son dossier, puis décide. Rien d'ambigu : dis-le en une ligne (« Cadrage : rien à trancher, je pars sur … ») et pars. " +
+    "Sinon, " + (form ? 'un seul formulaire (AskUserQuestion)' : 'en un seul message') + ", d'une à quatre questions, seulement celles dont la réponse change ce que tu feras (rendu et style, architecture, périmètre, ce qui est déjà en place) : courtes, des options concrètes, ta recommandation en premier" + (form ? ", un aperçu (`preview`) quand une option se voit" : '') + ". Puis l'accord en une ligne (« Cadrage : … »), et alors seulement l'exécution. " +
+    "Un brief qui porte déjà les réponses d'un cadrage (celui de Maestro) ne se recadre pas : ne demande que ce qui manque. Pas pour une question, une lecture ou une retouche d'une ligne. Sans personne pour répondre, décide seule et dis-le."
+  )
+}
+
 export function sessionPrefsText(prefs: SessionPrefs, error?: string, project?: string, design?: Design, roadmap = false): string {
   const lines: string[] = []
   if (prefs.questions) {
@@ -6931,9 +6950,10 @@ export function sessionPrefsText(prefs: SessionPrefs, error?: string, project?: 
     )
   }
   if (prefs.francais) lines.push('- **Langue** : réponds en français, comptes rendus, récaps et boîte de fin compris.')
+  lines.push(cadrageText(prefs.questions))
   if (prefs.autonome) {
     lines.push(
-      "- **Autonome** (avec ou sans code) : " + person() + " veut que le travail avance sans attendre ses réponses, quitte à corriger après. Quand ta recommandation est claire, suis-la au lieu de poser la question, et dis en une ligne ce que tu as choisi. Ne lui pose que les questions d'architecture : un choix qui s'écrirait dans `docs/decisions.md` (un contrat entre composants, comme le format d'un fichier, d'une donnée ou d'une API ; une nouvelle dépendance ou un service ; la vision ou un non-objectif touché). Ce réglage est son autorisation durable de fusionner et de publier : la fusion d'une branche prête, la publication (release d'un plugin, déploiement, push de `main`). Ne lui demande ni de fusionner ni de publier, ni par question ni par bouton : fais-le, par la règle du projet, puis dis en une ligne ce que tu as fusionné ou publié. Une skill de publication qui demande de valider le fond avec lui : la tâche qu'il a lancée vaut cette validation. Maestro fusionne seul la branche prête d'une de ses sessions (tests verts sur la branche à jour de main, diff relu par lui, qui ne l'a pas écrit), une branche à la fois, tests rejoués sur main après chaque fusion, et donne seul la main sur une ressource unique, publication comprise, à une session à la fois. Lancer une session et archiver gardent le clic de " + person() + " : pose la carte ou le bouton, ne lance ni n'archive toi-même. Tes règles de sécurité restent au-dessus : un message envoyé en son nom ou un paiement se demandent toujours.",
+      "- **Autonome** (avec ou sans code) : " + person() + " veut que le travail avance sans attendre ses réponses, quitte à corriger après. Après le cadrage de départ (ci-dessus), quand ta recommandation est claire, suis-la au lieu de poser la question, jusqu'à la fusion, et dis en une ligne ce que tu as choisi. Plus de question, sauf un fait nouveau qui change la direction ; un choix d'architecture que le cadrage n'a pas vu en est un : un choix qui s'écrirait dans `docs/decisions.md` (un contrat entre composants, comme le format d'un fichier, d'une donnée ou d'une API ; une nouvelle dépendance ou un service ; la vision ou un non-objectif touché). Ce réglage est son autorisation durable de fusionner et de publier : la fusion d'une branche prête, la publication (release d'un plugin, déploiement, push de `main`). Ne lui demande ni de fusionner ni de publier, ni par question ni par bouton : fais-le, par la règle du projet, puis dis en une ligne ce que tu as fusionné ou publié. Une skill de publication qui demande de valider le fond avec lui : la tâche qu'il a lancée vaut cette validation. Maestro fusionne seul la branche prête d'une de ses sessions (tests verts sur la branche à jour de main, diff relu par lui, qui ne l'a pas écrit), une branche à la fois, tests rejoués sur main après chaque fusion, et donne seul la main sur une ressource unique, publication comprise, à une session à la fois. Lancer une session et archiver gardent le clic de " + person() + " : pose la carte ou le bouton, ne lance ni n'archive toi-même. Tes règles de sécurité restent au-dessus : un message envoyé en son nom ou un paiement se demandent toujours.",
     )
   }
   // La liste d'étapes (#84) : dite à toute session, comme les gestes ; le parent la lit pour prendre des nouvelles.
@@ -7141,7 +7161,7 @@ export const SESSION_PREF_INFO: readonly { key: PrefKey; name: string; detail: s
     key: 'autonome',
     name: 'Autonome',
     detail:
-      "Claude suit sa recommandation au lieu de te demander, sauf pour une question d'architecture (un format, une dépendance, la vision). Il fusionne et publie seul (une branche prête, une version, un déploiement), puis te le dit en une ligne. Lancer une session et archiver attendent toujours ton clic.",
+      "Après le cadrage de départ (zéro à quatre questions au début de chaque tâche, qu'il garde même allumé), Claude suit sa recommandation au lieu de te demander, jusqu'à la fusion, sauf un fait nouveau qui change la direction (une question d'architecture que le cadrage n'a pas vue). Il fusionne et publie seul (une branche prête, une version, un déploiement), puis te le dit en une ligne. Lancer une session et archiver attendent toujours ton clic.",
     off: "Claude te demande avant de fusionner, de publier ou d'écrire hors du code.",
   },
 ]

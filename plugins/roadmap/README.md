@@ -531,9 +531,15 @@ remplaçant le précédent (#119) :
   chaque message de Bertrand (hook `prompt.submit` depuis #116). Éteint, rien ne bride la longueur
   des réponses, celles de Maestro comprises (#128) ;
 - `francais` : réponses en français ;
-- `autonome` (#77, #105, avec ou sans code, éteint par défaut) : Claude suit sa
-  recommandation au lieu de poser la question, sauf pour une question d'architecture, c'est-à-dire
-  un choix qui s'écrirait dans `docs/decisions.md`. Le réglage est l'autorisation durable de
+- le cadrage de départ (#303, dit à toute session, pas un réglage) : au début de chaque tâche, avant
+  le premier geste qui code ou exécute, la session relit la ligne, sa fiche et son dossier ; rien
+  d'ambigu, elle le dit en une ligne et part ; sinon un seul formulaire d'une à quatre questions
+  (rendu et style, architecture, périmètre, ce qui est en place), puis l'accord en une ligne. Un
+  brief de Maestro qui porte déjà le cadrage ne se recadre pas : la session ne demande que ce qui manque ;
+- `autonome` (#77, #105, avec ou sans code, éteint par défaut) : après le cadrage de départ
+  (#303, ci-dessous), Claude suit sa recommandation au lieu de poser la question, jusqu'à la
+  fusion, sauf un fait nouveau qui change la direction, comme une question d'architecture que le
+  cadrage n'a pas vue, c'est-à-dire un choix qui s'écrirait dans `docs/decisions.md`. Le réglage est l'autorisation durable de
   fusionner et de publier (release d'un plugin, déploiement, push de `main`) : aucune session ne
   demande « je fusionne ? » ni « je publie ? », elle le fait puis le dit en une ligne. Un Maestro ou
   Maestro fusionne seul la branche prête d'une de ses sessions (tests verts, à jour de `main`,
@@ -693,6 +699,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.197.0 (2026-11-04)** : reglages-session : toute session cadre au départ (zéro à quatre questions en un formulaire, puis l'accord en une ligne) avant d'avancer en autonome jusqu'à la fusion
 - **0.196.0 (2026-11-04)** : panneau : une priorité oui ou non (prio:oui), un drapeau dans un carré rouge devant le titre quand l'option Priorités est allumée (éteinte par défaut), posée d'un clic dans la fiche
 - **0.195.0 (2026-11-04)** : panneau : la fiche d'une tâche ouvre ses maquettes d'un clic dans le volet navigateur (bande « Voir les maquettes »), et sa ligne Dossier lit spec: à la racine du projet
 - **0.194.0 (2026-11-04)** : maestro : le brief d'une session lancée donne le dossier du projet (règles, carte, structure), sa place dans la chaîne et demande une ligne « Lu : » au premier compte rendu

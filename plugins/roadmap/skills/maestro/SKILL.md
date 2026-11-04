@@ -55,7 +55,10 @@ rule at the end of a turn that executed (below).
      (§ 2); `user_asked` if the person said « fais-le ».
   4. **Execute nothing in Maestro** (above), even when it looks faster.
   The `autonome` setting does not skip the framing of a new request: it skips the questions during
-  execution, and the sub-session is the one that executes. Case of 2026-11-02 (Adbricks Cowork):
+  execution, and the sub-session is the one that executes. The brief carries the framing's answers
+  in its detailed part (a « Cadrage : » paragraph, one line per answer), so the sub-session does
+  not frame a second time: its own starting framing (#303, the « Cadrage de départ » rule injected
+  in every session) asks only what is still missing, and says in one line when nothing is. Case of 2026-11-02 (Adbricks Cowork):
   Maestro searched « najeu » only, asked one question mixed with the launch menu, then connected
   the client itself in the browser and through the MCP, with no sub-session.
 
@@ -110,7 +113,8 @@ to it.
     no line when none is known;
   - `Fini quand : …`: what done means, tests included (under Maestro: the branch pushed, ready to
     merge);
-  - then `---`, then the detailed brief (the line to reread, the context, the Maestro clause).
+  - then `---`, then the detailed brief (the line to reread, the context, the framing's answers
+    in a `Cadrage :` paragraph when Maestro framed the request, the Maestro clause).
 - **The title comes from the written line** (#263): reread the line after writing it and take its
   `id:` and its `nom:` from the file, never a number foreseen before writing (Adbricks Cowork,
   2026-11-03: « #420 · Récap Slack à Martial » while #420 was the Meta renaming and the recap had
