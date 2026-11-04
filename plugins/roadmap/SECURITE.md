@@ -1,6 +1,6 @@
 # Est-il sûr de l'installer ?
 
-Version décrite : roadmap 0.179.0
+Version décrite : roadmap 0.180.0
 Un plugin de Claude Code fait tourner du code sur ta machine, donc la question se pose. Certains plugins
 malveillants ont l'air inoffensifs quand on les installe, puis téléchargent et lancent autre chose plus
 tard. Cette page dit tout ce que fait roadmap. Un test vérifie à chaque version qu'elle dit vrai, et tu
@@ -102,6 +102,7 @@ le moteur saute les hooks).
 | l'état du panneau, dans le stockage du plugin que tient l'app | `hooks/register.tsx` | en continu |
 | les vignettes des pièces jointes, dans un dossier privé de `$TMPDIR` | `hooks/register.tsx` | quand une fiche montre une image |
 | `~/.claude/reglages-session.json` | `hooks/reglages.tsx` | quand tu changes un réglage de session dans le volet Réglages |
+| `.claude/roadmap.json` du projet, sa clé `mission` seule | `hooks/reglages.tsx` | quand tu changes « Mission de la fiche » dans la section « Ce projet » du volet Réglages |
 | `~/.claude/locks/heavy-tests/` | `scripts/one-at-a-time.sh` | autour d'une suite de tests lourde |
 | la roadmap du projet, après une copie de sauvegarde à côté d'elle | `skills/audit/scripts/audit.py` | quand tu valides un audit, ou une écriture de la skill tasks, qui passe par lui |
 | les fichiers que pose l'onboarding dans le projet (`CLAUDE.md`, `docs/`, `roadmap/`, `scripts/`, `.claude/roadmap.json`…) | `skills/onboarding/scripts/onboarding.py` | quand tu lances l'onboarding et valides son plan |

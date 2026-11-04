@@ -438,6 +438,10 @@ def reglages_projet(main):
     ranger = cfg.get("ranger_par")
     if ranger is not None and ranger not in cles:
         soucis.append("ranger_par « %s » non déclarée dans cles, ignorée" % ranger)
+    # #278 : le cadre Mission de la fiche, en phrase (défaut) ou en puces.
+    mission = cfg.get("mission")
+    if mission is not None and mission not in ("phrase", "puces"):
+        soucis.append("mission « %s » inconnue (phrase ou puces), le panneau montre la phrase" % mission)
     rangement = cfg.get("rangement")
     if rangement is not None and not (isinstance(rangement, dict) and isinstance(rangement.get("skill"), str) and rangement["skill"]):
         soucis.append("rangement sans skill, ignoré : l'archivage ne l'attend pas")

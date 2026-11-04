@@ -12,7 +12,9 @@ import {
   ownOptions,
   projectKeyOf,
   sessionPrefsView,
+  setProjectMission,
   setSessionPref,
+  type MissionStyle,
   type PrefKey,
 } from './parse'
 
@@ -157,6 +159,36 @@ function writePref($: EngineInterface, key: PrefKey, value: boolean, project: Se
   return writing
 }
 
+/**
+ * Le projet de la session, quand sa roadmap est déclarée par un `.claude/roadmap.json` (#278) : son nom, le
+ * chemin du fichier, ses réglages lus, et de quoi redessiner le panneau après une écriture.
+ */
+export type SettingsProject = { name: string; path: string; mission: MissionStyle; changed?: () => Promise<unknown> }
+
+/** Ce qu'a donné la dernière écriture de `.claude/roadmap.json` quand elle a échoué ; vide sinon. */
+let projectNote = ''
+
+/** Un clic sur un réglage du projet (#278) : le fichier relu, `mission` réécrite, les autres clés gardées. */
+function writeMission($: EngineInterface, project: SettingsProject, value: MissionStyle): Promise<void> {
+  writing = writing.then(async () => {
+    try {
+      await $.fs.write(project.path, setProjectMission(await $.fs.read(project.path), value))
+      projectNote = ''
+      await project.changed?.()
+    } catch (err) {
+      projectNote = `Rien d'écrit : ${err instanceof Error ? err.message : String(err)}`
+    }
+    await update($, prefsStampAtom, v => v + 1)
+  })
+  return writing
+}
+
+/** Les choix du rendu de la mission (#278), dans l'ordre du volet. */
+const MISSION_CHOICES: readonly { value: MissionStyle; label: string }[] = [
+  { value: 'phrase', label: 'Phrase' },
+  { value: 'puces', label: 'Puces' },
+]
+
 /** Le dernier refus d'une option du panneau, par champ. */
 const optionNotes = new Map<string, string>()
 
@@ -270,7 +302,7 @@ const OPTIONS_SCOPE = 'partout · tout de suite'
  * son contrôle (On | Off, une liste ou un champ). Le ⓘ ouvre l'explication sous la ligne, une seule à
  * la fois : plus rien au survol (#91), qu'un écran tactile ne montre pas.
  */
-export async function drawSettings($: EngineInterface, e: RenderInput<'Pane'>, palette: Palette): Promise<RenderElement> {
+export async function drawSettings($: EngineInterface, e: RenderInput<'Pane'>, palette: Palette, project?: SettingsProject): Promise<RenderElement> {
   const resolved = $.ui.resolve(e)
   const { Box, Text, Button } = resolved
   // L'application mobile ne dessine pas encore de choix ni de champ (sa table n'a ni Select ni
@@ -292,8 +324,8 @@ export async function drawSettings($: EngineInterface, e: RenderInput<'Pane'>, p
   } catch (err) {
     readError = err instanceof Error ? err.message : String(err)
   }
-  const project = await sessionProject($)
-  const view = sessionPrefsView(text, project.key, project.home)
+  const session = await sessionProject($)
+  const view = sessionPrefsView(text, session.key, session.home)
   const error = readError ?? view.error
 
   /** On | Off côte à côte : le choix actif en bouton principal ; un clic sur lui n'écrit rien. */
@@ -372,16 +404,16 @@ export async function drawSettings($: EngineInterface, e: RenderInput<'Pane'>, p
 
   // Hors projet, un clic écrit les clés du haut : les valeurs de départ des projets jamais réglés.
   // Un changement revient au message suivant de chaque session ouverte (#119), sans attendre la suivante.
-  const sessionScope = project.name === undefined ? 'hors projet · au prochain message' : `ce projet (${project.name}) · au prochain message`
+  const sessionScope = session.name === undefined ? 'hors projet · au prochain message' : `ce projet (${session.name}) · au prochain message`
   const sessionWhen =
-    project.name === undefined
+    session.name === undefined
       ? 'au prochain message, dans chaque session hors projet et des projets jamais réglés'
-      : `au prochain message, dans chaque session de ce projet (${project.name})`
+      : `au prochain message, dans chaque session de ce projet (${session.name})`
 
   const prefRow = (key: PrefKey) => {
     const info = SESSION_PREF_INFO.find(i => i.key === key)!
     const value = view.rows.find(r => r.key === key)?.value ?? DEFAULT_SESSION_PREFS[key]
-    return line(`pref:${key}`, `pref-row:${key}`, info.name, onOff(`pref:${key}`, value, to => void writePref($, key, to, project)), {
+    return line(`pref:${key}`, `pref-row:${key}`, info.name, onOff(`pref:${key}`, value, to => void writePref($, key, to, session)), {
       text: info.detail,
       off: info.off,
       meta: `Par défaut : ${DEFAULT_SESSION_PREFS[key] ? 'On' : 'Off'} · Prend effet : ${sessionWhen}`,
@@ -437,6 +469,31 @@ export async function drawSettings($: EngineInterface, e: RenderInput<'Pane'>, p
     )
   }
 
+  /**
+   * La section « Ce projet » (#278, maquette choisie par BBR) : Phrase | Puces comme On | Off, le choix actif en
+   * bouton principal ; un clic sur lui n'écrit rien. Sa portée dit le fichier qu'elle écrit.
+   */
+  const projectSection = (p: SettingsProject) => {
+    const choice = (
+      <Box flexDirection="row" gap={SPACE.tight} flexShrink={0}>
+        {MISSION_CHOICES.map(c =>
+          c.value === p.mission ? (
+            <Button key={`project:mission:${c.value}`} variant="primary" label={c.label} onPress={() => undefined} />
+          ) : (
+            <Button key={`project:mission:${c.value}`} plain dimColor label={c.label} onPress={() => void writeMission($, p, c.value)} />
+          ),
+        )}
+      </Box>
+    )
+    return section('project', 'Ce projet', `${p.name} · tout de suite · .claude/roadmap.json`, [
+      line('project:mission', 'project-row:mission', 'Mission de la fiche', choice, {
+        text: "Le cadre Mission de la fiche de tâche. Phrase : le libellé entier, coupé quand il est long. Puces : le premier segment du libellé (jusqu'au premier « ; ») en mission, chaque segment suivant en puce, la date de sa parenthèse finale à droite.",
+        meta: `Par défaut : Phrase · Prend effet : tout de suite, dans ce projet · Écrit dans ${p.path} (clé mission), à committer si le projet est un dépôt git`,
+      }),
+      projectNote !== '' && <Box key="project-note" paddingX={SPACE.indent}>{caption(projectNote, palette.lateOn)}</Box>,
+    ])
+  }
+
   const sections: RenderElement[] = []
   for (const s of SETTINGS_SECTIONS) {
     if (s.prefs) {
@@ -459,6 +516,8 @@ export async function drawSettings($: EngineInterface, e: RenderInput<'Pane'>, p
           sections.length === 0,
         ),
       )
+      // #278 : juste après « Claude et toi », les réglages de `.claude/roadmap.json` du projet.
+      if (project) sections.push(projectSection(project))
       continue
     }
     // Une section sans aucune de ses options listées ne se dessine pas.

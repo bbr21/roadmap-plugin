@@ -74,7 +74,7 @@ import {
   type Palette,
 } from './icons'
 import { MIX, RADIUS, SIZE, SPACE, TEXT } from './tokens'
-import { SETTINGS_PANE, drawSettings, openSettings, prefsFile, redrawSettings, sessionProject, watchSettings } from './reglages'
+import { SETTINGS_PANE, drawSettings, openSettings, prefsFile, redrawSettings, sessionProject, watchSettings, type SettingsProject } from './reglages'
 import {
   CLASSIC_SKIPS_OFF,
   declaredAccount,
@@ -140,6 +140,9 @@ import {
   chainOf,
   ficheCards,
   missionCut,
+  missionBullets,
+  missionShown as missionVisible,
+  MISSION_FOLD,
   finCard,
   codeKeptWhole,
   foldCell,
@@ -1626,6 +1629,18 @@ async function localSource($: EngineInterface): Promise<Source | undefined> {
   } catch {
     return undefined
   }
+}
+
+/**
+ * Les réglages du projet que le volet Réglages change (#278) : seulement quand sa roadmap est déclarée par
+ * un `.claude/roadmap.json`, celui que lit le panneau. Une écriture redessine le panneau.
+ */
+async function settingsProject($: EngineInterface): Promise<SettingsProject | undefined> {
+  const source = await localSource($)
+  if (!source?.root) return undefined
+  const path = `${source.root}/.claude/roadmap.json`
+  if (!(await $.fs.exists(path).catch(() => false))) return undefined
+  return { name: source.name, path, mission: projectSettings(source).mission, changed: () => update($, stampAtom, v => v + 1) }
 }
 
 /**
@@ -5512,7 +5527,7 @@ export const register: Register = (on, options) => {
     return result
   })
 
-  on('ui.render', { component: 'Pane', requestId: SETTINGS_PANE }, async ($, e) => drawSettings($, e, await paletteOf($)))
+  on('ui.render', { component: 'Pane', requestId: SETTINGS_PANE }, async ($, e) => drawSettings($, e, await paletteOf($), await settingsProject($)))
 }
 
 /** Le dessin du panneau : la vue d'ensemble, le détail d'une tâche, ou ce qui manque. */
@@ -7081,8 +7096,11 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     const storedChanges = current.id ? changesOf(await $.store.get(changesKey(ficheSource.name, current.id)).catch(() => undefined)) : undefined
     // Le morceau « livré : … » de la note d'une close va dans la carte Fin (#150) ; le reste de la note reste.
     const noteShown = current.done ? livreOfNote(current.note).rest : current.note
+    // #278 : un projet en `mission: puces` montre le libellé un fait par puce (maquette A de Caroline) ;
+    // un libellé sans « ; » qui coupe reste une phrase.
+    const bulleted = !frame.recap && projectSettings(ficheSource).mission === 'puces' ? missionBullets(frame.text) : undefined
     // Sans récap, une ligne longue tient en trois lignes, le reste derrière « Tout voir » (#146, maquette B).
-    const cut = frame.recap ? undefined : missionCut(frame.text)
+    const cut = frame.recap || bulleted ? undefined : missionCut(frame.text)
     const missionShown = missionOpen === current.key
     // Sur le bureau, la coupe se fait en hauteur sous un fondu (#205) ; au terminal, en signes (#146).
     const faded = cut?.cut === true && graphic && Client !== undefined && Svg !== undefined
@@ -7200,6 +7218,28 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
         {foldArrow(id, up, bg, onPress)}
       </Box>
     )
+    // La mission en puces (#278, maquette A, choix de BBR) : la mission en gras, puis un fait par puce, sa date
+    // à droite en gris ; au-delà de six, les cinq dernières, « N plus anciennes » au-dessus les ouvre.
+    const missionList = (b: NonNullable<ReturnType<typeof missionBullets>>) => {
+      const shown = missionVisible(b.items, missionShown)
+      const start = b.items.length - shown.items.length
+      const foldable = b.items.length > MISSION_FOLD.over
+      return (
+        <Box key="mission-bullets" flexDirection="column" gap={SPACE.tight}>
+          <Text weight="semibold" wrap="wrap">{b.mission}</Text>
+          {!editing && foldable && moreLink('mission-line', missionShown ? 'Replier' : `${shown.hidden} plus anciennes`, toggleMission)}
+          {shown.items.map((item, i) => (
+            <Box key={`mission-bullet:${start + i}`} flexDirection="row" gap={SPACE.row}>
+              <Text color={palette.text2}>•</Text>
+              <Box flexGrow={1} flexShrink={1} minWidth={0}>
+                <Text wrap="wrap">{item.text}</Text>
+              </Box>
+              {item.date && <Text size="caption" color={palette.text3}>{item.date}</Text>}
+            </Box>
+          ))}
+        </Box>
+      )
+    }
     // Le filet au-dessus de chaque ligne d'une carte (#199, maquette A), comme dans la carte Fin (#183).
     const rule = ruleIcon(palette.border, fullWidth((e.props as { bodyColumns?: number }).bodyColumns ?? 48))
     const ruleAbove = Svg ? <Svg source={rule} alt="séparateur" height={1} /> : null
@@ -8489,7 +8529,9 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
             <Text size="caption" weight="medium" color={labelSpec && editBad(labelSpec) ? palette.lateOn : palette.text2}>Mission</Text>
             {labelSpec
               ? editInput(labelSpec)
-              : faded && !missionShown
+              : bulleted
+                ? missionList(bulleted)
+                : faded && !missionShown
                 ? fadeClip('mission-line', <Text wrap="wrap">{frame.text}</Text>, palette.note, toggleMission)
                 : <Text wrap="wrap">{cut?.cut && !missionShown && !faded ? cut.text : frame.text}</Text>}
             {labelSpec && editBad(labelSpec) && <Text size="caption" color={palette.lateOn} wrap="wrap">{editNote}</Text>}
@@ -8499,7 +8541,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
               (frame.recap || (cut?.cut && !faded)) &&
               moreLink('mission-line', missionShown ? 'Replier' : frame.recap ? 'La ligne de la roadmap' : 'Tout voir', toggleMission)}
             {!editing && frame.recap && missionShown && <Text size="caption" wrap="wrap">{current.label}</Text>}
-            {!editing && noteShown && (cut ? !cut.cut || missionShown : missionShown) && linked('note', noteShown, { color: palette.text2 })}
+            {!editing && noteShown && (bulleted || (cut ? !cut.cut || missionShown : missionShown)) && linked('note', noteShown, { color: palette.text2 })}
           </Box>
         </Box>
         {finBox()}

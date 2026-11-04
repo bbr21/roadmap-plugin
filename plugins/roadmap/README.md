@@ -679,6 +679,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.180.0 (2026-11-04)** : panneau : la mission de la fiche en puces ou en phrase, au choix du projet (réglage mission dans roadmap.json et le volet Réglages) (#278)
 - **0.179.0 (2026-11-03)** : tasks, maestro : la skill tasks ouvre une ligne quand qui: est exigé, le rapprochement pèse les mots rares (noms propres, codes), et Maestro est averti quand il écrit ROADMAP.md à la main (#255)
 - **0.178.0 (2026-11-03)** : panneau : les filtres de temps rangés comme la liste, Ma journée (le jour, toute l'équipe, récurrentes à part), Demain neuf, Cette semaine, En retard et À relancer par sujet (#268)
 - **0.177.0 (2026-11-03)** : panneau, maestro : la carte « Ce qui a changé » dans la fiche (#269), les lignes de la liste gardent leur place au dépli et la tête de section respire sous son trait (#266), l'encart « Derniers travaux » à l'ouverture de Maestro (#270)

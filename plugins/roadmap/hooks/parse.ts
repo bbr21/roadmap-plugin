@@ -102,6 +102,8 @@ export type Source = {
   preuves?: string[] | string
   /** `publier` (#191) : le libellé de l'étape ajoutée après « Fusionner » (`true` : « Publier ») ; sans lui, pas d'étape. */
   publier?: string
+  /** `mission` (#278) : `puces` montre le cadre Mission de la fiche un fait par puce ; sans, la phrase. */
+  mission?: MissionStyle
 }
 
 /** `ecriture` de `.claude/roadmap.json` (#158) : sans elle, les skills du plugin écrivent elles-mêmes. */
@@ -150,6 +152,8 @@ export type ProjectSettings = {
   preuves?: string[] | string
   /** `publier` (#191), résolu par `parseProjectConfig`. */
   publier?: string
+  /** `mission` (#278) : le rendu du cadre Mission de la fiche ; `phrase` par défaut. */
+  mission: MissionStyle
 }
 
 /** Les champs exigés d'un ancien `mode: "projet"`, et de l'onboarding sans code : `parent:` et `après:` renvoient à des numéros. */
@@ -184,6 +188,7 @@ export function projectSettings(source: Source): ProjectSettings {
     ...(source.ecriture ? { ecriture: source.ecriture } : {}),
     ...(source.preuves ? { preuves: source.preuves } : {}),
     ...(source.publier ? { publier: source.publier } : {}),
+    mission: source.mission ?? 'phrase',
   }
 }
 
@@ -1353,6 +1358,92 @@ export function missionCut(label: string): { text: string; cut: boolean } {
   const head = label.slice(0, 160)
   const word = label.charAt(160) === ' ' ? head : head.replace(/\s+\S*$/, '')
   return { text: `${(word || head).replace(/[\s,;:—-]+$/, '')}…`, cut: true }
+}
+
+/** Le rendu du cadre Mission (#278) : `phrase`, le libellé entier ou coupé (défaut) ; `puces`, un fait par puce. */
+export type MissionStyle = 'phrase' | 'puces'
+const MISSION_STYLES: readonly MissionStyle[] = ['phrase', 'puces']
+
+/** Un fait de la mission en puces (#278) : son texte, et la date de sa parenthèse finale s'il en a une. */
+export type MissionBullet = { text: string; date?: string }
+
+/** Les « ; » qui ne coupent pas : ceux d'une parenthèse, de crochets, de guillemets ou de code (#278). */
+const MISSION_OPEN: Record<string, string> = { '(': ')', '[': ']', '«': '»', '“': '”' }
+const MISSION_TOGGLE = new Set(['"', '`'])
+
+function missionSegments(label: string): string[] {
+  const parts: string[] = []
+  const stack: string[] = []
+  let quote = ''
+  let from = 0
+  for (let i = 0; i < label.length; i++) {
+    const ch = label[i]!
+    if (quote !== '') {
+      if (ch === quote) quote = ''
+    } else if (MISSION_TOGGLE.has(ch)) quote = ch
+    else if (MISSION_OPEN[ch]) stack.push(MISSION_OPEN[ch]!)
+    else if (stack.length > 0 && ch === stack[stack.length - 1]) stack.pop()
+    else if (ch === ';' && stack.length === 0) {
+      parts.push(label.slice(from, i))
+      from = i + 1
+    }
+  }
+  parts.push(label.slice(from))
+  return parts.map(p => p.trim()).filter(p => p !== '')
+}
+
+/** Une date de fin de parenthèse (#278) : `28/10`, `02/11/2026`, `2026-11-02`, précédée ou non d'un jour abrégé. */
+const MISSION_DATE_RE = /^(?:\p{L}{2,4}\.?\s+)?(?:\d{1,2}\/\d{1,2}(?:\/\d{2,4})?|\d{4}-\d{2}-\d{2})$/u
+
+/** Un fait : sa parenthèse finale datée tombe du texte, sa date seule reste (#278, maquette A). */
+function missionBullet(segment: string): MissionBullet {
+  const cap = (t: string) => t.charAt(0).toLocaleUpperCase('fr') + t.slice(1)
+  if (segment.endsWith(')')) {
+    let depth = 0
+    for (let i = segment.length - 1; i >= 0; i--) {
+      if (segment[i] === ')') depth++
+      else if (segment[i] === '(' && --depth === 0) {
+        const last = segment.slice(i + 1, -1).split(',').pop()!.trim()
+        const text = segment.slice(0, i).trim()
+        if (MISSION_DATE_RE.test(last) && text !== '') return { text: cap(text), date: last }
+        break
+      }
+    }
+  }
+  return { text: cap(segment) }
+}
+
+/**
+ * La mission en puces (#278, maquette de Caroline) : le premier segment du libellé, jusqu'au premier « ; »
+ * qui coupe, est la mission ; chaque suivant, un fait. Moins de deux segments : rien, la phrase reste.
+ */
+export function missionBullets(label: string): { mission: string; items: MissionBullet[] } | undefined {
+  const segments = missionSegments(label)
+  if (segments.length < 2) return undefined
+  return { mission: segments[0]!, items: segments.slice(1).map(missionBullet) }
+}
+
+/** Au-delà de `over` puces, seules les `shown` dernières se voient (#278) : les derniers faits disent l'état. */
+export const MISSION_FOLD = { over: 6, shown: 5 } as const
+
+/** Les puces montrées, et combien de plus anciennes restent derrière leur lien (#278). */
+export function missionShown<T>(items: T[], open: boolean): { hidden: number; items: T[] } {
+  if (open || items.length <= MISSION_FOLD.over) return { hidden: 0, items }
+  const hidden = items.length - MISSION_FOLD.shown
+  return { hidden, items: items.slice(hidden) }
+}
+
+/**
+ * `mission` réécrit dans le texte d'un `.claude/roadmap.json` (#278, volet Réglages) : les autres clés
+ * gardées, deux espaces ; `phrase`, le défaut, retire la clé. Lève sur un JSON illisible ou pas objet.
+ */
+export function setProjectMission(text: string, value: MissionStyle): string {
+  const data: unknown = JSON.parse(text)
+  if (typeof data !== 'object' || data === null || Array.isArray(data)) throw new Error("ce n'est pas un objet JSON")
+  const next: Record<string, unknown> = { ...(data as Record<string, unknown>) }
+  if (value === 'phrase') delete next.mission
+  else next.mission = value
+  return `${JSON.stringify(next, null, 2)}\n`
 }
 
 /**
@@ -5172,7 +5263,7 @@ export function checkBrief(
 export function parseProjectConfig(text: string, base: string, defaults: { name: string; me: string[] }): Source | undefined {
   const data: unknown = JSON.parse(text)
   if (typeof data !== 'object' || data === null) return undefined
-  const c = data as { name?: unknown; dir?: unknown; me?: unknown; subjects?: unknown; mode?: unknown; requis?: unknown; requis_sur?: unknown; cles?: unknown; rangement?: unknown; relance?: unknown; design?: unknown; cles_visibles?: unknown; ranger_par?: unknown; regles?: unknown; ecriture?: unknown; preuves?: unknown; publier?: unknown }
+  const c = data as { name?: unknown; dir?: unknown; me?: unknown; subjects?: unknown; mode?: unknown; requis?: unknown; requis_sur?: unknown; cles?: unknown; rangement?: unknown; relance?: unknown; design?: unknown; cles_visibles?: unknown; ranger_par?: unknown; regles?: unknown; ecriture?: unknown; preuves?: unknown; publier?: unknown; mission?: unknown }
   const dir = typeof c.dir === 'string' && c.dir !== '' ? (c.dir.startsWith('/') ? c.dir : `${base}/${c.dir}`) : base
   const strings = (v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : undefined)
   // Une valeur inconnue ou d'un mauvais type prend le défaut : le panneau s'ouvre quand même. `auto`
@@ -5228,6 +5319,8 @@ export function parseProjectConfig(text: string, base: string, defaults: { name:
     ...(ecriture ? { ecriture } : {}),
     ...(preuves ? { preuves } : {}),
     ...(publier ? { publier } : {}),
+    // #278 : une valeur inconnue vaut le défaut, la phrase ; le doctor la signale.
+    ...(MISSION_STYLES.includes(c.mission as MissionStyle) && c.mission !== 'phrase' ? { mission: c.mission as MissionStyle } : {}),
   }
 }
 

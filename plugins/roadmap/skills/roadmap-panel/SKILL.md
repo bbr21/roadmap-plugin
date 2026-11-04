@@ -92,6 +92,11 @@ How sessions work and the roadmap's settings (#76, #176), optional too:
 - `relance`: the number of days without news from an awaited third party beyond which its task is
   « À relancer » (integer; default 14). The count starts from `relance:` on the line, otherwise
   from `ouvert:`.
+- `mission` (#278): how the task card shows its label. `phrase` (default) shows it whole, cut
+  when long; `puces` shows the first segment (up to the first `;` outside brackets or quotes) in
+  bold, then one bullet per following segment, the date of its final parenthesis on the right;
+  beyond 6 bullets, the last 5. Declare `puces` when labels chain dated facts with `;`. The
+  « Ce projet » section of the Réglages pane switches it.
 
 Tidying up before archiving (#101), optional: a project that tidies its memory away at the end of
 a subject (AAFES, skill `aafes-memory`) says so, and the end of turn only proposes archiving the
