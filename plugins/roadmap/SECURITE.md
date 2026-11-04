@@ -1,6 +1,6 @@
 # Est-il sûr de l'installer ?
 
-Version décrite : roadmap 0.182.0
+Version décrite : roadmap 0.183.0
 Un plugin de Claude Code fait tourner du code sur ta machine, donc la question se pose. Certains plugins
 malveillants ont l'air inoffensifs quand on les installe, puis téléchargent et lancent autre chose plus
 tard. Cette page dit tout ce que fait roadmap. Un test vérifie à chaque version qu'elle dit vrai, et tu
@@ -37,7 +37,7 @@ réserve (`session.*`, `turn.*`, `skill.prompt`) ; le plugin a alors un secours 
 
 | Événement | Ce qu'il fait |
 |---|---|
-| `session.start` | ouvre le panneau Roadmap dans un projet qui a une roadmap, enregistre les commandes `/roadmap` et `/reglages` |
+| `session.start` | ouvre le panneau Roadmap dans un projet qui a une roadmap, enregistre les commandes `/roadmap` et `/reglages` ; une fois par jour, reporte à la semaine suivante les étapes de journée passées de la roadmap (#277) |
 | `session.end`, `session.compact`, `session.measure` | garde l'état du panneau à la fin, à la compaction et au calcul de l'usage |
 | `prompt.submit` | à ton message : rouvre le panneau, ajoute en contexte les rappels de la roadmap (ligne d'une idée, règles de session) |
 | `turn.start`, `turn.complete` | début et fin d'un tour : note les fichiers changés, rappelle d'inscrire le travail dans la roadmap |
@@ -51,7 +51,7 @@ réserve (`session.*`, `turn.*`, `skill.prompt`) ; le plugin a alors un secours 
 
 | Programme | Lancé par | Quand et pourquoi |
 |---|---|---|
-| `git` | `hooks/register.tsx`, `hooks/reglages.tsx`, `scripts/one-at-a-time.sh`, `skills/doctor/scripts/doctor.py`, `skills/maestro/scripts/etat_maestro.py`, `skills/onboarding/scripts/onboarding.py` | lire l'état du dépôt du projet (branche, commits, fichiers changés, copies de travail) ; et, quand tu coches, rouvres ou édites une tâche dans le panneau, committer et pousser les seuls fichiers de la roadmap vers le dépôt distant du projet |
+| `git` | `hooks/register.tsx`, `hooks/reglages.tsx`, `scripts/one-at-a-time.sh`, `skills/doctor/scripts/doctor.py`, `skills/maestro/scripts/etat_maestro.py`, `skills/onboarding/scripts/onboarding.py` | lire l'état du dépôt du projet (branche, commits, fichiers changés, copies de travail) ; et, quand tu coches, rouvres ou édites une tâche dans le panneau, ou au report du jour des étapes de journée (#277), committer et pousser les seuls fichiers de la roadmap vers le dépôt distant du projet |
 | `curl` | `hooks/register.tsx` | quand tu cliques sur Rafraîchir dans le panneau : lire la dernière version publiée du plugin, pour te dire qu'une mise à jour existe |
 | `gh` | `hooks/register.tsx`, `skills/doctor/scripts/doctor.py`, `skills/onboarding/scripts/onboarding.py` | la même lecture de version quand `curl` manque ; dans le doctor, vérifier que GitHub CLI est connecté (voir plus bas) ; à l'onboarding, lire les pull requests du projet pour en tirer la roadmap |
 | `python3` | `hooks/register.tsx` | cocher une tâche dans un dossier Cowork qui déclare son propre outil d'écriture (voir plus bas), isolé par `-I` |
@@ -98,7 +98,7 @@ le moteur saute les hooks).
 
 | Fichier | Écrit par | Quand |
 |---|---|---|
-| la roadmap du projet : `ROADMAP.md`, `ROADMAP-fait.md`, `ROADMAP-bilans.csv` | `hooks/register.tsx` | quand tu coches, rouvres ou édites une tâche dans le panneau |
+| la roadmap du projet : `ROADMAP.md`, `ROADMAP-fait.md`, `ROADMAP-bilans.csv` | `hooks/register.tsx` | quand tu coches, rouvres ou édites une tâche dans le panneau ; et `ROADMAP.md` seul, une fois par jour au démarrage d'une session, pour reporter à la semaine suivante les étapes de journée passées (`due:` seul, #277) |
 | l'état du panneau, dans le stockage du plugin que tient l'app | `hooks/register.tsx` | en continu |
 | les vignettes des pièces jointes, dans un dossier privé de `$TMPDIR` | `hooks/register.tsx` | quand une fiche montre une image |
 | `~/.claude/reglages-session.json` | `hooks/reglages.tsx` | quand tu changes un réglage de session dans le volet Réglages |

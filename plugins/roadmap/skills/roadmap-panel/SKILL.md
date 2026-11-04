@@ -97,6 +97,11 @@ How sessions work and the roadmap's settings (#76, #176), optional too:
   bold, then one bullet per following segment, the date of its final parenthesis on the right;
   beyond 6 bullets, the last 5. Declare `puces` when labels chain dated facts with `;`. The
   « Ce projet » section of the Réglages pane switches it.
+- `a_preuve` (#277): a list of `ref:` of shells whose steps wait for proof
+  (`["s-prod-du-lundi"]`). Otherwise, once a day at session start, a step (`parent:` set)
+  `tous:semaine` or `tous:2semaines` whose `due:` has passed moves to the same weekday of the next
+  period, with no occurrence closed and no lateness; a step under one of these shells, at any
+  depth, stays at its date and late until it is done. A line with `cycle:` never moves.
 
 Tidying up before archiving (#101), optional: a project that tidies its memory away at the end of
 a subject (AAFES, skill `aafes-memory`) says so, and the end of turn only proposes archiving the

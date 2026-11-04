@@ -110,6 +110,8 @@ export type Source = {
   publier?: string
   /** `mission` (#278) : `puces` montre le cadre Mission de la fiche un fait par puce ; sans, la phrase. */
   mission?: MissionStyle
+  /** `a_preuve` (#277) : les `ref:` des coquilles dont les étapes de semaine attendent la preuve, sans report. */
+  aPreuve?: string[]
 }
 
 /** `ecriture` de `.claude/roadmap.json` (#158) : sans elle, les skills du plugin écrivent elles-mêmes. */
@@ -160,6 +162,8 @@ export type ProjectSettings = {
   publier?: string
   /** `mission` (#278) : le rendu du cadre Mission de la fiche ; `phrase` par défaut. */
   mission: MissionStyle
+  /** `a_preuve` (#277) : les coquilles dont les étapes ne passent pas seules à la semaine suivante ; aucune par défaut. */
+  aPreuve: string[]
 }
 
 /** Les champs exigés d'un ancien `mode: "projet"`, et de l'onboarding sans code : `parent:` et `après:` renvoient à des numéros. */
@@ -195,6 +199,7 @@ export function projectSettings(source: Source): ProjectSettings {
     ...(source.preuves ? { preuves: source.preuves } : {}),
     ...(source.publier ? { publier: source.publier } : {}),
     mission: source.mission ?? 'phrase',
+    aPreuve: source.aPreuve ?? [],
   }
 }
 
@@ -3401,7 +3406,7 @@ export function addedOpenTasks(before: string | undefined, after: string): Task[
  */
 export function writesRoadmap(command: string, tool?: string): boolean {
   // #244 : aussi les scripts du plugin qui l'écrivent sans la nommer, ses questions en attente, et
-  // l'outil que le projet déclare par `ecriture` (`patch.py` chez Caroline).
+  // l'outil que le projet déclare par `ecriture`, quand il en déclare un.
   if (/roadmap\.md|cowork\.py|tasks\.py|audit\.py|roadmap-questions\.json/i.test(command)) return true
   const name = tool?.split('/').pop()?.trim()
   return name !== undefined && name !== '' && command.includes(name)
@@ -5345,7 +5350,7 @@ export function routineBrief(
 export function parseProjectConfig(text: string, base: string, defaults: { name: string; me: string[] }): Source | undefined {
   const data: unknown = JSON.parse(text)
   if (typeof data !== 'object' || data === null) return undefined
-  const c = data as { name?: unknown; dir?: unknown; me?: unknown; subjects?: unknown; mode?: unknown; requis?: unknown; requis_sur?: unknown; cles?: unknown; rangement?: unknown; relance?: unknown; design?: unknown; cles_visibles?: unknown; ranger_par?: unknown; regles?: unknown; ecriture?: unknown; preuves?: unknown; publier?: unknown; mission?: unknown }
+  const c = data as { name?: unknown; dir?: unknown; me?: unknown; subjects?: unknown; mode?: unknown; requis?: unknown; requis_sur?: unknown; cles?: unknown; rangement?: unknown; relance?: unknown; design?: unknown; cles_visibles?: unknown; ranger_par?: unknown; regles?: unknown; ecriture?: unknown; preuves?: unknown; publier?: unknown; mission?: unknown; a_preuve?: unknown }
   const dir = typeof c.dir === 'string' && c.dir !== '' ? (c.dir.startsWith('/') ? c.dir : `${base}/${c.dir}`) : base
   const strings = (v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : undefined)
   // Une valeur inconnue ou d'un mauvais type prend le défaut : le panneau s'ouvre quand même. `auto`
@@ -5380,6 +5385,8 @@ export function parseProjectConfig(text: string, base: string, defaults: { name:
   const section = typeof c.preuves === 'string' && c.preuves.startsWith('#') ? path(c.preuves.slice(1)) : undefined
   const preuves = section ? `#${section}` : lieux.length > 0 ? lieux : undefined
   // #191 : `true` vaut « Publier » ; une chaîne d'une ligne nomme l'étape (« Déployer le VPS »).
+  // #277 : des `ref:` de coquilles ; une valeur qui n'est pas une chaîne d'une ligne s'ignore.
+  const aPreuve = Array.isArray(c.a_preuve) ? c.a_preuve.map(path).filter((x): x is string => x !== undefined) : []
   const publier = c.publier === true ? 'Publier' : typeof c.publier === 'string' && !/[\r\n`]/.test(c.publier) && c.publier.trim() !== '' ? clip(c.publier.trim(), 40) : undefined
   return {
     name: typeof c.name === 'string' && c.name !== '' ? c.name : defaults.name,
@@ -5401,6 +5408,7 @@ export function parseProjectConfig(text: string, base: string, defaults: { name:
     ...(ecriture ? { ecriture } : {}),
     ...(preuves ? { preuves } : {}),
     ...(publier ? { publier } : {}),
+    ...(aPreuve.length > 0 ? { aPreuve } : {}),
     // #278 : une valeur inconnue vaut le défaut, la phrase ; le doctor la signale.
     ...(MISSION_STYLES.includes(c.mission as MissionStyle) && c.mission !== 'phrase' ? { mission: c.mission as MissionStyle } : {}),
   }
@@ -5594,6 +5602,62 @@ export function nextDue(due: string, tous: Recurrence, today: string): string {
   const daily = tous === 'jour' || tous === 'ouvré'
   while (daily ? due <= today && addPeriods(due, tous, k) <= today : addPeriods(due, tous, k) < today) k++
   return addPeriods(due, tous, k)
+}
+
+/** Une étape reportée par `rollDaySteps` (#277) : sa ligne réécrite, son ancien et son nouveau `due:`. */
+export type DayStepMove = { id?: string; label: string; from: string; to: string; line: string }
+
+/** Les rythmes en jours qu'un jour passé reporte (#277) : `mois` et plus, une échéance manquée reste un retard. */
+const ROLLED: readonly Recurrence[] = ['semaine', '2semaines']
+
+/**
+ * Les étapes de journée qui passent (#277) : une étape ouverte (`parent:` posé) `tous:semaine` ou
+ * `tous:2semaines` dont le `due:` est avant aujourd'hui avance au premier `due + période × k` qui
+ * n'est pas avant aujourd'hui, sans occurrence close ni retard. Restent : celle du jour (jusqu'à la
+ * fin du jour, heure locale), une ligne à `cycle:`, et l'étape dont une coquille de sa lignée porte
+ * un `ref:` de `aPreuve` (ses étapes attendent la preuve). Seul le `due:` change dans la ligne.
+ */
+export function rollDaySteps(open: string, today: string, aPreuve: readonly string[]): { open: string; moves: DayStepMove[] } {
+  const lines = open.split('\n')
+  const fieldsOf = (raw: string) => {
+    const m = LINE_RE.exec(raw.replace(/\r$/, ''))
+    if (!m) return undefined
+    const all = (m[3] ?? '').split('|').map(f => f.trim())
+    const get = (k: string) => all.find(f => f.startsWith(`${k}:`))?.slice(k.length + 1).trim()
+    return { open: m[1] === ' ', label: (m[2] ?? '').trim(), get }
+  }
+  const byId = new Map<string, { parent?: string; ref?: string }>()
+  for (const raw of lines) {
+    const f = fieldsOf(raw)
+    const id = f?.get('id')
+    if (f && id) byId.set(id, { parent: f.get('parent'), ref: f.get('ref') })
+  }
+  // Une coquille « à preuve » dans la lignée ; une boucle de parents s'arrête où elle revient.
+  const proven = (parent: string | undefined) => {
+    const seen = new Set<string>()
+    for (let at = parent; at !== undefined && at !== '-' && !seen.has(at); at = byId.get(at)?.parent) {
+      seen.add(at)
+      const ref = byId.get(at)?.ref
+      if (ref !== undefined && aPreuve.includes(ref)) return true
+    }
+    return false
+  }
+  const moves: DayStepMove[] = []
+  const out = lines.map(raw => {
+    const f = fieldsOf(raw)
+    if (!f || !f.open) return raw
+    const tous = f.get('tous') as Recurrence | undefined
+    const due = f.get('due')
+    const parent = f.get('parent')
+    if (tous === undefined || !ROLLED.includes(tous) || due === undefined || !/^\d{4}-\d{2}-\d{2}$/.test(due)) return raw
+    if (parent === undefined || parent === '-' || f.get('cycle') !== undefined || due >= today || proven(parent)) return raw
+    const to = nextDue(due, tous, today)
+    const line = raw.replace(/(\|\s*|\[)due:\s*\d{4}-\d{2}-\d{2}/, `$1due:${to}`)
+    const id = f.get('id')
+    moves.push({ ...(id !== undefined ? { id } : {}), label: f.label, from: due, to, line: line.replace(/\r$/, '') })
+    return line
+  })
+  return moves.length === 0 ? { open, moves } : { open: out.join('\n'), moves }
 }
 
 export function closeInTexts(
@@ -6081,6 +6145,23 @@ export function editRoute(o: { ecriture?: Ecriture; cowork: boolean; task: { id?
       })
     return `Modifie ${taskRef(o.task)} par la skill tasks : ${changes.join(', ')}`
   })
+}
+
+/**
+ * Le report des étapes de journée (#277), au démarrage, sans geste de personne : le panneau écrit
+ * lui-même, sinon Claude, pour `cowork.py` comme pour l'outil d'`ecriture` (aucun script du projet
+ * ne se lance seul ; Claude passe par ses permissions). Le texte ne porte que des numéros et des
+ * dates, jamais un libellé de la roadmap ; sans étape numérotée, rien à demander (`undefined`).
+ */
+export function rollRoute(o: { ecriture?: Ecriture; cowork: boolean; moves: readonly DayStepMove[] }): WriteRoute | undefined {
+  if (!o.cowork && o.ecriture === undefined) return { via: 'panel' }
+  const moves = o.moves.filter(m => m.id !== undefined && /^\d+$/.test(m.id) && /^\d{4}-\d{2}-\d{2}$/.test(m.to))
+  if (moves.length === 0) return undefined
+  return {
+    via: 'claude',
+    text: `Reporte par la skill tasks les étapes de journée passées : ${moves.map(m => `#${m.id} au ${m.to}`).join(', ')}`,
+    note: o.ecriture ? entrustedNote(o.ecriture) : 'Confié à Claude : ce projet écrit sa roadmap par cowork.py',
+  }
 }
 
 /** Un champ de la fiche en édition (#161) : son nom, sa carte, la valeur de la ligne, les valeurs admises (un menu). */

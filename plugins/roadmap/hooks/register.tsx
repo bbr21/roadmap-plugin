@@ -187,6 +187,8 @@ import {
   closeRoute,
   isRoutine,
   nextDue,
+  rollDaySteps,
+  rollRoute,
   routineBrief,
   routineDue,
   checkRoute,
@@ -4416,6 +4418,56 @@ async function saveEdit(
   return push.exitCode === 0 ? done : { ...done, note: `Enregistrée et committée, mais pas poussée : ${lastLine(push.stderr || push.stdout)}` }
 }
 
+/** La clé du store qui garde le jour du dernier report des étapes de journée d'une roadmap (#277). */
+function dayStepsKey(source: Source): string {
+  return `day-steps:${source.dir}`
+}
+
+/**
+ * Les étapes de journée qui passent (#277), une fois par jour au démarrage d'une session : le jour
+ * se pose au store avant d'écrire (deux sessions ouvertes ensemble n'écrivent qu'une fois), puis les
+ * étapes passées avancent par la voie du projet : Claude pour `cowork.py` et l'outil d'`ecriture`
+ * (aucun script du projet ne se lance sans geste), sinon le panneau, avec les gardes de `saveEdit` (sur main, rien en
+ * attente, à jour de l'amont), committé seul et poussé. Rien n'est demandé ; une panne se tait.
+ */
+async function rollDayStepsOnStart($: EngineInterface, source: Source): Promise<void> {
+  const today = todayOf(await $.clock.now())
+  const key = dayStepsKey(source)
+  if ((await $.store.get(key).catch(() => undefined)) === today) return
+  const { open } = files(source)
+  const aPreuve = projectSettings(source).aPreuve
+  const first = rollDaySteps((await readOr($, open)) ?? '', today, aPreuve)
+  await $.store.set(key, today)
+  if (first.moves.length === 0) return
+  const cowork = await coworkPyFor($, source)
+  // Aucun script du projet ne se lance seul au démarrage : cowork.py et `ecriture` passent par Claude.
+  const route = rollRoute({ ecriture: source.ecriture, cowork, moves: first.moves })
+  if (route === undefined) return
+  if (route.via === 'claude') return queueSubmit($, route.text)
+  const git = (...args: string[]) => $.process.run(['git', '-C', source.dir, ...args], { timeoutMs: 60_000 })
+  const head = await git('rev-parse', '--abbrev-ref', 'HEAD')
+  const inGit = head.exitCode === 0
+  let upstream = false
+  if (inGit) {
+    const branch = head.stdout.trim()
+    if (branch !== 'main' && branch !== 'master') return
+    if ((await git('status', '--porcelain', '--', 'ROADMAP.md')).stdout.trim() !== '') return
+    upstream = (await git('rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}')).exitCode === 0
+    if (upstream && (await git('pull', '--ff-only', '-q')).exitCode !== 0) return
+  }
+  // Relue après le pull : une autre machine a pu reporter ou cocher entre-temps.
+  const out = rollDaySteps(await $.fs.read(open), today, aPreuve)
+  if (out.moves.length === 0) return
+  await $.fs.write(open, out.open)
+  await update($, retryAtom, v => v + 1)
+  if (!inGit) return
+  const ids = out.moves.map(m => (m.id ? `#${m.id}` : clip(m.label, 30))).join(', ')
+  if ((await git('commit', '-q', '-m', `roadmap: report des étapes de journée ${ids}`, '--', 'ROADMAP.md')).exitCode !== 0) return
+  if (!upstream || (await git('push', '-q')).exitCode === 0) return
+  // Un autre clone a avancé : on se remet dessus, puis un seul nouvel essai.
+  if ((await git('pull', '--rebase', '-q')).exitCode === 0) await git('push', '-q')
+}
+
 /** Le clic sur « Enregistrer » (#161) : une écriture à la fois ; rien de changé, la fiche se referme. */
 async function confirmEdit($: EngineInterface, source: Source, task: Task, specs: readonly EditSpec[]): Promise<void> {
   if (saving) return
@@ -4941,6 +4993,8 @@ export const register: Register = (on, options) => {
       $.clock.every(TICK_MS, () => void poll($))
       void summarize($, source)
       void matchSessions($, source)
+      // #277 : les étapes de journée passées avancent, une fois par jour, sans retenir le démarrage.
+      void rollDayStepsOnStart($, source).catch(() => undefined)
       await startCapture($, source)
       // Un rechargement du module (mise à jour, mod en développement) garde le panneau dessiné, avec
       // les boutons de l'ancien module : leurs clics tombaient dans le vide (« ui_press not handled »,

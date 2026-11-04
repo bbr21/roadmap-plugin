@@ -459,6 +459,10 @@ def reglages_projet(main):
     mission = cfg.get("mission")
     if mission is not None and mission not in ("phrase", "puces"):
         soucis.append("mission « %s » inconnue (phrase ou puces), le panneau montre la phrase" % mission)
+    # #277 : les ref: des coquilles « à preuve », dont les étapes de semaine ne passent pas seules.
+    a_preuve = cfg.get("a_preuve")
+    if a_preuve is not None and not (isinstance(a_preuve, list) and all(isinstance(r, str) and r.strip() for r in a_preuve)):
+        soucis.append("a_preuve n'est pas une liste de ref: de coquilles, ignorée : toutes les étapes de semaine passent seules")
     rangement = cfg.get("rangement")
     if rangement is not None and not (isinstance(rangement, dict) and isinstance(rangement.get("skill"), str) and rangement["skill"]):
         soucis.append("rangement sans skill, ignoré : l'archivage ne l'attend pas")
