@@ -75,9 +75,14 @@ python3 "<skill folder>/scripts/tasks.py" match <project folder> --text "<action
 ```
 
 For each action: the nearby open and closed tasks (`score`: the share of the action's words they
-carry; a child also counts its parent's label), their `role` and a `cas_probable`
-(`couverte_ou_a_etoffer`, `deja_faite`, `nouvelle`). The score is a lead: read the labels, and put
-each action in **exactly one case**:
+carry, each word weighed by its rarity in the roadmap; a child also counts its parent's label), the
+words they share (`communs`), their `role` and a `cas_probable` (`couverte_ou_a_etoffer`,
+`deja_faite`, `nouvelle`). A word's weight is ln(1 + N/df)², over the open and closed labels (#255):
+a name, a code or a supplier that few tasks carry weighs much more than « point », « envoyer » or
+« message », and a word no task carries weighs as a frequent one. A task covers the action from a
+score of 0.5 with at least two shared words (one, for a one-word action): a rare name alone shows
+the task, without calling the action covered. The score is a lead: read the labels, and put each
+action in **exactly one case**:
 
 | Case | What happens |
 |---|---|
@@ -154,7 +159,10 @@ Write `<scratchpad>/operations.json`:
   refused), `parent` (an `id`
   or a `key`), `section` (default « Prochain », else the first open section), `note`, `fields`.
   The id is the next free one. A child is written under its parent, after its other children, and
-  takes the required fields it lacks (`après:-` otherwise) and the parent's category keys.
+  takes the required fields it lacks (`après:-` otherwise) and the parent's category keys. When the
+  project requires `qui:` (a code project, #255), a new line gets the person, the first `me` name
+  of `.claude/roadmap.json`; `fields.qui` only takes one of the `me` names: a new line is never
+  taken, a session takes it by hand (`qui:<branch>` and `branche:<branch>`).
 - **update**: `fields` (never `id`, `qui`, `branche`, `verrou`, `fait`); `parent` and `après` are
   allowed, and checked; a task given a `parent` takes that parent's axis. `null` removes an optional key (a `prio:` set on a child); a required key
   is never removed.

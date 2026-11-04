@@ -18,6 +18,7 @@ import csv
 import datetime
 import io
 import json
+import math
 import os
 import re
 import sys
@@ -34,8 +35,13 @@ Erreur = im.Erreur
 
 # Les sections de ROADMAP.md qui ne reçoivent pas de tâche.
 SECTIONS_FERMEES = {"Grammaire d'une ligne", "Cap"}
-# Part des mots d'une action retrouvés dans une tâche à partir de laquelle elle couvre le même sujet.
+# Part des mots d'une action retrouvés dans une tâche, pondérés par leur rareté (#255), à partir de
+# laquelle elle couvre le même sujet ; et le nombre de mots partagés qu'il y faut (un seul suffit à une
+# action d'un mot) : un nom rare seul ne fait pas d'une action neuve une tâche couverte.
 SEUIL = 0.5
+MOTS_PARTAGES_MIN = 2
+# Le poids d'un mot que la roadmap ne porte nulle part : celui d'un mot fréquent, il ne rapproche rien.
+POIDS_INCONNU = 1.0
 
 # Le contrat d'operations.json, en anglais comme la skill (#158) ; le code garde le vocabulaire de l'audit.
 OPS = {
@@ -249,7 +255,8 @@ def contexte(dossier, jour=None, perso="~/.claude/roadmap-perso.json"):
     me_projet = cfg.get("me")
     me_projet = [me_projet] if isinstance(me_projet, str) else [m for m in me_projet or [] if isinstance(m, str)]
     c.update({
-        "me": list(dict.fromkeys(list(c.get("me") or []) + me_projet)),
+        # Le nom de la roadmap d'abord (#255) : `qui:` d'une ligne neuve le prend.
+        "me": list(dict.fromkeys(me_projet + list(c.get("me") or []))),
         "prochain_id": max(ids or [0]) + 1,
         "axes": ob._axes_declares(texte_o),
         "sections": [l[3:].strip() for l in texte_o.split("\n")
@@ -262,30 +269,54 @@ def contexte(dossier, jour=None, perso="~/.claude/roadmap-perso.json"):
     return c
 
 
+def poids_des_mots(libelles):
+    """Le poids de chaque mot des libellés (#255) : sa rareté, ln(1 + N/df)², N les libellés, df ceux
+    qui le portent. Un nom propre, un code, un fournisseur pèsent lourd ; « point », « envoyer », peu."""
+    df = {}
+    for l in libelles:
+        for w in audit.mots(l):
+            df[w] = df.get(w, 0) + 1
+    n = len(libelles)
+    return {w: math.log(1 + n / c) ** 2 for w, c in df.items()}
+
+
 def rapprocher(ctx, texte, n=5):
-    """Les tâches ouvertes et closes du même sujet qu'une action, par la part de ses mots qu'elles
-    portent (celle d'un enfant compte le libellé de son parent), et le cas probable. Claude tranche."""
+    """Les tâches ouvertes et closes du même sujet qu'une action, par la part pondérée de ses mots
+    qu'elles portent (celle d'un enfant compte le libellé de son parent), les mots partagés, et le
+    cas probable. Un mot pèse sa rareté dans la roadmap (#255). Claude tranche."""
     cible = audit.mots(texte)
     par_id = {t["id"]: t for t in ctx["taches"]}
+    closes_ctx = ctx.get("closes") or []
+    poids = poids_des_mots([t["libelle"] for t in ctx["taches"]] + [t["libelle"] for t in closes_ctx])
+    total = sum(poids.get(w, POIDS_INCONNU) for w in cible)
 
-    def score(libelle):
-        return round(len(cible & audit.mots(libelle)) / len(cible), 2) if cible else 0.0
+    def mesure(libelle):
+        communs = cible & audit.mots(libelle)
+        return round(sum(poids[w] for w in communs) / total, 2) if total else 0.0, sorted(communs)
 
     ouvertes = []
     for t in ctx["taches"]:
         p = t["parent"]
         role = "enfant" if p else ("parent" if t["enfants"] else "seule")
-        s = score(t["libelle"] + " " + (par_id[p]["libelle"] if p in par_id else ""))
+        s, communs = mesure(t["libelle"] + " " + (par_id[p]["libelle"] if p in par_id else ""))
         if s > 0:
             ouvertes.append({"id": t["id"], "libelle": t["libelle"], "role": role, "parent": p, "score": s,
-                             "due": t["champs"].get("due")})
-    closes = [dict(t, score=score(t["libelle"])) for t in ctx.get("closes") or []]
-    closes = [t for t in closes if t["score"] > 0]
+                             "communs": communs, "due": t["champs"].get("due")})
+    closes = []
+    for t in closes_ctx:
+        s, communs = mesure(t["libelle"])
+        if s > 0:
+            closes.append(dict(t, score=s, communs=communs))
     for liste in (ouvertes, closes):
         liste.sort(key=lambda t: (-t["score"], int(t["id"]) if (t["id"] or "").isdigit() else 0))
-    if ouvertes and ouvertes[0]["score"] >= SEUIL:
+    assez = min(MOTS_PARTAGES_MIN, len(cible))
+
+    def couvre(liste):
+        return any(t["score"] >= SEUIL and len(t["communs"]) >= assez for t in liste)
+
+    if couvre(ouvertes):
         cas = "couverte_ou_a_etoffer"
-    elif closes and closes[0]["score"] >= SEUIL:
+    elif couvre(closes):
         cas = "deja_faite"
     else:
         cas = "nouvelle"
@@ -357,6 +388,21 @@ class _Tenue(audit._Preparation):
                 raise Erreur("%s : %s:%s hors des valeurs admises (%s)" % (quoi, k, hors[0], ", ".join(admises)))
         return val
 
+    def poser_qui(self, champs, qui, quoi):
+        """`qui:` d'une ligne neuve (#255) : la personne (`me`), donnée ou posée quand le projet l'exige ;
+        une ligne neuve n'est jamais prise, `qui:<branche>` avec `branche:` se pose à la prise."""
+        if qui is not None:
+            val = audit._propre(qui)
+            if val not in self.me:
+                raise Erreur("%s : qui ne vaut que la personne (%s) sur une ligne neuve ; une session prend sa ligne "
+                             "à la main, qui:<branche> et branche:<branche>" % (quoi, ", ".join(self.me) or "aucune déclarée"))
+            champs["qui"] = val
+        elif "qui" in self.requis:
+            if not self.me:
+                raise Erreur("%s : champ exigé qui sans valeur : déclare la personne (me) dans .claude/roadmap.json"
+                             % quoi)
+            champs["qui"] = self.me[0]
+
     def enfants_ouverts(self, t):
         return [e for e in self.ouvertes() if e is not t and _sans_parent(e) == t.id]
 
@@ -398,8 +444,10 @@ class _Tenue(audit._Preparation):
             raise Erreur("ajout : libellé vide")
         brut = dict(op.get("fields") or {})
         apres = brut.pop("après", None)
+        qui = brut.pop("qui", None)
         champs = {k: self.champ_propose(k, v, quoi, INTERDITS_AJOUT) for k, v in brut.items()}
         champs.setdefault("ouvert", self.jour)
+        self.poser_qui(champs, qui, quoi)
         p = op.get("parent")
         mere = None
         if p not in (None, "", "-"):
@@ -644,6 +692,7 @@ class _Tenue(audit._Preparation):
         for k in self.heritage + ([] if mere else ["prio"]):
             if k not in champs and t.get(k):
                 champs[k] = t.get(k)
+        self.poser_qui(champs, None, quoi)
         self.completer(champs, t, quoi)
         champs["après"] = t.id
         champs["id"] = self.numero(op.get("key"))

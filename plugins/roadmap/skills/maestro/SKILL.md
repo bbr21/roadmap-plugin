@@ -43,7 +43,12 @@ rule at the end of a turn that executed (below).
      platforms, what is already in place), until the request is clear. This form comes before the
      launch menu (« Je lance lesquelles ? ») and is never mixed with it in the same send.
   2. **Open the task's line** with the `tasks` skill, with what the framing taught, and its short
-     name in `nom:` (40 characters at most, #263).
+     name in `nom:` (40 characters at most, #263). Never by hand (#255): `tasks.py match` first, and
+     show the person the match before writing, the nearest task and why it does not cover the
+     action (its shared words, what it lacks); a covered subject gets its existing task enriched,
+     not a new line. Then `tasks.py write`, dry run, then `--apply`. A line written in `ROADMAP.md`
+     by `Write`, `Edit` or a shell command outside `tasks.py` brings back the hook's reminder in the
+     tool's result: reread that line and remove it if it doubles a task.
   3. **Propose the sub-session**: an `own_initiative` card, title `#<id> · <nom>` copied from the
      line as written (§ « The title comes from the written line »), brief
      opened by Mission, Fichiers, Fini quand, carrying the framing's answers and the Maestro clause

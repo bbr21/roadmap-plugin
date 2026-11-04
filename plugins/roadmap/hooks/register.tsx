@@ -226,6 +226,8 @@ import {
   maestroContext,
   maestroExecAction,
   maestroExecReminder,
+  handWriteReminder,
+  handWritesRoadmap,
   maestroDayContext,
   maestroIntro,
   maestroRelaunchContext,
@@ -1177,6 +1179,24 @@ function rangementNote(c: Capture | undefined, last: string | undefined, active:
 let stepList = { planned: false, tools: 0 }
 /** Les gestes d'exécution d'un tour de la personne chez Maestro (#250) : redits une fois en fin de tour. */
 let maestroExec: string[] = []
+
+/** Le rappel de la skill tasks déjà donné ce tour-ci à un Maestro qui écrit la roadmap à la main (#255). */
+let handWarned = false
+
+/**
+ * #255 : Maestro qui écrit ROADMAP.md à la main, hors de `tasks.py`, reçoit le rappel de la skill tasks
+ * dans le résultat, une fois par tour ; jamais un refus. Un sous-agent, un appel refusé ou en échec : rien.
+ */
+async function handWriteNote($: EngineInterface, e: unknown, tool: string, ran: ToolCallResult): Promise<ToolCallResult> {
+  if (handWarned || fromAgent(e) || ran.deny !== undefined || ran.isError === true || !handWritesRoadmap(tool, e)) return ran
+  try {
+    if (!(await maestroHere($))) return ran
+  } catch {
+    return ran
+  }
+  handWarned = true
+  return { ...ran, context: [...(ran.context ?? []), handWriteReminder()] }
+}
 
 /** Le rappel « Maestro n'exécute pas » (#250), une fois par tour qui a exécuté. */
 function maestroExecNote(): string | undefined {
@@ -5040,8 +5060,9 @@ export const register: Register = (on, options) => {
   })
 
   // Capture des tasks : la grammaire contrôlée à chaque écriture, le rappel en fin de tour.
-  on('tool.call', { tool: 'Edit' }, ($, e, next) => written($, () => next(e), e.file_path))
-  on('tool.call', { tool: 'Write' }, ($, e, next) => written($, () => next(e), e.file_path))
+  // #255 : chez Maestro, une ligne écrite à la main reçoit le rappel de la skill tasks.
+  on('tool.call', { tool: 'Edit' }, async ($, e, next) => handWriteNote($, e, 'Edit', await written($, () => next(e), e.file_path)))
+  on('tool.call', { tool: 'Write' }, async ($, e, next) => handWriteNote($, e, 'Write', await written($, () => next(e), e.file_path)))
   on('tool.call', { tool: 'NotebookEdit' }, ($, e, next) => written($, () => next(e), e.notebook_path))
   // La carte New task d'une sous-session remonte à son Maestro (#67).
   // Option « Lancer en bypass » : la carte qui reste ici demande le bypass (#87).
@@ -5174,7 +5195,7 @@ export const register: Register = (on, options) => {
       const stdout = (r.result as { stdout?: unknown } | undefined)?.stdout
       if (typeof stdout === 'string') reportTurn.fromTasks = reportQuestions(stdout)
     }
-    const ran = await written($, () => next(inQueue($, e)), undefined, writesRoadmap(e.command, capture?.source.ecriture?.outil), tasksOut)
+    const ran = await handWriteNote($, e, 'Bash', await written($, () => next(inQueue($, e)), undefined, writesRoadmap(e.command, capture?.source.ecriture?.outil), tasksOut))
     if (fromAgent(e) || ran.deny !== undefined || ran.isError === true) return ran
     // Une fusion sur main ou une publication (#136) : la liste d'étapes se renvoie avant la commande suivante.
     try {
@@ -5200,6 +5221,7 @@ export const register: Register = (on, options) => {
       const wake = maestro && wakeTurn(e.text)
       closingTurn = { work: false, box: '', asked: '', wake, maestro }
       maestroExec = []
+      handWarned = false
       wakeRefused = false
       if (maestro && !wake) await update($, pendingAsksAtom, () => []).catch(() => undefined)
     }

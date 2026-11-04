@@ -8398,6 +8398,39 @@ export function maestroExecReminder(actions: readonly string[]): string {
   return `Maestro n'exécute pas (skill roadmap:maestro, § 1) : ce tour a fait ${actions.join(', ')}. Arrête-toi là et propose la session fille à la place : la ligne de la tâche par la skill roadmap:tasks, puis sa carte (start_session, own_initiative, titre « #<id> · <nom> », tirés de la ligne écrite (son nom:), brief ouvert par Mission, Fichiers, Fini quand, avec ce qui est déjà fait) ; la carte refusée en mode auto, dis à ${person()} de cliquer le ▶ de la ligne dans le panneau, ou de quitter le mode auto.`
 }
 
+/**
+ * Une écriture de ROADMAP.md à la main (#255), hors des scripts du plugin : un `Write` du fichier, un `Edit`
+ * qui y ajoute une ligne (un `id:` ou une case de plus), une commande Bash qui l'écrit (redirection, `tee`,
+ * `sed -i`, un script qui ouvre un fichier en écriture). Lire, chercher, committer, `tasks.py` : rien.
+ */
+export function handWritesRoadmap(tool: string, input: unknown): boolean {
+  const args = (input && typeof input === 'object' ? input : {}) as Record<string, unknown>
+  const str = (k: string) => (typeof args[k] === 'string' ? (args[k] as string) : '')
+  const isRoadmap = (path: string) => /(^|\/)ROADMAP\.md$/i.test(path)
+  if (tool === 'Write') return isRoadmap(str('file_path'))
+  if (tool === 'Edit') {
+    if (!isRoadmap(str('file_path'))) return false
+    const ids = (s: string) => new Set([...s.matchAll(/\bid:(\d+)/g)].map(m => m[1]))
+    const boxes = (s: string) => (s.match(/^\s*- \[[ xX]\]/gm) ?? []).length
+    const before = ids(str('old_string'))
+    return [...ids(str('new_string'))].some(id => !before.has(id)) || boxes(str('new_string')) > boxes(str('old_string'))
+  }
+  if (tool !== 'Bash') return false
+  const command = str('command')
+  if (!/roadmap\.md/i.test(command) || /tasks\.py|audit\.py|cowork\.py/.test(command)) return false
+  return (
+    />>?\s*['"]?[^\s'"|;&<>]*roadmap\.md/i.test(command) ||
+    /\btee\b[^|;&]*roadmap\.md/i.test(command) ||
+    /\b(?:sed|perl)\b[^|;&]*\s-[a-zA-Z]*i\b/.test(command) ||
+    (/\b(?:python3?|node|ruby)\b/.test(command) && /open\([^)]*,\s*['"][wa]|\.write\(|writeFile|write_text/.test(command))
+  )
+}
+
+/** Le rappel quand Maestro écrit une ligne de la roadmap à la main (#255) : la skill tasks et son rapprochement. */
+export function handWriteReminder(): string {
+  return `Maestro vient d'écrire ROADMAP.md à la main, sans la skill roadmap:tasks (#255) : c'est ainsi que des doublons s'ouvrent. Une ligne neuve passe par elle : \`tasks.py match\` d'abord, puis montre à ${person()} la tâche la plus proche et pourquoi elle ne couvre pas l'action, puis \`tasks.py write\` (essai à blanc, puis --apply). Relis la ligne que tu viens d'écrire : si une tâche ouverte ou close couvrait déjà ce sujet, retire le doublon et étoffe celle-là.`
+}
+
 /** Le contexte que reçoit Claude quand Bertrand dit « Maestro ». */
 export function maestroContext(o: {
   source: Source
