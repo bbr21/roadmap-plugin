@@ -166,11 +166,12 @@ AXE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 DATE_FAIT = re.compile(r"^\d{4}-\d{2}-\d{2}( ([01]\d|2[0-3]):[0-5]\d)?$")
 AXE_DEFAUT = "dossier"
-# Les priorités en mots, vers l'échelle 1, 2, 3 du panneau.
-PRIOS = {"1": "1", "2": "2", "3": "3", "p1": "1", "p2": "2", "p3": "3",
-         "haute": "1", "high": "1", "urgent": "1", "urgente": "1", "élevée": "1",
-         "normale": "2", "moyenne": "2", "medium": "2", "normal": "2",
-         "basse": "3", "low": "3", "faible": "3"}
+# Les priorités en mots, vers la priorité oui ou non du panneau (#300) : une priorité haute devient
+# `oui` ; une autre s'efface (""), la tâche sans priorité.
+PRIOS = {"oui": "oui", "1": "oui", "2": "", "3": "", "p1": "oui", "p2": "", "p3": "",
+         "haute": "oui", "high": "oui", "urgent": "oui", "urgente": "oui", "élevée": "oui",
+         "normale": "", "moyenne": "", "medium": "", "normal": "",
+         "basse": "", "low": "", "faible": ""}
 # Les champs exigés que l'analyse sait compléter : « aucune » pour les liens, la personne pour resp.
 DEFAUTS_LIENS = {"parent": "-", "après": "-"}
 
@@ -221,6 +222,8 @@ def appliquer(tache, c, avec_defauts=True):
     for k, v in tache["champs"]:
         if v is not None and k in c.get("valeurs", {}):
             v = c["valeurs"][k].get(v, v)
+        if k == "prio" and v == "":
+            continue  # une priorité basse ou normale s'efface (#300)
         champs.append((k, v))
     presentes = {k for k, _ in champs}
     st = c.get("sous_titres") or {}
@@ -482,10 +485,13 @@ def taches_du_tableau(rangs, c):
                     continue
                 v = d
             elif role == "prio":
-                p = c.get("valeurs", {}).get("prio", {}).get(v) or PRIOS.get(v.lower())
+                p = c.get("valeurs", {}).get("prio", {}).get(v)
+                p = PRIOS.get(v.lower()) if p is None else p
                 if p is None:
                     compte[("prio", v)] = compte.get(("prio", v), 0) + 1
                     continue
+                if p == "":
+                    continue  # une priorité basse ou normale s'efface (#300)
                 v = p
             else:
                 v = valeur_propre(v)
@@ -628,7 +634,7 @@ def _grammaire(c):
     cles = "".join(" | %s:…" % k for k in c.get("cles") or {})
     return [
         "- [ ] <Verbe à l'infinitif + objet> `[axe | id:N | ouvert:AAAA-MM-JJ | due:AAAA-MM-JJ | resp:Nom | parent:N "
-        "| après:N,M | attend:… | qui:… | prio:1 | fiche:… | src:…%s]`" % cles,
+        "| après:N,M | attend:… | qui:… | prio:oui | fiche:… | src:…%s]`" % cles,
         "- [x] <Verbe à l'infinitif + objet> `[axe | id:N | ouvert:AAAA-MM-JJ | fait:AAAA-MM-JJ | src:…%s]`" % cles,
     ]
 
@@ -658,7 +664,7 @@ def _entete(texte, axes, c, jour, qui=""):
         lignes[fin_g:fin_g] = [
             "", "- **axe** (premier champ, sans clé) : %s." % ", ".join("`%s`" % a for a in axes), "",
             "Importée le %s : chaque tâche porte son `id:`, unique sur ROADMAP.md et ROADMAP-fait.md ; `prio` vaut "
-            "1, 2 ou 3 ; les clés déclarées sont dans `.claude/roadmap.json`." % jour]
+            "oui pour une tâche prioritaire ; les clés déclarées sont dans `.claude/roadmap.json`." % jour]
     else:
         manquent = [a for a in axes if "`%s`" % a not in lignes[declare]]
         if manquent:

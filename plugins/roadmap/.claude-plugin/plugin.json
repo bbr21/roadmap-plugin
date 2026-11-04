@@ -1,6 +1,6 @@
 {
   "name": "roadmap",
-  "version": "0.195.0",
+  "version": "0.196.0",
   "description": "Panneau Claude Code à côté du chat : la roadmap du projet de la session, filtrable, avec le détail d'une tâche et son lancement dans une nouvelle session",
   "author": {
     "name": "Bertrand Fargheon"
@@ -39,6 +39,12 @@
       "type": "boolean",
       "title": "Axe en pastille",
       "description": "Allumé, chaque tâche ouverte de la liste porte son axe (le département) en pastille, à droite du titre, avant l'âge. Jamais dans « En cours » (le bloc de Maestro ou le filtre), ni sous un axe choisi, ni dans un projet qui montre ses propres clés (cles_visibles). Éteint par défaut : l'axe se dit par la couleur du carré.",
+      "default": false
+    },
+    "priorities": {
+      "type": "boolean",
+      "title": "Priorités",
+      "description": "Allumé, une tâche prioritaire (prio:oui) porte un drapeau blanc dans un carré rouge juste devant son titre, et sa fiche un drapeau à gauche du crayon qui pose ou ôte la priorité d'un clic. Éteint par défaut : ni l'un ni l'autre ; la priorité reste écrite dans la ligne. Elle ne change pas l'ordre des tâches.",
       "default": false
     },
     "theme": {

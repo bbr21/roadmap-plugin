@@ -59,6 +59,8 @@ import {
   archiveIcon,
   unarchiveIcon,
   pencilIcon,
+  priorityIcon,
+  PRIORITY_PX,
   clockIcon,
   gearIcon,
   todoIcon,
@@ -496,6 +498,7 @@ import {
   relaunchSections,
   todaySections,
   isDueSoon,
+  isPriority,
   isToRelaunch,
   matchesWho,
   peopleOf,
@@ -740,7 +743,7 @@ function axisCount(tasks: Task[], axis: string): number {
 }
 
 /** Les réglages du plugin (userConfig), relus à chaque chargement du module. */
-let settings = { me: [] as string[], autoOpen: true, titleModel: 'sonnet', capture: true, theme: 'auto', launchEffort: 'high', launchBypass: false, axisPill: false, dateFormat: 'us', account: 'auto' as Account }
+let settings = { me: [] as string[], autoOpen: true, titleModel: 'sonnet', capture: true, theme: 'auto', launchEffort: 'high', launchBypass: false, axisPill: false, priorities: false, dateFormat: 'us', account: 'auto' as Account }
 
 /**
  * La palette du panneau. Le mod ne reçoit pas l'apparence de l'app : il lit le thème de Claude
@@ -4579,6 +4582,28 @@ async function confirmEdit($: EngineInterface, source: Source, task: Task, specs
 }
 
 /**
+ * Le clic sur le drapeau de la fiche (#300, F1) : pose `prio:oui`, ou retire `prio:` d'une prioritaire
+ * (`prio:1` de l'ancienne échelle comprise), par `saveEdit`, la voie d'écriture du projet ; une à la fois.
+ */
+async function togglePriority($: EngineInterface, source: Source, task: Task): Promise<void> {
+  if (saving) return
+  saving = true
+  try {
+    const out = await saveEdit($, source, task, { prio: isPriority(task) ? '' : 'oui' }).catch((err: unknown) => ({
+      error: `Enregistrement impossible : ${err instanceof Error ? err.message : String(err)}`,
+    }))
+    if (!('error' in out)) await update($, retryAtom, v => v + 1)
+    try {
+      $.ui.toast('error' in out ? out.error : out.asked ? `Demandé à Claude : ${out.asked}` : `${out.id ? `#${out.id} ` : 'Tâche '}enregistrée${out.note ? ` : ${out.note}` : ''}`)
+    } catch {
+      // pas de toast sur cette surface : la ligne redessinée le montre
+    }
+  } finally {
+    saving = false
+  }
+}
+
+/**
  * Ouvre un fichier dans le panneau Fichiers de Claude Code, à la ligne voulue. Ce panneau n'ouvre
  * que les dossiers de la session : hors de ceux-là, le fichier part dans l'app par défaut du Mac.
  */
@@ -5078,6 +5103,7 @@ export const register: Register = (on, options) => {
     launchEffort: typeof options.launchEffort === 'string' && options.launchEffort !== '' ? options.launchEffort : 'high',
     launchBypass: options.launchBypass === true,
     axisPill: typeof options.axisPill === 'boolean' ? options.axisPill : false,
+    priorities: options.priorities === true,
     dateFormat: options.dateFormat === 'fr' ? 'fr' : 'us',
     account: declaredAccount(options.account, options.classicHooks) ?? 'auto',
   }
@@ -8787,6 +8813,32 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
             true,
           )
         : undefined
+    // Le drapeau de priorité (#300, F1, choix de BBR) : à gauche du crayon, le réglage « Priorités »
+    // allumé, sur une ouverte hors édition ; posé, carré rouge et drapeau blanc ; ôté, carré gris clair.
+    const priorityOn = isPriority(current)
+    const priorityLabel = priorityOn ? 'Retirer la priorité' : 'Marquer prioritaire'
+    const pressPriority = () => void togglePriority($, source, current)
+    const priorityFlag =
+      settings.priorities && !current.done && !editing
+        ? pressable(
+            'prio-task',
+            pressPriority,
+            <Box flexDirection="row" alignItems="center">
+              {strut(SIZE.strut.row)}
+              {Svg && <Svg source={priorityIcon(priorityOn, palette, PRIORITY_PX.fiche)} alt={priorityLabel} width={PRIORITY_PX.fiche} height={PRIORITY_PX.fiche} />}
+            </Box>,
+            <Button key="prio-task" plain label={priorityLabel} onPress={pressPriority} />,
+          )
+        : undefined
+    const titleEnd =
+      priorityFlag && pencil ? (
+        <Box flexDirection="row" alignItems="center" gap={SPACE.row}>
+          {priorityFlag}
+          {pencil}
+        </Box>
+      ) : (
+        priorityFlag ?? pencil
+      )
     const openLine = () => void openFile($, current.done ? paths.done : paths.open, line)
     const labelSpec = editSpecs.find(spec => spec.field === 'label')
     const nameSpec = editSpecs.find(spec => spec.field === 'nom')
@@ -8806,7 +8858,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
             { key: 'open-line', press: openLine, hit: hit('open-line', openLine) },
             undefined,
             false,
-            pencil,
+            titleEnd,
             inSession && child
               ? undefined
               : {
@@ -9294,6 +9346,10 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     const gaugeCells = head ? pxCells(34) + 1 + pxCells(7.3 * `${head.block.done}/${head.block.total}`.length) + 1 : 0
     const dueCells = parts.due ? Math.max(AGE_CELLS, pxCells(6.5 * [...parts.due.text].length)) : AGE_CELLS
     // Jamais dans « En cours » (#177) : le bloc de Maestro ou le filtre ; le carré d'axe suffit.
+    // La priorité (#300, maquette D1) : le drapeau blanc dans son carré rouge, juste devant le titre, le
+    // réglage « Priorités » allumé, sur une ouverte ; il compte dans ce qui ne rétrécit pas.
+    const prioritized = settings.priorities && !t.done && isPriority(t)
+    const priorityCells = prioritized && Svg ? pxCells(PRIORITY_PX.row) + 1 : 0
     const department = ghost ? undefined : axisPillText(t, { enabled: settings.axisPill, axisFilter: axis, live: block !== undefined || attend === 'live', groupedByAxis: tree !== undefined && !rangerPar && (by === 'subject' || attend === 'relaunch'), clesVisibles })
     // Le département ne part pas : il compte dans ce qui ne rétrécit pas (#259, la recherche le montre).
     const departmentCells = department !== undefined && Svg ? pxCells(pillIcon({ text: department, bg: palette.sel, fg: palette.text2, weight: 600 }).width) + 1 : 0
@@ -9305,7 +9361,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
             fitRowPills({
               columns: (e.props as { bodyColumns?: number }).bodyColumns ?? 56,
               inset: 4,
-              steps: gaugeCells + dueCells + departmentCells,
+              steps: gaugeCells + dueCells + departmentCells + priorityCells,
               pills: parts.tags.map(spec => pxCells(pillIcon(spec).width)),
               mark: grouped ? 0 : markWidth,
               number: grouped ? treeNumCells + TREE_LEAD_CELLS : treeNumCells,
@@ -9317,7 +9373,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
             fitRowPills({
               columns: (e.props as { bodyColumns?: number }).bodyColumns ?? 56,
               inset: 6,
-              steps: stepsCells.columns + (block ? blockEndCells : 0),
+              steps: stepsCells.columns + (block ? blockEndCells : 0) + priorityCells,
               pills: parts.tags.map(spec => pxCells(pillIcon(spec).width)),
               mark: grouped ? 0 : markWidth,
               number: grouped ? treeNumCells + TREE_LEAD_CELLS : treeNumCells,
@@ -9404,6 +9460,14 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
             lui ; les tags viennent à droite du titre, l'échéance au bout, en texte, à la place de l'âge. */}
         {!grouped && number}
         <Box key={`lead:${t.key}`} flexDirection="row" alignItems="center" flexGrow={1} flexShrink={1} minWidth={0}>
+          {prioritized &&
+            (Svg ? (
+              <Box key={`prio:${t.key}`} flexShrink={0} paddingRight={SPACE.row}>
+                <Svg source={priorityIcon(true, palette, PRIORITY_PX.row)} alt="Prioritaire" width={PRIORITY_PX.row} height={PRIORITY_PX.row} />
+              </Box>
+            ) : (
+              <Text key={`prio:${t.key}`} color={palette.lateOn}>{'⚑ '}</Text>
+            ))}
           {/* Sur le bureau (#224, maquette C de #212), le titre est un texte : la mère en gras, une faite grise
               et barrée (#198), un titre provisoire estompé ; un bouton natif imposerait son encre, sa
               graisse et sa marge. Un bouton sans encre le couvre et ouvre la fiche. Au terminal, le bouton. */}

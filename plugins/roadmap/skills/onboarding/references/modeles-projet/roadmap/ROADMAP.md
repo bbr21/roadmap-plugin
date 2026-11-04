@@ -5,7 +5,7 @@ Les tâches de {{NOM}}, une ligne par tâche. Une tâche close part en tête de 
 ## Grammaire d'une ligne
 
 ```
-- [ ] <Verbe à l'infinitif + objet> `[axe | id:N | nom:… | ouvert:AAAA-MM-JJ | due:AAAA-MM-JJ | resp:Nom | parent:N | après:N,M | attend:… | qui:… | prio:1 | tous:mois | relance:AAAA-MM-JJ | fait:AAAA-MM-JJ | fiche:… | pj:… | src:…{{CLES_GRAMMAIRE}}]`
+- [ ] <Verbe à l'infinitif + objet> `[axe | id:N | nom:… | ouvert:AAAA-MM-JJ | due:AAAA-MM-JJ | resp:Nom | parent:N | après:N,M | attend:… | qui:… | prio:oui | tous:mois | relance:AAAA-MM-JJ | fait:AAAA-MM-JJ | fiche:… | pj:… | src:…{{CLES_GRAMMAIRE}}]`
 ```
 
 - **axe** (premier champ, sans clé) : {{AXES}}.
@@ -15,7 +15,7 @@ Les tâches de {{NOM}}, une ligne par tâche. Une tâche close part en tête de 
 - **resp** : la personne qui porte la tâche, {{QUI}} ou une autre ; un nom pour suivre, pas une assignation, jamais `-`.
 - **parent** : le numéro de sa tâche parent (`12` ou `#12`), ou `-` si elle n'en a pas. Une tâche est seule, parent (d'autres la citent) ou enfant, sur deux niveaux au plus ; un parent porte un sujet, ses enfants sont ses étapes et prennent son axe (le panneau Roadmap refuse un autre axe), et sa date est celle de son enfant ouvert le plus proche (`due:` facultatif sur lui). **après** : les numéros des tâches à faire d'abord, séparés par des virgules, ou `-` si elle n'en a aucune : entre enfants d'un même parent, ou entre parents ; le panneau Roadmap la bloque tant qu'une est ouverte, et un parent bloqué bloque ses enfants.
 - **attend** : ce qui bloque, et qui doit agir. **qui** : la session qui tient la tâche.
-- **prio** : facultatif, `1` (urgent), `2` (important) ou `3` (quand on a le temps). Lu et contrôlé, mais le panneau ne l'affiche pas et ne range pas par lui.
+- **prio** : facultatif, `oui` pour une tâche prioritaire, quelle que soit son échéance, mère, fille ou seule ; sans `prio:`, pas de priorité. Le panneau la montre par un drapeau devant le titre quand son réglage « Priorités » est allumé, et ne range pas par elle (#300).
 - **tous** : la tâche revient au calendrier, `semaine`, `2semaines`, `mois`, `trimestre` ou `an` ; `due:` dit sa prochaine occurrence. Cochée, elle se reconduit : l'occurrence part dans ROADMAP-fait sous un numéro neuf (`src:#N`), la ligne reste avec la `due:` suivante.
 - **relance** : la date de la dernière relance du tiers attendu (`attend:`) ; le panneau compte l'attente depuis elle, sinon depuis `ouvert:`.
 - **fiche** : document de contexte. **pj** : les pièces jointes, des fichiers du dossier (captures, PDF, photos) séparés par des virgules ; le panneau Roadmap les montre dans la fiche de la tâche. **src** : d'où vient la tâche (email, réunion, note).{{CLES_PUCES}}

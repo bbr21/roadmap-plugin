@@ -30,11 +30,12 @@ French, as the roadmap does. Only this skill is in English.
   lines then, not the script's as well, and never in a second message.
 
 **The model** (#125): a task is **standalone**, **parent** (a subject: short title, keys, rhythm,
-priority, no action) or **child** (a step, `parent:N`), two levels at most. `après:` links two
+no action) or **child** (a step, `parent:N`), two levels at most. `après:` links two
 siblings, or two tasks without a parent; never the child of one subject to the child of another.
 A parent's date is the date of its next open child: the panel computes it, never write it (a
-`due:` set on a parent stays the subject's final deadline). Priority goes on the parent or the
-standalone task, never on a child. Marking the last open child done closes its parent too, except
+`due:` set on a parent stays the subject's final deadline). Priority is yes or no, on any task,
+child included (#300): `prio:oui`, or no `prio:` at all; the old scale `prio:1`, `2`, `3` is no
+longer written (see « Migrating the old priorities »). Marking the last open child done closes its parent too, except
 a recurring parent (`tous:`), which stays open for the next period's steps. A child has no axis
 of its own (#190): it takes its parent's, and the roadmap check refuses a child whose axis differs
 from its parent's; a parent whose axis changes in the panel takes its open children with it.
@@ -92,7 +93,7 @@ action in **exactly one case**:
 | Already covered | nothing, except a more precise date (`reschedule`) |
 | To expand | one more child under the existing parent; a standalone task that gets a step becomes a parent |
 | Already done | nothing |
-| New | a task, with its date and priority |
+| New | a task, with its date (and `prio:oui` when it is said to be a priority) |
 | Contrary to an open task, with no reason given | a question |
 
 **Never a new task for a subject that already has one.** Two actions of the same batch on one
@@ -151,7 +152,7 @@ Write `<scratchpad>/operations.json`:
 - **questions** (#232, optional): every question of « What gets asked » below, in the audit's
   format (`ROADMAP-questions.json`, #159), so the report lists them under « T'attendent ».
   `key` (unique), `kind` (`conflict`, `undated`, `partial_proof`, `rhythm`, `reopen`, or one of
-  the audit's: `late`, `prio_on_child`, `structure`), `question` (readable on its own: the task's
+  the audit's: `late`, `structure`), `question` (readable on its own: the task's
   label in it), `options` (the recommendation first, marked « (recommandé) », each with the
   `operations` that answer it, `[]` for « change nothing »), and `task` (an open id, the `key` of
   an `add` of this batch, or a closed id for `reopen`) or, for an action with no task, `about`
@@ -167,7 +168,7 @@ Write `<scratchpad>/operations.json`:
   of `.claude/roadmap.json`; `fields.qui` only takes one of the `me` names: a new line is never
   taken, a session takes it by hand (`qui:<branch>` and `branche:<branch>`).
 - **update**: `fields` (never `id`, `qui`, `branche`, `verrou`, `fait`); `parent` and `après` are
-  allowed, and checked; a task given a `parent` takes that parent's axis. `null` removes an optional key (a `prio:` set on a child); a required key
+  allowed, and checked; a task given a `parent` takes that parent's axis. `null` removes an optional key (a `prio:`, an `attend:` lifted); a required key
   is never removed.
   `pj` (attachments, #204) is a field like the others: project file paths (screenshots, PDFs,
   photos), comma-separated, relative to the project root; copy the file into the project first.
@@ -226,7 +227,7 @@ python3 "<skill folder>/scripts/tasks.py" write <project folder> --operations <s
 
 It shows the rendered lines, then the report (step 5), and writes nothing. A refusal (« Refusé : … ») leaves nothing written
 and names the problem: missing required field, undeclared key or value outside its list, unknown
-axis or section, a child's axis other than its parent's, wrong date, third level, `prio:` on a child, `après:` to another parent's child
+axis or section, a child's axis other than its parent's, wrong date, third level, `prio:` other than `oui`, `après:` to another parent's child
 or in a loop, a line taken by a session (`qui:` and `branche:`, which can only be rescheduled or
 marked done), a parent with an open child, a communication deliverable not sent yet (#242), the roadmap changed since the context (run `context`
 again). Fix the operations, or ask the missing question, and run it again.
@@ -346,8 +347,17 @@ a project that has a roadmap, because the skill is not always loaded when the id
 Nobody answers: write only what is clear, show no form. The questions still go into
 `operations.json`, so the report keeps them under « T'attendent ». Each one also waits where the
 `regles` file says; otherwise the report is where it waits. The report ends with the number of
-pending questions, by priority (`prio:1`, `prio:2`, `prio:3`, no priority; a child counts its
-parent's).
+pending questions, by priority (prioritaires, then sans priorité; a child counts its parent's).
+
+## Migrating the old priorities
+
+The old scale (`prio:1` urgent, `2` important, `3` when there is time, #130) becomes yes or no
+(#300): `prio:1` becomes `prio:oui`, `prio:2` and `prio:3` are removed. The doctor reports a roadmap
+that still carries them. `python3 scripts/tasks.py prio-oui <folder>` prints, as JSON, the
+`operations` that do it (`update` with `prio: "oui"` or `prio: null`) and the `skipped` lines (no
+`id:`, or taken by a session); pass the operations to `write` like any others, dry run first, and
+say which lines were skipped. The grammar written at the top of the roadmap (`prio:1` in its
+example, the `**prio**` bullet) is edited by hand in the same go: `prio:oui`, yes or no, any task.
 
 ## What the skill does not do
 

@@ -643,6 +643,11 @@ de Maestro ou le filtre, où le carré d'axe suffit et le titre garde sa place),
 quand les sections se rangent par axe en attendant les titres, ni dans un projet qui montre ses propres
 clés (`cles_visibles`). L'arbre suit le même réglage ; la fiche d'une tâche et l'en-tête de sa session
 gardent leur axe. Allumée, le panneau dessine 20 lignes d'un coup au lieu de 40, puis « Voir les N autres ».
+`priorities` (« Priorités », défaut non ; #300) : allumé, une tâche prioritaire (`prio:oui`, ou `prio:1`
+de l'ancienne échelle avant sa migration) porte un drapeau blanc dans un carré rouge de 16 px juste
+devant son titre, et sa fiche, à gauche du crayon, un carré de 22 px qui pose ou ôte la priorité d'un
+clic (gris clair quand elle est ôtée), par la voie d'écriture du projet. Éteint, ni l'un ni l'autre ;
+la priorité ne range jamais les tâches.
 `dateFormat` (« Format des dates », défaut `us` ; #201) : `us` écrit les dates du panneau, de la fiche
 et de l'en-tête d'une session à l'américaine, « Nov 4 », l'heure sur 12 h (« Nov 1 à 8:11 PM ») ; `fr`
 à la française, « 04/11 », « 4 nov. » et « 01/11 à 20:11 ». Les mots (aujourd'hui, hier, dans 4 j)
@@ -688,6 +693,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.196.0 (2026-11-04)** : panneau : une priorité oui ou non (prio:oui), un drapeau dans un carré rouge devant le titre quand l'option Priorités est allumée (éteinte par défaut), posée d'un clic dans la fiche
 - **0.195.0 (2026-11-04)** : panneau : la fiche d'une tâche ouvre ses maquettes d'un clic dans le volet navigateur (bande « Voir les maquettes »), et sa ligne Dossier lit spec: à la racine du projet
 - **0.194.0 (2026-11-04)** : maestro : le brief d'une session lancée donne le dossier du projet (règles, carte, structure), sa place dans la chaîne et demande une ligne « Lu : » au premier compte rendu
 - **0.193.0 (2026-11-04)** : reglages-session : les messages du mode ADHD passent au verdict en gras, puis la preuve (faits en mots, chiffres en petit tableau, ce qui te revient en citation)

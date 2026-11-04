@@ -318,6 +318,23 @@ export function externalIcon(hex: string, size = 16, width: number = STROKE.base
   return line(hex, size, width, '<path d="M14 4.5h5.5V10M19.5 4.5L11 13"/><path d="M18 14v5.5H4.5V6H10"/>')
 }
 
+/** Le côté du signe de priorité (#300, maquette D1) : dans la ligne de tâche, puis dans la fiche, à la hauteur du crayon. */
+export const PRIORITY_PX = { row: 16, fiche: 22 } as const
+
+/**
+ * La priorité d'une tâche (#300, maquette D1 choisie par BBR) : un drapeau dans un carré aux coins du
+ * quart de son côté. Posée : carré `late` plein, drapeau blanc (`onAxis`, le blanc de la flèche du carré
+ * d'axe). Ôtée (la fiche seule la montre) : carré `btn`, bord `border`, drapeau `text3` au trait.
+ */
+export function priorityIcon(on: boolean, palette: Pick<Palette, 'late' | 'onAxis' | 'btn' | 'border' | 'text3'>, size: number = PRIORITY_PX.row): string {
+  const box = on
+    ? `<rect width="24" height="24" rx="6" fill="${palette.late}"/>`
+    : `<rect x="0.75" y="0.75" width="22.5" height="22.5" rx="5.5" fill="${palette.btn}" stroke="${palette.border}" stroke-width="1.5"/>`
+  const ink = on ? palette.onAxis : palette.text3
+  const flag = `<g transform="translate(5 5) scale(0.5833)" stroke="${ink}" stroke-width="${STROKE.pill / 0.5833}" stroke-linecap="round" stroke-linejoin="round"><path d="M6 21V4" fill="none"/><path d="M6 4.5h12l-2.5 4 2.5 4H6z" fill="${on ? ink : 'none'}"/></g>`
+  return svg(size, 24, box + flag, on ? 'Prioritaire' : 'Sans priorité')
+}
+
 /** Fenêtre de navigateur : ouvrir les maquettes d'une tâche dans le volet navigateur (#306). */
 export function browserIcon(hex: string, size = 16, width: number = STROKE.base): string {
   return line(hex, size, width, '<rect x="3.5" y="4.5" width="17" height="15" rx="2"/><path d="M3.5 9h17"/><path d="M6.5 6.8h.01M9 6.8h.01"/>')

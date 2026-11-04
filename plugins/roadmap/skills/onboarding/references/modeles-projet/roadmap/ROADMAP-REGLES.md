@@ -13,7 +13,7 @@ Fixées par le plugin roadmap, les mêmes dans tout projet : elles ne se changen
 - Un sujet de plusieurs tâches devient une mère : un titre court qui nomme le sujet (son `nom:`, 40 caractères au plus), sans action à elle ; ses filles portent les actions.
 - Deux niveaux au plus : une fille n'a pas de filles.
 - Une ligne, une action : un verbe à l'infinitif et son objet ; plusieurs actions liées par « ; » se découpent en filles.
-- Une fille prend l'axe de sa mère ; la priorité (`prio:`) se pose sur la mère ou la tâche seule, jamais sur une fille ; la date d'une mère est celle de sa prochaine fille ouverte.
+- Une fille prend l'axe de sa mère ; la priorité (`prio:oui`) se pose sur n'importe quelle tâche, mère, fille ou seule ; la date d'une mère est celle de sa prochaine fille ouverte.
 - `après:` relie deux sœurs, ou deux tâches sans parent, jamais en boucle.
 
 ### Numéros et champs

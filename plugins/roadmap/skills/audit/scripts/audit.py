@@ -441,15 +441,20 @@ def _jj_mm(date):
     return datetime.date.fromisoformat(date).strftime("%d/%m")
 
 
+def prioritaire(champs):
+    """#300 : `prio:oui`, ou `prio:1` de l'ancienne échelle (#130), que `tasks.py prio-oui` migre ; 2 et 3 non."""
+    return champs.get("prio") in ("oui", "1")
+
+
 def _priorite(t, par_id):
-    if t["parent"] in par_id:
-        return par_id[t["parent"]]["champs"].get("prio") or t["champs"].get("prio")
-    return t["champs"].get("prio")
+    """« oui » pour une tâche prioritaire, ou l'enfant d'un parent prioritaire ; sinon rien."""
+    mere = par_id.get(t["parent"])
+    return "oui" if prioritaire(t["champs"]) or (mere is not None and prioritaire(mere["champs"])) else None
 
 
 def questions_par_tache(taches, trous, pistes, jour):
-    """Une question par tâche en retard, sans date ou enfant à `prio:` (#159), la recommandation en
-    premier, chaque option avec ses opérations de `tasks.py write` ; dans l'ordre des priorités."""
+    """Une question par tâche en retard ou sans date (#159), la recommandation en premier, chaque
+    option avec ses opérations de `tasks.py write` ; les prioritaires d'abord (#300)."""
     par_id = {t["id"]: t for t in taches}
     meres = {t["parent"] for t in taches if t["parent"]}
     piste_de = {}
@@ -504,25 +509,7 @@ def questions_par_tache(taches, trous, pistes, jour):
                 texte = "%s n'a pas d'échéance : que fait-on ?" % nom
             poser(t, kind, texte, options)
 
-    for t in taches:
-        mere = par_id.get(t["parent"])
-        prio = t["champs"].get("prio")
-        if not (mere and prio) or (t["champs"].get("qui") and t["champs"].get("branche")):
-            continue
-        nom_m = "« %s » (#%s)" % (mere["libelle"], mere["id"])
-        retirer = {"op": "update", "id": t["id"], "fields": {"prio": None}}
-        porter = {"label": "Porter prio:%s sur %s" % (prio, nom_m),
-                  "operations": [retirer, {"op": "update", "id": mere["id"], "fields": {"prio": prio}}]}
-        if mere["champs"].get("prio"):
-            options = [{"label": "Garder prio:%s de %s, retirer celle-ci" % (mere["champs"]["prio"], nom_m),
-                        "operations": [retirer]}, porter]
-        else:
-            options = [porter, {"label": "Retirer la priorité", "operations": [retirer]}]
-        poser(t, "prio_on_child", "« %s » (#%s) porte prio:%s, mais une priorité se pose sur son parent %s : que fait-on ?"
-              % (t["libelle"], t["id"], prio, nom_m), options)
-
-    rang = {"1": 0, "2": 1, "3": 2}
-    questions.sort(key=lambda q: (rang.get(q["priority"], 3), int(q["task"]) if q["task"].isdigit() else 0))
+    questions.sort(key=lambda q: (0 if q["priority"] == "oui" else 1, int(q["task"]) if q["task"].isdigit() else 0))
     return questions
 
 
@@ -565,10 +552,10 @@ def _en_attente(questions, taches):
 
 
 def compter(questions):
-    compte = {"total": len(questions), "prio:1": 0, "prio:2": 0, "prio:3": 0, "sans priorité": 0}
+    compte = {"total": len(questions), "prioritaires": 0, "sans priorité": 0}
     for q in questions:
-        p = q.get("priority")
-        compte["prio:%s" % p if p in ("1", "2", "3") else "sans priorité"] += 1
+        # Une question gardée d'avant #300 peut porter « 1 » : prioritaire, comme sa ligne.
+        compte["prioritaires" if q.get("priority") in ("oui", "1") else "sans priorité"] += 1
     parts = ["%s : %d" % (k, n) for k, n in compte.items() if k != "total" and n]
     resume = "Questions en attente : %d" % compte["total"] + (" (%s)" % ", ".join(parts) if parts else "")
     return compte, resume
@@ -753,8 +740,8 @@ class _Preparation:
                 raise Erreur("%s : date invalide %s:%r (AAAA-MM-JJ)" % (quoi, k, val))
         if k == "nom" and len(val) > NOM_MAX:
             raise Erreur("%s : nom:%s dépasse %d caractères (un nom court, clair)" % (quoi, val, NOM_MAX))
-        if k == "prio" and val not in ("1", "2", "3"):
-            raise Erreur("%s : prio vaut 1, 2 ou 3, pas %r" % (quoi, val))
+        if k == "prio" and val != "oui":
+            raise Erreur("%s : prio vaut oui, pas %r (une tâche prioritaire, #300)" % (quoi, val))
         if not val:
             raise Erreur("%s : valeur vide pour %s" % (quoi, k))
         return val

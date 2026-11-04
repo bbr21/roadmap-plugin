@@ -198,7 +198,7 @@ losing a line. The original is never modified without its backup copy.
 2. **Analyse**: `analyser <fichier> --dossier <dossier> [--fait <ROADMAP-fait.md>] > <scratchpad>/analyse.json`.
 3. **Show the analysis** in one message, then a multiple-choice form on what needs deciding: the
    format recognised, the counts (open, closed, to number), the mapping (column → field, status →
-   section or closed, tags → axis or declared key, `prio` in words → 1, 2, 3, subheadings →
+   section or closed, tags → axis or declared key, `prio` in words → `oui` for a high priority, nothing otherwise (#300), subheadings →
    `projet` and `dept`), the unrecognised values, the missing required fields and the default
    values proposed for them. An unreadable line is fixed in the source before going further. A
    visible choice (the roadmap's layout) goes through mockups.

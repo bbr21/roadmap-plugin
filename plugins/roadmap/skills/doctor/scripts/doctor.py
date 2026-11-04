@@ -567,6 +567,7 @@ def roadmap(main):
     requis, sur = ob.requis_du_dossier(main)
     if requis:
         out.append(champs_exiges(rdir, requis, lancees=sur == "lancees"))
+    out.append(priorites(rdir))
     check = os.path.join(main, "scripts", "check.mjs")
     if os.path.isfile(check) and shutil.which("node"):
         r = lancer(["node", "scripts/check.mjs"], cwd=main, timeout=120)
@@ -730,6 +731,21 @@ def parents_enfants(rdir):
     return ligne(OK, "Parents et enfants", "%d parent(s), %d enfant(s)" % (len([k for k in enfants if k in par_id]), nb_enfants))
 
 
+def priorites(rdir):
+    """#300 : la priorité est oui ou non ; `prio:1`, `2`, `3` (l'échelle de #130) se migrent par la skill tasks."""
+    try:
+        with open(os.path.join(rdir, "ROADMAP.md"), encoding="utf-8") as f:
+            ouvertes = [_champs_de(l) for l in ob.lignes_de_taches(f.read()) if l.startswith("- [ ]")]
+    except OSError:
+        ouvertes = []
+    anciennes = sum(1 for c in ouvertes if c.get("prio") in ("1", "2", "3"))
+    oui = sum(1 for c in ouvertes if c.get("prio") == "oui")
+    if anciennes:
+        return ligne(VOIR, "Priorités", "%d ligne(s) à l'ancienne échelle prio:1, 2, 3 ; la priorité est oui ou non" % anciennes,
+                     "skill tasks : python3 scripts/tasks.py prio-oui <dossier>, puis write (prio:1 devient oui, 2 et 3 s'effacent)")
+    return ligne(OK, "Priorités", "%d tâche(s) prioritaire(s) (prio:oui)" % oui)
+
+
 def roadmap_projet(main):
     out = []
     rdir = ob.trouver_roadmap(main)
@@ -752,6 +768,7 @@ def roadmap_projet(main):
     requis, sur = ob.requis_du_dossier(main, cfg)
     out.append(champs_exiges(rdir, requis, lancees=sur == "lancees"))
     out.append(parents_enfants(rdir))
+    out.append(priorites(rdir))
     return out
 
 

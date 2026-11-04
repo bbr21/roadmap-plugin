@@ -29,7 +29,7 @@ export type Task = {
   id?: string
   /** `nom:` : le nom court choisi à la main (#235), qui l'emporte sur le titre tiré par le modèle ; `nom:-` le laisse absent. */
   nom?: string
-  /** `prio:` : 1 (urgent), 2 (important) ou 3 (quand on a le temps) ; facultative, lue et contrôlée, mais ni affichée ni triée (#130). */
+  /** `prio:` : `oui` pour une tâche prioritaire (#300) ; `1`, `2`, `3`, l'ancienne échelle de #130, restent lus jusqu'à la migration (`isPriority`). Ne range pas. */
   prio?: Prio
   /** `feedback:` : les numéros des retours de l'app d'où vient la tâche, ou qu'elle a reçus (Splitmybill). */
   feedback?: string[]
@@ -53,7 +53,15 @@ export type Task = {
   ownDue?: string
 }
 
-export type Prio = '1' | '2' | '3'
+export type Prio = 'oui' | '1' | '2' | '3'
+
+/**
+ * Une tâche prioritaire (#300) : `prio:oui`, ou `prio:1` de l'ancienne échelle, qui devient `oui` à la
+ * migration (`tasks.py prio-oui`) ; `2` et `3` valent « sans priorité ».
+ */
+export function isPriority(t: Pick<Task, 'prio'>): boolean {
+  return t.prio === 'oui' || t.prio === '1'
+}
 
 /** Les périodes d'une tâche récurrente (`tous:`, #99). */
 export type Recurrence = 'jour' | 'ouvré' | 'semaine' | '2semaines' | 'mois' | 'trimestre' | 'an'
@@ -213,7 +221,7 @@ const FENCE_RE = /^\s*```/
 const ID_RE = /^[1-9]\d*$/
 /** `parent:12` ou `parent:#12`, comme `après:` : le numéro seul. */
 const PARENT_RE = /^#?([1-9]\d*)$/
-const PRIO_RE = /^[123]$/
+const PRIO_RE = /^(oui|[123])$/
 const FEEDBACK_RE = /^\d+(,\d+)*$/
 const IMAGE_RE = /\.(png|jpe?g|gif|webp|heic|heif|tiff?|bmp)$/i
 
@@ -706,7 +714,7 @@ export function lintRoadmap(text: string, done: boolean, rules: Partial<LintRule
       else if ((k === 'fait' || k === 'ouvert') && rules.today !== undefined && v.slice(0, 10) > rules.today)
         say(`${k}:${v} : date dans le futur (aujourd'hui : ${rules.today}, heure locale)`)
       else if (k === 'id' && !ID_RE.test(v)) say(`id: n'est pas un numéro (« ${v} ») : un entier, sans #`)
-      else if (k === 'prio' && !PRIO_RE.test(v)) say(`prio: vaut 1, 2 ou 3 (« ${v} »)`)
+      else if (k === 'prio' && !PRIO_RE.test(v)) say(`prio: vaut oui (« ${v} »)`)
       else if (k === 'tous' && !(RECURRENCES as readonly string[]).includes(v)) say(`tous: vaut ${RECURRENCES.slice(0, -1).join(', ')} ou ${RECURRENCES[RECURRENCES.length - 1]} (« ${v} »)`)
       else if (k === 'skill' && !SKILL_RE.test(v)) say(`skill: vaut un nom de skill, nom ou plugin:nom (« ${v} »)`)
       else if (k === 'feedback' && !FEEDBACK_RE.test(v)) say(`feedback: des numéros de retours séparés par des virgules (« ${v} »)`)
@@ -735,8 +743,6 @@ export function lintRoadmap(text: string, done: boolean, rules: Partial<LintRule
         say(rules.closed.has(parentId) ? `parent:${parentId} : #${parentId} est close ; rouvre-la d'abord, ou retire parent:` : `parent:${parentId} : aucune tâche #${parentId}`)
       }
       if (parent?.parent !== undefined) say(`parent:${parentId} : #${parentId} est déjà l'enfant de #${parent.parent} ; deux niveaux au plus (parent › enfants)`)
-      const prio = keys.get('prio')
-      if (parentId !== undefined && prio !== undefined) say(`prio:${prio} : prio se pose sur le parent #${parentId}, jamais sur un enfant`)
       for (const n of prereqNumbers(keys.get('après') ?? '') ?? []) {
         const pre = openById.get(n)
         if (pre !== undefined && pre.parent !== parentId) say(`après:${n} : #${n} n'a pas le même parent ; après: relie deux enfants d'un même parent, ou deux parents`)
@@ -6111,7 +6117,7 @@ export function closeWithParentInTexts(
  * Un champ que la fiche d'une tâche modifie (#161) : le libellé, l'axe, une clé de la grammaire, ou
  * `cle:<k>`, une clé que le projet déclare dans `cles`.
  */
-export type EditField = 'nom' | 'label' | 'axis' | 'due' | 'resp' | 'qui' | 'attend' | 'apres' | 'parent' | `cle:${string}`
+export type EditField = 'nom' | 'label' | 'axis' | 'due' | 'resp' | 'qui' | 'attend' | 'apres' | 'parent' | 'prio' | `cle:${string}`
 /** Les changements d'une tâche (#161) : un champ absent ne change pas, une valeur vide retire le champ. */
 export type TaskEdit = Partial<Record<EditField, string>>
 

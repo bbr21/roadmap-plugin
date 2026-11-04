@@ -32,7 +32,7 @@ subject, every delay settled by a question, every task done on proof marked done
 name, not an action; its children are work steps (2 to 6), not gestures. `après:` links two
 siblings, or two parents; never one subject's child to another's. A parent's date is the date of
 its next open child: never propose one (a `due:` set on it stays the subject's final deadline).
-Priority goes on a parent or a standalone task, never on a child, and is never proposed where
+Priority is yes or no (`prio:oui`, #300), on any task, child included, and is never proposed where
 there is none (#130).
 
 The script is `scripts/audit.py`, run from this skill's folder (the path given when the skill
@@ -102,7 +102,7 @@ An existing task is named by its `id:`, a task created by the audit by its `key`
 unique in the file). An unknown key is refused, as is a wrong type (`"after": "12"` instead of
 `["12"]`). A task merged or closed by the audit can no longer be targeted: target the kept one.
 
-`fields` are checked as the panel checks them: dates as YYYY-MM-DD, `prio` 1, 2 or 3, keys of the
+`fields` are checked as the panel checks them: dates as YYYY-MM-DD, `prio` oui, keys of the
 grammar or declared in `roadmap.json`. They never carry `id`, `qui`, `branche`, `verrou`, `fait`,
 `parent` or `après`: the audit sets `parent:` itself (split, group) and `après:` goes through
 `after`.
@@ -169,7 +169,7 @@ values any more: they are per-task questions (step 4).
 
 ## 4. Per-task questions and proofs
 
-The survey's `questions` hold one question per task, already sorted by priority (`prio:1` first;
+The survey's `questions` hold one question per task, already sorted by priority (the `prio:oui` tasks first;
 a child counts its parent's), each with its `options`, the recommended one first, each option
 carrying its `operations` for `tasks.py write`:
 
@@ -177,7 +177,6 @@ carrying its `operations` for `tasks.py write`:
 |---|---|---|
 | `late` | `due:` before today | reschedule to next Monday, done, pause, drop |
 | `undated` | no `due:` (a parent with an open child never is) | date to next Monday, done, pause, drop |
-| `prio_on_child` | a child carries `prio:` | move it to the parent, or remove it |
 
 The recommendation: a proof lead → « Faite » at the lead's date; more than 30 days late → « En
 pause »; otherwise the date. A line taken by a session only offers reschedule and done; a parent
@@ -249,7 +248,7 @@ lines another way.
    `ROADMAP-bilans.csv`, `ROADMAP-questions.json`), on `main` in the main checkout with code,
    then push. Backups are not committed; offer to delete them once the roadmap is read in the panel.
 3. A short report, in French: what was written (the bilans), what was refused and stays a gap,
-   and the pending questions' summary line (« Questions en attente : 3 (prio:1 : 1, sans
+   and the pending questions' summary line (« Questions en attente : 3 (prioritaires : 1, sans
    priorité : 2) »).
 
 ## Unattended (scheduled task)

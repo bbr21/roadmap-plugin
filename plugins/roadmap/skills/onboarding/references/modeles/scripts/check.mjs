@@ -201,7 +201,8 @@ check('Grammaire de ROADMAP.md et ROADMAP-fait.md', (err) => {
         if (key === 'fait' && !isDone(value)) err(at, `fait:${value} : date AAAA-MM-JJ (et heure HH:MM) attendue`);
         // Une date de clôture ou d'ouverture n'est jamais après aujourd'hui (#201).
         if ((key === 'ouvert' || key === 'fait') && value.trim().slice(0, 10) > TODAY && isDone(value.trim())) err(at, `${key}:${value.trim()} : date dans le futur (aujourd'hui : ${TODAY}, heure locale)`);
-        if (key === 'prio' && !/^[123]$/.test(value.trim())) err(at, `prio:${value} : 1, 2 ou 3 attendu`);
+        // #300 : prio:oui ; l'ancienne échelle 1, 2, 3 (#130) reste tolérée jusqu'à la migration (tasks.py prio-oui).
+        if (key === 'prio' && !/^(oui|[123])$/.test(value.trim())) err(at, `prio:${value} : oui attendu`);
         if (key === 'tous' && !['jour', 'ouvré', 'semaine', '2semaines', 'mois', 'trimestre', 'an'].includes(value.trim())) err(at, `tous:${value} : jour, ouvré, semaine, 2semaines, mois, trimestre ou an attendu`);
         if (key === 'skill' && !/^[a-z0-9][a-z0-9-]*(:[a-z0-9][a-z0-9-]*)?$/.test(value.trim())) err(at, `skill:${value} : nom de skill attendu (nom ou plugin:nom)`);
         // parent: le numéro de la tâche mère (#12 compris), ou - ; après: un libellé, ou des numéros séparés par des virgules, ou -.
@@ -250,7 +251,6 @@ check('Grammaire de ROADMAP.md et ROADMAP-fait.md', (err) => {
           axis: fields[0],
           id: found.get('id'),
           parent: (found.get('parent') ?? '').replace(/^#/, ''),
-          prio: found.get('prio'),
           after: (found.get('après') ?? '').split(',').map((v) => v.trim().replace(/^#/, '')).filter((v) => /^[1-9]\d*$/.test(v)),
         });
       }
@@ -266,7 +266,7 @@ check('Grammaire de ROADMAP.md et ROADMAP-fait.md', (err) => {
   const openById = new Map();
   for (const row of open) if (row.id && !openById.has(row.id)) openById.set(row.id, row);
   // Les règles de structure que la skill tasks refuse à l'écriture (#125), refusées aussi à la main (#289) :
-  // deux niveaux au plus, la prio: sur le parent, après: entre deux sœurs ou deux tâches sans parent, un parent ouvert.
+  // deux niveaux au plus, après: entre deux sœurs ou deux tâches sans parent, un parent ouvert.
   // Seules les lignes ouvertes se contrôlent : une ligne close garde son histoire.
   const doneIds = new Set([...read(DONE).matchAll(/[[|]\s*id:(\d+)\s*[|\]]/g)].map((m) => m[1]));
   const parentOf = (row) => (row.parent === '-' ? '' : row.parent);
@@ -281,7 +281,6 @@ check('Grammaire de ROADMAP.md et ROADMAP-fait.md', (err) => {
       else err(row.at, `parent:${p} : aucune tâche #${p}`);
     }
     if (mother && parentOf(mother)) err(row.at, `parent:${p} : #${p} est déjà l'enfant de #${parentOf(mother)} ; deux niveaux au plus (parent › enfants)`);
-    if (p && row.prio !== undefined) err(row.at, `prio:${row.prio} : prio se pose sur le parent #${p}, jamais sur un enfant`);
     for (const n of row.after) {
       const pre = openById.get(n);
       if (pre && parentOf(pre) !== p) err(row.at, `après:${n} : #${n} n'a pas le même parent ; après: relie deux enfants d'un même parent, ou deux parents`);

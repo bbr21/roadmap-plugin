@@ -420,10 +420,6 @@ class _Tenue(audit._Preparation):
                 nums.append(cible.id)
         t.set("après", ",".join(nums) or "-")
 
-    def refuser_prio_enfant(self, t, quoi):
-        if _sans_parent(t) != "-" and t.get("prio"):
-            raise Erreur("%s : prio se pose sur le parent #%s, jamais sur un enfant" % (quoi, _sans_parent(t)))
-
     def refuser_sans_envoi(self, t, quoi):
         """#242 : ni clôture ni clôture partielle tant qu'une communication de la tâche n'est pas partie."""
         attente = envois_en_attente(t.get("livrable"), list(dict.fromkeys([self.r.get("dossier") or self.rdir, self.rdir])))
@@ -456,8 +452,6 @@ class _Tenue(audit._Preparation):
                 raise Erreur("%s : le parent #%s est close ; rouvre-la d'abord (une question)" % (quoi, p))
             mere = self.tache(p, quoi)
             self.deux_niveaux(mere, quoi)
-            if "prio" in champs:
-                raise Erreur("%s : prio se pose sur le parent #%s, jamais sur un enfant" % (quoi, mere.id))
             champs["parent"] = mere.id
             for k in self.heritage:
                 if k not in champs and mere.get(k):
@@ -521,7 +515,7 @@ class _Tenue(audit._Preparation):
         parent = brut.pop("parent", None)
         for k, v in brut.items():
             if v is None:
-                # `null` retire une clé facultative (#159 : la `prio:` posée sur un enfant).
+                # `null` retire une clé facultative (une `prio:`, un `attend:` levé).
                 if k in self.requis or k in INTERDITS_COMPLETER:
                     raise Erreur("%s : %s est un champ exigé ou réservé, il ne se retire pas" % (quoi, k))
                 t.champs = [(c, x) for c, x in t.champs if c != k]
@@ -542,7 +536,6 @@ class _Tenue(audit._Preparation):
                 t.axe = mere.axe
         if apres is not None:
             self.poser_apres(t, apres, quoi)
-        self.refuser_prio_enfant(t, quoi)
         self.tenue["completees"].append(t.id)
         # #275 : les noms des clés, jamais leurs valeurs brutes (un src: de trois lignes dans le compte rendu).
         dit = ["%s retiré" % k if v is None else k for k, v in (op.get("fields") or {}).items()]
@@ -690,7 +683,7 @@ class _Tenue(audit._Preparation):
             champs["parent"] = p
         elif "parent" in self.requis:
             champs["parent"] = "-"
-        for k in self.heritage + ([] if mere else ["prio"]):
+        for k in self.heritage + ["prio"]:
             if k not in champs and t.get(k):
                 champs[k] = t.get(k)
         self.poser_qui(champs, None, quoi)
@@ -965,6 +958,24 @@ def afficher(bilan, decl, en_json=False):
     print(bilan["markdown"])
 
 
+def migration_prio(ctx):
+    """#300 : les opérations de `write` qui passent une roadmap à `prio:oui` : `prio:1` devient `oui`,
+    `prio:2` et `prio:3` s'effacent. Une ligne sans `id:` ou prise par une session est laissée, dite
+    dans `skipped` ; la reprendre à la main, ou une fois libre."""
+    operations, laissees = [], []
+    for t in ctx["taches"]:
+        p = t["champs"].get("prio")
+        if p not in ("1", "2", "3"):
+            continue
+        pourquoi = ("sans id:" if not t.get("id") else
+                    "prise par une session" if t["champs"].get("qui") and t["champs"].get("branche") else None)
+        if pourquoi:
+            laissees.append({"id": t.get("id") or "", "libelle": t["libelle"], "pourquoi": pourquoi})
+        else:
+            operations.append({"op": "update", "id": t["id"], "fields": {"prio": "oui" if p == "1" else None}})
+    return {"operations": operations, "skipped": laissees}
+
+
 def main(argv=None):
     import argparse
     p = argparse.ArgumentParser(prog="tasks.py", description="Tenir la roadmap au quotidien (#158).")
@@ -974,18 +985,22 @@ def main(argv=None):
     r = sous.add_parser("match", help="the tasks on the same subject as an action, as JSON")
     r.add_argument("dossier")
     r.add_argument("--text", dest="texte", action="append", required=True)
+    m = sous.add_parser("prio-oui", help="the write operations that move prio:1, 2, 3 to prio:oui (#300), as JSON")
+    m.add_argument("dossier")
     e = sous.add_parser("write", help="dry run of the operations, or write them with --apply")
     e.add_argument("dossier")
     e.add_argument("--operations", required=True)
     e.add_argument("--apply", dest="appliquer", action="store_true")
     e.add_argument("--json", dest="en_json", action="store_true", help="the bilan and its report as JSON")
-    for s in (c, r, e):
+    for s in (c, r, m, e):
         s.add_argument("--day", dest="jour", help="YYYY-MM-DD (today by default)")
         s.add_argument("--perso", default="~/.claude/roadmap-perso.json", help=argparse.SUPPRESS)
     args = p.parse_args(argv)
     try:
         if args.commande == "context":
             print(json.dumps(contexte(args.dossier, args.jour, args.perso), ensure_ascii=False, indent=2))
+        elif args.commande == "prio-oui":
+            print(json.dumps(migration_prio(contexte(args.dossier, args.jour, args.perso)), ensure_ascii=False, indent=2))
         elif args.commande == "match":
             ctx = contexte(args.dossier, args.jour, args.perso)
             print(json.dumps([rapprocher(ctx, t) for t in args.texte], ensure_ascii=False, indent=2))
