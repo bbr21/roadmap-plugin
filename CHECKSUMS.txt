@@ -1,8 +1,8 @@
-# roadmap 0.192.0 : SHA-256 de chaque fichier installé du plugin, chemins relatifs à son dossier.
-# Vérifier une copie installée (~/.claude/plugins/cache/roadmap/roadmap/0.192.0) : plugins/roadmap/SECURITE.md, « Vérifier que ta copie est une vraie version ».
-a441efe56713489696e42275c8cf378c21c600e9ee38d679efbf04d8c927d29a  .claude-plugin/plugin.json
-5bb12a159deb354d613c46751ec9907a7a4982219ec9875e3255236d9692772f  README.md
-44f1f23b6115569355d492fca951b72aa40ee2980f751bc38aa06958d4e35556  SECURITE.md
+# roadmap 0.192.1 : SHA-256 de chaque fichier installé du plugin, chemins relatifs à son dossier.
+# Vérifier une copie installée (~/.claude/plugins/cache/roadmap/roadmap/0.192.1) : plugins/roadmap/SECURITE.md, « Vérifier que ta copie est une vraie version ».
+6816e887d35aa83eb6121e55222ea60eda4a1228c07e2a2a06ac535601ad25e6  .claude-plugin/plugin.json
+36b2b5ae9e51c6b68cc9dad8604195e6634c67bfeb11946897b9eeb64cd69cce  README.md
+302d5c81c184881da2fb6a8e4bfce3512f28b043296a986cff855af4a96f488f  SECURITE.md
 bce019cb7147413a8e5f0687df59a41394fa92545568b5d37b1df8bd6d885e30  hooks/bar-hit.tsx
 d842d789476d67282d0f04b7e5fdc68a3d981ccec65dd79cfa2d11eed13fb828  hooks/hooks.json
 1ca8a58b959b7c3b2df75fd8ed95102449a1452c08e5b6a195737aba86eb2b0c  hooks/icons.ts
@@ -10,7 +10,7 @@ eba99a8a158cec79564e01209327512cc6f4c8fe7942959e32124869578eaa76  hooks/parse.ts
 a29e07be4f95c637c8f3ab377dc9a97cd16de11e8e7de7062311dd2888a0833f  hooks/press-hit.tsx
 26232b14c554ee9685faed876ff0c140078fb1c637ad49c7c253ffc023e7cd5f  hooks/register.tsx
 9077e22cf587bb924e58af1b09ffc2435a1559c54a21beebf16a6d40bf48e08c  hooks/reglages.tsx
-b64846e12e5b40469c000e214da8e4a4aa558034c4bab036ece6deed2311e9b9  hooks/tokens.ts
+a60c99f6765f3920810c7d2acacabb77363b5b2bf9a65154c40ddd3411db29df  hooks/tokens.ts
 2c41c480ffe671321b91523191e8e36453f4a211957d90b91b4f3148a257da86  scripts/one-at-a-time.sh
 0c1d55a0112bb0ce00a34cae0dd02e58eb3387d4aa8f75bcd79c01df8dd1af0c  skills/audit/SKILL.md
 6a5b552a70a783ab37c44e4f828737fef20c953c5ef963fe3641f6d973640b12  skills/audit/scripts/audit.py

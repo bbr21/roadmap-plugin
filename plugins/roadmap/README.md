@@ -687,6 +687,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.192.1 (2026-11-04)** : panneau : les dates, résumés et compteurs en text3 lisibles (contraste 4,5:1 en sombre et en clair)
 - **0.192.0 (2026-11-04)** : mockups : avant une maquette, la nouvelle skill roadmap:mockups part du design system du projet ; frontend-design seulement sans lui
 - **0.191.1 (2026-11-04)** : panneau : le nom d'une section est aligné dans Toutes comme dans Ma journée (plus de bouton natif décalé, en-tête à chevron compris) ; la mère gardée pour ses filles sous un filtre n'est plus grisée (#295, #296)
 - **0.191.0 (2026-11-04)** : maquettes : le réglage fait lancer frontend-design puis web-design-guidelines (ou la skill de design du projet) avant la première maquette, et le plugin rappelle en fin de tour une maquette dessinée sans skill de design (#292)

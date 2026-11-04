@@ -17,7 +17,7 @@ export type Palette = {
   text: string
   /** Texte secondaire. */
   text2: string
-  /** Texte tertiaire, chevrons. */
+  /** Texte tertiaire, chevrons : au moins 4,5:1 sur bg, hover et note, sous text2 (#298, `tests/contraste.test.tsx`). */
   text3: string
   late: string
   lateTint: string
@@ -74,7 +74,8 @@ export const PALETTES: Record<ThemeName, Palette> = {
     border: '#3A3835',
     text: '#ECEBE7',
     text2: '#A6A39C',
-    text3: '#6F6C66',
+    // Au plancher AA (4,5:1) sur bg, hover et note, et 1,4 point sous text2 (#298, maquette A).
+    text3: '#94918A',
     late: '#E5534B',
     lateTint: '#47231F',
     lateOn: '#FF928A',
@@ -112,8 +113,9 @@ export const PALETTES: Record<ThemeName, Palette> = {
     sel: '#ECE9E1',
     border: '#E3DFD5',
     text: '#1F1E1D',
-    text2: '#6B6862',
-    text3: '#A9A59D',
+    // text2 fonce d'un cran pour que text3, monté au plancher AA, reste en dessous (#298, maquette A).
+    text2: '#57544E',
+    text3: '#706D67',
     late: '#C4372F',
     lateTint: '#FCE7E5',
     lateOn: '#B0261E',
