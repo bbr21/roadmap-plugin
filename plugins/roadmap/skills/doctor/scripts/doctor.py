@@ -5,7 +5,8 @@ marchent, ligne par ligne, OK, KO ou À voir, avec la commande qui corrige.
   python3 doctor.py [DOSSIER]          le dossier du projet (défaut : le dossier courant)
   python3 doctor.py [DOSSIER] --json   le même diagnostic en JSON
 
-Lecture seule : il ne change rien, ni au projet ni à la machine. Code de retour 1 s'il y a un KO.
+Lecture seule : il ne change rien, ni au projet ni à la machine. Il lit sur le réseau les empreintes
+publiées du plugin roadmap (CHECKSUMS.txt du dépôt public, par curl, #274). Code de retour 1 s'il y a un KO.
 Ce qu'il exige (outils, skills de Superpowers, skill iOS) est dans references/requis.json : la liste
 des skills y suit celle que le plugin cite (hooks/parse.ts), et un test le garde.
 
@@ -14,6 +15,7 @@ Python 3.9 et plus, bibliothèque standard seulement.
 
 import argparse
 import glob
+import hashlib
 import json
 import os
 import re
@@ -35,6 +37,11 @@ MAGASIN = ("Library", "Application Support", "Claude", "local-agent-mode-session
 GERE = "/Library/Application Support/ClaudeCode" if sys.platform == "darwin" else "/etc/claude-code"
 # Le plugin intégré de sécurité de Claude Code, sous ses deux noms (#116).
 SEC_DEFAULT = ("sec-default@builtin", "cc-plugin-sec-default@builtin")
+# Les empreintes de chaque version, publiées avec le miroir public du plugin (#271, #274).
+DEPOT_PUBLIC = "bbr21/roadmap-plugin"
+CHECKSUMS_MAIN = "https://raw.githubusercontent.com/%s/main/CHECKSUMS.txt" % DEPOT_PUBLIC
+CHECKSUMS_AU = "https://raw.githubusercontent.com/" + DEPOT_PUBLIC + "/%s/CHECKSUMS.txt"
+COMMITS_API = "https://api.github.com/repos/%s/commits?path=CHECKSUMS.txt&per_page=100" % DEPOT_PUBLIC
 
 
 def charger_requis():
@@ -296,6 +303,164 @@ def plugins_et_skills(requis, plugins, home, skills=None, facultatif=False):
                              ", dernière le %s" % depuis if depuis else ""),
                          "/plugin, Marketplaces, %s, Enable auto-update ; ou à la main : claude plugin update %s" % (
                              cat, actif.get("id"))))
+    return out
+
+
+# ---------------------------------------------------------------- empreintes (#274)
+# La lecture de CHECKSUMS.txt est celle de tools/securite.py (parse_checksums), qui n'est pas installé ;
+# le relevé des fichiers est plus strict que le sien (rien n'est sauté) : un test du dépôt les compare.
+
+
+class Injoignable(Exception):
+    """Les empreintes publiées n'ont pas pu être lues (réseau, curl absent, limite de GitHub)."""
+
+
+def _bruit(rel):
+    """Ce que le Finder pose partout : rien qui se charge."""
+    base = os.path.basename(rel)
+    return base == ".DS_Store" or base.startswith("._")
+
+
+def fichiers_installes(dossier):
+    """Tout ce que contient une copie installée du plugin, chemins relatifs, triés : fichiers et liens
+    symboliques (un dossier lié compte pour une entrée, jamais suivi). Seuls le bruit du Finder et le
+    dossier `.in_use` que l'app pose à la racine sont laissés : un fichier caché dans un cache, un
+    `node_modules` ou un test compte (revue de sécurité de #274)."""
+    out = []
+    for base, dirs, files in os.walk(dossier):
+        if base == dossier:
+            dirs[:] = [d for d in dirs if d != ".in_use"]
+        for nom in dirs + files:
+            chemin = os.path.join(base, nom)
+            if nom in files or os.path.islink(chemin):
+                rel = os.path.relpath(chemin, dossier).replace(os.sep, "/")
+                if not _bruit(rel):
+                    out.append(rel)
+    return sorted(out)
+
+
+def _cache_admis(rel, voulues):
+    """Le cache que Python écrit lui-même à côté d'un script publié qu'il a lancé :
+    <dossier>/__pycache__/<module>.<interpréteur>.pyc, seulement si <dossier>/<module>.py est publié."""
+    m = re.match(r"^(?:(.*)/)?__pycache__/([A-Za-z_][A-Za-z0-9_]*)\.[A-Za-z0-9_-]+\.pyc$", rel)
+    return bool(m) and ("%s/%s.py" % (m.group(1), m.group(2)) if m.group(1) else "%s.py" % m.group(2)) in voulues
+
+
+def lire_empreintes(texte):
+    """CHECKSUMS.txt : {nom: (version, {chemin: sha256})}."""
+    out, courant = {}, None
+    for l in texte.split("\n"):
+        tete = re.match(r"^# (\S+) (\d+\.\d+\.\d+) : ", l)
+        if tete:
+            courant = tete.group(1)
+            out[courant] = (tete.group(2), {})
+        elif courant and re.match(r"^[0-9a-f]{64}  ", l):
+            out[courant][1][l[66:]] = l[:64]
+    return out
+
+
+def _sha256(chemin):
+    h = hashlib.sha256()
+    with open(chemin, "rb") as f:
+        for bloc in iter(lambda: f.read(65536), b""):
+            h.update(bloc)
+    return h.hexdigest()
+
+
+def _curl(url):
+    """Le texte d'une adresse publique, par curl (aucun shell) ; None si la lecture échoue."""
+    if not shutil.which("curl"):
+        raise Injoignable("curl absent")
+    r = lancer(["curl", "-fsSL", "--max-time", "20", url], timeout=30)
+    return r.stdout if r is not None and r.returncode == 0 else None
+
+
+def empreintes_publiees(version, nom="roadmap", curl=None):
+    """{chemin: sha256} de `version`, lu dans CHECKSUMS.txt du dépôt public : celui de main, sinon
+    celui du commit « <nom> <version> » du miroir. None si la version n'a pas d'empreintes publiées
+    (avant 0.176.0) ; lève Injoignable si le dépôt public ne répond pas."""
+    curl = curl or _curl
+    texte = curl(CHECKSUMS_MAIN)
+    if texte is None:
+        raise Injoignable("CHECKSUMS.txt du dépôt public %s illisible" % DEPOT_PUBLIC)
+    trouve = lire_empreintes(texte).get(nom)
+    if trouve and trouve[0] == version:
+        return trouve[1]
+    liste = curl(COMMITS_API)
+    try:
+        commits = json.loads(liste) if liste is not None else None
+    except ValueError:
+        commits = None
+    if not isinstance(commits, list):
+        raise Injoignable("historique du dépôt public %s illisible (limite de l'API GitHub ?)" % DEPOT_PUBLIC)
+    voulu = "%s %s" % (nom, version)
+    sha = next((c.get("sha") for c in commits if isinstance(c, dict)
+                and str((c.get("commit") or {}).get("message", "")).split("\n")[0].strip() == voulu), None)
+    if not sha:
+        return None
+    texte = curl(CHECKSUMS_AU % sha)
+    if texte is None:
+        raise Injoignable("CHECKSUMS.txt de %s illisible" % voulu)
+    trouve = lire_empreintes(texte).get(nom)
+    return trouve[1] if trouve and trouve[0] == version else None
+
+
+def _reinstaller(p):
+    if _de_l_app(p):
+        return "claude.ai, Réglages, Plugins : retirer puis réajouter %s (plugin du compte)" % p.get("id")
+    portee = p.get("scope") if p.get("scope") in ("user", "project", "local") else "user"
+    return "claude plugin uninstall %s --scope %s && claude plugin install %s --scope %s" % (
+        p.get("id"), portee, p.get("id"), portee)
+
+
+def _liste(fichiers, n=5):
+    return ", ".join(fichiers[:n]) + (" et %d autres" % (len(fichiers) - n) if len(fichiers) > n else "")
+
+
+def empreintes(roadmap, chercher):
+    """Une ligne par copie installée du plugin roadmap : identique aux empreintes publiées de sa
+    version, ou les fichiers changés, en trop et manquants. `chercher(version)` : {chemin: sha256},
+    None sans empreintes publiées, ou lève Injoignable ; lu une fois par version."""
+    out, lus = [], {}
+    sujet = "Empreintes du plugin roadmap"
+    for p in roadmap:
+        base = p.get("installPath") or ""
+        if not base or not os.path.isdir(base):
+            continue
+        version = str(p.get("version", "?"))
+        copie = "%s %s" % (_source(p), version)
+        if version not in lus:
+            try:
+                lus[version] = chercher(version)
+            except Injoignable as e:
+                lus[version] = e
+        voulues = lus[version]
+        if isinstance(voulues, Injoignable):
+            out.append(ligne(VOIR, sujet, "%s : empreintes publiées injoignables (%s)" % (copie, voulues),
+                             "relancer le doctor avec le réseau ; à la main : plugins/roadmap/SECURITE.md, "
+                             "« Vérifier que ta copie est une vraie version »"))
+            continue
+        if voulues is None:
+            out.append(ligne(VOIR, sujet, "%s : aucune empreinte publiée pour cette version "
+                             "(CHECKSUMS.txt existe depuis la 0.176.0)" % copie,
+                             "mettre le plugin à jour, puis relancer le doctor"))
+            continue
+        avoir = fichiers_installes(base)
+        liens = [f for f in avoir if os.path.islink(os.path.join(base, f))]
+        avoir = [f for f in avoir if f not in liens]
+        changes = [f for f in avoir if f in voulues and voulues[f] != _sha256(os.path.join(base, f))]
+        en_trop = [f for f in avoir if f not in voulues and not _cache_admis(f, voulues)]
+        manquants = sorted(f for f in voulues if f not in avoir and f not in liens)
+        if not (liens or changes or en_trop or manquants):
+            out.append(ligne(OK, sujet, "%s : identique aux empreintes publiées (%d fichiers)" % (copie, len(voulues))))
+            continue
+        ecarts = []
+        for mots, fichiers in ((("lien symbolique", "liens symboliques"), liens), (("changé", "changés"), changes),
+                               (("en trop", "en trop"), en_trop), (("manquant", "manquants"), manquants)):
+            if fichiers:
+                ecarts.append("%d %s (%s)" % (len(fichiers), mots[len(fichiers) > 1], _liste(fichiers)))
+        out.append(ligne(KO, sujet, "%s : différente de la version publiée, %s" % (copie, " ; ".join(ecarts)),
+                         _reinstaller(p)))
     return out
 
 
@@ -761,12 +926,17 @@ def regles_du_projet(main):
     return ligne(OK, "Règles du projet", " ; ".join(parties))
 
 
-def diagnostiquer(dossier, plugins="lire", home=None, avec_outils=True, gere=None):
+def diagnostiquer(dossier, plugins="lire", home=None, avec_outils=True, gere=None, empreintes_de=None):
+    """`empreintes_de` : la lecture des empreintes publiées ; par défaut le réseau, seulement quand le
+    doctor juge les outils de la machine."""
     dossier = os.path.abspath(os.path.expanduser(dossier))
     home = home or os.path.expanduser("~")
     requis = charger_requis()
     if plugins == "lire":
         plugins = lire_plugins(home)
+    if empreintes_de is None and avec_outils:
+        empreintes_de = empreintes_publiees
+    copies = empreintes([p for p in plugins or [] if _nom(p) == "roadmap"], empreintes_de) if empreintes_de else []
     lignes = []
     principal = ob.principal(dossier)
     if ob.travail_du_dossier(principal) == "projet":
@@ -779,6 +949,7 @@ def diagnostiquer(dossier, plugins="lire", home=None, avec_outils=True, gere=Non
         lignes += [l for l in [regles_du_projet(principal)] if l]
         lignes.append(design_system(principal))
         lignes += plugins_et_skills(requis, plugins, home, requis["projet"]["skills"], facultatif=True)
+        lignes += copies
         lignes += [l for l in [python_intercepte(plugins, shutil.which if avec_outils else None)] if l]
         lignes.append(sec_default(home, gere))
         lignes.append(nom_utilisateur(home))
@@ -797,6 +968,7 @@ def diagnostiquer(dossier, plugins="lire", home=None, avec_outils=True, gere=Non
     lignes += [l for l in [regles_du_projet(main)] if l]
     lignes.append(design_system(main))
     lignes += plugins_et_skills(requis, plugins, home)
+    lignes += copies
     lignes += [l for l in [python_intercepte(plugins, shutil.which if avec_outils else None)] if l]
     lignes.append(sec_default(home, gere))
     lignes.append(nom_utilisateur(home))

@@ -1,6 +1,6 @@
 # Est-il sûr de l'installer ?
 
-Version décrite : roadmap 0.188.0
+Version décrite : roadmap 0.189.0
 Un plugin de Claude Code fait tourner du code sur ta machine, donc la question se pose. Certains plugins
 malveillants ont l'air inoffensifs quand on les installe, puis téléchargent et lancent autre chose plus
 tard. Cette page dit tout ce que fait roadmap. Un test vérifie à chaque version qu'elle dit vrai, et tu
@@ -52,7 +52,7 @@ réserve (`session.*`, `turn.*`, `skill.prompt`) ; le plugin a alors un secours 
 | Programme | Lancé par | Quand et pourquoi |
 |---|---|---|
 | `git` | `hooks/register.tsx`, `hooks/reglages.tsx`, `scripts/one-at-a-time.sh`, `skills/doctor/scripts/doctor.py`, `skills/maestro/scripts/etat_maestro.py`, `skills/onboarding/scripts/onboarding.py` | lire l'état du dépôt du projet (branche, commits, fichiers changés, copies de travail) ; et, quand tu coches, rouvres ou édites une tâche dans le panneau, ou au report du jour des étapes de journée (#277), committer et pousser les seuls fichiers de la roadmap vers le dépôt distant du projet |
-| `curl` | `hooks/register.tsx` | quand tu cliques sur Rafraîchir dans le panneau : lire la dernière version publiée du plugin, pour te dire qu'une mise à jour existe |
+| `curl` | `hooks/register.tsx`, `skills/doctor/scripts/doctor.py` | quand tu cliques sur Rafraîchir dans le panneau : lire la dernière version publiée du plugin, pour te dire qu'une mise à jour existe ; dans le doctor, lire les empreintes publiées de ta version pour vérifier ta copie (voir plus bas) |
 | `gh` | `hooks/register.tsx`, `skills/doctor/scripts/doctor.py`, `skills/onboarding/scripts/onboarding.py` | la même lecture de version quand `curl` manque ; dans le doctor, vérifier que GitHub CLI est connecté (voir plus bas) ; à l'onboarding, lire les pull requests du projet pour en tirer la roadmap |
 | `python3` | `hooks/register.tsx` | cocher une tâche dans un dossier Cowork qui déclare son propre outil d'écriture (voir plus bas), isolé par `-I` |
 | `open` | `hooks/register.tsx` | ouvrir un lien ou un fichier que tu as cliqué dans le panneau, avec l'app par défaut du Mac |
@@ -81,8 +81,8 @@ lire l'état des sessions :
 
 | Vers | Quand | Ce qui part |
 |---|---|---|
-| `raw.githubusercontent.com` | quand tu cliques sur Rafraîchir dans le panneau, par `curl` | une simple lecture du `plugin.json` publié dans le dépôt public `bbr21/roadmap-plugin` ; rien de toi n'est envoyé |
-| `api.github.com` | la même lecture par `gh`, quand `curl` manque ; et à l'onboarding, la liste des pull requests du projet | ta connexion GitHub CLI, comme pour toute commande `gh` |
+| `raw.githubusercontent.com` | quand tu cliques sur Rafraîchir dans le panneau, par `curl` ; et quand le doctor tourne | une simple lecture du `plugin.json` publié dans le dépôt public `bbr21/roadmap-plugin`, et pour le doctor de son `CHECKSUMS.txt` ; rien de toi n'est envoyé |
+| `api.github.com` | la même lecture par `gh`, quand `curl` manque ; à l'onboarding, la liste des pull requests du projet ; et dans le doctor, quand ta version n'est plus la dernière, la liste des commits du dépôt public, par `curl` | ta connexion GitHub CLI, comme pour toute commande `gh` ; rien pour le doctor, qui lit sans connexion |
 | le dépôt distant de ton projet | quand tu coches, rouvres ou édites une tâche dans le panneau | un commit des seuls fichiers de la roadmap, poussé par `git push` vers le `origin` que ton projet a déjà |
 | `$.model.complete` | une fois par tâche nouvelle | le libellé de la tâche part à Claude, sur ton compte et par l'app, pour en tirer un titre court ; modèle réglable (« Modèle des titres courts ») |
 | `claude.ai` | jamais par le plugin | une adresse affichée dans un message (la page des plugins), que tu ouvres si tu veux |
@@ -161,7 +161,10 @@ cd ~/.claude/plugins/cache/roadmap/roadmap/<version>
 curl -fsSL https://raw.githubusercontent.com/bbr21/roadmap-plugin/main/CHECKSUMS.txt | grep -v '^#' | shasum -a 256 -c --quiet
 ```
 
-`<version>` est celle que tu as (`claude plugin list`). Rien ne s'affiche si tout est identique ; sinon,
+Le doctor du plugin le fait pour toi : il compare chaque copie installée (catalogue local et magasin
+du compte) aux empreintes de sa version et dit « identique » ou nomme les fichiers changés, en trop ou
+manquants, et signale tout lien symbolique ; seul le cache que Python écrit à côté d'un script publié
+(`__pycache__/*.pyc`) est admis sans être comparé. À la main : `<version>` est celle que tu as (`claude plugin list`). Rien ne s'affiche si tout est identique ; sinon,
 la commande nomme chaque fichier changé ou manquant. Pour une version plus ancienne, prends le
 `CHECKSUMS.txt` du commit « roadmap <version> » du dépôt public. Depuis le dépôt du plugin,
 `python3 tools/release.py empreintes <dossier installé>` signale aussi les fichiers en trop.

@@ -1,6 +1,6 @@
 ---
 name: doctor
-description: "Read-only checklist of a project wired to the roadmap system; says first if the folder has code (#176). With code: tools (git, node, python3, gh logged in), repo on main and pushed to GitHub, roadmap found and valid, node scripts/check.mjs, roadmap plugin enabled, Superpowers and every method skill the launched sessions cite, its updates, swiftui-pro on an iOS project. Without code: python3, roadmap, settings of .claude/roadmap.json, required fields of open tasks, roadmap plugin, and Superpowers as « À voir » if missing: it is optional there. One OK, KO or « À voir » line per item, with the command that fixes it. Run at the end of onboarding. Triggers on « doctor », « lance le doctor sur ce projet », « tout est branché ? », « checklist du projet », « le projet est prêt pour Maestro ? », « Superpowers est bien installé ? », « pourquoi Maestro ne voit rien ». Not for a Cowork folder (its own doctor), nor for fixing: it says what to do, nor for the content of tasks (audit)."
+description: "Read-only checklist of a project wired to the roadmap system; says first if the folder has code (#176). With code: tools (git, node, python3, gh logged in), repo on main and pushed to GitHub, roadmap found and valid, node scripts/check.mjs, roadmap plugin enabled and matching its fingerprints, Superpowers and every method skill the launched sessions cite, its updates, swiftui-pro on an iOS project. Without code: python3, roadmap, settings of .claude/roadmap.json, required fields of open tasks, roadmap plugin, and Superpowers as « À voir » if missing: it is optional there. One OK, KO or « À voir » line per item, with the command that fixes it. Run at the end of onboarding. Triggers on « doctor », « lance le doctor sur ce projet », « tout est branché ? », « checklist du projet », « le projet est prêt pour Maestro ? », « Superpowers est bien installé ? », « pourquoi Maestro ne voit rien ». Not for a Cowork folder (its own doctor), nor for fixing: it says what to do, nor for the content of tasks (audit)."
 ---
 
 # Doctor of a project
@@ -11,7 +11,8 @@ script's labels (OK, KO, « À voir ») as they come. Only this skill is in Engl
 ## What it checks
 
 Everything the roadmap, the panel and Maestro need to work in a project, and nothing more. It
-changes nothing: neither the project nor the machine.
+changes nothing: neither the project nor the machine. Its only network read is the plugin's
+published fingerprints (`CHECKSUMS.txt` of the public repo `bbr21/roadmap-plugin`, by `curl`).
 
 | Item | OK when |
 |---|---|
@@ -28,6 +29,7 @@ changes nothing: neither the project nor the machine.
 | Required fields | every launched task (`qui:` or `branche:`) carries `ouvert`, `due`, `qui` and `après`, or the fields of `requis` in `.claude/roadmap.json` (`[]`: no line), on every open task when `requis_sur` is `ouvertes`; otherwise « À voir », with the count |
 | Roadmap plugin | installed and enabled, in the version the app loads |
 | Roadmap plugin twice | one enabled copy only; two (the account's store and the local catalog `roadmap@roadmap`), « À voir » (#229): keep the account's copy, which the app updates, otherwise the most recent, with the exact gesture that removes the other |
+| Plugin fingerprints | one line per installed copy of the roadmap plugin (account's store, local catalog `~/.claude/plugins/cache/roadmap/roadmap/<version>`): its files match the SHA-256 published for its version in `CHECKSUMS.txt` of the public repo `bbr21/roadmap-plugin` (#274), read from `main`, otherwise from the mirror commit « roadmap <version> »; only the Finder's `.DS_Store` and `._*`, the app's `.in_use` at the root, and Python's own `__pycache__/<module>.*.pyc` next to a published `<module>.py` are left out: a test, a `node_modules` or any other cache counts as extra, and a symbolic link is always KO. Identical: OK. Changed, extra or missing files, or a link: KO, naming them, with the gesture that reinstalls the copy. No fingerprints for that version (before 0.176.0), or the public repo unreachable: « À voir » |
 | Superpowers | installed and enabled |
 | Method skills | every skill the launched sessions cite exists in the installed version: a skill renamed by Superpowers shows up here |
 | Superpowers updates | installed by the app: tracked by the app, with the date of the last one; installed from the terminal: automatic, otherwise the date of the last one and how to turn it on |
@@ -53,6 +55,7 @@ In a folder without code (#76, #176: no git repository, a repository without cod
 | Required fields | the fields of `requis` on every open task (`requis_sur: "ouvertes"`, written by the onboarding; an old `mode: "projet"` too), else on every launched task; otherwise « À voir », with the count (a line written outside Claude Code is flagged only here) |
 | Roadmap plugin | as with code |
 | Roadmap plugin twice | as with code |
+| Plugin fingerprints | as with code |
 | Superpowers, its updates | optional (#94): missing or disabled, « À voir » with the command, never KO |
 | Plugin hooks | as with code |
 | User name | as with code |
@@ -107,6 +110,10 @@ command that fixes it, as the script gives it. Then the verdict in one sentence.
   `roadmap@<source>.<champ>` (#227), so a setting written by one is not read by the other. Give
   the copy to keep and the script's gesture for the other one, which the user does themselves:
   the doctor never uninstalls a plugin.
+- Plugin fingerprints KO: the installed copy is not the published version (edited by hand, damaged,
+  or tampered with). Name the files, and give the reinstall gesture, which the user does
+  themselves; never edit or delete the copy. « À voir » for an old version: updating the plugin
+  is enough.
 - Everything green: say so in one sentence, and that « Maestro » works in this project.
 - The doctor does not read the content of tasks. Tasks bundled together, duplicated or without a
   deadline: offer the `audit` skill, which splits, merges and completes after validation.
