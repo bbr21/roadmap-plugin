@@ -161,9 +161,11 @@ to it.
     turn: the person answers in the session itself, Maestro does not relay it (#151);
   - do not tick your line: your last report says what was done and the problem met;
   - your line closed (read in `ROADMAP-fait.md`, never assumed) and nothing left pending, your last
-    turn ends on « fini, rien en attente », then your conclusion (#243), whose Livré row says
-    « fini : #N close par Maestro le AAAA-MM-JJ », then « Archiver cette session ? » and the reply
-    button « Oui, archiver » (the app
+    turn ends on « fini, rien en attente », then your conclusion (#243): its title, then
+    `**Ce qu'on a fait.**` and two or three plain sentences (the starting problem, what was built,
+    what it changes, #307), then its table, whose Livré row says « fini : #N close par Maestro le
+    AAAA-MM-JJ »; then « Archiver cette session ? » and the reply button « Oui, archiver », the
+    box's recap without repeating « fini : … » (the app
     does not offer the `archive` app button); on that click, `archive_session` (`self`); if the
     app refuses, say so; your line still open, do not offer archiving: Maestro ticks it at the
     merge;

@@ -1311,7 +1311,7 @@ const BLOQUE_LINE = /^bloque\s*:/
 const CONCLUSION_FORMAT = [
   '---',
   "### ✅ #<id> · <la tâche, en quelques mots> : c'est livré",
-  '<une phrase : ce qui change pour la personne>',
+  "**Ce qu'on a fait.** <deux ou trois phrases simples : le problème de départ, ce qu'on a construit, ce que ça change pour la personne>",
   '',
   '| Livré | <version, commits>, close le AAAA-MM-JJ (« close par Maestro le » pour une session qu\'il a lancée), lu dans ROADMAP-fait |',
   '|---|---|',
@@ -1461,6 +1461,9 @@ export function parseEndFiche(text: string): EndFiche | undefined {
   return fiche.mission ? (fiche as EndFiche) : undefined
 }
 
+/** L'étiquette du bloc de la conclusion (#307), ôtée du texte gardé : « Ce qu'on a fait. ». */
+const RECIT_LABEL = /^ce qu['’]on a fait\s*[.:]\s*/i
+
 /** La conclusion (#243) lue en fiche : son titre donne le numéro et l'état, sa phrase la mission, son tableau le reste. */
 function conclusionFiche(lines: readonly string[], label: (line: string) => string | undefined): EndFiche | undefined {
   const title = lines[0]!.replace(/\*\*|__/g, '').trim()
@@ -1470,7 +1473,11 @@ function conclusionFiche(lines: readonly string[], label: (line: string) => stri
   if (colon >= 0 && title.slice(colon + 3).trim() !== '') fiche.etat = title.slice(colon + 3).trim()
   let i = 1
   while (i < lines.length && lines[i]!.trim() === '') i++
-  if (i < lines.length && !TABLE_ROW.test(lines[i]!)) fiche.mission = cellText(lines[i++]!)
+  // La phrase, ou le bloc « Ce qu'on a fait » (#307) sur toutes ses lignes, jusqu'à la ligne vide ou au tableau, sans son étiquette.
+  const said: string[] = []
+  while (i < lines.length && lines[i]!.trim() !== '' && !TABLE_ROW.test(lines[i]!)) said.push(cellText(lines[i++]!))
+  const recit = said.join(' ').replace(RECIT_LABEL, '')
+  if (recit !== '') fiche.mission = recit
   while (i < lines.length && lines[i]!.trim() === '') i++
   for (; i < lines.length; i++) {
     const m = TABLE_ROW.exec(lines[i]!)
@@ -1701,13 +1708,20 @@ export function codeKeptWhole(md: string): string {
   return md.replace(/`([^`\n]+)`/g, (whole, code: string) => (code.length <= 24 ? `\`${code.replace(/-(?!\u2060)/g, '-\u2060')}\`` : whole))
 }
 
+/** Le Livré d'une conclusion sans sa redite de l'État (#307) : « roadmap 0.197.0, fini : #303 close par Maestro le … » devient « roadmap 0.197.0 ». */
+const withoutClosing = (livre: string): string => {
+  const cut = livre.replace(/[,;]\s*(?:fini\s*:\s*)?(?:#\d+\s+)?close\b.*$/u, '').trim()
+  return cut === '' ? livre : cut
+}
+
 /** Une ligne de la carte Fin : son étiquette, sa valeur en markdown, et sa teinte (souci : vert s'il a tout roulé). */
 export type FinRow = { name: string; md: string; tone?: 'ok' | 'dim' }
 /**
  * La carte Fin d'une tâche (#150, maquette C) : la Conclusion (#264) et le récap de fin (#144) fondus.
- * `when` : l'heure de la fiche de fin, ou « tiré de la roadmap » ; `missing` : close, bilan dû et absent.
+ * `when` : l'heure de la fiche de fin, ou « tiré de la roadmap » ; `missing` : close, bilan dû et absent ;
+ * `recap` : le « Ce qu'on a fait » de la conclusion, en tête de la carte (#307, maquette A).
  */
-export type FinCard = { emoji?: string; ressenti?: string; missing: boolean; when: string; rows: FinRow[]; more: FinRow[] }
+export type FinCard = { emoji?: string; ressenti?: string; missing: boolean; when: string; recap?: string; rows: FinRow[]; more: FinRow[] }
 
 /**
  * La carte Fin (#150) : Fait, Livré, Souci, État, À toi, puis, dépliées, Cause, Corrections et Note.
@@ -1723,7 +1737,7 @@ export function finCard(o: { recap?: StoredRecap; task: Task; bilan?: Bilan; due
   const fromNote = livreOfNote(task.note)
   const day = (task.fait ?? '').slice(0, 10)
   const closed = task.done ? `${abandoned ? 'annulée' : 'fini'} : ${task.id ? `#${task.id} ` : ''}close${day ? ` le ${day}` : ''}` : undefined
-  const livre = recap?.livre !== undefined ? unbulleted(cellMarkdown(recap.livre)) : fromNote.livre !== undefined ? livreMarkdown(fromNote.livre) : undefined
+  const livre = recap?.livre !== undefined ? unbulleted(cellMarkdown(withoutClosing(recap.livre))) : fromNote.livre !== undefined ? livreMarkdown(fromNote.livre) : undefined
   const etat = recap?.etat !== undefined ? cellMarkdown(recap.etat) : closed
   const note = bilan && bilan.note !== '' ? bilan.note : undefined
   const atoi = recap?.atoi !== undefined ? cellMarkdown(recap.atoi) : note
@@ -1748,6 +1762,7 @@ export function finCard(o: { recap?: StoredRecap; task: Task; bilan?: Bilan; due
     ...(bilan && bilan.ressenti !== '' ? { ressenti: bilan.ressenti } : {}),
     missing: task.done && !bilan && o.due,
     when: recap ? stampLabel(recap.at) : 'tiré de la roadmap',
+    ...(recap ? { recap: recap.mission } : {}),
     rows,
     more,
   }
@@ -3882,7 +3897,7 @@ const archiveThen = (): string =>
  * le dit et le propose d'un bouton (#87 : un bouton de réponse) ; refusé, Maestro prend le relais (il
  * voit l'enfant « à archiver »).
  */
-const maestroClauseEnd = (): string => `Ta ligne close par Maestro (lue dans ROADMAP-fait, jamais supposée) et plus rien en attente (aucune question, aucune session à toi encore ouverte), ton dernier tour finit sur « fini, rien en attente », puis ta conclusion, dont la ligne Livré dit « fini : #<id> close par Maestro le AAAA-MM-JJ », avec ${ARCHIVE_BOX}. Ta ligne encore ouverte, ne propose pas l'archivage : Maestro la coche à la fusion. ${archiveThen()} Refusé, Maestro propose l'archivage à ${person()}.`
+const maestroClauseEnd = (): string => `Ta ligne close par Maestro (lue dans ROADMAP-fait, jamais supposée) et plus rien en attente (aucune question, aucune session à toi encore ouverte), ton dernier tour finit sur « fini, rien en attente », puis ta conclusion (son bloc « Ce qu'on a fait » en deux ou trois phrases simples, puis son tableau), dont la ligne Livré dit « fini : #<id> close par Maestro le AAAA-MM-JJ », avec ${ARCHIVE_BOX}, son recap sans redire « fini : … ». Ta ligne encore ouverte, ne propose pas l'archivage : Maestro la coche à la fusion. ${archiveThen()} Refusé, Maestro propose l'archivage à ${person()}.`
 
 /**
  * Un choix visuel sous un Maestro (#96) : la page des maquettes. Depuis #151 (Bertrand, 2026-10-31), la
@@ -6955,7 +6970,7 @@ export function sessionPrefsText(prefs: SessionPrefs, error?: string, project?: 
   }
   if (prefs.adhd) {
     lines.push(
-      "- **Mode ADHD** (#275, parti A : le verdict, puis la preuve) : un message de tâche s'ouvre sur son verdict, une phrase en gras, sans emoji, qui dit l'état et ce qui en sort : `**Tout concorde : les budgets baissés de 15 % sont en place chez Meta et Google.**`, `**C'est en place, il reste ton envoi : l'annonce basculera seule le 28/11.**`. En cours, `**En cours, étape 4/6 : je relis les budgets chez Google.**` ; détour (erreur, retour en arrière), `**Détour : un test casse sur le compte de la mère.**` ; question, `**J'ai besoin de toi : la vue des faites.**`, puis le formulaire ; prête, `**Prête à fusionner : tests verts (…), branche poussée.**`. Un seul verdict par message. Puis la preuve, dans la forme de ce qu'elle est : un fait sûr, une puce de mots, une ligne, sans chiffre ni identifiant, sans glyphe ni gras en tête ; ce qui a été vérifié et chiffré, un petit tableau, une ligne par objet, trois colonnes au plus (l'objet, l'attendu, le vu), seul endroit du message où vont les chiffres (les montants intermédiaires et les conversions ne s'écrivent pas). Ce qui revient à " + person() + " sort du fil, en fin de message, chacun sa citation : `> **À toi :** …` pour une action ou une décision qui lui revient (et seulement elle, avec où et comment), jamais un geste qu'un outil fait à ta place ; `> **Une question :** …` (puis le formulaire) ; `> **Hors de ma tâche :** …` pour un doute ou une idée hors du périmètre (avec sa carte). Un lien se donne par son nom (`[le brouillon à Rong](…)`), jamais par son adresse. Cinq puces au plus, sans sous-puce : ni titre, ni rubrique, ni paragraphe (seule exception, le bloc « Ce qui a changé » du compte rendu « prête à fusionner », #269). Rien de répété d'un message à l'autre : un fait, une question ou un « À toi » déjà dit ne revient pas. Les étapes restent dans la liste d'étapes de l'app (`update_plan`) : la preuve ne la recopie pas, l'étape se dit dans le verdict, sous le nom de la liste. Une question ou une réponse courte hors tâche : pas de verdict imposé. Une explication que " + person() + " demande prend la place qu'il faut pour être comprise, avec un exemple concret. À la fin de la session, une seule fois, la conclusion, d'une autre mise en page : au dernier tour (ta ligne close, lue dans ROADMAP-fait), ou au tour où la session s'arrête bloquée. Un `---`, puis un titre `### ✅ #<id> · <la tâche> : c'est livré`, une phrase sur ce qui change pour " + person() + ", puis un tableau de deux colonnes, `| Livré | <version>, close le AAAA-MM-JJ |` (« close par Maestro le » pour une session qu'il a lancée), `|---|---|`, `| À essayer | où et quoi |`, et `| En route | le souci rencontré |` s'il y en a eu un ; puis la boîte de fin « Archiver cette session ? » avec le bouton de réponse « Oui, archiver ». Bloquée : `### ⛔ #<id> · <la tâche> : bloquée`, la phrase, puis `| Fait | … |`, `|---|---|`, `| Bloque | ce qui bloque, qui débloque, ce qui suit |`, `| À toi | … |`, sans question d'archivage. Un tour qui attend une réponse de " + person() + " n'est pas bloqué. Ta ligne #<id> encore ouverte, pas de conclusion ni d'archivage. Maestro : son verdict compte sa liste d'étapes (`**Maestro · 2 en cours · 1 t'attend**`, `**Maestro · tout est livré**` quand rien ne reste), et ne s'écrit que quand il a changé depuis son message d'avant ; sa conclusion, `### ✅ Maestro · <le lot> : tout est livré`, une phrase, le tableau `| Tâche | Ce qui change | Version |`, une ligne par tâche lancée (`| #<id> <nom court> | … | X.Y.Z |`), puis `**À essayer :** …` ; à chaque tâche livrée, l'étape de sa liste dit `· livrée <version>` et sa preuve `- #<id> livrée <version> : ce qui change`. Si un rappel ne réclame que le bouton de la boîte, pose la boîte seule, sans réécrire le message.",
+      "- **Mode ADHD** (#275, parti A : le verdict, puis la preuve) : un message de tâche s'ouvre sur son verdict, une phrase en gras, sans emoji, qui dit l'état et ce qui en sort : `**Tout concorde : les budgets baissés de 15 % sont en place chez Meta et Google.**`, `**C'est en place, il reste ton envoi : l'annonce basculera seule le 28/11.**`. En cours, `**En cours, étape 4/6 : je relis les budgets chez Google.**` ; détour (erreur, retour en arrière), `**Détour : un test casse sur le compte de la mère.**` ; question, `**J'ai besoin de toi : la vue des faites.**`, puis le formulaire ; prête, `**Prête à fusionner : tests verts (…), branche poussée.**`. Un seul verdict par message. Puis la preuve, dans la forme de ce qu'elle est : un fait sûr, une puce de mots, une ligne, sans chiffre ni identifiant, sans glyphe ni gras en tête ; ce qui a été vérifié et chiffré, un petit tableau, une ligne par objet, trois colonnes au plus (l'objet, l'attendu, le vu), seul endroit du message où vont les chiffres (les montants intermédiaires et les conversions ne s'écrivent pas). Ce qui revient à " + person() + " sort du fil, en fin de message, chacun sa citation : `> **À toi :** …` pour une action ou une décision qui lui revient (et seulement elle, avec où et comment), jamais un geste qu'un outil fait à ta place ; `> **Une question :** …` (puis le formulaire) ; `> **Hors de ma tâche :** …` pour un doute ou une idée hors du périmètre (avec sa carte). Un lien se donne par son nom (`[le brouillon à Rong](…)`), jamais par son adresse. Cinq puces au plus, sans sous-puce : ni titre, ni rubrique, ni paragraphe (seule exception, le bloc « Ce qui a changé » du compte rendu « prête à fusionner », #269). Rien de répété d'un message à l'autre : un fait, une question ou un « À toi » déjà dit ne revient pas. Les étapes restent dans la liste d'étapes de l'app (`update_plan`) : la preuve ne la recopie pas, l'étape se dit dans le verdict, sous le nom de la liste. Une question ou une réponse courte hors tâche : pas de verdict imposé. Une explication que " + person() + " demande prend la place qu'il faut pour être comprise, avec un exemple concret. À la fin de la session, une seule fois, la conclusion, d'une autre mise en page : au dernier tour (ta ligne close, lue dans ROADMAP-fait), ou au tour où la session s'arrête bloquée. Un `---`, puis un titre `### ✅ #<id> · <la tâche> : c'est livré`, puis le bloc `**Ce qu'on a fait.**` suivi de deux ou trois phrases simples, en mots de tous les jours : le problème de départ, ce qu'on a construit, ce que ça change pour " + person() + " (#307) ; puis un tableau de deux colonnes, `| Livré | <version>, close le AAAA-MM-JJ |` (« close par Maestro le » pour une session qu'il a lancée ; sans version, le livrable et où il est), `|---|---|`, `| À essayer | où et quoi |`, et `| En route | le souci rencontré |` s'il y en a eu un ; puis la boîte de fin « Archiver cette session ? » avec le bouton de réponse « Oui, archiver », son recap en quelques mots, sans redire « fini : … » ni la conclusion. Bloquée : `### ⛔ #<id> · <la tâche> : bloquée`, la phrase, puis `| Fait | … |`, `|---|---|`, `| Bloque | ce qui bloque, qui débloque, ce qui suit |`, `| À toi | … |`, sans question d'archivage. Un tour qui attend une réponse de " + person() + " n'est pas bloqué. Ta ligne #<id> encore ouverte, pas de conclusion ni d'archivage. Maestro : son verdict compte sa liste d'étapes (`**Maestro · 2 en cours · 1 t'attend**`, `**Maestro · tout est livré**` quand rien ne reste), et ne s'écrit que quand il a changé depuis son message d'avant ; sa conclusion, `### ✅ Maestro · <le lot> : tout est livré`, une phrase, le tableau `| Tâche | Ce qui change | Version |`, une ligne par tâche lancée (`| #<id> <nom court> | … | X.Y.Z |`), puis `**À essayer :** …` ; à chaque tâche livrée, l'étape de sa liste dit `· livrée <version>` et sa preuve `- #<id> livrée <version> : ce qui change`. Si un rappel ne réclame que le bouton de la boîte, pose la boîte seule, sans réécrire le message.",
     )
   }
   if (prefs.francais) lines.push('- **Langue** : réponds en français, comptes rendus, récaps et boîte de fin compris.')
@@ -7066,7 +7081,7 @@ export function prefsChangedLead(): string {
 // s'effaçait au fil d'une longue session (fil absent 3 messages sur 4). Une ligne la redit à chaque message.
 export function sessionPrefsReminder(prefs: SessionPrefs): string | undefined {
   if (!prefs.adhd) return undefined
-  return "Mode ADHD : ouvre un message de tâche par son verdict, une phrase en gras qui dit l'état et ce qui en sort (« **Tout concorde : …** », « **En cours, étape 4/6 : …** », « **J'ai besoin de toi : …** », « **Prête à fusionner : tests verts, branche poussée.** »), puis la preuve : un fait sûr en une puce de mots, sans chiffre, identifiant ni glyphe ; ce qui a été vérifié et chiffré en petit tableau (l'objet, l'attendu, le vu) ; en fin de message, chacun sa citation, `> **À toi :** …` (une action ou une décision qui revient à " + person() + "), `> **Une question :** …`, `> **Hors de ma tâche :** …`. Un lien par son nom ; ni titre, ni rubrique, ni sous-puce, et rien de répété d'un message à l'autre. En fin de session (ligne close, ou bloquée), la conclusion à part : `---`, `### ✅ #<id> · <la tâche> : c'est livré` (ou `### ⛔ … : bloquée`), une phrase, puis le tableau Livré, À essayer, En route (bloquée : Fait, Bloque, À toi)."
+  return "Mode ADHD : ouvre un message de tâche par son verdict, une phrase en gras qui dit l'état et ce qui en sort (« **Tout concorde : …** », « **En cours, étape 4/6 : …** », « **J'ai besoin de toi : …** », « **Prête à fusionner : tests verts, branche poussée.** »), puis la preuve : un fait sûr en une puce de mots, sans chiffre, identifiant ni glyphe ; ce qui a été vérifié et chiffré en petit tableau (l'objet, l'attendu, le vu) ; en fin de message, chacun sa citation, `> **À toi :** …` (une action ou une décision qui revient à " + person() + "), `> **Une question :** …`, `> **Hors de ma tâche :** …`. Un lien par son nom ; ni titre, ni rubrique, ni sous-puce, et rien de répété d'un message à l'autre. En fin de session (ligne close, ou bloquée), la conclusion à part : `---`, `### ✅ #<id> · <la tâche> : c'est livré`, `**Ce qu'on a fait.**` et deux ou trois phrases simples (le problème de départ, ce qu'on a construit, ce que ça change), puis le tableau Livré, À essayer, En route (bloquée : `### ⛔ … : bloquée`, une phrase, puis Fait, Bloque, À toi) ; la boîte de fin ne redit pas « fini : … »."
 }
 
 // --- Fil de Maestro (#133) -----------------------------------------------------------------------

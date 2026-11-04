@@ -5597,6 +5597,8 @@ export const register: Register = (on, options) => {
   if (settings.account !== 'team') {
     on('classic.Stop', async ($, e, next) => {
       stopTurn.stopRan = true
+      // La conclusion se garde ici (#307) : si ce Stop relance Claude, la fin de tour ne lira que la réponse relancée.
+      await saveEndFiche($, e.last_assistant_message)
       const result = await next(e)
       const block = await endOfTurnBlock($, e.last_assistant_message, e.stop_hook_active === true, result.block !== undefined)
       return block === undefined ? result : { ...result, block }
@@ -7380,7 +7382,8 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     const noteForLinks = current.done ? livreOfNote(current.note).rest : current.note
     const fileHits = await readLinks($, ficheSource, [current.attend, noteForLinks, current.src], now)
     const storedRecap = current.id ? recapOf(await $.store.get(recapKey(ficheSource.name, current.id)).catch(() => undefined)) : undefined
-    const frame = missionFrame(current.label, storedRecap)
+    // #307 (maquette A) : la Mission garde la demande ; le récap de fin ouvre la carte Fin.
+    const frame = missionFrame(current.label)
     const storedChanges = current.id ? changesOf(await $.store.get(changesKey(ficheSource.name, current.id)).catch(() => undefined)) : undefined
     // Le morceau « livré : … » de la note d'une close va dans la carte Fin (#150) ; le reste de la note reste.
     const noteShown = current.done ? livreOfNote(current.note).rest : current.note
@@ -7683,6 +7686,12 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
         'Fin',
         fin.when,
         <Box flexDirection="column" gap={SPACE.tight}>
+          {/* Le « Ce qu'on a fait » de la conclusion en tête, au-dessus du tableau (#307, maquette A). */}
+          {fin.recap && (
+            <Box key="fin-recap" flexDirection="column">
+              <Markdown text={codeKeptWhole(`**Ce qu'on a fait.** ${fin.recap}`)} />
+            </Box>
+          )}
           {/* Le tableau : la colonne d'étiquettes des champs de la carte Détails, sans écart de plus, pour que
               les valeurs des deux cartes commencent au même endroit (#183) ; un filet au-dessus de chaque ligne (#199). */}
           {shown.map(r => (
