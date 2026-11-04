@@ -9029,6 +9029,9 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     const head = tree?.kind === 'head' ? tree : undefined
     const child = tree?.kind === 'child' ? tree : undefined
     const ghost = head?.ghost === true
+    // Grise seulement dans les Done (#203) : une mère ouverte parmi les faites. Sous un filtre des ouvertes
+    // (Ma journée…), la mère gardée pour ses filles est une ouverte : pleine encre, comme dans Toutes (#296).
+    const greyed = ghost && showDone
     // La case (#198, maquette A) : le carré d'axe de toute ligne, ouverte ou faite, dans toutes les
     // vues ; plus de rond. Un premier clic l'arme (filet orange) et pose « Confirmer » au bout de la
     // ligne, un second la désarme. Ni la mère, dont le carré porte la flèche qui la replie (#168), ni
@@ -9074,7 +9077,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
             : treeAloneRowIcon(markSource, markWidth)
     const markAlt = `${isAbandoned(t) ? 'annulée' : t.done ? 'faite' : t.axis}${armed ? ', armée' : ''}${chain ? `, étape ${chain.step}` : ''}${head ? (head.open ? ', replier' : ', déplier') : ''}`
     const checkKey = `check:${t.id ?? keyPart(t.key)}`
-    const markFaded = ghost || (t.done && !checkedMark)
+    const markFaded = greyed || (t.done && !checkedMark)
     const mark = Svg ? (
       <Svg source={markFaded ? fade(drawn, true) : drawn} alt={markAlt} width={markWidth} height={24} {...(moving !== undefined ? { isInteractive: true } : {})} />
     ) : head ? (
@@ -9250,7 +9253,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
               et barrée (#198), un titre provisoire estompé ; un bouton natif imposerait son encre, sa
               graisse et sa marge. Un bouton sans encre le couvre et ouvre la fiche. Au terminal, le bouton. */}
           {Svg ? (
-            <Text wrap="truncate-end" {...(head ? { weight: 'semibold' as const } : {})} {...(t.done ? { strikethrough: true, color: palette.text3 } : ghost || !titled(t) ? { color: palette.text2 } : {})}>
+            <Text wrap="truncate-end" {...(head ? { weight: 'semibold' as const } : {})} {...(t.done ? { strikethrough: true, color: palette.text3 } : greyed || !titled(t) ? { color: palette.text2 } : {})}>
               {s.titre}
             </Text>
           ) : null}
@@ -9261,7 +9264,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
               </Button>
             </Box>
           ) : (
-            <Button key={t.key} plain dimColor={ghost || (!t.done && !titled(t))} onPress={select(selectionOf(t))}>
+            <Button key={t.key} plain dimColor={greyed || (!t.done && !titled(t))} onPress={select(selectionOf(t))}>
               <Text wrap="truncate-end" {...(t.done ? { strikethrough: true, color: palette.text3 } : {})}>{s.titre}</Text>
             </Button>
           )}
@@ -9432,7 +9435,22 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
               </Button>
             )}
             {mark}
-            {headZones ? <Text wrap="truncate-end">{name}</Text> : <Button key={`group:${keyPart(id)}`} plain label={name} onPress={toggleGroup(id)} />}
+            {/* Sur le bureau, le nom est toujours un texte (#295) : sans zone de clic, un bouton sans encre le
+                couvre ; un bouton natif lui imposait sa marge. Au terminal, le bouton. */}
+            {Svg ? (
+              <Box flexDirection="row" alignItems="center" flexShrink={1} minWidth={0}>
+                <Text wrap="truncate-end">{name}</Text>
+                {!headZones && (
+                  <Box position="absolute" top={0} left={0}>
+                    <Button key={`group:${keyPart(id)}`} plain onPress={toggleGroup(id)}>
+                      {titleOverlay(name)}
+                    </Button>
+                  </Box>
+                )}
+              </Box>
+            ) : (
+              <Button key={`group:${keyPart(id)}`} plain label={name} onPress={toggleGroup(id)} />
+            )}
           </Box>
           <Box flexDirection="row" alignItems="center" gap={SPACE.row} flexShrink={0}>
             {lead}
@@ -9572,10 +9590,15 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
         <Box flexDirection="column" flexGrow={1} flexShrink={1} minWidth={0}>
           <Box flexDirection="row" justifyContent="space-between" alignItems="center">
             <Box flexDirection="row" alignItems="center" flexShrink={1} minWidth={0}>
-              {headZones ? (
-                <Text weight="semibold" color={nameInk} wrap="truncate-end">{name}</Text>
-              ) : (
-                <Button key={`bande:${keyPart(name)}`} plain label={name} onPress={toggleBand(id)} />
+              {/* Le nom est toujours un texte (#295) : sans zone de clic (un gros projet, « Toutes »), un bouton
+                  natif lui imposait sa marge et sa graisse ; un bouton sans encre le couvre, comme le titre d'une ligne (#224). */}
+              <Text weight="semibold" color={nameInk} wrap="truncate-end">{name}</Text>
+              {!headZones && (
+                <Box position="absolute" top={0} left={0}>
+                  <Button key={`bande:${keyPart(name)}`} plain onPress={toggleBand(id)}>
+                    {titleOverlay(name)}
+                  </Button>
+                </Box>
               )}
             </Box>
             <Box flexDirection="row" alignItems="center" flexShrink={0}>
