@@ -128,6 +128,13 @@ to it.
   and the sessions already run on it, with their paths. The panel writes it: a card titled
   `#<id> · …` without it gets it when posted. Do not copy it by hand; a card without `#<id>` in its
   title gets none.
+- **The folder and the chain** (#301): before the tree, the panel also adds « Le dossier du projet »:
+  its root (in code, the main folder, whose roadmap stays the one that counts for a session in a
+  worktree), its rules (`CLAUDE.md`, `AGENTS.md`) and map (`INDEX.md`, `docs/README.md`,
+  `README.md`) that exist, its roadmap and its first-level folders. The tree opens on « Ta place dans
+  la chaîne »: after #A (delivered or not), before #B. Both ask the session to state, in its first
+  report, the prerequisites not delivered and a line « Lu : … » with what it read. Do not copy them
+  by hand either.
 - **By hand** (`start_session`, `user_asked` when the person asked for it, otherwise an
   `own_initiative` card): same title, own worktree, full brief opened by its three mission lines,
   then the detail (the line to reread, the files, what « fini » means, test included) and the
@@ -201,6 +208,11 @@ to it.
 - **Read**: each end of turn of a sub-session reaches Maestro (the start of its report);
   `list_sessions` with `linked: true` gives the status of all of them (running, waiting, PR). A note
   is not proof: reread the branch's diff and tests before calling it ready.
+- **Check the first report** (#301): it carries a line « Lu : … » (the folder's rules and map, the
+  fiche, the chain); missing or empty, ask the session by message to read its brief's « Le dossier
+  du projet » and say what it read. A « prérequise #A pas livrée » is Maestro's call: wait (tell it
+  to pause that part), restart #A's session, or let it go on; the sub-session never stops on its
+  own.
 - **Act on its message** (#131): the app wakes Maestro only when all its sessions are idle; so a
   sub-session notifies it itself, by a message « Roadmap — nouvelle de ta session … » at each end of
   turn and at each form question, once per status. That message comes from the panel, not from the

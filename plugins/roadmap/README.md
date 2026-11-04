@@ -688,6 +688,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.194.0 (2026-11-04)** : maestro : le brief d'une session lancée donne le dossier du projet (règles, carte, structure), sa place dans la chaîne et demande une ligne « Lu : » au premier compte rendu
 - **0.193.0 (2026-11-04)** : reglages-session : les messages du mode ADHD passent au verdict en gras, puis la preuve (faits en mots, chiffres en petit tableau, ce qui te revient en citation)
 - **0.192.1 (2026-11-04)** : panneau : les dates, résumés et compteurs en text3 lisibles (contraste 4,5:1 en sombre et en clair)
 - **0.192.0 (2026-11-04)** : mockups : avant une maquette, la nouvelle skill roadmap:mockups part du design system du projet ; frontend-design seulement sans lui

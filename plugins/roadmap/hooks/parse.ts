@@ -5120,6 +5120,28 @@ function deliveredOf(t: Task, bilan: Bilan | undefined): string | undefined {
 }
 
 /**
+ * La place d'une tâche dans sa chaîne (#301) : après ses prérequises, livrées ou non, avant ce qu'elle
+ * débloque. Une prérequise ouverte se dit en tête du premier compte rendu, et c'est Maestro (sans lui,
+ * la personne) qui tranche : la session avance sur le reste, elle ne s'arrête pas seule. Une annulée ne
+ * bloque pas. Ni prérequise ni suite : rien.
+ */
+function chainPlace(prereqs: readonly Task[], unlocks: readonly Task[], stateOf: (t: Task) => string): string[] {
+  if (prereqs.length === 0 && unlocks.length === 0) return []
+  const num = (t: Task) => (t.id ? `#${t.id}` : clip(t.label.replace(/`/g, ''), 60))
+  const before = prereqs.map(t => `${num(t)} (${t.done ? (isAbandoned(t) ? stateOf(t) : `livrée${t.fait ? ` le ${t.fait}` : ''}`) : `pas livrée : ${stateOf(t)}`})`)
+  const parts = [...(before.length > 0 ? [`après ${listFr(before)}`] : []), ...(unlocks.length > 0 ? [`avant ${listFr(unlocks.map(num))}`] : [])]
+  const open = prereqs.filter(t => !t.done)
+  return [
+    `- Ta place dans la chaîne : ${parts.join(', ')}.`,
+    ...(open.length > 0
+      ? [
+          `  - ${open.length > 1 ? 'Des prérequises ne sont pas livrées' : "Une prérequise n'est pas livrée"} : dis-le en tête de ton premier compte rendu (« ${open.map(t => `prérequise ${num(t)} pas livrée`).join(', ')} »), puis avance sur ce qui n'en dépend pas ; Maestro (sans lui, ${person()}) tranche : attendre, relancer ou continuer. Ne t'arrête pas seule.`,
+        ]
+      : []),
+  ]
+}
+
+/**
  * La section de l'arbre d'une tâche (#237) : sa mère, ses filles, ses sœurs et leur état, ses prérequises
  * et ce qu'elles ont livré, ce qu'elle débloque, les closes qui la citent et les sessions déjà passées
  * sur elle (du projet seulement, `source.match`), chacune avec son chemin. Rien : une tâche seule.
@@ -5132,8 +5154,11 @@ export function treeContext(o: {
   bilans?: ReadonlyMap<string, Bilan>
   sessions?: readonly unknown[]
 }): string[] {
-  const { source, task } = o
+  const { source } = o
   const all = [...o.open.filter(t => !t.done), ...o.done.filter(t => t.done)]
+  // #301 : la tâche relue à part (le crochet d'une carte relit la roadmap) est la même ligne : sans
+  // elle, « Débloque » ne trouvait jamais ce qui la suit.
+  const task = all.find(t => t === o.task) ?? (o.task.id ? all.find(t => t.id === o.task.id) : undefined) ?? o.task
   const others = all.filter(t => t !== task && !(task.id && t.id === task.id))
   const pathOf = (t: Task) => {
     const [file, line] = [t.key.split(':').slice(0, -1).join(':'), t.key.split(':').pop()]
@@ -5156,6 +5181,9 @@ export function treeContext(o: {
   const ordered = (ts: readonly Task[]) => [...ts.filter(t => !t.done), ...ts.filter(t => t.done)]
 
   const out: string[] = []
+  const prereqs = prereqsOf(task, all)
+  const unlocks = unlockedBy(task, all, t => prereqsOf(t, all))
+  out.push(...chainPlace(prereqs, unlocks, stateOf))
   const mother = task.parent ? others.find(t => t.id === task.parent) : undefined
   if (mother) {
     const fiche = mother.fiche ? (URL_RE.test(mother.fiche) ? mother.fiche : pathCandidates(source, mother.fiche)[0]) : undefined
@@ -5165,13 +5193,11 @@ export function treeContext(o: {
   out.push(...rubric('Filles', daughters.map(entry)))
   const sisters = task.parent ? ordered(others.filter(t => t.parent === task.parent)) : []
   out.push(...rubric('Sœurs', sisters.map(entry)))
-  const prereqs = prereqsOf(task, all)
   const prereqItems = prereqs.map(t => {
     const delivered = t.done ? deliveredOf(t, t.id ? o.bilans?.get(t.id) : undefined) : undefined
     return delivered ? `${entry(t)}\n${delivered}` : entry(t)
   })
   out.push(...rubric('Prérequises', prereqItems))
-  const unlocks = unlockedBy(task, all, t => prereqsOf(t, all))
   out.push(...rubric('Débloque', unlocks.map(entry)))
   // Les closes qui la nomment (« #N », `après:N`), hors celles déjà citées plus haut.
   const shown = new Set<Task>([...(mother ? [mother] : []), ...daughters, ...sisters, ...prereqs, ...unlocks])
@@ -5201,6 +5227,59 @@ export function treeContext(o: {
 /** Un brief complété par la section de l'arbre (#237), au bout, s'il ne l'a pas déjà. */
 export function withTreeContext(prompt: string, lines: readonly string[]): string {
   if (lines.length === 0 || prompt.includes(TREE_MARK)) return prompt
+  return `${prompt.replace(/\s+$/, '')}\n\n${lines.join('\n')}`
+}
+
+/** Le titre du bloc du dossier (#301) : il n'entre qu'une fois dans un brief. */
+export const FOLDER_MARK = 'Le dossier du projet'
+
+/** Le plus de dossiers que cite la structure : au-delà, « … ». */
+const FOLDER_MAX = 20
+
+/** Les règles et les cartes d'un dossier (#301), à sa racine : l'app ne charge d'elle-même que `CLAUDE.md`. */
+const FOLDER_RULES = ['CLAUDE.md', 'AGENTS.md'] as const
+const FOLDER_MAPS = ['INDEX.md', 'docs/README.md', 'README.md'] as const
+
+/** Les fichiers du dossier que le panneau vérifie avant d'écrire le bloc (#301). */
+export function folderPaths(source: Source): string[] {
+  const root = source.root ?? source.dir
+  return [...FOLDER_RULES, ...FOLDER_MAPS].map(f => `${root}/${f}`)
+}
+
+/**
+ * Le bloc du dossier d'une session lancée (#301) : sa racine (en code, le dossier principal, dont la
+ * roadmap fait foi même pour une session en worktree), ses règles et sa carte qui existent, sa roadmap,
+ * ses dossiers du premier niveau, puis la consigne de dire, au premier compte rendu, ce qui a été lu :
+ * c'est la preuve que le contexte est chargé.
+ */
+export function folderContext(o: { source: Source; found: BriefFound; entries?: readonly { name: string; kind: string }[] }): string[] {
+  const { source, found } = o
+  const root = source.root ?? source.dir
+  const code = projectSettings(source).travail === 'code'
+  const existing = (names: readonly string[]) => names.map(f => `${root}/${f}`).filter(p => found[p] === 'file').map(p => `\`${p}\``)
+  const rules = existing(FOLDER_RULES)
+  const maps = existing(FOLDER_MAPS)
+  const dirs = (o.entries ?? [])
+    .filter(e => e.kind === 'dir' && !e.name.startsWith('.') && e.name !== 'node_modules')
+    .map(e => e.name)
+    .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))
+  const structure = dirs.slice(0, FOLDER_MAX).map(d => `\`${d}/\``).join(', ') + (dirs.length > FOLDER_MAX ? ', …' : '.')
+  return [
+    `${FOLDER_MARK} ${source.name} (relevé au lancement ; pioche dedans tout ce qu'il te faut) :`,
+    code
+      ? `- Racine : \`${root}\`, le dossier principal. Si ta session tourne dans un worktree, la roadmap qui fait foi reste celle du dossier principal, \`${source.dir}/ROADMAP.md\`, jamais la copie de ton worktree ; ton code, lui, se lit et s'écrit dans ton worktree.`
+      : `- Racine : \`${root}\`.`,
+    ...(rules.length > 0 ? [`- Ses règles : ${rules.join(', ')} (l'app la charge seule quand ta session tourne dans ce dossier ; ailleurs, lis-la).`] : []),
+    ...(maps.length > 0 ? [`- Sa carte : ${maps.join(', ')} (lis-la d'abord : elle dit où trouver chaque chose).`] : []),
+    `- Sa roadmap : \`${source.dir}/ROADMAP.md\`, les tâches closes dans \`${source.dir}/ROADMAP-fait.md\`.`,
+    ...(dirs.length > 0 ? [`- Sa structure : ${structure}`] : []),
+    "Dans ton premier compte rendu, juste après ta phrase d'état, une ligne « Lu : … » cite ce que tu as lu de ce bloc, de ta ligne et de l'arbre (règles, carte, fiche, chaîne) : c'est la preuve que ton contexte est chargé.",
+  ]
+}
+
+/** Un brief complété par le bloc du dossier (#301), au bout, s'il ne l'a pas déjà. */
+export function withFolderContext(prompt: string, lines: readonly string[]): string {
+  if (lines.length === 0 || prompt.includes(FOLDER_MARK)) return prompt
   return `${prompt.replace(/\s+$/, '')}\n\n${lines.join('\n')}`
 }
 
@@ -5299,6 +5378,7 @@ export function launchBrief(
   found: BriefFound = {},
   named: readonly string[] = [],
   tree: readonly string[] = [],
+  folder: readonly string[] = [],
 ): { title: string; prompt: string; background: string } {
   const { travail, requis, requiredOn } = projectSettings(source)
   const { files, notes } = briefFiles(source, task, found)
@@ -5323,6 +5403,7 @@ export function launchBrief(
     'Lis d\'abord, par leur chemin :',
     ...files.map(f => `- ${f}`),
     ...notes,
+    ...(folder.length > 0 ? ['', ...folder] : []),
     ...(tree.length > 0 ? ['', ...tree] : []),
     '',
     'Relis la ligne dans le fichier avant de commencer : elle a pu bouger depuis ce lancement.',

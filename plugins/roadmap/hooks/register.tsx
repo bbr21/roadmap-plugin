@@ -281,6 +281,10 @@ import {
   treeContext,
   TREE_MARK,
   withTreeContext,
+  FOLDER_MARK,
+  folderContext,
+  folderPaths,
+  withFolderContext,
   launchPrompt,
   namedFiles,
   ownLaunch,
@@ -3347,7 +3351,24 @@ async function workBrief($: EngineInterface, source: Source, task: Task, shortTi
   // #194 : les fichiers que nomment la spec et la fiche ouvrent le brief, sous la mission.
   const named: string[] = []
   for (const doc of briefDocs(source, task, found)) for (const f of namedFiles((await readOr($, doc)) ?? '')) if (!named.includes(f)) named.push(f)
-  return launchBrief(source, task, shortTitle, bilanLog, maestro, found, named, await treeFor($, source, task))
+  return launchBrief(source, task, shortTitle, bilanLog, maestro, found, named, await treeFor($, source, task), await folderFor($, source))
+}
+
+/**
+ * Le bloc du dossier (#301) : ses règles et ses cartes qui existent, et ses dossiers du premier niveau,
+ * relevés maintenant. Une lecture en panne ôte sa part ; le bloc part toujours.
+ */
+async function folderFor($: EngineInterface, source: Source): Promise<string[]> {
+  const found: Record<string, 'file' | 'dir'> = {}
+  for (const path of folderPaths(source)) {
+    try {
+      if ((await $.fs.stat(path)).kind === 'file') found[path] = 'file'
+    } catch {
+      // absent : le bloc ne le cite pas
+    }
+  }
+  const entries = await $.fs.list(source.root ?? source.dir).catch(() => [])
+  return folderContext({ source, found, entries })
 }
 
 /**
@@ -3385,7 +3406,7 @@ async function treeFor($: EngineInterface, source: Source, task: Task): Promise<
 async function withTree($: EngineInterface, e: unknown): Promise<unknown> {
   const card = e as { title?: unknown; prompt?: unknown }
   const id = typeof card.title === 'string' ? sessionTitleId(card.title) : undefined
-  if (id === undefined || typeof card.prompt !== 'string' || card.prompt.includes(TREE_MARK)) return e
+  if (id === undefined || typeof card.prompt !== 'string' || (card.prompt.includes(TREE_MARK) && card.prompt.includes(FOLDER_MARK))) return e
   try {
     const source = await sourceNow($)
     if (!source) return e
@@ -3393,7 +3414,9 @@ async function withTree($: EngineInterface, e: unknown): Promise<unknown> {
     const tasks = [open, done].map(async (p, i) => load($, p, i === 0 ? 'ROADMAP.md' : 'ROADMAP-fait.md'))
     const task = (await Promise.all(tasks)).flatMap(t => (typeof t === 'string' ? [] : t)).find(t => t.id === id)
     if (!task) return e
-    const prompt = withTreeContext(card.prompt, await treeFor($, source, task))
+    // #301 : le dossier, puis l'arbre ; chacun seulement s'il manque à la carte.
+    const withFolder = card.prompt.includes(FOLDER_MARK) ? card.prompt : withFolderContext(card.prompt, await folderFor($, source))
+    const prompt = card.prompt.includes(TREE_MARK) ? withFolder : withTreeContext(withFolder, await treeFor($, source, task))
     return prompt === card.prompt ? e : { ...(e as object), prompt }
   } catch {
     return e
