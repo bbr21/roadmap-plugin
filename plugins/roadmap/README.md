@@ -686,6 +686,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.191.1 (2026-11-04)** : panneau : le nom d'une section est aligné dans Toutes comme dans Ma journée (plus de bouton natif décalé, en-tête à chevron compris) ; la mère gardée pour ses filles sous un filtre n'est plus grisée (#295, #296)
 - **0.191.0 (2026-11-04)** : maquettes : le réglage fait lancer frontend-design puis web-design-guidelines (ou la skill de design du projet) avant la première maquette, et le plugin rappelle en fin de tour une maquette dessinée sans skill de design (#292)
 - **0.190.0 (2026-11-04)** : check.mjs et le contrôle du hook refusent les fautes de structure que tasks refuse (troisième niveau, prio sur un enfant, après entre deux sujets, parent clos ou introuvable) ; une ligne neuve à plusieurs actions est signalée (#289)
 - **0.189.0 (2026-11-04)** : doctor : vérifie chaque copie installée du plugin roadmap contre les empreintes publiées de sa version (CHECKSUMS.txt du dépôt public) : identique, ou fichiers changés, en trop, manquants et liens symboliques (#274)
