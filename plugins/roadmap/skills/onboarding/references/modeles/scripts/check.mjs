@@ -244,7 +244,16 @@ check('Grammaire de ROADMAP.md et ROADMAP-fait.md', (err) => {
           if (!existsSync(join(root, value.split('#')[0]))) err(at, `${key}:${value} : chemin absent`);
         }
       }
-      if (!inDone && axeAt === 0) open.push({ at, axis: fields[0], id: found.get('id'), parent: (found.get('parent') ?? '').replace(/^#/, '') });
+      if (!inDone && axeAt === 0) {
+        open.push({
+          at,
+          axis: fields[0],
+          id: found.get('id'),
+          parent: (found.get('parent') ?? '').replace(/^#/, ''),
+          prio: found.get('prio'),
+          after: (found.get('après') ?? '').split(',').map((v) => v.trim().replace(/^#/, '')).filter((v) => /^[1-9]\d*$/.test(v)),
+        });
+      }
       if (!found.has('id')) err(at, `champ id: absent : une ligne neuve prend id:${nextId}, juste après l'axe`);
       if (inDone && !found.has('fait')) err(at, 'champ fait:AAAA-MM-JJ absent');
       if (!inDone && found.has('fait')) err(at, 'champ fait: dans ROADMAP.md : la ligne part dans ROADMAP-fait');
@@ -256,10 +265,26 @@ check('Grammaire de ROADMAP.md et ROADMAP-fait.md', (err) => {
   // Une sous-tâche n'a pas d'axe à elle : elle prend celui de sa mère ouverte (#190).
   const openById = new Map();
   for (const row of open) if (row.id && !openById.has(row.id)) openById.set(row.id, row);
+  // Les règles de structure que la skill tasks refuse à l'écriture (#125), refusées aussi à la main (#289) :
+  // deux niveaux au plus, la prio: sur le parent, après: entre deux sœurs ou deux tâches sans parent, un parent ouvert.
+  // Seules les lignes ouvertes se contrôlent : une ligne close garde son histoire.
+  const doneIds = new Set([...read(DONE).matchAll(/[[|]\s*id:(\d+)\s*[|\]]/g)].map((m) => m[1]));
+  const parentOf = (row) => (row.parent === '-' ? '' : row.parent);
   for (const row of open) {
-    const mother = openById.get(row.parent);
+    const p = parentOf(row);
+    const mother = openById.get(p);
     if (mother && mother.axis !== row.axis) {
-      err(row.at, `axe « ${row.axis} » différent de celui de sa mère #${row.parent} (« ${mother.axis} ») : une sous-tâche prend l'axe de sa tâche parente`);
+      err(row.at, `axe « ${row.axis} » différent de celui de sa mère #${p} (« ${mother.axis} ») : une sous-tâche prend l'axe de sa tâche parente`);
+    }
+    if (p && !mother) {
+      if (doneIds.has(p)) err(row.at, `parent:${p} : #${p} est close ; rouvre-la d'abord, ou retire parent:`);
+      else err(row.at, `parent:${p} : aucune tâche #${p}`);
+    }
+    if (mother && parentOf(mother)) err(row.at, `parent:${p} : #${p} est déjà l'enfant de #${parentOf(mother)} ; deux niveaux au plus (parent › enfants)`);
+    if (p && row.prio !== undefined) err(row.at, `prio:${row.prio} : prio se pose sur le parent #${p}, jamais sur un enfant`);
+    for (const n of row.after) {
+      const pre = openById.get(n);
+      if (pre && parentOf(pre) !== p) err(row.at, `après:${n} : #${n} n'a pas le même parent ; après: relie deux enfants d'un même parent, ou deux parents`);
     }
   }
 });

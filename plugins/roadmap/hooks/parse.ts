@@ -633,6 +633,11 @@ export type LintRules = {
   cles: Readonly<Record<string, readonly string[]>>
   /** Aujourd'hui, à l'heure locale (#201) : `fait:` et `ouvert:` ne tombent pas après ; sans lui, rien n'est comparé. */
   today?: string
+  /**
+   * Les numéros des tâches closes (ROADMAP-fait.md, #289) : donnés, un `parent:` qui ne vise aucune tâche
+   * ouverte se refuse, close ou introuvable ; sans eux (une ligne contrôlée seule), rien n'est comparé.
+   */
+  closed?: ReadonlySet<string>
 }
 
 /** L'exemple d'un champ exigé absent : ce qu'il faut écrire. */
@@ -715,7 +720,8 @@ export function lintRoadmap(text: string, done: boolean, rules: Partial<LintRule
       for (const k of requis) if ((keys.get(k) ?? '') === '' && !(k === 'due' && parent)) say(`champ exigé absent : ${k}:${requiredExample(k)}`)
     }
     if (!checked && keys.has('tous') && (keys.get('due') ?? '') === '') say('tous: demande une due:AAAA-MM-JJ, la prochaine occurrence')
-    // Les règles du modèle (#125) : signalées, jamais refusées.
+    // Les règles de structure du modèle (#125), que la skill tasks refuse à l'écriture : des problèmes francs (#289).
+    // L'échéance d'un enfant après celle de son parent reste un avertissement.
     if (!done && !checked) {
       const parentId = PARENT_RE.exec(keys.get('parent') ?? '')?.[1]
       const parent = parentId === undefined ? undefined : openById.get(parentId)
@@ -724,10 +730,15 @@ export function lintRoadmap(text: string, done: boolean, rules: Partial<LintRule
         const parentText = (lines[Number(parent.key.slice(parent.key.lastIndexOf(':') + 1)) - 1] ?? '').replace(/\r$/, '')
         say(`axe « ${axis} » différent de celui de sa mère #${parentId} (« ${parent.axis} ») : une sous-tâche prend l'axe de sa tâche parente`, false, parentText)
       }
-      if (parent?.parent !== undefined) say(`parent:${parentId} : #${parentId} est déjà l'enfant de #${parent.parent} ; deux niveaux au plus (parent › enfants)`, true)
+      if (parentId !== undefined && parent === undefined && rules.closed !== undefined) {
+        say(rules.closed.has(parentId) ? `parent:${parentId} : #${parentId} est close ; rouvre-la d'abord, ou retire parent:` : `parent:${parentId} : aucune tâche #${parentId}`)
+      }
+      if (parent?.parent !== undefined) say(`parent:${parentId} : #${parentId} est déjà l'enfant de #${parent.parent} ; deux niveaux au plus (parent › enfants)`)
+      const prio = keys.get('prio')
+      if (parentId !== undefined && prio !== undefined) say(`prio:${prio} : prio se pose sur le parent #${parentId}, jamais sur un enfant`)
       for (const n of prereqNumbers(keys.get('après') ?? '') ?? []) {
         const pre = openById.get(n)
-        if (pre !== undefined && pre.parent !== parentId) say(`après:${n} : #${n} n'a pas le même parent ; après: relie deux enfants d'un même parent, ou deux parents`, true)
+        if (pre !== undefined && pre.parent !== parentId) say(`après:${n} : #${n} n'a pas le même parent ; après: relie deux enfants d'un même parent, ou deux parents`)
       }
       const due = keys.get('due') ?? ''
       if (parent?.due !== undefined && DATE_RE.test(due) && due > parent.due) say(`due: après l'échéance de son parent #${parentId} (${parent.due})`, true)
@@ -744,7 +755,48 @@ export function lintRoadmap(text: string, done: boolean, rules: Partial<LintRule
 export function newProblems(before: string | undefined, after: string, done: boolean, rules: Partial<LintRules> = {}): LineProblem[] {
   const old = new Set((before ?? '').split('\n').map(l => l.replace(/\r$/, '')))
   // Une sous-tâche se signale aussi quand c'est sa mère qui change d'axe (#190).
-  return lintRoadmap(after, done, rules).filter(p => !old.has(p.text) || (p.parentText !== undefined && !old.has(p.parentText)))
+  const problems = lintRoadmap(after, done, rules).filter(p => !old.has(p.text) || (p.parentText !== undefined && !old.has(p.parentText)))
+  if (done) return problems
+  // Une ligne neuve (un numéro, sinon un libellé, absent de `before`) qui enchaîne plusieurs actions (#289).
+  const was = parseRoadmap(before ?? '', 'ROADMAP.md')
+  const ids = new Set(was.map(t => t.id).filter(id => id !== undefined))
+  const labels = new Set(was.map(t => t.label))
+  const lines = after.split('\n')
+  for (const t of parseRoadmap(after, 'ROADMAP.md')) {
+    if (t.done || (t.id !== undefined ? ids.has(t.id) : labels.has(t.label))) continue
+    const n = actionFragments(t.label).length
+    if (n < 2) continue
+    const line = Number(t.key.slice(t.key.lastIndexOf(':') + 1))
+    problems.push({
+      line,
+      text: (lines[line - 1] ?? '').replace(/\r$/, ''),
+      why: `une ligne, une action : le libellé enchaîne ${n} actions par « ; » ; une tâche par action, ou un parent et ses enfants`,
+      soft: true,
+    })
+  }
+  return problems.sort((a, b) => a.line - b.line)
+}
+
+/**
+ * Le libellé coupé à chaque « ; » hors parenthèses (une parenthèse est un seul aparté), espaces réduits,
+ * morceaux vides retirés ; une parenthèse jamais refermée : coupé à chaque « ; ». Le découpage de
+ * `fragments` de audit.py (#289), qui compte les actions d'une ligne.
+ */
+export function actionFragments(label: string): string[] {
+  const parts: string[] = []
+  let start = 0
+  let depth = 0
+  for (let i = 0; i < label.length; i++) {
+    const c = label[i]
+    if (c === '(') depth++
+    else if (c === ')' && depth > 0) depth--
+    else if (c === ';' && depth === 0) {
+      parts.push(label.slice(start, i))
+      start = i + 1
+    }
+  }
+  parts.push(label.slice(start))
+  return (depth > 0 ? label.split(';') : parts).map(p => p.replace(/\s+/g, ' ').trim()).filter(p => p !== '')
 }
 
 /** Le plus grand numéro `id:` des deux fichiers, plus un. */
@@ -796,11 +848,22 @@ export function taskKey(task: Task): string {
   return task.id ? `#${task.id}` : hashLabel(task.label)
 }
 
+/** Le rappel après une écriture : ce qui se corrige d'abord, puis ce qui est à revoir sans refus (`soft`, #289). */
 export function problemsText(file: string, problems: readonly LineProblem[]): string {
-  return [
-    `Plugin roadmap : ${problems.length === 1 ? 'une ligne écrite' : `${problems.length} lignes écrites`} dans ${file} ne ${problems.length === 1 ? 'suit' : 'suivent'} pas la grammaire écrite en tête du fichier. ${problems.length === 1 ? 'Corrige-la' : 'Corrige-les'} maintenant :`,
-    ...problems.map(p => `- L${p.line} : ${p.why}\n  ${clip(p.text, 160)}`),
-  ].join('\n')
+  const item = (p: LineProblem) => `- L${p.line} : ${p.why}\n  ${clip(p.text, 160)}`
+  const hard = problems.filter(p => !p.soft)
+  const soft = problems.filter(p => p.soft)
+  const out: string[] = []
+  if (hard.length > 0) {
+    out.push(
+      `Plugin roadmap : ${hard.length === 1 ? 'une ligne écrite' : `${hard.length} lignes écrites`} dans ${file} ne ${hard.length === 1 ? 'suit' : 'suivent'} pas la grammaire écrite en tête du fichier. ${hard.length === 1 ? 'Corrige-la' : 'Corrige-les'} maintenant :`,
+      ...hard.map(item),
+    )
+  }
+  if (soft.length > 0) {
+    out.push(`${hard.length > 0 ? '' : 'Plugin roadmap : '}À revoir dans ${file}, sans refus (une règle du modèle) :`, ...soft.map(item))
+  }
+  return out.join('\n')
 }
 
 /** Le rappel de fin de tour : des fichiers du projet ont changé, la roadmap non. */

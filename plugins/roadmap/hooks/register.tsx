@@ -1436,7 +1436,7 @@ async function checkRoadmap($: EngineInterface, c: Capture, before?: { open?: st
     if (after === undefined || after === c.seen[key]) continue
     const old = new Set((c.seen[key] ?? '').split('\n').map(l => l.replace(/\r$/, '')))
     const { requis, requiredOn, cles } = projectSettings(c.source)
-    const problems = [...newProblems(c.seen[key], after, done, { requis, requiredOn, cles, today: todayOf(Date.now()) }), ...ids[key].filter(p => !old.has(p.text))]
+    const problems = [...newProblems(c.seen[key], after, done, { requis, requiredOn, cles, today: todayOf(Date.now()), closed: doneIds(now.done) }), ...ids[key].filter(p => !old.has(p.text))]
     if (problems.length > 0) notes.push(problemsText(file, problems))
     if (!done) {
       const added = addedOpenTasks((before ?? c.seen).open, after)
@@ -4365,8 +4365,9 @@ async function saveEdit(
   edit: TaskEdit,
 ): Promise<{ id?: string; warnings: string[]; note?: string; asked?: string } | { error: string; field?: EditField }> {
   const settings = projectSettings(source)
-  const rules = { requis: settings.requis, requiredOn: settings.requiredOn, cles: settings.cles }
-  const { open } = files(source)
+  const { open, done: doneFile } = files(source)
+  // Un parent: clos ou introuvable se refuse à la fiche comme à l'écriture (#289).
+  const rules = { requis: settings.requis, requiredOn: settings.requiredOn, cles: settings.cles, closed: doneIds(await readOr($, doneFile)) }
   const cowork = await coworkPyFor($, source)
   const route = editRoute({ ecriture: source.ecriture, cowork, task, edit })
   if (route.via === 'claude') {
