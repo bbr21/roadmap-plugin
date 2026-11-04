@@ -45,6 +45,10 @@ found none of them; a systematic text scan found all three. Comparison:
   the changed file by its path. A common word (`points`, `text`) brings noise: skim it, keep what
   really depends on the change.
 - **Docs** are only counted: the project's rule « la doc suit le code » says which to update.
+- **Symbols** are read on code files only (not Markdown, HTML, CSS or data files), modified files
+  before new ones, 40 at most. When the cap is reached, the report says how many were left out:
+  name the ones that matter with `--symbols`. A generic file name (`index.ts`, `utils.py`) is looked
+  for with its folder (`a/index`), so other files of the same name do not count as citing it.
 
 Then run the project's whole test suite (its CLAUDE.md, « Commandes »), whatever the map says: the
 map tells what to read and which test to write, not which tests may be skipped.

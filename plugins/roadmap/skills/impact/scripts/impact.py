@@ -10,11 +10,12 @@ Python 3.9, standard library only; reads the repository through `git` (diff, ls-
 
 For each changed file: the tracked files that contain its name (`tokens.ts`) or import it by its stem
 (`from '../hooks/tokens'`). For each changed symbol, read on the added or removed lines of the diff
-(functions, types, constants, object keys, every name of a Swift `case` line): the files that contain
+(functions, types, constants, object keys, every name of a Swift `case` line; code files only, modified
+files before new ones, 40 at most, the rest counted in `cut`): the files that contain
 it as a whole word. Each list is sorted tests first, then code; docs (`docs/`, `.md`) are only counted; the code list is cut at 15, never the tests.
 
 Exit 0 (map written, or nothing changed), 2 (not a git repository, or git failed).
-JSON: {"base", "ranked": [{"path", "hits"}], "files": [{"path", "tests", "code", "docs"}], "symbols": [{"name", "tests", "code", "docs"}]}.
+JSON: {"base", "cut", "ranked": [{"path", "hits"}], "files": [{"path", "tests", "code", "docs"}], "symbols": [{"name", "tests", "code", "docs"}]}.
 The report is in French, like the sessions that read it.
 """
 import argparse
@@ -42,7 +43,7 @@ KEYWORDS = {
 
 DECLARATIONS = [
     # TS, JS, Swift, Python, Kotlin…: a keyword followed by the declared name.
-    re.compile(r"\b(?:function|class|interface|type|enum|const|let|var|def|func|struct|protocol|actor|typealias|extension)\s+([A-Za-z_]\w*)"),
+    re.compile(r"\b(?:function|class|interface|type|enum|const|let|var|def|func|fun|fn|struct|trait|protocol|actor|typealias|extension)\s+([A-Za-z_]\w*)"),
     # An object key or a typed field: `  text3: '#94918A',` (start of line only).
     re.compile(r"^\s*([A-Za-z_]\w*)\??\s*:(?!:)"),
     # Python top-level assignment: `NAME = …`.
@@ -51,6 +52,16 @@ DECLARATIONS = [
 SWIFT_CASE = re.compile(r"^\s*(?:indirect\s+)?case\s+(.+)$")
 
 TEST_DIRS = {"tests", "test", "__tests__", "spec"}
+
+# Files whose changed lines are prose, markup, style or data, not declarations: read as code, their
+# words (« Objectif : », `status:`, `color:`) took the place of the real symbols under the cap (#310).
+NOT_CODE_EXT = (".json", ".yaml", ".yml", ".toml", ".csv", ".tsv", ".html", ".htm", ".css", ".scss",
+                ".svg", ".xml", ".plist", ".lock", ".ini", ".cfg", ".env", ".strings")
+# A file name that many files share: it is looked for by its folder (`a/index`), not its name alone.
+GENERIC_STEMS = {"index", "main", "utils", "util", "helpers", "mod", "__init__", "types", "constants",
+                 "config", "app", "readme", "package", "setup", "test", "tests"}
+# The ones a folder import stands for (`from '../src/a'` loads `src/a/index.ts`).
+FOLDER_STEMS = {"index", "__init__", "mod"}
 
 
 class GitError(Exception):
@@ -86,9 +97,8 @@ def names_on_line(text):
     found = []
     m = SWIFT_CASE.match(text)
     if m:
-        body = m.group(1)
-        for part in body.split(","):
-            n = re.match(r"\s*\.?([A-Za-z_]\w*)", part)
+        for part in top_level_parts(m.group(1)):
+            n = re.match(r"\s*(?:let\s+|var\s+)?\.?([A-Za-z_]\w*)", part)
             if n:
                 found.append(n.group(1))
         return found
@@ -97,20 +107,51 @@ def names_on_line(text):
     return found
 
 
+def top_level_parts(body):
+    """`a, .b(let c, let d), .e` split on the commas outside parentheses; stops at the case's `:`."""
+    parts, depth, cur = [], 0, ""
+    for ch in body:
+        if ch in "([":
+            depth += 1
+        elif ch in ")]":
+            depth -= 1
+        elif depth == 0 and ch == ",":
+            parts.append(cur)
+            cur = ""
+            continue
+        elif depth == 0 and ch == ":":
+            break
+        cur += ch
+    parts.append(cur)
+    return parts
+
+
+def is_code(path):
+    return not is_doc(path) and not path.lower().endswith(NOT_CODE_EXT)
+
+
 def keep(name):
     return len(name) >= MIN_LEN and name.lower() not in KEYWORDS and not name.isdigit()
 
 
 def changed_symbols(repo, base, files):
-    """Names declared on the added or removed lines of the diff, then in each untracked file."""
+    """Names declared on the added or removed lines of the diff of the code files, then in each
+    untracked code file; every name found, uncut (impact() cuts and counts)."""
     lines = []
+    files = [f for f in files if is_code(f)]
     if files:
-        diff = run_git(repo, "diff", "-U0", base, "--", *files)
-        for line in diff.splitlines():
-            if line.startswith(("+++", "---")):
+        # A modified file first: its callers already exist. A new file's declarations come after,
+        # so that they do not fill the cap (the new impact.py did, on the diff of #305).
+        added = set(split_z(run_git(repo, "diff", "--name-only", "--diff-filter=A", "-z", base, "--", *files)))
+        for group in ([f for f in files if f not in added], [f for f in files if f in added]):
+            if not group:
                 continue
-            if line.startswith(("+", "-")):
-                lines.append(line[1:])
+            diff = run_git(repo, "diff", "-U0", base, "--", *group)
+            for line in diff.splitlines():
+                if line.startswith(("+++", "---")):
+                    continue
+                if line.startswith(("+", "-")):
+                    lines.append(line[1:])
         tracked = set(split_z(run_git(repo, "ls-files", "-z", "--", *files)))
         for f in files:
             if f not in tracked:
@@ -122,7 +163,7 @@ def changed_symbols(repo, base, files):
         for n in names_on_line(text):
             if keep(n) and n not in names:
                 names.append(n)
-    return names[:MAX_SYMBOLS]
+    return names
 
 
 def read_text(path):
@@ -172,14 +213,26 @@ def sort_hits(paths):
 
 
 def citers(path, texts):
+    """Files that name `path`: its file name, or an import of it (JS/TS with a `/` before the stem,
+    Python by module); a generic name (`index.ts`) only with its folder (`a/index`, or `from '../a'`)."""
     base = os.path.basename(path)
     stem = os.path.splitext(base)[0]
-    imp = re.compile(r"""(?:from|import|require\(|import\()\s*['"][^'"]*\b%s(?:\.\w+)?['"]""" % re.escape(stem))
+    parent = os.path.basename(os.path.dirname(path))
+    q = re.escape(stem)
+    if stem.lower() in GENERIC_STEMS and parent:
+        needles = ["%s/%s" % (parent, stem)]
+        tests = [re.compile(r"""['"][^'"\n]*/%s/%s(?:\.\w+)?['"]""" % (re.escape(parent), q))]
+        if stem in FOLDER_STEMS:
+            tests.append(re.compile(r"""(?:from|import|require\(|import\()\s*['"][^'"\n]*/%s['"]""" % re.escape(parent)))
+    else:
+        needles = [base]
+        tests = [re.compile(r"""(?:from|import|require\(|import\()\s*['"][^'"\n]*/%s(?:\.\w+)?['"]""" % q),
+                 re.compile(r"^\s*(?:from|import)\s+(?:[\w.]*\.)?%s(?:\s|\.|,|$)" % q, re.M)]
     hits = []
     for p, t in texts.items():
         if p == path:
             continue
-        if base in t or (stem and imp.search(t)):
+        if any(n in t for n in needles) or any(rx.search(t) for rx in tests):
             hits.append(p)
     return hits
 
@@ -199,11 +252,13 @@ def users(names, texts):
 def impact(repo, base="HEAD", files=None, symbols=None):
     planned = files is not None or symbols is not None
     files = list(files or []) if planned else changed_files(repo, base)
-    names = list(symbols or []) if planned else changed_symbols(repo, base, files)
+    found = list(symbols or []) if planned else changed_symbols(repo, base, files)
+    names = found if planned else found[:MAX_SYMBOLS]
     texts = corpus(repo)
     by_name = users(names, texts)
     result = {
         "base": None if planned else base,
+        "cut": len(found) - len(names),
         "files": [dict(path=f, **sort_hits(citers(f, texts))) for f in files],
         "symbols": [dict(name=n, **sort_hits(by_name.get(n, []))) for n in names],
     }
@@ -247,6 +302,9 @@ def render(result):
         return "Carte d'impact : aucun changement (rien dans le diff ni hors suivi)."
     where = "contre %s" % result["base"] if result["base"] else "avant de coder"
     out = ["Carte d'impact (%s) : %d fichier(s), %d symbole(s)." % (where, len(result["files"]), len(result["symbols"]))]
+    if result.get("cut"):
+        out.append("Plafond de %d atteint : %d symboles non relevés ; nomme ceux qui comptent par `--symbols`."
+                   % (MAX_SYMBOLS, result["cut"]))
     many = [r for r in result["ranked"] if r["hits"] > 1]
     if many:
         out += ["", "Tests à lire d'abord (touchés par plusieurs changements) :"]
