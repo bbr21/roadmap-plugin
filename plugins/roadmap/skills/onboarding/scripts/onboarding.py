@@ -1287,7 +1287,7 @@ PROFONDEUR_DESIGN = 4
 
 
 def normaliser_design(v):
-    """`design` des réponses ou de `--poser` : liste d'entrées `{chemin, pour?}` (une chaîne vaut son
+    """`design` des réponses ou de `--poser` : liste d'entrées `{chemin, pour?, skill?}` (une chaîne vaut son
     chemin), « aucun » pour un projet qui s'en passe ; None ou liste vide : rien de déclaré."""
     if v is None or v == []:
         return None
@@ -1308,6 +1308,12 @@ def normaliser_design(v):
         pour = e.get("pour")
         if isinstance(pour, str) and pour.strip():
             entree["pour"] = pour.strip()
+        # #292 : la skill de design du projet, un nom de skill (`plugin:skill`) et rien d'autre.
+        skill = e.get("skill")
+        if skill is not None:
+            if not isinstance(skill, str) or not re.fullmatch(r"[\w.-]+(?::[\w.-]+)?", skill.strip()):
+                raise Erreur("design : skill %r, un nom de skill attendu (plugin:skill)" % (skill,))
+            entree["skill"] = skill.strip()
         out.append(entree)
     return out
 

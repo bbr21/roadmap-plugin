@@ -119,9 +119,10 @@ export type Ecriture = { outil: string; consigne: string }
 
 /**
  * Le design system d'un projet (#129) : ses entrées (un dossier, un fichier, une adresse ; `pour` dit
- * ce que chacune couvre, un modèle de deck par type de tâche), ou `aucun` quand le projet s'en passe.
+ * ce que chacune couvre, un modèle de deck par type de tâche ; `skill` nomme la skill de design du projet,
+ * #292), ou `aucun` quand le projet s'en passe.
  */
-export type DesignEntry = { chemin: string; pour?: string }
+export type DesignEntry = { chemin: string; pour?: string; skill?: string }
 export type Design = DesignEntry[] | 'aucun'
 
 /**
@@ -896,6 +897,27 @@ export function isMethodSkill(name: string): boolean {
 /** La skill de revue SwiftUI, avec ou sans le préfixe de son plugin (`swiftui-pro:swiftui-pro`). */
 export function isSwiftUISkill(name: string): boolean {
   return name.slice(name.lastIndexOf(':') + 1) === 'swiftui-pro'
+}
+
+/** Les skills de design (#292) : la direction visuelle d'une maquette ; le design system garde couleurs et composants. */
+const DESIGN_SKILLS = new Set(['frontend-design', 'web-design-guidelines', 'design-taste-frontend'])
+
+const skillTail = (name: string) => name.slice(name.lastIndexOf(':') + 1)
+
+/** Une skill de design, avec ou sans le préfixe de son plugin ; ou celle que déclare le projet (`designSkills`). */
+export function isDesignSkill(name: string, declared: readonly string[] = []): boolean {
+  return DESIGN_SKILLS.has(skillTail(name)) || declared.some(d => d === name || skillTail(d) === skillTail(name))
+}
+
+/** Une page de maquettes (#292) : `maquette*.html` ou `maquettes*.html`, où qu'elle soit. */
+export function isMockupPage(path: string | undefined): boolean {
+  return typeof path === 'string' && /(^|\/)maquettes?[^/]*\.html?$/i.test(path)
+}
+
+/** Le rappel de fin de tour d'une maquette dessinée sans skill de design (#292). */
+export function designReminder(what: string, declared: readonly string[] = []): string {
+  const own = declared.length > 0 ? ` ; à défaut, la skill de design du projet (${declared.map(d => `\`${d}\``).join(', ')})` : ''
+  return `Plugin roadmap : ce tour a dessiné une maquette (${what}) et la session n'a lancé aucune skill de design. Avant de la montrer à ${person()}, lance \`frontend-design:frontend-design\` par l'outil Skill pour la direction visuelle, puis relis les maquettes avec \`web-design-guidelines\`${own}, et refais-les si elles en sortent changées. Le design system du projet reste la source des couleurs, des polices et des composants. Si ce n'était pas une maquette, dis-le en une ligne.`
 }
 
 /** La skill du panneau, avec ou sans le préfixe de son plugin (`roadmap:roadmap-panel`) ; le filtre de ses hooks. */
@@ -5494,6 +5516,14 @@ export function parseProjectConfig(text: string, base: string, defaults: { name:
   }
 }
 
+/** Un nom de skill, avec ou sans le préfixe de son plugin (`maison:charte`) : rien qui sorte en consigne. */
+const SKILL_NAME = /^[\w.-]+(?::[\w.-]+)?$/
+
+/** Les skills de design que déclare le design system du projet (`skill` d'une entrée de `design`, #292). */
+export function designSkills(design?: Design): string[] {
+  return Array.isArray(design) ? [...new Set(design.flatMap(e => (e.skill ? [e.skill] : [])))] : []
+}
+
 /** La longueur de `pour` dans la règle des maquettes (#129). */
 const DESIGN_POUR_MAX = 120
 
@@ -5510,7 +5540,9 @@ function designOf(v: unknown): Design | undefined {
     if (typeof o.chemin !== 'string' || o.chemin.trim() === '' || /[\r\n`]/.test(o.chemin)) return []
     const flat = typeof o.pour === 'string' ? o.pour.replace(/`/g, '').replace(/\s+/g, ' ').trim() : ''
     const pour = flat.length > DESIGN_POUR_MAX ? `${flat.slice(0, DESIGN_POUR_MAX - 1)}…` : flat
-    return [{ chemin: o.chemin.trim(), ...(pour !== '' ? { pour } : {}) }]
+    // #292 : la skill de design du projet, un nom de skill et rien d'autre.
+    const skill = typeof (o as { skill?: unknown }).skill === 'string' ? ((o as { skill: string }).skill).trim() : ''
+    return [{ chemin: o.chemin.trim(), ...(pour !== '' ? { pour } : {}), ...(SKILL_NAME.test(skill) ? { skill } : {}) }]
   })
   return entries.length > 0 ? entries : undefined
 }
@@ -6706,7 +6738,14 @@ function gesturesText(autonome: boolean): string {
 // Toute maquette s'appuie sur le design system que le projet déclare (#129, après celui du plugin, #108),
 // ou propose d'en poser un : la cohérence d'un projet ne tient plus à la mémoire de la session.
 function mockupText(design?: Design): string {
-  return "- **Maquettes avant un choix visuel** (avec ou sans code) : tout choix dont le résultat se voit (dans un projet de code : un écran, une vue, un panneau, un volet, un composant, une mise en page, un graphique ; sans code : la mise en page d'un document, d'un tableau ou d'une présentation) passe par 2 ou 3 maquettes simples, jamais par une description seule. Chacune a un parti net et son compromis, ta recommandation en premier ; " + person() + " choisit, et alors seulement tu codes ou tu décides. Prends le support le plus léger qui permet de décider : l'aperçu de chaque option du formulaire à choix (champ `preview`) pour un petit choix (une disposition, un ordre, un libellé) ; un widget de maquette (`mcp__visualize__show_widget`, module `mockup`, après `read_me`) pour un écran ou un panneau ; une page HTML statique ouverte dans le volet navigateur (`preview_start` avec son url `file://`) pour une interface riche ou qui se clique, posée dans le dossier du projet (hors de lui, le volet n'en montre qu'un instantané). " + designText(design) + " Le réglage autonome ne s'y applique pas : un choix visuel revient à " + person() + ". Sans personne pour répondre, garde les maquettes dans le dossier du chantier, suis ta recommandation et dis-le. Pas pour un choix sans rendu (une règle, un format, un correctif de logique), ni pour un rendu déjà choisi sur maquette."
+  return "- **Maquettes avant un choix visuel** (avec ou sans code) : tout choix dont le résultat se voit (dans un projet de code : un écran, une vue, un panneau, un volet, un composant, une mise en page, un graphique ; sans code : la mise en page d'un document, d'un tableau ou d'une présentation) passe par 2 ou 3 maquettes simples, jamais par une description seule. Chacune a un parti net et son compromis, ta recommandation en premier ; " + person() + " choisit, et alors seulement tu codes ou tu décides. Prends le support le plus léger qui permet de décider : l'aperçu de chaque option du formulaire à choix (champ `preview`) pour un petit choix (une disposition, un ordre, un libellé) ; un widget de maquette (`mcp__visualize__show_widget`, module `mockup`, après `read_me`) pour un écran ou un panneau ; une page HTML statique ouverte dans le volet navigateur (`preview_start` avec son url `file://`) pour une interface riche ou qui se clique, posée dans le dossier du projet (hors de lui, le volet n'en montre qu'un instantané). " + designSkillText(design) + " " + designText(design) + " Le réglage autonome ne s'y applique pas : un choix visuel revient à " + person() + ". Sans personne pour répondre, garde les maquettes dans le dossier du chantier, suis ta recommandation et dis-le. Pas pour un choix sans rendu (une règle, un format, un correctif de logique), ni pour un rendu déjà choisi sur maquette."
+}
+
+/** La skill de design dans la règle des maquettes (#292) : avant la première maquette, puis la relecture. */
+function designSkillText(design?: Design): string {
+  const own = designSkills(design)
+  const fallback = own.length > 0 ? `, ou la skill de design de ce projet (${listFr(own.map(s => `\`${s}\``))}) quand elles manquent` : ", ou, quand elles manquent, la skill de design que déclare le projet (`skill` d'une entrée de `design`)"
+  return `Avant la première maquette, lance une skill de design par l'outil Skill : \`frontend-design:frontend-design\` pour la direction visuelle, puis relis tes maquettes avec \`web-design-guidelines\`${fallback} ; le plugin le rappelle en fin de tour. La skill donne la direction visuelle, le design system les couleurs, les polices et les composants.`
 }
 
 /** Le design system dans la règle des maquettes (#129) : celui que déclare le projet, son refus, ou la proposition d'en poser un. */

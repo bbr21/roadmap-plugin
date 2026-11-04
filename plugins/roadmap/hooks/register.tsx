@@ -117,6 +117,10 @@ import {
   codeWithoutTests,
   isMethodSkill,
   isSwiftUISkill,
+  isDesignSkill,
+  isMockupPage,
+  designReminder,
+  designSkills,
   PANEL_SKILL,
   panelSkillNote,
   pinnedPaneToast,
@@ -770,6 +774,12 @@ type Capture = {
   swiftUIUsed: boolean
   /** Une maquette montrée dans la session (#96 ; perdu au rechargement du module). */
   mockupShown: boolean
+  /** Une skill de design lancée dans la session (#292 ; perdu au rechargement du module). */
+  designUsed: boolean
+  /** Le dernier `read_me` du visualiseur a chargé le module `mockup` : un widget est une maquette (#292). */
+  mockupModule: boolean
+  /** La maquette dessinée pendant le tour (une page, ou « un widget de maquette ») ; remise à zéro à chaque tour (#292). */
+  mockupDrawn?: string
   /** Les HEAD dont le rappel de méthode a déjà été donné : une fois par commit. */
   methodAsked: Set<string>
   /** La roadmap au début du tour : une idée à coder n'appelle sa ligne que si elle n'a pas bougé (#83). */
@@ -780,6 +790,10 @@ type Capture = {
   boxThisTurn: string
 }
 let capture: Capture | undefined
+
+/** Le visualiseur (#292) : son `read_me` dit le module chargé, son widget dessine. */
+const VISUALIZE_README = 'mcp__visualize__read_me'
+const VISUALIZE_WIDGET = 'mcp__visualize__show_widget'
 
 async function readOr($: EngineInterface, path: string): Promise<string | undefined> {
   try {
@@ -812,6 +826,8 @@ async function startCapture($: EngineInterface, source: Source): Promise<void> {
     methodUsed: false,
     swiftUIUsed: false,
     mockupShown: false,
+    designUsed: false,
+    mockupModule: false,
     methodAsked: new Set(),
     cardThisTurn: false,
     boxThisTurn: '',
@@ -875,6 +891,18 @@ async function methodNote($: EngineInterface, c: Capture): Promise<string | unde
   const note = methodReminder(codeWithoutTests(files), code && !c.methodUsed, c.swiftUIUsed ? undefined : swiftUIFiles(files), unmocked)
   if (note) c.methodAsked.add(now)
   return note
+}
+
+/** Le rappel de design (#292) : une maquette dessinée pendant le tour, aucune skill de design dans la session. */
+function designNote(c: Capture): string | undefined {
+  if (c.mockupDrawn === undefined || c.designUsed) return undefined
+  return designReminder(c.mockupDrawn, designSkills(c.source.design))
+}
+
+/** Une maquette dessinée par le fil principal (#292) : une page `maquettes*.html` écrite, ou un widget du module `mockup`. */
+function noteMockupDrawn(e: { agentId?: unknown; file_path?: unknown }): void {
+  if (!capture || e.agentId !== undefined) return
+  if (isMockupPage(typeof e.file_path === 'string' ? e.file_path : undefined)) capture.mockupDrawn = `\`${baseName(e.file_path as string)}\``
 }
 
 /** Les fichiers d'interface créés ou très modifiés par les commits du tour (#96). */
@@ -1360,6 +1388,7 @@ async function endOfTurnBlock($: EngineInterface, last: string | undefined, acti
     } catch {
       // git illisible : pas de rappel de méthode
     }
+    notes.push(designNote(c))
     try {
       notes.push(await ideaNote($, c, last))
     } catch {
@@ -4879,6 +4908,7 @@ let skillPrompted = false
 function noteSkill(name: string): void {
   if (capture && isMethodSkill(name)) capture.methodUsed = true
   if (capture && isSwiftUISkill(name)) capture.swiftUIUsed = true
+  if (capture && isDesignSkill(name, designSkills(capture.source.design))) capture.designUsed = true
 }
 
 /**
@@ -5175,8 +5205,15 @@ export const register: Register = (on, options) => {
 
   // Capture des tasks : la grammaire contrôlée à chaque écriture, le rappel en fin de tour.
   // #255 : chez Maestro, une ligne écrite à la main reçoit le rappel de la skill tasks.
-  on('tool.call', { tool: 'Edit' }, async ($, e, next) => handWriteNote($, e, 'Edit', await written($, () => next(e), e.file_path)))
-  on('tool.call', { tool: 'Write' }, async ($, e, next) => handWriteNote($, e, 'Write', await written($, () => next(e), e.file_path)))
+  // #292 : une page de maquettes écrite se note pour le rappel de design.
+  on('tool.call', { tool: 'Edit' }, async ($, e, next) => {
+    noteMockupDrawn(e)
+    return handWriteNote($, e, 'Edit', await written($, () => next(e), e.file_path))
+  })
+  on('tool.call', { tool: 'Write' }, async ($, e, next) => {
+    noteMockupDrawn(e)
+    return handWriteNote($, e, 'Write', await written($, () => next(e), e.file_path))
+  })
   on('tool.call', { tool: 'NotebookEdit' }, ($, e, next) => written($, () => next(e), e.notebook_path))
   // La carte New task d'une sous-session remonte à son Maestro (#67).
   // Option « Lancer en bypass » : la carte qui reste ici demande le bypass (#87).
@@ -5223,9 +5260,17 @@ export const register: Register = (on, options) => {
   for (const tool of MOCKUP_TOOLS) {
     on('tool.call', { tool }, ($, e, next) => {
       if (capture && !fromAgent(e) && isMockupCall(tool, e)) capture.mockupShown = true
+      // #292 : un widget après un read_me du module mockup est une maquette dessinée.
+      if (capture && !fromAgent(e) && tool === VISUALIZE_WIDGET && capture.mockupModule) capture.mockupDrawn ??= 'un widget de maquette'
       return next(e)
     })
   }
+  // #292 : le module que charge le visualiseur dit si le widget suivant est une maquette.
+  on('tool.call', { tool: VISUALIZE_README }, ($, e, next) => {
+    const modules = (e as { modules?: unknown }).modules
+    if (capture && !fromAgent(e)) capture.mockupModule = Array.isArray(modules) && modules.includes('mockup')
+    return next(e)
+  })
   on('tool.call', { tool: ASK_TOOL }, async ($, e, next) => {
     if (fromAgent(e)) return next(e)
     // « T'attendent » passe par ce formulaire (#244).
@@ -5358,6 +5403,7 @@ export const register: Register = (on, options) => {
       capture.roadmapAtTurn = joined(await roadmapNow($, capture.source))
       capture.cardThisTurn = false
       capture.boxThisTurn = ''
+      capture.mockupDrawn = undefined
     }
     // Cette session reprend la main : sa tâche passe à la roue sans attendre la relecture.
     if (e.agentId === undefined) await markOwnRunning($, true)
