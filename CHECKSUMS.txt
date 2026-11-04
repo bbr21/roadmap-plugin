@@ -1,14 +1,14 @@
-# roadmap 0.194.0 : SHA-256 de chaque fichier installé du plugin, chemins relatifs à son dossier.
-# Vérifier une copie installée (~/.claude/plugins/cache/roadmap/roadmap/0.194.0) : plugins/roadmap/SECURITE.md, « Vérifier que ta copie est une vraie version ».
-9469c088b91cd330382f1c6f4e5f4f88972fc6939570523adcf1657cbad6935f  .claude-plugin/plugin.json
-416ee4eaa2e7eedbd4ddefdd8d629f0f52f7632a9001481c301fa33fc1f882cb  README.md
-849f22ff751694f0c7fcdf85838b0a4ac47544d9068212798fea5d6eab5ef623  SECURITE.md
+# roadmap 0.195.0 : SHA-256 de chaque fichier installé du plugin, chemins relatifs à son dossier.
+# Vérifier une copie installée (~/.claude/plugins/cache/roadmap/roadmap/0.195.0) : plugins/roadmap/SECURITE.md, « Vérifier que ta copie est une vraie version ».
+072a26b94c2a513e92249f54199a29f90b17fb367a25709a076a9d7e366c3fc9  .claude-plugin/plugin.json
+2f991a7b5a3d5d9466dc562dd6f5eaf693a21d6512f8f43a2dda245740280e19  README.md
+7a52a8a088a22485cbc7a1c92d9c03b537eb03466b1affbbbf8d31c475bde41e  SECURITE.md
 bce019cb7147413a8e5f0687df59a41394fa92545568b5d37b1df8bd6d885e30  hooks/bar-hit.tsx
 d842d789476d67282d0f04b7e5fdc68a3d981ccec65dd79cfa2d11eed13fb828  hooks/hooks.json
-1ca8a58b959b7c3b2df75fd8ed95102449a1452c08e5b6a195737aba86eb2b0c  hooks/icons.ts
-b8a771659d2fa3d8738a6c315bfb25ef26d22fa83242973549875f9efae3d200  hooks/parse.ts
+a463822efd04aa03e3b2e9f6b8dbfd16554e0f9304c32e92d261e5bb2ca239a5  hooks/icons.ts
+0e8e01a2fa097c42c77b449df0e88aaea65ac7276d2728f44b7edbee66f0e39e  hooks/parse.ts
 a29e07be4f95c637c8f3ab377dc9a97cd16de11e8e7de7062311dd2888a0833f  hooks/press-hit.tsx
-879dab78d6c9922dd372eab9dc76d39899978b5b5938d955834f5616a10f3e2f  hooks/register.tsx
+f8471bb4f19e4ade4f9c5140b4931f63fca0d9c2190961974f16dd5e1627ba1c  hooks/register.tsx
 9077e22cf587bb924e58af1b09ffc2435a1559c54a21beebf16a6d40bf48e08c  hooks/reglages.tsx
 a60c99f6765f3920810c7d2acacabb77363b5b2bf9a65154c40ddd3411db29df  hooks/tokens.ts
 2c41c480ffe671321b91523191e8e36453f4a211957d90b91b4f3148a257da86  scripts/one-at-a-time.sh
@@ -53,4 +53,4 @@ e6f5953eb1388edbde39dc1246b5ae010ed560421a32f3b6558ff9360fa4021a  skills/reglage
 7aea4f6f1aea6a6943f089a42da0e1dba04d1b2ace89b24eb14eab2ae1971b72  skills/roadmap-panel/SKILL.md
 ba2d2f89b97134fc034cebc779b2ddbb6a7e93e563d3854720089a430a520622  skills/tasks/SKILL.md
 8d20e7d1b485578e5e83752968c95fb60cfb4ec2a99be8b7b1943a9457bf29a0  skills/tasks/scripts/tasks.py
-765f957c4bb398acab9ebdbd9c285c0bd9ca9b6df16d0b2d5863d654540539f2  types/index.d.ts
+851000fa68263415317b28ebf3f0e6efaea84ff0f040849d6fece5db63b4679d  types/index.d.ts

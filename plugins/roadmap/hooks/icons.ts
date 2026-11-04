@@ -318,6 +318,16 @@ export function externalIcon(hex: string, size = 16, width: number = STROKE.base
   return line(hex, size, width, '<path d="M14 4.5h5.5V10M19.5 4.5L11 13"/><path d="M18 14v5.5H4.5V6H10"/>')
 }
 
+/** Fenêtre de navigateur : ouvrir les maquettes d'une tâche dans le volet navigateur (#306). */
+export function browserIcon(hex: string, size = 16, width: number = STROKE.base): string {
+  return line(hex, size, width, '<rect x="3.5" y="4.5" width="17" height="15" rx="2"/><path d="M3.5 9h17"/><path d="M6.5 6.8h.01M9 6.8h.01"/>')
+}
+
+/** Croix : fermer ce que le panneau a ouvert (#306). */
+export function closeIcon(hex: string, size = 16, width: number = STROKE.base): string {
+  return line(hex, size, width, '<path d="M6.5 6.5l11 11M17.5 6.5l-11 11"/>')
+}
+
 /** Crayon : modifier la tâche depuis sa fiche (#161). */
 export function pencilIcon(hex: string, size = 16, width: number = STROKE.base): string {
   return line(hex, size, width, '<path d="M15.5 4.5l4 4L8.5 19.5H4.5v-4z"/><path d="M13 7l4 4"/>')

@@ -51,6 +51,8 @@ import {
   alertIcon,
   playIcon,
   externalIcon,
+  browserIcon,
+  closeIcon,
   envelopeTile,
   documentIcon,
   imageIcon,
@@ -119,6 +121,11 @@ import {
   isSwiftUISkill,
   isDesignSkill,
   isMockupPage,
+  mockupPagesOf,
+  mockupToggle,
+  previewOpenIn,
+  fileUrl,
+  mockupAskText,
   designReminder,
   designSkills,
   PANEL_SKILL,
@@ -625,6 +632,12 @@ let autoModeRefusal: { at: number; text: string } | undefined
 const AUTO_MODE_SKIP_MS = 30 * 60_000
 // Celui qui montre un fichier dans le panneau Fichiers.
 const SHOW_PANE_TOOL = 'mcp__ccd_view__show_pane'
+// Ceux du bouton des maquettes (#306) : le volet navigateur, la disposition, la barre latérale.
+const PREVIEW_START_TOOL = 'mcp__Claude_Browser__preview_start'
+const GET_LAYOUT_TOOL = 'mcp__ccd_view__get_layout'
+const CLOSE_PANE_TOOL = 'mcp__ccd_view__close_pane'
+const WINDOW_LAYOUT_TOOL = 'mcp__ccd_window__get_window_layout'
+const SIDEBAR_TOOL = 'mcp__ccd_window__set_sidebar_collapsed'
 // Ceux qui lisent la fiche d'une session et la montrent.
 const GET_SESSION_TOOL = 'mcp__ccd_session_mgmt__get_session'
 const SET_MODE_TOOL = 'mcp__ccd_session_mgmt__set_session_permission_mode'
@@ -683,6 +696,8 @@ const zoneGenAtom = atom({ plugin: 'roadmap', key: 'zoneGen' } as const, 0)
 const checkMoveAtom = atom({ plugin: 'roadmap', key: 'checkMove' } as const, 0)
 /** Pourquoi les autres sessions manquent (liste refusée ou illisible) ; vide quand elle se lit. */
 const scanNoteAtom = atom({ plugin: 'roadmap', key: 'scanNote' } as const, '')
+/** La page de maquettes que le bouton de la fiche a ouverte (#306), vide sinon. */
+const mockupOpenAtom = atom({ plugin: 'roadmap', key: 'mockupOpen' } as const, '')
 const versionNoteAtom = atom({ plugin: 'roadmap', key: 'versionNote' } as const, { state: 'none', text: '', foot: '' } as VersionCheck)
 /**
  * Le bloc des réglages de session donné en dernier à la conversation (#116), vide sinon : un bloc qui
@@ -4581,6 +4596,77 @@ async function openFile($: EngineInterface, path: string, line?: number): Promis
   }))
 }
 
+/** La page de maquettes d'une tâche (#306) : la plus récente, relue au plus toutes les 30 s. */
+let mockupRead: { key: string; at: number; page: { path: string; name: string } | undefined } | undefined
+
+async function readMockupPage($: EngineInterface, source: Source, task: Task, now: number): Promise<{ path: string; name: string } | undefined> {
+  const base = source.root ?? source.dir
+  const key = `${base}|${task.key}|${task.spec ?? ''}|${(task.livrable ?? []).join(',')}`
+  if (mockupRead && mockupRead.key === key && now - mockupRead.at < FOCUS_FACTS_MS) return mockupRead.page
+  const dir = task.spec ? `${base}/${task.spec.replace(/\/+$/, '')}` : undefined
+  const names = dir ? (await $.fs.list(dir).catch(() => [])).filter(e => e.kind === 'file').map(e => e.name) : []
+  let best: { path: string; name: string; mtime: number } | undefined
+  for (const rel of mockupPagesOf(task, names)) {
+    for (const path of pathCandidates(source, rel)) {
+      try {
+        const st = await $.fs.stat(path)
+        if (st.kind !== 'file') continue
+        if (!best || st.mtimeMs > best.mtime) best = { path, name: baseName(path), mtime: st.mtimeMs }
+        break
+      } catch {
+        // absent ici : le candidat suivant
+      }
+    }
+  }
+  const page = best ? { path: best.path, name: best.name } : undefined
+  mockupRead = { key, at: now, page }
+  return page
+}
+
+/** Le texte d'un appel d'outil réussi ; refusé (mode auto, #248), en erreur ou absent : `undefined`. */
+async function toolText($: EngineInterface, call: { tool: string } & Record<string, unknown>): Promise<string | undefined> {
+  try {
+    const ran = await $.tool.call(call)
+    return ran.deny === undefined && !ran.isError ? (ran.text ?? '') : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/** La barre latérale repliée par le bouton des maquettes (#306) : il la rouvre en fermant, et seulement elle. */
+let mockupFoldedSidebar = false
+
+/**
+ * Le bouton des maquettes (#306) : ouvre la page dans le volet navigateur et replie la barre latérale,
+ * le plus grand que l'app laisse prendre à un plugin (le ↗ du volet n'a pas d'appel) ; ou referme le
+ * volet et rouvre la barre. En mode auto, ou l'ouverture refusée, la demande passe par Claude (#248).
+ */
+async function toggleMockup($: EngineInterface, path: string): Promise<void> {
+  await setView($, () => ({ openNote: '' }))
+  const viaClaude = async () => {
+    queueSubmit($, mockupAskText(path))
+    // La note redessine le panneau, et ce dessin envoie le message.
+    await setView($, () => ({ openNote: 'Demandé à Claude : ouvrir les maquettes dans son volet navigateur.' }))
+  }
+  if ((await ownMode($)) === 'auto') return viaClaude()
+  const opened = await read($, mockupOpenAtom)
+  const layout = await toolText($, { tool: GET_LAYOUT_TOOL })
+  if (mockupToggle(layout === undefined ? undefined : previewOpenIn(layout), opened, path) === 'close') {
+    await toolText($, { tool: CLOSE_PANE_TOOL, pane: 'preview' })
+    if (mockupFoldedSidebar) await toolText($, { tool: SIDEBAR_TOOL, collapsed: false })
+    mockupFoldedSidebar = false
+    await update($, mockupOpenAtom, () => '')
+    return
+  }
+  if ((await toolText($, { tool: PREVIEW_START_TOOL, url: fileUrl(path) })) === undefined) return viaClaude()
+  await toolText($, { tool: SHOW_PANE_TOOL, pane: 'preview' })
+  const win = await toolText($, { tool: WINDOW_LAYOUT_TOOL })
+  if (!mockupFoldedSidebar && win !== undefined && !/"sidebar_collapsed"\s*:\s*true/.test(win)) {
+    mockupFoldedSidebar = (await toolText($, { tool: SIDEBAR_TOOL, collapsed: true })) !== undefined
+  }
+  await update($, mockupOpenAtom, () => path)
+}
+
 // Les filtres d'axe, partagés par la légende et la barre. Un filtre change : les sections se rouvrent.
 /** Un clic sur un axe garde le compteur ou l'état choisi, pour les combiner (#99, partout depuis #176) ; posé à chaque dessin. */
 let axisKeepsState = false
@@ -6532,11 +6618,13 @@ async function stepsMoved($: EngineInterface): Promise<boolean> {
 let ficheDocs: { key: string; at: number; docs: { label: string; path: string }[] } | undefined
 
 async function readFicheDocs($: EngineInterface, source: Source, task: Task, now: number) {
-  const key = `${source.dir}|${task.spec ?? ''}`
+  // `spec:` se lit à la racine du projet (#93), pas dans le dossier de la roadmap (#306).
+  const base = source.root ?? source.dir
+  const key = `${base}|${task.spec ?? ''}`
   if (ficheDocs && ficheDocs.key === key && now - ficheDocs.at < FOCUS_FACTS_MS) return ficheDocs.docs
   const docs: { label: string; path: string }[] = []
   if (task.spec) {
-    const at = `${source.dir}/${task.spec.replace(/\/$/, '')}`
+    const at = `${base}/${task.spec.replace(/\/$/, '')}`
     for (const [label, path] of [['Spec', `${at}/spec.md`], ['Spec', at], ['Plan', `${at}/plan.md`], ['Maquettes', `${at}/maquettes.html`]] as const) {
       if (docs.some(d => d.label === label)) continue
       try {
@@ -7255,6 +7343,8 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     // Son dossier (Spec, Plan, Maquettes) et le récap de fin de sa session (#144), dans les deux contextes.
     const ficheSource = inSession && ownBrand ? ownBrand.data.source : source
     const docs = await readFicheDocs($, ficheSource, current, now)
+    const mockupPage = await readMockupPage($, ficheSource, current, now)
+    const mockupOpened = await read($, mockupOpenAtom)
     const attachments = await readAttachments($, ficheSource, current, now)
     const deliverables = await readAttachments($, ficheSource, current, now, 'livrable')
     const draft = await readDraft($, deliverables)
@@ -8050,6 +8140,47 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
         </Box>
       )
     }
+    // Le bouton des maquettes (#306, maquette A plus visible) : une bande bleue sous l'état, « Voir les
+    // maquettes » en grand et le nom de la page ; ouverte, grise, « Fermer les maquettes ».
+    const mockupBand = () => {
+      if (!mockupPage) return null
+      const shown = mockupOpened === mockupPage.path
+      const word = shown ? 'Fermer les maquettes' : 'Voir les maquettes'
+      const press = () => void toggleMockup($, mockupPage.path)
+      if (!Svg) {
+        return (
+          <Box key="mockup-row" paddingX={SPACE.indent}>
+            <Button key="mockup-btn" label={`${word} · ${mockupPage.name}`} onPress={press} />
+          </Box>
+        )
+      }
+      const fg = shown ? palette.text : palette.liveOn
+      return (
+        <Box key="mockup-row" paddingX={SPACE.indent}>
+          <Box
+            key="mockup-band"
+            flexDirection="row"
+            alignItems="center"
+            gap={SPACE.row}
+            paddingX={SPACE.indent}
+            flexGrow={1}
+            minWidth={0}
+            backgroundColor={shown ? palette.btn : palette.liveTint}
+            borderStyle="round"
+            borderColor={shown ? palette.border : palette.live}
+          >
+            {strut(SIZE.strut.control)}
+            <Svg source={shown ? closeIcon(fg, SIZE.icon.md) : browserIcon(fg, SIZE.icon.md)} alt="" width={SIZE.icon.md} height={SIZE.icon.md} />
+            <Text size="heading" weight="semibold" color={fg}>{word}</Text>
+            <Box flexGrow={1} flexShrink={1} minWidth={0} alignItems="flex-end">
+              <Text size="caption" color={palette.text2} wrap="truncate-end">{shown ? 'ouvertes dans le volet' : mockupPage.name}</Text>
+            </Box>
+            {!shown && <Svg source={externalIcon(fg, SIZE.icon.xs)} alt="" width={SIZE.icon.xs} height={SIZE.icon.xs} />}
+            {hit('mockup', press)}
+          </Box>
+        </Box>
+      )
+    }
     // Les pièces jointes (#204, maquette B, vignettes plus petites) et les livrables (#234) : les images en
     // vignettes de 48 × 64, un clic les ouvre en grand dans le panneau Fichiers ; dessous, une ligne par autre
     // fichier, un absent grisé (`missing`), sans clic. Au terminal, sans Svg, des boutons.
@@ -8687,6 +8818,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
           )}
         </Box>
         {stateBox()}
+        {mockupBand()}
         {draftBlock()}
         {/* En édition (#161) : la barre sous l'en-tête, à la place du crayon. */}
         {editing && editBar()}

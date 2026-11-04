@@ -1,6 +1,6 @@
 # Est-il sûr de l'installer ?
 
-Version décrite : roadmap 0.194.0
+Version décrite : roadmap 0.195.0
 Un plugin de Claude Code fait tourner du code sur ta machine, donc la question se pose. Certains plugins
 malveillants ont l'air inoffensifs quand on les installe, puis téléchargent et lancent autre chose plus
 tard. Cette page dit tout ce que fait roadmap. Un test vérifie à chaque version qu'elle dit vrai, et tu
@@ -75,7 +75,10 @@ lire l'état des sessions :
 | `mcp__ccd_session_mgmt__set_session_permission_mode` | passer une session lancée en bypass, si tu as allumé le réglage « Lancer en bypass » |
 | `mcp__ccd_session_mgmt__archive_session`, `mcp__ccd_session_mgmt__unarchive_session` | archiver ou désarchiver une session, à ton clic |
 | `mcp__ccd_window__open_session_in` | ouvrir une session à côté, à ton clic |
-| `mcp__ccd_view__show_pane` | ouvrir un fichier dans le volet Fichiers de l'app |
+| `mcp__ccd_view__show_pane` | ouvrir un fichier dans le volet Fichiers de l'app, ou montrer le volet navigateur |
+| `mcp__Claude_Browser__preview_start` | ouvrir la page de maquettes d'une tâche dans le volet navigateur, à ton clic (#306) |
+| `mcp__ccd_view__get_layout`, `mcp__ccd_view__close_pane` | savoir si le volet navigateur est ouvert, et le refermer, à ton clic sur le bouton des maquettes |
+| `mcp__ccd_window__get_window_layout`, `mcp__ccd_window__set_sidebar_collapsed` | replier la barre latérale pour agrandir les maquettes, et la rouvrir en les fermant, à ton clic |
 
 ## Ce qui sort de la machine
 

@@ -44,6 +44,8 @@ declare module 'claude-code' {
       settingsInfo: string
       /** Ce qu'a donné le dernier « Rafraîchir » du pied du panneau (#138) : les versions comparées ; `none` avant le premier clic. */
       versionNote: VersionCheck
+      /** La page de maquettes que le bouton de la fiche a ouverte dans le volet navigateur (#306), chemin absolu ; vide sinon. */
+      mockupOpen: string
     }
   }
 }
