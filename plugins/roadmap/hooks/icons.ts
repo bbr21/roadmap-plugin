@@ -436,7 +436,7 @@ export function textWidth(text: string, size: number, bold = false): number {
   return Math.ceil(em * size * (bold ? 1.05 : 1))
 }
 
-export type PillMark = 'clock' | 'person' | 'spinner' | 'check' | 'merge' | 'cancel'
+export type PillMark = 'clock' | 'person' | 'spinner' | 'check' | 'merge' | 'cancel' | 'repeat'
 
 /**
  * Une pastille : 18 px de haut (20 au détail), rayon de la moitié, texte de 12 px gras, chiffres
@@ -525,6 +525,8 @@ const MARK_PATHS: Record<PillMark, string> = {
   merge: '<circle cx="6" cy="5" r="2.5"/><circle cx="6" cy="19" r="2.5"/><circle cx="18" cy="10" r="2.5"/><path d="M6 7.5v9M18 12.5c0 4-6 3.2-10.4 4.8"/>',
   spinner: `<circle cx="12" cy="12" r="9" stroke-opacity="${MIX.spinnerTrack}"/><path d="M12 3a9 9 0 0 1 9 9"/>`,
   check: '<path d="M5 12.5l4.5 4.5L19 7.5"/>',
+  // Deux flèches en boucle (#280) : une récurrente.
+  repeat: '<path d="m17 2 4 4-4 4"/><path d="M3 11v-1a4 4 0 0 1 4-4h14"/><path d="m7 22-4-4 4-4"/><path d="M21 13v1a4 4 0 0 1-4 4H3"/>',
   // Un cercle barré (#207) : l'étiquette « annulée ».
   cancel: '<circle cx="12" cy="12" r="8"/><path d="M6.5 17.5l11-11"/>',
 }

@@ -339,11 +339,18 @@ filtres, « Qui », les rangements) vaut dans tout projet.
   « Plus › » ; « Qui » se combine avec l'axe et la ligne choisie, et les nombres suivent. La date d'une ligne est rouge en retard (« 23/10 · 6 j »), orange dans
   les 7 jours, grise au-delà ; la pastille d'un tiers attendu dit son attente à partir de 7 jours
   (« Rong · 16 j », orange, rouge à 14). « Tout afficher » revient à toutes les tâches.
-- **Récurrence et relance** (#99) : `tous:semaine|2semaines|mois|trimestre|an`, avec `due:` à la
-  prochaine occurrence (pastille « ↻ mensuel ») ; « Marquer faite » envoie l'occurrence dans
+- **Récurrence et relance** (#99) : `tous:jour|ouvré|semaine|2semaines|mois|trimestre|an` (#280 :
+  `jour` chaque jour, `ouvré` du lundi au vendredi), avec `due:` à la prochaine occurrence (pastille
+  rose « mensuel », ses flèches en boucle devant) ; « Marquer faite » envoie l'occurrence dans
   ROADMAP-fait sous un numéro neuf (`src:#N`) et avance `due:` d'une période, « Annuler la tâche »
   arrête la récurrence ; `cowork.py` ne la reconduit pas encore, et le panneau le dit.
   `relance:AAAA-MM-JJ` date la dernière relance du tiers attendu ; le brief demande de la poser.
+- **Routine d'un clic** (#280) : une récurrente qui porte `skill:<nom>` (ou `plugin:nom`) ou
+  `fiche:<chemin>` est une routine. Due, son ▶ est bleu : un clic coche l'occurrence (comme « Marquer
+  faite »), passe la ligne à sa prochaine date (une quotidienne en retard : une seule occurrence, puis
+  le jour après aujourd'hui) et pose la carte d'une session « #N · Routine du AAAA-MM-JJ · … », dont
+  le brief lance d'abord la skill, puis suit la fiche, sans bilan ni archivage. Pas due, le ▶ pose la
+  carte seule. Avec `ecriture`, le panneau n'écrit rien : la coche ouvre le brief.
 - **La fin d'un parent** (#125) : « Marquer faite » sur son dernier enfant ouvert ferme aussi le
   parent, dans la même écriture, avec son bilan (« parent #375 fait aussi ») ; un parent `tous:`
   est reconduit à la place, depuis son `due:` écrit (« parent #411 reconduit au 10/11 »). Une
@@ -679,6 +686,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.182.0 (2026-11-04)** : panneau : la récurrente d'un clic (tous:jour et tous:ouvré, skill: et fiche:, ▶ bleu qui coche, redate et lance la session du jour ; pastille rose de récurrence) (#280)
 - **0.181.0 (2026-11-04)** : doctor : signale un shim python3 posé par un plugin (modern-python), qui refuse les scripts des skills (#279)
 - **0.180.0 (2026-11-04)** : panneau : la mission de la fiche en puces ou en phrase, au choix du projet (réglage mission dans roadmap.json et le volet Réglages) (#278)
 - **0.179.0 (2026-11-03)** : tasks, maestro : la skill tasks ouvre une ligne quand qui: est exigé, le rapprochement pèse les mots rares (noms propres, codes), et Maestro est averti quand il écrit ROADMAP.md à la main (#255)

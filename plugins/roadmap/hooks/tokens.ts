@@ -32,6 +32,9 @@ export type Palette = {
   finished: string
   finishedTint: string
   finishedOn: string
+  /** La pastille d'une récurrente (#280) : rose, une teinte qu'aucun état ne prend. */
+  recurTint: string
+  recurOn: string
   /** Coche, session lancée. */
   ok: string
   /** Les Done : la barre pleine de la vue Done, le compte « x Done » montré ; le vert de `ok` depuis #180. */
@@ -83,6 +86,8 @@ export const PALETTES: Record<ThemeName, Palette> = {
     finished: '#A781F0',
     finishedTint: '#2F2742',
     finishedOn: '#C7AEFA',
+    recurTint: '#3D2230',
+    recurOn: '#F0A8C8',
     ok: '#5BAE6A',
     // Le vert de `ok` (#180) : les Done se voient, même dans leur vue.
     done: '#5BAE6A',
@@ -119,6 +124,8 @@ export const PALETTES: Record<ThemeName, Palette> = {
     finished: '#7C4FD6',
     finishedTint: '#EFE9FC',
     finishedOn: '#5F35BF',
+    recurTint: '#FBE6F0',
+    recurOn: '#A63A72',
     ok: '#2E8540',
     done: '#2E8540',
     pri: '#1F1E1D',

@@ -1,16 +1,16 @@
-# roadmap 0.181.0 : SHA-256 de chaque fichier installé du plugin, chemins relatifs à son dossier.
-# Vérifier une copie installée (~/.claude/plugins/cache/roadmap/roadmap/0.181.0) : plugins/roadmap/SECURITE.md, « Vérifier que ta copie est une vraie version ».
-b070dfe6dda6f8b9c0a2eb8aad90fdcbb490f8c805f5e788643b2feeb4afdcf8  .claude-plugin/plugin.json
-36384901d6b09d6df634b0dedcdaade3b13eb7e47e433bfb2284d98bc8ce324a  README.md
-aad405a4de30ede4a62424e8ee725474bc20df2c6293934ce6e8d8d266f32858  SECURITE.md
+# roadmap 0.182.0 : SHA-256 de chaque fichier installé du plugin, chemins relatifs à son dossier.
+# Vérifier une copie installée (~/.claude/plugins/cache/roadmap/roadmap/0.182.0) : plugins/roadmap/SECURITE.md, « Vérifier que ta copie est une vraie version ».
+2e316bea6233e33b8ee16f79f4336cf26d1d9ad1b9b89e2cf734b3ee23b57006  .claude-plugin/plugin.json
+784b13bf36b6488fc3fc29e551b439d9ef050dc939e089344d31bce11504a24e  README.md
+97216a14fcca69673f777d9da24de31dea494639520c8ea97e7d350fa74002da  SECURITE.md
 bce019cb7147413a8e5f0687df59a41394fa92545568b5d37b1df8bd6d885e30  hooks/bar-hit.tsx
 d842d789476d67282d0f04b7e5fdc68a3d981ccec65dd79cfa2d11eed13fb828  hooks/hooks.json
-724adad60fd1842503663c54aa0827a5d5c8a27a5629092188a9bc37bc2c065f  hooks/icons.ts
-d0ac05e4398454f96ef624ba0379f000a920c55f74b54b3b9a6c15cf32b3ab33  hooks/parse.ts
+a6a85afac504d6dd6af8627a6a85570871f91ba54ae68a2d41bb6d67e93604d9  hooks/icons.ts
+373022c42cca94fa1f09ca128516d8d56d2c37fa976c7eef080661a241906434  hooks/parse.ts
 a29e07be4f95c637c8f3ab377dc9a97cd16de11e8e7de7062311dd2888a0833f  hooks/press-hit.tsx
-7aebe5e166fe74c294b2900ee3dfbae398fb16409f648674860fdf206300f131  hooks/register.tsx
+7e98c5b88a23b305ddbab44410101f3c779483a0a81990d0d27a01fc180b3bcf  hooks/register.tsx
 9077e22cf587bb924e58af1b09ffc2435a1559c54a21beebf16a6d40bf48e08c  hooks/reglages.tsx
-2045887e0a997e9f1f9cf347a592b19333196a8a5a00627cf80dc43e58f9a563  hooks/tokens.ts
+b64846e12e5b40469c000e214da8e4a4aa558034c4bab036ece6deed2311e9b9  hooks/tokens.ts
 2c41c480ffe671321b91523191e8e36453f4a211957d90b91b4f3148a257da86  scripts/one-at-a-time.sh
 3e41ae0248b4b9624b89c3c3cb96d484e2d5a7f222c989a211f6d3c5c4114b0b  skills/audit/SKILL.md
 1e5f77901f798994bc866ab8a04248326ee2b87f668ce0fd148e09962def597a  skills/audit/scripts/audit.py
@@ -42,7 +42,7 @@ a5e48e2179e7e88a3c5490bdadaa6a85bf3f38df30b1fa6c31422e0744789d2d  skills/onboard
 0ee6fbed65d1245b9688e60f4fb08651b132816251d1cc73093aaecbc3bf2216  skills/onboarding/references/modeles/roadmap/ROADMAP-bilans.csv
 4710280c9429dece175dd9d65373c51c1f3f0f4139bc7cc30a8703f41a65a0a7  skills/onboarding/references/modeles/roadmap/ROADMAP-fait.md
 9d4fa6171335122ae2786a616ad5500342aa1db12407a616ed7e1d5df70703b9  skills/onboarding/references/modeles/roadmap/ROADMAP.md
-725f697057fe1353ad2645a397120dfc61171dc272d79e81a6bfaed188f089f7  skills/onboarding/references/modeles/scripts/check.mjs
+8c6a5296ae6de359d35f073ea001432e1e33ba35f101f18c1c3441d3aecf5701  skills/onboarding/references/modeles/scripts/check.mjs
 690657b77bf612f5b561f025b76a4146b9cfa72c3cdaea642ff7599f90d61fd0  skills/onboarding/references/modeles/scripts/new-session.sh
 9f1a1e0f4cce062285a8559697a429db6365b64a2caefc7d1c731d037e887068  skills/onboarding/references/modeles/scripts/session-start.sh
 5f6a998c06f4d569b435a9be39a10ed07e48c45a1c14aff6f8d4e53070e36004  skills/onboarding/references/questions.md
@@ -50,6 +50,6 @@ a5e48e2179e7e88a3c5490bdadaa6a85bf3f38df30b1fa6c31422e0744789d2d  skills/onboard
 179c9ab3333cf37a33fcdad299d1cb536fbfedb85efdaee673bc75c89eea94cd  skills/onboarding/scripts/onboarding.py
 67493cd427b027f0b3de4cc353ef30ae6a8082d1d86dd979ea5f6e8e45467026  skills/reglages-session/SKILL.md
 63222231611dbac2848a90ae42f7f993668416a77a96abb0559d43900ee25a8f  skills/roadmap-panel/SKILL.md
-4afa9e30e1a6357d00d8139eb54c0086f48ff951575ca6fb9d36b87433b0540d  skills/tasks/SKILL.md
+09f272077437ac80f541ea6cf2e18e765424818c63d82f01eff320477246dfab  skills/tasks/SKILL.md
 723f2a88fd1bb1ed862e2e3d22c85105a330de3d299b7425a328d648b3edec2d  skills/tasks/scripts/tasks.py
 765f957c4bb398acab9ebdbd9c285c0bd9ca9b6df16d0b2d5863d654540539f2  types/index.d.ts

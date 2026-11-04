@@ -183,7 +183,11 @@ Write `<scratchpad>/operations.json`:
   proves it, and where), `bilan` (#262). The line moves to the top of `ROADMAP-fait.md` with
   `fait:AAAA-MM-JJ HH:MM` (the time of the write when the date is today; a past date gets no
   invented time), its bilan row to the bilan journal. A recurring standalone task (`tous:`) is
-  marked done with the panel's « Marquer faite » button, which carries it over.
+  marked done with the panel's « Marquer faite » button, which carries it over. A **routine**
+  (#280) is a recurring task that carries its instructions: `skill:<name>` (or `plugin:name`), the
+  skill its session loads first, and/or `fiche:<path>`, the detail; the panel's blue ▶ ticks the
+  occurrence, moves the line to its next date and launches the session. Never write « tick the
+  task at the end » in a routine's fiche: the panel does it.
 - **bilan** (#262, on `done`, `drop` and `handoff`), the contract of `cowork.py roadmap close
   --bilan-b64`: `fait` (one line, 140 characters at most: what was done), `souci` (one line: the
   problem met, empty only with `fluide`), `ressenti` (`fluide`, `accroché`, `bloqué`), `cause`
@@ -302,7 +306,8 @@ round, the recommendation first, each question readable on its own (the task's l
 - the **date** of a new task that the source does not give (recommendation: the next occasion,
   for instance the next call);
 - a **partial proof** (« Cocher », « Laisser ouverte », « Réécrire sur ce qui reste »);
-- the **rhythm** of an ongoing subject (`tous:semaine`, `tous:mois`…);
+- the **rhythm** of an ongoing subject (`tous:jour`, `tous:ouvré` Monday to Friday, `tous:semaine`,
+  `tous:mois`…);
 - **reopening** a closed task.
 
 Everything else is done without a question and said in one line: the case of a clear match, what

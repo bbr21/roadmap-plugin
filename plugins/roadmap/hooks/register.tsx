@@ -185,6 +185,10 @@ import {
   blockerOf,
   closeCaption,
   closeRoute,
+  isRoutine,
+  nextDue,
+  routineBrief,
+  routineDue,
   checkRoute,
   closeWithParentInTexts,
   editInTexts,
@@ -3186,7 +3190,7 @@ async function poll($: EngineInterface): Promise<void> {
 /** Le « Message additionnel » tapé dans le détail, ajouté au brief ; vidé à chaque changement de tâche. */
 let launchExtra = ''
 
-async function launchSession($: EngineInterface, source: Source, task: Task, shortTitle: string, extra = '', kind = ''): Promise<void> {
+async function launchSession($: EngineInterface, source: Source, task: Task, shortTitle: string, extra = '', kind = '', routineClosed = false): Promise<void> {
   // `check` : le bouton « Vérifier », une session qui contrôle la tâche sans la faire.
   // Le brief de lancement dit où écrire le bilan de clôture : le journal du dossier, ou celui par défaut.
   const key = taskKey(task)
@@ -3196,7 +3200,9 @@ async function launchSession($: EngineInterface, source: Source, task: Task, sho
   const base =
     kind === 'check'
       ? checkBrief(source, task, shortTitle, !projet || (await isGitDir($, source.dir)), await briefFound($, source, task))
-      : await workBrief($, source, task, shortTitle)
+      : kind === 'routine'
+        ? routineBrief(source, task, shortTitle, { today: todayOf(await $.clock.now()), closed: routineClosed, found: await briefFound($, source, task) })
+        : await workBrief($, source, task, shortTitle)
   const brief = extra.trim() === '' ? base : { ...base, prompt: `${base.prompt}\n\nMessage additionnel :\n${extra.trim()}` }
   // Un refus net de l'app ou une panne : rien n'est parti, le bouton redevient cliquable.
   const release = () => setView($, v => ({ launched: v.launched.filter(k => k !== key) }))
@@ -4022,6 +4028,36 @@ async function closeTask(
   const rebase = await git('pull', '--rebase', '-q')
   const push = rebase.exitCode === 0 ? await git('push', '-q') : rebase
   return push.exitCode === 0 ? { id: out.id } : { id: out.id, note: `${closed} et committée, mais pas poussée : ${lastLine(push.stderr || push.stdout)}` }
+}
+
+/**
+ * Le ▶ d'une routine (#280) : due, il coche son occurrence par la voie de « Marquer faite » (le panneau
+ * ou `cowork.py` ; avec `ecriture`, la coche ouvre le brief, Claude seul écrivant par cet outil), puis
+ * pose la carte de sa session au brief léger. Pas due (déjà faite aujourd'hui), la carte seule.
+ */
+async function launchRoutine($: EngineInterface, source: Source, task: Task, shortTitle: string): Promise<void> {
+  const today = todayOf(await $.clock.now())
+  if (!routineDue(task, today) || source.ecriture !== undefined) return launchSession($, source, task, shortTitle, '', 'routine')
+  if (cancelling) return
+  cancelling = true
+  let out: { id?: string; note?: string } | { error: string }
+  try {
+    out = await closeTask($, source, task, 'done', '').catch((err: unknown) => ({ error: `Routine non lancée : ${err instanceof Error ? err.message : String(err)}` }))
+  } finally {
+    cancelling = false
+  }
+  if ('error' in out) {
+    await setView($, () => ({ launchNote: out.error }))
+    return
+  }
+  await update($, retryAtom, v => v + 1)
+  const next = task.due !== undefined && task.tous !== undefined ? nextDue(task.due, task.tous, today) : undefined
+  try {
+    $.ui.toast(`${task.id ? `#${task.id}` : 'Routine'} lancée · cochée${next ? `, revient le ${next}` : ''}${out.note ? ` : ${out.note}` : ''}`)
+  } catch {
+    // pas de toast sur cette surface : la carte suit
+  }
+  await launchSession($, source, task, shortTitle, '', 'routine', true)
 }
 
 /** Le clic sur « Confirmer » de l'encart : une écriture à la fois, puis le détail montre la tâche faite ou annulée. */
@@ -8135,7 +8171,10 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
                 {!current.done &&
                   !live &&
                   !launched.includes(taskKey(current)) &&
-                  primary('launch', playIcon(palette.priText, 14), 'Lancer', () => void launchSession($, source, current, s.titre, launchExtra))}
+                  // Une routine (#280) : « Lancer » fait le geste de son ▶ (coche, redate, carte).
+                  primary('launch', playIcon(palette.priText, 14), 'Lancer', () =>
+                    void (isRoutine(current) ? launchRoutine($, source, current, s.titre) : launchSession($, source, current, s.titre, launchExtra)),
+                  )}
                 {/* « Vérifier » : une session qui dit si la tâche est encore à jour, sans la faire. Un
                     bouton de l'app, sans zone de clic : le dessin en compte au plus ZONE_LIMIT. */}
                 {!current.done && !live && !launched.includes(taskKey(current)) && (
@@ -8731,7 +8770,10 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     due: { bg: palette.sel, fg: palette.text2, strong: false },
     // Dans les 7 jours (#99) : orange.
     soon: { bg: palette.blockTint, fg: palette.blockOn, strong: true },
-    recur: { bg: palette.sel, fg: palette.text2, strong: false },
+    // Rose, avec ses flèches en boucle (#280).
+    recur: { bg: palette.recurTint, fg: palette.recurOn, strong: false },
+    // La skill d'une routine (#280) : grise.
+    skill: { bg: palette.sel, fg: palette.text2, strong: false },
     wait: { bg: palette.waitTint, fg: palette.waitOn, strong: true },
     // Une attente qui dort (#99) : orange à 7 jours, rouge à 14.
     waitAging: { bg: palette.blockTint, fg: palette.blockOn, strong: true },
@@ -8774,7 +8816,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   // Le dessin d'une pastille de la liste ; sa largeur compte aussi dans les colonnes (#198).
   const rowPillSpec = (p: Pill) => {
     const c = pillColors[p.kind]
-    const mark: PillMark | undefined = p.kind === 'late' ? 'clock' : p.kind === 'wait' || p.kind === 'waitAging' || p.kind === 'waitOld' || p.kind === 'owner' ? 'person' : undefined
+    const mark: PillMark | undefined = p.kind === 'late' ? 'clock' : p.kind === 'recur' ? 'repeat' : p.kind === 'wait' || p.kind === 'waitAging' || p.kind === 'waitOld' || p.kind === 'owner' ? 'person' : undefined
     return { text: p.text, bg: c.bg, fg: c.fg, ...(mark ? { mark } : {}), weight: (c.strong ? 600 : 500) as 500 | 600 }
   }
   type PillSpec = Parameters<typeof drawnPill>[0]
@@ -9138,8 +9180,9 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
         {confirmTag ?? (
           <Box key={`p:${t.key}`} width={3} flexShrink={0} flexDirection="row" justifyContent="center">
             {playable && (
-              <Button key={`play:${t.key}`} plain dimColor onPress={() => void launchSession($, source, t, s.titre)}>
-                ▶
+              <Button key={`play:${t.key}`} plain dimColor onPress={() => void (isRoutine(t, head !== undefined) ? launchRoutine($, source, t, s.titre) : launchSession($, source, t, s.titre))}>
+                {/* Une routine due (#280, maquette A) : le ▶ bleu, son clic la coche et la redate. */}
+                {!head && routineDue(t, today) ? <Text color={palette.live}>▶</Text> : '▶'}
               </Button>
             )}
           </Box>

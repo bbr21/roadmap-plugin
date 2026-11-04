@@ -18,6 +18,8 @@ export type Task = {
   fait?: string
   src?: string
   fiche?: string
+  /** `skill:` : la skill qu'une routine lance d'abord (#280), `nom` ou `plugin:nom`. */
+  skill?: string
   qui?: string
   branche?: string
   spec?: string
@@ -54,8 +56,12 @@ export type Task = {
 export type Prio = '1' | '2' | '3'
 
 /** Les périodes d'une tâche récurrente (`tous:`, #99). */
-export type Recurrence = 'semaine' | '2semaines' | 'mois' | 'trimestre' | 'an'
-export const RECURRENCES: readonly Recurrence[] = ['semaine', '2semaines', 'mois', 'trimestre', 'an']
+export type Recurrence = 'jour' | 'ouvré' | 'semaine' | '2semaines' | 'mois' | 'trimestre' | 'an'
+/** `jour` : chaque jour ; `ouvré` : du lundi au vendredi (#280). */
+export const RECURRENCES: readonly Recurrence[] = ['jour', 'ouvré', 'semaine', '2semaines', 'mois', 'trimestre', 'an']
+
+/** `skill:` : un nom de skill, `nom` ou `plugin:nom` (#280). */
+const SKILL_RE = /^[a-z0-9][a-z0-9-]*(:[a-z0-9][a-z0-9-]*)?$/
 
 /** Au-delà de ce nombre de jours sans nouvelle, une attente de tiers est à relancer (#99) ; `relance` de roadmap.json le change. */
 export const RELAUNCH_DAYS = 14
@@ -564,6 +570,7 @@ export function parseRoadmap(text: string, file: string): Task[] {
       }
       else if (k === 'prio' && PRIO_RE.test(v)) task.prio = v as Prio
       else if (k === 'tous' && (RECURRENCES as readonly string[]).includes(v)) task.tous = v as Recurrence
+      else if (k === 'skill' && SKILL_RE.test(v)) task.skill = v
       else if (k === 'relance' && DATE_RE.test(v)) task.relance = v
       else if (k === 'feedback' && FEEDBACK_RE.test(v)) task.feedback = v.split(',')
       else if (k === 'pj' || k === 'livrable') {
@@ -582,7 +589,7 @@ export function parseRoadmap(text: string, file: string): Task[] {
 // Le contrôle de la grammaire, plus strict que la lecture : la lecture ignore une ligne qu'elle ne
 // comprend pas, le contrôle la signale. Clés admises : celles que la lecture garde, plus `verrou`
 // (Splitmybill).
-const KEYS: readonly string[] = [...FIELDS, 'après', 'parent', 'id', 'nom', 'prio', 'feedback', 'pj', 'livrable', 'verrou', 'tous', 'relance']
+const KEYS: readonly string[] = [...FIELDS, 'après', 'parent', 'id', 'nom', 'prio', 'feedback', 'pj', 'livrable', 'verrou', 'tous', 'relance', 'skill']
 /** Les clés de la grammaire : une clé déclarée dans `cles` ne peut en reprendre aucune. */
 export const GRAMMAR_KEYS: readonly string[] = KEYS
 const DECLARED_KEY_RE = /^[a-zà-ÿ][a-zà-ÿ0-9-]*$/
@@ -689,7 +696,8 @@ export function lintRoadmap(text: string, done: boolean, rules: Partial<LintRule
         say(`${k}:${v} : date dans le futur (aujourd'hui : ${rules.today}, heure locale)`)
       else if (k === 'id' && !ID_RE.test(v)) say(`id: n'est pas un numéro (« ${v} ») : un entier, sans #`)
       else if (k === 'prio' && !PRIO_RE.test(v)) say(`prio: vaut 1, 2 ou 3 (« ${v} »)`)
-      else if (k === 'tous' && !(RECURRENCES as readonly string[]).includes(v)) say(`tous: vaut semaine, 2semaines, mois, trimestre ou an (« ${v} »)`)
+      else if (k === 'tous' && !(RECURRENCES as readonly string[]).includes(v)) say(`tous: vaut ${RECURRENCES.slice(0, -1).join(', ')} ou ${RECURRENCES[RECURRENCES.length - 1]} (« ${v} »)`)
+      else if (k === 'skill' && !SKILL_RE.test(v)) say(`skill: vaut un nom de skill, nom ou plugin:nom (« ${v} »)`)
       else if (k === 'feedback' && !FEEDBACK_RE.test(v)) say(`feedback: des numéros de retours séparés par des virgules (« ${v} »)`)
       else if ((k === 'pj' || k === 'livrable') && (v === '' || v.split(',').some(x => x.trim() === ''))) say(`${k}: des chemins de fichiers séparés par des virgules (« ${v} »)`)
       else if (k === 'nom' && (v === '' || v.length > NAME_MAX)) say(`nom: 40 caractères au plus, et pas vide (« ${clip(v, 50)} »)`)
@@ -3431,6 +3439,9 @@ export function sessionTitleFor(task: Task, shortTitle: string): string {
 /** Après le préfixe, la marque d'une session de vérification (`checkBrief`) : « #47 · Vérifier · … ». */
 const CHECK_MARK = /^v[ée]rifier\s*·\s*/i
 
+/** Après le préfixe, la marque d'une session de routine (`routineBrief`) : « #412 · Routine du 2026-11-04 · … ». */
+const ROUTINE_MARK = /^routine du \d{4}-\d{2}-\d{2}\s*·\s*/i
+
 /** Une session de vérification (`check`) ou de réalisation (`work`) de sa tâche, d'après son titre. */
 export function sessionTitleKind(title: string): 'check' | 'work' {
   const m = SESSION_PREFIX.exec(title)
@@ -4589,7 +4600,7 @@ export function taskForSessionTitle(title: string, tasks: readonly Task[], title
 export function sessionName(title: string): string | undefined {
   const m = SESSION_PREFIX.exec(title)
   if (!m) return undefined
-  const name = title.slice(m[0].length).replace(CHECK_MARK, '').trim()
+  const name = title.slice(m[0].length).replace(CHECK_MARK, '').replace(ROUTINE_MARK, '').trim()
   return name === '' ? undefined : name
 }
 
@@ -4644,7 +4655,11 @@ export function launchTitleRefusal(o: {
     return `${head} « ${name} » n'est pas le nom de #${id}, dont la ligne ${written} : son titre est ${titled(task)}.${owner} ${tail}`
   }
   const kind = sessionTitleKind(o.title)
-  const taken = o.sessions.find(s => sessionTitleId(s.title) === id && sessionTitleKind(s.title) === kind)
+  // Une routine (#280) : une session par jour, celle d'hier ne bloque pas ; elle ne bloque ni n'est bloquée par le travail sur la tâche.
+  const routine = isRoutineTitle(o.title)
+  const taken = o.sessions.find(s =>
+    sessionTitleId(s.title) === id &&
+    (routine ? normalizeTitle(s.title) === normalizeTitle(o.title) : !isRoutineTitle(s.title) && sessionTitleKind(s.title) === kind))
   if (taken) {
     return `${head} #${id} est déjà porté par la session ouverte « ${taken.title} ». Une tâche n'a qu'une session : reprends celle-là (SendMessage), ou archive-la avant d'en lancer une autre.`
   }
@@ -4660,7 +4675,7 @@ export function axisLabel(axis: string): string {
 /** Au-delà, une tâche sans échéance est « à revoir ». */
 export const STALE_DAYS = 21
 
-export type PillKind = 'late' | 'due' | 'soon' | 'recur' | 'wait' | 'waitAging' | 'waitOld' | 'stale' | 'owner'
+export type PillKind = 'late' | 'due' | 'soon' | 'recur' | 'skill' | 'wait' | 'waitAging' | 'waitOld' | 'stale' | 'owner'
 export type Pill = { kind: PillKind; text: string }
 
 /**
@@ -4671,6 +4686,8 @@ export function rowPills(task: Task, today: string, me: readonly string[]): Pill
   if (task.done) return []
   const pills: Pill[] = []
   if (task.tous !== undefined) pills.push({ kind: 'recur', text: recurLabel(task.tous) })
+  // Une routine (#280, maquette A) : sa skill, sans le plugin, ou « fiche ».
+  if (isRoutine(task)) pills.push({ kind: 'skill', text: task.skill ? task.skill.slice(task.skill.indexOf(':') + 1) : 'fiche' })
   if (task.due !== undefined) pills.push(duePill(task.due, today))
   else if (task.ouvert !== undefined && daysBetween(task.ouvert, today) > STALE_DAYS) pills.push({ kind: 'stale', text: 'à revoir' })
   if (task.resp !== undefined && !me.includes(attendWho(task.resp))) pills.push({ kind: 'owner', text: shortAttend(task.resp) })
@@ -4708,11 +4725,11 @@ export function dueInk(kind: PillKind, palette: { lateOn: string; blockOn: strin
   return kind === 'late' ? palette.lateOn : kind === 'soon' ? palette.blockOn : palette.text2
 }
 
-const RECUR_LABELS: Record<Recurrence, string> = { semaine: 'hebdo', '2semaines': '2 sem.', mois: 'mensuel', trimestre: 'trimestriel', an: 'annuel' }
+const RECUR_LABELS: Record<Recurrence, string> = { jour: 'quotidien', ouvré: 'jours ouvrés', semaine: 'hebdo', '2semaines': '2 sem.', mois: 'mensuel', trimestre: 'trimestriel', an: 'annuel' }
 
-/** La pastille d'une tâche récurrente : « ↻ mensuel ». */
+/** La pastille d'une tâche récurrente : « mensuel » ; l'icône en boucle le précède (#280). */
 export function recurLabel(tous: Recurrence): string {
-  return `↻ ${RECUR_LABELS[tous]}`
+  return RECUR_LABELS[tous]
 }
 
 export function clip(text: string, max: number): string {
@@ -5259,6 +5276,71 @@ export function checkBrief(
   return { title: checkTitleFor(task, shortTitle), prompt, background: briefBackground(source) }
 }
 
+/**
+ * Une routine (#280) : une récurrente ouverte qui porte ses instructions, une skill (`skill:`) ou une
+ * fiche (`fiche:`). Son ▶ la lance, la coche et la redate d'un clic. Une mère (`hasChildren`) n'en est
+ * pas une : ses étapes se font une à une.
+ */
+export function isRoutine(task: Task, hasChildren = false): boolean {
+  return !task.done && !hasChildren && task.tous !== undefined && (task.skill !== undefined || task.fiche !== undefined)
+}
+
+/** Une routine due (#280) : le jour de sa `due:`, ou en retard ; son ▶ est bleu, et son clic la coche. */
+export function routineDue(task: Task, today: string): boolean {
+  return isRoutine(task) && task.due !== undefined && task.due <= today
+}
+
+/** Une session de routine, d'après son titre : une par jour, celle d'hier ne bloque pas celle du jour (#280). */
+export function isRoutineTitle(title: string): boolean {
+  const m = SESSION_PREFIX.exec(title)
+  return m !== null && ROUTINE_MARK.test(title.slice(m[0].length))
+}
+
+/**
+ * Le brief d'une routine lancée d'un clic (#280), léger : sa skill d'abord, sa fiche, la ligne, et ce
+ * qui est déjà fait de la roadmap. `closed` : le panneau vient de cocher l'occurrence. Avec `ecriture`,
+ * le panneau n'écrit jamais : la coche devient la première consigne, avant la skill. Ni bilan ni
+ * archivage : une routine montre son résultat.
+ */
+export function routineBrief(
+  source: Source,
+  task: Task,
+  shortTitle: string,
+  o: { today: string; closed: boolean; found?: BriefFound },
+): { title: string; prompt: string; background: string } {
+  const found = o.found ?? {}
+  const due = task.due !== undefined && task.due <= o.today
+  const byClaude = due && !o.closed && source.ecriture !== undefined
+  const steps: string[] = []
+  if (byClaude) {
+    steps.push(`D'abord, coche l'occurrence du jour de ${taskRef(task)} par ${source.ecriture!.outil} : elle se reconduit seule au jour suivant.`)
+  }
+  if (task.skill) steps.push(`${byClaude ? 'Puis lance' : "Lance d'abord"} la skill \`${task.skill}\` par l'outil Skill, ${byClaude ? 'et suis-la' : 'puis suis-la'}.`)
+  if (task.fiche) {
+    const hit = URL_RE.test(task.fiche) ? task.fiche : pathCandidates(source, task.fiche).find(p => found[p] !== undefined)
+    steps.push(
+      hit
+        ? `Lis la fiche \`${hit}\` et suis-la${task.skill ? ' : elle dit le détail de la routine' : ''}.`
+        : `Lis la fiche \`${task.fiche}\` et suis-la (introuvable sous \`${source.root ?? source.dir}\` au lancement).`,
+    )
+  }
+  const roadmap = byClaude
+    ? []
+    : due
+      ? [`L'occurrence du ${o.today} est déjà cochée par le panneau : ne touche pas à la roadmap.`]
+      : [`Pas due aujourd'hui (prochaine : ${task.due ?? '?'}) : rien n'est coché, ne touche pas à la roadmap.`]
+  const prompt = [
+    ...steps,
+    '',
+    `La routine, dans la roadmap ${source.name} :`,
+    ...briefTask({ ...task, tous: undefined }),
+    '',
+    ...roadmap,
+    "Montre le résultat en quelques lignes, et ce qui demande une décision ; rien ne part en son nom sans l'accord de " + person() + '.',
+  ].join('\n')
+  return { title: sessionTitleFor(task, `Routine du ${o.today} · ${shortTitle}`), prompt, background: briefBackground(source) }
+}
+
 /** `.claude/roadmap.json` d'un projet : tout est facultatif, `dir` relatif au projet ou absolu. */
 export function parseProjectConfig(text: string, base: string, defaults: { name: string; me: string[] }): Source | undefined {
   const data: unknown = JSON.parse(text)
@@ -5480,12 +5562,21 @@ export function abandonInTexts(
  * La ligne doit être encore celle affichée (`task.key`) : sinon rien ne change. La ligne close se
  * contrôle avec les axes de la roadmap et les clés déclarées par le projet (`cles`, #155).
  */
-const PERIOD_MONTHS: Record<Recurrence, number> = { semaine: 0, '2semaines': 0, mois: 1, trimestre: 3, an: 12 }
-const PERIOD_DAYS: Record<Recurrence, number> = { semaine: 7, '2semaines': 14, mois: 0, trimestre: 0, an: 0 }
+const PERIOD_MONTHS: Record<Recurrence, number> = { jour: 0, ouvré: 0, semaine: 0, '2semaines': 0, mois: 1, trimestre: 3, an: 12 }
+const PERIOD_DAYS: Record<Recurrence, number> = { jour: 1, ouvré: 1, semaine: 7, '2semaines': 14, mois: 0, trimestre: 0, an: 0 }
 
 /** `due` plus `k` périodes ; un mois trop court ramène à son dernier jour (31/01 + 1 mois = 28/02). */
 function addPeriods(due: string, tous: Recurrence, k: number): string {
   const [y, m, d] = due.split('-').map(Number) as [number, number, number]
+  if (tous === 'ouvré') {
+    // Le k-ième jour ouvré après `due` : samedi et dimanche ne comptent pas (#280).
+    const at = new Date(Date.UTC(y, m - 1, d))
+    for (let n = 0; n < k; ) {
+      at.setUTCDate(at.getUTCDate() + 1)
+      if (at.getUTCDay() !== 0 && at.getUTCDay() !== 6) n++
+    }
+    return at.toISOString().slice(0, 10)
+  }
   if (PERIOD_DAYS[tous] > 0) return new Date(Date.UTC(y, m - 1, d + k * PERIOD_DAYS[tous])).toISOString().slice(0, 10)
   const months = m - 1 + k * PERIOD_MONTHS[tous]
   const last = new Date(Date.UTC(y, months + 1, 0)).getUTCDate()
@@ -5499,7 +5590,9 @@ function addPeriods(due: string, tous: Recurrence, k: number): string {
  */
 export function nextDue(due: string, tous: Recurrence, today: string): string {
   let k = 1
-  while (addPeriods(due, tous, k) < today) k++
+  // Un rythme quotidien (#280) : une occurrence, puis le jour après aujourd'hui ; aujourd'hui est fait.
+  const daily = tous === 'jour' || tous === 'ouvré'
+  while (daily ? due <= today && addPeriods(due, tous, k) <= today : addPeriods(due, tous, k) < today) k++
   return addPeriods(due, tous, k)
 }
 
