@@ -6910,6 +6910,63 @@ export function searchTasks(tasks: readonly Task[], query: string, titleOf: (t: 
 }
 
 /**
+ * L'arbre d'une recherche (#318, choix de Bertrand du 2026-11-04) : les tâches trouvées, ouvertes et
+ * faites, en blocs de `byTree`, pour se ranger comme les autres vues. Une tâche trouvée qui fait partie
+ * d'une chaîne amène toute sa chaîne : une fille, sa mère ouverte et toutes ses sœurs ; une mère, ses
+ * étapes ; les faites de la mère dans son bloc (`doneTasks`, toutes). Une faite trouvée hors d'une
+ * chaîne ouverte reste une ligne seule ; une faite d'une chaîne n'y paraît qu'une fois.
+ */
+export function searchTree(found: readonly Task[], all: readonly Task[], titleOf: (t: Task) => string, prereqsOf: (t: Task) => readonly Task[] = () => []): TreeBlock[] {
+  const openById = new Map<string, Task>()
+  for (const t of all) if (!t.done && t.id !== undefined && !openById.has(t.id)) openById.set(t.id, t)
+  const kidsOf = (id: string) => all.filter(x => x.parent === id && x.id !== id)
+  // La mère ouverte d'une tâche trouvée : la sienne, ou elle-même si elle a des filles.
+  const motherOf = (t: Task): Task | undefined => {
+    const up = t.parent !== undefined && t.parent !== t.id ? openById.get(t.parent) : undefined
+    if (up) return up
+    return !t.done && t.id !== undefined && kidsOf(t.id).length > 0 ? t : undefined
+  }
+  const listed: Task[] = []
+  const add = (t: Task) => {
+    if (!listed.includes(t)) listed.push(t)
+  }
+  // La chaîne entière d'une mère : elle, puis ses descendantes ouvertes, à toute profondeur.
+  const addChain = (m: Task, seen = new Set<Task>()) => {
+    if (seen.has(m)) return
+    seen.add(m)
+    add(m)
+    for (const k of m.id === undefined ? [] : kidsOf(m.id)) if (!k.done) addChain(k, seen)
+  }
+  const chained = new Set<string>()
+  for (const t of found) {
+    const m = motherOf(t)
+    if (m) {
+      addChain(m)
+      if (m.id !== undefined) chained.add(m.id)
+    }
+  }
+  for (const t of found) {
+    if (!t.done) add(t)
+    // Une faite dont la mère ouverte est dans la recherche est déjà dans son bloc.
+    else if (!(t.parent !== undefined && chained.has(t.parent) && openById.has(t.parent))) add(t)
+  }
+  return byTree(listed, all, titleOf, prereqsOf)
+}
+
+/** Les lignes montrées d'une section de recherche (#318) : chaque tâche seule, chaque mère et ses étapes, faites comprises. */
+export function shownLines(items: readonly AxisItem[]): number {
+  return items.reduce((n, i) => n + (i.kind === 'alone' ? 1 : (i.block.ghost ? 0 : 1) + i.block.tasks.length + i.block.doneTasks.length), 0)
+}
+
+/** L'en-tête d'une recherche (#318) : le compte et le mot cherché, puis ouvertes et faites quand il y a des faites. */
+export function searchSummary(open: number, done: number, query: string, max: number): string {
+  const n = open + done
+  const head = `${n} résultat${n > 1 ? 's' : ''} pour « ${query.trim()} »`
+  const split = done === 0 ? '' : ` · ${[...(open > 0 ? [`${open} ouverte${open > 1 ? 's' : ''}`] : []), `${done} faite${done > 1 ? 's' : ''}`].join(', ')}`
+  return `${head}${split}${n > max ? ` (${max} affichés)` : ''}`
+}
+
+/**
  * La relance des zones de clic. Elles vivent dans un cadre de module que l'app charge à part ; quand
  * il ne charge pas en 10 s, l'app démonte toutes les zones et ne réessaie pas (2026-10-23, « Client
  * frame torn down: did not load »). Chaque module de zone poste `{ ready }` une fois par chargement

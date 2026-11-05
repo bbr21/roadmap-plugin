@@ -342,7 +342,10 @@ import {
   taskForSessionTitle,
   launchTitleRefusal,
   sessionName,
+  searchSummary,
   searchTasks,
+  searchTree,
+  shownLines,
   sessionTitleId,
   pickTaskSource,
   taskIdIn,
@@ -9650,11 +9653,25 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   const by = groupingOf(groupBy, showDone, rangeable)
   // Les ouvertes sont toujours en arbre (#189) : le rangement trie des arbres entiers. L'arbre
   // garde les tâches en retard à leur place (une mère en retard garde ses filles) : la pastille de
-  // retard reste sur la ligne. Sous une recherche, pas d'arbre : ses résultats n'ont pas de « ↳ » (#86).
+  // retard reste sur la ligne. Une recherche (#318, choix de Bertrand) : ses résultats en arbre aussi, rangés
+  // comme la liste ; une tâche trouvée d'une chaîne amène toute sa chaîne (`searchTree`), ses faites comprises.
   // Ma journée (#268) : ses récurrentes qui tombent quittent l'arbre pour leur section à part, au bas.
   const recurringToday = attend === 'today' ? shown.filter(t => isRecurringSoon(t, today)) : []
   const treeShown = recurringToday.length > 0 ? shown.filter(t => !recurringToday.includes(t)) : shown
-  const tree = !showDone && !searching ? byTree(sortTasks(treeShown, sortOrder), allTasks, t => short(t).titre, prereqsFor, today) : []
+  // La recherche : ouvertes puis faites, toutes, quels que soient les filtres.
+  const titleOf = (t: Task) => cachedTitle(t, titles)
+  const foundOpen = searching ? sortTasks(searchTasks(openTasks.filter(t => !inBlock(t)), search, titleOf), sortOrder) : []
+  const foundDone = searching
+    ? searchTasks(doneTasks.filter(t => !inBlock(t)), search, titleOf).sort((a, b) => (b.fait ?? '').localeCompare(a.fait ?? ''))
+    : []
+  const foundCount = foundOpen.length + foundDone.length
+  const foundShown = foundOpen.slice(0, SEARCH_MAX)
+  const foundDoneShown = foundDone.slice(0, Math.max(0, SEARCH_MAX - foundShown.length))
+  const tree = searching
+    ? searchTree([...foundShown, ...foundDoneShown], allTasks, t => short(t).titre, prereqsFor)
+    : !showDone
+    ? byTree(sortTasks(treeShown, sortOrder), allTasks, t => short(t).titre, prereqsFor, today)
+    : []
 
   const setAxis = (a: string) => () => pressAxis($, a)
   const toggleDone = () => pressDone($, showDone)
@@ -10365,15 +10382,10 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     for (const it of sec.items)
       for (const t of it.kind === 'alone' ? [it.task] : [it.block.head as Task, ...it.block.doneTasks])
         doneRights.set(t, doneRight(t, doneMode, sec.day, today, axisLabel(t.axis)))
-  // La recherche : ouvertes puis faites, toutes, quels que soient les filtres.
-  const titleOf = (t: Task) => cachedTitle(t, titles)
-  const foundOpen = searching ? sortTasks(searchTasks(openTasks.filter(t => !inBlock(t)), search, titleOf), sortOrder) : []
-  const foundDone = searching
-    ? searchTasks(doneTasks.filter(t => !inBlock(t)), search, titleOf).sort((a, b) => (b.fait ?? '').localeCompare(a.fait ?? ''))
-    : []
-  const foundCount = foundOpen.length + foundDone.length
-  const foundShown = foundOpen.slice(0, SEARCH_MAX)
-  const foundDoneShown = foundDone.slice(0, Math.max(0, SEARCH_MAX - foundShown.length))
+  // Une faite trouvée, ou dans une chaîne trouvée (#318) : sa date de fin au bout de sa ligne.
+  if (searching)
+    for (const b of tree)
+      for (const t of [...(b.head ? [b.head] : []), ...b.tasks, ...b.doneTasks]) if (t.done) doneRights.set(t, doneRight(t, 'subject', undefined, today, ''))
 
   // L'arbre, rangé en bandes par la valeur de `ranger_par` (#125) : une bande par valeur, les blocs
   // sous la valeur de leur tête, les tâches seules coupées par bande. Une bande se replie à part.
@@ -10409,9 +10421,9 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   const rangedSections =
     by === 'day' ? dayTree(tree, today, isLive) : by === 'deadline' ? deadlineTree(tree, today, isLive) : by === 'owner' ? ownerTree(tree, me, isLive) : by === 'number' ? numberTree(tree) : undefined
   const treeGroups: ListGroup[] = rangedSections
-    ? rangedSections.flatMap(sec => sectionGroups(sec.key, sec.label, sec.count, sec.items, { look: bandLook(sec.key, today, me), ...(sec.late ? { lead: lateLead() } : {}) }))
+    ? rangedSections.flatMap(sec => sectionGroups(sec.key, sec.label, searching ? shownLines(sec.items) : sec.count, sec.items, { look: bandLook(sec.key, today, me), ...(sec.late ? { lead: lateLead() } : {}) }))
     : !rangerPar
-    ? axisTree(tree, order, isLive).flatMap(sec => sectionGroups(`axe:${sec.axis}`, axisLabel(sec.axis), sec.count, sec.items, { axis: sec.axis }))
+    ? axisTree(tree, order, isLive).flatMap(sec => sectionGroups(`axe:${sec.axis}`, axisLabel(sec.axis), searching ? shownLines(sec.items) : sec.count, sec.items, { axis: sec.axis }))
     : bandsOf(
         tree.flatMap(g =>
           g.head
@@ -10426,7 +10438,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
         `Sans ${rangerPar}`,
       ).flatMap(band => {
         const id = `bande:${band.label}`
-        const count = band.items.reduce((n, u) => n + (u.block.head && !u.block.ghost ? 1 : 0) + u.block.tasks.length, 0)
+        const count = band.items.reduce((n, u) => n + (u.block.head && !u.block.ghost ? 1 : 0) + u.block.tasks.length + (searching ? u.block.doneTasks.length : 0), 0)
         return [
           { key: id, name: band.label, tasks: [], band: { count } },
           ...band.items.map(u => ({ key: u.block.key, name: u.block.label, tasks: u.block.head ? treeSteps(u.block, isLive, stepLingers) : u.block.tasks, block: u.block, under: id })),
@@ -10494,11 +10506,9 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
 
   // Les groupes de la liste : « En retard » d'abord, puis les sujets ; les faites par jour.
   // `key` suit l'état d'une section quand son libellé bouge (l'avancement d'un arbre) ; sans lui, son nom.
+  // Une recherche (#318) : rangée comme la liste, sous ses sujets.
   const allGroups: ListGroup[] = searching
-    ? [
-        ...(foundShown.length > 0 ? [{ name: 'Ouvertes', tasks: foundShown }] : []),
-        ...(foundDoneShown.length > 0 ? [{ name: 'Done', tasks: foundDoneShown }] : []),
-      ]
+    ? treeGroups
     : showDone
     ? doneSections.flatMap(sec => sectionGroups(sec.key, sec.label, sec.count, sec.items))
     : attend === 'relaunch'
@@ -10911,7 +10921,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
         <Box flexDirection="row" justifyContent="space-between" alignItems="center" paddingX={SPACE.indent}>
           <Text size="caption" color={palette.text2} wrap="truncate-end">
             {searching
-              ? `${foundCount} résultat${foundCount > 1 ? 's' : ''}${foundCount > SEARCH_MAX ? ` (${SEARCH_MAX} affichés)` : ''}`
+              ? searchSummary(foundOpen.length, foundDone.length, search, SEARCH_MAX)
               : filterSummary({ axis, attend, showDone, shown: shown.length, doneShown: doneShown.length, groupBy: by, who })}
           </Text>
           {/* Le bouton des sous-tâches (#203, choix de Bertrand du 2026-11-01) : dans toutes les vues dès
