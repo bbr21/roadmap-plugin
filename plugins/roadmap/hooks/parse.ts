@@ -3725,6 +3725,47 @@ export function reopenOutcome(ran: { deny?: string; isError?: boolean; text?: st
   return { open: true }
 }
 
+/**
+ * Le fichier où l'outil a rangé une réponse trop grosse pour être rendue (#302) : « … exceeds maximum
+ * allowed tokens. Output has been saved to <chemin>. » (la liste des sessions de BBR, archivées
+ * comprises, en est là dès 200 rangées).
+ */
+export function savedResultPath(text: string): string | undefined {
+  return /Output has been saved to (\/\S+?)\.?(?:\s|$)/.exec(text)?.[1]
+}
+
+/** Ce que dit la réponse de `list_sessions` (#302) : ses rangées, le fichier où elles sont rangées, ou illisible. */
+export function sessionRowsOf(text: string): { rows: unknown[] } | { path: string } | { error: string } {
+  const path = savedResultPath(text)
+  if (path !== undefined) return { path }
+  try {
+    const rows: unknown = JSON.parse(text)
+    if (Array.isArray(rows)) return { rows }
+  } catch {
+    // pas du JSON : illisible
+  }
+  return { error: 'la liste des sessions est illisible' }
+}
+
+/**
+ * L'index des sessions du projet (#302) : pour chaque numéro « #N · » des titres, la session que retient
+ * `taskSessionRow`. Gardé au store, il permet de relire une session par `get_session`, sans relister.
+ */
+export function taskSessionIndex(rows: readonly unknown[], prefixes: readonly string[]): Record<string, string> {
+  const ids = new Set<string>()
+  for (const r of rows) {
+    const title = (r as { title?: unknown } | null)?.title
+    const id = typeof title === 'string' ? sessionTitleId(title) : undefined
+    if (id !== undefined) ids.add(id)
+  }
+  const out: Record<string, string> = {}
+  for (const id of ids) {
+    const found = taskSessionRow({ id }, rows, prefixes)
+    if (found) out[id] = found.sessionId
+  }
+  return out
+}
+
 /** Le titre d'une session qui vérifie une tâche : « #47 · Vérifier · <titre court> », 58 caractères au plus. */
 export function checkTitleFor(task: Task, shortTitle: string): string {
   return sessionTitleFor(task, `Vérifier · ${shortTitle}`)
@@ -5281,6 +5322,8 @@ export function treeContext(o: {
   done: readonly Task[]
   bilans?: ReadonlyMap<string, Bilan>
   sessions?: readonly unknown[]
+  /** La liste des sessions non lue (#302) : la rubrique le dit au lieu de se taire. */
+  sessionsFail?: string
 }): string[] {
   const { source } = o
   const all = [...o.open.filter(t => !t.done), ...o.done.filter(t => t.done)]
@@ -5347,7 +5390,8 @@ export function treeContext(o: {
   const sessions = [...rows]
     .sort((a, b) => at(b) - at(a))
     .map(r => `« ${r.title} » · ${r.isArchived === true ? 'archivée' : 'ouverte'} · dossier \`${r.cwd}\`${typeof r.branch === 'string' && r.branch ? ` · branche \`${r.branch}\`` : ''}`)
-  out.push(...rubric('Sessions déjà passées sur elle', sessions))
+  if (o.sessionsFail !== undefined) out.push(`- Sessions déjà passées sur elle : non lues (${o.sessionsFail})`)
+  else out.push(...rubric('Sessions déjà passées sur elle', sessions))
   if (out.length === 0) return []
   return [`${TREE_MARK}${task.id ? ` de la tâche #${task.id}` : ''} (relevé au lancement ; relis les chemins pour le détail) :`, ...out]
 }

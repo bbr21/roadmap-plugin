@@ -348,6 +348,8 @@ import {
   discoveredSource,
   sessionTitleKind,
   taskSessionRow,
+  sessionRowsOf,
+  taskSessionIndex,
   taskTitle,
   reopenOutcome,
   type TaskSessionRow,
@@ -3405,28 +3407,25 @@ async function folderFor($: EngineInterface, source: Source): Promise<string[]> 
 
 /**
  * La section de l'arbre d'une tâche (#237) : les deux fichiers de la roadmap, le journal des bilans et
- * la liste des sessions, archivées comprises, relus maintenant. Une lecture en panne ou refusée ôte sa
- * part (un `deny` ne lève pas, #195), le reste du brief part.
+ * la liste des sessions, archivées comprises, relus maintenant. Un fichier de la roadmap en panne ôte sa
+ * part (un `deny` ne lève pas, #195), le reste du brief part ; la liste des sessions se relit dans son
+ * fichier quand elle est trop grosse, et sa panne se dit dans la rubrique (#302).
  */
 async function treeFor($: EngineInterface, source: Source, task: Task): Promise<string[]> {
   const { open, done } = files(source)
-  const [openTasks, doneTasks, bilan] = await Promise.all([load($, open, 'ROADMAP.md'), load($, done, 'ROADMAP-fait.md'), loadBilan($, source).catch(() => undefined)])
-  let sessions: unknown[] = []
-  try {
-    toolCalls++
-    const ran = await $.tool.call({ tool: LIST_SESSIONS_TOOL, include_archived: true, limit: TASK_SESSION_LIMIT })
-    const rows: unknown = ran.deny === undefined && !ran.isError ? JSON.parse(ran.text ?? '[]') : []
-    if (Array.isArray(rows)) sessions = rows
-  } catch {
-    // outil absent ou réponse illisible : pas de rubrique des sessions
-  }
+  const [openTasks, doneTasks, bilan, listed] = await Promise.all([
+    load($, open, 'ROADMAP.md'),
+    load($, done, 'ROADMAP-fait.md'),
+    loadBilan($, source).catch(() => undefined),
+    allSessionRows($),
+  ])
   return treeContext({
     source,
     task,
     open: typeof openTasks === 'string' ? [] : openTasks,
     done: typeof doneTasks === 'string' ? [] : doneTasks,
     ...(bilan ? { bilans: bilan.bilans } : {}),
-    sessions,
+    ...('rows' in listed ? { sessions: listed.rows } : { sessionsFail: listed.fail }),
   })
 }
 
@@ -3921,44 +3920,116 @@ async function archiveSession($: EngineInterface, key: string, entry: LiveEntry)
 }
 
 /**
- * La session d'une tâche close, archivée comprise (#206) : lue à l'ouverture de sa fiche, une fois par
- * minute au plus, par une liste qui demande les archivées (la relecture de 3 s ne les demande pas). Un
- * refus, une panne ou une réponse illisible : rien, et pas de bouton.
+ * La session d'une tâche close, archivée comprise (#206, #302) : lue à l'ouverture de sa fiche, une fois par
+ * minute au plus. D'abord par l'index du store (`task-session-ids`) et `get_session`, une petite réponse ;
+ * sinon par toute la liste, archivées comprises, que l'outil range dans un fichier quand elle est trop
+ * grosse (#302 : 109 175 caractères dès 200 rangées) et qui se relit alors par `$.fs.read`. Cette lecture
+ * remplit l'index de tout le projet. Un refus, une panne ou une réponse illisible se disent (`fail`).
  */
-const taskSessions = new Map<string, { row?: TaskSessionRow; at: number }>()
+type TaskSessionLook = { row?: TaskSessionRow; fail?: string }
+const taskSessions = new Map<string, TaskSessionLook & { at: number }>()
 const taskSessionsAsked = new Set<string>()
 const TASK_SESSION_MS = 60_000
-const TASK_SESSION_LIMIT = 200
+/** Toutes les sessions de l'app, ou presque : BBR en avait 1 716 le 2026-11-04 (#302). */
+const TASK_SESSION_LIMIT = 2000
+const TASK_SESSION_IDS_KEY = 'task-session-ids'
 
-function taskSessionOf($: EngineInterface, source: Source, t: Task, now: number): TaskSessionRow | undefined {
+async function loadTaskSessionIds($: EngineInterface): Promise<Record<string, string>> {
+  const stored = await $.store.get(TASK_SESSION_IDS_KEY).catch(() => undefined)
+  return typeof stored === 'object' && stored !== null ? (stored as Record<string, string>) : {}
+}
+
+/** La session de l'index, relue par sa fiche : rien quand elle n'y est pas ou ne se lit plus. */
+async function indexedTaskSession($: EngineInterface, source: Source, t: Task, ids: Record<string, string>): Promise<TaskSessionRow | undefined> {
+  const id = ids[`${source.name}:${t.id}`]
+  if (id === undefined) return undefined
+  try {
+    const ran = await $.tool.call({ tool: GET_SESSION_TOOL, session_id: id })
+    if (ran.deny !== undefined || ran.isError || !ran.text) return undefined
+    return taskSessionRow(t, [JSON.parse(ran.text)], source.match)
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * Toute la liste des sessions, archivées comprises (#302) : relue par `$.fs.read` quand l'outil l'a rangée
+ * dans un fichier. Sert la fiche d'une close et le contexte de l'arbre du brief (#237). Un refus, une
+ * erreur ou une réponse illisible rendent leur cause, que l'appelant dit.
+ */
+async function allSessionRows($: EngineInterface): Promise<{ rows: unknown[] } | { fail: string }> {
+  try {
+    toolCalls++
+    const ran = await $.tool.call({ tool: LIST_SESSIONS_TOOL, include_archived: true, limit: TASK_SESSION_LIMIT })
+    if (ran.deny !== undefined) return { fail: `liste refusée${ran.deny ? ` (${ran.deny})` : ''}` }
+    if (ran.isError) return { fail: ran.text || 'liste en erreur' }
+    let read = sessionRowsOf(ran.text ?? '')
+    if ('path' in read) read = sessionRowsOf(await $.fs.read(read.path))
+    if ('error' in read) return { fail: read.error }
+    if ('path' in read) return { fail: 'la liste des sessions est illisible' }
+    return { rows: read.rows }
+  } catch (err) {
+    return { fail: err instanceof Error ? err.message : String(err) }
+  }
+}
+
+/** Toute la liste des sessions (#302), et l'index du projet remis à jour. */
+async function listedTaskSession($: EngineInterface, source: Source, t: Task, ids: Record<string, string>): Promise<TaskSessionLook> {
+  try {
+    const read = await allSessionRows($)
+    if ('fail' in read) return { fail: read.fail }
+    const found = taskSessionIndex(read.rows, source.match)
+    const next = { ...ids }
+    for (const [n, sid] of Object.entries(found)) next[`${source.name}:${n}`] = sid
+    await $.store.set(TASK_SESSION_IDS_KEY, next).catch(() => undefined)
+    const row = taskSessionRow(t, read.rows, source.match)
+    return row ? { row } : {}
+  } catch (err) {
+    return { fail: err instanceof Error ? err.message : String(err) }
+  }
+}
+
+function taskSessionOf($: EngineInterface, source: Source, t: Task, now: number): TaskSessionLook | undefined {
   if (!t.done || !t.id) return undefined
   const key = `${source.name}:${t.id}`
   const kept = taskSessions.get(key)
   if ((!kept || now - kept.at > TASK_SESSION_MS) && !taskSessionsAsked.has(key)) {
     taskSessionsAsked.add(key)
     void (async () => {
-      let row: TaskSessionRow | undefined
-      try {
-        const ran = await $.tool.call({ tool: LIST_SESSIONS_TOOL, include_archived: true, limit: TASK_SESSION_LIMIT })
-        const rows: unknown = ran.deny === undefined && !ran.isError ? JSON.parse(ran.text ?? '[]') : []
-        row = Array.isArray(rows) ? taskSessionRow(t, rows, source.match) : undefined
-      } catch {
-        // outil absent ou réponse illisible : pas de bouton
-      }
-      taskSessions.set(key, { ...(row ? { row } : {}), at: now })
+      const ids = await loadTaskSessionIds($)
+      const indexed = await indexedTaskSession($, source, t, ids)
+      const look = indexed ? { row: indexed } : await listedTaskSession($, source, t, ids)
+      taskSessions.set(key, { ...look, at: now })
       taskSessionsAsked.delete(key)
       await update($, liveVersionAtom, v => v + 1).catch(() => undefined)
     })()
   }
-  return kept?.row
+  return kept
+}
+
+/** La tâche dont la confirmation « désarchiver la session » est ouverte (#302), gardée aussi en mémoire : un clic ailleurs la referme. */
+let reopenAskNow = ''
+
+/** Un clic ailleurs que l'icône et sa confirmation referme la confirmation ouverte (#302). */
+async function closeReopenAsk($: EngineInterface, element: string): Promise<void> {
+  if (reopenAskNow === '' || element.includes('reopen-')) return
+  reopenAskNow = ''
+  await setView($, () => ({ reopenAsk: '' }))
+}
+
+/** Ouvre ou referme la confirmation du désarchivage de la session de cette tâche (#302). */
+async function askReopen($: EngineInterface, key: string): Promise<void> {
+  reopenAskNow = reopenAskNow === key ? '' : key
+  await setView($, () => ({ reopenAsk: reopenAskNow }))
 }
 
 /**
- * « Rouvrir la session » d'une tâche close (#206, maquette A) : désarchive sa session, puis l'ouvre comme
+ * « Rouvrir la session » d'une tâche close (#206 ; confirmée depuis #302) : désarchive sa session, puis l'ouvre comme
  * « Ouvrir la session » (le lien, quand l'app ne la range pas d'ici). Un refus s'écrit sous la fiche.
  */
 async function reopenSession($: EngineInterface, source: Source, t: Task, row: TaskSessionRow, now: number): Promise<void> {
-  await setView($, () => ({ openNote: '' }))
+  reopenAskNow = ''
+  await setView($, () => ({ openNote: '', reopenAsk: '' }))
   let outcome: ReturnType<typeof reopenOutcome>
   try {
     outcome = reopenOutcome(await $.tool.call({ tool: UNARCHIVE_SESSION_TOOL, session_id: row.sessionId }))
@@ -5635,6 +5706,7 @@ export const register: Register = (on, options) => {
       if (typeof id === 'string') {
         notePress(id)
         if (pressDisarms(id)) await disarm($)
+        await closeReopenAsk($, id)
         pressHandlers.get(id)?.()
       }
       return {}
@@ -5655,6 +5727,7 @@ export const register: Register = (on, options) => {
       notePress(e.element)
       // Un clic ailleurs désarme le carré armé (#179, #198).
       if (pressDisarms(e.element)) await disarm($)
+      await closeReopenAsk($, e.element)
     }
     const result = await next(e)
     // Le bouton cliqué dans le panneau quitte le focus au dessin suivant (#228).
@@ -7091,7 +7164,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   ])
   const {
     axis: axisRaw, attend: attendRaw, who: whoRaw = 'all', moreFilters = false, showDone: doneChosen, groupBy, selected, openGroups, closedGroups, moreGroups,
-    launchNote, launched, openNote, conclusionOpen, missionOpen = '', draftOpen = '', draftFolded = '', cancelAsk = '', closeKind = 'abandon', cancelNote = '',
+    launchNote, launched, openNote, conclusionOpen, missionOpen = '', draftOpen = '', draftFolded = '', reopenAsk = '', cancelAsk = '', closeKind = 'abandon', cancelNote = '',
     editing: editingKey = '', editNote = '', editField = '', editCount = 0, foldedCards = [], openedCards = [],
   } = view
   const data = await paneData($, source, [stamp, titlesVersion, themeStamp, retry, liveVersion].join('|'))
@@ -7416,9 +7489,12 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     const due = current.due && !current.done ? dueLabel(current.due, today) : undefined
     const live = liveOf(current)
     const kept = doneSessionOf(current)
-    // Close, sa session archivée (#206) : « Rouvrir la session » au pied de la carte Fin.
-    const archivedRow = !kept ? taskSessionOf($, source, current, now) : undefined
-    const reopenRow = archivedRow?.isArchived ? archivedRow : undefined
+    // Close, sa session archivée (#206, #302) : l'icône d'archive dans la bande d'état, une confirmation
+    // avant de désarchiver ; une recherche en panne se dit sous la bande.
+    const sessionLook = !kept ? taskSessionOf($, source, current, now) : undefined
+    const reopenRow = sessionLook?.row?.isArchived ? sessionLook.row : undefined
+    const sessionFail = sessionLook?.fail
+    const reopenAsking = reopenRow !== undefined && reopenAsk === taskKey(current)
     const abandoned = isAbandoned(current)
     const asking = cancelAsk === taskKey(current)
     const pre = prereqFor(current)
@@ -7722,17 +7798,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
             </Box>
           ))}
           {canOpen && !fades && moreLink('fin', opened ? 'Replier' : 'Tout voir', toggleFin)}
-          {canOpen && fades && !lastCut && !reopenRow && foldedRow('fin', opened, palette.bg, toggleFin)}
-          {/* Close, sa session archivée (#206, maquette A) : le bouton au pied, la flèche du pli à droite. */}
-          {reopenRow && (
-            <Box key="fin-reopen" flexDirection="column" gap={SPACE.tight}>
-              {ruleAbove}
-              <Box flexDirection="row" alignItems="center" justifyContent="space-between">
-                {reopenButton(reopenRow)}
-                {canOpen && fades && !lastCut && foldArrow('fin', opened, palette.bg, toggleFin)}
-              </Box>
-            </Box>
-          )}
+          {canOpen && fades && !lastCut && foldedRow('fin', opened, palette.bg, toggleFin)}
         </Box>,
         {
           before: fin.emoji && <Text>{fin.emoji}</Text>,
@@ -7917,19 +7983,48 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
         <Button key={key} plain label={label} onPress={onPress} />,
       )
     }
-    // « Rouvrir la session » (#206, maquette A) : un bouton secondaire, l'icône et le mot, fond `btn` ; au terminal, le mot.
-    const reopenButton = (row: TaskSessionRow) =>
-      pressable(
-        'reopen-session',
-        () => void reopenSession($, source, current, row, now),
-        <Box flexDirection="row" alignItems="center" gap={SPACE.row} paddingX={SPACE.indent} backgroundColor={palette.btn} hover={{ backgroundColor: palette.btnHover }}>
-          {corners(RADIUS.control, palette.bg)}
+    // L'icône d'archive de la bande d'état (#302, maquette A, choix de BBR) : la boîte à flèche montante
+    // seule, au filet de la bande ; armée, au filet orange. Un clic ouvre ou referme la confirmation, il ne
+    // désarchive pas. Au terminal, un bouton à mot.
+    const reopenArm = (fg: string) => {
+      const press = () => void askReopen($, taskKey(current))
+      const tone = reopenAsking ? palette.block : fg
+      return pressable(
+        'reopen-arm',
+        press,
+        <Box flexDirection="row" alignItems="center" paddingX={SPACE.tight} borderStyle="round" borderColor={tone}>
           {strut(SIZE.strut.row)}
-          {Svg && <Svg source={unarchiveIcon(palette.text, SIZE.icon.sm)} alt="Rouvrir la session" width={SIZE.icon.sm} height={SIZE.icon.sm} />}
-          <Text>Rouvrir la session</Text>
+          {Svg && <Svg source={unarchiveIcon(reopenAsking ? palette.blockOn : fg, SIZE.icon.sm)} alt="Désarchiver la session" width={SIZE.icon.sm} height={SIZE.icon.sm} />}
         </Box>,
-        <Button key="reopen-session" plain label="Rouvrir la session" onPress={() => void reopenSession($, source, current, row, now)} />,
+        <Button key="reopen-arm" plain label="Désarchiver la session" onPress={press} />,
       )
+    }
+    // La confirmation (#302) : l'encart du rond (#184), filet orange arrondi sur le fond du panneau, la
+    // question en orange, le détail en gris ; « Désarchiver et ouvrir » désarchive puis ouvre, « Annuler »
+    // referme (un clic ailleurs aussi).
+    const reopenConfirm = (row: TaskSessionRow) => {
+      const confirm = () => void reopenSession($, source, current, row, now)
+      const cancel = () => void askReopen($, taskKey(current))
+      return (
+        <Box key="reopen-confirm" flexDirection="column" gap={SPACE.block} padding="sm" flexGrow={1} borderStyle="round" borderColor={palette.block}>
+          <Text weight="semibold" color={palette.blockOn} wrap="wrap">{`Attention\u00a0: désarchiver la session de #${current.id}\u00a0?`}</Text>
+          <Text size="caption" color={palette.text2} wrap="wrap">{`« ${row.title} » revient dans la liste de l'app et s'ouvre, avec tout son historique.`}</Text>
+          <Box flexDirection="row" alignItems="center" gap={SPACE.row}>
+            {pressable(
+              'reopen-session',
+              confirm,
+              <Box flexDirection="row" alignItems="center" paddingX={SPACE.indent} backgroundColor={palette.pri}>
+                {corners(RADIUS.control, palette.bg)}
+                {strut(SIZE.strut.row)}
+                <Text weight="semibold" color={palette.priText}>Désarchiver et ouvrir</Text>
+              </Box>,
+              <Button key="reopen-session" variant="primary" label="Désarchiver et ouvrir" onPress={confirm} />,
+            )}
+            <Button key="reopen-cancel" plain dimColor label="Annuler" onPress={cancel} />
+          </Box>
+        </Box>
+      )
+    }
     // Le bloc Brouillon (#236, maquette A1 « L'enveloppe », choix de BBR) : sous la bande d'état, le plus
     // récent des livrables texte. Un bandeau teinté (tuile, mot, fraîcheur) qui replie le bloc au clic ;
     // l'objet, puis une ligne par champ (À, Cc, Cci, PJ en jetons qui ouvrent le fichier : maquette B1 de
@@ -8172,7 +8267,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
               : band.mark === 'spinner'
                 ? spinnerIcon(fg, SIZE.icon.sm, undefined, false, now)
                 : undefined
-      return (
+      const row = (
         <Box key="state-band-row" paddingX={SPACE.indent}>
           <Box key="state-band" flexDirection="row" alignItems="center" gap={SPACE.row} paddingX={SPACE.indent} flexGrow={1} backgroundColor={bg}>
             {corners(RADIUS.control, palette.bg)}
@@ -8185,7 +8280,26 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
                 <Text color={palette.text} wrap="truncate-end">{band.why}</Text>
               </Box>
             )}
+            {reopenRow && <Box flexGrow={1} />}
+            {reopenRow && reopenArm(fg)}
           </Box>
+        </Box>
+      )
+      // Close, sa session archivée (#302) : la confirmation sous la bande ; une recherche en panne s'y dit.
+      if (!reopenAsking && !sessionFail) return row
+      return (
+        <Box key="state-band-wrap" flexDirection="column" gap={SPACE.block}>
+          {row}
+          {reopenAsking && reopenRow && (
+            <Box key="reopen-confirm-row" paddingX={SPACE.indent}>
+              {reopenConfirm(reopenRow)}
+            </Box>
+          )}
+          {sessionFail && !reopenRow && (
+            <Box key="session-fail-row" paddingX={SPACE.indent}>
+              <Text size="caption" color={palette.text2} wrap="wrap">{`Session non retrouvée : ${sessionFail}`}</Text>
+            </Box>
+          )}
         </Box>
       )
     }
@@ -8677,8 +8791,6 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
                 field(`${k.charAt(0).toUpperCase()}${k.slice(1)}`, plain(current.extra?.[k]?.join(', ')), `cle:${k}`),
               )}
               {field('Qui', plain(current.qui))}
-              {/* Sans carte Fin, « Rouvrir la session » sous Qui (#206). */}
-              {!fin && reopenRow && field('Session', reopenButton(reopenRow))}
               {field('Branche', mono(current.branche))}
               {field(
                 'Échéance',

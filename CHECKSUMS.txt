@@ -1,14 +1,14 @@
-# roadmap 0.200.0 : SHA-256 de chaque fichier installé du plugin, chemins relatifs à son dossier.
-# Vérifier une copie installée (~/.claude/plugins/cache/roadmap/roadmap/0.200.0) : plugins/roadmap/SECURITE.md, « Vérifier que ta copie est une vraie version ».
-3c90354f5f4fbd46d1f48e6dd2ac958c4ffeead9dab406aea9fe3c8e42a62735  .claude-plugin/plugin.json
-086d57bb087ff6beef4a842139f7deea2ad371bf5814fb864dbc8a43743ba425  README.md
-86cf92f3abf7eb815679413fdedb03c9d7d8d215e88cfbd0683d2b668037fddf  SECURITE.md
+# roadmap 0.201.0 : SHA-256 de chaque fichier installé du plugin, chemins relatifs à son dossier.
+# Vérifier une copie installée (~/.claude/plugins/cache/roadmap/roadmap/0.201.0) : plugins/roadmap/SECURITE.md, « Vérifier que ta copie est une vraie version ».
+3a86c9781ae829c915788dd0342e6204ada4da38936cd700f7e4d9c7bfb559ea  .claude-plugin/plugin.json
+bc2dee74ee4470882c9a99a247ab46e869413a70c25c99bf078e1c6a0fda66f0  README.md
+870b6fa2325d3154a924dc049aae6a093161b5f944ddc7500a38482dc5ec67f3  SECURITE.md
 bce019cb7147413a8e5f0687df59a41394fa92545568b5d37b1df8bd6d885e30  hooks/bar-hit.tsx
 d842d789476d67282d0f04b7e5fdc68a3d981ccec65dd79cfa2d11eed13fb828  hooks/hooks.json
 2b5b1b834d3df1e650a88876b5a313b2ab260332e7a444e96a96407dc4c47677  hooks/icons.ts
-b85073b5f0c7e52ef2f84b3b296c7ded2cdf59cc487810fe8e3f55cbdffb4726  hooks/parse.ts
+c2389a676511237ac5456432d04485585541b0f9a28651b87beffcfe6cb07089  hooks/parse.ts
 a29e07be4f95c637c8f3ab377dc9a97cd16de11e8e7de7062311dd2888a0833f  hooks/press-hit.tsx
-13172c7f05d0a639b9f1470666e77cb28ca62e9ee4ef5a45bed39861070592d2  hooks/register.tsx
+15f7a4b39e260c200756b50ae4af2920421cf3ed3349f39beae56b8949e2cd18  hooks/register.tsx
 b95cd4120df48c4a28aa45cda925a6368edd13719edc50d7ae2bf24f63dd7e1c  hooks/reglages.tsx
 a60c99f6765f3920810c7d2acacabb77363b5b2bf9a65154c40ddd3411db29df  hooks/tokens.ts
 2c41c480ffe671321b91523191e8e36453f4a211957d90b91b4f3148a257da86  scripts/one-at-a-time.sh
@@ -55,4 +55,4 @@ a3b4b7ea6e2a3494ff34e2f3695bfbd7caacb2bb5606d79a94e947b9110fc826  skills/onboard
 7aea4f6f1aea6a6943f089a42da0e1dba04d1b2ace89b24eb14eab2ae1971b72  skills/roadmap-panel/SKILL.md
 683f5daebfed3fc4bf57dc68b07b676aead631b5fe23e04d8a9ef4e3943c5b28  skills/tasks/SKILL.md
 20dff54a90c53c44cfe3e14110776c823b8ac1c96644acc4f86ab3732220e5ae  skills/tasks/scripts/tasks.py
-851000fa68263415317b28ebf3f0e6efaea84ff0f040849d6fece5db63b4679d  types/index.d.ts
+c81c4c716156abe1176c8a107c81ebf3403233bfd19a10ce83396f34c574a561  types/index.d.ts

@@ -700,6 +700,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.201.0 (2026-11-04)** : panneau : une tâche close rouvre sa session par l'icône d'archive de la bande Done, avec une confirmation, même sur une très longue liste de sessions ; le brief de l'arbre relit aussi cette liste (#302)
 - **0.200.0 (2026-11-04)** : tasks, maestro : un sujet, une tâche et une mère au titre court tenus par des questions de write (#288) ; la note d'un ajout et la raison d'un abandon dans le libellé (#285) ; à la fin d'une étude, une task proposée par étape recommandée (#293)
 - **0.199.1 (2026-11-04)** : tasks, onboarding : l'ancienne échelle de priorité (prio:1, 2, 3) est refusée à l'écriture et au contrôle, après la migration des roadmaps à prio:oui
 - **0.199.0 (2026-11-04)** : reglages-session : la conclusion de fin de session s'ouvre sur « Ce qu'on a fait » (le problème, ce qu'on a construit, ce que ça change), que la carte Fin de la fiche montre
