@@ -46,7 +46,14 @@ rule at the end of a turn that executed (below).
      name in `nom:` (40 characters at most, #263). Never by hand (#255): `tasks.py match` first, and
      show the person the match before writing, the nearest task and why it does not cover the
      action (its shared words, what it lacks); a covered subject gets its existing task enriched,
-     not a new line. Then `tasks.py write`, dry run, then `--apply`. A line written in `ROADMAP.md`
+     not a new line. Give `match` the action's `--zone` (the files, functions, commands or area it
+     will touch, #320) and read `a_verser`: an open task at the same place, for the same purpose,
+     whose result stays small, receives the action rather than a new line and a new session.
+     When `write` asks « Verser dans #N », put the question to the person; if #N is taken by a
+     session (`relay`), check with `list_sessions` that it is open and send it the action
+     (`SendMessage`), instead of opening a session; closed, take « Tâche à part ». Then
+     `tasks.py write`, dry run, then `--apply`. A `followup` question says a closed task already
+     did the work or that the action follows it: put it to the person before opening anything. A line written in `ROADMAP.md`
      by `Write`, `Edit` or a shell command outside `tasks.py` brings back the hook's reminder in the
      tool's result: reread that line and remove it if it doubles a task.
   3. **Propose the sub-session**: an `own_initiative` card, title `#<id> · <nom>` copied from the
@@ -76,7 +83,10 @@ rule at the end of a turn that executed (below).
   form: the buttons are the question. A click sends « Maestro journée »,
   « Maestro quoi lancer », « Maestro relances », « Maestro sessions » or « Maestro scan », and the
   plugin attaches what needs reading; one of these messages arriving without that block (panel
-  closed) is handled by reading the roadmap yourself. « Maestro go » posts the cards of the first
+  closed) is handled by reading the roadmap yourself. Before « Quoi lancer » proposes launches, run
+  `tasks.py lots` (#320, skill `tasks`): two open tasks at the same place, for the same purpose,
+  with a small result, are one session, not two; put its questions first, in one form, and launch
+  what is left. « Maestro go » posts the cards of the first
   three; « Maestro, <une demande> » scans everything and frames the request first (below, #250). News of children that are stuck, however, is
   said right away.
   « Maestro <axe> » (« Maestro Rob », « Maestro Merch Promo », #239; case, accents, spaces and

@@ -45,8 +45,8 @@ POIDS_INCONNU = 1.0
 
 # Le contrat d'operations.json, en anglais comme la skill (#158) ; le code garde le vocabulaire de l'audit.
 OPS = {
-    "add": {"op", "key", "label", "axis", "section", "parent", "note", "fields", "distinct"},
-    "update": {"op", "id", "fields"},
+    "add": {"op", "key", "label", "axis", "section", "parent", "note", "fields", "distinct", "zone"},
+    "update": {"op", "id", "fields", "append"},
     "reschedule": {"op", "id", "due"},
     "done": {"op", "id", "date", "proof", "bilan"},
     "drop": {"op", "id", "reason", "bilan"},
@@ -74,7 +74,23 @@ INTERDITS_SUITE = INTERDITS_AJOUT | {"après", "attend", "src", "fiche"}
 # Les questions qui attendent la personne (#232), au format de l'audit (#159) : leur genre, et sa raison dite.
 RAISONS = {"conflict": "conflit", "undated": "date manquante", "late": "en retard", "partial_proof": "preuve partielle",
            "rhythm": "rythme", "reopen": "réouverture", "prio_on_child": "priorité sur un enfant", "structure": "structure",
-           "subject": "même sujet", "name": "titre court"}
+           "subject": "même sujet", "name": "titre court", "merge": "même endroit", "followup": "déjà fait"}
+# Verser une action dans une tâche ouverte (#320). Un lieu (fichier, fonction, commande, zone en mots) porté
+# par plus de 3 tâches ouvertes et plus du quart d'entre elles est commun : il ne rapproche rien
+# (`register.tsx` quand tout le nomme). Une tâche reste petite quand les deux libellés tiennent en
+# 1 200 caractères ; sans lieu partagé en plus, le but se lit dans les mots du contexte, dès 0,5 comme #288.
+LIEU_COMMUN_MIN = 3
+LIEU_COMMUN_PART = 0.25
+PETIT_MAX = 1200
+SEUIL_CONTEXTE = 0.5
+CANDIDATES_MAX = 2
+# Ce qui se lit d'une fiche ou d'une spec, par fichier.
+CONTEXTE_MAX = 20000
+EXTENSIONS = r"py|tsx?|jsx?|mjs|cjs|md|json|sh|swift|csv|css|ya?ml|toml|html"
+FICHIER_RE = re.compile(r"(?<![\w/.-])((?:[\w.-]+/)*[\w-]+(?:\.[\w-]+)*\.(?:%s))(?![\w-])" % EXTENSIONS)
+SYMBOLE_RE = re.compile(r"(?<![\w.])([a-z][a-z0-9]*[A-Z][A-Za-z0-9]*|[a-z][a-z0-9]*_[a-z0-9_]+)(?!\w)")
+CODE_RE = re.compile(r"`([^`\n]+)`")
+CITE_RE = re.compile(r"#(\d+)")
 # Une tâche à part choisie par la personne (#288) : la raison que porte l'option « Tâche à part ».
 A_PART = "tâche à part, choisie par la personne"
 # Le titre court proposé à une mère sans `nom:` (#288) : ses premiers mots, comme `fallbackTitle` du panneau.
@@ -266,6 +282,7 @@ def contexte(dossier, jour=None, perso="~/.claude/roadmap-perso.json"):
     cfg = audit._cfg(c["dossier"])
     cles = cfg.get("cles") if isinstance(cfg.get("cles"), dict) else {}
     closes = [t for t in im.lire_checklist(texte_o)[0] if t["fait"]] + im.lire_checklist(texte_f)[0]
+    livres = _livres(c["dossier"], os.path.dirname(c["roadmap"]))
     me_projet = cfg.get("me")
     me_projet = [me_projet] if isinstance(me_projet, str) else [m for m in me_projet or [] if isinstance(m, str)]
     c.update({
@@ -277,10 +294,24 @@ def contexte(dossier, jour=None, perso="~/.claude/roadmap-perso.json"):
                      if l.startswith("## ") and l[3:].strip() not in SECTIONS_FERMEES],
         "parents": parents,
         "cles_valeurs": {k: v for k, v in cles.items() if isinstance(v, list)},
-        "closes": [{"id": im.champ(t, "id"), "libelle": t["libelle"], "fait": im.champ(t, "fait")} for t in closes],
+        # #320 : ce qui a été fait, pour reconnaître une suite : la fiche, la spec et le bilan d'une tâche close.
+        "closes": [{"id": im.champ(t, "id"), "libelle": t["libelle"], "fait": im.champ(t, "fait"),
+                    "champs": {k: im.champ(t, k) for k in ("fiche", "spec") if im.champ(t, k)},
+                    "livre": livres.get(im.champ(t, "id") or "")} for t in closes],
         "declarations": ob.declarations(c["dossier"], cfg),
     })
     return c
+
+
+def _livres(dossier, rdir):
+    """Ce que chaque tâche close a livré, d'après son bilan (#262) : la colonne `fait`, la dernière ligne
+    l'emporte. Un journal absent ou illisible ne donne rien."""
+    try:
+        chemin = journal_de_bilan(dossier, rdir)["chemin"]
+        with open(chemin, encoding="utf-8", newline="") as f:
+            return {r.get("id", ""): (r.get("fait") or "").strip() for r in csv.DictReader(f) if (r.get("fait") or "").strip()}
+    except (OSError, Erreur, csv.Error, UnicodeDecodeError):
+        return {}
 
 
 def poids_des_mots(libelles):
@@ -294,10 +325,11 @@ def poids_des_mots(libelles):
     return {w: math.log(1 + n / c) ** 2 for w, c in df.items()}
 
 
-def rapprocher(ctx, texte, n=5):
+def rapprocher(ctx, texte, n=5, zone=None, apres=None):
     """Les tâches ouvertes et closes du même sujet qu'une action, par la part pondérée de ses mots
     qu'elles portent (celle d'un enfant compte le libellé de son parent), les mots partagés, et le
-    cas probable. Un mot pèse sa rareté dans la roadmap (#255). Claude tranche."""
+    cas probable. Un mot pèse sa rareté dans la roadmap (#255). Plus, par le contexte des tâches
+    ouvertes et la zone de l'action, celles où la verser (`a_verser`, #320). Claude tranche."""
     cible = audit.mots(texte)
     par_id = {t["id"]: t for t in ctx["taches"]}
     closes_ctx = ctx.get("closes") or []
@@ -334,7 +366,232 @@ def rapprocher(ctx, texte, n=5):
         cas = "deja_faite"
     else:
         cas = "nouvelle"
-    return {"texte": texte, "ouvertes": ouvertes[:n], "closes": closes[:n], "cas_probable": cas}
+    return {"texte": texte, "ouvertes": ouvertes[:n], "closes": closes[:n], "cas_probable": cas,
+            "a_verser": a_verser(ctx, texte, zone, apres),
+            "faites_au_meme_endroit": faites_au_meme_endroit(ctx, texte, zone, apres)}
+
+
+# ---------------------------------------------------------------- le contexte d'une tâche (#320)
+
+
+def _norme(texte):
+    """Un texte comparable : sans accents, en minuscules, guillemets et espaces réduits."""
+    t = audit._sans_accents(texte or "").lower()
+    return re.sub(r"\s+", " ", re.sub(r"[«»“”\"'’]", " ", t)).strip()
+
+
+def _fichier_seul(texte):
+    m = FICHIER_RE.fullmatch(texte.strip())
+    return os.path.basename(m.group(1)).lower() if m else None
+
+
+def _commande(contenu):
+    """Les lieux d'un bout de code : une commande (`git add -A`, `release.py release`) donne « git add »
+    et sa famille « git » ; un identifiant seul (`pruneBranches`) se donne lui-même."""
+    mots, sortie = contenu.split(), {}
+    if len(mots) == 1 and re.fullmatch(r"[A-Za-z_][\w-]{2,}", mots[0]):
+        sortie[mots[0].lower()] = "zone"
+    elif len(mots) >= 2 and re.fullmatch(r"[a-z][\w.-]*", mots[0]):
+        fichier = _fichier_seul(mots[0])
+        if fichier or any(m.startswith("-") for m in mots[1:]):
+            if re.fullmatch(r"[a-z][\w-]*", mots[1]):
+                sortie["%s %s" % (mots[0].lower(), mots[1].lower())] = "zone"
+            sortie[fichier or mots[0].lower()] = "fichier" if fichier else "zone"
+    return sortie
+
+
+def lieux_du_texte(texte):
+    """Les lieux qu'un texte nomme (#320), {lieu: genre} : un fichier (`fichier`, par son nom de base),
+    une fonction, un identifiant ou une commande (`zone`)."""
+    texte = texte or ""
+    sortie = {}
+    for m in SYMBOLE_RE.finditer(texte):
+        sortie[m.group(1).lower()] = "zone"
+    for m in CODE_RE.finditer(texte):
+        sortie.update(_commande(m.group(1)))
+    for m in FICHIER_RE.finditer(texte):
+        sortie[os.path.basename(m.group(1)).lower()] = "fichier"
+    return sortie
+
+
+def lieux_de_zone(zone):
+    """Les lieux d'une zone donnée par l'écrivain (#320) : chaque entrée entière (un fichier par son nom
+    de base, une expression en mots), plus ce qu'elle nomme en code."""
+    sortie = {}
+    for entree in zone or []:
+        entree = audit._propre(entree)
+        if not entree:
+            continue
+        fichier = _fichier_seul(entree)
+        sortie[fichier or _norme(entree)] = "fichier" if fichier else "zone"
+        sortie.update(lieux_du_texte(entree))
+        if "`" not in entree:
+            sortie.update(_commande(entree))
+    return sortie
+
+
+def _lire_borne(chemin):
+    try:
+        with open(chemin, encoding="utf-8") as f:
+            return f.read(CONTEXTE_MAX)
+    except (OSError, UnicodeDecodeError):
+        return ""
+
+
+def contexte_tache(dossier, t):
+    """Ce qu'on fait d'une tâche ouverte (#320) : son libellé et son nom, sa fiche et sa spec lues sur
+    disque (`spec.md` et `plan.md` d'un dossier), et les lieux qu'ils nomment. Une fiche ou une spec
+    introuvable se passe."""
+    champs = t.get("champs") or {}
+    morceaux = [t.get("libelle") or "", champs.get("nom") or "", t.get("livre") or ""]
+    lus = {"fiche": None, "spec": None}
+    for cle in ("fiche", "spec"):
+        v = audit._propre(champs.get(cle))
+        if not v or v == "…":
+            continue
+        chemin = os.path.join(dossier, v)
+        fichiers = [chemin] if os.path.isfile(chemin) else [os.path.join(chemin, f) for f in ("spec.md", "plan.md")]
+        textes = [_lire_borne(f) for f in fichiers if os.path.isfile(f)]
+        if any(textes):
+            lus[cle] = v
+            morceaux += textes
+    texte = "\n".join(morceaux)
+    return dict(lus, texte=texte, norme=" %s " % _norme(texte), lieux=lieux_du_texte(texte))
+
+
+def _porte(c, lieu):
+    """Une tâche porte un lieu quand elle le nomme en code, ou que son contexte le dit en mots entiers."""
+    return lieu in c["lieux"] or re.search(r"(?<!\w)%s(?!\w)" % re.escape(lieu), c["norme"]) is not None
+
+
+def _lieux_et_chaine(texte, zone, apres):
+    lieux = dict(lieux_de_zone(zone))
+    lieux.update(lieux_du_texte(texte))
+    cites = set(CITE_RE.findall(texte or ""))
+    if apres not in (None, "", "-"):
+        try:
+            cites |= set(_refs(apres, "après"))
+        except Erreur:
+            pass
+    return lieux, cites
+
+
+def _au_meme_endroit(dossier, taches, texte, lieux, cites, feuilles):
+    """Les tâches (ouvertes, ou closes) au même endroit qu'une action et au même but, avec leurs raisons ;
+    `feuilles` : seulement celles où le résultat reste petit (une feuille, 1 200 caractères à deux)."""
+    if not lieux or not taches:
+        return []
+    contextes = {t["id"]: contexte_tache(dossier, t) for t in taches}
+    porteurs = {l: sum(1 for c in contextes.values() if _porte(c, l)) for l in lieux}
+    borne = max(LIEU_COMMUN_MIN, LIEU_COMMUN_PART * len(taches))
+    rares = {l: g for l, g in lieux.items() if porteurs[l] <= borne}
+    cible = audit.mots(texte)
+    poids = poids_des_mots([c["texte"] for c in contextes.values()])
+    total = sum(poids.get(w, POIDS_INCONNU) for w in cible)
+    sortie = []
+    for t in taches:
+        c = contextes[t["id"]]
+        communs = sorted(l for l in rares if _porte(c, l))
+        zones = [l for l in communs if rares[l] == "zone"]
+        if not zones:
+            continue
+        fichiers = [l for l in communs if rares[l] == "fichier"]
+        mots_communs = cible & audit.mots(c["texte"])
+        score = round(sum(poids[w] for w in mots_communs) / total, 2) if total else 0.0
+        chaine = t["id"] in cites
+        if not (len(communs) >= 2 or chaine or (score >= SEUIL_CONTEXTE and len(mots_communs) >= 2)):
+            continue
+        petit = not t.get("enfants") and len(t["libelle"]) + len(texte or "") + 3 <= PETIT_MAX
+        if feuilles and not petit:
+            continue
+        champs = t.get("champs") or {}
+        prise = champs.get("branche") if champs.get("qui") and champs.get("branche") else None
+        sortie.append({"id": t["id"], "libelle": t["libelle"], "lieux_communs": zones, "fichiers_communs": fichiers,
+                       "chaine": chaine, "score_contexte": score, "petit": petit, "branche": prise,
+                       "fiche": c["fiche"], "spec": c["spec"], "parent": t.get("parent"),
+                       "apres": champs.get("après"), "src": champs.get("src"), "livre": t.get("livre")})
+    sortie.sort(key=lambda x: (-len(x["lieux_communs"]) - len(x["fichiers_communs"]), not x["chaine"],
+                               x["branche"] is not None, -x["score_contexte"], int(x["id"]) if x["id"].isdigit() else 0))
+    return sortie[:CANDIDATES_MAX]
+
+
+def a_verser(ctx, texte, zone=None, apres=None):
+    """#320 : les tâches ouvertes où verser une action, quand trois choses tiennent : même endroit (un lieu
+    de genre zone partagé et non commun ; un fichier seul jamais), même but ou suite directe (deux lieux
+    partagés, un lien de chaîne, ou 0,5 des mots de l'action dans le contexte avec deux mots communs),
+    résultat petit (une feuille, les deux libellés en 1 200 caractères). Deux au plus, rangées par lieux,
+    chaîne, tâche libre d'abord, mots. Chacune avec ses raisons : la personne juge."""
+    lieux, cites = _lieux_et_chaine(texte, zone, apres)
+    return _au_meme_endroit(ctx["dossier"], ctx["taches"], texte, lieux, cites, feuilles=True)
+
+
+def faites_au_meme_endroit(ctx, texte, zone=None, apres=None):
+    """#320 : ce qui a été fait. Les tâches closes au même endroit et au même but qu'une action (leur
+    libellé, leur bilan, leur fiche ou leur spec) : l'action en est la suite, ou elle est déjà faite."""
+    lieux, cites = _lieux_et_chaine(texte, zone, apres)
+    closes = [dict(t, champs=t.get("champs") or {}) for t in ctx.get("closes") or [] if t.get("id")]
+    return _au_meme_endroit(ctx["dossier"], closes, texte, lieux, cites, feuilles=False)
+
+
+def lots(ctx):
+    """#320 : un regard extérieur sur toutes les tâches ouvertes. Chaque feuille rejouée comme une action,
+    avec les lieux que son contexte nomme pour zone : deux tâches au même endroit, au même but, au résultat
+    petit, deviennent une question (kind `merge`, sur la tâche versée) : « Verser #V dans #R » (`append` à
+    #R, `drop` de #V), par sa session quand #R est prise (`relay`), ou « Les garder à part ». La tâche versée
+    est la plus récente des deux libres, ou la libre quand l'autre est prise ; deux tâches prises, rien."""
+    par_id = {t["id"]: t for t in ctx["taches"]}
+    paires = {}
+    for t in ctx["taches"]:
+        if t["enfants"]:
+            continue
+        c = contexte_tache(ctx["dossier"], t)
+        autres = dict(ctx, taches=[x for x in ctx["taches"] if x["id"] != t["id"]])
+        for cand in a_verser(autres, t["libelle"], list(c["lieux"]), t["champs"].get("après")):
+            paires.setdefault(frozenset((t["id"], cand["id"])), cand)
+
+    def prise(t):
+        return t["champs"].get("branche") if t["champs"].get("qui") and t["champs"].get("branche") else None
+
+    def rang(i):
+        return int(i) if i.isdigit() else 0
+
+    par_versee = {}
+    for paire, raisons in paires.items():
+        a, b = sorted(paire, key=rang)
+        if prise(par_id[a]) and prise(par_id[b]):
+            continue
+        r, v = (b, a) if prise(par_id[b]) else (a, b)
+        par_versee.setdefault(v, []).append((r, raisons))
+    questions = []
+    for v in sorted(par_versee, key=rang):
+        tv = par_id[v]
+        recus = sorted(par_versee[v], key=lambda x: (prise(par_id[x[0]]) is not None, rang(x[0])))[:CANDIDATES_MAX]
+        options = []
+        for r, _ in recus:
+            tr = par_id[r]
+            abandon = {"op": "drop", "id": v, "reason": "versée dans #%s" % r,
+                       "bilan": {"fait": "versée dans #%s" % r, "souci": "", "ressenti": "fluide", "cause": "aucune",
+                                 "corrections": "0",
+                                 "note": "Même endroit et même but que #%s : l'action y est versée (#320)." % r}}
+            if prise(tr):
+                options.append({"label": "Verser #%s dans #%s, tenue par la session de %s" % (v, r, prise(tr)),
+                                "operations": [abandon], "relay": {"id": r, "branche": prise(tr), "action": tv["libelle"]}})
+                continue
+            op = {"op": "update", "id": r, "append": tv["libelle"]}
+            src = tv["champs"].get("src")
+            if src:
+                op["fields"] = {"src": "%s ; %s" % (tr["champs"]["src"], src) if tr["champs"].get("src") else src}
+            options.append({"label": "Verser #%s dans #%s" % (v, r), "operations": [op, abandon]})
+        options[0] = dict(options[0], label=options[0]["label"] + " (recommandé)")
+        options.append({"label": "Les garder à part", "operations": []})
+        r0, raisons = recus[0]
+        questions.append({
+            "key": "merge-%s" % v, "task": v, "kind": "merge",
+            "question": "#%s « %s » et #%s « %s » touchent le même endroit (%s) ; verser #%s dans #%s ?"
+                        % (v, _court(tv["libelle"]), r0, _court(par_id[r0]["libelle"]),
+                           ", ".join(raisons["lieux_communs"] + raisons["fichiers_communs"]), v, r0),
+            "options": options})
+    return questions
 
 
 # ---------------------------------------------------------------- un sujet, une tâche (#288)
@@ -419,6 +676,70 @@ def un_sujet(ctx, operations):
                         {"label": "Tâche à part", "operations": a_part},
                         {"label": "Ne rien ajouter : #%s couvre déjà l'action" % meilleure["id"], "operations": []}]})
     return retenues, questions
+
+
+def un_lot(ctx, operations, retenues):
+    """#320 : un ajout sans parent, sans `distinct`, que #288 n'a pas retenu et que rien dans le lot ne vise,
+    devient une question (kind `merge`) quand `a_verser` lui trouve une tâche ouverte : « Verser dans #N »
+    (`update` avec `append`, et sa `src:` jointe), ou, pour une tâche prise, l'action renvoyée à sa session
+    (`relay`, sans opération) ; puis « Tâche à part ». Une tâche que le lot close ne reçoit rien."""
+    fermees = {str(op.get("id")) for op in operations if op.get("op") in ("drop", "done", "handoff")}
+    ctx_ouvert = dict(ctx, taches=[t for t in ctx["taches"] if t["id"] not in fermees])
+    visees = set().union(*(_refs_op(op) for op in operations)) if operations else set()
+    cles, questions = set(), []
+    for a in operations:
+        k = a.get("key")
+        if (a.get("op") != "add" or not _sans_ref(a.get("parent")) or audit._propre(a.get("distinct"))
+                or k in retenues or k in visees):
+            continue
+        libelle = audit._propre(a.get("label"))
+        texte = _aparte(libelle, audit._propre(a.get("note")))
+        zone = a.get("zone")
+        if zone is not None and (not isinstance(zone, list) or not all(isinstance(z, str) for z in zone)):
+            raise Erreur("ajout « %s » : zone est une liste de lieux (fichiers, fonctions, zones en mots)" % libelle[:40])
+        apres = (a.get("fields") or {}).get("après")
+        candidates = a_verser(ctx_ouvert, texte, zone, apres)
+        if not candidates:
+            faites = faites_au_meme_endroit(ctx, texte, zone, apres)
+            if faites:
+                f = faites[0]
+                questions.append({
+                    "key": "followup-%s" % k, "about": libelle, "kind": "followup",
+                    "question": "« %s » touche le même endroit que #%s « %s », close (%s) ; en est-ce la suite, ou est-ce déjà fait ?"
+                                % (_court(libelle), f["id"], _court(f["libelle"]),
+                                   ", ".join(f["lieux_communs"] + f["fichiers_communs"])),
+                    "options": [{"label": "Suite de #%s (recommandé)" % f["id"],
+                                 "operations": [dict(a, note="; ".join(x for x in (audit._propre(a.get("note")),
+                                                                                 "suite de #%s" % f["id"]) if x),
+                                                     distinct=A_PART)]},
+                                {"label": "Déjà fait par #%s : ne rien ajouter" % f["id"], "operations": []},
+                                {"label": "Tâche à part", "operations": [dict(a, distinct=A_PART)]}]})
+                cles.add(k)
+            continue
+        options = []
+        for c in candidates:
+            if c["branche"]:
+                options.append({"label": "Verser dans #%s, tenue par la session de %s" % (c["id"], c["branche"]),
+                                "operations": [], "relay": {"id": c["id"], "branche": c["branche"], "action": texte}})
+                continue
+            op = {"op": "update", "id": c["id"], "append": texte}
+            src = audit._propre((a.get("fields") or {}).get("src"))
+            if src:
+                op["fields"] = {"src": "%s ; %s" % (c["src"], src) if c["src"] else src}
+            options.append({"label": "Verser dans #%s" % c["id"], "operations": [op]})
+        options[0] = dict(options[0], label=options[0]["label"] + " (recommandé)")
+        options.append({"label": "Tâche à part", "operations": [dict(a, distinct=A_PART)]})
+        meilleure = candidates[0]
+        pourquoi = ", ".join(meilleure["lieux_communs"] + meilleure["fichiers_communs"])
+        tenue = (" ; #%s est tenue par la session de %s : si elle est ouverte, l'action lui est renvoyée"
+                 % (meilleure["id"], meilleure["branche"]) if meilleure["branche"] else "")
+        questions.append({
+            "key": "merge-%s" % k, "about": libelle, "kind": "merge",
+            "question": "« %s » touche le même endroit que #%s « %s » (%s)%s ; la verser dans #%s, ou en tâche à part ?"
+                        % (_court(libelle), meilleure["id"], _court(meilleure["libelle"]), pourquoi, tenue, meilleure["id"]),
+            "options": options})
+        cles.add(k)
+    return cles, questions
 
 
 # ---------------------------------------------------------------- écrire
@@ -613,6 +934,13 @@ class _Tenue(audit._Preparation):
         t = self.tache(op.get("id"), "complément")
         quoi = "complément de #%s" % t.id
         self.libre(t, quoi)
+        if "append" in op:
+            # #320 : une action versée dans la tâche, après « ; ».
+            ajout = audit._propre(op.get("append"))
+            if not ajout:
+                raise Erreur("%s : append vide" % quoi)
+            t.libelle = "%s ; %s" % (t.libelle.rstrip(" ;"), ajout)
+            t.touche = True
         brut = dict(op.get("fields") or {})
         apres = brut.pop("après", None)
         parent = brut.pop("parent", None)
@@ -641,7 +969,8 @@ class _Tenue(audit._Preparation):
             self.poser_apres(t, apres, quoi)
         self.tenue["completees"].append(t.id)
         # #275 : les noms des clés, jamais leurs valeurs brutes (un src: de trois lignes dans le compte rendu).
-        dit = ["%s retiré" % k if v is None else k for k, v in (op.get("fields") or {}).items()]
+        dit = (["libellé"] if "append" in op else []) + [
+            "%s retiré" % k if v is None else k for k, v in (op.get("fields") or {}).items()]
         self.changer(t, "complétée : %s" % ", ".join(dit))
 
     def redater(self, op):
@@ -968,6 +1297,9 @@ def preparer(ctx, props, maintenant=None):
     for op in operations:
         _verifier_operation(op)
     retenues, du_lot = un_sujet(ctx, operations)
+    a_verser_cles, a_verser_questions = un_lot(ctx, operations, retenues)
+    retenues |= a_verser_cles
+    du_lot += a_verser_questions
     for op in operations:
         if op.get("key") in retenues:
             continue
@@ -1125,6 +1457,10 @@ def main(argv=None):
     r = sous.add_parser("match", help="the tasks on the same subject as an action, as JSON")
     r.add_argument("dossier")
     r.add_argument("--text", dest="texte", action="append", required=True)
+    r.add_argument("--zone", action="append", help="a place the action touches (file, function, command, area); "
+                                                   "repeat it, it applies to every --text (#320)")
+    lo = sous.add_parser("lots", help="the open tasks that should be poured into one another, as questions (#320)")
+    lo.add_argument("dossier")
     m = sous.add_parser("prio-oui", help="the write operations that move prio:1, 2, 3 to prio:oui (#300), as JSON")
     m.add_argument("dossier")
     e = sous.add_parser("write", help="dry run of the operations, or write them with --apply")
@@ -1132,18 +1468,20 @@ def main(argv=None):
     e.add_argument("--operations", required=True)
     e.add_argument("--apply", dest="appliquer", action="store_true")
     e.add_argument("--json", dest="en_json", action="store_true", help="the bilan and its report as JSON")
-    for s in (c, r, m, e):
+    for s in (c, r, lo, m, e):
         s.add_argument("--day", dest="jour", help="YYYY-MM-DD (today by default)")
         s.add_argument("--perso", default="~/.claude/roadmap-perso.json", help=argparse.SUPPRESS)
     args = p.parse_args(argv)
     try:
         if args.commande == "context":
             print(json.dumps(contexte(args.dossier, args.jour, args.perso), ensure_ascii=False, indent=2))
+        elif args.commande == "lots":
+            print(json.dumps({"questions": lots(contexte(args.dossier, args.jour, args.perso))}, ensure_ascii=False, indent=2))
         elif args.commande == "prio-oui":
             print(json.dumps(migration_prio(contexte(args.dossier, args.jour, args.perso)), ensure_ascii=False, indent=2))
         elif args.commande == "match":
             ctx = contexte(args.dossier, args.jour, args.perso)
-            print(json.dumps([rapprocher(ctx, t) for t in args.texte], ensure_ascii=False, indent=2))
+            print(json.dumps([rapprocher(ctx, t, zone=args.zone) for t in args.texte], ensure_ascii=False, indent=2))
         else:
             maintenant = datetime.datetime.now()
             if args.jour:

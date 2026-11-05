@@ -107,6 +107,53 @@ child; an `add` with children of its own leaves its place to them, two levels at
 part » (the same operations, with `distinct`), « Ne rien ajouter ». A task the batch closes covers
 nothing. The rest of the batch is written.
 
+**Pour into an open task what touches the same place (#320).** Words miss it when two tasks act at
+the same place for the same purpose: on 2026-11-04, #313 (delete a closed task's branch) shared no
+telling word with #287 (`release.py` commits only its files, no more `git add -A` in the main
+folder), though both are the git clean-up of the main folder and Maestro gave them one session.
+So, before writing an `add`, say where it acts: `zone`, a list of places (files, functions,
+commands, or an area in words: `"git branch -d"`, `"pruneBranches"`, `"dossier principal"`), and
+`--zone` on `match` (repeated; it applies to every `--text`). `match` then reads each open task's
+context: its label and `nom:`, its `fiche:` and `spec:` (`spec.md` and `plan.md` of the folder),
+the places they name, its chain and its session, and gives `a_verser`: at most two tasks, each with
+its reasons (`lieux_communs`, `fichiers_communs`, `chaine`, `score_contexte`, `branche`, `fiche`,
+`spec`). A task is listed only when the three hold:
+
+- **same place**: a shared place that is a function, a command or an area, carried by 3 open tasks
+  at most (or a quarter of them): a shared file alone never counts, since almost everything touches
+  `register.tsx`;
+- **same purpose or direct follow-up**: two shared places, or a chain link (the action cites `#N`
+  or follows it by `après:`), or 0.5 of the action's weighted words found in the task's context with
+  two shared words;
+- **a small result**: the task has no open child, and both labels hold in 1,200 characters.
+
+Read their context before writing (the purpose is yours to judge, the script only shows where).
+`write` holds it as a question, never a refusal: an `add` without `parent`, without `distinct`,
+that the subject rule did not hold and that nothing else in the batch points to, becomes a `merge`
+question: « Verser dans #N (recommandé) » (`{"op": "update", "id": N, "append": "<the action>"}`,
+its `src` joined to the task's), or, for a task taken by a session,
+« Verser dans #N, tenue par la session de <branch> »
+with no operation and a `relay` (`id`, `branche`, `action`): Maestro checks
+that the session is open and sends it the action instead of opening a session; then the second
+task if any, then « Tâche à part » (the same `add`, with `distinct`). Without `zone`, and with no
+code named in its label, an `add` is matched by words only, as before.
+
+**What was done counts too.** `match` also gives `faites_au_meme_endroit`: the closed tasks at the
+same place and for the same purpose (same rules, no size limit), read in their label, their bilan
+(`fait` of `ROADMAP-bilans.csv`, in `livre`) and their fiche or spec. When no open task receives
+the action, `write` asks a `followup` question: « Suite de #N (recommandé) » (the same `add`, with
+the note « suite de #N » and `distinct`), « Déjà fait par #N : ne rien ajouter », « Tâche à part ».
+
+**An outside look at all the open tasks.** `python3 "<skill folder>/scripts/tasks.py" lots <project
+folder>` replays each open leaf as an action, with the places its context names for zone, and
+returns `{"questions": [...]}` (the audit's format, kind `merge`, on the task to pour): two tasks at
+the same place, for the same purpose, with a small result. The one poured in is the newer of two
+free tasks, or the free one when the other is taken; two taken tasks give nothing. Options:
+« Verser #V dans #R » (`update` with `append` on R, `drop` of V with its bilan), or for a taken R
+the same with `relay` and only the `drop`, then « Les garder à part ». Ask them with the batch's
+other questions; the chosen option's operations go to `write`. It does not group by subject: the
+audit does that (#284).
+
 ## 3. Mark done on proof
 
 A task is done when clear proof says so: an email sent, a deliverable filed, a commit, a note. Look
@@ -174,7 +221,8 @@ Write `<scratchpad>/operations.json`:
   refused), `parent` (an `id`
   or a `key`), `section` (default « Prochain », else the first open section), `distinct` (#288: why this action
   is a task of its own though an open task looks like the same subject; never written in the
-  line), `note` (written in the label,
+  line), `zone` (#320: the places the action touches, files, functions, commands or an area in
+  words, used to match it with the open tasks; never written), `note` (written in the label,
   between parentheses: « Réserver le studio son (demandé par Linda) », never after the field block,
   which the cowork doctor refuses, #285), `fields`.
   The id is the next free one. A child is written under its parent, after its other children, and
@@ -182,7 +230,9 @@ Write `<scratchpad>/operations.json`:
   project requires `qui:` (a code project, #255), a new line gets the person, the first `me` name
   of `.claude/roadmap.json`; `fields.qui` only takes one of the `me` names: a new line is never
   taken, a session takes it by hand (`qui:<branch>` and `branche:<branch>`).
-- **update**: `fields` (never `id`, `qui`, `branche`, `verrou`, `fait`); `parent` and `après` are
+- **update**: `fields` (never `id`, `qui`, `branche`, `verrou`, `fait`); `append` (#320: text
+  added to the label after « ; », the action poured into the task; refused on a taken task like any
+  update); `parent` and `après` are
   allowed, and checked; a task given a `parent` takes that parent's axis. `null` removes an optional key (a `prio:`, an `attend:` lifted); a required key
   is never removed.
   `pj` (attachments, #204) is a field like the others: project file paths (screenshots, PDFs,

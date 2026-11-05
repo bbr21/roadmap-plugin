@@ -701,6 +701,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.204.0 (2026-11-04)** : tasks, maestro : à l'écriture, une action qui touche le même endroit qu'une tâche ouverte se propose d'y être versée, une suite d'une tâche close se reconnaît, et tasks.py lots repasse sur toutes les ouvertes (#320)
 - **0.203.0 (2026-11-04)** : panneau : la fiche d'une tâche refaite (carton par état, jauges horizontales des étapes et de la chaîne, carte Détails repliée, Tout lire pour la mission) (#291)
 - **0.202.0 (2026-11-04)** : panneau, tools : les branches fusionnées que rien ne tient sont supprimées, sur le Mac et sur GitHub, après l'archivage d'une session et au démarrage (option Branches nettoyées) ; la réouverture recrée la branche ; release.py ne committe plus que ses fichiers (#313, #287)
 - **0.201.0 (2026-11-04)** : panneau : une tâche close rouvre sa session par l'icône d'archive de la bande Done, avec une confirmation, même sur une très longue liste de sessions ; le brief de l'arbre relit aussi cette liste (#302)
