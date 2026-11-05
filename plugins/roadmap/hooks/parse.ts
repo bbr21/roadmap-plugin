@@ -8142,6 +8142,73 @@ export type WelcomeFacts = {
   extra?: { kind: 'relances' | 'sessions'; n: number }
   /** Les livrées d'hier et d'aujourd'hui (#270) ; absent quand rien n'a été livré. */
   recent?: Recent
+  /** La frise des 61 derniers jours (#325) ; absente quand rien n'a été fait ni ajouté. */
+  activity?: Activity
+}
+
+/** Un jour de la frise (#325) : ses faites (`fait:`) et ses ajoutées (`addedOn`). */
+export type ActivityDay = { date: string; done: number; added: number }
+/** Le palier d'un jour : 0 rien, 1 peu (sous la médiane des jours actifs), 2 beaucoup (#325). */
+export type ActivityTier = 0 | 1 | 2
+export type Activity = {
+  days: ActivityDay[]
+  doneTier: ActivityTier[]
+  addedTier: ActivityTier[]
+  /** Les jours où au moins une tâche a été faite. */
+  activeDays: number
+  /** Le jour le plus fourni en faites, le plus récent à égalité ; absent sans aucune faite. */
+  record?: { n: number; date: string }
+  /** Les ajoutées depuis lundi. */
+  addedWeek: number
+}
+
+/** Les jours de la frise d'activité, aujourd'hui compris (#325) : deux mois. */
+export const ACTIVITY_DAYS = 61
+
+/** Le jour où une tâche a été ajoutée (#325) : sa date `ouvert:`, sinon la première date de sa `src:`. */
+export function addedOn(t: Task): string | undefined {
+  if (t.ouvert) return t.ouvert.slice(0, 10)
+  return t.src ? /\b(\d{4}-\d{2}-\d{2})\b/.exec(t.src)?.[1] : undefined
+}
+
+/** Les paliers d'une bande (#325) : rien à zéro, peu sous la médiane de ses jours actifs, beaucoup dès elle. */
+export function activityTiers(counts: readonly number[]): ActivityTier[] {
+  const active = counts.filter(n => n > 0).sort((a, b) => a - b)
+  if (active.length === 0) return counts.map(() => 0)
+  const mid = active.length / 2
+  const median = active.length % 2 === 1 ? active[Math.floor(mid)]! : (active[mid - 1]! + active[mid]!) / 2
+  return counts.map(n => (n === 0 ? 0 : n < median ? 1 : 2))
+}
+
+/**
+ * La frise d'activité (#325, maquette E) : les 61 derniers jours, les faites et les ajoutées de chacun, sans
+ * les mères (leurs filles le disent, #125) ; rien de fait ni d'ajouté sur la période : `undefined`.
+ */
+export function activityFacts(o: { tasks: readonly Task[]; today: string }): Activity | undefined {
+  const mothers = new Set(o.tasks.flatMap(t => (t.parent !== undefined && t.parent !== t.id ? [t.parent] : [])))
+  const counted = o.tasks.filter(t => !t.isParent && !(t.id !== undefined && mothers.has(t.id)))
+  const first = shiftDay(o.today, 1 - ACTIVITY_DAYS)
+  const days: ActivityDay[] = Array.from({ length: ACTIVITY_DAYS }, (_, i) => ({ date: shiftDay(first, i), done: 0, added: 0 }))
+  const at = (date: string | undefined) => (date && date >= first && date <= o.today ? days[daysBetween(first, date)] : undefined)
+  for (const t of counted) {
+    if (t.done && t.fait) {
+      const day = at(t.fait.slice(0, 10))
+      if (day) day.done++
+    }
+    const day = at(addedOn(t))
+    if (day) day.added++
+  }
+  if (days.every(d => d.done === 0 && d.added === 0)) return undefined
+  const monday = shiftDay(o.today, -sinceMonday(o.today))
+  const best = days.reduce<ActivityDay | undefined>((top, d) => (d.done > 0 && (!top || d.done >= top.done) ? d : top), undefined)
+  return {
+    days,
+    doneTier: activityTiers(days.map(d => d.done)),
+    addedTier: activityTiers(days.map(d => d.added)),
+    activeDays: days.filter(d => d.done > 0).length,
+    ...(best ? { record: { n: best.done, date: best.date } } : {}),
+    addedWeek: days.filter(d => d.date >= monday).reduce((sum, d) => sum + d.added, 0),
+  }
 }
 
 /** Une tâche livrée hier ou aujourd'hui (#270) : son #, son nom, le jour, et ce qu'elle a livré. */
@@ -8215,6 +8282,7 @@ export function welcomeFacts(o: {
   const relances = tasks.filter(t => isToRelaunch(t, o.today, o.me, o.relanceDays)).length
   const n = relances > 0 ? relances : o.sessions
   const recent = recentWork({ tasks, today: o.today, ...(o.bilans ? { bilans: o.bilans } : {}), ...(o.titleOf ? { titleOf: o.titleOf } : {}) })
+  const activity = activityFacts({ tasks: o.tasks, today: o.today })
   return {
     total: tasks.length,
     done: done.length,
@@ -8225,6 +8293,7 @@ export function welcomeFacts(o: {
     day: sections.reduce((sum, g) => sum + g.tasks.length, 0),
     ...(n > 0 ? { extra: { kind: relances > 0 ? ('relances' as const) : ('sessions' as const), n } } : {}),
     ...(recent ? { recent } : {}),
+    ...(activity ? { activity } : {}),
   }
 }
 
@@ -8237,7 +8306,12 @@ export type WelcomeAction = { key: WelcomeKey; label: string; message: string; n
 export type WelcomePill = { tone: 'late' | 'soon' | 'wait' | 'live' | 'none'; text: string }
 /** L'encart « Derniers travaux » (#270) : le compte de la carte, et ce que Maestro raconte (huit au plus, `more` en plus). */
 export type WelcomeRecent = { counts: string; items: RecentWork[]; more: number }
-export type Welcome = { hello: string; sub: string; counts: string; progress: { done: number; total: number; pct: number }; week?: string; pills: WelcomePill[]; actions: WelcomeAction[]; cheer: string; recent?: WelcomeRecent }
+/**
+ * La frise de la carte (#325) : les paliers de ses deux bandes, ses repères de mois (`at`, le jour de la
+ * frise), « N jours actifs · record N le … » et « + N ajoutées » (depuis lundi, absent à zéro).
+ */
+export type WelcomeActivity = { doneTier: ActivityTier[]; addedTier: ActivityTier[]; marks: { at: number; label: string }[]; caption: string; addedWeek?: string }
+export type Welcome = { hello: string; sub: string; counts: string; progress: { done: number; total: number; pct: number }; week?: string; pills: WelcomePill[]; actions: WelcomeAction[]; cheer: string; recent?: WelcomeRecent; activity?: WelcomeActivity }
 
 /** Les livrées que Maestro reçoit au plus, et la longueur d'un livré (#270). */
 const RECENT_SHOWN = 8
@@ -8281,7 +8355,7 @@ export function welcomeText(f: WelcomeFacts, o: { person: string; now: Date }): 
     ...(f.extra ? [action(f.extra.kind, f.extra.kind === 'relances' ? 'À relancer' : 'Mes sessions', f.extra.n)] : []),
     action('scan', '⟳ Tout scanner'),
   ]
-  const week = f.closedWeek > 0 ? `+ ${nWord(f.closedWeek, 'close')} cette semaine` : undefined
+  const week = f.closedWeek > 0 ? `+ ${nWord(f.closedWeek, 'faite')} cette semaine` : undefined
   const cheer =
     f.total === 0
       ? 'Ta roadmap est vide : on la remplit ?'
@@ -8305,6 +8379,27 @@ export function welcomeText(f: WelcomeFacts, o: { person: string; now: Date }): 
     actions,
     cheer,
     ...(f.recent ? { recent: welcomeRecent(f.recent) } : {}),
+    ...(f.activity ? { activity: welcomeActivity(f.activity) } : {}),
+  }
+}
+
+/** Le repère de mois d'une frise : « Oct » (us), « oct. » (fr) ; le premier jour, sa date entière. */
+function monthMark(iso: string, first: boolean): string {
+  if (first) return spokenDate(iso)
+  const m = Number(iso.slice(5, 7)) - 1
+  return (dateFormat === 'fr' ? FR_MONTHS[m] : US_MONTHS[m]) ?? iso
+}
+
+/** Les mots de la frise (#325) : les repères de mois, les jours actifs et le record, les ajoutées de la semaine. */
+function welcomeActivity(a: Activity): WelcomeActivity {
+  const marks = a.days.flatMap((d, at) => (at === 0 || d.date.endsWith('-01') ? [{ at, label: monthMark(d.date, at === 0) }] : []))
+  const active = a.activeDays > 0 ? nWord(a.activeDays, 'jour actif', 'jours actifs') : 'aucune faite en deux mois'
+  return {
+    doneTier: a.doneTier,
+    addedTier: a.addedTier,
+    marks,
+    caption: a.record ? `${active} · record ${a.record.n} le ${spokenDate(a.record.date)}` : active,
+    ...(a.addedWeek > 0 ? { addedWeek: `+ ${nWord(a.addedWeek, 'ajoutée')}` } : {}),
   }
 }
 
@@ -8317,13 +8412,13 @@ function welcomeRecent(r: Recent): WelcomeRecent {
 }
 
 /**
- * La consigne de l'encart « Derniers travaux » (#270, maquette A) : Maestro explique, sous la carte, chaque
- * livrée d'une phrase simple ; le plugin lui donne la liste, il ne relit rien.
+ * La consigne des derniers travaux (#270, réécrite par #325) : sous la carte, Maestro les raconte en un court
+ * paragraphe par thème, les numéros dans le texte, sans puces ; le plugin lui donne la liste, il ne relit rien.
  */
 function recentLines(r: WelcomeRecent): string[] {
   const total = r.items.length + r.more
   return [
-    `- Puis les derniers travaux, ${r.counts} (${total > 1 ? `${total} tâches livrées` : 'une tâche livrée'}) : un titre **Derniers travaux**, puis une puce par tâche, quatre au plus, les plus récentes d'abord, chacune « #<id> · on a … » : une phrase simple qui dit ce qui change pour ${person()} (« on a retiré… », « on a ajouté… »), sans jargon (ni fonction, ni fichier, ni version). ${total > 4 ? `Puis une ligne « Et ${total - 4} autres depuis hier », qui peut citer la plus notable.` : ''} Court : pas de tableau, pas de sous-titre.`.trimEnd(),
+    `- Puis les derniers travaux, ${r.counts} (${total > 1 ? `${total} tâches livrées` : 'une tâche livrée'}) : un titre **Derniers travaux**, puis un court paragraphe par thème, deux à quatre au plus, chacun de une à trois phrases (« Côté Maestro, … ; dans la fiche, … ; côté garde-fous, … »), qui disent ce qui change pour ${person()} en mots simples, les numéros glissés dans le texte (« … (#321) »), sans jargon (ni fonction, ni fichier, ni version) ; sans puces, sans tableau, sans sous-titre ; regroupe les tâches proches, et ${total > 6 ? 'laisse de côté les moins notables : le compte dit le reste' : 'cite chacune'}.`,
     "  Les tâches livrées, comptées par le plugin (le livré est le texte de la ligne, pas une phrase à recopier) :",
     ...r.items.map(i => `  - #${i.id} ${i.name} (${i.when === 'today' ? 'aujourd’hui' : 'hier'})${i.livre ? ` : ${i.livre}` : ''}`),
     ...(r.more > 0 ? [`  - et ${r.more} autres`] : []),
@@ -8370,7 +8465,7 @@ export function maestroIntro(o: { source: Source; welcome: Welcome; cardShown?: 
     ].join('\n')
   }
   return [
-    `${Person()} a dit « Maestro » : le panneau de la roadmap ${o.source.name} vient de s'ouvrir, et la carte d'accueil s'affiche à la place de son message : « ${w.hello} », ${w.counts}${w.week ? ` (${w.week})` : ''}, aujourd'hui : ${w.pills.map(p => p.text).join(', ')}${w.recent ? `, la ligne « Derniers travaux · ${w.recent.counts} »` : ''}, et ses boutons ${w.actions.map(a => `« ${a.label} »`).join(', ')}. Tu es Maestro, l'orchestrateur : tu lances les tâches de la roadmap, une session par tâche, tu les suis et tu fusionnes pour elles (skill roadmap:maestro).`,
+    `${Person()} a dit « Maestro » : le panneau de la roadmap ${o.source.name} vient de s'ouvrir, et la carte d'accueil s'affiche à la place de son message : « ${w.hello} », ${w.counts}${w.week ? ` (${w.week})` : ''}, aujourd'hui : ${w.pills.map(p => p.text).join(', ')}${w.activity ? ', la frise des faites et des ajoutées des deux derniers mois' : ''}, et ses boutons ${w.actions.map(a => `« ${a.label} »`).join(', ')}. Tu es Maestro, l'orchestrateur : tu lances les tâches de la roadmap, une session par tâche, tu les suis et tu fusionnes pour elles (skill roadmap:maestro).`,
     '',
     `Rien n'est scanné : avant le clic de ${person()} sur un bouton, ne lis ni la roadmap ni tes sessions (pas de list_sessions, pas de lecture de ROADMAP.md) ; la carte dit déjà les chiffres.`,
     "- Si le bloc « Roadmap — nouvelles de tes sessions enfants » est là, dis d'abord ces nouvelles et suis leurs consignes.",

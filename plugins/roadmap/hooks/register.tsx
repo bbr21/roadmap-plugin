@@ -70,6 +70,9 @@ import {
   discIcon,
   halfDiscIcon,
   mixOver,
+  activityFills,
+  activityIcon,
+  activitySwatchIcon,
   personIcon,
   resolveTheme,
   ringIcon,
@@ -295,6 +298,7 @@ import {
   welcomeText,
   type MaestroAction,
   type Welcome,
+  type WelcomeActivity,
   type WelcomeCardSeen,
   type WelcomePill,
   MAESTRO_MENU,
@@ -6520,6 +6524,9 @@ async function brandData($: EngineInterface) {
 /** La largeur de la barre de l'accueil, en px. */
 const WELCOME_BAR = 160
 
+/** La largeur de la frise d'activité de l'accueil, en px : celle de la carte, 520 au plus (#325). */
+const activityWidth = (e: RenderInput<'UserMessage'> | RenderInput<'Pane'>) => surfaceWidth(e, 6, 520)
+
 /**
  * L'accueil de Maestro sous son bonjour (#141, maquette A) : les faites sur le total et leur barre, les
  * closes de la semaine, « Aujourd'hui » et ses pastilles, puis les boutons. Un bouton envoie son message
@@ -6543,6 +6550,23 @@ function welcomeTree(
     live: [palette.liveTint, palette.liveOn],
     none: [palette.sel, palette.text2],
   }
+  // La frise d'activité (#325, maquette E) : un Svg posé à sa taille rendue, les carrés restent carrés ; sa
+  // légende, rien, peu, beaucoup, chaque palier en vert (faites) et en bleu (ajoutées).
+  const doneFills = activityFills(palette.ok, palette)
+  const addedFills = activityFills(palette.live, palette)
+  const activitySvg = (a: WelcomeActivity) => {
+    if (!Svg) return null
+    const width = activityWidth(e)
+    const source = activityIcon({ ...a, done: doneFills, added: addedFills, ring: palette.text, ink: palette.text2, width })
+    const height = Number(/height="(\d+)"/.exec(source)?.[1] ?? 46)
+    return <Svg source={source} alt={`Tâches faites et ajoutées par jour, les ${a.doneTier.length} derniers jours`} width={width} height={height} />
+  }
+  const legendStep = (key: string, hexes: string[], label: string) => (
+    <Box key={`welcome:legend:${key}`} flexDirection="row" alignItems="center" gap={SPACE.row}>
+      {Svg && <Svg source={activitySwatchIcon(hexes)} alt="" width={hexes.length * 12 - 2} height={10} />}
+      <Text size="caption" color={palette.text2}>{label}</Text>
+    </Box>
+  )
   return (
     <Box key="welcome" flexDirection="column" gap={SPACE.tight}>
       <Box flexDirection="row" alignItems="center" gap={SPACE.row} flexWrap="wrap">
@@ -6551,19 +6575,35 @@ function welcomeTree(
           <Svg source={barIcon([{ hex: palette.ok, n: done }, { hex: palette.sel, n: total - done }], palette.done, WELCOME_BAR)} alt={`${pct} % fait`} width={WELCOME_BAR} height={6} />
         )}
         {total > 0 && <Text size="footnote" color={palette.text2}>{`${pct} %`}</Text>}
-        {w.week && <Text size="caption" weight="semibold" color={palette.ok}>{w.week}</Text>}
       </Box>
+      {/* Un seul bloc des faites (#325, maquette E) : la semaine, la frise des faites et des ajoutées, ses chiffres. */}
+      {(w.week || w.activity?.addedWeek) && (
+        <Box key="welcome:week" flexDirection="row" alignItems="center" gap={SPACE.row} flexWrap="wrap">
+          {w.week && <Text size="caption" weight="semibold" color={palette.ok}>{w.week}</Text>}
+          {w.activity?.addedWeek && <Text size="caption" weight="semibold" color={palette.live}>{w.activity.addedWeek}</Text>}
+        </Box>
+      )}
+      {w.activity && (
+        <Box key="welcome:activity" flexDirection="column" gap={SPACE.tight}>
+          {activitySvg(w.activity)}
+          <Box flexDirection="row" alignItems="center" gap={SPACE.row} flexWrap="wrap">
+            <Box flexGrow={1} flexShrink={1} minWidth={0}>
+              <Text size="caption" color={palette.text2}>{w.activity.caption}</Text>
+            </Box>
+            {Svg && (
+              <Box flexDirection="row" alignItems="center" gap={SPACE.row} flexShrink={0}>
+                {legendStep('none', [doneFills[0]], 'rien')}
+                {legendStep('few', [doneFills[1], addedFills[1]], 'peu')}
+                {legendStep('many', [doneFills[2], addedFills[2]], 'beaucoup')}
+              </Box>
+            )}
+          </Box>
+        </Box>
+      )}
       <Box flexDirection="row" alignItems="center" gap={SPACE.tight} flexWrap="wrap">
         <Text size="footnote" color={palette.text2}>Aujourd'hui</Text>
         {w.pills.map(p => pill(p.text, ...tone[p.tone]))}
       </Box>
-      {w.recent && (
-        // L'encart « Derniers travaux » (#270, maquette A) : la carte annonce, Maestro raconte sous elle.
-        <Box key="welcome:recent" flexDirection="row" alignItems="center" gap={SPACE.row} flexWrap="wrap">
-          <Text size="footnote" weight="semibold" color={palette.text2}>Derniers travaux</Text>
-          <Text size="caption" color={palette.text3}>{w.recent.counts}</Text>
-        </Box>
-      )}
       <Box flexDirection="row" alignItems="center" gap={SPACE.tight} flexWrap="wrap" paddingTop="xs">
         {w.actions.map(a => (
           <Button

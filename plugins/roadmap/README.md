@@ -740,6 +740,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.212.0 (2026-11-05)** : panneau : la carte d'accueil de Maestro montre la frise d'activité des deux derniers mois, faites et ajoutées ; Maestro raconte les derniers travaux par thème (#325)
 - **0.211.0 (2026-11-05)** : panneau : la bande de Maestro alignée en colonnes fixes, la liste des axes aux % calés à droite et au crayon après le nom (#326)
 - **0.210.0 (2026-11-05)** : reglages-session : réglage autonome éteint, la fusion, la publication et les gestes hors du code attendent le oui ; tableau « Autonome éteint » (#304)
 - **0.209.0 (2026-11-05)** : mockups : un rendu ne se code qu'après le oui sur la maquette exacte, le plugin rappelle une édition de rendu faite sans oui (#322)
