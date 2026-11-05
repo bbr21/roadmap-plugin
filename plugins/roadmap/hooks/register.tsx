@@ -117,6 +117,8 @@ import {
   captureReminder,
   ideaOffer,
   ideaReminder,
+  studySteps,
+  studyStepsReminder,
   proposeTaskText,
   codeWithoutTests,
   isMethodSkill,
@@ -976,6 +978,15 @@ async function ideaNote($: EngineInterface, c: Capture, last: string | undefined
   return ideaReminder(c.source, phrase, parentMaestro)
 }
 
+/** #293 : une réponse qui recommande des étapes, sans carte ni roadmap changée pendant le tour. */
+async function studyNote($: EngineInterface, c: Capture, last: string | undefined): Promise<string | undefined> {
+  if (c.cardThisTurn || c.roadmapAtTurn === undefined) return undefined
+  const steps = studySteps(last ?? '')
+  if (steps === undefined) return undefined
+  if (joined(await roadmapNow($, c.source)) !== c.roadmapAtTurn) return undefined
+  return studyStepsReminder(c.source, steps, parentMaestro)
+}
+
 /** Ce que dit une boîte de fin : récap, question, boutons. */
 function boxText(e: unknown, withRecap = true): string {
   const box = e as { recap?: unknown; ask?: unknown; actions?: unknown }
@@ -1412,7 +1423,8 @@ async function endOfTurnBlock($: EngineInterface, last: string | undefined, acti
     }
     notes.push(designNote(c))
     try {
-      notes.push(await ideaNote($, c, last))
+      // Des étapes recommandées (#293) : leur rappel prend la place de celui d'une idée.
+      notes.push((await studyNote($, c, last)) ?? (await ideaNote($, c, last)))
     } catch {
       // pas de rappel d'idée
     }

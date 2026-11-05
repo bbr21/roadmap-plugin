@@ -1192,6 +1192,53 @@ export function ideaReminder(source: Source, phrase: string, child = false): str
   ].join('\n')
 }
 
+/** Ce qui annonce des étapes recommandées (#293), sur le texte comparable : sans accents, en minuscules. */
+const STEPS_LEAD = /recommand|recommend|prochaines? etapes|etapes? suivantes|next steps|etapes? (?:proposee|conseillee)s?/
+const STEP_ITEM = /^\s*\d+[.)]\s+(.+)$/
+
+/**
+ * Les étapes qu'une réponse recommande (#293) : la première liste numérotée d'au moins deux étapes
+ * qu'annonce la ligne qui la précède (« je recommande », « prochaines étapes », « next steps »), hors
+ * code et citations ; rien sinon. Des motifs, comme `ideaOffer` : un récit de ce qui a été fait passe.
+ */
+export function studySteps(text: string): string[] | undefined {
+  const lines = ownProse(text).split('\n')
+  for (let i = 0; i < lines.length; i++) {
+    if (!STEP_ITEM.test(lines[i] ?? '') || (i > 0 && STEP_ITEM.test(lines[i - 1] ?? ''))) continue
+    let lead = i - 1
+    while (lead >= 0 && (lines[lead] ?? '').trim() === '') lead--
+    if (lead < 0 || !STEPS_LEAD.test(comparable(lines[lead] ?? ''))) continue
+    const steps: string[] = []
+    for (let j = i; j < lines.length; j++) {
+      const m = STEP_ITEM.exec(lines[j] ?? '')
+      if (m) steps.push(clip((m[1] ?? '').replace(/\*\*|__/g, '').replace(/\s+/g, ' ').trim(), 80))
+      else if ((lines[j] ?? '').trim() !== '' && !/^\s{2,}\S/.test(lines[j] ?? '')) break
+    }
+    if (steps.length >= 2) return steps
+  }
+  return undefined
+}
+
+/** La règle des étapes d'une étude (#293), dite à la sous-session par la clause de Maestro. */
+export const STUDY_STEPS_CHILD =
+  "À la fin d'une étude, d'un spike ou d'un audit qui recommande des étapes : une carte par étape qui n'a pas sa task, dans le tour même et sans écrire sa ligne ; une étape qui a déjà sa task s'y rattache, une étape écartée dit pourquoi ; ton dernier compte rendu les nomme, car Maestro ne close pas l'étude avant (#293)."
+
+/**
+ * Le rappel de fin de tour d'une réponse qui recommande des étapes (#293) alors que ni la roadmap ni
+ * une carte de session n'ont bougé pendant le tour : une carte par étape sans task.
+ */
+export function studyStepsReminder(source: Source, steps: readonly string[], child = false): string {
+  const shown = steps.slice(0, 4).map(s => `« ${s} »`).join(', ') + (steps.length > 4 ? '…' : '')
+  return [
+    `Plugin roadmap : ta dernière réponse recommande ${steps.length} étapes (${shown}), et ni la roadmap (\`${source.dir}/ROADMAP.md\`) ni une carte de session n'ont bougé pendant ce tour.`,
+    "Règle du plugin roadmap (étapes d'une étude, #293) : à la fin d'une étude, d'un spike ou d'un audit, une task proposée par étape recommandée, avant que la tâche se close : une carte par étape qui n'a pas sa task (`start_session`, `own_initiative`) ; une étape qui a déjà sa task, rattache-la et dis laquelle en une ligne ; une étape écartée, dis pourquoi en une ligne.",
+    child
+      ? "Sous Maestro : pose les cartes sans écrire leurs lignes (le panneau les remonte à Maestro, qui les ouvre), et nomme-les dans ton compte rendu : Maestro ne close pas l'étude tant qu'une étape n'a ni ligne ni raison d'être écartée."
+      : "Seule : écris d'abord la ligne de chaque étape par la skill `tasks`, puis pose sa carte, titrée `#<id> · <nom>` d'après la ligne écrite.",
+    "Si ce ne sont pas des étapes recommandées (un récit de ce qui a été fait, un exemple), dis-le en une ligne et termine.",
+  ].join('\n')
+}
+
 /** Un tour « travaille » à partir de deux outils de la session, hors liste d'étapes et boîte de fin (#98, partout depuis #104). */
 export const STEP_LIST_MIN_TOOLS = 2
 
@@ -3978,6 +4025,7 @@ export function maestroClause(maestro: string, travail: Travail = 'code'): strin
       '- Ne coche pas ta ligne : Maestro la coche, avec son bilan. Ton dernier compte rendu dit ce qui a été fait et le souci rencontré.',
       `- ${PARTIAL_CLOSE_CHILD}`,
       `- ${maestroClauseEnd()}`,
+      `- ${STUDY_STEPS_CHILD}`,
       "- Dès qu'une idée neuve ou une action hors de ta tâche apparaît (suite, idée, défaut), pose ta carte dans le tour même, sans attendre qu'on te la demande et sans écrire sa ligne (#216). Une tâche que tu proposes, ou un lancement que " + person() + " te demande, remonte à Maestro : pose ta carte comme d'habitude (ou lance comme demandé), le panneau Roadmap la lui transmet au lieu de la laisser dans ton transcript, que " + person() + " ne regarde pas, et pour que la session créée soit sa fille directe ; Maestro ouvre sa ligne et pose la carte.",
     ]
   }
@@ -3995,6 +4043,7 @@ export function maestroClause(maestro: string, travail: Travail = 'code'): strin
     `- Ton compte rendu « prête à fusionner » finit par le bloc « Ce qui a changé », que la fiche de ta tâche montre (#269) : ${CHANGES_BLOCK_RULE}.`,
     `- ${PARTIAL_CLOSE_CHILD}`,
     `- ${maestroClauseEnd()} Rien de non commité ne doit rester dans ton worktree.`,
+    `- ${STUDY_STEPS_CHILD}`,
     "- Dès qu'une idée neuve ou une action hors de ta tâche apparaît (suite, idée, défaut), pose ta carte dans le tour même, sans attendre qu'on te la demande et sans écrire sa ligne (#216). Une tâche que tu proposes, ou un lancement que " + person() + " te demande, remonte à Maestro : pose ta carte comme d'habitude (ou lance comme demandé), le panneau Roadmap la lui transmet au lieu de la laisser dans ton transcript, que " + person() + " ne regarde pas, et pour que la session créée soit sa fille directe ; Maestro ouvre sa ligne et pose la carte.",
   ]
 }
@@ -9697,6 +9746,7 @@ export function reportOf(changes: TaskChange[], waiting: Waiting[], me: readonly
 const REASONS: Record<string, string> = {
   conflict: 'conflit', undated: 'date manquante', late: 'en retard', partial_proof: 'preuve partielle',
   rhythm: 'rythme', reopen: 'réouverture', prio_on_child: 'priorité sur un enfant', structure: 'structure',
+  subject: 'même sujet', name: 'titre court',
 }
 
 type PendingQuestion = { key?: unknown; kind?: unknown; task?: unknown; question?: unknown; options?: { label?: unknown }[] }

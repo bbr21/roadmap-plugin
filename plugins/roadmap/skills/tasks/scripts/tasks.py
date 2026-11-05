@@ -45,7 +45,7 @@ POIDS_INCONNU = 1.0
 
 # Le contrat d'operations.json, en anglais comme la skill (#158) ; le code garde le vocabulaire de l'audit.
 OPS = {
-    "add": {"op", "key", "label", "axis", "section", "parent", "note", "fields"},
+    "add": {"op", "key", "label", "axis", "section", "parent", "note", "fields", "distinct"},
     "update": {"op", "id", "fields"},
     "reschedule": {"op", "id", "due"},
     "done": {"op", "id", "date", "proof", "bilan"},
@@ -73,7 +73,13 @@ INTERDITS_COMPLETER = {"id", "qui", "branche", "verrou", "fait"}
 INTERDITS_SUITE = INTERDITS_AJOUT | {"après", "attend", "src", "fiche"}
 # Les questions qui attendent la personne (#232), au format de l'audit (#159) : leur genre, et sa raison dite.
 RAISONS = {"conflict": "conflit", "undated": "date manquante", "late": "en retard", "partial_proof": "preuve partielle",
-           "rhythm": "rythme", "reopen": "réouverture", "prio_on_child": "priorité sur un enfant", "structure": "structure"}
+           "rhythm": "rythme", "reopen": "réouverture", "prio_on_child": "priorité sur un enfant", "structure": "structure",
+           "subject": "même sujet", "name": "titre court"}
+# Une tâche à part choisie par la personne (#288) : la raison que porte l'option « Tâche à part ».
+A_PART = "tâche à part, choisie par la personne"
+# Le titre court proposé à une mère sans `nom:` (#288) : ses premiers mots, comme `fallbackTitle` du panneau.
+NOM_MAX = 40
+NOM_MOTS = 5
 # Le libellé d'une tâche dans le compte rendu : coupé au mot au-delà.
 LIBELLE_COURT = 60
 # Une communication (#242) : un segment du chemin qui la nomme (`emails/`, `message-martial.md`), ou des
@@ -118,6 +124,14 @@ def est_un_tiers(attend, me):
 
 def _jj_mm(iso):
     return "%s/%s" % (iso[8:10], iso[5:7])
+
+
+def _aparte(libelle, texte):
+    """#285 : un texte ajouté par l'écriture va dans le libellé, entre parenthèses (un aparté, que la
+    règle « une ligne, une action » de #289 ne compte pas), jamais après le bloc de champs, que le
+    doctor de cowork refuse hors grammaire."""
+    texte = audit._propre(texte)
+    return "%s (%s)" % (libelle, texte) if texte else libelle
 
 
 def _court(libelle, n=LIBELLE_COURT):
@@ -323,6 +337,90 @@ def rapprocher(ctx, texte, n=5):
     return {"texte": texte, "ouvertes": ouvertes[:n], "closes": closes[:n], "cas_probable": cas}
 
 
+# ---------------------------------------------------------------- un sujet, une tâche (#288)
+
+
+def titre_court(libelle):
+    """Le titre court proposé à une mère : ses cinq premiers mots, coupés au mot sous 40 caractères."""
+    mots, sortie = libelle.replace("`", "").split()[:NOM_MOTS], []
+    for m in mots:
+        if len(" ".join(sortie + [m])) > NOM_MAX:
+            break
+        sortie.append(m)
+    return " ".join(sortie) or libelle[:NOM_MAX]
+
+
+def _sans_ref(v):
+    return v in (None, "", "-")
+
+
+def _refs_op(op):
+    """Les numéros et clés qu'une opération vise : son parent et ses `après:`."""
+    champs = op.get("fields") or {}
+    refs = {str(x).lstrip("#") for x in (op.get("parent"), champs.get("parent")) if not _sans_ref(x)}
+    apres = champs.get("après")
+    if apres is not None:
+        try:
+            refs |= set(_refs(apres, "après"))
+        except Erreur:
+            pass
+    return refs
+
+
+def _sans_cle_apres(op, cle):
+    champs = dict(op.get("fields") or {})
+    if "après" in champs:
+        try:
+            champs["après"] = [x for x in _refs(champs["après"], "après") if x != cle]
+        except Erreur:
+            pass
+    return dict(op, fields=champs) if op.get("fields") is not None else op
+
+
+def un_sujet(ctx, operations):
+    """#288 : les ajouts sans parent que `rapprocher` trouve couverts par une tâche ouverte (score ≥ 0,5
+    et deux mots communs), sauf `distinct`, retenus avec ce qui les vise dans le lot ; chacun devient une
+    question (kind `subject`) : « Sous #N (recommandé) », « Tâche à part », « Ne rien ajouter ». Une tâche
+    que le lot close ne couvre rien. Rend (clés retenues, questions)."""
+    fermees = {str(op.get("id")) for op in operations if op.get("op") in ("drop", "done", "handoff")}
+    ctx_ouvert = dict(ctx, taches=[t for t in ctx["taches"] if t["id"] not in fermees])
+    retenues, questions = set(), []
+    for a in operations:
+        if a.get("op") != "add" or not _sans_ref(a.get("parent")) or audit._propre(a.get("distinct")) or a.get("key") in retenues:
+            continue
+        libelle = audit._propre(a.get("label"))
+        r = rapprocher(ctx_ouvert, libelle)
+        if r["cas_probable"] != "couverte_ou_a_etoffer":
+            continue
+        assez = min(MOTS_PARTAGES_MIN, len(audit.mots(libelle)))
+        meilleure = next(t for t in r["ouvertes"] if t["score"] >= SEUIL and len(t["communs"]) >= assez)
+        cible = meilleure["parent"] if meilleure["role"] == "enfant" and meilleure["parent"] else meilleure["id"]
+        k = a.get("key")
+        groupe, cles = [a], {k}
+        for op in operations:
+            if op is not a and _refs_op(op) & cles:
+                groupe.append(op)
+                if op.get("key"):
+                    cles.add(op["key"])
+        retenues |= cles
+        enfants = [op for op in groupe if op is not a and str(op.get("parent") or "").lstrip("#") == k]
+        if enfants:
+            # Deux niveaux au plus : ses enfants passent sous la cible, la mère proposée s'efface.
+            sous = [dict(_sans_cle_apres(op, k), parent=cible) if op in enfants else _sans_cle_apres(op, k)
+                    for op in groupe if op is not a]
+        else:
+            sous = [dict({c: v for c, v in a.items() if c not in ("axis", "section", "distinct")}, parent=cible)] + groupe[1:]
+        a_part = [dict(a, distinct=A_PART)] + groupe[1:]
+        questions.append({
+            "key": "subject-%s" % k, "about": libelle, "kind": "subject",
+            "question": "« %s » : même sujet que #%s « %s » ; l'ajouter sous #%s, ou en tâche à part ?"
+                        % (_court(libelle), meilleure["id"], _court(meilleure["libelle"]), cible),
+            "options": [{"label": "Sous #%s (recommandé)" % cible, "operations": sous},
+                        {"label": "Tâche à part", "operations": a_part},
+                        {"label": "Ne rien ajouter : #%s couvre déjà l'action" % meilleure["id"], "operations": []}]})
+    return retenues, questions
+
+
 # ---------------------------------------------------------------- écrire
 
 
@@ -376,6 +474,9 @@ class _Tenue(audit._Preparation):
         self.closes = {c["id"]: c["libelle"] for c in ctx.get("closes") or []}
         self.blanc_apres = set()  # ancres d'une section vide : une ligne vide après les tâches posées
         self.section_de = {t["ligne"]: t["section"] for t in im.lire_checklist(self.texte_o)[0]}
+        # #288 : les mères qui reçoivent une fille dans ce lot (leur numéro ou leur clé), et celles qui en avaient.
+        self.meres_du_lot = []
+        self.meres_avant = {t["parent"] for t in ctx["taches"] if t.get("parent")}
 
     # -- règles
 
@@ -453,6 +554,8 @@ class _Tenue(audit._Preparation):
             mere = self.tache(p, quoi)
             self.deux_niveaux(mere, quoi)
             champs["parent"] = mere.id
+            if p.lstrip("#") not in [r for r, _ in self.meres_du_lot]:
+                self.meres_du_lot.append((p.lstrip("#"), mere))
             for k in self.heritage:
                 if k not in champs and mere.get(k):
                     champs[k] = mere.get(k)
@@ -467,7 +570,7 @@ class _Tenue(audit._Preparation):
             raise Erreur("%s : axe « %s » inconnu (axes : %s)" % (quoi, axe, ", ".join(self.axes) or "minuscules, chiffres, tirets"))
         self.completer(champs, mere, quoi)
         champs["id"] = self.numero(op.get("key"))
-        t = audit._Tache(id=champs["id"], libelle=libelle, note=audit._propre(op.get("note")), axe=axe,
+        t = audit._Tache(id=champs["id"], libelle=_aparte(libelle, op.get("note")), axe=axe,
                          champs=audit._ordonnes(champs))
         self.cles[op["key"]] = t
         if apres is not None:
@@ -593,11 +696,13 @@ class _Tenue(audit._Preparation):
         return r
 
     def fermer_tache(self, t, date, suffixe, souci, raison="", bilan=None):
+        """`raison` (un abandon) va dans le libellé, après « ; » et avant le suffixe (#285), comme la reprise
+        à la main d'Adbricks Cowork ; une note déjà portée par la ligne reste où elle était."""
         t.retiree = True
         fait = self.moment(date)
         champs = [(k, v) for k, v in t.champs if k not in ("fait", "attend")] + [("fait", fait)]
-        note = (t.note + " " + raison).strip() if raison else t.note
-        self.vers_fait.append(im.rendre_ligne(True, t.libelle + suffixe, t.axe, champs, note))
+        libelle = "%s ; %s" % (t.libelle, raison) if raison else t.libelle
+        self.vers_fait.append(im.rendre_ligne(True, libelle + suffixe, t.axe, champs, t.note))
         rang = dict(bilan) if bilan else {"fait": t.libelle, "souci": souci}
         rang.update(date=fait[:10], id=t.id)
         self.bilans.append(rang)
@@ -761,7 +866,7 @@ class _Tenue(audit._Preparation):
             raise Erreur("%s : #%s a un enfant ouvert (#%s) : mets en pause ses enfants" % (quoi, t.id, ouverts[0].id))
         t.set("due", reprise)
         jour = datetime.date.fromisoformat(self.jour)
-        t.note = (t.note + " (en pause depuis le %s : %s)" % (jour.strftime("%d/%m"), raison)).strip()
+        t.libelle = _aparte(t.libelle, "en pause depuis le %s : %s" % (jour.strftime("%d/%m"), raison))
         if _sans_parent(t) == "-" and SECTION_PAUSE in self.sections and self.section_de.get(t.ligne) != SECTION_PAUSE:
             t.deplacee = True
             self.placer(t, None, SECTION_PAUSE, quoi)
@@ -793,6 +898,24 @@ class _Tenue(audit._Preparation):
         reco = q["options"][0]["label"].replace("(recommandé)", "").strip()
         self.compte["t_attendent"].append({"key": q["key"], "id": num, "libelle": _court(libelle),
                                            "raison": RAISONS[q["kind"]], "question": q["question"], "recommande": reco})
+
+    def questions_de_titre(self):
+        """#288 : une mère sans `nom:` qui reçoit sa première fille reçoit une question qui propose un titre
+        court (kind `name`) ; rien pour une mère nommée, close par le lot ou prise par une session."""
+        sortie = []
+        for ref, mere in self.meres_du_lot:
+            if mere.id in self.meres_avant or mere.get("nom") or getattr(mere, "retiree", False) or (
+                    mere.get("qui") and mere.get("branche")):
+                continue
+            nom = titre_court(mere.libelle)
+            sortie.append({
+                "key": "name-%s" % ref, "task": ref, "kind": "name",
+                "question": "« %s » (#%s) reçoit sa première sous-tâche : quel titre court pour elle ?"
+                            % (_court(mere.libelle), mere.id),
+                "options": [{"label": "« %s » (recommandé)" % nom,
+                             "operations": [{"op": "update", "id": mere.id, "fields": {"nom": nom}}]},
+                            {"label": "Garder le titre tiré du libellé", "operations": []}]})
+        return sortie
 
     def ouvertes(self):
         vues, sortie = set(), []
@@ -844,6 +967,10 @@ def preparer(ctx, props, maintenant=None):
     prep = _Tenue(ctx, maintenant)
     for op in operations:
         _verifier_operation(op)
+    retenues, du_lot = un_sujet(ctx, operations)
+    for op in operations:
+        if op.get("key") in retenues:
+            continue
         {"add": prep.ajouter, "update": prep.completer_tache, "reschedule": prep.redater,
          "done": prep.cocher, "drop": prep.abandonner, "pause": prep.mettre_en_pause,
          "handoff": prep.passer_la_main}[op["op"]](op)
@@ -851,6 +978,14 @@ def preparer(ctx, props, maintenant=None):
     if not isinstance(questions, list):
         raise Erreur("questions : une liste de questions (le format de l'audit)")
     for q in questions:
+        ref = str(q.get("task") or "").lstrip("#") if isinstance(q, dict) else ""
+        if ref in retenues:
+            # Sa tâche attend la question du sujet (#288) : la question vise l'action, sans tâche.
+            q = dict({c: v for c, v in q.items() if c != "task"},
+                     about=next(audit._propre(o.get("label")) for o in operations if o.get("key") == ref))
+        prep.attendre(q)
+    du_lot += prep.questions_de_titre()
+    for q in du_lot:
         prep.attendre(q)
     prep.boucles()
     apres_o = prep.rendre_ouvert()
@@ -865,6 +1000,7 @@ def preparer(ctx, props, maintenant=None):
         fichiers[chemin_bilans] = bilans
     fichiers = {p: t for p, t in fichiers.items() if audit._lire_fichier(p) != t}
     bilan = dict(prep.tenue, ids_crees=prep.bilan["ids_crees"], notes=prep.notes, comptes=prep.bilan.get("comptes"),
+                 questions=du_lot,
                  compte_rendu=prep.compte, jour=prep.jour,
                  lignes={os.path.basename(p): audit.lignes_changees(audit._lire_fichier(p), t) for p, t in fichiers.items()})
     return fichiers, bilan
@@ -954,6 +1090,10 @@ def afficher(bilan, decl, en_json=False):
               % (decl["ecriture"]["outil"], decl["ecriture"]["consigne"]))
     else:
         print("Essai à blanc : rien n'est écrit. Relance avec --apply pour écrire.")
+    if bilan.get("questions"):
+        print()
+        print("Questions du lot (#288), à poser par le formulaire ; l'option choisie part dans un nouveau write :")
+        print(json.dumps(bilan["questions"], ensure_ascii=False, indent=2))
     print()
     print(bilan["markdown"])
 

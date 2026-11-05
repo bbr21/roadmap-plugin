@@ -169,6 +169,10 @@ to it.
     does not offer the `archive` app button); on that click, `archive_session` (`self`); if the
     app refuses, say so; your line still open, do not offer archiving: Maestro ticks it at the
     merge;
+  - at the end of a study, a spike or an audit that recommends steps: one card per step that has
+    no task, in the same turn and without writing its line; a step that already has its task is
+    attached to it, a step set aside says why; your last report names them, since Maestro does not
+    close the study before (#293);
   - as soon as a new idea or an action outside your task comes up, post your card in the same
     turn, without being asked and without writing its line (#216); a task you propose, or a
     launch the person asks of you, goes up to Maestro: post your card as usual, the panel forwards
@@ -400,6 +404,12 @@ The merge itself:
 
 - **After the merge**, Maestro ticks the line (`fait:`, what was delivered, the PR), moves it to the
   top of `ROADMAP-fait.md` and writes its bilan from the sub-session's last report.
+- **No study closed with a step left over** (#293): a study, a spike or an audit whose last report
+  recommends steps is not ticked while one of those steps has neither a line (open, or the task it
+  was attached to) nor a reason to be set aside, said in the report. Maestro reads the report's
+  steps, opens the line of each card the sub-session posted (the panel forwards the cards), and
+  only then ticks the study, naming the new lines in its bilan. Case of origin: adBricks #444,
+  closed on 2026-11-04 with its 4 steps and no task, caught up as #446 to #448 only when BBR asked.
 - **No closing before the send** (#242): a line whose deliverable is a communication (email, message,
   invitation: `livrable:` with « À : » / « Objet : » headers, or named so) is not ticked, not handed
   off, and its session not offered for archiving, until the file's « Statut : » says

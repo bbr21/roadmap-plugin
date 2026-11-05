@@ -99,6 +99,14 @@ action in **exactly one case**:
 **Never a new task for a subject that already has one.** Two actions of the same batch on one
 subject: the second goes under the first (`parent` set to its `key`).
 
+`write` holds this rule (#288), as a question, never a refusal: an `add` without `parent` that an
+open task covers (the match above: score ≥ 0.5 and two shared words), unless it says `distinct`, is
+not written; it and the operations of the batch that point to its `key` become a `subject`
+question: « Sous #N (recommandé) » (under the covering task, or under its parent when it is a
+child; an `add` with children of its own leaves its place to them, two levels at most), « Tâche à
+part » (the same operations, with `distinct`), « Ne rien ajouter ». A task the batch closes covers
+nothing. The rest of the batch is written.
+
 ## 3. Mark done on proof
 
 A task is done when clear proof says so: an email sent, a deliverable filed, a commit, a note. Look
@@ -157,11 +165,18 @@ Write `<scratchpad>/operations.json`:
   `operations` that answer it, `[]` for « change nothing »), and `task` (an open id, the `key` of
   an `add` of this batch, or a closed id for `reopen`) or, for an action with no task, `about`
   (its text). Nothing is written for a question: its answer goes through a new `write`.
+  `write` adds its own (#288), kinds `subject` and `name` (« What gets asked »): the `questions` of
+  its output (printed under « Questions du lot », or in `--json`), with their options' `operations`
+  ready for the next `write`; ask them in the same form as yours.
 
 - **add**: `key` (unique, not a number), `label` (in French: an infinitive verb and its object; a
   parent carries a subject name), `axis` (a child's is its parent's: leave it out, another one is
   refused), `parent` (an `id`
-  or a `key`), `section` (default « Prochain », else the first open section), `note`, `fields`.
+  or a `key`), `section` (default « Prochain », else the first open section), `distinct` (#288: why this action
+  is a task of its own though an open task looks like the same subject; never written in the
+  line), `note` (written in the label,
+  between parentheses: « Réserver le studio son (demandé par Linda) », never after the field block,
+  which the cowork doctor refuses, #285), `fields`.
   The id is the next free one. A child is written under its parent, after its other children, and
   takes the required fields it lacks (`après:-` otherwise) and the parent's category keys. When the
   project requires `qui:` (a code project, #255), a new line gets the person, the first `me` name
@@ -203,9 +218,10 @@ Write `<scratchpad>/operations.json`:
   `cowork.json` says `"roadmap": "plugin-roadmap"` (Adbricks Cowork, AAFES Cowork): its doctor
   checks every row. Elsewhere optional: without it, the row says the label and « Faite : <proof> ».
   A parent closed with its last child gets the child's bilan, its `fait` naming that child.
-- **drop**: `reason`, `bilan`; « (abandonné) » at the end of the label, like the panel's « Annuler la tâche ».
-- **pause** (#159): `until` (the resume date), `reason`. `due:` becomes `until`, the note gets
-  « (en pause depuis le JJ/MM : <reason>) », and a task without a parent moves to « Plus tard »; a
+- **drop**: `reason`, `bilan`; the reason goes into the label after « ; », then « (abandonné) » at
+  its end (« Préparer le budget mocap ; budget repris par Linda (abandonné) », #285), like the panel's « Annuler la tâche ».
+- **pause** (#159): `until` (the resume date), `reason`. `due:` becomes `until`, the label gets
+  « (en pause depuis le JJ/MM : <reason>) » (#285), and a task without a parent moves to « Plus tard »; a
   child stays under its parent. Refused on a line taken by a session and on a parent with an open
   child.
 - **handoff** (#245, « Partial closure » below): `date` and `proof` as for `done`, `delivered`
@@ -313,7 +329,13 @@ round, the recommendation first, each question readable on its own (the task's l
 - a **partial proof** (« Cocher », « Laisser ouverte », « Réécrire sur ce qui reste »);
 - the **rhythm** of an ongoing subject (`tous:jour`, `tous:ouvré` Monday to Friday, `tous:semaine`,
   `tous:mois`…);
-- **reopening** a closed task.
+- **reopening** a closed task;
+- **the same subject** (`subject`, #288, set by `write`): an action an open task covers;
+- **a mother's short title** (`name`, #288, set by `write`): a task without `nom:` that gets its
+  first child. `write` proposes its first five words; before asking, replace that proposal (the
+  option's label and its `nom`) with a short title of 2 to 5 words in the label's language, which
+  says what the subject is (« Vendor agreement Little Zoo »). Better still, give `nom` in the same
+  batch (an `update` of the mother, or `fields.nom` of a new one): no question then.
 
 Everything else is done without a question and said in one line: the case of a clear match, what
 a child inherits, the id, the default section.
@@ -337,6 +359,11 @@ a project that has a roadmap, because the skill is not always loaded when the id
   Fini quand. Under Maestro, a sub-session posts its card only, without writing the line: the panel
   sends it up to Maestro, who opens the line and posts it again. Work done elsewhere (another
   repository, another person): the line alone, said in one line.
+- **A study's steps** (#293): a study, a spike or an audit that ends on a recommendation in steps
+  proposes one task per step that has none (its line, then its card; under Maestro, the card only),
+  attaches each other step to its existing task (said in one line) and says why a step is set
+  aside. The plugin's end-of-turn reminder catches a numbered list of steps announced as
+  recommended (« je recommande », « prochaines étapes », « next steps ») when no card was posted.
 - **One card per idea, no duplicate**: reread the roadmap and the linked sessions
   (`list_sessions` with `linked: true`) first. The app shows three cards per turn at most: beyond
   that, the lines are written and the answer says so. Launching keeps the person's click on Start,
