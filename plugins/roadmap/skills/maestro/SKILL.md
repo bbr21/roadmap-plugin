@@ -481,6 +481,17 @@ The merge itself:
   not offer the `archive` app button). On that click, and on it alone, `archive_session` with
   `session_id: "self"`.
 
+- **Dosing the launches** (#324): the panel lets at most `maxSessions` task sessions work at once on
+  the whole Mac (option « Sessions en même temps », 4 by default, all projects counted, Maestros
+  excluded). A session holds its place from its launch until it says « prête à fusionner », a partial
+  closure or « fini »; idle for 15 min (waiting for the person, a resource), it gives its place back.
+  A posted card not yet started reserves a place for 15 min. A launch also waits while the Mac's load
+  over one minute is above 2 × its cores. Beyond that, the card does not go out: the panel puts the
+  task in Maestro's queue, in the chain's order (`après:`), refuses the card with its rank
+  (« Plus de place : … #N attend son tour, 2e en file »), and posts it itself as soon as a place frees
+  up. Do not post a queued card again, do not do the task yourself: the block « En cours » lists the
+  queued tasks and what holds them; the person clicks Start when the panel posts the card.
+
 ## What the Roadmap panel does for Maestro
 
 - It recognises Maestro by its title « Maestro … » (or by the alias « Lot … » of old titles), by

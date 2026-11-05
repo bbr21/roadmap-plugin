@@ -1,6 +1,6 @@
 {
   "name": "roadmap",
-  "version": "0.212.0",
+  "version": "0.213.0",
   "description": "Panneau Claude Code à côté du chat : la roadmap du projet de la session, filtrable, avec le détail d'une tâche et son lancement dans une nouvelle session",
   "author": {
     "name": "Bertrand Fargheon"
@@ -93,6 +93,20 @@
       "title": "Branches nettoyées",
       "description": "Dans un projet de code, les branches déjà fusionnées sur main que plus rien ne tient (ni une session encore ouverte, ni une ligne ouverte de la roadmap) sont supprimées, sur le Mac et sur GitHub : après l'archivage d'une session, et au démarrage d'une session (au plus toutes les 10 minutes). « Rouvrir la session » d'une tâche close recrée sa branche depuis main. Éteint : les branches restent.",
       "default": true
+    },
+    "maxSessions": {
+      "type": "string",
+      "title": "Sessions en même temps",
+      "description": "Le nombre de sessions de tâche qui travaillent en même temps sur le Mac, tous projets confondus, que Maestro ne dépasse pas : au-delà, les tâches attendent leur tour dans l'ordre de la chaîne, et le panneau pose seul la carte de la suivante quand une session se dit prête (ou attend ta réponse depuis 15 min). Un lancement attend aussi quand la charge du Mac dépasse 2 × ses cœurs. Mesuré le 2026-11-05 : 4 tient sur un Mac de 16 Go.",
+      "default": "4",
+      "options": [
+        "2",
+        "3",
+        "4",
+        "5",
+        "6",
+        "8"
+      ]
     },
     "account": {
       "type": "string",

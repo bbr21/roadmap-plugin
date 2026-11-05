@@ -252,6 +252,7 @@ export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
       { field: 'launchEffort', name: 'Effort', def: 'high' },
       { field: 'launchBypass', name: 'Lancer en bypass', def: 'Off' },
       { field: 'pruneBranches', name: 'Branches nettoyées', def: 'On' },
+      { field: 'maxSessions', name: 'Sessions en même temps', def: '4' },
     ],
   },
   {
