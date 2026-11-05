@@ -7741,6 +7741,47 @@ export function cadrageText(form = true): string {
   )
 }
 
+/**
+ * Ce que fait chaque étape quand le réglage `autonome` est éteint (#304, BBR à Maestro, 2026-11-04 : « si le
+ * mode auto n'est pas activé, sur la partie code, je pense que ça bloque le merge ou peut-être d'autres
+ * étapes »). Éteint, le texte des réglages ne disait rien : une session seule suivait la règle du projet
+ * (« Finir un chantier … sans attendre ») et fusionnait sans demander. `off` : `attend` le oui de la
+ * personne, ou `avance` sans demander ; `on` : ce que fait le réglage allumé. Le tableau « Autonome éteint »
+ * du README du plugin reprend chaque entrée mot pour mot (tools/test_reglages.py) : une étape s'ajoute aux deux.
+ */
+export const AUTONOME_OFF_STEPS: readonly { step: string; off: 'attend' | 'avance'; on: string }[] = [
+  { step: "Fusionner sur main une branche prête", off: 'attend', on: "seul, puis dit en une ligne" },
+  { step: "Publier (release d'un plugin, déploiement, push d'un code sur main)", off: 'attend', on: "seul, puis dit en une ligne" },
+  { step: "Écrire hors du code (un service, un formulaire, une tâche planifiée)", off: 'attend', on: "sans confirmation, puis dit en une ligne" },
+  { step: "Trancher un choix qui lui revient, vu en cours de route", off: 'attend', on: "sa recommandation suivie, sauf un choix d'architecture" },
+  { step: "Maestro : choisir les tâches à lancer", off: 'attend', on: "les cartes des trois premières, sans menu (mode Code ; en mode Projet, le menu reste)" },
+  { step: "Maestro : répondre à la question d'une session", off: 'attend', on: "Maestro répond, sauf architecture ou geste qui lui revient (mode Code)" },
+  { step: "Maestro : donner la main sur une publication", off: 'attend', on: "Maestro la donne seul" },
+  { step: "Lire, chercher, ouvrir une page", off: 'avance', on: "pareil" },
+  { step: "Coder, tester, committer et pousser sa branche", off: 'avance', on: "pareil" },
+  { step: "Prendre sa ligne de roadmap (commit et push du seul fichier de la roadmap)", off: 'avance', on: "pareil" },
+  { step: "Trancher ce que les fichiers, le code ou un défaut raisonnable tranchent", off: 'avance', on: "pareil" },
+  { step: "Maestro : donner la main sur le simulateur ou un appareil", off: 'avance', on: "pareil" },
+  { step: "Poser la carte d'une tâche proposée", off: 'avance', on: "pareil" },
+]
+
+/** Une étape dans la phrase : la première lettre en minuscule, sauf « Maestro ». */
+export function autonomeStepInText(step: string): string {
+  return step.startsWith('Maestro') ? step : step.charAt(0).toLowerCase() + step.slice(1)
+}
+
+/** Le paragraphe du réglage éteint (#304), tiré de `AUTONOME_OFF_STEPS`. */
+function autonomeOffText(): string {
+  const of = (off: 'attend' | 'avance') => AUTONOME_OFF_STEPS.filter(s => s.off === off).map(s => autonomeStepInText(s.step)).join(' ; ')
+  return (
+    `- **Autonome éteint** (avec ou sans code) : le travail avance sans demander, sauf ce qui attend le oui de ${person()}. Attendent son oui : ${of('attend')}. ` +
+    `Demande-le une fois par geste, quand il est prêt (la branche prête et ses tests verts), par la question de ta boîte de fin et son bouton (« Fusionner #N », « Publier »), puis fais-le ; sous Maestro, c'est lui qui le demande. ` +
+    `Avancent sans demander : ${of('avance')}. ` +
+    `Une règle du projet qui dit de fusionner ou de publier « sans attendre » dit comment, pas quand : réglage éteint, le geste attend quand même son oui. ` +
+    `Allumé ou non, attendent toujours ${person()} : le cadrage de départ, un choix sur maquettes, lancer une session et archiver, un message en son nom ou un paiement.`
+  )
+}
+
 export function sessionPrefsText(prefs: SessionPrefs, error?: string, project?: string, design?: Design, roadmap = false): string {
   const lines: string[] = []
   if (prefs.questions) {
@@ -7759,6 +7800,9 @@ export function sessionPrefsText(prefs: SessionPrefs, error?: string, project?: 
     lines.push(
       "- **Autonome** (avec ou sans code) : " + person() + " veut que le travail avance sans attendre ses réponses, quitte à corriger après. Après le cadrage de départ (ci-dessus), quand ta recommandation est claire, suis-la au lieu de poser la question, jusqu'à la fusion, et dis en une ligne ce que tu as choisi. Plus de question, sauf un fait nouveau qui change la direction ; un choix d'architecture que le cadrage n'a pas vu en est un : un choix qui s'écrirait dans `docs/decisions.md` (un contrat entre composants, comme le format d'un fichier, d'une donnée ou d'une API ; une nouvelle dépendance ou un service ; la vision ou un non-objectif touché). Ce réglage est son autorisation durable de fusionner et de publier : la fusion d'une branche prête, la publication (release d'un plugin, déploiement, push de `main`). Ne lui demande ni de fusionner ni de publier, ni par question ni par bouton : fais-le, par la règle du projet, puis dis en une ligne ce que tu as fusionné ou publié. Une skill de publication qui demande de valider le fond avec lui : la tâche qu'il a lancée vaut cette validation. Maestro fusionne seul la branche prête d'une de ses sessions (tests verts sur la branche à jour de main, diff relu par lui, qui ne l'a pas écrit), une branche à la fois, tests rejoués sur main après chaque fusion, et donne seul la main sur une ressource unique, publication comprise, à une session à la fois. Lancer une session et archiver gardent le clic de " + person() + " : pose la carte ou le bouton, ne lance ni n'archive toi-même. Tes règles de sécurité restent au-dessus : un message envoyé en son nom ou un paiement se demandent toujours.",
     )
+  } else {
+    // Éteint (#304) : ce qui attend le oui et ce qui avance, dit au lieu de rien.
+    lines.push(autonomeOffText())
   }
   // La liste d'étapes (#84) : dite à toute session, comme les gestes ; le parent la lit pour prendre des nouvelles.
   lines.push(

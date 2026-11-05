@@ -358,7 +358,7 @@ to it.
 iOS simulator, device, database, deployment, publishing a plugin, test account: only one
 sub-session at a time, and Maestro is the one that hands it over. With the `autonome` setting, it
 hands it over on its own, without asking the person, publishing included, and the sub-session
-publishes without asking again (#105); without the setting, nothing changes.
+publishes without asking again (#105); without the setting, Maestro still hands over the simulator or a device on its own, but asks the person before handing over a publication (#304, plugin README « Autonome éteint »).
 
 1. The sub-session that needs it says so at the top of its report and ends its turn.
 2. Maestro hands it to only one, by message

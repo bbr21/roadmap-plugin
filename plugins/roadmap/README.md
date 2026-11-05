@@ -236,7 +236,7 @@ branche prête d'une de ses sessions (tests verts, à jour de `main`, diff relu 
 fois, tests rejoués après chaque fusion. Il publie seul aussi (release d'un plugin, déploiement)
 et donne seul la main sur une ressource unique (#105). Il répond lui-même à une session qui
 attend, sauf pour une question d'architecture ou un geste qui revient à Bertrand. Sans le réglage,
-la fusion et la publication attendent le clic de Bertrand.
+la fusion et la publication attendent le clic de Bertrand (tableau « Autonome éteint », #304).
 
 **Le récap au fil des fusions** (#136) : après chaque `git merge` réussi dans le dossier principal
 et chaque `release.py release`, le panneau rappelle dans le résultat de la commande de renvoyer la
@@ -578,6 +578,43 @@ dépôt (un worktree compte pour son projet), en `~/`. Un projet sans bloc prend
 fichier, sinon les valeurs par défaut ; le dossier personnel n'est pas un projet. Un fichier
 illisible laisse les réglages par défaut et le dit. La skill `reglages-session` les lit et les change.
 
+### Autonome éteint : ce qui attend (#304)
+
+Demande de Bertrand du 04/11/2026 (« si le mode auto n'est pas activé, sur la partie code, je pense
+que ça bloque le merge ou peut-être d'autres étapes »). Relevé le 05/11 : éteint, le texte des
+réglages ne disait rien de l'autonomie. Une session seule suivait la règle de son projet (« Finir un
+chantier … sans attendre ») et pouvait fusionner et publier sans demander, alors que ce guide et le
+volet disaient l'inverse ; seuls la confirmation des gestes hors du code et le menu de Maestro en
+dépendaient. Depuis, réglage éteint, toute session reçoit le paragraphe « Autonome éteint » : ce qui
+attend le oui de Bertrand, demandé une fois par geste quand il est prêt, par la question de la
+boîte de fin et son bouton (« Fusionner #N », « Publier ») ; ce qui avance sans demander ; et qu'une
+règle du projet qui dit « sans attendre » dit comment, pas quand. Sous Maestro, c'est lui qui demande.
+
+Le tableau reprend mot pour mot la liste `AUTONOME_OFF_STEPS` de `hooks/parse.ts`, dont le
+paragraphe est tiré ; `tools/test_reglages.py` refuse un écart entre les deux (une étape s'ajoute aux
+deux). La colonne Éteint s'ouvre par « attend » ou « avance ».
+
+| Étape | Éteint | Allumé |
+|---|---|---|
+| Fusionner sur main une branche prête | attend son oui, par le bouton de la boîte de fin | seul, puis dit en une ligne |
+| Publier (release d'un plugin, déploiement, push d'un code sur main) | attend son oui, par le bouton de la boîte de fin | seul, puis dit en une ligne |
+| Écrire hors du code (un service, un formulaire, une tâche planifiée) | attend son oui, une fois pour tout le geste ; lire et ouvrir la page avancent | sans confirmation, puis dit en une ligne |
+| Trancher un choix qui lui revient, vu en cours de route | attend sa réponse, par le formulaire | sa recommandation suivie, sauf un choix d'architecture |
+| Maestro : choisir les tâches à lancer | attend son choix, par le menu « Je lance lesquelles ? » | les cartes des trois premières, sans menu (mode Code ; en mode Projet, le menu reste) |
+| Maestro : répondre à la question d'une session | attend sa réponse, dans la session | Maestro répond, sauf architecture ou geste qui lui revient (mode Code) |
+| Maestro : donner la main sur une publication | attend son oui | Maestro la donne seul |
+| Lire, chercher, ouvrir une page | avance | pareil |
+| Coder, tester, committer et pousser sa branche | avance | pareil |
+| Prendre sa ligne de roadmap (commit et push du seul fichier de la roadmap) | avance : c'est du suivi, pas une publication | pareil |
+| Trancher ce que les fichiers, le code ou un défaut raisonnable tranchent | avance, dit en une ligne (cap du brief du ▶) | pareil |
+| Maestro : donner la main sur le simulateur ou un appareil | avance : Maestro la donne seul, une session à la fois | pareil |
+| Poser la carte d'une tâche proposée | avance : la carte est la question, Start reste à son clic | pareil |
+
+Allumé ou non, attendent toujours Bertrand : le cadrage de départ, un choix sur maquettes, lancer une
+session et archiver, un message en son nom ou un paiement. En mode Projet, rien ne fusionne : les
+lignes de fusion ne s'y appliquent pas ; l'envoi à un tiers reste au oui de Bertrand dans les deux
+réglages.
+
 ### Le volet Réglages
 
 Demande de Bertrand du 28/10/2026 (#81) : voir chaque réglage et le changer d'un clic, sans
@@ -703,6 +740,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.210.0 (2026-11-05)** : reglages-session : réglage autonome éteint, la fusion, la publication et les gestes hors du code attendent le oui ; tableau « Autonome éteint » (#304)
 - **0.209.0 (2026-11-05)** : mockups : un rendu ne se code qu'après le oui sur la maquette exacte, le plugin rappelle une édition de rendu faite sans oui (#322)
 - **0.208.0 (2026-11-05)** : panneau : la file des tests lourds se voit dans le bloc En cours de Maestro (#321) ; le crayon d'un axe change sa couleur et son nom en place, et le doctor contrôle la clé axes (#286)
 - **0.207.0 (2026-11-05)** : panneau : la fiche d'une tâche close dit sa durée et où ce temps est passé (travail, attente de BBR, file des tests, Mac chargé, attente de fusion), en petit donut cliquable (#314)
