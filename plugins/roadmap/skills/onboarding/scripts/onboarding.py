@@ -367,7 +367,7 @@ def variables(r, aujourdhui=None):
                                                                   "`%s`" % verif if verif else "la vérification s'écrit ici dès qu'elle existe"))
     etapes.append("Ménage : dans le dossier principal, la ligne de ROADMAP part en tête de ROADMAP-fait avec "
                   "`fait:AAAA-MM-JJ` et ce qui a été livré, son bilan s'ajoute à `%sROADMAP-bilans.csv`, le tout committé%s ; "
-                  "puis `git -C %s worktree remove <dossier>` et `branch -d <branche>`%s. Un worktree créé par l'app se laisse à l'app." % (
+                  "puis `git -C %s worktree remove <dossier>` et `branch -d <branche>`%s. Un worktree créé par l'app se laisse à l'app : sa branche part seule après l'archivage de sa session (option « Branches nettoyées » du plugin roadmap)." % (
                       rm, " et poussé" if pousse else "", dossier,
                       " (et la branche distante si elle a été poussée)" if pousse else ""))
     etapes += [e.strip() for e in r.get("fin_en_plus") or [] if e.strip()]

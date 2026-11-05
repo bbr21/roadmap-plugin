@@ -3683,7 +3683,7 @@ export function sessionTitleKind(title: string): 'check' | 'work' {
 }
 
 /** La session d'une tâche retrouvée dans la liste de l'app (#206), archivée ou non. */
-export type TaskSessionRow = { sessionId: string; title: string; link?: string; isArchived: boolean }
+export type TaskSessionRow = { sessionId: string; title: string; link?: string; isArchived: boolean; branch?: string }
 
 /**
  * La session qui a mené une tâche (#206), parmi les rangées de `list_sessions` (archivées comprises) :
@@ -3711,6 +3711,8 @@ export function taskSessionRow(task: { id?: string; branche?: string }, rows: re
     title: best.title,
     ...(typeof best.link === 'string' ? { link: best.link } : {}),
     isArchived: best.isArchived === true,
+    // #313 : la branche de la session, que la réouverture recrée si le ménage l'a supprimée.
+    ...(typeof best.branch === 'string' && best.branch !== '' ? { branch: best.branch } : {}),
   }
 }
 
@@ -9844,4 +9846,73 @@ export function reportRefusal(markdown: string): string {
     '',
     markdown,
   ].join('\n')
+}
+
+/**
+ * Le ménage des branches (#313, BBR le 2026-11-04) : les branches fusionnées que rien ne tient partent,
+ * en local et sur GitHub. Rien ne tient une branche quand aucun worktree ne l'a (une session encore là),
+ * qu'aucune ligne ouverte ne la nomme et que sa pointe n'est pas celle de la base (une branche recréée
+ * pour une reprise attend son worktree). `local` et `remote` ne portent que des branches déjà fusionnées
+ * (`remote` dans la base de GitHub). Un nom qui commence par un tiret reste : git le lirait comme une option.
+ */
+export type BranchSweepInput = {
+  base: string
+  current: string
+  baseTip: string
+  local: ReadonlyMap<string, string>
+  remote: ReadonlyMap<string, string>
+  held: readonly string[]
+  open: readonly string[]
+}
+
+export function branchesToPrune(i: BranchSweepInput): { local: string[]; remote: string[]; kept: { name: string; reason: string }[] } {
+  const kept: { name: string; reason: string }[] = []
+  const reasonOf = (name: string, tip: string): string | undefined =>
+    name.startsWith('-') ? 'nom refusé'
+      : name === i.base ? 'base'
+      : name === i.current ? 'courante'
+        : i.held.includes(name) ? 'worktree'
+          : i.open.includes(name) ? 'ligne ouverte'
+            : tip === i.baseTip ? 'pointe de main'
+              : undefined
+  const local: string[] = []
+  for (const [name, tip] of i.local) {
+    const reason = reasonOf(name, tip)
+    if (reason) kept.push({ name, reason })
+    else local.push(name)
+  }
+  const remote = [...i.remote].filter(([name, tip]) => reasonOf(name, tip) === undefined).map(([name]) => name)
+  return { local: local.sort(), remote: remote.sort(), kept }
+}
+
+/** Les branches que tiennent les worktrees, lues de `git worktree list --porcelain` (détachés exclus). */
+export function parseWorktreeBranches(porcelain: string): string[] {
+  return porcelain.split('\n').flatMap(l => (l.startsWith('branch refs/heads/') ? [l.slice('branch refs/heads/'.length).trim()] : []))
+}
+
+/** Les pointes de `git for-each-ref --format='%(objectname) %(refname)'` sous un préfixe, ôté ; `HEAD` ignoré. */
+export function parseRefTips(text: string, prefix: string): Map<string, string> {
+  const tips = new Map<string, string>()
+  for (const line of text.split('\n')) {
+    const m = /^(\S+) (\S+)$/.exec(line.trim())
+    if (!m || !m[2]!.startsWith(prefix)) continue
+    const name = m[2]!.slice(prefix.length)
+    if (name !== 'HEAD' && name !== '') tips.set(name, m[1]!)
+  }
+  return tips
+}
+
+/** Les branches que nomment les lignes ouvertes (`branche:`) : le ménage ne les touche jamais. */
+export function openBranchesOf(tasks: readonly { done?: boolean; branche?: string }[]): string[] {
+  return tasks.flatMap(t => (!t.done && t.branche ? [t.branche] : []))
+}
+
+/** La ligne qui dit un passage : ce qui est parti, sur le Mac et sur GitHub, et ce que git a refusé. */
+export function sweepNote(r: { local: readonly string[]; remote: readonly string[]; failed: readonly string[] }): string {
+  const parts: string[] = []
+  const n = r.local.length
+  if (n > 0) parts.push(n === 1 ? '1 branche fusionnée supprimée' : `${n} branches fusionnées supprimées`)
+  if (r.remote.length > 0) parts.push(n > 0 ? `${r.remote.length} sur GitHub` : `${r.remote.length} sur GitHub supprimée${r.remote.length > 1 ? 's' : ''}`)
+  if (r.failed.length > 0) parts.push(`${r.failed.length} branche${r.failed.length > 1 ? 's' : ''} gardée${r.failed.length > 1 ? 's' : ''} sur refus : ${r.failed.slice(0, 3).join(', ')}`)
+  return parts.join(', ')
 }

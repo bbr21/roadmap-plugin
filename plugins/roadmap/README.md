@@ -644,6 +644,7 @@ la carte est reposée sans lui et la session lancée demande elle-même le bypas
 la carte d'approbation de l'app ; il faut d'abord activer le bypass dans Réglages → Claude Code).
 Depuis une session en mode auto, l'option ne vaut pas (#248) : le contrôle du mode auto refuse un agent
 qui doit se relever en bypass, la carte part donc sans le mode ni la consigne.
+`pruneBranches` (« Branches nettoyées », défaut oui, #313) : dans un projet de code, les branches fusionnées sur main que rien ne tient (ni un worktree, ni une ligne ouverte, ni la pointe de main) partent, sur le Mac par `git branch -d` et sur GitHub par un seul `git push origin :refs/heads/…`, après l'archivage d'une session et au démarrage d'une session (au plus toutes les 10 minutes) ; « Rouvrir la session » recrée la branche depuis main.
 `axisPill` (« Axe en pastille », défaut non depuis #177 ; #156) : allumé, chaque tâche ouverte de la
 liste porte son axe en pastille grise, à droite du titre, avant l'âge ; jamais dans « En cours » (le bloc
 de Maestro ou le filtre, où le carré d'axe suffit et le titre garde sa place), ni sous un axe choisi, ni
@@ -700,6 +701,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.202.0 (2026-11-04)** : panneau, tools : les branches fusionnées que rien ne tient sont supprimées, sur le Mac et sur GitHub, après l'archivage d'une session et au démarrage (option Branches nettoyées) ; la réouverture recrée la branche ; release.py ne committe plus que ses fichiers (#313, #287)
 - **0.201.0 (2026-11-04)** : panneau : une tâche close rouvre sa session par l'icône d'archive de la bande Done, avec une confirmation, même sur une très longue liste de sessions ; le brief de l'arbre relit aussi cette liste (#302)
 - **0.200.0 (2026-11-04)** : tasks, maestro : un sujet, une tâche et une mère au titre court tenus par des questions de write (#288) ; la note d'un ajout et la raison d'un abandon dans le libellé (#285) ; à la fin d'une étude, une task proposée par étape recommandée (#293)
 - **0.199.1 (2026-11-04)** : tasks, onboarding : l'ancienne échelle de priorité (prio:1, 2, 3) est refusée à l'écriture et au contrôle, après la migration des roadmaps à prio:oui

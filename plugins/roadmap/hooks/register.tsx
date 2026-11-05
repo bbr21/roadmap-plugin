@@ -352,6 +352,11 @@ import {
   taskSessionIndex,
   taskTitle,
   reopenOutcome,
+  branchesToPrune,
+  openBranchesOf,
+  parseRefTips,
+  parseWorktreeBranches,
+  sweepNote,
   type TaskSessionRow,
   sessionTitleIn,
   sessionParentIn,
@@ -747,7 +752,7 @@ function axisCount(tasks: Task[], axis: string): number {
 }
 
 /** Les réglages du plugin (userConfig), relus à chaque chargement du module. */
-let settings = { me: [] as string[], autoOpen: true, titleModel: 'sonnet', capture: true, theme: 'auto', launchEffort: 'high', launchBypass: false, axisPill: false, priorities: false, dateFormat: 'us', account: 'auto' as Account }
+let settings = { me: [] as string[], autoOpen: true, titleModel: 'sonnet', capture: true, theme: 'auto', launchEffort: 'high', launchBypass: false, pruneBranches: true, axisPill: false, priorities: false, dateFormat: 'us', account: 'auto' as Account }
 
 /**
  * La palette du panneau. Le mod ne reçoit pas l'apparence de l'app : il lit le thème de Claude
@@ -3901,6 +3906,8 @@ async function archiveSession($: EngineInterface, key: string, entry: LiveEntry)
     // bande de Maestro la compte archivée avant la relecture des sessions (#174).
     archivedSessionIds.add(entry.sessionId)
     liveStatus.set(key, 'closed')
+    // #313 : la session archivée libère son worktree ; sa branche fusionnée part au ménage qui suit.
+    sweepAfterArchive($, await sourceNow($).catch(() => undefined))
     for (const [k, v] of sessionMatches) if (v.sessionId === entry.sessionId) sessionMatches.delete(k)
     await setView($, () => ({ openNote: `Session « ${entry.title} » archivée.` }))
     await update($, liveVersionAtom, v => v + 1)
@@ -4023,6 +4030,92 @@ async function askReopen($: EngineInterface, key: string): Promise<void> {
   await setView($, () => ({ reopenAsk: reopenAskNow }))
 }
 
+/** Le relevé du dernier ménage des branches (#313), au store : heure, branches parties, refus. */
+const BRANCH_SWEEP_KEY = 'branch-sweep'
+/** Au démarrage, un ménage au plus toutes les 10 minutes par projet ; après un archivage, toujours. */
+const BRANCH_SWEEP_EVERY_MS = 10 * 60_000
+/** Le délai entre un archivage et son ménage : l'app libère le worktree de la session une seconde après. */
+const BRANCH_SWEEP_DELAYS_MS = [5_000, 30_000] as const
+let sweeping = false
+
+/**
+ * Le ménage des branches (#313) : en mode code, l'option `pruneBranches` allumée, les branches fusionnées
+ * dans la base que rien ne tient partent du Mac (`git branch -d`, qui refuse encore une branche non
+ * fusionnée) puis de GitHub (un seul `git push origin --delete`). Décision : `branchesToPrune`. Rend la
+ * ligne qui le dit, vide quand rien n'est parti.
+ */
+async function sweepBranches($: EngineInterface, source: Source, why: 'start' | 'archive'): Promise<string> {
+  if (!settings.pruneBranches || sweeping || projectSettings(source).travail !== 'code') return ''
+  sweeping = true
+  try {
+    const now = await $.clock.now()
+    if (why === 'start') {
+      const last = (await $.store.get(BRANCH_SWEEP_KEY).catch(() => undefined)) as { at?: number } | undefined
+      if (typeof last?.at === 'number' && now - last.at < BRANCH_SWEEP_EVERY_MS) return ''
+    }
+    const run = (dir: string, ...args: string[]) => $.process.run(['git', '-C', dir, ...args], { timeoutMs: 60_000 })
+    const listed = await run(source.root ?? source.dir, 'worktree', 'list', '--porcelain')
+    if (listed.exitCode !== 0) return ''
+    const main = /^worktree (.+)$/m.exec(listed.stdout)?.[1]?.trim()
+    if (!main) return ''
+    const current = (await run(main, 'rev-parse', '--abbrev-ref', 'HEAD')).stdout.trim()
+    const base = ['main', 'master'].find(b => b === current)
+    if (!base) return ''
+    const baseTip = (await run(main, 'rev-parse', '--verify', '--quiet', `refs/heads/${base}`)).stdout.trim()
+    const hasOrigin = (await run(main, 'remote')).stdout.split('\n').some(r => r.trim() === 'origin')
+    if (hasOrigin) await run(main, 'fetch', '--prune', '--quiet', 'origin')
+    const format = '--format=%(objectname) %(refname)'
+    const refs = await run(main, 'for-each-ref', '--merged', base, format, 'refs/heads')
+    if (refs.exitCode !== 0 || !baseTip) return ''
+    // Sur GitHub, une branche ne part que fusionnée dans la base de GitHub elle-même : un main local en
+    // avance, pas encore poussé, ne suffit pas.
+    const remoteRefs = hasOrigin ? await run(main, 'for-each-ref', '--merged', `origin/${base}`, format, 'refs/remotes/origin') : undefined
+    const open = await load($, files(source).open, 'ROADMAP.md')
+    const plan = branchesToPrune({
+      base,
+      current,
+      baseTip,
+      local: parseRefTips(refs.stdout, 'refs/heads/'),
+      remote: remoteRefs?.exitCode === 0 ? parseRefTips(remoteRefs.stdout, 'refs/remotes/origin/') : new Map(),
+      held: parseWorktreeBranches(listed.stdout),
+      open: typeof open === 'string' ? [] : openBranchesOf(open),
+    })
+    if (typeof open === 'string') return '' // roadmap illisible : on ne sait pas ce que tiennent les lignes ouvertes
+    const local: string[] = []
+    const failed: string[] = []
+    for (const name of plan.local) ((await run(main, 'branch', '-d', '--', name)).exitCode === 0 ? local : failed).push(name)
+    let remote: string[] = []
+    if (plan.remote.length > 0) {
+      // Des refspecs complets (`:refs/heads/<nom>`) : un nom ne se lit jamais comme une option.
+      const pushed = await run(main, 'push', 'origin', ...plan.remote.map(n => `:refs/heads/${n}`))
+      remote = pushed.exitCode === 0 ? plan.remote : []
+      if (pushed.exitCode !== 0) failed.push(...plan.remote.map(n => `origin/${n}`))
+    }
+    await $.store.set(BRANCH_SWEEP_KEY, { at: now, why, local, remote, failed, kept: plan.kept.length }).catch(() => undefined)
+    return sweepNote({ local, remote, failed })
+  } catch {
+    return ''
+  } finally {
+    sweeping = false
+  }
+}
+
+/** Le ménage qui suit un archivage (#313) : après la libération du worktree, puis une seconde fois plus tard. */
+function sweepAfterArchive($: EngineInterface, source: Source | undefined): void {
+  if (!source || !settings.pruneBranches || projectSettings(source).travail !== 'code') return
+  for (const ms of BRANCH_SWEEP_DELAYS_MS) {
+    try {
+      $.clock.after(ms, () => {
+        void sweepBranches($, source, 'archive').then(note => {
+          if (note) $.ui.toast(note)
+        })
+      })
+    } catch {
+      // horloge indisponible : le démarrage suivant fera le ménage
+    }
+  }
+}
+
 /**
  * « Rouvrir la session » d'une tâche close (#206 ; confirmée depuis #302) : désarchive sa session, puis l'ouvre comme
  * « Ouvrir la session » (le lien, quand l'app ne la range pas d'ici). Un refus s'écrit sous la fiche.
@@ -4030,6 +4123,10 @@ async function askReopen($: EngineInterface, key: string): Promise<void> {
 async function reopenSession($: EngineInterface, source: Source, t: Task, row: TaskSessionRow, now: number): Promise<void> {
   reopenAskNow = ''
   await setView($, () => ({ openNote: '', reopenAsk: '' }))
+  // #313 : l'app rattache un worktree à la branche de la session par son nom ; supprimée par le ménage,
+  // elle se recrée d'abord depuis la base, où son travail est déjà fusionné.
+  const branch = row.branch ?? t.branche
+  if (branch) await restoreBranch($, source, branch)
   let outcome: ReturnType<typeof reopenOutcome>
   try {
     outcome = reopenOutcome(await $.tool.call({ tool: UNARCHIVE_SESSION_TOOL, session_id: row.sessionId }))
@@ -4041,6 +4138,29 @@ async function reopenSession($: EngineInterface, source: Source, t: Task, row: T
   taskSessions.set(`${source.name}:${t.id}`, { row: { ...row, isArchived: false }, at: now })
   await update($, liveVersionAtom, v => v + 1)
   await openSession($, { sessionId: row.sessionId, startedAt: now, title: row.title, ...(row.link ? { link: row.link } : {}) })
+}
+
+/**
+ * La branche d'une session qu'on rouvre (#313) : présente, rien ; absente (le ménage l'a supprimée),
+ * recréée à la pointe de la base (`main`, sinon `master`) dans le dossier principal. Un nom qui se lirait
+ * comme une option n'est jamais passé à git. Un échec n'empêche pas la réouverture.
+ */
+async function restoreBranch($: EngineInterface, source: Source, name: string): Promise<void> {
+  if (name.startsWith('-')) return
+  try {
+    const run = (dir: string, ...args: string[]) => $.process.run(['git', '-C', dir, ...args], { timeoutMs: 30_000 })
+    const dir = source.root ?? source.dir
+    const listed = await run(dir, 'worktree', 'list', '--porcelain')
+    const main = (listed.exitCode === 0 ? /^worktree (.+)$/m.exec(listed.stdout)?.[1]?.trim() : undefined) || dir
+    if ((await run(main, 'show-ref', '--verify', '--quiet', `refs/heads/${name}`)).exitCode === 0) return
+    for (const base of ['main', 'master']) {
+      if ((await run(main, 'rev-parse', '--verify', '--quiet', `refs/heads/${base}`)).exitCode !== 0) continue
+      await run(main, 'branch', name, base)
+      return
+    }
+  } catch {
+    // git indisponible : l'app dira elle-même si la branche manque
+  }
 }
 
 /** Un /compact lancé par la bande et pas encore répondu : un second clic n'en lance pas un autre (#197). */
@@ -5187,6 +5307,7 @@ export const register: Register = (on, options) => {
     theme: typeof options.theme === 'string' && options.theme !== '' ? options.theme : 'auto',
     launchEffort: typeof options.launchEffort === 'string' && options.launchEffort !== '' ? options.launchEffort : 'high',
     launchBypass: options.launchBypass === true,
+    pruneBranches: typeof options.pruneBranches === 'boolean' ? options.pruneBranches : true,
     axisPill: typeof options.axisPill === 'boolean' ? options.axisPill : false,
     priorities: options.priorities === true,
     dateFormat: options.dateFormat === 'fr' ? 'fr' : 'us',
@@ -5254,6 +5375,10 @@ export const register: Register = (on, options) => {
       void matchSessions($, source)
       // #277 : les étapes de journée passées avancent, une fois par jour, sans retenir le démarrage.
       void rollDayStepsOnStart($, source).catch(() => undefined)
+      // #313 : le filet du ménage des branches, au plus toutes les 10 minutes, sans retenir le démarrage.
+      void sweepBranches($, source, 'start').then(note => {
+        if (note) $.ui.toast(note)
+      })
       await startCapture($, source)
       // Un rechargement du module (mise à jour, mod en développement) garde le panneau dessiné, avec
       // les boutons de l'ancien module : leurs clics tombaient dans le vide (« ui_press not handled »,
@@ -5485,6 +5610,16 @@ export const register: Register = (on, options) => {
       return next(e)
     })
   }
+  // #313 : une session qui s'archive (« Oui, archiver »), ou qui archive une autre session : le ménage
+  // des branches suit, si la session vit encore ; sinon le démarrage suivant s'en charge.
+  on('tool.call', { tool: ARCHIVE_SESSION_TOOL }, async ($, e, next) => {
+    const result = await next(e)
+    const ran = result as { deny?: string; isError?: boolean }
+    if (next.origin.plugin === 'engine' && !fromAgent(e) && ran.deny === undefined && !ran.isError) {
+      sweepAfterArchive($, await sourceNow($).catch(() => undefined))
+    }
+    return result
+  })
   // #292 : le module que charge le visualiseur dit si le widget suivant est une maquette.
   on('tool.call', { tool: VISUALIZE_README }, ($, e, next) => {
     const modules = (e as { modules?: unknown }).modules

@@ -1,6 +1,6 @@
 {
   "name": "roadmap",
-  "version": "0.201.0",
+  "version": "0.202.0",
   "description": "Panneau Claude Code à côté du chat : la roadmap du projet de la session, filtrable, avec le détail d'une tâche et son lancement dans une nouvelle session",
   "author": {
     "name": "Bertrand Fargheon"
@@ -87,6 +87,12 @@
       "title": "Lancer en bypass",
       "description": "Les sessions lancées depuis le panneau, ou par une carte que pose Claude (Maestro compris), demandent le mode bypass : plus aucune demande de permission. L'app ne l'accorde que si la session d'où tu lances y est déjà ; sinon la session lancée te le demande d'un clic à son démarrage. Éteint : elles prennent le mode de la session d'où tu lances.",
       "default": false
+    },
+    "pruneBranches": {
+      "type": "boolean",
+      "title": "Branches nettoyées",
+      "description": "Dans un projet de code, les branches déjà fusionnées sur main que plus rien ne tient (ni une session encore ouverte, ni une ligne ouverte de la roadmap) sont supprimées, sur le Mac et sur GitHub : après l'archivage d'une session, et au démarrage d'une session (au plus toutes les 10 minutes). « Rouvrir la session » d'une tâche close recrée sa branche depuis main. Éteint : les branches restent.",
+      "default": true
     },
     "account": {
       "type": "string",

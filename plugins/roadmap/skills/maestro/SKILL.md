@@ -440,6 +440,12 @@ The merge itself:
   band's icon. The panel refuses any end box that asks to archive other sessions (« Archiver
   #A ? », « Archive-les »), Maestro's included; Maestro then posts its box again without it, or
   none.
+- **Branches** (#313): with the `pruneBranches` option on (default), Maestro deletes no branch itself.
+  The panel deletes the merged branches that nothing holds (no worktree, no open line, not the tip of
+  `main`), on the Mac and on GitHub, a few seconds after a session is archived and at session start
+  (at most every 10 minutes). A task's branch therefore goes once its session is archived, never
+  before: its worktree holds it until then. « Rouvrir la session » recreates a missing branch from
+  `main` before unarchiving. Option off: the closing step of the project's rules deletes it.
 - **Archiving closes nothing, and loses nothing** (#124): a task's line is ticked only by Maestro,
   after the merge. A sub-session whose line is still open does not offer its archiving (the panel
   refuses its end box), and its conclusion says « #N close par Maestro le AAAA-MM-JJ » once the
