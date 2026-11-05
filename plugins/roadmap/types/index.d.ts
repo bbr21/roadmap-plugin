@@ -131,6 +131,14 @@ export type View = {
   batchMonth?: string
   /** Le bilan du dernier lot (#316), ou `…` pendant qu'il s'écrit ; vide ou absent sinon. */
   batchNote?: string
+  /** L'axe en édition (#286), `<legend|head>:<axe>` : sa ligne devient l'édition ; vide ou absent : aucune. */
+  axisEdit?: string
+  /** Le nom tapé dans l'édition de l'axe (#286) ; absent : son nom affiché. */
+  axisDraft?: string
+  /** La couleur choisie dans l'édition de l'axe (#286), un nom d'`AXIS_NAMES` ; vide ou absente : la sienne. */
+  axisPick?: string
+  /** L'enregistrement de l'axe en cours (`…`) ou son refus (#286) ; vide ou absent sinon. */
+  axisNote?: string
 }
 
 /** Une session lancée depuis le panneau, gardée dans `$.store` par empreinte du libellé de sa task. */

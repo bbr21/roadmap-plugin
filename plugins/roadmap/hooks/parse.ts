@@ -120,7 +120,20 @@ export type Source = {
   mission?: MissionStyle
   /** `a_preuve` (#277) : les `ref:` des coquilles dont les étapes de semaine attendent la preuve, sans report. */
   aPreuve?: string[]
+  /** `axes` (#286) : la couleur et le libellé choisis pour un axe, par son slug ; sans, le rang et `axisLabel`. */
+  axes?: Record<string, AxisStyle>
 }
+
+/**
+ * Les noms des couleurs d'axe (#286), dans l'ordre de `axes` des palettes (`tokens.ts`) : ce qu'écrit la clé
+ * `axes` de `.claude/roadmap.json` (`"admin": { "couleur": "violet" }`). Un nom vaut ses deux tons, sombre et
+ * clair. Ici et non dans tokens.ts : `design/` lit parse.ts sous Node, qui ne suit pas un import sans extension.
+ */
+export const AXIS_NAMES = ['bleu', 'orange', 'vert', 'jaune', 'violet', 'turquoise', 'rose', 'gris'] as const
+export type AxisColorName = (typeof AXIS_NAMES)[number]
+
+/** Ce qu'un axe a de choisi (#286) : une des couleurs nommées du design system, un libellé libre. */
+export type AxisStyle = { color?: AxisColorName; label?: string }
 
 /** `ecriture` de `.claude/roadmap.json` (#158) : sans elle, les skills du plugin écrivent elles-mêmes. */
 export type Ecriture = { outil: string; consigne: string }
@@ -1983,14 +1996,21 @@ export function parseSources(text: string): Source[] {
   const data: unknown = JSON.parse(text)
   const list = (data as { sources?: unknown }).sources
   if (!Array.isArray(list)) return []
-  return list.filter(
-    (s): s is Source =>
-      typeof s === 'object' &&
-      s !== null &&
-      typeof (s as Source).name === 'string' &&
-      typeof (s as Source).dir === 'string' &&
-      Array.isArray((s as Source).match),
-  )
+  return list
+    .filter(
+      (s): s is Source =>
+        typeof s === 'object' &&
+        s !== null &&
+        typeof (s as Source).name === 'string' &&
+        typeof (s as Source).dir === 'string' &&
+        Array.isArray((s as Source).match),
+    )
+    .map(s => {
+      // `axes` (#286) s'écrit en français dans le fichier : relu comme celui de `.claude/roadmap.json`.
+      const { axes: raw, ...rest } = s as Source & { axes?: unknown }
+      const axes = axisStylesOf(raw)
+      return axes ? { ...rest, axes } : rest
+    })
 }
 
 /**
@@ -2225,6 +2245,155 @@ export function axisOrder(open: Task[], done: Task[]): string[] {
   const order = countBy(open, t => t.axis).map(([a]) => a)
   for (const a of axesOf(done)) if (!order.includes(a)) order.push(a)
   return order
+}
+
+/** Le libellé d'un axe : 40 caractères au plus, sur une ligne (#286). */
+const AXIS_LABEL_MAX = 40
+
+/**
+ * `axes` de la config (#286), `{ "admin": { "couleur": "violet", "nom": "Papiers" } }` : une clé qui n'est pas
+ * un slug d'axe, une couleur inconnue ou un nom vide s'ignorent ; rien de valable, `undefined`.
+ */
+export function axisStylesOf(raw: unknown): Record<string, AxisStyle> | undefined {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return undefined
+  const out: Record<string, AxisStyle> = {}
+  for (const [axis, v] of Object.entries(raw)) {
+    if (!AXIS_RE.test(axis) || typeof v !== 'object' || v === null) continue
+    const { couleur, nom } = v as { couleur?: unknown; nom?: unknown }
+    const color = AXIS_NAMES.find(n => n === couleur)
+    const label = typeof nom === 'string' ? nom.replace(/\s+/g, ' ').trim().slice(0, AXIS_LABEL_MAX) : ''
+    const style: AxisStyle = { ...(color ? { color } : {}), ...(label !== '' ? { label } : {}) }
+    if (Object.keys(style).length > 0) out[axis] = style
+  }
+  return Object.keys(out).length > 0 ? out : undefined
+}
+
+/** Le slug d'un libellé d'axe (#286) : minuscules, sans accent, un tiret pour tout le reste, sans tiret aux bords. */
+export function axisSlug(label: string): string {
+  return label
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+}
+
+/**
+ * Le rang de couleur de chaque axe (#286) : sa couleur choisie, sinon, dans l'ordre de `order`, la
+ * première que personne n'a choisie (ni prise avant lui), pour qu'un choix ne double pas une autre couleur.
+ */
+export function axisPalette(order: readonly string[], styles: Readonly<Record<string, AxisStyle>> | undefined): Map<string, number> {
+  const out = new Map<string, number>()
+  const taken = new Set<number>()
+  for (const a of order) {
+    const chosen = styles?.[a]?.color
+    if (chosen !== undefined) {
+      out.set(a, AXIS_NAMES.indexOf(chosen))
+      taken.add(AXIS_NAMES.indexOf(chosen))
+    }
+  }
+  let next = 0
+  for (const a of order) {
+    if (out.has(a)) continue
+    while (taken.has(next % AXIS_NAMES.length) && taken.size < AXIS_NAMES.length) next++
+    out.set(a, next % AXIS_NAMES.length)
+    taken.add(next % AXIS_NAMES.length)
+    next++
+  }
+  return out
+}
+
+/** Le nom affiché d'un axe (#286) : son libellé choisi, sinon `axisLabel`. */
+export function axisName(axis: string, styles: Readonly<Record<string, AxisStyle>> | undefined): string {
+  return styles?.[axis]?.label ?? axisLabel(axis)
+}
+
+/** Le slug d'axe d'une ligne de tâche, et où il se trouve dans la ligne ; pas une tâche : `undefined`. */
+function lineAxis(line: string): { axis: string; at: number } | undefined {
+  const m = LINE_RE.exec(line)
+  if (!m) return undefined
+  const block = `\`[${m[3] ?? ''}]\``
+  const at = line.lastIndexOf(block)
+  const axis = (m[3] ?? '').split('|')[0]?.trim() ?? ''
+  return at < 0 || !AXIS_RE.test(axis) ? undefined : { axis, at: at + 2 + (m[3] ?? '').indexOf(axis) }
+}
+
+/** Les lignes d'un texte dont l'axe change, et la déclaration d'en-tête ; `count` : les tâches touchées. */
+function renameAxisIn(text: string, from: string, to: string): { text: string; count: number } {
+  let count = 0
+  let inFence = false
+  let declared = false
+  const lines = text.split('\n').map(line => {
+    if (FENCE_RE.test(line)) inFence = !inFence
+    if (inFence) return line
+    if (!declared && AXES_LINE_RE.test(line.trim())) {
+      declared = true
+      return line.replace(new RegExp(`\`${from}\``, 'g'), `\`${to}\``)
+    }
+    const found = lineAxis(line)
+    if (!found || found.axis !== from) return line
+    count++
+    return line.slice(0, found.at) + to + line.slice(found.at + from.length)
+  })
+  return { text: lines.join('\n'), count }
+}
+
+/** Les axes d'un texte : portés par une ligne ou déclarés dans l'en-tête. */
+function axesIn(text: string | undefined): Set<string> {
+  const out = new Set<string>(text ? declaredAxes(text) : [])
+  for (const line of (text ?? '').split('\n')) {
+    const found = lineAxis(line)
+    if (found) out.add(found.axis)
+  }
+  return out
+}
+
+/**
+ * Renomme un axe (#286) dans les deux fichiers de la roadmap : le premier champ des lignes ouvertes et
+ * faites, et la déclaration d'en-tête. Refusé : un slug vide ou mal formé, ou celui d'un autre axe.
+ */
+export function renameAxisInTexts(open: string, done: string | undefined, from: string, to: string): { open: string; done?: string; lines: number } | { error: string } {
+  if (!AXIS_RE.test(to)) return { error: 'Ce nom ne donne aucun slug : mets-y au moins une lettre ou un chiffre.' }
+  if (to !== from && (axesIn(open).has(to) || axesIn(done).has(to))) return { error: `L'axe « ${to} » existe déjà : choisis un autre nom.` }
+  if (to === from) return { open, ...(done !== undefined ? { done } : {}), lines: 0 }
+  const a = renameAxisIn(open, from, to)
+  const b = done !== undefined ? renameAxisIn(done, from, to) : undefined
+  return { open: a.text, ...(b ? { done: b.text } : {}), lines: a.count + (b?.count ?? 0) }
+}
+
+/** Le style d'un axe en clés de fichier (#286) : `couleur`, `nom`. */
+function axisStyleJson(style: AxisStyle): Record<string, string> {
+  return { ...(style.color ? { couleur: style.color } : {}), ...(style.label ? { nom: style.label } : {}) }
+}
+
+/** `axes` d'un objet de config réécrit (#286) : l'ancienne clé ôtée, la nouvelle posée, les autres gardées. */
+function withAxesKey(data: Record<string, unknown>, o: { from: string; to: string; style: AxisStyle }): Record<string, unknown> {
+  const axes = typeof data.axes === 'object' && data.axes !== null && !Array.isArray(data.axes) ? { ...(data.axes as Record<string, unknown>) } : {}
+  delete axes[o.from]
+  const style = axisStyleJson(o.style)
+  if (Object.keys(style).length > 0) axes[o.to] = style
+  else delete axes[o.to]
+  const next = { ...data }
+  if (Object.keys(axes).length > 0) next.axes = axes
+  else delete next.axes
+  return next
+}
+
+/** `.claude/roadmap.json` réécrit pour un axe (#286), créé avec la seule clé `axes` s'il n'existe pas. */
+export function withAxisStyle(config: string | undefined, o: { from: string; to: string; style: AxisStyle }): string {
+  const data: unknown = config === undefined || config.trim() === '' ? {} : JSON.parse(config)
+  if (typeof data !== 'object' || data === null || Array.isArray(data)) throw new Error("ce n'est pas un objet JSON")
+  return `${JSON.stringify(withAxesKey(data as Record<string, unknown>, o), null, 2)}\n`
+}
+
+/** `~/.claude/roadmap-perso.json` réécrit pour un axe de la source `name` (#286), les autres entrées intactes. */
+export function withPersoAxisStyle(perso: string, name: string, o: { from: string; to: string; style: AxisStyle }): string {
+  const data: unknown = JSON.parse(perso)
+  if (typeof data !== 'object' || data === null || Array.isArray(data)) throw new Error("ce n'est pas un objet JSON")
+  const d = data as { sources?: unknown }
+  if (!Array.isArray(d.sources) || !d.sources.some(s => (s as { name?: unknown })?.name === name)) throw new Error(`aucune source « ${name} »`)
+  const sources = d.sources.map(s => ((s as { name?: unknown })?.name === name ? withAxesKey(s as Record<string, unknown>, o) : s))
+  return `${JSON.stringify({ ...d, sources }, null, 2)}\n`
 }
 
 // Le format des dates du panneau (#201, choix de Bertrand) : `us` par défaut, « Nov 4 » et l'heure
@@ -5869,6 +6038,7 @@ export function parseProjectConfig(text: string, base: string, defaults: { name:
   // #191 : `true` vaut « Publier » ; une chaîne d'une ligne nomme l'étape (« Déployer le VPS »).
   // #277 : des `ref:` de coquilles ; une valeur qui n'est pas une chaîne d'une ligne s'ignore.
   const aPreuve = Array.isArray(c.a_preuve) ? c.a_preuve.map(path).filter((x): x is string => x !== undefined) : []
+  const axes = axisStylesOf((data as { axes?: unknown }).axes)
   const publier = c.publier === true ? 'Publier' : typeof c.publier === 'string' && !/[\r\n`]/.test(c.publier) && c.publier.trim() !== '' ? clip(c.publier.trim(), 40) : undefined
   return {
     name: typeof c.name === 'string' && c.name !== '' ? c.name : defaults.name,
@@ -5891,6 +6061,7 @@ export function parseProjectConfig(text: string, base: string, defaults: { name:
     ...(preuves ? { preuves } : {}),
     ...(publier ? { publier } : {}),
     ...(aPreuve.length > 0 ? { aPreuve } : {}),
+    ...(axes ? { axes } : {}),
     // #278 : une valeur inconnue vaut le défaut, la phrase ; le doctor la signale.
     ...(MISSION_STYLES.includes(c.mission as MissionStyle) && c.mission !== 'phrase' ? { mission: c.mission as MissionStyle } : {}),
   }
@@ -6726,6 +6897,20 @@ export function checkRoute(o: { ecriture?: Ecriture; cowork: boolean; task: { id
     if (o.action === 'family') return `Coche ${ref} et ses ${o.open ?? 0} étape${(o.open ?? 0) > 1 ? 's' : ''} ouverte${(o.open ?? 0) > 1 ? 's' : ''} par la skill tasks`
     return `Coche ${ref} par la skill tasks`
   })
+}
+
+/**
+ * Le renommage d'un axe (#286) : le panneau l'écrit dans un projet ordinaire ; dans un dossier Cowork
+ * (cowork.py n'a pas de renommage) ou un projet qui déclare `ecriture`, il part à Claude.
+ */
+export function renameAxisRoute(o: { ecriture?: Ecriture; cowork: boolean; from: string; to: string }): WriteRoute {
+  if (!o.cowork && o.ecriture === undefined) return { via: 'panel' }
+  const tool = o.ecriture ? `par ${o.ecriture.outil}` : 'par cowork.py, ligne par ligne'
+  return {
+    via: 'claude',
+    text: `Renomme l'axe \`${o.from}\` en \`${o.to}\` dans la roadmap : le premier champ de chaque ligne ouverte et faite qui le porte, et sa déclaration d'en-tête, ${tool}, par la skill tasks.`,
+    note: o.ecriture ? entrustedNote(o.ecriture) : 'Confié à Claude : ce dossier écrit sa roadmap par cowork.py',
+  }
 }
 
 /**
@@ -8193,6 +8378,8 @@ export type Brand =
       label: string
       axis: string
       axisIndex: number
+      /** Le libellé choisi de son axe (#286) ; absent, `axisLabel(axis)`. */
+      axisText?: string
       due?: string
       /** La station d'avant sur sa voie : toutes ses prérequises (`après:`), faite si toutes le sont (#209). */
       before?: { ids: string[]; done: boolean }
@@ -8556,7 +8743,8 @@ export function taskBrandOf(
     id: task.id ?? '',
     label: o.label ?? task.label,
     axis: task.axis,
-    axisIndex: Math.max(0, order.indexOf(task.axis)),
+    axisIndex: axisPalette(order, source.axes).get(task.axis) ?? 0,
+    ...(source.axes?.[task.axis]?.label ? { axisText: source.axes[task.axis]?.label } : {}),
     ...(task.due ? { due: task.due } : {}),
     ...(before.length > 0 ? { before: { ids: before.map(t => t.id as string), done: before.every(t => t.done) } } : {}),
     ...(next.length > 0 ? { next } : {}),
@@ -10192,6 +10380,126 @@ export function queuedCommand(command: string, root: string): string | undefined
   const label = flat.length > QUEUE_LABEL_MAX ? `${flat.slice(0, QUEUE_LABEL_MAX - 1)}…` : flat
   const script = shellQuote(`${root}/scripts/one-at-a-time.sh`)
   return `${script} take $$ ${shellQuote(label)}; {\n${command}\n}; __roadmap_rc=$?; ${script} give $$; (exit $__roadmap_rc)`
+}
+
+// ---------------------------------------------------------------- la file des tests lourds vue du panneau (#321)
+
+/** Une suite de la file : le shell de l'outil Bash qui la lance, depuis quand (epoch, s), sa branche, sa commande. */
+export type HeavyEntry = { pid: number; since: number; branch: string; label: string }
+/** La charge du Mac qui retient le départ de la suite qui tient la place (#249), lue de `lock/load`. */
+export type HeavyLoad = { load: number; cores: number; max: number; since: number }
+/** La file d'un projet : la suite qui tient la place (`run` : son départ, l'attente de charge finie), et celles qui attendent, dans l'ordre. */
+export type HeavyQueue = { owner?: HeavyEntry & { run: number; load?: HeavyLoad }; waiting: HeavyEntry[] }
+/** La pastille d'une branche dans le bloc « En cours » de Maestro (maquette C) : son texte, son ton, sa commande courte. */
+export type QueueMark = { text: string; tone: 'live' | 'block' | 'neutral'; command: string }
+
+/** Le `max_age` de one-at-a-time.sh : un verrou plus vieux est mort, le script le lèverait. */
+const HEAVY_MAX_AGE_S = 1800
+
+/** Le dossier de la file d'un projet, comme one-at-a-time.sh le nomme : la clé, chaque caractère hors `A-Za-z0-9._-` changé en `_`. */
+export function heavyQueueDir(locksDir: string, key: string): string {
+  return `${locksDir.replace(/\/+$/, '')}/heavy-tests/${key.replace(/[^A-Za-z0-9._-]/g, '_')}`
+}
+
+function heavyFields(text: string | undefined): Record<string, string> {
+  const out: Record<string, string> = {}
+  for (const line of (text ?? '').split('\n')) {
+    const at = line.indexOf('=')
+    if (at > 0 && !(line.slice(0, at) in out)) out[line.slice(0, at)] = line.slice(at + 1)
+  }
+  return out
+}
+
+const heavyInt = (v: string | undefined): number | undefined => (v !== undefined && /^\d+$/.test(v) ? Number(v) : undefined)
+
+function heavyEntry(text: string | undefined): HeavyEntry | undefined {
+  const f = heavyFields(text)
+  const pid = heavyInt(f.pid)
+  const since = heavyInt(f.since)
+  if (pid === undefined || since === undefined) return undefined
+  return { pid, since, branch: f.branch ?? '', label: f.label ?? '' }
+}
+
+/**
+ * La file lue des fichiers de one-at-a-time.sh (#321) : `lock/owner`, `lock/load`, et les tickets de
+ * `queue/` (nom et texte), rangés par nom comme le script les range. Un verrou dont le PID est mort ou
+ * tenu depuis plus de 30 min ne compte pas, un ticket mort non plus ; `alive` absent, tout PID vit.
+ * `undefined` quand rien ne tourne ni n'attend.
+ */
+export function readHeavyQueue(
+  files: { owner?: string; load?: string; tickets: readonly { name: string; text: string }[] },
+  now: number,
+  alive: (pid: number) => boolean = () => true,
+): HeavyQueue | undefined {
+  const held = heavyEntry(files.owner)
+  let owner: HeavyQueue['owner']
+  if (held && alive(held.pid) && now - held.since <= HEAVY_MAX_AGE_S) {
+    const run = heavyInt(heavyFields(files.owner).run) ?? held.since
+    const l = heavyFields(files.load)
+    const [load, cores, max, since] = [heavyInt(l.load), heavyInt(l.cores), heavyInt(l.max), heavyInt(l.since)]
+    owner = { ...held, run, ...(load !== undefined && cores !== undefined && max !== undefined && since !== undefined ? { load: { load, cores, max, since } } : {}) }
+  }
+  const waiting = [...files.tickets]
+    .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
+    .map(t => heavyEntry(t.text))
+    .filter((e): e is HeavyEntry => e !== undefined && alive(e.pid))
+  return owner || waiting.length > 0 ? { ...(owner ? { owner } : {}), waiting } : undefined
+}
+
+const QUEUE_COMMANDS: readonly [RegExp, string][] = [
+  [/claude\s+plugin\s+test/, 'plugin test'],
+  [/release\.py\s+check/, 'release.py check'],
+  [/release\.py\s+release/, 'release.py release'],
+  [/rejouer_delais\.py/, 'rejouer_delais.py'],
+  [/npm\s+(?:test|t|run\s+test)\b/, 'npm test'],
+  [/xcodebuild\s/, 'xcodebuild test'],
+  [/swift\s+test/, 'swift test'],
+  [/test\.sh\b/, 'test.sh'],
+]
+const QUEUE_COMMAND_MAX = 24
+
+/** La commande d'une suite dite courte (#321) : « plugin test », « release.py check »… ; sinon son libellé, coupé. */
+export function queueCommand(label: string): string {
+  for (const [re, name] of QUEUE_COMMANDS) if (re.test(label)) return name
+  const flat = label.trim().replace(/\s+/g, ' ')
+  return flat.length > QUEUE_COMMAND_MAX ? `${flat.slice(0, QUEUE_COMMAND_MAX - 1)}…` : flat
+}
+
+/**
+ * La pastille de chaque branche de la file (#321, maquette C) : la suite qui tient la place, « tests 4 min »
+ * (depuis son départ), ou « Mac chargé » quand la charge retient son départ ; une suite qui attend, son rang
+ * dans la file, le titulaire compté. Une branche qui a plusieurs suites garde la première place.
+ */
+export function queueMarks(q: HeavyQueue, now: number): Map<string, QueueMark> {
+  const marks = new Map<string, QueueMark>()
+  const o = q.owner
+  if (o) marks.set(o.branch, { text: o.load ? 'Mac chargé' : `tests ${durationLabel((now - o.run) * 1000)}`, tone: o.load ? 'block' : 'live', command: queueCommand(o.label) })
+  q.waiting.forEach((w, i) => {
+    if (marks.has(w.branch)) return
+    const rank = i + (o ? 2 : 1)
+    marks.set(w.branch, { text: `en file, ${rank === 1 ? '1er' : `${rank}e`}`, tone: 'neutral', command: queueCommand(w.label) })
+  })
+  return marks
+}
+
+/**
+ * Qui tient une suite de la file (#321) : la tâche dont `branche:` est sa branche, Maestro quand c'est sa
+ * branche à lui (`own`, son worktree) ou `main` (une fusion, une publication), sinon la branche telle quelle.
+ */
+export function queueWho(branch: string, own: string | undefined, task?: { id: string; title: string }): string {
+  if (task) return `#${task.id} ${task.title}`
+  if (branch === 'main') return 'main (Maestro)'
+  return own !== undefined && branch === own ? 'Maestro' : branch
+}
+
+/** La branche d'un fichier HEAD de git (`ref: refs/heads/<branche>`) ; rien pour un HEAD détaché. */
+export function branchOfHead(head: string): string | undefined {
+  return /^ref: refs\/heads\/(.+?)\s*$/m.exec(head)?.[1]
+}
+
+/** La phrase de la charge qui retient le départ (#321), sous les lignes du bloc ; `who` : la tâche, ou la branche. */
+export function queueLoadText(load: HeavyLoad, now: number, who: string): string {
+  return `Le Mac est chargé (charge ${load.load} pour ${load.cores} cœurs, seuil ${load.max}) : ${who} attend qu'elle retombe depuis ${durationLabel((now - load.since) * 1000)}.`
 }
 
 // ---------------------------------------------------------------- compte rendu des écritures (#244)

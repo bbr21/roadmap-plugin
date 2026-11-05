@@ -16,6 +16,8 @@
 # ROADMAP_QUEUE_SAY (s), ROADMAP_QUEUE_MAX_AGE (s), ROADMAP_QUEUE_MAX_LOAD (défaut 2 × cœurs),
 # ROADMAP_QUEUE_LOAD_WAIT (s, défaut 300, 0 coupe l'attente), ROADMAP_QUEUE_LOAD_FILE (la charge lue
 # dans un fichier, pour les tests).
+# Ce que le panneau lit (#321) : lock/owner (pid, since, branch, label, run une fois la suite partie),
+# lock/load pendant l'attente de charge, queue/<horodatage>-<pid>. Détail : docs/plans/feat-file-tests-visible/.
 set -u
 
 usage() {
@@ -113,6 +115,22 @@ cores() {
   [[ "$n" =~ ^[0-9]+$ && "$n" -gt 0 ]] && echo "$n" || echo 4
 }
 
+# Ce que le panneau lit pendant l'attente de charge (#321) : lock/load, réécrit à chaque relevé, ôté au départ.
+# Écriture atomique (.tmp puis mv) : le panneau ne lit jamais un fichier à moitié écrit.
+put_load() {
+  printf 'load=%s\ncores=%s\nmax=%s\nsince=%s\n' "$1" "$2" "$3" "$4" > "$lock/load.tmp" 2>/dev/null \
+    && mv -f "$lock/load.tmp" "$lock/load" 2>/dev/null
+}
+
+# La suite part (#321) : `run=` s'ajoute au propriétaire, que le panneau lit pour dire depuis quand elle tourne.
+mark_run() {
+  rm -f "$lock/load"
+  local owner
+  owner="$(< "$lock/owner")" 2>/dev/null || return 0
+  printf '%s\nrun=%s\n' "$owner" "$(now)" > "$lock/owner.tmp" 2>/dev/null && mv -f "$lock/owner.tmp" "$lock/owner" 2>/dev/null
+  return 0
+}
+
 # Place prise : attendre que la charge passe sous le seuil, au plus load_wait secondes, en le disant.
 wait_for_calm() {
   local ncpu max wait_max load began polls=0 said=0
@@ -124,6 +142,7 @@ wait_for_calm() {
   (( wait_max > 0 )) || return 0
   began="$(now)"
   while load="$(load_now)" && [[ -n "$load" ]] && (( load > max )); do
+    put_load "$load" "$ncpu" "$max" "$began"
     if (( $(now) - began >= wait_max )); then
       echo "roadmap : le Mac reste chargé (charge $load) après $(span $(( $(now) - began ))) : tests lourds lancés quand même ; un « timed out after 5000 ms » vient sans doute de la charge, le test se rejoue seul."
       return 0
@@ -159,6 +178,7 @@ while :; do
       trap - EXIT
       (( said )) && echo "roadmap : tests lourds, à ton tour après $(span $(( $(now) - start )))."
       wait_for_calm
+      mark_run
       exit 0
     fi
   fi

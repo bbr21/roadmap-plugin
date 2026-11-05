@@ -1,23 +1,23 @@
-# roadmap 0.207.0 : SHA-256 de chaque fichier installé du plugin, chemins relatifs à son dossier.
-# Vérifier une copie installée (~/.claude/plugins/cache/roadmap/roadmap/0.207.0) : plugins/roadmap/SECURITE.md, « Vérifier que ta copie est une vraie version ».
-5f2ac6f8c1bf9fc58224c10dfa3bebd8cb0e01ee054a5602103c64e8cc4fa801  .claude-plugin/plugin.json
-2533b6443fba653a34c81cbd155234f6997fe39a258425c135d391f93ed16964  README.md
-7816fbb4b80c4c79b225998682f7ac5efcbcf10cbac86ea6f53cc2f4f9616ce5  SECURITE.md
+# roadmap 0.208.0 : SHA-256 de chaque fichier installé du plugin, chemins relatifs à son dossier.
+# Vérifier une copie installée (~/.claude/plugins/cache/roadmap/roadmap/0.208.0) : plugins/roadmap/SECURITE.md, « Vérifier que ta copie est une vraie version ».
+3f40744c1f8abb33088c0845d952f416af90b274122f3a1d0441e1c0efe8989d  .claude-plugin/plugin.json
+41775eb6cfefc4df6af094afeca6f6d87a1ec78f56848cee0fa609753992aa23  README.md
+9e4c66a6e63c0c468c60a0010df01a0f7d890cf0302fd8e60a8cd2b1b9cd4e9e  SECURITE.md
 bce019cb7147413a8e5f0687df59a41394fa92545568b5d37b1df8bd6d885e30  hooks/bar-hit.tsx
 24387c7ebf678c8c7ed5c9cee4be7aa908712c43d03f08c0106f5342c16f823f  hooks/donut-hit.tsx
 d842d789476d67282d0f04b7e5fdc68a3d981ccec65dd79cfa2d11eed13fb828  hooks/hooks.json
-f268065c4789ab91d2e02bdb4ccab1a755b5b0833fc95cc66ad57c41e0edfc43  hooks/icons.ts
-a78a52b6a9bd431a39e15e5ccd7fb200df0f8d8482ea161c5caa4b8e5a91cca5  hooks/parse.ts
+4a411d7394e6903f4e4e7aa619fe1f295c15faa12634d21170cf0fbf700fe8b0  hooks/icons.ts
+5d4b67015a083de83730c8ea7b50bb6a2f64aa073d9195e82e47e6f23b0c4a6f  hooks/parse.ts
 a29e07be4f95c637c8f3ab377dc9a97cd16de11e8e7de7062311dd2888a0833f  hooks/press-hit.tsx
-82fd7681ca1cd9838aada9f14d71c4d90348b3d2aa44116c2100535656e5b58a  hooks/register.tsx
+6f5324c7abfdd53e4b94693317d0b7da3a5cfb10e7235f8d0eb3e587d90716bf  hooks/register.tsx
 a8cc4f58b6fc93fdbd3b6768496660d7627e524b993045ce56e4efbcde209716  hooks/reglages.tsx
 838d832dfd2509b472e7d42c149f6161f7c57803d81bd61dff2751a678b45ad0  hooks/tokens.ts
-2c41c480ffe671321b91523191e8e36453f4a211957d90b91b4f3148a257da86  scripts/one-at-a-time.sh
+40a25201db9424dbda555e5497587c448e2ba8f5c27efa5510ca748b4e59f1ee  scripts/one-at-a-time.sh
 d8ad29856a2309a62def7e5672cb2b2bd9e400696a9e2ec8c043e6651d392afc  skills/audit/SKILL.md
 96a83357ddbfe02dc669336763cc83d53ccf0c93e2b386e65e3b88614ad79064  skills/audit/scripts/audit.py
-cb39b2a2bce3fe2b1b10cfcdb8d114caa94f9843e70f1899be940efc1ccda4f3  skills/doctor/SKILL.md
+98ba63d081c11cd6aca85a8c7ca017b752e3fa8f7236735a5efb7ce9562c51b2  skills/doctor/SKILL.md
 44d591f8999b245c9b184ee332336a58415f5c04c37d87411149f3ee6fb816a9  skills/doctor/references/requis.json
-5209a235ed8f3e8121525926b8d0f0581477efbd434e77d2cfca05abf5b106f6  skills/doctor/scripts/doctor.py
+763a5aa2de44f41fe101b720a2f8e381443775e88c805e7188390e2f6ddaa7ac  skills/doctor/scripts/doctor.py
 89ed5b8041162f8f88b09dfaad66e3883a269875d8d05699b1af60ac50a9f978  skills/impact/SKILL.md
 fb013dbd0a4ee2fec41e962e3d57eaa37dfee0ab6323d4617b056e3a430c173a  skills/impact/scripts/impact.py
 709aa48256fe74ef549f8b95d0874853748dae147ae9eb418aee00400e813c81  skills/maestro/SKILL.md
@@ -53,7 +53,7 @@ a817ac2159b67d3c04b4f9214c1c4e87925ed1180c9a76d7d0321a17760a1884  skills/onboard
 b40356fb5b066912a72a6885cfd9e78c401f0a855b587c543a341051a3f72919  skills/onboarding/scripts/importer.py
 757f582f254f81a0d3059118a4579bd9bd0389c286519d3aa714050e221f3e0f  skills/onboarding/scripts/onboarding.py
 12e9ced1bce299fe8fac7751aee7340cc6d04f3b6b7dd75d42ba9a7d95d00338  skills/reglages-session/SKILL.md
-7aea4f6f1aea6a6943f089a42da0e1dba04d1b2ace89b24eb14eab2ae1971b72  skills/roadmap-panel/SKILL.md
+d89981be6e7501e518361f51901f7a42bdcdf3e07441e269c60fc9afe2ef3051  skills/roadmap-panel/SKILL.md
 cd8712dde284dc26b80f929d8195c1c9234d10c53c8adc4bb78206aa554c6249  skills/tasks/SKILL.md
 ef1cf86d9b465115957049125888d3363761103bf0d612373f719602299efbd1  skills/tasks/scripts/tasks.py
-fb1ee1234597a5f3e0e01aaf74415e2057f9581dc94b19b053b0954263b05024  types/index.d.ts
+6f1fcba8d4ee938e2051d3db60cd86d43b7f51b8d2e65ecf19c3c5c33d98d681  types/index.d.ts

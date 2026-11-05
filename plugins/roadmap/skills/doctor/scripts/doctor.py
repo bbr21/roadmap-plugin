@@ -958,6 +958,93 @@ def regles_du_projet(main):
     return ligne(OK, "Règles du projet", " ; ".join(parties))
 
 
+# Les couleurs d'axe du panneau (#286), dans l'ordre de `AXIS_NAMES` de hooks/parse.ts.
+COULEURS_AXE = ("bleu", "orange", "vert", "jaune", "violet", "turquoise", "rose", "gris")
+SLUG_AXE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
+NOM_AXE_MAX = 40
+
+
+def axes_declares(main, home=None):
+    """`axes` (#286) de `.claude/roadmap.json`, sinon de l'entrée de `~/.claude/roadmap-perso.json` dont un
+    `match` contient le dossier ; et d'où il vient. Rien de déclaré : (None, None)."""
+    chemin = os.path.join(main, ".claude", "roadmap.json")
+    if os.path.isfile(chemin):
+        try:
+            with open(chemin, encoding="utf-8") as f:
+                cfg = json.load(f)
+        except (OSError, ValueError):
+            cfg = None
+        if isinstance(cfg, dict) and "axes" in cfg:
+            return cfg["axes"], ".claude/roadmap.json"
+        return None, None
+    perso = os.path.join(home or os.path.expanduser("~"), ".claude", "roadmap-perso.json")
+    try:
+        with open(perso, encoding="utf-8") as f:
+            sources = (json.load(f) or {}).get("sources") or []
+    except (OSError, ValueError, AttributeError):
+        return None, None
+    principal = os.path.normpath(main)
+    for src in sources if isinstance(sources, list) else []:
+        if not isinstance(src, dict) or "axes" not in src:
+            continue
+        matchs = [m for m in src.get("match") or [] if isinstance(m, str) and m]
+        if any(principal.startswith(os.path.normpath(os.path.expanduser(m))) for m in matchs):
+            return src["axes"], "roadmap-perso.json (source %s)" % src.get("name", "?")
+    return None, None
+
+
+def axes_portes(rdir):
+    """Les axes que portent les lignes de ROADMAP.md et ROADMAP-fait.md."""
+    out = set()
+    for nom in ("ROADMAP.md", "ROADMAP-fait.md"):
+        try:
+            with open(os.path.join(rdir, nom), encoding="utf-8") as f:
+                lignes = ob.lignes_de_taches(f.read())
+        except OSError:
+            continue
+        for l in lignes:
+            bloc = re.findall(r"`\[([^`]*)\]`", l)
+            if bloc:
+                out.add(bloc[-1].split("|")[0].strip())
+    return out
+
+
+def axes_du_projet(main, home=None):
+    """La couleur et le nom choisis des axes (#286, `axes`), que le panneau ignore sans rien dire quand ils
+    sont mal écrits : une clé qui n'est pas un slug, une couleur inconnue, un nom vide ; un nom de plus de
+    40 caractères, il le coupe. Un axe qu'aucune ligne ne porte ne se voit nulle part. Rien de déclaré : pas de ligne."""
+    axes, ou = axes_declares(main, home)
+    if axes is None:
+        return None
+    correction = "corriger « axes » de %s, ou rééditer l'axe au crayon du panneau" % ou
+    if not isinstance(axes, dict):
+        return ligne(VOIR, "Axes", "axes n'est pas un objet (slug d'axe → { couleur, nom }), ignoré", correction)
+    rdir = ob.trouver_roadmap(main)
+    portes = axes_portes(rdir) if rdir else set()
+    soucis = []
+    for axe, style in axes.items():
+        if not SLUG_AXE.match(axe):
+            soucis.append("« %s » n'est pas un slug d'axe (minuscules, chiffres, tirets), ignoré" % axe)
+            continue
+        if not isinstance(style, dict):
+            soucis.append("%s : ni couleur ni nom (un objet { couleur, nom } attendu), ignoré" % axe)
+            continue
+        couleur = style.get("couleur")
+        if couleur is not None and couleur not in COULEURS_AXE:
+            soucis.append("%s : couleur « %s » inconnue (%s), ignorée" % (axe, couleur, ", ".join(COULEURS_AXE)))
+        nom = style.get("nom")
+        if nom is not None:
+            if not isinstance(nom, str) or not nom.strip():
+                soucis.append("%s : nom vide, ignoré" % axe)
+            elif len(" ".join(nom.split())) > NOM_AXE_MAX:
+                soucis.append("%s : nom de plus de 40 caractères, coupé par le panneau" % axe)
+        if rdir and axe not in portes:
+            soucis.append("« %s » : aucune ligne ne le porte (axe renommé ou retiré ?)" % axe)
+    if soucis:
+        return ligne(VOIR, "Axes", " ; ".join(soucis), correction)
+    return ligne(OK, "Axes", "%d axe(s) à couleur ou nom choisi, dans %s" % (len(axes), ou))
+
+
 def diagnostiquer(dossier, plugins="lire", home=None, avec_outils=True, gere=None, empreintes_de=None):
     """`empreintes_de` : la lecture des empreintes publiées ; par défaut le réseau, seulement quand le
     doctor juge les outils de la machine."""
@@ -978,7 +1065,7 @@ def diagnostiquer(dossier, plugins="lire", home=None, avec_outils=True, gere=Non
             lignes += outils(requis, "projet", est_git)
         lignes.append(travail(principal))
         lignes += roadmap_projet(principal)
-        lignes += [l for l in [regles_du_projet(principal)] if l]
+        lignes += [l for l in [regles_du_projet(principal), axes_du_projet(principal, home)] if l]
         lignes.append(design_system(principal))
         lignes += plugins_et_skills(requis, plugins, home, requis["projet"]["skills"], facultatif=True)
         lignes += copies
@@ -997,7 +1084,7 @@ def diagnostiquer(dossier, plugins="lire", home=None, avec_outils=True, gere=Non
     lignes += faits
     if git(dossier, "rev-parse", "--git-dir").returncode == 0:
         lignes += roadmap(main)
-    lignes += [l for l in [regles_du_projet(main)] if l]
+    lignes += [l for l in [regles_du_projet(main), axes_du_projet(main, home)] if l]
     lignes.append(design_system(main))
     lignes += plugins_et_skills(requis, plugins, home)
     lignes += copies

@@ -1,6 +1,6 @@
 # Est-il sûr de l'installer ?
 
-Version décrite : roadmap 0.207.0
+Version décrite : roadmap 0.208.0
 Un plugin de Claude Code fait tourner du code sur ta machine, donc la question se pose. Certains plugins
 malveillants ont l'air inoffensifs quand on les installe, puis téléchargent et lancent autre chose plus
 tard. Cette page dit tout ce que fait roadmap. Un test vérifie à chaque version qu'elle dit vrai, et tu
@@ -60,6 +60,7 @@ réserve (`session.*`, `turn.*`, `skill.prompt`) ; le plugin a alors un secours 
 | `claude` | `skills/doctor/scripts/doctor.py` | `claude plugin list --json`, pour voir quelles copies du plugin sont installées |
 | `node` | `skills/doctor/scripts/doctor.py` | lancer le contrôle du projet lui-même, `scripts/check.mjs` |
 | `rm` | `scripts/one-at-a-time.sh` | rendre la place dans la file des tests lourds |
+| `ps` | `hooks/register.tsx` | dans le panneau de Maestro, quand la file des tests lourds n'est pas vide, au plus toutes les 30 s : savoir si les suites qui la tiennent vivent encore, pour ne pas montrer un verrou mort (#321) |
 | `awk`, `basename`, `cp`, `date`, `getconf`, `head`, `ls`, `mkdir`, `mv`, `perl`, `ps`, `sed`, `sleep`, `sort`, `stat`, `sysctl`, `tr`, `wc` | `scripts/one-at-a-time.sh` | tenir la file des tests lourds : un verrou par projet, l'âge et le PID de qui le tient, la charge du Mac (`perl` ne sert qu'à lire l'heure à la microseconde) |
 
 ## Les outils de l'app

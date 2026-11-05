@@ -102,6 +102,14 @@ How sessions work and the roadmap's settings (#76, #176), optional too:
   `tous:semaine` or `tous:2semaines` whose `due:` has passed moves to the same weekday of the next
   period, with no occurrence closed and no lateness; a step under one of these shells, at any
   depth, stays at its date and late until it is done. A line with `cycle:` never moves.
+- `axes` (#286): per axis slug, its chosen colour and label
+  (`{"admin": {"couleur": "violet", "nom": "Papiers & impôts"}}`). `couleur` is one of `bleu`,
+  `orange`, `vert`, `jaune`, `violet`, `turquoise`, `rose`, `gris` (the design system's 8 axis
+  colours, each with its dark and light tone); `nom` is a free label of 40 characters at most.
+  Without them, an axis takes the first colour nobody chose, by rank, and its slug with a capital.
+  The pencil on hover of an axis (legend row or section head) writes this key; a new label also
+  renames the axis on the lines (its slug, `papiers-impots`). For a source of
+  `~/.claude/roadmap-perso.json`, the key goes in its entry.
 
 Tidying up before archiving (#101), optional: a project that tidies its memory away at the end of
 a subject (AAFES, skill `aafes-memory`) says so, and the end of turn only proposes archiving the

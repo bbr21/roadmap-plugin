@@ -621,6 +621,15 @@ export function squareIcon(hex: string, size = 16): string {
   return svg(size, 16, `<rect x="3" y="3" width="10" height="10" rx="${RADIUS.square}" fill="${hex}"/>`)
 }
 
+/**
+ * Une pastille du nuancier d'axe (#286, maquette B) : un carré de 14 px à la couleur, sur 20 × 20 ; choisie,
+ * un anneau de 1,5 px à l'encre `ring`, séparé du carré par l'air du fond.
+ */
+export function axisSwatchIcon(hex: string, picked: boolean, ring: string): string {
+  const mark = picked ? `<rect x="1" y="1" width="18" height="18" rx="5" fill="none" stroke="${ring}" stroke-width="1.5"/>` : ''
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 20 20">${mark}<rect x="3" y="3" width="14" height="14" rx="3" fill="${hex}"/></svg>`
+}
+
 // Les marques d'une ligne de tâche, dessinées sur 16 × 24 : elles fixent seules la hauteur de la
 // ligne, sans cale à côté. Un dessin de moins par ligne compte : « Tout déplier » en pose des
 // centaines.

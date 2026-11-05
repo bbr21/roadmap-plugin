@@ -24,6 +24,7 @@ published fingerprints (`CHECKSUMS.txt` of the public repo `bbr21/roadmap-plugin
 | Structure | the onboarding layout is complete (CLAUDE.md, roadmap, start hook, scripts) |
 | Project check | the project's `node scripts/check.mjs` passes |
 | Rules of the roadmap | `ROADMAP-REGLES.md` next to `ROADMAP.md` (or the file `regles` declares) is there (#167); missing: KO, with the `onboarding.py regles` command that sets it from the template. Also lists `ecriture` and `preuves` when declared; an unreadable `ecriture` is KO, a missing place « À voir » |
+| Axes | the chosen colour and name of axes (`axes` of `.claude/roadmap.json`, or of the project's entry in `roadmap-perso.json`, #286), which the panel otherwise ignores silently: a key that is not an axis slug, a `couleur` other than `bleu`, `orange`, `vert`, `jaune`, `violet`, `turquoise`, `rose`, `gris`, an empty `nom` or one over 40 characters (cut), an axis no line of the roadmap carries: « À voir ». No line without `axes` |
 | Work | first line: « Code (dépôt git, N fichiers de code) », « Projet (pas de dépôt git) », « Projet (dépôt git sans fichier de code) », or « … (forcé par mode dans .claude/roadmap.json) » (#176). A wrong detection is fixed with `mode` |
 | Settings | an unknown `mode` (other than `auto`, `code`, `projet`) or `requis_sur` (other than `ouvertes`, `lancees`), or `mission` (other than `phrase`, `puces`), or an `a_preuve` that is not a list of `ref:` (#277): « À voir » |
 | Required fields | every launched task (`qui:` or `branche:`) carries `ouvert`, `due`, `qui` and `après`, or the fields of `requis` in `.claude/roadmap.json` (`[]`: no line), on every open task when `requis_sur` is `ouvertes`; otherwise « À voir », with the count |
@@ -51,6 +52,7 @@ In a folder without code (#76, #176: no git repository, a repository without cod
 | Work | as with code |
 | Structure | a `CLAUDE.md` with the rules of a folder without code, the roadmap, `ROADMAP-fait.md` and `ROADMAP-REGLES.md`, `id:` on every line |
 | Rules of the roadmap | `ROADMAP-REGLES.md` next to `ROADMAP.md` (or the file `regles` declares) is there (#167); missing: KO, with the `onboarding.py regles` command that sets it from the template. Also lists `ecriture` and `preuves` when declared; an unreadable `ecriture` is KO, a missing place « À voir » |
+| Axes | as with code |
 | Settings | `mode`, `requis_sur`, `cles`, `requis`, `cles_visibles`, `ranger_par`, `mission` and `a_preuve` in `.claude/roadmap.json` understood by the panel; a leftover `vue` (ignored since #238) or anything else: « À voir » |
 | Required fields | the fields of `requis` on every open task (`requis_sur: "ouvertes"`, written by the onboarding; an old `mode: "projet"` too), else on every launched task; otherwise « À voir », with the count (a line written outside Claude Code is flagged only here) |
 | Roadmap plugin | as with code |

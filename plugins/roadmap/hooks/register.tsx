@@ -12,6 +12,7 @@ import {
   barCuts,
   barIcon,
   axisPillIcon,
+  axisSwatchIcon,
   axisTint,
   percentIcon,
   pillIcon,
@@ -395,6 +396,12 @@ import {
   sessionScanNote,
   maestroTasksNote,
   liveBlockRows,
+  heavyQueueDir,
+  readHeavyQueue,
+  queueMarks,
+  queueLoadText,
+  queueWho,
+  branchOfHead,
   OPENING_VIEW,
   openingView,
   roadmapAxes,
@@ -568,7 +575,17 @@ import {
   type GaugeKind,
   type TaskChange,
   type Waiting,
+  AXIS_NAMES,
+  axisName,
+  axisPalette,
+  axisSlug,
+  renameAxisInTexts,
+  renameAxisRoute,
+  withAxisStyle,
+  withPersoAxisStyle,
+  type AxisStyle,
 } from './parse'
+import type { HeavyQueue, QueueMark } from './parse'
 
 const PANE = PANE_ID
 const BAR_HIT = 'bar-hit'
@@ -3304,6 +3321,76 @@ async function refreshAll($: EngineInterface): Promise<void> {
   }
 }
 
+// ---------------------------------------------------------------- la file des tests lourds (#321)
+
+/** Les PID vivants de la file, relus par `ps` au plus toutes les 30 s et quand la file change ; `undefined` : `ps` illisible, tout PID vit. */
+let queuePids: { key: string; at: number; alive?: Set<number> } = { key: '', at: 0 }
+const QUEUE_PS_MS = 30_000
+/** Ce que le dernier pas a vu de la file (et la minute) : changé, le panneau se redessine. */
+let queueSeen = ''
+/** Vrai quand le dernier dessin était celui de Maestro, seul à montrer la file : les pas ne la relisent que pour lui. */
+let queueWanted = false
+
+/**
+ * La file des tests lourds du projet (#222, #249), lue des fichiers de one-at-a-time.sh (#321) : le dossier
+ * qu'il nomme d'après le dossier git commun du dossier principal (ou ce dossier, sans git). Trois lectures de
+ * fichiers ; un `ps` borné, seulement quand la file n'est pas vide, dit les PID morts. Rien ne lève.
+ */
+async function readQueue($: EngineInterface): Promise<HeavyQueue | undefined> {
+  try {
+    // Le dossier par défaut du script ; ROADMAP_LOCKS_DIR ne sert qu'à ses tests.
+    const locks = `${((await $.env.get('HOME').catch(() => undefined)) ?? '').replace(/\/+$/, '')}/.claude/locks`
+    const home = mainCheckout(await $.session.root())
+    const git = await $.fs.stat(`${home}/.git`).catch(() => undefined)
+    const dir = heavyQueueDir(locks, git?.kind === 'dir' ? `${home}/.git` : home)
+    const text = (path: string) => $.fs.read(path).catch(() => undefined)
+    const names = (await $.fs.list(`${dir}/queue`).catch(() => [])).filter(e => e.kind === 'file' && !e.name.startsWith('.')).map(e => e.name)
+    const [owner, load, tickets] = await Promise.all([
+      text(`${dir}/lock/owner`),
+      text(`${dir}/lock/load`),
+      Promise.all(names.map(async name => ({ name, text: (await text(`${dir}/queue/${name}`)) ?? '' }))),
+    ])
+    const now = await $.clock.now()
+    const files = { ...(owner !== undefined ? { owner } : {}), ...(load !== undefined ? { load } : {}), tickets }
+    const all = readHeavyQueue(files, Math.floor(now / 1000))
+    if (!all) return undefined
+    const pids = [...(all.owner ? [all.owner.pid] : []), ...all.waiting.map(w => w.pid)].sort((a, b) => a - b)
+    const key = pids.join(',')
+    if (key !== queuePids.key || now - queuePids.at >= QUEUE_PS_MS) {
+      queuePids = { key, at: now }
+      const ran = await $.process.run(['ps', '-o', 'pid=', '-p', key], { timeoutMs: 5_000 }).catch(() => undefined)
+      // `ps -p` sort en 1 quand aucun PID ne vit ; tout autre code : illisible.
+      if (ran && (ran.exitCode === 0 || ran.exitCode === 1)) queuePids.alive = new Set(ran.stdout.split(/\s+/).filter(Boolean).map(Number))
+    }
+    const alive = queuePids.alive
+    return alive ? readHeavyQueue(files, Math.floor(now / 1000), pid => alive.has(pid)) : all
+  } catch {
+    return undefined
+  }
+}
+
+/** La branche du dossier de la session (#321), lue de son HEAD sans git : son `.git`, dossier ou fichier `gitdir:` d'un worktree. */
+async function headBranch($: EngineInterface): Promise<string | undefined> {
+  try {
+    const cwd = (await $.session.cwd()).replace(/\/+$/, '')
+    const git = await $.fs.stat(`${cwd}/.git`)
+    const gitDir = git.kind === 'dir' ? `${cwd}/.git` : /^gitdir:\s*(.+?)\s*$/m.exec(await $.fs.read(`${cwd}/.git`))?.[1]
+    return gitDir ? branchOfHead(await $.fs.read(`${gitDir}/HEAD`)) : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/** Un pas de la minuterie chez Maestro : la file relue ; changée (ou une minute passée tant qu'elle n'est pas vide), le panneau se redessine. */
+async function restampQueue($: EngineInterface): Promise<void> {
+  if (!queueWanted) return
+  const q = await readQueue($)
+  const seen = q ? JSON.stringify([q, Math.floor((await $.clock.now()) / 60_000)]) : ''
+  if (seen === queueSeen) return
+  queueSeen = seen
+  await update($, liveVersionAtom, v => v + 1)
+}
+
 /** Le numéro du pas, pour la recherche du dossier ; une relecture en vol fait sauter le pas suivant. */
 let pollTick = 0
 let polling = false
@@ -3323,6 +3410,7 @@ async function poll($: EngineInterface): Promise<void> {
       await checkZones($)
       await refreshSessions($, knownSource, true)
       if (await restamp($, knownSource)) await summarize($, knownSource)
+      await restampQueue($)
     }
     await retryCreated($)
   } catch {
@@ -4793,6 +4881,126 @@ async function saveEdit(
   return push.exitCode === 0 ? done : { ...done, note: `Enregistrée et committée, mais pas poussée : ${lastLine(push.stderr || push.stdout)}` }
 }
 
+/**
+ * Les fichiers de la roadmap réécrits par le panneau, par le chemin de l'édition d'une fiche (#161) : dans git,
+ * seulement sur main, sans modification en attente de ces fichiers, un pull avant, puis commit et push (un
+ * second essai après un rebase). Hors de git, l'écriture seule. `write` rend les textes à écrire, par nom.
+ */
+async function writeRoadmapFiles(
+  $: EngineInterface,
+  source: Source,
+  names: readonly string[],
+  message: string,
+  write: () => Promise<Record<string, string> | { error: string }>,
+): Promise<{ note?: string } | { error: string }> {
+  const git = (...args: string[]) => $.process.run(['git', '-C', source.dir, ...args], { timeoutMs: 60_000 })
+  const head = await git('rev-parse', '--abbrev-ref', 'HEAD')
+  const inGit = head.exitCode === 0
+  let upstream = false
+  if (inGit) {
+    const branch = head.stdout.trim()
+    if (branch !== 'main' && branch !== 'master') return { error: `${source.name} est sur « ${branch} », pas sur main : sa roadmap ne s'écrit que sur main. Rien n'a été écrit.` }
+    const status = await git('status', '--porcelain', '--', ...names)
+    if (status.stdout.trim() !== '') return { error: `La roadmap a des modifications non committées (${lastLine(status.stdout)}) : une session l'écrit peut-être. Rien n'a été écrit.` }
+    upstream = (await git('rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}')).exitCode === 0
+    if (upstream) {
+      const pull = await git('pull', '--ff-only', '-q')
+      if (pull.exitCode !== 0) return { error: `git pull a échoué, rien n'a été écrit : ${lastLine(pull.stderr || pull.stdout)}` }
+    }
+  }
+  const texts = await write()
+  if ('error' in texts) return texts
+  const changed = Object.keys(texts)
+  for (const name of changed) await $.fs.write(`${source.dir}/${name}`, texts[name] as string)
+  if (!inGit || changed.length === 0) return {}
+  const commit = await git('commit', '-q', '-m', message, '--', ...changed)
+  if (commit.exitCode !== 0) return { note: `Enregistré, mais pas committé : ${lastLine(commit.stderr || commit.stdout)}` }
+  if (!upstream || (await git('push', '-q')).exitCode === 0) return {}
+  const rebase = await git('pull', '--rebase', '-q')
+  const push = rebase.exitCode === 0 ? await git('push', '-q') : rebase
+  return push.exitCode === 0 ? {} : { note: `Enregistré et committé, mais pas poussé : ${lastLine(push.stderr || push.stdout)}` }
+}
+
+/**
+ * Où vit le style des axes d'une roadmap (#286) : son `.claude/roadmap.json` ; une source déclarée dans
+ * `~/.claude/roadmap-perso.json`, son entrée ; une roadmap seule, un `.claude/roadmap.json` à créer à sa racine.
+ */
+async function axisConfigOf($: EngineInterface, source: Source): Promise<{ path: string; perso?: string }> {
+  const project = `${source.root ?? source.dir}/.claude/roadmap.json`
+  if (await $.fs.exists(project).catch(() => false)) return { path: project }
+  const perso = await readPerso($)
+  if (perso.sources.some(s => s.name === source.name)) {
+    let home = ''
+    try {
+      home = ((await $.env.get('HOME')) ?? '').replace(/\/+$/, '')
+    } catch {
+      // sans HOME, le chemin part de la racine et l'écriture échoue, dite sous le champ
+    }
+    return { path: `${home}/.claude/roadmap-perso.json`, perso: source.name }
+  }
+  return { path: project }
+}
+
+let axisSaving = false
+
+/**
+ * Enregistre l'édition d'un axe (#286) : le renommage d'abord, quand le slug du nom change (le panneau écrit
+ * ROADMAP.md et ROADMAP-fait.md ; Cowork et `ecriture` : la demande part à Claude), puis la couleur et le
+ * libellé dans la config. Un refus se dit sous le champ, l'édition reste ouverte.
+ */
+async function saveAxisEdit($: EngineInterface, source: Source, from: string, label: string, color: AxisStyle['color']): Promise<void> {
+  if (axisSaving) return
+  axisSaving = true
+  const fail = (why: string) => setView($, () => ({ axisNote: why }))
+  try {
+    const name = label.replace(/\s+/g, ' ').trim()
+    const to = axisSlug(name)
+    if (to === '') return void (await fail('Ce nom ne donne aucun slug : mets-y au moins une lettre ou un chiffre.'))
+    await setView($, () => ({ axisNote: SAVE_BUSY }))
+    const { open, done } = files(source)
+    let note = ''
+    if (to !== from) {
+      const check = renameAxisInTexts(await $.fs.read(open), await readOr($, done), from, to)
+      if ('error' in check) return void (await fail(check.error))
+      const route = renameAxisRoute({ ecriture: source.ecriture, cowork: await coworkPyFor($, source), from, to })
+      if (route.via === 'claude') {
+        queueSubmit($, route.text)
+        note = route.note
+      } else {
+        const out = await writeRoadmapFiles($, source, ['ROADMAP.md', 'ROADMAP-fait.md'], `roadmap: axe ${from} → ${to}`, async () => {
+          const fresh = renameAxisInTexts(await $.fs.read(open), await readOr($, done), from, to)
+          if ('error' in fresh) return fresh
+          return { 'ROADMAP.md': fresh.open, ...(fresh.done !== undefined ? { 'ROADMAP-fait.md': fresh.done } : {}) }
+        })
+        if ('error' in out) return void (await fail(out.error))
+        note = out.note ?? ''
+      }
+    }
+    // Le libellé ne se garde que s'il dit autre chose que l'axe à majuscule.
+    const style: AxisStyle = { ...(color ? { color } : {}), ...(name !== axisName(to, undefined) ? { label: name } : {}) }
+    const before = source.axes?.[from] ?? {}
+    if (to !== from || before.color !== style.color || before.label !== style.label) {
+      const where = await axisConfigOf($, source)
+      const text = await readOr($, where.path)
+      const next = where.perso !== undefined && text !== undefined ? withPersoAxisStyle(text, where.perso, { from, to, style }) : withAxisStyle(text, { from, to, style })
+      await $.fs.write(where.path, next)
+    }
+    await update($, stampAtom, v => v + 1)
+    await setView($, v => ({ axisEdit: '', axisDraft: undefined, axisPick: '', axisNote: '', ...(v.axis === from ? { axis: to } : {}) }))
+    if (note !== '') {
+      try {
+        $.ui.toast(note)
+      } catch {
+        // pas de toast sur cette surface
+      }
+    }
+  } catch (err) {
+    await fail(`Rien d'écrit : ${err instanceof Error ? err.message : String(err)}`)
+  } finally {
+    axisSaving = false
+  }
+}
+
 /** La clé du store qui garde le jour du dernier report des étapes de journée d'une roadmap (#277). */
 function dayStepsKey(source: Source): string {
   return `day-steps:${source.dir}`
@@ -5388,6 +5596,9 @@ export const register: Register = (on, options) => {
   ownRunningEvent = undefined
   pollTick = 0
   polling = false
+  queuePids = { key: '', at: 0 }
+  queueSeen = ''
+  queueWanted = false
   refreshFlushed = 0
   autoModeRefusal = undefined
   settings = {
@@ -6514,11 +6725,11 @@ function brandTree(
   const accent = axisColor(palette, brand.axisIndex)
   const axis = Svg ? (
     (() => {
-      const a = axisPillIcon({ name: axisLabel(brand.axis), hex: accent, bg: axisTint(palette, accent), fg: palette.text })
+      const a = axisPillIcon({ name: brand.axisText ?? axisLabel(brand.axis), hex: accent, bg: axisTint(palette, accent), fg: palette.text })
       return <Svg key="axis" source={a.source} alt={brand.axis} width={a.width} height={a.height} />
     })()
   ) : (
-    <Text key="axis" size="caption" color={accent}>{axisLabel(brand.axis)}</Text>
+    <Text key="axis" size="caption" color={accent}>{brand.axisText ?? axisLabel(brand.axis)}</Text>
   )
   // Une ligne sans `id:` (#142) : ni numéro, ni voie.
   const numbered = brand.id !== ''
@@ -7672,8 +7883,12 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   const axes = order.filter(a => axisCount(openTasks, a) > 0)
   // Un axe choisi qui n'a plus de tâche ouverte ne filtre plus rien : retour à tous les axes.
   const axis = axisRaw === 'all' || axes.includes(axisRaw) ? axisRaw : 'all'
-  const axisHex = (a: string): string => axisColor(palette, order.indexOf(a))
-  const axisTheme = (a: string): string => AXIS_THEME[Math.max(order.indexOf(a), 0) % AXIS_THEME.length] ?? 'subtle'
+  // La couleur choisie d'un axe (#286, `axes` de la config), sinon la première libre dans l'ordre.
+  const ranks = axisPalette(order, source.axes)
+  const axisHex = (a: string): string => axisColor(palette, ranks.get(a) ?? 0)
+  const axisTheme = (a: string): string => AXIS_THEME[(ranks.get(a) ?? 0) % AXIS_THEME.length] ?? 'subtle'
+  // Le nom affiché d'un axe (#286) : son libellé choisi, sinon l'axe à majuscule.
+  const axisShown = (a: string): string => axisName(a, source.axes)
   const square = (hex: string, theme: string, alt: string) => icon(squareIcon(hex), alt, 16, '■', theme)
   // Une pastille arrondie, dessinée en SVG ; le terminal, sans SVG, garde un fond de texte.
   const drawnPill = (o: { text: string; bg: string; fg: string; mark?: PillMark; height?: number; weight?: 500 | 600; size?: number }) => {
@@ -9764,6 +9979,19 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   const blockKeys = new Set(blockRows.map(r => taskKey(r.task)))
   const inBlock = (t: Task) => blockKeys.has(taskKey(t))
   const blockTasks = blockRows.map(r => r.task)
+  // La file des tests lourds (#321, maquette C) : la pastille de chaque branche prend la place de la barre
+  // d'étapes sur la ligne de sa session ; les suites d'une branche sans ligne (main, Maestro) ont la leur.
+  queueWanted = maestroBrand !== undefined
+  const heavy = maestroBrand ? await readQueue($) : undefined
+  const nowSec = Math.floor(now / 1000)
+  const heavyMarks: Map<string, QueueMark> = heavy ? queueMarks(heavy, nowSec) : new Map()
+  const blockBranches = new Set(blockTasks.map(t => t.branche).filter((b): b is string => b !== undefined))
+  const ownBranch = heavy ? await headBranch($) : undefined
+  const whoQueued = (branch: string) => {
+    const owned = openTasks.find(t => t.branche === branch && t.id !== undefined)
+    return queueWho(branch, ownBranch, owned ? { id: owned.id as string, title: short(owned).titre } : undefined)
+  }
+  const queueExtras = [...heavyMarks].filter(([branch]) => !blockBranches.has(branch))
   // Une tâche qu'on vient de cocher reste à sa place le temps de son mouvement (#182, maquette A), puis
   // part dans les Done ; une fille d'une mère ouverte y reste de toute façon, sous sa mère.
   const openIds = new Set(openTasks.map(t => t.id))
@@ -9856,6 +10084,103 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   const toggleGroup = (name: string) => () =>
     void setView($, v => (filtered && !doneMother(name) ? { closedGroups: toggleIn(v.closedGroups, name) } : { openGroups: toggleIn(v.openGroups, name) }))
 
+  // --- Éditer un axe (#286, maquette B choisie par Bertrand le 2026-11-04) ---------------------------
+  // Au survol de sa ligne de légende ou de sa tête de section, un crayon ; au clic, la ligne devient
+  // l'édition : le nom en champ et Enregistrer, dessous les 8 couleurs, l'aperçu du renommage et Annuler.
+  const axisEditKey = (where: 'legend' | 'head', a: string) => `${where}:${a}`
+  // Le crayon : caché dans sa Box sans clé, que montre le survol de la ligne à clé qui la porte ; un bouton
+  // sans encre le couvre, peint après la zone de clic de la ligne, qui ne reçoit donc pas ce clic. Au terminal, rien.
+  const axisPen = (where: 'legend' | 'head', a: string) =>
+    Svg ? (
+      <Box width={2} flexShrink={0} flexDirection="row" justifyContent="center" alignItems="center">
+        <Box display="none" hover={{ display: 'flex' }}>
+          <Svg source={rowMark(pencilIcon(palette.text2, SIZE.icon.sm), SIZE.icon.sm, 24)} alt="Modifier l'axe" width={SIZE.icon.sm} height={24} />
+        </Box>
+        <Box position="absolute" top={0} left={0} right={0} bottom={0} flexDirection="row" justifyContent="center" alignItems="center">
+          <Button
+            key={`axis-pen:${where}:${keyPart(a)}`}
+            plain
+            onPress={() => void setView($, () => ({ axisEdit: axisEditKey(where, a), axisDraft: undefined, axisPick: '', axisNote: '' }))}
+          >
+            {CHECK_OVERLAY}
+          </Button>
+        </Box>
+      </Box>
+    ) : null
+  // Ce que dira l'enregistrement : « N lignes : a → b », ou le refus d'un nom sans slug ou déjà pris.
+  const axisPreview = (a: string, draft: string): { text: string; refused: boolean } => {
+    const to = axisSlug(draft)
+    if (to === '') return { text: 'Ce nom ne donne aucun slug : mets-y au moins une lettre ou un chiffre.', refused: true }
+    if (to === a) return { text: '', refused: false }
+    if (order.includes(to)) return { text: `L'axe « ${to} » existe déjà : choisis un autre nom.`, refused: true }
+    const n = allTasks.filter(t => t.axis === a).length
+    return { text: `${n} ligne${n > 1 ? 's' : ''} : ${a} → ${to}`, refused: false }
+  }
+  const axisEditor = (a: string) => {
+    const draft = view.axisDraft ?? axisShown(a)
+    const chosen = AXIS_NAMES.find(n => n === view.axisPick) ?? source.axes?.[a]?.color ?? AXIS_NAMES[(ranks.get(a) ?? 0) % AXIS_NAMES.length] ?? 'bleu'
+    const hex = axisColor(palette, AXIS_NAMES.indexOf(chosen))
+    const preview = axisPreview(a, draft)
+    const note = view.axisNote ?? ''
+    // Ne s'écrit que la couleur choisie (ici ou avant) : celle du rang reste libre de suivre l'ordre.
+    const kept = AXIS_NAMES.find(n => n === view.axisPick) ?? source.axes?.[a]?.color
+    const save = () => void saveAxisEdit($, source, a, view.axisDraft ?? axisShown(a), kept)
+    return (
+      <Box key={`axis-edit:${keyPart(a)}`} flexDirection="column" gap={SPACE.tight} paddingX={SPACE.indent} paddingY="xs">
+        <Box flexDirection="row" alignItems="center" gap={SPACE.row}>
+          {tallIcon(squareIcon(hex), a, 16, '■', axisTheme(a))}
+          <Box flexGrow={1} flexShrink={1} minWidth={0}>
+            {Input ? (
+              <Input
+                key="axis-name"
+                placeholder="Nom de l'axe"
+                value={draft}
+                submitLabel="↵"
+                onInput={(value: string) => void setView($, () => ({ axisDraft: value, axisNote: '' }))}
+                onSubmit={(value: string) => void setView($, () => ({ axisDraft: value, axisNote: '' })).then(() => saveAxisEdit($, source, a, value, kept))}
+              />
+            ) : (
+              <Text weight="semibold" wrap="truncate-end">{draft}</Text>
+            )}
+          </Box>
+          <Box flexShrink={0}>
+            <Button key="axis-save" variant="primary" label={note === SAVE_BUSY ? 'Enregistrement…' : 'Enregistrer'} onPress={save} />
+          </Box>
+        </Box>
+        <Box flexDirection="row" alignItems="center" gap={SPACE.row} paddingLeft={2}>
+          {AXIS_NAMES.map((n, i) => (
+            <Box key={`axis-swatch:${n}`} flexShrink={0}>
+              {Svg ? (
+                <Svg source={axisSwatchIcon(axisColor(palette, i), n === chosen, palette.text)} alt={n === chosen ? `${n}, choisie` : n} width={20} height={20} />
+              ) : null}
+              {Svg ? (
+                <Box position="absolute" top={0} left={0} right={0} bottom={0} flexDirection="row" justifyContent="center" alignItems="center">
+                  <Button key={`axis-color:${n}`} plain onPress={() => void setView($, () => ({ axisPick: n, axisNote: '' }))}>
+                    {CHECK_OVERLAY}
+                  </Button>
+                </Box>
+              ) : (
+                <Button key={`axis-color:${n}`} plain dimColor={n !== chosen} label={n} onPress={() => void setView($, () => ({ axisPick: n, axisNote: '' }))} />
+              )}
+            </Box>
+          ))}
+        </Box>
+        <Box flexDirection="row" justifyContent="space-between" alignItems="center" gap={SPACE.row} paddingLeft={2}>
+          <Box flexShrink={1} minWidth={0}>
+            {(note !== '' && note !== SAVE_BUSY) || preview.text !== '' ? (
+              <Text size="caption" color={(note !== '' && note !== SAVE_BUSY) || preview.refused ? palette.lateOn : palette.text2} wrap="wrap">
+                {note !== '' && note !== SAVE_BUSY ? note : preview.text}
+              </Text>
+            ) : null}
+          </Box>
+          <Box flexShrink={0}>
+            <Button key="axis-cancel" plain label="Annuler" onPress={() => void setView($, () => ({ axisEdit: '', axisDraft: undefined, axisPick: '', axisNote: '' }))} />
+          </Box>
+        </Box>
+      </Box>
+    )
+  }
+
   // Une ligne de légende : l'icône, le nom (cliquable), le nombre et la part alignés à droite.
   // Pas de fond : sous un filtre, les autres lignes du groupe s'estompent.
   const legend = (o: {
@@ -9867,7 +10192,10 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     dim: boolean
     onPress?: () => void
     muted?: boolean
+    /** L'axe de la ligne (#286) : son crayon au survol, et l'édition à sa place quand elle est ouverte. */
+    axis?: string
   }) => {
+    if (o.axis !== undefined && view.axisEdit === axisEditKey('legend', o.axis)) return axisEditor(o.axis)
     const ink2 = o.muted ? palette.text3 : faded(palette.text2, o.dim)
     return (
       <Box
@@ -9905,6 +10233,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
           </Box>
         </Box>
         {o.onPress && hit(o.key, o.onPress)}
+        {o.axis !== undefined && axisPen('legend', o.axis)}
       </Box>
     )
   }
@@ -10026,6 +10355,16 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
       </Box>
     )
   }
+  // La pastille d'une suite de la file (#321) : son texte au dessin, sa commande dans son alt.
+  const queuePill = (m: QueueMark) => {
+    const tone = m.tone === 'block' ? { bg: palette.blockTint, fg: palette.blockOn } : m.tone === 'live' ? { bg: palette.liveTint, fg: palette.liveOn } : { bg: palette.sel, fg: palette.text2 }
+    const alt = `${m.text}, ${m.command}`
+    if (Svg) {
+      const pill = pillIcon({ text: m.text, ...tone, weight: TEXT.weight.soft })
+      return <Svg source={pill.source} alt={alt} width={pill.width} height={pill.height} />
+    }
+    return <Text size="caption" color={tone.fg}>{m.text}</Text>
+  }
   const sessionColumn = (t: Task, block?: BrandTask) => {
     const status = block ? blockSteps.get(block.id) : rowSteps.get(taskKey(t))
     // #191 : finie, sa branche en avance, sans question : à fusionner, ni la main ni la roue.
@@ -10037,20 +10376,28 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     const view = status ? stepsView(status.steps, { now, at: status.at, closed: t.done }) : undefined
     const bar = status && view ? stepsBarIcon(palette, view.segments, { width: ROW_STEPS.bar, height: 4, waiting: waiting || status.question !== undefined, merging, finished: block?.finished === true }) : undefined
     const checkHex = block?.finished ? palette.finished : palette.done
+    // Sa suite dans la file des tests lourds (#321, maquette C) : la pastille à la place de la barre et du compte.
+    const queued = block && t.branche !== undefined ? heavyMarks.get(t.branche) : undefined
     return (
       <Box key={`steps:${t.key}`} flexDirection="row" alignItems="center" gap={SPACE.row} flexShrink={0} {...(Svg ? { width: stepsCells.columns } : {})}>
         <Box width={ROW_STEPS.icon} flexShrink={0} flexDirection="row" justifyContent="center">
           {completed ? (Svg ? <Svg source={checkIcon(checkHex, 14, STROKE.pill)} alt={completedWord} width={SIZE.icon.sm} height={SIZE.icon.sm} /> : <Text size="caption" color={checkHex}>✓</Text>) : merging ? mergeMark() : waiting ? hand() : spinner()}
         </Box>
-        {Svg &&
+        {queued ? (
+          <Box flexGrow={1} flexShrink={1} minWidth={0} flexDirection="row" justifyContent="flex-end">
+            {queuePill(queued)}
+          </Box>
+        ) : Svg &&
           (bar && view ? (
             <Svg source={bar.source} alt={`étapes ${view.count}`} width={bar.width} height={bar.height} />
           ) : (
             <Svg source={`<svg xmlns="http://www.w3.org/2000/svg" width="${ROW_STEPS.bar}" height="4"/>`} alt="espace" width={ROW_STEPS.bar} height={4} />
           ))}
-        <Box width={stepsCells.count} flexShrink={0} flexDirection="row" justifyContent="flex-end">
-          {view && <Text size="caption" tabular color={palette.text3}>{view.count}</Text>}
-        </Box>
+        {!queued && (
+          <Box width={stepsCells.count} flexShrink={0} flexDirection="row" justifyContent="flex-end">
+            {view && <Text size="caption" tabular color={palette.text3}>{view.count}</Text>}
+          </Box>
+        )}
       </Box>
     )
   }
@@ -10151,7 +10498,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
       )
     // Une date tue sous sa tête (#265) ne laisse pas l'âge prendre sa place : le bout reste vide.
     const dueQuiet = !t.done && (bandQuiet(sectionOf.get(t), t).due || dayQuiet(t))
-    const right = dueQuiet ? '' : doneRights.get(t) ?? (tree ? (t.done ? 'fait' : days === undefined ? '' : ageLabel(days)) : t.done ? axisLabel(t.axis) : days === undefined ? '' : ageLabel(days))
+    const right = dueQuiet ? '' : doneRights.get(t) ?? (tree ? (t.done ? 'fait' : days === undefined ? '' : ageLabel(days)) : t.done ? axisShown(t.axis) : days === undefined ? '' : ageLabel(days))
     // Une tâche faite dont la session reste ouverte : y retourner, ou l'archiver, d'un clic.
     const kept = block === undefined && sessionRows.has(taskKey(t)) ? doneSessionOf(t) : undefined
     const inSession = isLive(t) || block !== undefined
@@ -10668,7 +11015,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   for (const sec of doneSections)
     for (const it of sec.items)
       for (const t of it.kind === 'alone' ? [it.task] : [it.block.head as Task, ...it.block.doneTasks])
-        doneRights.set(t, doneRight(t, doneMode, sec.day, today, axisLabel(t.axis)))
+        doneRights.set(t, doneRight(t, doneMode, sec.day, today, axisShown(t.axis)))
   // Une faite trouvée, ou dans une chaîne trouvée (#318) : sa date de fin au bout de sa ligne.
   if (searching)
     for (const b of tree)
@@ -10710,7 +11057,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   const treeGroups: ListGroup[] = rangedSections
     ? rangedSections.flatMap(sec => sectionGroups(sec.key, sec.label, searching ? shownLines(sec.items) : sec.count, sec.items, { look: bandLook(sec.key, today, me), ...(sec.late ? { lead: lateLead() } : {}) }))
     : !rangerPar
-    ? axisTree(tree, order, isLive).flatMap(sec => sectionGroups(`axe:${sec.axis}`, axisLabel(sec.axis), searching ? shownLines(sec.items) : sec.count, sec.items, { axis: sec.axis }))
+    ? axisTree(tree, order, isLive).flatMap(sec => sectionGroups(`axe:${sec.axis}`, axisShown(sec.axis), searching ? shownLines(sec.items) : sec.count, sec.items, { axis: sec.axis }))
     : bandsOf(
         tree.flatMap(g =>
           g.head
@@ -10745,7 +11092,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
       : tone === 'mine'
       ? { ink: palette.liveOn, accent: palette.live }
       : { ink: palette[`${tone}On`], accent: palette[tone] }
-  const headRow = (id: string, name: string, count: number, mark: string, nameInk: string, accent: string) => (
+  const headRow = (id: string, name: string, count: number, mark: string, nameInk: string, accent: string, axisOf?: string) => (
     <Box key={`band:${id}`} flexDirection="column" paddingX={SPACE.indent} paddingTop="md" paddingBottom="xs">
       <Box key={`hit:bande:${keyPart(name)}`} flexDirection="row" alignItems="flex-start" gap={SPACE.row}>
         {Svg && <Svg source={mark} alt="" width={16} height={24} />}
@@ -10772,12 +11119,15 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
           {Svg && <Svg source={sectionRuleIcon(accent, palette.border, wide)} alt="trait" height={2} />}
         </Box>
         {headZones && hit(`band:${id}`, toggleBand(id))}
+        {axisOf !== undefined && axisPen('head', axisOf)}
       </Box>
     </Box>
   )
   const bandRow = (id: string, name: string, count: number, lead?: RenderElement, axisOf?: string, look?: BandLookOf) =>
-    Svg && axisOf !== undefined
-      ? headRow(id, name, count, axisHeadIcon(axisHex(axisOf)), palette.text, axisHex(axisOf))
+    Svg && axisOf !== undefined && view.axisEdit === axisEditKey('head', axisOf)
+      ? <Box key={`band:${id}`} flexDirection="column" paddingTop="md">{axisEditor(axisOf)}</Box>
+      : Svg && axisOf !== undefined
+      ? headRow(id, name, count, axisHeadIcon(axisHex(axisOf)), palette.text, axisHex(axisOf), axisOf)
       : Svg && look
       ? headRow(id, name, count, bandGlyphIcon(look.glyph, toneColors(look.tone).ink), toneColors(look.tone).ink, toneColors(look.tone).accent)
       : (
@@ -10801,7 +11151,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     : attend === 'relaunch'
     ? // À relancer (#99, #268) : par sujet, quel que soit le rangement, les attentes les plus vieilles en haut.
       relaunchSections(shown, order, today, me).flatMap(sec =>
-        sectionGroups(`axe:${sec.axis}`, axisLabel(sec.axis), sec.tasks.length, sec.tasks.map(task => ({ kind: 'alone' as const, task })), { axis: sec.axis }),
+        sectionGroups(`axe:${sec.axis}`, axisShown(sec.axis), sec.tasks.length, sec.tasks.map(task => ({ kind: 'alone' as const, task })), { axis: sec.axis }),
       )
     : attend === 'today' && recurringToday.length > 0
     ? // Ma journée (#268) : rangée comme Cette semaine, puis ses récurrentes qui tombent, à part (choix de BBR).
@@ -11045,8 +11395,27 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   // lignes de la liste (roue ou main, barre, compte) ; toujours là, quels que soient filtre, axe ou recherche.
   // Son chevron, centré sur le titre, le déplie ; il s'ouvre replié (#251).
   const toggleLive = () => void setView($, v => ({ liveFolded: !(v.liveFolded ?? true) }))
+  // La file des tests lourds (#321) : une ligne par suite d'une branche sans ligne dans le bloc (main, Maestro),
+  // puis la phrase de la charge quand elle retient le départ.
+  const queueRows = queueExtras.map(([branch, m]) => (
+    <Box key={`queue:${keyPart(branch)}`} flexDirection="row" alignItems="center" gap={SPACE.row} paddingX={SPACE.indent} minHeight={SIZE.strut.row}>
+      <Box width={ROW_STEPS.icon} flexShrink={0} flexDirection="row" justifyContent="center">
+        {m.tone === 'neutral' ? (Svg ? <Svg source={clockIcon(palette.text3, 14)} alt="En file" width={SIZE.icon.sm} height={SIZE.icon.sm} /> : <Text dimColor>◷</Text>) : spinner()}
+      </Box>
+      <Box flexGrow={1} flexShrink={1} minWidth={0}>
+        <Text wrap="truncate-end">{`${whoQueued(branch)} · ${m.command}`}</Text>
+      </Box>
+      <Box flexShrink={0}>{queuePill(m)}</Box>
+    </Box>
+  ))
+  const heavyLoad = heavy?.owner?.load
+  const loadLine = heavyLoad && heavy?.owner ? (
+    <Box key="queue:load" paddingX={SPACE.indent} paddingY="xs" backgroundColor={palette.blockTint}>
+      <Text size="footnote" color={palette.blockOn}>{queueLoadText(heavyLoad, nowSec, whoQueued(heavy.owner.branch))}</Text>
+    </Box>
+  ) : null
   const liveBlock =
-    blockTasks.length > 0 ? (
+    blockTasks.length > 0 || queueRows.length > 0 ? (
       <Box flexDirection="column" borderStyle="round" borderColor={palette.border} paddingY="xs">
         <Box key="hit:live-fold" flexDirection="row" alignItems="center" gap={SPACE.row} paddingX={SPACE.indent} hover={{ backgroundColor: palette.hover }}>
           {graphic && Svg ? (
@@ -11065,6 +11434,8 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
           {graphic && hit('live-fold', toggleLive)}
         </Box>
         {liveOpen && blockTasks.map(t => row(t, undefined, undefined, blockOf.get(t.id as string)))}
+        {liveOpen && queueRows}
+        {liveOpen && loadLine}
       </Box>
     ) : null
 
@@ -11146,11 +11517,12 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
           return legend({
             key: `axis:${a}`,
             mark: d => tallIcon(fade(squareIcon(axisHex(a)), d), a, 16, '■', axisTheme(a)),
-            name: axisLabel(a),
+            name: axisShown(a),
             n,
             share: `${pct(n, total)} %`,
             dim,
             onPress: setAxis(a),
+            axis: a,
           })
         })}
       </Box>
