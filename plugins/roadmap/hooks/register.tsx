@@ -83,6 +83,8 @@ import {
   STROKE,
   gaugeIcon,
   type Palette,
+  donutDotIcon,
+  donutIcon,
 } from './icons'
 import { MIX, RADIUS, SIZE, SPACE, TEXT } from './tokens'
 import { SETTINGS_PANE, drawSettings, openSettings, prefsFile, redrawSettings, sessionProject, watchSettings, type SettingsProject } from './reglages'
@@ -168,6 +170,7 @@ import {
   missionShown as missionVisible,
   MISSION_FOLD,
   finCard,
+  type FinRow,
   codeKeptWhole,
   foldCell,
   livreOfNote,
@@ -179,6 +182,16 @@ import {
   changeZones,
   changesCard,
   changesKey,
+  durationView,
+  heavyTest,
+  spanLabel,
+  timingAsk,
+  timingBash,
+  timingKey,
+  timingOf,
+  timingTurnEnd,
+  timingTurnStart,
+  type StoredTiming,
   changesMissingNote,
   changesOf,
   mergeZones,
@@ -559,6 +572,8 @@ import {
 
 const PANE = PANE_ID
 const BAR_HIT = 'bar-hit'
+/** La zone de clic du donut de la durée (#314). */
+const DONUT_HIT = 'donut-hit'
 // Les zones de clic des lignes et des boutons dessinés : `press-<empreinte>`, et ce que chaque id déclenche,
 // reposé à chaque dessin.
 const PRESS = 'press-'
@@ -633,6 +648,8 @@ const PROPOSAL_MAX_MS = 7 * 86_400_000
 const UPDATE_PLAN_TOOL = 'mcp__ccd_turn__update_plan'
 const WRAP_UP_TOOL = 'mcp__ccd_turn__wrap_up' // aussi le texte de la boîte, pour le rappel d'une idée sans ligne (#83)
 const ASK_TOOL = 'AskUserQuestion'
+/** Le côté du petit donut de la durée, en px (#314). */
+const DURATION_DONUT = 44
 /** La note d'un enfant (`ChildStatus`), une clé par session : deux enfants n'écrasent pas la note l'un de l'autre. */
 const CHILD_STATUS_PREFIX = 'child-status:'
 /** Les relances faites par un parent : enfant → `lastActivityAt` de l'attente relancée. */
@@ -1204,6 +1221,42 @@ async function saveChanges($: EngineInterface, answer: string | undefined): Prom
     await $.store.set(branch.key, { zones, commits: branch.commits, at: await $.clock.now() })
   } catch {
     // store ou git illisibles : la fiche garde le relevé d'avant
+  }
+}
+
+/** La clé du relevé des temps de la tâche de cette session (#314), trouvée une fois : capture allumée, session numérotée, pas une vérification. */
+let timingTarget: string | null | undefined
+/** La boîte de fin de ce tour laisse une question à BBR (#314) : son attente court jusqu'au tour suivant. */
+let timingAsked = false
+async function timingKeyHere($: EngineInterface): Promise<string | undefined> {
+  if (timingTarget !== undefined) return timingTarget ?? undefined
+  const c = capture
+  if (!settings.capture || !c) return undefined
+  const title = (await readOwnSession($)).title
+  const id = sessionTitleId(title)
+  if (id === undefined) return undefined
+  timingTarget = sessionTitleKind(title) === 'check' ? null : timingKey(c.source.name, id)
+  return timingTarget ?? undefined
+}
+
+/** L'heure, ou rien quand l'horloge ne répond pas : le relevé des temps (#314) ne doit jamais faire sauter un hook. */
+async function timingNow($: EngineInterface): Promise<number | undefined> {
+  try {
+    return await $.clock.now()
+  } catch {
+    return undefined
+  }
+}
+
+/** Le relevé des temps (#314) passé par un réducteur et regardé ; store ou session illisibles : rien ne change. */
+async function noteTiming($: EngineInterface, step: (t: StoredTiming | undefined, now: number) => StoredTiming | undefined): Promise<void> {
+  try {
+    const key = await timingKeyHere($)
+    if (key === undefined) return
+    const next = step(timingOf(await $.store.get(key).catch(() => undefined)), await $.clock.now())
+    if (next !== undefined) await $.store.set(key, next)
+  } catch {
+    // le relevé garde son état d'avant
   }
 }
 
@@ -5674,10 +5727,13 @@ export const register: Register = (on, options) => {
     await noteChild($, (s, now) => ({ ...s, question: { text, since: now } }))
     // La question attend dans un transcript que Bertrand ne regarde pas : Maestro l'apprend tout de suite (#131).
     await tellMaestro($, childWake({ question: text }))
+    const asked = await timingNow($)
     try {
       return await next(e)
     } finally {
       await noteChild($, withoutQuestion)
+      // Le formulaire a attendu BBR : de l'attente, pas du travail (#314).
+      if (asked !== undefined) await noteTiming($, (t, now) => (t ? timingAsk(t, now - asked) : t))
     }
   })
   on('tool.call', { tool: WRAP_UP_TOOL }, async ($, e, next) => {
@@ -5704,6 +5760,7 @@ export const register: Register = (on, options) => {
     if (!fromAgent(e)) wakeBox = { ...(typeof recap === 'string' ? { recap } : {}), ...(typeof ask === 'string' ? { ask } : {}) }
     // La question de la boîte, ou « attend une réponse : … » en tête du récap, attend jusqu'au tour suivant (#121).
     const asked = boxQuestion((e as { ask?: unknown }).ask, recap)
+    if (!fromAgent(e)) timingAsked = asked !== undefined
     if (!fromAgent(e)) {
       await noteChild($, (s, now) => ({
         ...withoutQuestion(s),
@@ -5747,7 +5804,15 @@ export const register: Register = (on, options) => {
       const stdout = (r.result as { stdout?: unknown } | undefined)?.stdout
       if (typeof stdout === 'string') reportTurn.fromTasks = reportQuestions(stdout)
     }
+    const heavy = !fromAgent(e) && e.run_in_background !== true && heavyTest(e.command)
+    const began = heavy ? await timingNow($) : undefined
     const ran = await handWriteNote($, e, 'Bash', await written($, () => next(inQueue($, e)), undefined, writesRoadmap(e.command, capture?.source.ecriture?.outil), tasksOut))
+    // Une suite lourde : l'attente de la file et une suite tombée en délai dépassé vont au relevé des temps (#314).
+    if (began !== undefined && ran.deny === undefined) {
+      const result = ran.result as { stdout?: unknown; stderr?: unknown } | undefined
+      const said = [result?.stdout, result?.stderr].filter((x): x is string => typeof x === 'string').join('\n')
+      await noteTiming($, (t, now) => (t ? timingBash(t, said, now - began) : t))
+    }
     if (fromAgent(e) || ran.deny !== undefined || ran.isError === true) return ran
     // Une fusion sur main ou une publication (#136) : la liste d'étapes se renvoie avant la commande suivante.
     try {
@@ -5798,6 +5863,11 @@ export const register: Register = (on, options) => {
       capture.boxThisTurn = ''
       capture.mockupDrawn = undefined
     }
+    // Le relevé des temps (#314) : le tour commence, une question de la boîte prend fin.
+    if (e.agentId === undefined) {
+      timingAsked = false
+      await noteTiming($, timingTurnStart)
+    }
     // Cette session reprend la main : sa tâche passe à la roue sans attendre la relecture.
     if (e.agentId === undefined) await markOwnRunning($, true)
     // La réponse est arrivée (de Bertrand ou de Maestro) : la question de sa boîte de fin tombe (#121).
@@ -5815,6 +5885,8 @@ export const register: Register = (on, options) => {
     if (!e.isAborted) await saveEndFiche($, e.answer)
     // Et ce que la session a changé, zone par zone (#269).
     if (!e.isAborted) await saveChanges($, e.answer)
+    // Et le temps du tour (#314), même interrompu.
+    await noteTiming($, (t, now) => (t ? timingTurnEnd(t, now, { asked: timingAsked && !e.isAborted, ...(typeof e.answer === 'string' && !e.isAborted ? { answer: e.answer } : {}) }) : t))
     // Une session de Maestro prévient Maestro de l'état où elle s'arrête (#131) ; interrompue, la personne est là.
     if (!e.isAborted) await tellMaestro($, childWake({ ...wakeBox, answer: e.answer }))
     // Un réveil de Maestro ne laisse pas de rappel, qui ferait écrire son fil (#133).
@@ -5880,6 +5952,16 @@ export const register: Register = (on, options) => {
         notePress(id)
         await closeReopenAsk($, id)
         pressHandlers.get(id)?.()
+      }
+      return {}
+    }
+    // Un clic sur le donut de la durée (#314) : sa part se choisit, un second clic (ou le trou) revient au total.
+    if (e.element.startsWith(DONUT_HIT)) {
+      const pick = (e.data as { donut?: unknown } | null)?.donut
+      if (typeof pick === 'string' && pick !== '') {
+        notePress(`donut:${pick}`)
+        const prefix = pick.slice(0, pick.lastIndexOf(':') + 1)
+        await setView($, v => ({ gaugePick: pick === prefix || v.gaugePick === pick ? '' : pick }))
       }
       return {}
     }
@@ -7642,6 +7724,8 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     // #307 (maquette A) : la Mission garde la demande ; le récap de fin ouvre la carte Fin.
     const frame = missionFrame(current.label)
     const storedChanges = current.id ? changesOf(await $.store.get(changesKey(ficheSource.name, current.id)).catch(() => undefined)) : undefined
+    // Le relevé des temps de sa session (#314) : la durée d'une close et où elle est passée.
+    const storedTiming = current.done && current.id ? timingOf(await $.store.get(timingKey(ficheSource.name, current.id)).catch(() => undefined)) : undefined
     // Le morceau « livré : … » de la note d'une close va dans la carte Fin (#150) ; le reste de la note reste.
     const noteShown = current.done ? livreOfNote(current.note).rest : current.note
     // #278 : un projet en `mission: puces` montre le libellé un fait par puce (maquette A de Caroline) ;
@@ -7923,6 +8007,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     const bilan = current.done && current.id ? bilanData.bilans.get(current.id) : undefined
     const conclusionDue = current.done && current.id !== undefined && (current.fait ?? '').slice(0, 10) >= bilanData.config.depuis
     const fin = finCard({ ...(storedRecap ? { recap: storedRecap } : {}), task: current, ...(bilan ? { bilan } : {}), due: conclusionDue })
+    const duration = storedTiming ? durationView(storedTiming, current.fait) : undefined
     const finValue = (r: { tone?: string }, md: string) =>
       r.tone === 'ok' ? <Text wrap="wrap" color={palette.ok}>{md}</Text> : <Markdown text={codeKeptWhole(md)} {...(r.tone === 'dim' ? { dimColor: true } : {})} />
     const finBox = (): RenderElement | null => {
@@ -8709,6 +8794,64 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
         {noteShown && (bulleted || (cut ? !cut.cut || missionShown : missionShown)) && linked('note', noteShown, { color: palette.text2 })}
       </Box>
     )
+    // La durée (#314, maquette A1 choisie par BBR le 2026-11-05) : dans le carton d'une close, sous la demande et
+    // au-dessus du souci, le petit donut et le temps total ; un clic sur une part ne montre que sa ligne, son nom,
+    // son temps et sa précision ; un second clic, sur la part ou sur sa ligne, revient au total.
+    const durationBlock = (): RenderElement | null => {
+      if (!duration || editing) return null
+      const prefix = `duree:${taskKey(current)}:`
+      const pickN = gaugePick.startsWith(prefix) && gaugePick.length > prefix.length ? Number(gaugePick.slice(prefix.length)) : undefined
+      const part = pickN !== undefined ? duration.parts[pickN] : undefined
+      const total = spanLabel(duration.total)
+      const toggle = (i: number) => () => void setView($, v => ({ gaugePick: v.gaugePick === `${prefix}${i}` ? '' : `${prefix}${i}` }))
+      return (
+        <Box key="duree" flexDirection="row" gap={SPACE.row} alignItems="center">
+          {Svg && (
+            <Box key="duree-donut" flexDirection="column" flexShrink={0}>
+              <Svg source={donutIcon(palette, duration.parts, DURATION_DONUT, part ? pickN : undefined)} alt={`Durée ${total}`} width={DURATION_DONUT} height={DURATION_DONUT} />
+              {graphic && Client && (
+                <Box position="absolute" top={0} left={0} right={0} bottom={0}>
+                  <Client key={zoneKey(DONUT_HIT, 'donut-hit')} module="./donut-hit.tsx" props={{ shares: duration.parts.map(p => p.ms), pick: prefix }} width="100%" height="100%" />
+                </Box>
+              )}
+            </Box>
+          )}
+          <Box key="duree-side" flexDirection="column" flexGrow={1} flexShrink={1} minWidth={0}>
+            {part && pickN !== undefined ? (
+              <Box key="duree-part" flexDirection="column">
+                <Box flexDirection="row" gap={SPACE.row} alignItems="center" flexWrap="wrap">
+                  {Svg && <Svg source={donutDotIcon(palette, part.kind)} alt="" width={8} height={8} />}
+                  <Text>{part.label}</Text>
+                  <Text weight="semibold" tabular>{spanLabel(part.ms)}</Text>
+                </Box>
+                <Text size="caption" color={palette.text2} wrap="wrap">{part.note}</Text>
+                {hit('duree-part', toggle(pickN))}
+              </Box>
+            ) : (
+              <Box key="duree-total" flexDirection="column">
+                <Box flexDirection="row" gap={SPACE.row}>
+                  <Text weight="semibold" tabular>{total}</Text>
+                  <Text color={palette.text2}>au total</Text>
+                </Box>
+                {Svg && graphic && Client && <Text size="caption" color={palette.text3}>clique une part</Text>}
+              </Box>
+            )}
+            {/* Sans dessin (le terminal), les parts en boutons. */}
+            {!(Svg && graphic && Client) && (
+              <Box flexDirection="row" flexWrap="wrap" gap={SPACE.row}>
+                {duration.parts.map((p, i) => <Button key={`duree:${p.kind}`} plain dimColor={pickN !== i} label={p.label} onPress={toggle(i)} />)}
+              </Box>
+            )}
+          </Box>
+        </Box>
+      )
+    }
+    const finLine = (r: FinRow) => (
+      <Box key={`carton-fin:${r.name}`} flexDirection="row" gap={SPACE.row}>
+        {r.name === 'Souci' && <Text color={palette.block}>●</Text>}
+        <Box flexGrow={1} flexShrink={1} minWidth={0}>{finValue(r, r.md)}</Box>
+      </Box>
+    )
     const cartonBox = () => {
       const finShown = fin ? fin.rows.filter(r => cartonFin.has(r.name) && r.name !== 'Livré') : []
       return (
@@ -8720,14 +8863,11 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
                 {carton.meta !== '' && <Text size="caption" tabular color={palette.text2} wrap="truncate-end">{carton.meta}</Text>}
               </Box>
             </Box>
-            {finShown.map(r => (
-              <Box key={`carton-fin:${r.name}`} flexDirection="row" gap={SPACE.row}>
-                {r.name === 'Souci' && <Text color={palette.block}>●</Text>}
-                <Box flexGrow={1} flexShrink={1} minWidth={0}>{finValue(r, r.md)}</Box>
-              </Box>
-            ))}
+            {finShown.filter(r => r.name !== 'Souci').map(finLine)}
             {finShown.length > 0 && Svg && <Svg source={ruleIcon(cartonLook.edge, fullWidth((e.props as { bodyColumns?: number }).bodyColumns ?? 48))} alt="séparateur" height={1} />}
             {missionBody(cartonLook.bg, current.done)}
+            {durationBlock()}
+            {finShown.filter(r => r.name === 'Souci').map(finLine)}
           </Box>
         </Box>
       )

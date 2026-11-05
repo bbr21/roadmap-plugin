@@ -3,7 +3,7 @@
 // Couleurs et mesures : tokens.ts (#108) ; dessins du handoff de design (README « Icônes »). Un SVG
 // dessiné en image ne connaît pas `currentColor`, d'où la couleur passée à chaque dessin.
 
-import type { BandGlyph, ContextView, GaugeKind, SisterState, StepSegment, TodoIcon } from './parse'
+import type { BandGlyph, ContextView, DurationKind, GaugeKind, SisterState, StepSegment, TodoIcon } from './parse'
 import { FONT, MIX, PALETTES, RADIUS, SIZE, STROKE, TEXT, type Palette, type ThemeName } from './tokens'
 
 // Les palettes et les traits sont des tokens du design system (#108) ; on les sert aussi d'ici.
@@ -1070,4 +1070,37 @@ export function calendarDayIcon(o: { day: number; ink: string; ring?: string; do
   const dot = o.dot ? `<circle cx="${w / 2}" cy="${h - 3}" r="2" fill="${o.dot}"/>` : ''
   const text = `<text x="${w / 2}" y="${o.dot ? 10 : 11}" dominant-baseline="central" text-anchor="middle" font-family="${FONT}" font-size="${TEXT.pill}" font-weight="${o.bold ? TEXT.weight.strong : 400}" fill="${o.ink}" style="font-variant-numeric:tabular-nums">${o.day}</text>`
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">${ring}${text}${dot}</svg>`
+}
+
+/** La couleur d'une part du donut de la durée (#314) : t'attend en orange, fusion en violet, travail en bleu, tests en rouge, repos en gris. */
+const DONUT_TONE: Record<DurationKind, keyof Palette> = { bbr: 'block', merge: 'finished', work: 'live', tests: 'late', idle: 'sel' }
+/** L'épaisseur de l'anneau, en part du côté. */
+const DONUT_RING = 0.22
+
+/**
+ * Le petit donut de la durée d'une tâche (#314, maquette A1) : un arc par part, dans le sens horaire depuis midi,
+ * séparés d'un fin vide ; `pick`, la part cliquée garde sa couleur et les autres pâlissent.
+ */
+export function donutIcon(palette: Palette, parts: readonly { kind: DurationKind; ms: number }[], size: number, pick?: number): string {
+  const c = size / 2
+  const width = size * DONUT_RING
+  const r = c - width / 2
+  const round = 2 * Math.PI * r
+  const sum = parts.reduce((a, p) => a + Math.max(0, p.ms), 0) || 1
+  const gap = parts.length > 1 ? 1.5 : 0
+  let at = 0
+  const arcs = parts.map((p, i) => {
+    const length = (Math.max(0, p.ms) / sum) * round
+    const drawn = Math.max(0.5, length - gap)
+    const dim = pick !== undefined && pick !== i ? ' stroke-opacity="0.35"' : ''
+    const arc = `<circle cx="${c}" cy="${c}" r="${r.toFixed(2)}" fill="none" stroke="${palette[DONUT_TONE[p.kind]]}"${dim} stroke-width="${width.toFixed(2)}" stroke-dasharray="${drawn.toFixed(2)} ${(round - drawn).toFixed(2)}" stroke-dashoffset="${(-at).toFixed(2)}" transform="rotate(-90 ${c} ${c})"/>`
+    at += length
+    return arc
+  })
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">${arcs.join('')}</svg>`
+}
+
+/** La pastille d'une part dans la légende du donut (#314). */
+export function donutDotIcon(palette: Palette, kind: DurationKind, size = 8): string {
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}"><rect width="${size}" height="${size}" rx="${RADIUS.square}" fill="${palette[DONUT_TONE[kind]]}"/></svg>`
 }

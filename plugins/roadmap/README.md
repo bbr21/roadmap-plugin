@@ -703,6 +703,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.207.0 (2026-11-05)** : panneau : la fiche d'une tâche close dit sa durée et où ce temps est passé (travail, attente de BBR, file des tests, Mac chargé, attente de fusion), en petit donut cliquable (#314)
 - **0.206.1 (2026-11-05)** : garde-fou git : un clone frais n'exempte plus les règles qui valent partout, une configuration, un remote ou un worktree coupe la chaîne du clone, et un shell déguisé dans un here-doc est repéré (#315)
 - **0.206.0 (2026-11-04)** : panneau : la case d'une ligne choisit au lieu de cocher ; une barre de sélection coche, date, statut et récurrence en lot, à travers les axes, une mère prenant ses enfants (#316)
 - **0.205.0 (2026-11-04)** : panneau : une recherche se range comme la liste, sous ses sujets et leur trait coloré, et une tâche trouvée amène toute sa chaîne, faites comprises (#318)

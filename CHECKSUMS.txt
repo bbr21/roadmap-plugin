@@ -1,14 +1,15 @@
-# roadmap 0.206.1 : SHA-256 de chaque fichier installé du plugin, chemins relatifs à son dossier.
-# Vérifier une copie installée (~/.claude/plugins/cache/roadmap/roadmap/0.206.1) : plugins/roadmap/SECURITE.md, « Vérifier que ta copie est une vraie version ».
-00415464c480ed74bb7247abb10aae886c85bf75afb36c8e69edf4df4ca39cad  .claude-plugin/plugin.json
-394ec9397160cd87166bae7601d069f317ce67ee65f391eeb2f99983d35eb3ed  README.md
-bf0eebb0c9ba909a6c9b021799d6479f503f7ccfb783d3b60891b9c2d9a3dd1e  SECURITE.md
+# roadmap 0.207.0 : SHA-256 de chaque fichier installé du plugin, chemins relatifs à son dossier.
+# Vérifier une copie installée (~/.claude/plugins/cache/roadmap/roadmap/0.207.0) : plugins/roadmap/SECURITE.md, « Vérifier que ta copie est une vraie version ».
+5f2ac6f8c1bf9fc58224c10dfa3bebd8cb0e01ee054a5602103c64e8cc4fa801  .claude-plugin/plugin.json
+2533b6443fba653a34c81cbd155234f6997fe39a258425c135d391f93ed16964  README.md
+7816fbb4b80c4c79b225998682f7ac5efcbcf10cbac86ea6f53cc2f4f9616ce5  SECURITE.md
 bce019cb7147413a8e5f0687df59a41394fa92545568b5d37b1df8bd6d885e30  hooks/bar-hit.tsx
+24387c7ebf678c8c7ed5c9cee4be7aa908712c43d03f08c0106f5342c16f823f  hooks/donut-hit.tsx
 d842d789476d67282d0f04b7e5fdc68a3d981ccec65dd79cfa2d11eed13fb828  hooks/hooks.json
-a4e4ca9f22f75ec0cc24d8b5d19ac1284ac70a0475cbf77cbfc4130f359b3810  hooks/icons.ts
-7c4b35fed216e4c9c62ca9275d7690eec37626ca8798f4c954a8da1b57788607  hooks/parse.ts
+f268065c4789ab91d2e02bdb4ccab1a755b5b0833fc95cc66ad57c41e0edfc43  hooks/icons.ts
+a78a52b6a9bd431a39e15e5ccd7fb200df0f8d8482ea161c5caa4b8e5a91cca5  hooks/parse.ts
 a29e07be4f95c637c8f3ab377dc9a97cd16de11e8e7de7062311dd2888a0833f  hooks/press-hit.tsx
-0859ada933bfef81e8ad1f612aa2af2489cced1a392ace8049dd8421f96a583f  hooks/register.tsx
+82fd7681ca1cd9838aada9f14d71c4d90348b3d2aa44116c2100535656e5b58a  hooks/register.tsx
 a8cc4f58b6fc93fdbd3b6768496660d7627e524b993045ce56e4efbcde209716  hooks/reglages.tsx
 838d832dfd2509b472e7d42c149f6161f7c57803d81bd61dff2751a678b45ad0  hooks/tokens.ts
 2c41c480ffe671321b91523191e8e36453f4a211957d90b91b4f3148a257da86  scripts/one-at-a-time.sh

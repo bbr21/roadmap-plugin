@@ -5942,6 +5942,192 @@ export function splitNames(text: string): string[] {
   return text.split(',').map(s => s.trim()).filter(s => s !== '')
 }
 
+// --- Durée d'une tâche (#314, maquette D3) ----------------------------------------------------------
+// La session relève où passe son temps, dans le store sous le projet et le numéro de sa tâche (comme
+// « Ce qui a changé », #269) : ses tours, ce qu'elle a attendu de BBR, la file des tests et un Mac chargé,
+// l'heure où sa branche attend Maestro. La carte Fin en tire un petit donut, une part par cause, et sa
+// légende chiffrée à côté (BBR, 2026-11-05 : « court et simple »).
+
+/** Le relevé des temps d'une tâche, en ms (heures en epoch ms). `open` : la question de la boîte encore sans réponse. */
+export type StoredTiming = {
+  start: number
+  turnAt?: number
+  work: number
+  waits: number
+  asks: number
+  longest: number
+  open?: number
+  tests: number
+  timeouts: number
+  ready?: number
+  at: number
+}
+
+/** La clé du relevé des temps d'une tâche dans le store (#314). */
+export function timingKey(project: string, id: string): string {
+  return `timing:${project}#${id}`
+}
+
+const TIMING_NUMBERS = ['start', 'work', 'waits', 'asks', 'longest', 'tests', 'timeouts', 'at'] as const
+const TIMING_OPTIONAL = ['turnAt', 'open', 'ready'] as const
+
+/** Un relevé relu du store (#314) : ses compteurs en nombres, sinon rien. */
+export function timingOf(value: unknown): StoredTiming | undefined {
+  const v = value as Record<string, unknown> | null
+  if (typeof v !== 'object' || v === null) return undefined
+  if (!TIMING_NUMBERS.every(k => typeof v[k] === 'number' && Number.isFinite(v[k]))) return undefined
+  const t = Object.fromEntries(TIMING_NUMBERS.map(k => [k, v[k]])) as StoredTiming
+  for (const k of TIMING_OPTIONAL) if (typeof v[k] === 'number' && Number.isFinite(v[k])) t[k] = v[k] as number
+  return t
+}
+
+const positive = (ms: number) => Math.max(0, ms)
+
+/** Un tour commence : le premier fixe le début ; une question de boîte ouverte prend fin, sa durée va à l'attente. */
+export function timingTurnStart(prev: StoredTiming | undefined, now: number): StoredTiming {
+  const t: StoredTiming = prev ? { ...prev } : { start: now, work: 0, waits: 0, asks: 0, longest: 0, tests: 0, timeouts: 0, at: now }
+  if (t.open !== undefined) {
+    const waited = positive(now - t.open)
+    t.waits += waited
+    t.asks += 1
+    t.longest = Math.max(t.longest, waited)
+    delete t.open
+  }
+  t.turnAt = now
+  t.at = Math.max(t.at, now)
+  return t
+}
+
+/** « **Prête à fusionner » en tête de la réponse : la branche attend Maestro (#314). */
+const READY_RE = /^\s*\*\*Prête à fusionner\b/i
+
+/** Un tour finit : sa durée va au travail (les attentes du tour en sont déjà ôtées) ; `asked` : la boîte laisse une question. */
+export function timingTurnEnd(prev: StoredTiming, now: number, o: { answer?: string; asked: boolean }): StoredTiming {
+  const t: StoredTiming = { ...prev }
+  if (t.turnAt !== undefined) t.work = positive(t.work + now - t.turnAt)
+  t.work = positive(t.work)
+  delete t.turnAt
+  if (o.asked) t.open = now
+  if (o.answer !== undefined && READY_RE.test(o.answer)) t.ready = now
+  t.at = Math.max(t.at, now)
+  return t
+}
+
+/** Un formulaire a attendu `ms` la réponse de BBR : de l'attente, plus du travail. */
+export function timingAsk(prev: StoredTiming, ms: number): StoredTiming {
+  const waited = positive(ms)
+  return { ...prev, waits: prev.waits + waited, asks: prev.asks + 1, longest: Math.max(prev.longest, waited), work: prev.work - waited }
+}
+
+/** « 45 s », « 3 min », « 1 min 30 » : la durée que dit la file des tests (`span` de one-at-a-time.sh). */
+const SPAN_RE = /(\d+)\s*(s|min)(?:\s+(\d+)\b(?!\s*(?:s|min)))?/
+function spanMs(text: string): number {
+  const m = SPAN_RE.exec(text)
+  if (!m) return 0
+  return m[2] === 's' ? Number(m[1]) * 1000 : (Number(m[1]) * 60 + Number(m[3] ?? 0)) * 1000
+}
+
+/** Ce que la file des tests lourds a fait attendre (#222, #249) : son tour, puis la charge du Mac. */
+export function queueWaitMs(stdout: string): number {
+  let ms = 0
+  for (const line of stdout.split('\n')) {
+    const turn = /à ton tour après (.+)$/.exec(line) ?? /tests lourds lancés après (.+)$/.exec(line) ?? /le Mac reste chargé \([^)]*\) après ([^:]+):/.exec(line)
+    if (turn) ms += spanMs(turn[1]!)
+  }
+  return ms
+}
+
+const TIMED_OUT_RE = /timed out after \d+\s*ms/i
+
+/** Une suite lourde (#314) : l'attente de la file va aux tests ; tombée en délai dépassé, sa durée entière. */
+export function timingBash(prev: StoredTiming, stdout: string, ms: number): StoredTiming {
+  const queued = Math.min(queueWaitMs(stdout), positive(ms))
+  const lost = TIMED_OUT_RE.test(stdout) ? positive(ms) : queued
+  return { ...prev, tests: prev.tests + lost, timeouts: prev.timeouts + (TIMED_OUT_RE.test(stdout) ? 1 : 0), work: prev.work - lost }
+}
+
+/** « 45 s », « 12 min », « 3 h », « 3 h 10 », « 1 j 4 h » (#314). */
+export function spanLabel(ms: number): string {
+  const s = Math.round(positive(ms) / 1000)
+  if (s < 60) return `${s} s`
+  const min = Math.round(s / 60)
+  if (min < 60) return `${min} min`
+  const h = Math.floor(min / 60)
+  const rest = min % 60
+  if (h < 24) return rest === 0 ? `${h} h` : `${h} h ${String(rest).padStart(2, '0')}`
+  const d = Math.floor(h / 24)
+  return h % 24 === 0 ? `${d} j` : `${d} j ${h % 24} h`
+}
+
+export type DurationKind = 'bbr' | 'merge' | 'work' | 'tests' | 'idle'
+/** Une part du donut : sa cause, son nom, son temps, et sa précision sous sa ligne quand elle est cliquée. */
+export type DurationPart = { kind: DurationKind; label: string; ms: number; note: string }
+export type DurationView = { total: number; parts: DurationPart[] }
+
+const DURATION_LABEL: Record<DurationKind, string> = { bbr: "t'attendait", merge: 'attente de fusion', work: 'travail', tests: 'tests, Mac chargé', idle: 'au repos' }
+
+/** L'heure locale d'un `fait:AAAA-MM-JJ HH:MM`, ou rien sans heure. */
+function faitMs(fait: string | undefined): number | undefined {
+  const m = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})/.exec(fait ?? '')
+  return m ? new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]), Number(m[4]), Number(m[5])).getTime() : undefined
+}
+
+/**
+ * Le donut d'une tâche close (#314) : du premier tour relevé à la clôture (sans heure de clôture, au dernier
+ * tour, sans part de fusion), une part par cause, de la plus grosse à la plus petite, sans les parts à zéro.
+ */
+export function durationView(t: StoredTiming, fait: string | undefined): DurationView | undefined {
+  const closed = faitMs(fait)
+  const end = closed ?? t.at
+  const total = end - t.start
+  if (total <= 0) return undefined
+  const stillOpen = t.open !== undefined && closed !== undefined ? positive(closed - t.open) : 0
+  const bbr = t.waits + stillOpen
+  // La branche attend Maestro de « Prête à fusionner » à la clôture ; un tour après (une mise à jour) recule ce départ.
+  const merge = closed !== undefined && t.ready !== undefined ? positive(closed - Math.max(t.ready, t.at)) : 0
+  const work = positive(t.work)
+  const tests = t.tests
+  const idle = positive(total - bbr - merge - work - tests)
+  const ms: Record<DurationKind, number> = { bbr, merge, work, tests, idle }
+  const asks = t.asks + (t.open !== undefined ? 1 : 0)
+  const plural = (n: number, word: string) => `${n} ${word}${n > 1 ? 's' : ''}`
+  // Ce que la ligne d'une part cliquée dit sous son nom (maquette A1, BBR le 2026-11-05).
+  const notes: Record<DurationKind, string> = {
+    bbr: [plural(asks, 'question'), ...(t.open !== undefined ? ['1 sans réponse'] : [])].join(' · '),
+    merge: 'de « Prête à fusionner » à la clôture',
+    work: `${Math.round((work / total) * 100)} % de la durée`,
+    tests: t.timeouts > 0 ? `${plural(t.timeouts, 'suite')} tombée${t.timeouts > 1 ? 's' : ''} en délai dépassé` : 'en file ou sous un Mac chargé',
+    idle: 'ni tour, ni question',
+  }
+  const parts = (Object.keys(ms) as DurationKind[])
+    .filter(k => ms[k] > 0)
+    .map(k => ({ kind: k, label: DURATION_LABEL[k], ms: ms[k], note: notes[k] }))
+    .sort((x, y) => y.ms - x.ms)
+  return { total, parts }
+}
+
+/** L'anneau du donut, en part du côté de la région carrée qui le couvre : le trou en deçà, le vide au-delà. */
+const DONUT_HOLE = 0.25
+/**
+ * La part sous un clic sur le donut (#314) : ses coordonnées en parts (0 à 1) de la région carrée posée dessus ;
+ * l'angle depuis midi, dans le sens horaire, contre les parts cumulées ; `center` dans le trou ; rien hors de l'anneau.
+ */
+export function donutPartAt(shares: readonly number[], x: number, y: number): number | 'center' | undefined {
+  const dx = x - 0.5
+  const dy = y - 0.5
+  const d = Math.hypot(dx, dy)
+  if (d < DONUT_HOLE) return 'center'
+  if (d > 0.5 || shares.length === 0) return undefined
+  const turn = (Math.atan2(dx, -dy) / (2 * Math.PI) + 1) % 1
+  const sum = shares.reduce((a, b) => a + b, 0) || 1
+  let edge = 0
+  for (let i = 0; i < shares.length; i++) {
+    edge += shares[i]! / sum
+    if (turn < edge) return i
+  }
+  return shares.length - 1
+}
+
 // --- Bilan de clôture ------------------------------------------------------------------------
 // Toute roadmap tient un bilan de chaque task close (#264) : celui que nomme cowork.json « bilan »
 // (le log CSV et la date d'entrée en vigueur), sinon le journal par défaut, à côté de ROADMAP.md.
