@@ -9017,8 +9017,11 @@ function gitRule(sub: string, args: string[]): { rule: string; anywhere: boolean
   }
 }
 
-/** Une commande git d'une ligne shell : le dossier où elle agit, sa sous-commande et ses arguments. */
-type GitCall = { dir: string; sub: string; args: string[] }
+/**
+ * Une commande git d'une ligne shell : le dossier où elle agit, sa sous-commande et ses arguments.
+ * `config` : les clés que règlent ses `-c` et `--config-env`, en minuscules (#315).
+ */
+type GitCall = { dir: string; sub: string; args: string[]; config: string[] }
 
 /** `$NOM` et `${NOM}` remplacés par leur valeur connue ; une variable inconnue reste telle quelle. */
 function expandVars(word: string, vars: Map<string, string>): string {
@@ -9058,8 +9061,11 @@ function plainShell(commands: ShellCommand[]): boolean {
 function shellSteps(command: string, cwd: string, home: string, vars = new Map<string, string>(), line = { read: true }): ShellStep[] {
   const steps: ShellStep[] = []
   let dir = cwd
-  const { commands, read } = shellCommands(command, home)
-  if (!read) line.read = false
+  const parsed = shellCommands(command, home)
+  const { commands, read } = parsed
+  // #315 : le texte d'un here-doc n'est du texte que si aucune commande de la ligne ne peut le lancer
+  // comme un script, même sur une ligne comprise (`| bash /dev/stdin`, un script écrit puis lancé par `sh`).
+  if (!read || (parsed.bodies.length > 0 && runsText(plainText(command, parsed), home))) line.read = false
   const plain = read && plainShell(commands)
   if (!plain) vars.clear()
   // #309 : faux dès qu'un séparateur autre que `&&` sépare cette étape de la précédente.
@@ -9158,25 +9164,52 @@ function cloneDest(call: GitCall): string | undefined {
   return resolvePath(call.dir, target)
 }
 
-/** Une commande git, avec son dossier : `-C <chemin>`, `--work-tree`, `--git-dir`, sinon celui de la commande ; une autre commande, rien. */
+/**
+ * Une commande git, avec son dossier : `-C <chemin>`, `--work-tree`, `-c core.worktree=` (#315),
+ * `--git-dir`, sinon celui de la commande ; une autre commande, rien. `--config-env=core.worktree=X`
+ * tire le dossier de la variable `X` : il ne se lit pas.
+ */
 function gitCall({ dir, env, words }: ShellStep): GitCall | undefined {
   if (words[0] !== 'git') return undefined
   let base = dir
   let workTree = env.get('GIT_WORK_TREE')
   let gitDir = env.get('GIT_DIR')
+  const config: string[] = []
   let i = 1
   while (i < words.length && words[i]!.startsWith('-')) {
     const [option, inline] = words[i]!.split(/=(.*)/s) as [string, string | undefined]
-    const takes = ['-C', '-c', '--work-tree', '--git-dir'].includes(option) && inline === undefined
+    const takes = ['-C', '-c', '--config-env', '--work-tree', '--git-dir'].includes(option) && inline === undefined
     const value = inline ?? (takes ? words[i + 1] : undefined)
     if (option === '-C') base = resolvePath(base, value ?? '.')
     if (option === '--work-tree') workTree = value
     if (option === '--git-dir') gitDir = value
+    if ((option === '-c' || option === '--config-env') && value !== undefined) {
+      // Les noms de section et de clé de git ne tiennent pas à la casse.
+      const [key, setting] = value.split(/=(.*)/s) as [string, string | undefined]
+      config.push(key.toLowerCase())
+      if (key.toLowerCase() === 'core.worktree') workTree = option === '-c' ? (setting ?? '') : `$${setting ?? ''}`
+    }
     i += takes ? 2 : 1
   }
   // Le dossier de travail l'emporte ; sinon celui du dépôt (`…/.git` : son parent).
   const target = workTree !== undefined ? resolvePath(base, workTree) : gitDir !== undefined ? resolvePath(base, gitDir).replace(/\/\.git$/, '') : base
-  return { dir: target, sub: words[i] ?? '', args: words.slice(i + 1) }
+  return { dir: target, sub: words[i] ?? '', args: words.slice(i + 1), config }
+}
+
+/** Une clé de configuration qui ne règle que l'auteur des commits : elle ne peut rediriger aucun dépôt (#315). */
+const AUTHOR_KEY = /^user\.[a-z]+$/i
+
+/**
+ * Une commande git qui peut rediriger le clone de la ligne ailleurs que dans son dossier (#315) : une
+ * configuration (`git config`, `-c`, `--config-env`) autre que l'auteur des commits (`core.worktree`,
+ * `include.path`…), un `git remote` ou un `git worktree`. Après elle, le clone n'est plus sûr.
+ */
+function redirectsClone(call: GitCall): boolean {
+  if (call.config.some(key => !AUTHOR_KEY.test(key))) return true
+  if (call.sub === 'remote' || call.sub === 'worktree') return true
+  if (call.sub !== 'config') return false
+  const args = call.args[0] === '--local' ? call.args.slice(1) : call.args
+  return !(args.length === 2 && AUTHOR_KEY.test(args[0]!))
 }
 
 /** Les mots qui lancent la commande qui les suit (`command git …`, `nohup git …`). */
@@ -9257,8 +9290,9 @@ function braceWords(word: string): string[] {
  * recolle les lignes), `$'…'` décodé, `$HOME` et `~` développés, en morceaux coupés à chaque
  * séparateur, parenthèse ou guillemet inversé, même entre guillemets, accolades développées. `afterSub` : le
  * morceau suit une substitution qui se ferme, dont le résultat peut être le nom de sa commande.
+ * `assignments` : une affectation reste un mot entier (`W=x`), au lieu de sa seule valeur (#315).
  */
-function looseSegments(line: string, home: string): { words: string[]; afterSub: boolean }[] {
+function looseSegments(line: string, home: string, assignments = false): { words: string[]; afterSub: boolean }[] {
   let text = ''
   for (let i = 0; i < line.length; i++) {
     const c = line[i]!
@@ -9290,7 +9324,7 @@ function looseSegments(line: string, home: string): { words: string[]; afterSub:
     // Un groupe `{ …; }` n'est qu'une accolade seule ; `{a,b}` se développe.
     const words = piece.split(/\s+/).filter(w => w !== '' && w !== '{' && w !== '}').flatMap(w => {
       const value = /^[A-Za-z_][A-Za-z0-9_]*=(.*)$/s.exec(w)?.[1]
-      return value === undefined ? braceWords(w) : value === '' ? [] : braceWords(value)
+      return value === undefined || assignments ? braceWords(w) : value === '' ? [] : braceWords(value)
     }).map(w => w.replaceAll(TEXT_BLANK, ' '))
     segments.push({ words, afterSub })
   }
@@ -9387,9 +9421,12 @@ export function forbiddenGit(command: string, cwd: string, home: string): GitHit
   for (const step of steps) {
     const call = gitCall(step)
     if (!call || step.joined !== true) clones = []
+    // #315 : une commande qui peut rediriger un clone (configuration, remote, worktree) coupe la chaîne, elle comprise.
+    if (call && redirectsClone(call)) clones = []
     const found = call && gitRule(call.sub, call.args)
-    if (call && found) hits.push({ ...found, dir: call.dir, ...(line.read && clones.includes(call.dir) ? { fresh: true as const } : {}) })
-    const dest = call && step.env.size === 0 ? cloneDest(call) : undefined
+    // #315 : un push forcé vers main reste refusé de partout, clone frais compris.
+    if (call && found) hits.push({ ...found, dir: call.dir, ...(line.read && !found.anywhere && clones.includes(call.dir) ? { fresh: true as const } : {}) })
+    const dest = call && step.env.size === 0 && call.config.length === 0 ? cloneDest(call) : undefined
     if (dest !== undefined) clones.push(dest)
   }
   return line.read ? hits : [...hits, ...looseHits(looseText(command, home), cwd, home)]
@@ -9406,15 +9443,10 @@ const SHELL_READERS = /^(ba|z|da|k|c|tc|fi)?sh$|^(source|eval|xargs|exec)$/
  * `SHELL_READERS` où qu'il soit, ou, en tête d'un morceau (affectations, `env`, `export` et lanceurs
  * sautés avec leurs options et nombres), `.`, un nom illisible, ou ce qui suit une substitution fermée.
  */
-function runsText(text: string): boolean {
-  let afterSub = false
-  for (const piece of text.split(/([;&|\n()`])/)) {
-    if (piece.length === 1 && ';&|\n()`'.includes(piece)) {
-      afterSub = piece === ')' || piece === '`'
-      continue
-    }
-    const words = piece.replace(/["']/g, '').split(/\s+/).filter(Boolean)
-    if (words.some(w => SHELL_READERS.test(w.replace(/^.*\//, '')))) return true
+function runsText(text: string, home: string): boolean {
+  // #315 : les mots comme bash les lit (antislash, `$'…'`, accolades) : `ba\sh` et `$'\x62ash'` sont `bash`.
+  for (const { words, afterSub } of looseSegments(text, home, true)) {
+    if (words.some(w => SHELL_READERS.test(w.replace(/^.*\//, '').replace(/^[A-Za-z_][A-Za-z0-9_]*=/, '')))) return true
     let k = 0
     let launched = false
     while (k < words.length) {
@@ -9425,7 +9457,6 @@ function runsText(text: string): boolean {
     }
     const first = words[k]
     if (first !== undefined && (afterSub || first === '.' || illegible(first))) return true
-    afterSub = false
   }
   return false
 }
@@ -9437,13 +9468,21 @@ function runsText(text: string): boolean {
  * texte. Sinon la ligne se relit telle quelle.
  */
 function looseText(command: string, home: string): string {
-  const { bodies, texts } = shellCommands(command, home)
-  if (bodies.length === 0 && texts.length === 0) return command
+  const parsed = shellCommands(command, home)
+  if (parsed.bodies.length === 0 && parsed.texts.length === 0) return command
+  const text = plainText(command, parsed)
+  return runsText(text, home) ? command : text
+}
+
+/**
+ * La ligne sans le texte de ses here-docs, chacune de ses chaînes sans substitution gardée d'un seul
+ * mot (#309) : ses blancs et ses séparateurs deviennent `TEXT_BLANK`, comme bash la lit.
+ */
+function plainText(command: string, { bodies, texts }: Pick<ShellLine, 'bodies' | 'texts'>): string {
   let text = command
-  // Une chaîne sans substitution reste un seul mot, comme pour bash : ses blancs et ses séparateurs deviennent `TEXT_BLANK`.
   for (const [start, end] of texts) text = text.slice(0, start) + text.slice(start, end).replace(/[\s()|;&`]/g, TEXT_BLANK) + text.slice(end)
   for (const [start, end] of [...bodies].reverse()) text = text.slice(0, start) + text.slice(end)
-  return runsText(text) ? command : text
+  return text
 }
 
 /** Une livraison (#136) : une fusion (`git merge`, avec le dossier où elle tourne) ou une publication (`release.py release`). */
