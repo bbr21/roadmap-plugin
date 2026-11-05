@@ -42,6 +42,9 @@ export type Palette = {
   /** Bouton Lancer. */
   pri: string
   priText: string
+  /** Le carton d'une tâche à faire (#291) : `pri` à 13 % sur `bg`, et son filet à 22 %. */
+  planTint: string
+  planEdge: string
   /** La flèche posée dans un carré d'axe (#168) : blanche dans les deux thèmes. */
   onAxis: string
   /** Boutons icône. */
@@ -94,6 +97,9 @@ export const PALETTES: Record<ThemeName, Palette> = {
     done: '#5BAE6A',
     pri: '#ECEBE7',
     priText: '#1F1E1D',
+    // Le carton d'une tâche à faire (#291) : le blanc de Lancer à 13 % sur le fond, son filet à 22 %.
+    planTint: '#343434',
+    planEdge: '#474746',
     onAxis: '#FFFFFF',
     btn: '#2D2C29',
     btnHover: '#383633',
@@ -132,6 +138,8 @@ export const PALETTES: Record<ThemeName, Palette> = {
     done: '#2E8540',
     pri: '#1F1E1D',
     priText: '#FFFFFF',
+    planTint: '#E2E2E2',
+    planEdge: '#CECECD',
     onAxis: '#FFFFFF',
     btn: '#F1EFE9',
     btnHover: '#E7E4DB',

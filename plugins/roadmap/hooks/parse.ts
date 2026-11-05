@@ -2773,6 +2773,120 @@ export function chainOf(
   return { mother, sisters, index: ordered.indexOf(task), done, total: kids.length }
 }
 
+/**
+ * Un segment d'une jauge de la fiche (#291) : sa sorte (faite, celle de la fiche, sa prérequise ouverte, celle
+ * qu'elle débloque, à faire, le vide, annulée), ce qu'il dit quand on le clique, et la teinte de ce texte.
+ */
+export type GaugeKind = 'done' | 'here' | 'pre' | 'next' | 'open' | 'none' | 'cancelled'
+export type GaugeSeg = { kind: GaugeKind; title: string; sub: string; tone: 'text' | 'live' | 'block' }
+/** Une jauge de la fiche (#291) : sa tête et son compte, ses segments, la ligne dessous quand rien n'est cliqué. */
+export type Gauge = { head: string; count: string; segs: GaugeSeg[]; line: { title: string; sub: string; tone: GaugeSeg['tone'] } }
+
+const STEP_STATE_WORDS: Record<ChildStep['status'], string> = { completed: 'faite', in_progress: 'en cours', pending: 'à faire' }
+
+/**
+ * La jauge des étapes (#291) : un segment par étape, la faite, celle en cours (« ici »), les à faire ; dessous,
+ * l'étape en cours et la suivante, ou, toutes faites, leur compte et la dernière. Sans étape : rien.
+ */
+export function stepGauge(given: readonly ChildStep[], o: { closed: boolean; age: string }): Gauge | undefined {
+  if (given.length === 0) return undefined
+  // Close, toutes ses étapes sont faites, même celle restée « en cours » dans la note (#145, comme `stepsView`).
+  const steps = o.closed ? given.map(s => ({ ...s, status: 'completed' as const })) : given
+  const n = steps.length
+  const done = steps.filter(s => s.status === 'completed').length
+  const segs: GaugeSeg[] = steps.map((s, i) => ({
+    kind: s.status === 'completed' ? 'done' : s.status === 'in_progress' ? 'here' : 'open',
+    title: s.content,
+    sub: `étape ${i + 1} sur ${n} · ${STEP_STATE_WORDS[s.status]}`,
+    tone: s.status === 'in_progress' ? 'live' : 'text',
+  }))
+  const at = o.age ? ` · ${o.age}` : ''
+  const now = steps.findIndex(s => s.status === 'in_progress')
+  const next = steps.find((s, i) => i > now && s.status === 'pending')
+  const line: Gauge['line'] =
+    now >= 0 && !o.closed
+      ? { title: steps[now]!.content, sub: `étape ${now + 1} sur ${n}${next ? ` · puis ${next.content}` : ''}${at}`, tone: 'live' }
+      : done === n || o.closed
+        ? { title: `${n} étapes faites`, sub: `la dernière : ${steps[n - 1]!.content}${at}`, tone: 'text' }
+        : { title: `${done} faite${done > 1 ? 's' : ''} sur ${n}`, sub: `prochaine : ${steps.find(s => s.status === 'pending')?.content ?? ''}${at}`, tone: 'text' }
+  return { head: 'Étapes', count: `${done}/${n}`, segs, line }
+}
+
+/**
+ * La jauge de la chaîne (#291), au pied de la fiche : une fille montre la ligne de sa mère, une sœur par
+ * segment (les faites d'abord, puis celle en session, puis les autres), sa prérequise ouverte et celle qu'elle
+ * débloque marquées ; une mère, ses filles ; une tâche seule, ce qu'elle attend, elle-même et ce qu'elle
+ * débloque. Sans mère, ni fille, ni lien : rien.
+ */
+export function chainGauge(
+  task: Task,
+  all: readonly Task[],
+  o: { isLive: (t: Task) => boolean; prereqsOf: (t: Task) => readonly Task[]; unlocksOf: (t: Task) => readonly Task[]; titleOf: (t: Task) => string },
+): Gauge | undefined {
+  const name = (t: Task) => `${t.id ? `#${t.id} ` : ''}${o.titleOf(t)}`
+  const when = (iso?: string) => (iso ? ` · ${shortDate(iso)}` : '')
+  const faites = (done: number, total: number) => `${done} faite${done > 1 ? 's' : ''} sur ${total}`
+  const pres = o.prereqsOf(task)
+  const unlocks = o.unlocksOf(task)
+  const openPre = pres.find(p => !p.done)
+  const relation = (): Pick<Gauge['line'], 'sub' | 'tone'> | undefined =>
+    openPre
+      ? { sub: `attend ${name(openPre)}${when(openPre.due)}`, tone: 'block' }
+      : unlocks.length > 0
+        ? { sub: `débloque ${unlocks.map(name).join(', ')}`, tone: 'text' }
+        : pres.length > 0
+          ? { sub: `après ${pres.map(name).join(', ')}, faite${pres.length > 1 ? 's' : ''}`, tone: 'text' }
+          : undefined
+  const sisterSeg = (t: Task, state: SisterState): GaugeSeg => {
+    const kind: GaugeKind = state === 'done' ? 'done' : state === 'cancelled' ? 'cancelled' : pres.includes(t) ? 'pre' : unlocks.includes(t) ? 'next' : 'open'
+    const blocker = o.prereqsOf(t).find(p => !p.done)
+    const sub =
+      state === 'done' ? `faite${when(t.fait)}` : state === 'cancelled' ? 'annulée' : state === 'live' ? 'en session' : state === 'blocked' && blocker ? `après ${blocker.id ? `#${blocker.id}` : o.titleOf(blocker)}` : `à faire${when(t.due)}`
+    return { kind, title: name(t), sub, tone: kind === 'pre' ? 'block' : 'text' }
+  }
+  // Les faites d'abord, la plus ancienne en tête ; puis celle en session, puis les autres dans l'ordre de la mère.
+  const lineOf = (sisters: SisterChain['sisters']) => {
+    const closed = sisters.filter(s => s.state === 'done' || s.state === 'cancelled').reverse()
+    const open = sisters.filter(s => s.state !== 'done' && s.state !== 'cancelled')
+    return [...closed, ...open.filter(s => s.state === 'live'), ...open.filter(s => s.state !== 'live')]
+  }
+  const chain = chainOf(task, all, o)
+  if (chain) {
+    const segs = lineOf(chain.sisters).map(s => (s.task === task ? { kind: 'here' as const, title: name(task), sub: 'ici', tone: 'text' as const } : sisterSeg(s.task, s.state)))
+    const rel = relation() ?? { sub: `${chain.index + 1}${chain.index === 0 ? 're' : 'e'} sur ${chain.total}`, tone: 'text' as const }
+    return { head: `Fille de ${name(chain.mother)}`, count: faites(chain.done, chain.total), segs, line: { title: `${name(task)}, ici`, ...rel } }
+  }
+  const kids = task.id === undefined ? [] : all.filter(t => t !== task && t.parent === task.id)
+  if (kids.length > 0) {
+    const first = kids[0]!
+    const sisters = chainOf(first, all, o)?.sisters ?? []
+    const ordered = lineOf(sisters)
+    const nextKid = ordered.find(s => s.state !== 'done' && s.state !== 'cancelled')
+    const done = kids.filter(k => k.done).length
+    return {
+      head: 'Ses filles',
+      count: faites(done, kids.length),
+      segs: ordered.map(s => sisterSeg(s.task, s.state)),
+      line: { title: `${name(task)}, ici`, sub: nextKid ? `prochaine : ${name(nextKid.task)}${when(nextKid.task.due)}` : 'toutes ses filles sont faites', tone: 'text' },
+    }
+  }
+  if (pres.length === 0 && unlocks.length === 0) return undefined
+  const linkSeg = (t: Task, kind: GaugeKind): GaugeSeg => ({ kind, title: name(t), sub: t.done ? `faite${when(t.fait)}` : `à faire${when(t.due)}`, tone: kind === 'pre' ? 'block' : 'text' })
+  const segs: GaugeSeg[] = [
+    ...(pres.length === 0 ? [{ kind: 'none' as const, title: 'Rien avant elle', sub: 'elle n’attend aucune tâche', tone: 'text' as const }] : pres.map(p => linkSeg(p, p.done ? 'done' : 'pre'))),
+    { kind: 'here', title: name(task), sub: 'ici', tone: 'text' },
+    ...(unlocks.length === 0 ? [{ kind: 'none' as const, title: 'Rien après elle', sub: 'aucune tâche ne l’attend', tone: 'text' as const }] : unlocks.map(u => linkSeg(u, 'next'))),
+  ]
+  const count = `${pres.length ? `${pres.length} avant` : 'rien avant'} · ${unlocks.length ? `${unlocks.length} après` : 'rien après'}`
+  return { head: 'Sa chaîne', count, segs, line: { title: `${name(task)}, ici`, ...relation()! } }
+}
+
+/** La ligne sous une jauge (#291) : celle du segment cliqué, ou, sans clic (ou un rang hors de la jauge), la ligne par défaut. */
+export function gaugeLine(g: Gauge, pick: number | undefined): Gauge['line'] {
+  const seg = pick === undefined ? undefined : g.segs[pick]
+  return seg ? { title: seg.title, sub: seg.sub, tone: seg.tone } : g.line
+}
+
 /** La légende sous la jauge (#246) : « à faire » à gauche si elle commence à faire ou bloquée, « ici · 3e sur 6 », « faites » à droite si elle finit close. */
 export function gaugeCaption(states: readonly SisterState[], index: number): { left: string; mid: string; right: string } {
   const closed = (s: SisterState | undefined) => s === 'done' || s === 'cancelled'
@@ -8155,12 +8269,10 @@ export function ficheCards(o: {
   editing?: boolean
 }): { cards: FicheCard[] } {
   if (o.editing) return { cards: ['avancement', 'chaine', 'details'] }
-  const session = o.context === 'session'
+  // #291 (fiche finale) : le geste (Lancer, Ouvrir la session) monte en tête de fiche, la chaîne descend en
+  // jauge au pied, et ce que disait Avancement (dossier, branche, attente) rejoint la carte Détails.
   const cards: FicheCard[] = []
-  if (session ? o.docs > 0 || o.branch > 0 || o.attend : o.attend || o.blocked || o.live || o.kept || o.docs > 0) cards.push('avancement')
-  if (!session && !o.done && !o.live) cards.push('lancer')
-  if (o.links > 0) cards.push('chaine')
-  if (o.details > 0) cards.push('details')
+  if (o.details > 0 || o.docs > 0 || o.attend || (o.context === 'session' && o.branch > 0)) cards.push('details')
   if ((o.deliverables ?? 0) > 0) cards.push('livrables')
   if ((o.attachments ?? 0) > 0) cards.push('pj')
   return { cards }
@@ -8186,17 +8298,97 @@ export function stateBand(o: { state: 'wait' | 'live' | 'merge' | 'done'; questi
   return { word: 'Done', why: o.fait ? `close le ${shortDate(o.fait)}` : '', mark: 'check', tone: 'done' }
 }
 
-/** Les cartes repliées d'office (#210) : sur une tâche Done, ses étapes toutes cochées n'apprennent plus rien. */
-const FOLDED_WHEN_DONE = ['etapes']
+/**
+ * Le carton de la fiche (#291, fiche finale) : la mission dans une Box teintée de l'état, son titre à la couleur
+ * de l'état et sa date à droite. À faire : « À lancer », l'échéance ou l'âge ; en session (et t'attend, à
+ * fusionner) : « Ce que fait la session », le jour de la demande ; close : « Livré en » sa version ; annulée.
+ */
+export function cartonOf(o: {
+  state?: 'wait' | 'live' | 'merge' | 'done'
+  done: boolean
+  abandoned: boolean
+  version?: string
+  due?: string
+  ouvert?: string
+  fait?: string
+  today: string
+}): { tone: 'plan' | 'live' | 'wait' | 'merge' | 'done' | 'cancel'; title: string; meta: string } {
+  if (o.done) {
+    const meta = o.fait ? doneLabel(o.fait) : ''
+    if (o.abandoned) return { tone: 'cancel', title: 'Annulée', meta }
+    return { tone: 'done', title: o.version ? `Livré en ${o.version}` : 'Livrée', meta }
+  }
+  if (o.state === 'live' || o.state === 'wait' || o.state === 'merge')
+    return { tone: o.state, title: 'Ce que fait la session', meta: o.ouvert ? `demandée ${shortDate(o.ouvert)}` : '' }
+  const meta = o.due
+    ? `échéance${dueLabel(o.due, o.today).late ? ' :' : ''} ${dueLabel(o.due, o.today).text}`
+    : o.ouvert
+      ? `ouverte ${openedLabel(daysBetween(o.ouvert, o.today))}`
+      : ''
+  return { tone: 'plan', title: 'À lancer', meta }
+}
+
+/** Une rangée de la carte Détails (#291) : son nom, sa valeur, son complément en gris, la chasse fixe d'un nom de branche. */
+export type StoryRow = { name: string; value: string; sub?: string; mono?: boolean }
 
 /**
- * Une carte de la fiche est-elle repliée (#199, #210) : le choix fait à la main, par son nom et pour
- * toutes les tâches, l'emporte ; sinon, repliée d'office sur une Done si elle est de `FOLDED_WHEN_DONE`.
+ * La carte Détails qui raconte la tâche (#291, fiche finale) : quand (ouverte → échéance, ou → faite, et en
+ * combien), qui la tient (la personne, la session et sa branche, fondues quand elles portent le même nom),
+ * d'où elle vient (la source, le sujet, la section, les clés du projet, les retours). Un groupe vide ne paraît
+ * pas. `summary` : la tête de la carte repliée, le temps de la tâche et les commits de sa branche.
+ */
+export function detailsStory(
+  task: Task,
+  o: { today: string; sujet?: string; branch?: readonly string[]; workMs?: number; cles: readonly string[] },
+): { summary: string; groups: StoryRow[][] } {
+  const when: StoryRow[] = []
+  const end = task.done ? (task.fait ? doneLabel(task.fait) : '') : task.due ? shortDate(task.due) : ''
+  if (task.ouvert || end) {
+    const value = task.ouvert && end ? `${shortDate(task.ouvert)} → ${end}` : task.ouvert ? `depuis ${shortDate(task.ouvert)}` : `→ ${end}`
+    const sub = task.done
+      ? o.workMs ? `faite en ${durationLabel(o.workMs)}` : undefined
+      : task.due ? dueLabel(task.due, o.today).text : task.ouvert ? openedLabel(daysBetween(task.ouvert, o.today)) : undefined
+    when.push({ name: 'Quand', value, ...(sub ? { sub } : {}) })
+  }
+  if (task.done && task.due && task.fait) {
+    const ahead = daysBetween(task.fait.slice(0, 10), task.due)
+    when.push({ name: 'Échéance', value: shortDate(task.due), sub: ahead > 0 ? `tenue, ${ahead} j d’avance` : ahead === 0 ? 'tenue, le jour même' : `${-ahead} j de retard` })
+  }
+  if (!task.done && o.workMs) when.push({ name: 'Travail', value: `${durationLabel(o.workMs)} de session` })
+  const who: StoryRow[] = []
+  if (task.resp) who.push({ name: 'Qui', value: task.resp })
+  if (task.qui) who.push({ name: 'Session', value: task.qui, mono: task.qui.includes('/') })
+  if (task.branche && task.branche !== task.qui) who.push({ name: 'Branche', value: task.branche, mono: true })
+  if (o.branch?.[0]) who.push({ name: 'Branche', value: o.branch[0] })
+  const from: StoryRow[] = []
+  if (task.src) from.push({ name: 'D’où', value: task.src })
+  const section = task.section !== '' && task.section !== 'En cours' ? task.section : ''
+  if (o.sujet) from.push({ name: 'Sujet', value: o.sujet, ...(section ? { sub: `section ${section}` } : {}) })
+  else if (section) from.push({ name: 'Section', value: section })
+  for (const k of o.cles) {
+    const v = task.extra?.[k]
+    if (v?.length) from.push({ name: `${k.charAt(0).toUpperCase()}${k.slice(1)}`, value: v.join(', ') })
+  }
+  if (task.feedback?.length) from.push({ name: 'Retours', value: task.feedback.map(n => `#${n}`).join(', ') })
+  const commits = /^(\d+) commits?/.exec(o.branch?.[0] ?? '')?.[0]
+  const summary = [when[0]?.value, commits].filter(Boolean).join(' · ')
+  return { summary, groups: [when, who, from].filter(g => g.length > 0) }
+}
+
+/** Les cartes repliées d'office (#210) : sur une tâche Done, ses étapes toutes cochées n'apprennent plus rien. */
+const FOLDED_WHEN_DONE = ['etapes']
+/** Les cartes repliées d'office pour toutes les tâches (#291) : Détails, qui raconte, se lit à la demande. */
+const FOLDED_ALWAYS = ['details']
+
+/**
+ * Une carte de la fiche est-elle repliée (#199, #210, #291) : le choix fait à la main, par son nom et pour
+ * toutes les tâches, l'emporte ; sinon, repliée d'office si elle est de `FOLDED_ALWAYS`, ou, sur une Done, de
+ * `FOLDED_WHEN_DONE`.
  */
 export function cardFolded(id: string, v: { foldedCards?: string[]; openedCards?: string[] }, done: boolean): boolean {
   if (v.foldedCards?.includes(id)) return true
   if (v.openedCards?.includes(id)) return false
-  return done && FOLDED_WHEN_DONE.includes(id)
+  return FOLDED_ALWAYS.includes(id) || (done && FOLDED_WHEN_DONE.includes(id))
 }
 
 /** Le clic sur la tête d'une carte : il inverse ce qu'on voit et le retient, dans l'une des deux listes. */

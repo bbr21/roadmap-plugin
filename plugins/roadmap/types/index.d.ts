@@ -97,6 +97,10 @@ export type View = {
   draftOpen?: string
   /** Tâche dont le bloc Brouillon est replié à son bandeau (clé `<fichier>:<ligne>`, #236) ; vide ou absente sinon. */
   draftFolded?: string
+  /** Le segment cliqué d'une jauge de la fiche (#291) : `<steps|chain>:<taskKey>:<rang>` ; vide ou absent : la ligne par défaut. */
+  gaugePick?: string
+  /** Tâche dont le champ « message au brief » est ouvert sous Lancer (clé `taskKey`, #291) ; vide ou absente sinon. */
+  briefOpen?: string
   /** Tâche dont la clôture (faite ou annulée, selon `closeKind`) attend sa confirmation (clé `taskKey`) ; vide sinon. */
   cancelAsk: string
   /** La clôture que confirme l'encart de `cancelAsk` : « Marquer faite » ou « Annuler la tâche » (#73). */

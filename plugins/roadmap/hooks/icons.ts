@@ -3,7 +3,7 @@
 // Couleurs et mesures : tokens.ts (#108) ; dessins du handoff de design (README « Icônes »). Un SVG
 // dessiné en image ne connaît pas `currentColor`, d'où la couleur passée à chaque dessin.
 
-import type { BandGlyph, ContextView, SisterState, StepSegment, TodoIcon } from './parse'
+import type { BandGlyph, ContextView, GaugeKind, SisterState, StepSegment, TodoIcon } from './parse'
 import { FONT, MIX, PALETTES, RADIUS, SIZE, STROKE, TEXT, type Palette, type ThemeName } from './tokens'
 
 // Les palettes et les traits sont des tokens du design system (#108) ; on les sert aussi d'ici.
@@ -843,6 +843,28 @@ export function sisterGaugeIcon(states: readonly SisterState[], index: number, c
       ? `<rect x="${x(index) - 1.25}" y="0.75" width="${cell + 2.5}" height="10.5" rx="2.5" fill="none" stroke="${colors.ring}" stroke-width="1.5"/>`
       : ''
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="12" viewBox="0 0 ${width} 12">${cells}${ring}</svg>`
+}
+
+/**
+ * Une jauge de la fiche (#291) : un segment de 6 px par entrée, celui de la fiche (`here`) à 10 px, la suivante
+ * (`next`) et le vide (`none`) en contour. Écart de 3 px, de 1 px quand les segments passent sous 4 px ; un
+ * segment garde au moins 1 px. Hauteur 10.
+ */
+export function gaugeIcon(kinds: readonly GaugeKind[], colors: Record<GaugeKind | 'ring', string>, width: number): string {
+  const n = Math.max(1, kinds.length)
+  const room = (gap: number) => (width - gap * (n - 1)) / n
+  const gap = room(3) >= 4 ? 3 : 1
+  const cell = Math.max(1, Math.floor(room(gap) * 10) / 10)
+  const x = (i: number) => Math.round(i * (cell + gap) * 10) / 10
+  const segs = kinds
+    .map((k, i) => {
+      if (k === 'here') return `<rect x="${x(i)}" y="0" width="${cell}" height="10" rx="3" fill="${colors.here}"/>`
+      if (k === 'next' || k === 'none')
+        return `<rect x="${x(i) + 0.75}" y="2.75" width="${Math.max(1, cell - 1.5)}" height="4.5" rx="2.25" fill="none" stroke="${colors[k]}" stroke-width="1.5"/>`
+      return `<rect x="${x(i)}" y="2" width="${cell}" height="6" rx="3" fill="${colors[k]}"/>`
+    })
+    .join('')
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="10" viewBox="0 0 ${width} 10">${segs}</svg>`
 }
 
 /** Les tâches nées d'un retour de l'app (`feedback:`) : une bulle de parole, pleine, sur 16 px. */

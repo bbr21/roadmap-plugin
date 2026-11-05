@@ -79,6 +79,7 @@ import {
   contextBarIcon,
   squareIcon,
   STROKE,
+  gaugeIcon,
   type Palette,
 } from './icons'
 import { MIX, RADIUS, SIZE, SPACE, TEXT } from './tokens'
@@ -538,6 +539,13 @@ import {
   reportRefusal,
   reportReminder,
   roadmapChanges,
+  cartonOf,
+  chainGauge,
+  detailsStory,
+  gaugeLine,
+  stepGauge,
+  type Gauge,
+  type GaugeKind,
   type TaskChange,
   type Waiting,
 } from './parse'
@@ -7300,7 +7308,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   const {
     axis: axisRaw, attend: attendRaw, who: whoRaw = 'all', moreFilters = false, showDone: doneChosen, groupBy, selected, openGroups, closedGroups, moreGroups,
     launchNote, launched, openNote, conclusionOpen, missionOpen = '', draftOpen = '', draftFolded = '', reopenAsk = '', cancelAsk = '', closeKind = 'abandon', cancelNote = '',
-    editing: editingKey = '', editNote = '', editField = '', editCount = 0, foldedCards = [], openedCards = [],
+    editing: editingKey = '', editNote = '', editField = '', editCount = 0, foldedCards = [], openedCards = [], gaugePick = '', briefOpen = '',
   } = view
   const data = await paneData($, source, [stamp, titlesVersion, themeStamp, retry, liveVersion].join('|'))
   const { palette, bilan: bilanData, titles, live: liveEntries, ignored } = data
@@ -7891,7 +7899,10 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     const finBox = (): RenderElement | null => {
       if (!fin) return null
       const opened = conclusionOpen === current.key
-      const shown = [...fin.rows, ...(opened ? fin.more : [])].map(r => ({ ...r, fold: opened ? { md: r.md, cut: false } : foldCell(r.md) }))
+      // Le Fait, le Souci et la version livrée sont dans le carton (#291) : la carte Fin ne les redit pas.
+      const own = fin.rows.filter(r => editing || !cartonFin.has(r.name))
+      if (own.length === 0 && fin.more.length === 0 && !fin.recap) return null
+      const shown = [...own, ...(opened ? fin.more : [])].map(r => ({ ...r, fold: opened ? { md: r.md, cut: false } : foldCell(r.md) }))
       const canOpen = fin.more.length > 0 || shown.some(r => r.fold.cut)
       // Sur le bureau, une cellule longue garde son texte entier sous le fondu (#205), la flèche au bout de la
       // dernière si elle est coupée, sinon sur sa ligne sous le tableau ; au terminal, la coupe en signes.
@@ -8352,7 +8363,11 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     const aheadNow = stepsSession ? aheadBySession.get(stepsSession)?.ahead : undefined
     const headState: BrandTask['state'] | undefined =
       waitState === 'wait' && stepsNote?.question === undefined && (aheadNow ?? 0) > 0 ? 'merge' : waitState
-    const headBrand = focusBrand ?? taskBrandOf(current, source, allTasks, { label: s.titre, prereqs: prereqsFor })
+    const fullBrand = focusBrand ?? taskBrandOf(current, source, allTasks, { label: s.titre, prereqs: prereqsFor })
+    // #291 : la voie (stations d'avant et d'après) quitte l'en-tête ; la jauge de chaîne, au pied, la remplace.
+    // En édition, l'en-tête garde la sienne : la fiche d'édition ne change pas.
+    const { before: _before, next: _next, ...bareBrand } = fullBrand
+    const headBrand = editingKey === taskKey(current) && !current.done ? fullBrand : bareBrand
     // Le résumé de la tête de chaque carte, ce qu'elle garde repliée (#199).
     const summaries: Record<FicheCard, string> = {
       avancement: cardSummary('avancement', {
@@ -8452,6 +8467,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
           </Box>
         )
       }
+      // #291 (fiche finale) : en gris, pour que seul « Ouvrir la session » soit bleu ; l'icône garde le bleu.
       const fg = shown ? palette.text : palette.liveOn
       return (
         <Box key="mockup-row" paddingX={SPACE.indent}>
@@ -8463,13 +8479,13 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
             paddingX={SPACE.indent}
             flexGrow={1}
             minWidth={0}
-            backgroundColor={shown ? palette.btn : palette.liveTint}
-            borderStyle="round"
-            borderColor={shown ? palette.border : palette.live}
+            backgroundColor={palette.btn}
+            hover={{ backgroundColor: palette.btnHover }}
           >
+            {corners(RADIUS.control, palette.bg)}
             {strut(SIZE.strut.control)}
             <Svg source={shown ? closeIcon(fg, SIZE.icon.md) : browserIcon(fg, SIZE.icon.md)} alt="" width={SIZE.icon.md} height={SIZE.icon.md} />
-            <Text size="heading" weight="semibold" color={fg}>{word}</Text>
+            <Text size="footnote" weight="semibold" color={palette.text}>{word}</Text>
             <Box flexGrow={1} flexShrink={1} minWidth={0} alignItems="flex-end">
               <Text size="caption" color={palette.text2} wrap="truncate-end">{shown ? 'ouvertes dans le volet' : mockupPage.name}</Text>
             </Box>
@@ -8529,6 +8545,354 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
             })}
           </Box>,
         )
+    }
+    // --- La fiche finale (#291, choix de BBR du 2026-11-04) -----------------------------------------------
+    // Le geste du moment en tête : en session, « Ouvrir la session », la roue et la durée à droite (la bande
+    // d'état et la carte de la session ne font plus qu'un) ; à lancer, « Lancer » et « Vérifier », et le message
+    // au brief derrière « + Ajouter un message au brief ».
+    const launchable = !current.done && !live && !launched.includes(taskKey(current))
+    const launchNow = () => void (isRoutine(current) ? launchRoutine($, source, current, s.titre) : launchSession($, source, current, s.titre, launchExtra))
+    const toggleBrief = () => void setView($, v => ({ briefOpen: v.briefOpen === taskKey(current) ? '' : taskKey(current) }))
+    const topAction = (): RenderElement | null => {
+      if (editing || current.done) return null
+      if (live) {
+        const waiting = live.state === 'open' && live.entry.sessionId !== undefined && runningBySession.get(live.entry.sessionId) === false
+        const spinning = live.state === 'open' && !waiting
+        const openIt = () => void openSession($, live.entry)
+        // Une vérification se distingue d'une réalisation (#291) : le mot du bouton dit laquelle il ouvre.
+        const openWord = sessionTitleKind(live.entry.title) === 'check' ? 'Ouvrir la vérification' : 'Ouvrir la session'
+        return (
+          <Box key="top-action" paddingX={SPACE.indent} flexDirection="row">
+            {pressable(
+              'open-session',
+              openIt,
+              <Box flexDirection="row" alignItems="center" gap={SPACE.row} paddingX={SPACE.indent} flexGrow={1} backgroundColor={palette.live} hover={{ backgroundColor: mixOver(palette.live, palette.bg, MIX.primaryHover) }}>
+                {corners(RADIUS.control, palette.bg)}
+                {strut(SIZE.strut.control)}
+                {Svg && <Svg source={externalIcon(palette.bg, 14)} alt="Ouvrir" width={SIZE.icon.sm} height={SIZE.icon.sm} />}
+                <Text weight="semibold" color={palette.bg}>{openWord}</Text>
+                <Box flexGrow={1} />
+                {Svg && spinning && <Svg source={spinnerIcon(palette.bg, 14, undefined, false, now)} alt="en cours" width={SIZE.icon.sm} height={SIZE.icon.sm} isInteractive />}
+                <Text tabular color={palette.bg}>{durationLabel(now - live.entry.startedAt)}</Text>
+              </Box>,
+              <Button key="open-session" variant="primary" label={`${openWord} · ${durationLabel(now - live.entry.startedAt)}`} onPress={openIt} />,
+              true,
+            )}
+          </Box>
+        )
+      }
+      const briefShown = briefOpen === taskKey(current)
+      return (
+        <Box key="top-action" flexDirection="column" gap={SPACE.block} paddingX={SPACE.indent}>
+          <Box flexDirection="row" alignItems="stretch" gap={SPACE.row}>
+            {launched.includes(taskKey(current)) && requested()}
+            {/* Un clic lance : plus de confirmation (2026-10-25) ; une routine (#280) fait le geste de son ▶. */}
+            {launchable && primary('launch', playIcon(palette.priText, 14), 'Lancer', launchNow)}
+            {/* « Vérifier » : une session qui dit si la tâche est encore à jour, sans la faire. */}
+            {launchable && (
+              <Box key="check-row" flexDirection="row" alignItems="center">
+                <Button key="check" plain dimColor label="Vérifier" onPress={() => void launchSession($, source, current, s.titre, launchExtra, 'check')} />
+              </Box>
+            )}
+          </Box>
+          {/* Bloquée : une ligne, la jauge de chaîne au pied dit le reste ; « Lancer » reste possible. */}
+          {holder && (
+            <Text size="caption" color={palette.blockOn} wrap="wrap">
+              {holder.parent
+                ? `Bloquée : son parent « ${short(holder.parent).titre} » attend « ${short(holder.pre).titre} ».`
+                : `Bloquée : « ${short(holder.pre).titre} » n'est pas encore faite.`}
+            </Text>
+          )}
+          {launchable && Input && !briefShown && moreLink('brief-open', '+ Ajouter un message au brief', toggleBrief)}
+          {/* Un message en plus du brief, facultatif ; Entrée lance comme « Lancer ». Sa clé suit la tâche. */}
+          {launchable && Input && briefShown && (
+            <Input
+              key={`launch-extra:${current.key}`}
+              rows={2}
+              placeholder="Message additionnel (facultatif)"
+              submitLabel="lancer"
+              onInput={(value: string) => {
+                launchExtra = value
+              }}
+              onSubmit={(value: string) => {
+                launchExtra = value
+                void launchSession($, source, current, s.titre, value)
+              }}
+            />
+          )}
+          {launched.includes(taskKey(current)) &&
+            waitBand(
+              'launched-note',
+              waitNote('launched'),
+              <Button key="launch-again" plain label="Relancer" onPress={() => void setView($, v => ({ launched: v.launched.filter(k => k !== taskKey(current)) }))} />,
+            )}
+          {launchNote === LAUNCHED ? (
+            <Box flexDirection="row" alignItems="center" gap={SPACE.row} padding="sm" borderStyle="round" borderColor={palette.border}>
+              {icon(checkIcon(palette.ok), 'lancée', 16, '✓', 'success')}
+              <Text>{LAUNCHED}</Text>
+            </Box>
+          ) : (
+            launchNote !== '' && launchNote !== LAUNCHING && <Text color={palette.text2}>{launchNote}</Text>
+          )}
+          {/* La carte refusée par le mode auto : le geste qui passe la session en bypass (#248). */}
+          {launchNote === AUTO_BLOCKED && <Button key="auto-bypass" label="Passer en bypass" onPress={() => void switchToBypass($, taskKey(current))} />}
+        </Box>
+      )
+    }
+    // Le carton (#291) : la mission dans une Box teintée de l'état. Close, il prend le Fait et le Souci de la
+    // carte Fin, qui ne les redit pas, et son titre la version livrée.
+    const livreRow = fin?.rows.find(r => r.name === 'Livré')
+    const version = livreRow ? /\b\d+\.\d+\.\d+\b/.exec(livreRow.md)?.[0] : undefined
+    // La ligne Livré quitte la carte Fin quand elle ne dit que la version, que le titre du carton reprend.
+    const versionOnly = livreRow !== undefined && /^\s*(roadmap\s+)?v?\d+\.\d+\.\d+\.?\s*$/.test(livreRow.md)
+    const cartonFin = new Set(current.done ? ['Fait', 'Souci', ...(versionOnly ? ['Livré'] : [])] : [])
+    // Une session qui tourne sans état de bande (une session « #N · … » hors Maestro) reste « en session ».
+    const cartonState = headState ?? (live ? 'live' : undefined)
+    const carton = cartonOf({
+      ...(cartonState ? { state: cartonState } : {}),
+      done: current.done,
+      abandoned,
+      ...(version ? { version } : {}),
+      ...(current.due ? { due: current.due } : {}),
+      ...(current.ouvert ? { ouvert: current.ouvert } : {}),
+      ...(current.fait ? { fait: current.fait } : {}),
+      today,
+    })
+    const cartonLook = {
+      plan: { bg: palette.planTint, edge: palette.planEdge, on: palette.pri },
+      live: { bg: palette.liveTint, edge: mixOver(palette.liveOn, palette.bg, MIX.sessionBorder), on: palette.liveOn },
+      wait: { bg: palette.blockTint, edge: mixOver(palette.blockOn, palette.bg, MIX.sessionBorder), on: palette.blockOn },
+      merge: { bg: palette.waitTint, edge: mixOver(palette.waitOn, palette.bg, MIX.sessionBorder), on: palette.waitOn },
+      done: { bg: palette.finishedTint, edge: mixOver(palette.finishedOn, palette.bg, MIX.sessionBorder), on: palette.finishedOn },
+      cancel: { bg: palette.sel, edge: palette.border, on: palette.text2 },
+    }[carton.tone]
+    // La mission telle que la fiche la montrait (#146, #205, #278), sur le fond du carton.
+    const missionBody = (bg: string, dim: boolean) => (
+      <Box key="mission-body" flexDirection="column" gap={SPACE.tight}>
+        {bulleted
+          ? missionList(bulleted)
+          : faded && !missionShown
+            ? fadeClip('mission-line', <Text wrap="wrap" {...(dim ? { color: palette.text2 } : {})}>{frame.text}</Text>, bg, toggleMission)
+            : <Text wrap="wrap" {...(dim ? { color: palette.text2 } : {})}>{cut?.cut && !missionShown && !faded ? cut.text : frame.text}</Text>}
+        {faded && missionShown && foldedRow('mission-line', true, bg, toggleMission)}
+        {(frame.recap || (cut?.cut && !faded)) && moreLink('mission-line', missionShown ? 'Replier' : frame.recap ? 'La ligne de la roadmap' : 'Tout lire', toggleMission)}
+        {frame.recap && missionShown && <Text size="caption" wrap="wrap">{current.label}</Text>}
+        {noteShown && (bulleted || (cut ? !cut.cut || missionShown : missionShown)) && linked('note', noteShown, { color: palette.text2 })}
+      </Box>
+    )
+    const cartonBox = () => {
+      const finShown = fin ? fin.rows.filter(r => cartonFin.has(r.name) && r.name !== 'Livré') : []
+      return (
+        <Box key="carton-row" paddingX={SPACE.indent}>
+          <Box key="carton" flexDirection="column" gap={SPACE.tight} padding="sm" flexGrow={1} borderStyle="round" borderColor={cartonLook.edge} backgroundColor={cartonLook.bg}>
+            <Box flexDirection="row" alignItems="center" gap={SPACE.row}>
+              <Text size="heading" weight="semibold" color={cartonLook.on}>{carton.title}</Text>
+              <Box flexGrow={1} flexShrink={1} minWidth={0} flexDirection="row" justifyContent="flex-end">
+                {carton.meta !== '' && <Text size="caption" tabular color={palette.text2} wrap="truncate-end">{carton.meta}</Text>}
+              </Box>
+            </Box>
+            {finShown.map(r => (
+              <Box key={`carton-fin:${r.name}`} flexDirection="row" gap={SPACE.row}>
+                {r.name === 'Souci' && <Text color={palette.block}>●</Text>}
+                <Box flexGrow={1} flexShrink={1} minWidth={0}>{finValue(r, r.md)}</Box>
+              </Box>
+            ))}
+            {finShown.length > 0 && Svg && <Svg source={ruleIcon(cartonLook.edge, fullWidth((e.props as { bodyColumns?: number }).bodyColumns ?? 48))} alt="séparateur" height={1} />}
+            {missionBody(cartonLook.bg, current.done)}
+          </Box>
+        </Box>
+      )
+    }
+    // Les deux jauges (#291), de la même forme : sa tête et son compte, un segment par étape ou par tâche,
+    // dessous la ligne de gauche ; un clic sur un segment y met le sien, un second la rend.
+    const bodyWidth = fullWidth((e.props as { bodyColumns?: number }).bodyColumns ?? 48)
+    const gaugeBlock = (kind: 'steps' | 'chain', g: Gauge | undefined, colors: Record<GaugeKind | 'ring', string>) => {
+      if (!g || editing) return null
+      const prefix = `${kind}:${taskKey(current)}:`
+      const pickN = gaugePick.startsWith(prefix) ? Number(gaugePick.slice(prefix.length)) : undefined
+      const line = gaugeLine(g, pickN)
+      const picked = pickN !== undefined && line !== g.line
+      const pickSeg = (i: number) => () => void setView($, v => ({ gaugePick: v.gaugePick === `${prefix}${i}` ? '' : `${prefix}${i}` }))
+      return (
+        <Box key={`gauge:${kind}`} flexDirection="column" gap={SPACE.tight} paddingX={SPACE.indent}>
+          <Box flexDirection="row" alignItems="center" gap={SPACE.row}>
+            <Text size="footnote" weight="semibold" color={kind === 'steps' ? palette.text : palette.text2} wrap="truncate-end">{g.head}</Text>
+            <Box flexGrow={1} flexShrink={1} minWidth={0} flexDirection="row" justifyContent="flex-end">
+              <Text size="caption" tabular color={palette.text2}>{g.count}</Text>
+            </Box>
+          </Box>
+          {Svg ? (
+            <Box key={`gauge-bar:${kind}`} flexDirection="column">
+              <Svg source={gaugeIcon(g.segs.map(x => x.kind), colors, bodyWidth)} alt={`${g.head} · ${g.count}`} height={10} />
+              {graphic && Client && (
+                <Box position="absolute" top={0} left={0} right={0} flexDirection="row">
+                  {g.segs.map((x, i) => (
+                    <Box key={`gauge-seg:${kind}:${i}`} flexGrow={1} flexShrink={1} minWidth={0}>
+                      {hit(`gauge:${kind}:${i}`, pickSeg(i), 1)}
+                    </Box>
+                  ))}
+                </Box>
+              )}
+            </Box>
+          ) : (
+            <Box flexDirection="row" flexWrap="wrap" gap={SPACE.row}>
+              {g.segs.map((x, i) => (
+                <Button key={`gauge:${kind}:${i}`} plain dimColor label={x.kind === 'here' ? `[${i + 1}]` : `${i + 1}`} onPress={pickSeg(i)} />
+              ))}
+            </Box>
+          )}
+          <Box key={`gauge-line:${kind}`} flexDirection="column">
+            <Text size="footnote" weight="semibold" wrap="truncate-end" color={line.tone === 'live' ? palette.liveOn : line.tone === 'block' && picked ? palette.blockOn : palette.text}>{line.title}</Text>
+            <Text size="caption" wrap="truncate-end" color={line.tone === 'block' && !picked ? palette.blockOn : palette.text2}>{line.sub}</Text>
+          </Box>
+        </Box>
+      )
+    }
+    const stepsStatus = stepsNote ? shownStatus(stepsNote, stepsSession, current.done) : undefined
+    const stepsAge = stepsStatus ? stepsView(stepsStatus.steps, { now, at: stepsStatus.at, fold: Infinity, closed: current.done })?.age ?? '' : ''
+    const stepsGauge = stepsStatus ? stepGauge(stepsStatus.steps, { closed: current.done, age: stepsAge }) : undefined
+    const stepsColors = { done: current.done ? palette.finished : palette.live, here: palette.text, pre: palette.block, next: palette.live, open: palette.sel, none: palette.text3, cancelled: palette.sel, ring: palette.text }
+    const chainOfFiche = chainGauge(current, allTasks, { isLive, prereqsOf: prereqsFor, unlocksOf: t => unlocksOf(t, allTasks, prereqsFor), titleOf: t => short(t).titre })
+    const axisInk = axisHex(current.axis)
+    const chainColors = { done: axisInk, here: palette.text, pre: palette.block, next: axisInk, open: palette.sel, none: palette.text3, cancelled: palette.sel, ring: palette.text }
+    // La question de la session qui attend, sous la jauge des étapes, comme dans la carte Étapes (#214).
+    const stepsQuestion = stepsStatus?.question?.text
+    // La carte Détails qui raconte la tâche (#291), repliée d'office ; ses rangées d'avant qui ne racontent rien
+    // (Attend, Dossier, Spec, Fichiers) viennent après.
+    const story = detailsStory(current, {
+      today,
+      ...(s.sujet !== '…' ? { sujet: s.sujet } : {}),
+      ...(facts ? { branch: facts.branch } : {}),
+      ...(live ? { workMs: now - live.entry.startedAt } : {}),
+      cles: Object.keys(cles),
+    })
+    const storyCard = () =>
+      card(
+        'details',
+        'Détails',
+        story.summary,
+        <Box flexDirection="column">
+          {story.groups.map((g, gi) => (
+            <Box key={`story-group:${gi}`} flexDirection="column" {...(gi > 0 ? { paddingTop: 1 } : {})}>
+              {g.map((r, ri) =>
+                field(
+                  r.name,
+                  <Box flexDirection="row" alignItems="center" gap={SPACE.row} flexShrink={1} minWidth={0}>
+                    {r.mono ? mono(r.value) : <Text wrap="truncate-end">{r.value}</Text>}
+                    {r.sub && <Text size="caption" color={palette.text2} wrap="truncate-end">{r.sub}</Text>}
+                  </Box>,
+                  `story:${gi}:${ri}`,
+                ),
+              )}
+            </Box>
+          ))}
+          {/* Une prérequise introuvable se dit ici (#291) : la jauge de chaîne ne porte que les tâches trouvées. */}
+          {missingPrereqs(current, allTasks).map((n, i) => field(i === 0 ? 'Avant' : '', plain(`#${n} introuvable`), `story-missing:${n}`))}
+          {field(
+            'Attend',
+            current.attend !== undefined &&
+              (me.includes(attendWho(current.attend)) && current.attend === attendWho(current.attend) ? plain(current.attend) : linked('attend', current.attend, { size: 'caption', color: palette.text2 })),
+          )}
+          {docs.length > 0 &&
+            field(
+              'Dossier',
+              <Box flexDirection="row" gap={SPACE.row}>
+                {docs.map(d => (
+                  <Button key={`focus-doc:${d.label}`} plain dimColor label={d.label} onPress={() => void openFile($, d.path)} />
+                ))}
+              </Box>,
+            )}
+          {field('Spec', mono(current.spec))}
+          {(fichePath || srcPath) &&
+            field(
+              'Fichiers',
+              <Box key="files-buttons" flexDirection="row" alignItems="center" gap={SPACE.row}>
+                {fichePath && action('open-fiche', documentIcon(palette.text, SIZE.icon.chip), 'Fiche', () => void openFile($, fichePath), undefined, 'chip')}
+                {srcPath && action('open-src', externalIcon(palette.text, SIZE.icon.chip), 'Source', () => void openFile($, srcPath), undefined, 'chip')}
+              </Box>,
+            )}
+        </Box>,
+      )
+    // La confirmation d'une clôture (#73) : faite ou annulée, sa raison, ce qui pourrait la contredire.
+    const closeAsk = () => (
+      <Box key="cancel-box" flexDirection="column" gap={SPACE.block} padding="sm" borderStyle="round" borderColor={palette.border}>
+        <Text weight="semibold" wrap="wrap">
+          {closeKind === 'done'
+            ? kidsOpen > 0
+              ? `Clore #${current.id} « ${s.titre} » et ${kidsOpen > 1 ? `ses ${kidsOpen} étapes ouvertes` : 'son étape ouverte'} ?`
+              : `Marquer${current.id ? ` #${current.id}` : ''} « ${s.titre} » faite ?`
+            : `Annuler${current.id ? ` #${current.id}` : ''} « ${s.titre} » ?`}
+        </Text>
+        <Text size="caption" color={palette.text2} wrap="wrap">
+          {closeCaption(closeKind, { ecriture: source.ecriture, cowork: bilanData.viaCowork })}
+        </Text>
+        {(live || launched.includes(taskKey(current))) && <Text size="caption" color={palette.lateOn} wrap="wrap">Une session tient cette tâche : elle peut encore l'écrire.</Text>}
+        {closeKind === 'done' && unsentNow !== undefined && cancelNote !== unsentNow && <Text size="caption" color={palette.lateOn} wrap="wrap">{unsentNow}</Text>}
+        {closeKind === 'abandon' && Input && (
+          <Input
+            key={`cancel-reason:${current.key}`}
+            rows={2}
+            placeholder="Raison (facultatif)"
+            submitLabel="annuler"
+            onInput={(value: string) => {
+              cancelReason = value
+            }}
+            onSubmit={(value: string) => {
+              cancelReason = value
+              void confirmClose($, source, current, 'abandon')
+            }}
+          />
+        )}
+        <Box flexDirection="row" alignItems="center" gap={SPACE.row}>
+          {closeKind === 'done' ? (
+            <Button
+              key="done-confirm"
+              variant="primary"
+              label={cancelNote === CANCEL_BUSY ? 'Écriture…' : kidsOpen > 0 ? 'Tout clore' : 'Confirmer'}
+              onPress={kidsOpen > 0 ? closeAll : () => void confirmClose($, source, current, 'done')}
+            />
+          ) : (
+            <Button key="cancel-confirm" variant="primary" label={cancelNote === CANCEL_BUSY ? 'Annulation…' : "Confirmer l'annulation"} onPress={() => void confirmClose($, source, current, 'abandon')} />
+          )}
+          <Button key="cancel-keep" plain dimColor label="Garder" onPress={() => void setView($, () => ({ cancelAsk: '', cancelNote: '' }))} />
+        </Box>
+        {cancelNote !== '' && cancelNote !== CANCEL_BUSY && <Text color={palette.lateOn} wrap="wrap">{cancelNote}</Text>}
+      </Box>
+    )
+    // Le pied (#291) : « Marquer faite », « Annuler la tâche » et leur confirmation ; close, sa session gardée.
+    const closeBlock = (): RenderElement | null => {
+      if (editing) return null
+      if (current.done)
+        return kept ? (
+          <Box key="kept-row" flexDirection="row" alignItems="stretch" gap={SPACE.row} paddingX={SPACE.indent}>
+            {primary('open-session', externalIcon(palette.priText, 14), 'Ouvrir la session', () => void openSession($, kept.entry))}
+            {action('archive-session', archiveIcon(palette.text), 'Archiver la session', () => void archiveSession($, kept.key, kept.entry))}
+          </Box>
+        ) : null
+      return (
+        <Box key="close-block" flexDirection="column" gap={SPACE.block} paddingX={SPACE.indent}>
+          {!(asking && cancelNote === CANCEL_BUSY) && (
+            <Box key="close-row" flexDirection="row" alignItems="center" gap={SPACE.row}>
+              {(['done', 'abandon'] as const)
+                .filter(kind => !(asking && closeKind === kind))
+                .map(kind => (
+                  <Button
+                    key={kind === 'done' ? 'done' : 'cancel'}
+                    plain
+                    dimColor
+                    label={kind === 'done' ? 'Marquer faite' : 'Annuler la tâche'}
+                    onPress={() => {
+                      cancelReason = ''
+                      void setView($, () => ({ cancelAsk: taskKey(current), closeKind: kind, cancelNote: '' }))
+                    }}
+                  />
+                ))}
+            </Box>
+          )}
+          {asking && closeAsk()}
+          {!asking && cancelNote !== '' && cancelNote !== CANCEL_BUSY && <Text size="caption" color={palette.lateOn} wrap="wrap">{cancelNote}</Text>}
+        </Box>
+      )
     }
     const cards: Record<FicheCard, () => RenderElement> = {
       avancement: () =>
@@ -9139,14 +9503,22 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
                 },
           )}
         </Box>
-        {stateBox()}
+        {/* La fiche finale (#291) : en session, la bande d'état se fond dans « Ouvrir la session ». */}
+        {(editing || headState !== 'live' || !live) && stateBox()}
+        {!editing && topAction()}
         {mockupBand()}
         {draftBlock()}
         {/* En édition (#161) : la barre sous l'en-tête, à la place du crayon. */}
         {editing && editBar()}
-        {/* La mission seule dans son cadre (#150, maquette C) : celle de la fiche de fin de sa session, sa
-            ligne de la roadmap derrière « La ligne de la roadmap » ; sans, la ligne, longue coupée (#146). */}
-        <Box paddingX={SPACE.indent}>
+        {!editing && cartonBox()}
+        {!editing && gaugeBlock('steps', stepsGauge, stepsColors)}
+        {!editing && stepsQuestion && (
+          <Box key="steps-question" paddingX={SPACE.indent}>
+            <Text size="caption" color={palette.blockOn} wrap="wrap">{stepsQuestion}</Text>
+          </Box>
+        )}
+        {/* En édition, la mission dans son cadre (#150) et ses champs (#161, #235). */}
+        {editing && <Box paddingX={SPACE.indent}>
           <Box flexDirection="column" gap={SPACE.tight} paddingX={SPACE.indent} paddingY="sm" flexGrow={1} backgroundColor={palette.note}>
             {corners(RADIUS.control, palette.bg)}
             {/* En édition, le nom court au-dessus du libellé (#235) : vide, le panneau tire le sien. */}
@@ -9170,11 +9542,13 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
             {!editing && frame.recap && missionShown && <Text size="caption" wrap="wrap">{current.label}</Text>}
             {!editing && noteShown && (bulleted || (cut ? !cut.cut || missionShown : missionShown)) && linked('note', noteShown, { color: palette.text2 })}
           </Box>
-        </Box>
+        </Box>}
         {finBox()}
         {changesBox()}
-        {stepsPart && card('etapes', 'Étapes', stepsPart.summary, stepsPart.body)}
-        {layout.cards.map(c => (editCards[c] ?? cards[c])())}
+        {editing && stepsPart && card('etapes', 'Étapes', stepsPart.summary, stepsPart.body)}
+        {layout.cards.map(c => (editing ? (editCards[c] ?? cards[c])() : c === 'details' ? storyCard() : cards[c]()))}
+        {closeBlock()}
+        {gaugeBlock('chain', chainOfFiche, chainColors)}
         <Box flexDirection="column" gap={SPACE.block} paddingX={SPACE.indent}>
           {openNote !== '' && <Text size="caption" color={palette.text2}>{openNote}</Text>}
           {/* Après l'enregistrement : les avertissements du modèle (#125), ou ce qui n'est pas allé au bout. */}
