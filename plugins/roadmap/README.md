@@ -47,9 +47,9 @@ les sessions toutes les 3 s (le dossier de la roadmap toutes les 15 s), et montr
   l'ordre de la légende, la flèche dans le carré de l'axe ; dedans, ce qui est en session d'abord,
   puis ce qui attend quelqu'un, puis la plus récente ; une mère au niveau des tâches seules, sa
   flèche dans son carré, ses filles un cran à droite, reliées par des coudes ; plus de rond
-  (#198) : le carré d'axe de la tâche la coche, elle se barre en gris et reste à sa place ; un
-  premier clic sur le carré arme la ligne, un second, sur le tag « Confirmer » au bout de la ligne,
-  le fait (#179, #198) ; toutes les lignes s'alignent en colonnes : carré, numéro, tags, échéance,
+  (#198) : le carré d'axe de la tâche la choisit (#316), mère comprise avec ses étapes ; la barre
+  de sélection, à la place de la ligne de la liste, coche les choisies (« Faites ») ou les édite
+  (Date ▾ : raccourcis, mois et « Répéter » ; Statut ▾) ; toutes les lignes s'alignent en colonnes : carré, numéro, tags, échéance,
   titre, département, âge, ▶ (une colonne vide pour toute la liste laisse sa place à la suivante) ;
 - les tâches par sujet (au menu « Ranger ») en sections repliables, une ligne par tâche (pastilles échéance, tiers,
   « à revoir », âge), triées : en session, puis par échéance, puis de la plus récente à la plus
@@ -369,17 +369,19 @@ filtres, « Qui », les rangements) vaut dans tout projet.
   un fil fin qui porte leur rang (1, 2 : en séquence par `après:` ; 1, 1 : en parallèle), avec leur
   case, leur département, puis « Rodney · 29/10 » (responsable et date en texte, rouge en retard,
   orange dans les 7 jours) ou le cadenas « après #437 ». Lignes de 30 px, plus d'âge sur la ligne.
-  **Cocher** : le carré d'axe d'une étape la clôt comme « Marquer faite » ; l'étape cochée reste à
-  sa place, grisée et barrée, son carré coché de blanc, et ce carré la rouvre (sa ligne revient dans
-  ROADMAP.md, son bilan est retiré) ; la dernière étape cochée coche sa mère, rouvrir une étape
-  rouvre sa mère. **Double confirmation** (#179 ; #198, maquette A) : le premier clic sur le carré
-  n'écrit rien, il l'entoure d'un filet orange et pose au bout de la ligne, à la place de l'âge et
-  du ▶, le tag « Confirmer » (« Rouvrir » sur une faite) ; seul ce tag écrit. Un second clic sur le
-  carré, un clic ailleurs dans le panneau ou 8 s sans rien désarment ; une seule ligne armée. Le
-  carré d'une mère la replie : une mère qui a des étapes ouvertes se clôt par sa fiche, où
+  **Choisir, puis cocher ou éditer** (#316, maquette C) : le carré d'axe d'une ligne la choisit,
+  sans rien écrire (fond et filet bleus) ; une mère emmène ses étapes, une étape se choisit seule,
+  à travers sujets et filtres. La barre de sélection compte les choisies : « ✓ Faites » les clôt
+  comme « Marquer faite » (la dernière étape cochée coche sa mère ; une faite se rouvre par
+  Statut ▾ « Ouverte », sa ligne revient dans ROADMAP.md, son bilan est retiré) ; Éditer ouvre
+  Date ▾ (Aujourd'hui, Demain, Lundi prochain, le mois, « Répéter » : jamais, chaque jour, chaque
+  semaine, chaque mois) et Statut ▾ ; chaque choix s'écrit aussitôt, tâche par tâche : une ligne
+  prise par une session ne change que de date, une communication pas partie ne se coche pas, et
+  le bilan sous la barre dit chaque refus. ✕ vide la sélection. La flèche d'une mère la replie ; sa
+  fiche peut aussi la clore avec ses étapes ouvertes, où
   « Marquer faite » demande « Clore #12 « Mocap » et ses 3 étapes ouvertes ? » (Tout clore). La
-  liste « N faites » porte le même carré, qui rouvre de la même façon. Un projet qui déclare
-  `ecriture` (#164) : la case n'écrit pas, après le tag elle le demande à Claude (« Coche
+  liste « N faites » porte le même carré, qui choisit de la même façon. Un projet qui déclare
+  `ecriture` (#164) : la barre n'écrit pas, elle le demande à Claude (« Coche
   #N par la skill tasks », « Rouvre #N … »). Une mère cochée aujourd'hui garde son
   bloc jusqu'au lendemain. Un dossier Cowork ne
   rouvre pas : `cowork.py` ne le sait pas, le toast le dit. « Déplier les sous-tâches » /
@@ -701,6 +703,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.206.0 (2026-11-04)** : panneau : la case d'une ligne choisit au lieu de cocher ; une barre de sélection coche, date, statut et récurrence en lot, à travers les axes, une mère prenant ses enfants (#316)
 - **0.205.0 (2026-11-04)** : panneau : une recherche se range comme la liste, sous ses sujets et leur trait coloré, et une tâche trouvée amène toute sa chaîne, faites comprises (#318)
 - **0.204.0 (2026-11-04)** : tasks, maestro : à l'écriture, une action qui touche le même endroit qu'une tâche ouverte se propose d'y être versée, une suite d'une tâche close se reconnaît, et tasks.py lots repasse sur toutes les ouvertes (#320)
 - **0.203.0 (2026-11-04)** : panneau : la fiche d'une tâche refaite (carton par état, jauges horizontales des étapes et de la chaîne, carte Détails repliée, Tout lire pour la mission) (#291)

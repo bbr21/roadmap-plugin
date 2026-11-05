@@ -123,10 +123,14 @@ export type View = {
   openedCards?: string[]
   /** Le bloc « En cours » de Maestro replié par son chevron (#160) ; absent, replié (#251) : la bande au-dessus de la saisie redit ses sessions. */
   liveFolded?: boolean
-  /** La ligne dont le rond est armé (#179, clé `taskKey`) : son encart attend sa confirmation ; vide ou absente : aucune. */
-  armed?: string
-  /** Le moment du clic qui l'a armée (ms) : passé `ARM_MS`, elle est désarmée. */
-  armedAt?: number
+  /** Les tâches choisies par leur case (#316, clés `taskKey`) : la barre de sélection les édite ; vide ou absente : aucune. */
+  picked?: string[]
+  /** La barre de sélection éditée (#316) : `edit` montre Date ▾ et Statut ▾, `date` ouvre l'encart du calendrier ; vide ou absent : Faites et Éditer. */
+  batchMenu?: string
+  /** Le mois montré par le calendrier du lot (#316), `AAAA-MM` ; absent : celui d'aujourd'hui. */
+  batchMonth?: string
+  /** Le bilan du dernier lot (#316), ou `…` pendant qu'il s'écrit ; vide ou absent sinon. */
+  batchNote?: string
 }
 
 /** Une session lancée depuis le panneau, gardée dans `$.store` par empreinte du libellé de sa task. */

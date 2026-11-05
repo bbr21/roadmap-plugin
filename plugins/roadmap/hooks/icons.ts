@@ -1056,3 +1056,18 @@ export function stepIcon(palette: Palette, status: StepSegment, size = 16): stri
   if (status === 'now') return spinnerIcon(palette.live, size)
   return svg(size, 16, `<circle cx="8" cy="8" r="6" fill="none" stroke="${palette.text3}" stroke-width="1.4"/>`)
 }
+
+/** La taille d'une case du calendrier de l'édition en lot (#316), en px. */
+export const DAY_CELL_PX = { width: 26, height: 22 } as const
+
+/**
+ * Une case du calendrier de l'édition en lot (#316, maquette C1) : le numéro du jour, centré ;
+ * aujourd'hui cerclé (`ring`), un point sous un jour où une tâche choisie est déjà due (`dot`).
+ */
+export function calendarDayIcon(o: { day: number; ink: string; ring?: string; dot?: string; bold?: boolean }): string {
+  const { width: w, height: h } = DAY_CELL_PX
+  const ring = o.ring ? `<rect x="1.5" y="0.5" width="${w - 3}" height="${h - 1}" rx="6" fill="none" stroke="${o.ring}" stroke-width="1"/>` : ''
+  const dot = o.dot ? `<circle cx="${w / 2}" cy="${h - 3}" r="2" fill="${o.dot}"/>` : ''
+  const text = `<text x="${w / 2}" y="${o.dot ? 10 : 11}" dominant-baseline="central" text-anchor="middle" font-family="${FONT}" font-size="${TEXT.pill}" font-weight="${o.bold ? TEXT.weight.strong : 400}" fill="${o.ink}" style="font-variant-numeric:tabular-nums">${o.day}</text>`
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">${ring}${text}${dot}</svg>`
+}

@@ -2633,11 +2633,6 @@ export function splitRowPills(pills: readonly Pill[]): { due?: Pill; tags: Pill[
   return { ...(due ? { due } : {}), tags: pills.filter(p => !DUE_KINDS.has(p.kind)) }
 }
 
-/** Le tag de la ligne armée (#198, maquette A), au bout de la ligne : ce que fait son clic. */
-export function armTag(action: 'done' | 'reopen'): string {
-  return action === 'reopen' ? 'Rouvrir' : 'Confirmer'
-}
-
 /** Le titre d'une ligne garde au moins ces cellules à côté de ses pastilles (#177). */
 export const ROW_TITLE_MIN = 6
 
@@ -6364,7 +6359,7 @@ export function closeWithParentInTexts(
  * Un champ que la fiche d'une tâche modifie (#161) : le libellé, l'axe, une clé de la grammaire, ou
  * `cle:<k>`, une clé que le projet déclare dans `cles`.
  */
-export type EditField = 'nom' | 'label' | 'axis' | 'due' | 'resp' | 'qui' | 'attend' | 'apres' | 'parent' | 'prio' | `cle:${string}`
+export type EditField = 'nom' | 'label' | 'axis' | 'due' | 'resp' | 'qui' | 'attend' | 'apres' | 'parent' | 'prio' | 'tous' | `cle:${string}`
 /** Les changements d'une tâche (#161) : un champ absent ne change pas, une valeur vide retire le champ. */
 export type TaskEdit = Partial<Record<EditField, string>>
 
@@ -6547,30 +6542,123 @@ export function checkRoute(o: { ecriture?: Ecriture; cowork: boolean; task: { id
   })
 }
 
-/** Le temps qu'une ligne reste armée (#179) : passé ce délai, son tag « Confirmer » part et ne fait plus rien (#198). */
-export const ARM_MS = 8000
-
-/** La ligne dont le carré est armé (#179, #198) : sa clé, et le moment du clic. */
-export type Armed = { key: string; at: number }
-
-/** Ce qui arrive à l'armement : un clic sur un carré, le tag « Confirmer », un clic ailleurs. */
-export type ArmEvent = { kind: 'round'; key: string } | { kind: 'confirm'; key: string } | { kind: 'cancel' } | { kind: 'elsewhere' }
-
 /**
- * La double confirmation du carré d'une ligne (#179 ; le carré, #198) : un premier clic arme sa ligne,
- * le tag « Confirmer » l'exécute (`run`) ; un second clic sur le même carré, un clic ailleurs ou
- * `ARM_MS` sans rien désarment. Une seule ligne armée à la fois.
+ * La sélection de la liste (#316) : la case d'une ligne ajoute sa tâche ou la retire (clé `taskKey`).
+ * Une mère emmène ses étapes dessinées (`kids`) : choisie, elles le sont toutes ; retirée, toutes partent.
+ * Une étape se choisit et se retire seule.
  */
-export function checkArm(armed: Armed | undefined, e: ArmEvent, now: number): { armed?: Armed; run?: string } {
-  const live = armed !== undefined && now - armed.at < ARM_MS ? armed : undefined
-  if (e.kind === 'round') return live?.key === e.key ? {} : { armed: { key: e.key, at: now } }
-  if (e.kind === 'confirm') return live?.key === e.key ? { run: e.key } : {}
-  return {}
+export function pickToggle(picked: readonly string[], task: Task, kids: readonly Task[]): string[] {
+  const key = taskKey(task)
+  const family = [key, ...kids.map(taskKey)]
+  if (picked.includes(key)) return picked.filter(k => !family.includes(k))
+  return [...picked, ...family.filter(k => !picked.includes(k))]
 }
 
-/** L'encart de cette ligne se montre-t-il (#179) : elle est armée, et le délai court encore. */
-export function armShown(armed: Armed | undefined, key: string, now: number): boolean {
-  return armed !== undefined && armed.key === key && now - armed.at < ARM_MS
+/** Les tâches choisies encore dans la roadmap (#316) : une tâche close ailleurs, renumérotée ou effacée sort de la sélection. */
+export function pickPrune(picked: readonly string[], tasks: readonly Task[]): string[] {
+  const live = new Set(tasks.map(taskKey))
+  return picked.filter(k => live.has(k))
+}
+
+/** Une date AAAA-MM-JJ décalée de `n` jours, en UTC (une date du calendrier, sans heure). */
+function shiftDay(day: string, n: number): string {
+  const [y, m, d] = day.split('-').map(Number) as [number, number, number]
+  return new Date(Date.UTC(y, m - 1, d + n)).toISOString().slice(0, 10)
+}
+
+/** Le jour de la semaine d'une date, lundi 0 … dimanche 6. */
+function mondayRank(day: string): number {
+  const [y, m, d] = day.split('-').map(Number) as [number, number, number]
+  return (new Date(Date.UTC(y, m - 1, d)).getUTCDay() + 6) % 7
+}
+
+/** Les raccourcis de date de l'édition en lot (#316) : aujourd'hui, demain, et le lundi qui suit (jamais aujourd'hui). */
+export function batchDays(today: string): { today: string; tomorrow: string; monday: string } {
+  return { today, tomorrow: shiftDay(today, 1), monday: shiftDay(today, 7 - mondayRank(today)) }
+}
+
+/** Le mois du calendrier de l'édition en lot (#316), `AAAA-MM` : des semaines entières, du lundi au dimanche. */
+export function monthGrid(month: string): { day: string; inMonth: boolean }[] {
+  const first = `${month}-01`
+  const start = shiftDay(first, -mondayRank(first))
+  const next = shiftDay(`${month}-28`, 4).slice(0, 7)
+  const last = shiftDay(`${next}-01`, -1)
+  const end = shiftDay(last, 6 - mondayRank(last))
+  const out: { day: string; inMonth: boolean }[] = []
+  for (let day = start; day <= end; day = shiftDay(day, 1)) out.push({ day, inMonth: day.startsWith(month) })
+  return out
+}
+
+/** Le mois d'à côté, `AAAA-MM` (#316). */
+export function shiftMonth(month: string, n: number): string {
+  const [y, m] = month.split('-').map(Number) as [number, number]
+  return new Date(Date.UTC(y, m - 1 + n, 1)).toISOString().slice(0, 7)
+}
+
+/** Ce que l'édition en lot change (#316) : une date (`''` la retire), une récurrence (`''` la retire), un statut. */
+export type BatchChange = { due?: string; tous?: Recurrence | ''; status?: 'done' | 'open' }
+
+/**
+ * Un pas du lot (#316) : la tâche, ses champs à réécrire (`saveEdit`), sa clôture ou sa réouverture ;
+ * `refused` dit ce qui ne s'est pas fait et pourquoi ; `motherWaits`, une mère qui se cochera avec sa
+ * dernière étape (closeTask la ferme avec elle).
+ */
+export type BatchStep = { task: Task; edit: TaskEdit; close: boolean; reopen: boolean; refused?: string; motherWaits?: boolean }
+
+/**
+ * Le plan d'une édition en lot (#316), tâche par tâche, sans rien écrire : une ligne prise par une
+ * session (`qui:` et `branche:`) ne change que de date ; une faite ne prend ni date ni récurrence,
+ * « Ouverte » la rouvre ; une mère dont toutes les étapes ouvertes ferment avec le lot attend la
+ * dernière, une mère dont une étape ouverte n'est pas choisie reste ouverte. Les étapes passent avant
+ * leur mère. La communication pas partie (#242) se garde à l'écriture, par `closeTask`.
+ */
+export function batchPlan(tasks: readonly Task[], picked: readonly string[], change: BatchChange): BatchStep[] {
+  const chosen = new Set(picked)
+  const list = tasks.filter(t => chosen.has(taskKey(t)))
+  // Les étapes d'abord, dans l'ordre de la roadmap ; les mères ensuite.
+  const isMother = (t: Task) => t.id !== undefined && tasks.some(k => k.parent === t.id && k.id !== t.id)
+  const ordered = [...list.filter(t => !isMother(t)), ...list.filter(isMother)]
+  return ordered.map(task => {
+    const taken = task.qui !== undefined && task.qui !== '' && task.branche !== undefined && task.branche !== ''
+    const edit: TaskEdit = {}
+    const refused: string[] = []
+    if (task.done) {
+      if (change.due !== undefined || change.tous !== undefined) refused.push('faite : rouvre-la d’abord pour changer sa date')
+      return { task, edit, close: false, reopen: change.status === 'open', ...(refused.length ? { refused: refused.join(' ; ') } : {}) }
+    }
+    if (change.due !== undefined) edit.due = change.due
+    if (change.tous !== undefined) {
+      if (taken) refused.push('prise par une session : seule sa date change')
+      else edit.tous = change.tous
+    }
+    let close = false
+    let motherWaits = false
+    if (change.status === 'done') {
+      const openKids = tasks.filter(k => !k.done && k.parent !== undefined && k.parent === task.id && k.id !== task.id)
+      const missing = openKids.filter(k => !chosen.has(taskKey(k)))
+      if (taken) refused.push('prise par une session : seule sa date change')
+      else if (missing.length > 0) refused.push(`étape${missing.length > 1 ? 's' : ''} ${missing.map(k => `#${k.id ?? '?'}`).join(', ')} encore ouverte${missing.length > 1 ? 's' : ''}`)
+      else if (openKids.length > 0) motherWaits = true
+      else close = true
+    }
+    return {
+      task,
+      edit,
+      close,
+      reopen: false,
+      ...(refused.length ? { refused: [...new Set(refused)].join(' ; ') } : {}),
+      ...(motherWaits ? { motherWaits } : {}),
+    }
+  })
+}
+
+/** Le bilan d'une édition en lot (#316) : le geste et le nombre de tâches qui l'ont pris, puis chaque refus. */
+export function batchSummary(outcomes: readonly { task: Task; ok: boolean; why?: string }[], what: string): string {
+  const ok = outcomes.filter(o => o.ok).length
+  const head = `${ok} tâche${ok > 1 ? 's' : ''} : ${what}${what.endsWith('.') ? '' : '.'}`
+  const refused = outcomes.filter(o => !o.ok)
+  if (refused.length === 0) return head
+  return `${head} Pas pour ${refused.map(o => `${o.task.id ? `#${o.task.id}` : clip(o.task.label, 30)} : ${o.why ?? 'refusée'}`).join(' ; ')}.`
 }
 
 /** La durée du mouvement de la case (#182, maquette A) : le rebond du carré et le trait de sa coche. */
@@ -6608,14 +6696,6 @@ export function checkMoveAt(move: CheckMove | undefined, done: boolean, now: num
 export function checkLingers(move: CheckMove | undefined, now: number): boolean {
   if (move === undefined || !move.done) return false
   return move.shownAt === undefined ? now - move.at < CHECK_WAIT_MS : now - move.shownAt < CHECK_HOLD_MS
-}
-
-/**
- * Un clic ailleurs désarme (#179) : tout bouton ou zone du panneau, sauf un carré (`check:…`, qui
- * arme ou désarme lui-même) et le tag « Confirmer » de la ligne armée (`arm-…`, #198).
- */
-export function pressDisarms(element: string): boolean {
-  return !/(^|[^a-z-])(check:|arm-)/.test(element)
 }
 
 /** La légende de l'encart de clôture : ce qui va se passer, et, avec `ecriture` (#164), à qui c'est confié. */
