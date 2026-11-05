@@ -7020,7 +7020,9 @@ function maestroBandTree(
   }
   return (
     <Box flexDirection="column" gap={SPACE.tight} backgroundColor={palette.bg} padding="sm">
+      {/* L'en-tête commence comme une ligne, par le même trait d'espace : « Maestro » au droit des pastilles (#326). */}
       <Box flexDirection="row" alignItems="center" gap={SPACE.row}>
+        {strut}
         <Text size="footnote" weight="semibold">{words.title}</Text>
         {words.foot !== '' && <Text size="caption" color={palette.text3}>{`· ${words.foot}`}</Text>}
         {/* Le contexte de Maestro, seul : « Contexte 40 % », sans tokens ni jauge (#174) ; au-delà de 65 %,
@@ -7046,7 +7048,7 @@ function maestroBandTree(
           const mark = marks[i] ?? bandState(t)
           const step = stepOf(t, i)
           return (
-            <Box key={`band-row:${keyPart(t.id)}`} flexDirection="row" alignItems="center" gap={SPACE.row} paddingX={1} hover={{ backgroundColor: palette.hover }}>
+            <Box key={`band-row:${keyPart(t.id)}`} flexDirection="row" alignItems="center" gap={SPACE.row} hover={{ backgroundColor: palette.hover }}>
               {strut}
               {Svg && <Svg source={discIcon(dot, 12)} alt={t.state === 'done' ? bandState(t).word : (words.states[i] ?? '')} width={12} height={12} />}
               {/* Le numéro à sa largeur, à un écart du titre : plus de case de 5 cellules (#211). */}
@@ -7058,10 +7060,13 @@ function maestroBandTree(
               </Box>
               <Box flexGrow={1} />
               {/* Jauge, compte et état à largeur fixe, sur chaque ligne (#172) : les barres partent de la même
-                  colonne, quels que soient le titre, l'étape ou le compte (« 5/7 », « 7/7 Done »). */}
+                  colonne, quels que soient le titre, l'étape ou le compte (« 5/7 », « 7/7 Done »). La case de la
+                  jauge suit son dessin, qui va jusqu'au compte (#326). */}
               {Svg && (
-                <Box key={`band-gauge:${keyPart(t.id)}`} width={BAND_COLUMNS.gauge} flexShrink={0} flexDirection="column" gap={0}>
+                <Box key={`band-gauge:${keyPart(t.id)}`} flexShrink={0} flexDirection="column" gap={0}>
                   {bar && <Svg source={bar.source} alt={`étapes ${view?.count ?? ''}`} width={bar.width} height={bar.height} />}
+                  {/* Sans note, la case garde la largeur d'une jauge : le compte et l'étape restent en colonne (#326). */}
+                  {!bar && <Svg source={`<svg xmlns="http://www.w3.org/2000/svg" width="${BAND_GAUGE.row}" height="4"/>`} alt="espace" width={BAND_GAUGE.row} height={4} />}
                   {ctxBar && ctx && <Svg source={ctxBar.source} alt={`contexte ${ctx.text}`} width={ctxBar.width} height={ctxBar.height} />}
                 </Box>
               )}
@@ -7071,9 +7076,10 @@ function maestroBandTree(
                   {view && <Text size="caption" tabular color={palette.text3}>{view.count}</Text>}
                 </Box>
               )}
-              {/* L'étape en cours, après la jauge et son compte, dans sa colonne (#211, maquette D). */}
+              {/* L'étape en cours, après la jauge et son compte, dans sa colonne (#211, maquette D). Elle ne
+                  rétrécit pas : seul le titre cède sa place, sinon un titre long poussait la jauge (#326). */}
               {cols.step > 0 && (
-                <Box key={`band-step:${keyPart(t.id)}`} width={cols.step} flexShrink={1} minWidth={0}>
+                <Box key={`band-step:${keyPart(t.id)}`} width={cols.step} flexShrink={0} minWidth={0}>
                   {step !== '' && <Text size="caption" color={palette.text3} wrap="truncate-end">{step}</Text>}
                 </Box>
               )}
@@ -7098,14 +7104,13 @@ function maestroBandTree(
   )
 }
 
-/** La largeur des jauges d'une ligne de la bande de Maestro, étapes et contexte, en px (#147, #217) ; celle de Maestro est partie (#174). `gap` : l'écart en px entre les deux, dessiné dans la jauge de contexte (#241). */
-const BAND_GAUGE = { row: 64, gap: 2 }
-
 /**
- * La case de la jauge de la bande de Maestro, en cellules de l'app (~7,8 px, #172) : 64 px tiennent dans
- * 9 cellules. Celles du compte, de l'état et de l'archivage suivent le texte réel (`bandColumns`, #174).
+ * La largeur des jauges d'une ligne de la bande de Maestro, étapes et contexte, en px (#147, #217) ; celle de
+ * Maestro est partie (#174). Leur case suit ce dessin, jusqu'au compte (#326) ; celles du compte, de l'état et
+ * de l'archivage suivent le texte réel (`bandColumns`, #174). `gap` : l'écart en px entre les deux jauges,
+ * dessiné dans la jauge de contexte (#241).
  */
-const BAND_COLUMNS = { gauge: 9 }
+const BAND_GAUGE = { row: 80, gap: 2 }
 
 /**
  * L'en-tête du panneau, au-dessus de la roadmap : Maestro et ses voies ; chez une tâche dont on a demandé
@@ -10247,7 +10252,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
       >
         {/* Pas de coins arrondis au survol, comme les lignes de tâches : quatre Svg de moins par
             ligne (2026-10-23, un tiers des Svg d'un dessin). La marque de 16 × 24 tient la hauteur. */}
-        {/* Dans un panneau étroit, c'est le nom qui se tronque : l'icône et les chiffres gardent leur place. */}
+        {/* Dans un panneau étroit, c'est le nom qui se tronque : l'icône, le crayon et les chiffres gardent leur place. */}
         <Box flexDirection="row" alignItems="center" gap={SPACE.row} flexShrink={1} minWidth={0}>
           <Box flexDirection="row" alignItems="center" flexShrink={0}>
             {o.mark(o.dim)}
@@ -10262,17 +10267,20 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
             <Text color={palette.text3}>{o.name}</Text>
           )}
         </Box>
+        {/* La zone de clic de la ligne, puis le crayon juste après le nom (#326), peint par-dessus elle (#286). */}
+        {o.onPress && hit(o.key, o.onPress)}
+        {o.axis !== undefined && axisPen('legend', o.axis)}
+        <Box flexGrow={1} />
         <Box flexDirection="row" flexShrink={0}>
-          {/* La part d'abord, puis le nombre de tâches en petite pastille, comme le compte des sections. */}
-          <Box width={shareCol} justifyContent="flex-end">
+          {/* La part d'abord, puis le nombre de tâches en petite pastille, comme le compte des sections ; chacun
+              calé à droite de sa case, en rangée (#326) : sans elle, `flex-end` calait en hauteur, pas à droite. */}
+          <Box width={shareCol} flexDirection="row" justifyContent="flex-end">
             <Text tabular color={o.muted ? palette.text3 : faded(palette.text, o.dim)}>{o.share}</Text>
           </Box>
-          <Box width={numCol} justifyContent="flex-end">
+          <Box width={numCol} flexDirection="row" justifyContent="flex-end">
             {countPill(o.n, o.dim || Boolean(o.muted), ink2)}
           </Box>
         </Box>
-        {o.onPress && hit(o.key, o.onPress)}
-        {o.axis !== undefined && axisPen('legend', o.axis)}
       </Box>
     )
   }

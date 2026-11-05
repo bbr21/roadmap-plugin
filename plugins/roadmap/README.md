@@ -740,6 +740,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.211.0 (2026-11-05)** : panneau : la bande de Maestro alignée en colonnes fixes, la liste des axes aux % calés à droite et au crayon après le nom (#326)
 - **0.210.0 (2026-11-05)** : reglages-session : réglage autonome éteint, la fusion, la publication et les gestes hors du code attendent le oui ; tableau « Autonome éteint » (#304)
 - **0.209.0 (2026-11-05)** : mockups : un rendu ne se code qu'après le oui sur la maquette exacte, le plugin rappelle une édition de rendu faite sans oui (#322)
 - **0.208.0 (2026-11-05)** : panneau : la file des tests lourds se voit dans le bloc En cours de Maestro (#321) ; le crayon d'un axe change sa couleur et son nom en place, et le doctor contrôle la clé axes (#286)
