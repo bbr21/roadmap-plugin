@@ -77,3 +77,8 @@ critique and the review changed, and what they flagged that the system itself wo
 
 The user chooses on the page, through the question form (AskUserQuestion), the recommendation
 first. Nothing is coded before their choice.
+
+Only the exact version the user approved with a yes is coded (#322). A correction (« plutôt X »,
+« plus petit », « oui mais… ») is not a yes: redraw the mockup with it, show the new version, ask
+« Je code cette version ? », and code only after the yes. The plugin reminds, in the result of the
+edit itself, any edit of a render file made without a yes since the last mockup drawn.

@@ -703,6 +703,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.209.0 (2026-11-05)** : mockups : un rendu ne se code qu'après le oui sur la maquette exacte, le plugin rappelle une édition de rendu faite sans oui (#322)
 - **0.208.0 (2026-11-05)** : panneau : la file des tests lourds se voit dans le bloc En cours de Maestro (#321) ; le crayon d'un axe change sa couleur et son nom en place, et le doctor contrôle la clé axes (#286)
 - **0.207.0 (2026-11-05)** : panneau : la fiche d'une tâche close dit sa durée et où ce temps est passé (travail, attente de BBR, file des tests, Mac chargé, attente de fusion), en petit donut cliquable (#314)
 - **0.206.1 (2026-11-05)** : garde-fou git : un clone frais n'exempte plus les règles qui valent partout, une configuration, un remote ou un worktree coupe la chaîne du clone, et un shell déguisé dans un here-doc est repéré (#315)

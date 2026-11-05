@@ -1095,6 +1095,61 @@ export function isMockupCall(tool: string, input: unknown): boolean {
   return false
 }
 
+// #322 (BBR, 2026-11-05) : « Tu me montres la version, je valide, et ensuite tu codes. » Une correction
+// sur une maquette n'est pas un oui : elle donne une nouvelle maquette, montrée, puis « Je code cette version ? ».
+const APPROVAL_LEAD =
+  /^(?:oui|ouais|ok|okay|go|vas[- ]y|allez|valide|validee?s?|je valide|c'est bon|c'est parfait|c'est valide|parfait|top|nickel|super|ca me va|ca marche|d'accord|daccord|banco|code[- ]la|code|lance|yes|yep|lgtm|approved?|let's go|on y va|on part sur|je prends|(?:la |le |maquette |option |version )?[a-d](?=$|[ ,;:]))(?=$|[^a-z0-9])/
+const APPROVAL_CORRECTION =
+  /\b(?:mais|plutot|plus|moins|trop|sans|change[rz]?|remplace[rz]?|enleve[rz]?|retire[rz]?|ajoute[rz]?|agrandi[rst]?|reduis|reduire|deplace[rz]?|corrige[rz]?|non|pas|sauf|refai[st]|refaire|attends?|hmm)\b|\?/
+
+/** Un message de la personne qui approuve la dernière maquette sans la corriger (#322) ; ni réveil ni correction. */
+export function mockupApproval(text: string): boolean {
+  if (wakeTurn(text)) return false
+  const said = normalizeTitle(text.replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, ''))
+    .replace(/[’]/g, "'")
+    .replace(/[.!…]+$/, '')
+    .trim()
+  if (said === '' || said.length > 120) return false
+  return APPROVAL_LEAD.test(said) && !APPROVAL_CORRECTION.test(said)
+}
+
+/** Les réponses d'un formulaire, lues de son résultat (objet `answers`, ou texte `"Q"="R"`) ; une note jointe : `noted`. */
+function formAnswers(result: unknown): { answers: string[]; noted: boolean } {
+  if (typeof result === 'string') {
+    const answers = [...result.matchAll(/"[^"]*"="([^"]*)"/g)].map(m => m[1]!)
+    return { answers, noted: /\bnotes?\s*:/i.test(result) }
+  }
+  if (typeof result !== 'object' || result === null) return { answers: [], noted: false }
+  const r = result as { answers?: unknown; annotations?: unknown; text?: unknown }
+  if (typeof r.text === 'string' && r.answers === undefined) return formAnswers(r.text)
+  const answers = typeof r.answers === 'object' && r.answers !== null ? Object.values(r.answers).filter((a): a is string => typeof a === 'string') : []
+  const notes = typeof r.annotations === 'object' && r.annotations !== null ? Object.values(r.annotations) : []
+  const noted = notes.some(n => typeof n === 'object' && n !== null && typeof (n as { notes?: unknown }).notes === 'string' && (n as { notes: string }).notes.trim() !== '')
+  return { answers, noted }
+}
+
+/**
+ * La réponse d'un formulaire vaut-elle un oui (#322) : chaque réponse est un libellé d'option choisi tel quel
+ * (ou un texte libre qui approuve), sans note jointe.
+ */
+export function formApproval(input: unknown, result: unknown): boolean {
+  const { answers, noted } = formAnswers(result)
+  if (noted || answers.length === 0) return false
+  const questions = Array.isArray((input as { questions?: unknown } | undefined)?.questions) ? ((input as { questions: { options?: unknown }[] }).questions) : []
+  const labels = new Set(questions.flatMap(q => (Array.isArray(q?.options) ? (q.options as { label?: unknown }[]) : []).map(o => o?.label).filter((l): l is string => typeof l === 'string')))
+  return answers.every(a => a.split(', ').every(part => labels.has(part)) || mockupApproval(a))
+}
+
+/** Un fichier qui porte un rendu (#322) : un fichier d'interface (#96), hors fichiers de test et pages de maquettes. */
+export function isRenderFile(path: string | undefined): boolean {
+  return typeof path === 'string' && UI_FILE.test(path) && !TEST_FILE.test(path) && !isMockupPage(path)
+}
+
+/** Le rappel d'un fichier de rendu édité sans oui depuis la dernière maquette dessinée (#322). */
+export function mockupYesReminder(file: string, what: string): string {
+  return `Plugin roadmap : tu modifies un fichier de rendu (${file}) et ${person()} n'a pas dit oui à la dernière maquette dessinée (${what}). Une correction de sa part (« plutôt X », « plus petit ») n'est pas un oui : redessine la maquette avec elle, montre-la, demande « Je code cette version ? », et ne code le rendu qu'après son oui. Si ce fichier ne porte pas le rendu de cette maquette, ou si ${person()} a déjà validé cette version exacte, dis-le en une ligne et continue.`
+}
+
 const shownFiles = (files: readonly string[]) =>
   files.slice(0, 5).map(f => `\`${f}\``).join(', ') + (files.length > 5 ? `, et ${files.length - 5} autres` : '')
 
@@ -4280,7 +4335,7 @@ const maestroClauseEnd = (): string => `Ta ligne close par Maestro (lue dans ROA
  * session pose elle-même le choix et Bertrand y répond chez elle : Maestro ne le relaie plus.
  */
 function maestroMockups(where: string): string {
-  return `Un choix visuel : écris tes 2 ou 3 maquettes dans une page HTML statique, ${where}, ouvre-la dans ton volet navigateur (\`preview_start\` avec son url \`file://\`), puis pose le choix toi-même, par le formulaire (\`AskUserQuestion\`), une option par maquette, ta recommandation en premier (sans formulaire, par la question de ta boîte de fin) ; dis « attend une réponse : choix de maquette, <chemin> » en tête de ton compte rendu et termine ton tour. ${Person()} y répond dans ta session : Maestro ne relaie pas la question, il ne te la rappelle qu'après 15 min sans réponse.`
+  return `Un choix visuel : écris tes 2 ou 3 maquettes dans une page HTML statique, ${where}, ouvre-la dans ton volet navigateur (\`preview_start\` avec son url \`file://\`), puis pose le choix toi-même, par le formulaire (\`AskUserQuestion\`), une option par maquette, ta recommandation en premier (sans formulaire, par la question de ta boîte de fin) ; dis « attend une réponse : choix de maquette, <chemin> » en tête de ton compte rendu et termine ton tour. ${Person()} y répond dans ta session : Maestro ne relaie pas la question, il ne te la rappelle qu'après 15 min sans réponse. Une correction de sa part n'est pas un oui : redessine, montre la nouvelle version, demande « Je code cette version ? », et ne code qu'après son oui.`
 }
 
 /**
@@ -7631,7 +7686,7 @@ function gesturesText(autonome: boolean): string {
 // Toute maquette s'appuie sur le design system que le projet déclare (#129, après celui du plugin, #108),
 // ou propose d'en poser un : la cohérence d'un projet ne tient plus à la mémoire de la session.
 function mockupText(design?: Design): string {
-  return "- **Maquettes avant un choix visuel** (avec ou sans code) : tout choix dont le résultat se voit (dans un projet de code : un écran, une vue, un panneau, un volet, un composant, une mise en page, un graphique ; sans code : la mise en page d'un document, d'un tableau ou d'une présentation) passe par 2 ou 3 maquettes simples, jamais par une description seule. Chacune a un parti net et son compromis, ta recommandation en premier ; " + person() + " choisit, et alors seulement tu codes ou tu décides. Prends le support le plus léger qui permet de décider : l'aperçu de chaque option du formulaire à choix (champ `preview`) pour un petit choix (une disposition, un ordre, un libellé) ; un widget de maquette (`mcp__visualize__show_widget`, module `mockup`, après `read_me`) pour un écran ou un panneau ; une page HTML statique ouverte dans le volet navigateur (`preview_start` avec son url `file://`) pour une interface riche ou qui se clique, posée dans le dossier du projet (hors de lui, le volet n'en montre qu'un instantané). " + designSkillText(design) + " " + designText(design) + " Le réglage autonome ne s'y applique pas : un choix visuel revient à " + person() + ". Sans personne pour répondre, garde les maquettes dans le dossier du chantier, suis ta recommandation et dis-le. Pas pour un choix sans rendu (une règle, un format, un correctif de logique), ni pour un rendu déjà choisi sur maquette."
+  return "- **Maquettes avant un choix visuel** (avec ou sans code) : tout choix dont le résultat se voit (dans un projet de code : un écran, une vue, un panneau, un volet, un composant, une mise en page, un graphique ; sans code : la mise en page d'un document, d'un tableau ou d'une présentation) passe par 2 ou 3 maquettes simples, jamais par une description seule. Chacune a un parti net et son compromis, ta recommandation en premier ; " + person() + " choisit, et alors seulement tu codes ou tu décides. Tu ne codes que la version exacte qu'il a vue et validée d'un oui : une correction de sa part (« plutôt X », « plus petit ») n'est pas un oui, elle donne une nouvelle maquette, montrée, puis la question « Je code cette version ? » ; le plugin rappelle une édition d'un fichier de rendu faite sans oui depuis la dernière maquette dessinée (#322). Prends le support le plus léger qui permet de décider : l'aperçu de chaque option du formulaire à choix (champ `preview`) pour un petit choix (une disposition, un ordre, un libellé) ; un widget de maquette (`mcp__visualize__show_widget`, module `mockup`, après `read_me`) pour un écran ou un panneau ; une page HTML statique ouverte dans le volet navigateur (`preview_start` avec son url `file://`) pour une interface riche ou qui se clique, posée dans le dossier du projet (hors de lui, le volet n'en montre qu'un instantané). " + designSkillText(design) + " " + designText(design) + " Le réglage autonome ne s'y applique pas : un choix visuel revient à " + person() + ". Sans personne pour répondre, garde les maquettes dans le dossier du chantier, suis ta recommandation et dis-le. Pas pour un choix sans rendu (une règle, un format, un correctif de logique), ni pour un rendu déjà choisi sur maquette."
 }
 
 /** La skill de design dans la règle des maquettes (#292) : avant la première maquette, puis la relecture. */

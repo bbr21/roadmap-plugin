@@ -147,6 +147,10 @@ import {
   settingsSkillNote,
   methodReminder,
   isMockupCall,
+  isRenderFile,
+  mockupApproval,
+  formApproval,
+  mockupYesReminder,
   uiFilesToMock,
   MOCKUP_TOOLS,
   swiftUIFiles,
@@ -860,6 +864,10 @@ type Capture = {
   mockupModule: boolean
   /** La maquette dessinée pendant le tour (une page, ou « un widget de maquette ») ; remise à zéro à chaque tour (#292). */
   mockupDrawn?: string
+  /** La dernière maquette dessinée que la personne n'a pas encore validée d'un oui (#322) ; vide sinon. */
+  mockupAwaiting?: string
+  /** Le rappel du oui déjà donné pour cette maquette (#322) : une fois par maquette dessinée. */
+  mockupYesWarned: boolean
   /** Les HEAD dont le rappel de méthode a déjà été donné : une fois par commit. */
   methodAsked: Set<string>
   /** La roadmap au début du tour : une idée à coder n'appelle sa ligne que si elle n'a pas bougé (#83). */
@@ -908,6 +916,7 @@ async function startCapture($: EngineInterface, source: Source): Promise<void> {
     mockupShown: false,
     designUsed: false,
     mockupModule: false,
+    mockupYesWarned: false,
     methodAsked: new Set(),
     cardThisTurn: false,
     boxThisTurn: '',
@@ -982,7 +991,26 @@ function designNote(c: Capture): string | undefined {
 /** Une maquette dessinée par le fil principal (#292) : une page `maquettes*.html` écrite, ou un widget du module `mockup`. */
 function noteMockupDrawn(e: { agentId?: unknown; file_path?: unknown }): void {
   if (!capture || e.agentId !== undefined) return
-  if (isMockupPage(typeof e.file_path === 'string' ? e.file_path : undefined)) capture.mockupDrawn = `\`${baseName(e.file_path as string)}\``
+  if (isMockupPage(typeof e.file_path === 'string' ? e.file_path : undefined)) {
+    capture.mockupDrawn = `\`${baseName(e.file_path as string)}\``
+    awaitYes(capture.mockupDrawn)
+  }
+}
+
+/** Une maquette dessinée (#322) : jusqu'au oui de la personne, un fichier de rendu édité se rappelle, une fois. */
+function awaitYes(what: string): void {
+  if (!capture) return
+  capture.mockupAwaiting = what
+  capture.mockupYesWarned = false
+}
+
+/** Un fichier de rendu édité par le fil principal sans oui depuis la dernière maquette (#322) : le rappel, au tour même. */
+function yesNote(e: { agentId?: unknown; file_path?: unknown }, ran: ToolCallResult): ToolCallResult {
+  const c = capture
+  if (!c || e.agentId !== undefined || c.mockupAwaiting === undefined || c.mockupYesWarned) return ran
+  if (ran.deny !== undefined || ran.isError === true || !isRenderFile(typeof e.file_path === 'string' ? e.file_path : undefined)) return ran
+  c.mockupYesWarned = true
+  return { ...ran, context: [...(ran.context ?? []), mockupYesReminder(`\`${baseName(e.file_path as string)}\``, c.mockupAwaiting)] }
 }
 
 /** Les fichiers d'interface créés ou très modifiés par les commits du tour (#96). */
@@ -5855,11 +5883,11 @@ export const register: Register = (on, options) => {
   // #292 : une page de maquettes écrite se note pour le rappel de design.
   on('tool.call', { tool: 'Edit' }, async ($, e, next) => {
     noteMockupDrawn(e)
-    return handWriteNote($, e, 'Edit', await written($, () => next(e), e.file_path))
+    return yesNote(e, await handWriteNote($, e, 'Edit', await written($, () => next(e), e.file_path)))
   })
   on('tool.call', { tool: 'Write' }, async ($, e, next) => {
     noteMockupDrawn(e)
-    return handWriteNote($, e, 'Write', await written($, () => next(e), e.file_path))
+    return yesNote(e, await handWriteNote($, e, 'Write', await written($, () => next(e), e.file_path)))
   })
   on('tool.call', { tool: 'NotebookEdit' }, ($, e, next) => written($, () => next(e), e.notebook_path))
   // La carte New task d'une sous-session remonte à son Maestro (#67).
@@ -5908,7 +5936,10 @@ export const register: Register = (on, options) => {
     on('tool.call', { tool }, ($, e, next) => {
       if (capture && !fromAgent(e) && isMockupCall(tool, e)) capture.mockupShown = true
       // #292 : un widget après un read_me du module mockup est une maquette dessinée.
-      if (capture && !fromAgent(e) && tool === VISUALIZE_WIDGET && capture.mockupModule) capture.mockupDrawn ??= 'un widget de maquette'
+      if (capture && !fromAgent(e) && tool === VISUALIZE_WIDGET && capture.mockupModule) {
+        capture.mockupDrawn ??= 'un widget de maquette'
+        awaitYes('un widget de maquette')
+      }
       return next(e)
     })
   }
@@ -5932,7 +5963,10 @@ export const register: Register = (on, options) => {
     if (fromAgent(e)) return next(e)
     // « T'attendent » passe par ce formulaire (#244).
     reportTurn.asked = true
-    if (capture && isMockupCall(ASK_TOOL, e)) capture.mockupShown = true
+    if (capture && isMockupCall(ASK_TOOL, e)) {
+      capture.mockupShown = true
+      awaitYes('les aperçus du formulaire')
+    }
     const first = (e as { questions?: { question?: unknown }[] }).questions?.[0]?.question
     const text = clip(typeof first === 'string' ? first : '', 160)
     await noteChild($, (s, now) => ({ ...s, question: { text, since: now } }))
@@ -5940,7 +5974,10 @@ export const register: Register = (on, options) => {
     await tellMaestro($, childWake({ question: text }))
     const asked = await timingNow($)
     try {
-      return await next(e)
+      const ran = await next(e)
+      // #322 : une option choisie telle quelle, sans note, vaut le oui de la maquette en attente.
+      if (capture?.mockupAwaiting !== undefined && ran.deny === undefined && formApproval(e, ran.result ?? ran.text)) capture.mockupAwaiting = undefined
+      return ran
     } finally {
       await noteChild($, withoutQuestion)
       // Le formulaire a attendu BBR : de l'attente, pas du travail (#314).
@@ -6073,6 +6110,8 @@ export const register: Register = (on, options) => {
       capture.cardThisTurn = false
       capture.boxThisTurn = ''
       capture.mockupDrawn = undefined
+      // #322 : le oui de la personne, sans correction, valide la dernière maquette dessinée.
+      if (capture.mockupAwaiting !== undefined && mockupApproval(e.text ?? '')) capture.mockupAwaiting = undefined
     }
     // Le relevé des temps (#314) : le tour commence, une question de la boîte prend fin.
     if (e.agentId === undefined) {

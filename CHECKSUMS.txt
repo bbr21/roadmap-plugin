@@ -1,15 +1,15 @@
-# roadmap 0.208.0 : SHA-256 de chaque fichier installé du plugin, chemins relatifs à son dossier.
-# Vérifier une copie installée (~/.claude/plugins/cache/roadmap/roadmap/0.208.0) : plugins/roadmap/SECURITE.md, « Vérifier que ta copie est une vraie version ».
-3f40744c1f8abb33088c0845d952f416af90b274122f3a1d0441e1c0efe8989d  .claude-plugin/plugin.json
-41775eb6cfefc4df6af094afeca6f6d87a1ec78f56848cee0fa609753992aa23  README.md
-9e4c66a6e63c0c468c60a0010df01a0f7d890cf0302fd8e60a8cd2b1b9cd4e9e  SECURITE.md
+# roadmap 0.209.0 : SHA-256 de chaque fichier installé du plugin, chemins relatifs à son dossier.
+# Vérifier une copie installée (~/.claude/plugins/cache/roadmap/roadmap/0.209.0) : plugins/roadmap/SECURITE.md, « Vérifier que ta copie est une vraie version ».
+7dd9fd76507e4547b249b77336e641ffef3c9df23935525b516a21b7cd44bb8a  .claude-plugin/plugin.json
+bde60a651a72af5820e73aaa017cab719afa3ddb51f5984ad3469e9520eca2f1  README.md
+668e8c5683ea82bd5e952f30052dedb42ea6154ef6a4e3dd10ea5ee9453020a3  SECURITE.md
 bce019cb7147413a8e5f0687df59a41394fa92545568b5d37b1df8bd6d885e30  hooks/bar-hit.tsx
 24387c7ebf678c8c7ed5c9cee4be7aa908712c43d03f08c0106f5342c16f823f  hooks/donut-hit.tsx
 d842d789476d67282d0f04b7e5fdc68a3d981ccec65dd79cfa2d11eed13fb828  hooks/hooks.json
 4a411d7394e6903f4e4e7aa619fe1f295c15faa12634d21170cf0fbf700fe8b0  hooks/icons.ts
-5d4b67015a083de83730c8ea7b50bb6a2f64aa073d9195e82e47e6f23b0c4a6f  hooks/parse.ts
+efacd6f63bd9e01f6c913b95ad58d9114d5201eb3bcb7efef0b6c2dae78863a8  hooks/parse.ts
 a29e07be4f95c637c8f3ab377dc9a97cd16de11e8e7de7062311dd2888a0833f  hooks/press-hit.tsx
-6f5324c7abfdd53e4b94693317d0b7da3a5cfb10e7235f8d0eb3e587d90716bf  hooks/register.tsx
+679a7b370eb228442c0a5c1b4e8cb7ca80320a7b90122c2a0e2847394c0dacc3  hooks/register.tsx
 a8cc4f58b6fc93fdbd3b6768496660d7627e524b993045ce56e4efbcde209716  hooks/reglages.tsx
 838d832dfd2509b472e7d42c149f6161f7c57803d81bd61dff2751a678b45ad0  hooks/tokens.ts
 40a25201db9424dbda555e5497587c448e2ba8f5c27efa5510ca748b4e59f1ee  scripts/one-at-a-time.sh
@@ -22,15 +22,15 @@ d8ad29856a2309a62def7e5672cb2b2bd9e400696a9e2ec8c043e6651d392afc  skills/audit/S
 fb013dbd0a4ee2fec41e962e3d57eaa37dfee0ab6323d4617b056e3a430c173a  skills/impact/scripts/impact.py
 709aa48256fe74ef549f8b95d0874853748dae147ae9eb418aee00400e813c81  skills/maestro/SKILL.md
 ef2caa713287dd923189b0fa351cc2587bf8b91b36a334cfa0c9eb954a63207a  skills/maestro/scripts/etat_maestro.py
-537d264c69a2d720b6bcbb5880de9aa8f0b8f60ceb9700e8493bd8bf597eb61b  skills/mockups/SKILL.md
+637d279ad9ce256ea4d8dfeff4ccc55d87b20d8a4e00b7e2f55b8a188997f745  skills/mockups/SKILL.md
 4e14f4179fd08aad77fcfbbef47464211ae175b5a517a86a9cb635d25647001b  skills/onboarding/SKILL.md
-e25e3a6385c9396a8e9bb71d7014d780ea7ac648ee1785ed717cf1f943dcd6fb  skills/onboarding/references/modeles-projet/CLAUDE.md
+79ddb55b3ef868f134439013f6ba679192c0cab7573c8ec6f39688f2d6d41861  skills/onboarding/references/modeles-projet/CLAUDE.md
 6cad23d0b86a406a7f6be88b594043e1aab715ad5cc5cd4bc51a3b4475d7f5bc  skills/onboarding/references/modeles-projet/dot-gitignore
 a863d1f04c1359581fc7aa09edd4aeaeb6482181c5ad591ac2f1477f4cf2bea2  skills/onboarding/references/modeles-projet/roadmap/ROADMAP-REGLES.md
 0ee6fbed65d1245b9688e60f4fb08651b132816251d1cc73093aaecbc3bf2216  skills/onboarding/references/modeles-projet/roadmap/ROADMAP-bilans.csv
 4710280c9429dece175dd9d65373c51c1f3f0f4139bc7cc30a8703f41a65a0a7  skills/onboarding/references/modeles-projet/roadmap/ROADMAP-fait.md
 9b5fbf7fab9a08d6ad15d30d815570ab36ffd27aa3b4c86d1f4153df7329f9a9  skills/onboarding/references/modeles-projet/roadmap/ROADMAP.md
-f88dd069a0297badc6d89b19ea618b26d659d08fe4ae5df9d2625cc078b110fa  skills/onboarding/references/modeles/CLAUDE.md
+3456741b1cd4a8394c48dbfbfe922fd8b7f5a60ff7ba3b5eff827f3306045433  skills/onboarding/references/modeles/CLAUDE.md
 9f3ad3b1f84d6ceae3febafb6e62a86acc5ed545ae230a2166d561748cacb897  skills/onboarding/references/modeles/docs/README.md
 499c59e7378eb6f4a57619534fd296c6a37be34b5ec15f80280711e831f9030b  skills/onboarding/references/modeles/docs/architecture.md
 961376b2bed5824983a94bcd77544c66b1ceaf3ef54e08fe60ab553e81b49366  skills/onboarding/references/modeles/docs/decisions.md
