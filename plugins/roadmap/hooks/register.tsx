@@ -98,6 +98,7 @@ import { MIX, RADIUS, SIZE, SPACE, TEXT } from './tokens'
 import { SETTINGS_PANE, drawSettings, openSettings, prefsFile, redrawSettings, sessionProject, watchSettings, type SettingsProject } from './reglages'
 import {
   CLASSIC_SKIPS_OFF,
+  retryOnLock,
   squareHitWidth,
   TREE_LEAD_CELLS,
   declaredAccount,
@@ -619,6 +620,41 @@ import {
   type AxisStyle,
 } from './parse'
 import type { HeavyQueue, QueueMark } from './parse'
+
+/**
+ * L'attente du moteur entre deux essais d'une écriture du store (#350) : son horloge, sinon `setTimeout` ;
+ * sans l'une ni l'autre, l'essai suivant part aussitôt.
+ */
+function engineWait($: EngineInterface, ms: number): Promise<void> {
+  return new Promise(resolve => {
+    try {
+      $.clock.after(ms, () => resolve())
+      return
+    } catch {
+      // horloge refusée : on tente la minuterie de l'environnement
+    }
+    if (typeof setTimeout === 'function') setTimeout(resolve, ms)
+    else resolve()
+  })
+}
+
+type StoreValue = Parameters<EngineInterface['store']['set']>[1]
+
+/**
+ * Toute écriture du store passe par ici (#350) : le store est un fichier partagé par les sessions ouvertes,
+ * et une écriture refusée parce qu'une autre session tient son verrou se réessaie au lieu d'échouer.
+ */
+function storeSet($: EngineInterface, key: string, value: StoreValue): Promise<void> {
+  return retryOnLock(async () => {
+    await $.store.set(key, value)
+  }, ms => engineWait($, ms))
+}
+
+function storeDelete($: EngineInterface, key: string): Promise<void> {
+  return retryOnLock(async () => {
+    await $.store.delete(key)
+  }, ms => engineWait($, ms))
+}
 
 const PANE = PANE_ID
 const BAR_HIT = 'bar-hit'
@@ -1292,7 +1328,7 @@ async function saveEndFiche($: EngineInterface, answer: string | undefined): Pro
     if (sessionTitleKind(title) === 'check') return
     const id = sessionTitleId(title) ?? fiche.id
     if (id === undefined) return
-    await $.store.set(recapKey(c.source.name, id), { ...fiche, at: await $.clock.now() })
+    await storeSet($, recapKey(c.source.name, id), { ...fiche, at: await $.clock.now() })
   } catch {
     // store ou fiche de session illisibles : la fiche de tâche garde son cadre
   }
@@ -1331,7 +1367,7 @@ async function saveChanges($: EngineInterface, answer: string | undefined): Prom
     const prev = changesOf(await $.store.get(branch.key).catch(() => undefined))
     const zones = mergeZones(branch.zones, said, prev?.zones)
     if (zones.length === 0) return
-    await $.store.set(branch.key, { zones, commits: branch.commits, at: await $.clock.now() })
+    await storeSet($, branch.key, { zones, commits: branch.commits, at: await $.clock.now() })
   } catch {
     // store ou git illisibles : la fiche garde le relevé d'avant
   }
@@ -1367,7 +1403,7 @@ async function noteTiming($: EngineInterface, step: (t: StoredTiming | undefined
     const key = await timingKeyHere($)
     if (key === undefined) return
     const next = step(timingOf(await $.store.get(key).catch(() => undefined)), await $.clock.now())
-    if (next !== undefined) await $.store.set(key, next)
+    if (next !== undefined) await storeSet($, key, next)
   } catch {
     // le relevé garde son état d'avant
   }
@@ -1575,7 +1611,7 @@ async function noteAccountSwitch($: EngineInterface, part: Record<string, unknow
   try {
     const stored = await $.store.get(ACCOUNT_SWITCH_KEY)
     const seen = typeof stored === 'object' && stored !== null && !Array.isArray(stored) ? stored : {}
-    await $.store.set(ACCOUNT_SWITCH_KEY, { ...seen, ...part, at: await $.clock.now(), version: sessionVersion ?? '?' })
+    await storeSet($, ACCOUNT_SWITCH_KEY, { ...seen, ...part, at: await $.clock.now(), version: sessionVersion ?? '?' })
   } catch {
     // store illisible, ou module déjà rechargé par l'écriture : la bascule tient sans sa note
   }
@@ -2147,7 +2183,7 @@ async function summarize($: EngineInterface, source: Source): Promise<void> {
         return
       }
       Object.assign(titles, parseTitles(reply.text, source.subjects))
-      await $.store.set(STORE_KEY, titles)
+      await storeSet($, STORE_KEY, titles)
       await update($, titlesVersionAtom, v => v + 1)
     }
     await update($, titleNoteAtom, () => '')
@@ -2272,7 +2308,7 @@ async function probeLive($: EngineInterface): Promise<void> {
       changed = true
     }
   }
-  if (pruned) await $.store.set(LIVE_KEY, live)
+  if (pruned) await storeSet($, LIVE_KEY, live)
   if (changed || pruned) await update($, liveVersionAtom, v => v + 1)
 }
 
@@ -2378,7 +2414,7 @@ async function markMaestro($: EngineInterface): Promise<void> {
   if (!own.id || sessionTitleId(own.title) !== undefined) return
   const now = await $.clock.now()
   const kept = Object.entries(await loadMaestros($)).filter(([, at]) => now - at <= MAESTRO_MARK_MS)
-  await $.store.set(MAESTROS_KEY, { ...Object.fromEntries(kept), [own.id]: now })
+  await storeSet($, MAESTROS_KEY, { ...Object.fromEntries(kept), [own.id]: now })
   // La marque n'est pas un atome : sans ce redessin, la bande attendait qu'une session bouge (#225).
   await update($, liveVersionAtom, v => v + 1)
 }
@@ -2463,7 +2499,7 @@ async function forwardProposal(
     // outil absent : la proposition est gardée pour Maestro
   }
   try {
-    await $.store.set(PROPOSALS_KEY, [...(await loadProposals($)), proposal])
+    await storeSet($, PROPOSALS_KEY, [...(await loadProposals($)), proposal])
     return { deny: proposalSentNote(name, card.title, 'store', proposal.initiation) }
   } catch {
     return pass()
@@ -2500,7 +2536,7 @@ async function receiveProposals($: EngineInterface): Promise<string | undefined>
   const id = (await readOwnSession($)).id
   const mine = kept.filter(p => p.lot === id && now - p.at <= PROPOSAL_MAX_MS)
   const rest = kept.filter(p => p.lot !== id && now - p.at <= PROPOSAL_MAX_MS)
-  if (rest.length !== kept.length) await $.store.set(PROPOSALS_KEY, rest)
+  if (rest.length !== kept.length) await storeSet($, PROPOSALS_KEY, rest)
   return mine.length > 0 ? maestroProposalText(mine) : undefined
 }
 
@@ -2630,7 +2666,7 @@ function noteChild($: EngineInterface, change: (s: ChildStatus, now: number) => 
       const now = await $.clock.now()
       const changed = change(prev, now)
       if (changed === prev) return
-      await $.store.set(key, { ...changed, at: opts.keepAt && prev.at > 0 ? prev.at : now })
+      await storeSet($, key, { ...changed, at: opts.keepAt && prev.at > 0 ? prev.at : now })
     } catch {
       // fiche, horloge ou store illisible : rien de noté, l'outil passe
     }
@@ -2845,9 +2881,9 @@ async function childAlertContext($: EngineInterface): Promise<string | undefined
   for (const child of children) if (alerted[child.id] !== undefined) next[child.id] = alerted[child.id] as ChildRelaunch
   for (const a of alerts) if (a.kind === 'silent' && !a.relaunched) next[a.child.id] = { at: a.child.lastActivityAt, ...(a.step ? { step: a.step } : {}) }
   if (Object.keys(next).length === 0) {
-    if (stored !== undefined) await $.store.delete(alertedKey)
+    if (stored !== undefined) await storeDelete($, alertedKey)
   } else if (JSON.stringify(next) !== JSON.stringify(alerted)) {
-    await $.store.set(alertedKey, next)
+    await storeSet($, alertedKey, next)
   }
   const lost = await archivedOpen($, archived, lines).catch(() => [])
   const text = [childAlertText(alerts), archivedOpenText(lost)].filter((t): t is string => t !== undefined).join('\n\n')
@@ -2924,11 +2960,11 @@ async function purgeChildNotes($: EngineInterface): Promise<void> {
   const fresh = (at: unknown) => typeof at === 'number' && now - at <= CHILD_NOTE_MAX_MS
   for (const key of await $.store.keys()) {
     if (key.startsWith(CHILD_STATUS_PREFIX)) {
-      if (!fresh(childStatusOf(await $.store.get(key))?.at)) await $.store.delete(key)
+      if (!fresh(childStatusOf(await $.store.get(key))?.at)) await storeDelete($, key)
     } else if (key.startsWith(CHILD_ALERTED_PREFIX)) {
       const value = await $.store.get(key)
       const ats = typeof value === 'object' && value !== null ? Object.values(value).map(v => (v as { at?: unknown } | null)?.at) : []
-      if (!ats.some(fresh)) await $.store.delete(key)
+      if (!ats.some(fresh)) await storeDelete($, key)
     }
   }
 }
@@ -3033,7 +3069,7 @@ async function markWorking($: EngineInterface, source: Source, added: Task[]): P
       live[key] = { sessionId, startedAt: await $.clock.now(), title: clip(task.label, 58), via: 'write' }
       liveStatus.set(key, 'open')
     }
-    await $.store.set(LIVE_KEY, live)
+    await storeSet($, LIVE_KEY, live)
     await update($, liveVersionAtom, v => v + 1)
   } catch {
     // stockage indisponible : la tâche ne passe pas « en session », l'écriture reste valable
@@ -3346,7 +3382,7 @@ async function noteSurface($: EngineInterface, row: Omit<SurfaceRow, 'at' | 'ses
     const stored = await $.store.get(SURFACE_LOG_KEY)
     const rows = Array.isArray(stored) ? (stored as SurfaceRow[]) : []
     const next = [...rows, { at: await $.clock.now(), ...(own.id ? { session: own.id } : {}), ...row }]
-    await $.store.set(SURFACE_LOG_KEY, next.slice(-SURFACE_LOG_ROWS))
+    await storeSet($, SURFACE_LOG_KEY, next.slice(-SURFACE_LOG_ROWS))
   } catch {
     // store ou fiche illisible : la sonde se tait, rien d'autre ne change
   }
@@ -3651,7 +3687,7 @@ async function reserveCard($: EngineInterface, ownId: string, title: string): Pr
   try {
     const now = await $.clock.now()
     const kept = (await doseCards($, ownId, now)).filter(c => c.title !== title)
-    await $.store.set(`${LAUNCH_CARDS_PREFIX}${ownId}`, [...kept, { title, at: now }])
+    await storeSet($, `${LAUNCH_CARDS_PREFIX}${ownId}`, [...kept, { title, at: now }])
   } catch {
     // store illisible : la place se lira à l'ouverture de la session
   }
@@ -3706,7 +3742,7 @@ async function doseLaunch($: EngineInterface, id: string | undefined, entry: Omi
     const tasks = knownSource ? await load($, files(knownSource).open, 'ROADMAP.md') : []
     const kept = queue.filter(q => q.id !== id)
     const ordered = launchQueueOrder([...kept, { ...entry, id, at: queue.find(q => q.id === id)?.at ?? now }], prereqsIn(typeof tasks === 'string' ? [] : tasks))
-    await $.store.set(`${LAUNCH_QUEUE_PREFIX}${own.id}`, ordered)
+    await storeSet($, `${LAUNCH_QUEUE_PREFIX}${own.id}`, ordered)
     doseSeenKey = ''
     const rank = ordered.findIndex(q => q.id === id) + 1
     return { refusal: queuedRefusal({ id, rank, taken: gate.taken, max: gate.max, why: gate.why, ...(gate.load ? { load: gate.load } : {}) }) }
@@ -3749,7 +3785,7 @@ async function relieveLaunches($: EngineInterface): Promise<void> {
       prereqsIn(open ?? []),
     )
     if (kept.length !== queue.length || kept.some((q, i) => q.id !== queue[i]?.id)) {
-      await $.store.set(`${LAUNCH_QUEUE_PREFIX}${ownId}`, kept)
+      await storeSet($, `${LAUNCH_QUEUE_PREFIX}${ownId}`, kept)
       queue = kept
     }
     if (queue.length > 0 && gate.go && now >= doseRetryAt) {
@@ -3769,7 +3805,7 @@ async function relieveLaunches($: EngineInterface): Promise<void> {
       }
       if (posted) {
         queue = queue.slice(1)
-        await $.store.set(`${LAUNCH_QUEUE_PREFIX}${ownId}`, queue)
+        await storeSet($, `${LAUNCH_QUEUE_PREFIX}${ownId}`, queue)
       } else doseRetryAt = now + DOSE_RETRY_MS
     }
     const next: DoseView | undefined = queue.length > 0 ? { queue, taken: gate.taken, max: gate.max, others: gate.others, why: gate.why, ...(gate.load ? { load: gate.load } : {}) } : undefined
@@ -4261,7 +4297,7 @@ function noteWelcomeCard($: EngineInterface, kind: 'reachedAt' | 'drawnAt' | 'fa
     try {
       const at = await $.clock.now()
       const seen = (await loadWelcomeCard($)) ?? {}
-      await $.store.set(WELCOME_CARD_KEY, { ...seen, [kind]: at, ...(error !== undefined ? { error } : {}) })
+      await storeSet($, WELCOME_CARD_KEY, { ...seen, [kind]: at, ...(error !== undefined ? { error } : {}) })
     } catch {
       // store illisible : le sort se notera au prochain chargement du module
     }
@@ -4298,7 +4334,7 @@ function notePaneDraw($: EngineInterface, kind: 'reachedAt' | 'drawnAt' | 'faile
       const stored = await $.store.get(PANE_DRAW_KEY)
       const seen = typeof stored === 'object' && stored !== null && !Array.isArray(stored) ? stored : {}
       const why = failure ? { error: failure.message, kind: failure.kind, stack: (failure.stack ?? '').split('\n').slice(0, 8).join('\n') } : {}
-      await $.store.set(PANE_DRAW_KEY, { ...seen, [kind]: at, version: sessionVersion ?? '?', ...why })
+      await storeSet($, PANE_DRAW_KEY, { ...seen, [kind]: at, version: sessionVersion ?? '?', ...why })
     } catch {
       // store illisible : le sort se notera au dessin suivant
     }
@@ -4483,7 +4519,7 @@ async function archiveSession($: EngineInterface, key: string, entry: LiveEntry)
     try {
       const live = await loadLive($)
       for (const k of Object.keys(live)) if (live[k]?.sessionId === entry.sessionId) delete live[k]
-      await $.store.set(LIVE_KEY, live)
+      await storeSet($, LIVE_KEY, live)
       await update($, liveVersionAtom, v => v + 1)
     } catch {
       // stockage indisponible : l'entrée reste, marquée close ; le sondage suivant la retire
@@ -4557,7 +4593,7 @@ async function listedTaskSession($: EngineInterface, source: Source, t: Task, id
     const found = taskSessionIndex(read.rows, source.match)
     const next = { ...ids }
     for (const [n, sid] of Object.entries(found)) next[`${source.name}:${n}`] = sid
-    await $.store.set(TASK_SESSION_IDS_KEY, next).catch(() => undefined)
+    await storeSet($, TASK_SESSION_IDS_KEY, next).catch(() => undefined)
     const row = taskSessionRow(t, read.rows, source.match)
     return row ? { row } : {}
   } catch (err) {
@@ -4660,7 +4696,7 @@ async function sweepBranches($: EngineInterface, source: Source, why: 'start' | 
       remote = pushed.exitCode === 0 ? plan.remote : []
       if (pushed.exitCode !== 0) failed.push(...plan.remote.map(n => `origin/${n}`))
     }
-    await $.store.set(BRANCH_SWEEP_KEY, { at: now, why, local, remote, failed, kept: plan.kept.length }).catch(() => undefined)
+    await storeSet($, BRANCH_SWEEP_KEY, { at: now, why, local, remote, failed, kept: plan.kept.length }).catch(() => undefined)
     return sweepNote({ local, remote, failed })
   } catch {
     return ''
@@ -5433,7 +5469,7 @@ async function rollDayStepsOnStart($: EngineInterface, source: Source): Promise<
   const { open } = files(source)
   const aPreuve = projectSettings(source).aPreuve
   const first = rollDaySteps((await readOr($, open)) ?? '', today, aPreuve)
-  await $.store.set(key, today)
+  await storeSet($, key, today)
   if (first.moves.length === 0) return
   const cowork = await coworkPyFor($, source)
   // Aucun script du projet ne se lance seul au démarrage : cowork.py et `ecriture` passent par Claude.
@@ -5864,7 +5900,7 @@ function writePerf($: EngineInterface): void {
     const stored = await $.store.get(PERF_KEY)
     const others = Array.isArray(stored) ? (stored as PerfRow[]).filter(r => r && r.mod !== PERF_MOD) : []
     const rows = [...others, ...perfRows].sort((a, b) => a.at - b.at).slice(-PERF_KEPT)
-    await $.store.set(PERF_KEY, rows)
+    await storeSet($, PERF_KEY, rows)
   })().catch(() => undefined)
 }
 

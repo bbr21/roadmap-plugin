@@ -11420,3 +11420,34 @@ export function placesPill(o: { taken: number; max: number; queued: number; why:
 export function queuedMark(rank: number, why: DoseWhy): QueueMark {
   return rank === 1 && why === 'load' ? { text: 'Mac chargé', tone: 'block', command: '' } : { text: `en file, ${queueRank(rank)}`, tone: 'neutral', command: '' }
 }
+
+/**
+ * Le store du plugin est un fichier partagé par toutes les sessions ouvertes : une écriture tombe sur
+ * « Lock file is already being held » (code `ELOCKED`) quand une autre session tient son verrou à cet
+ * instant (#350). Ce refus-là est passager ; toute autre panne ne l'est pas.
+ */
+export function isStoreLocked(err: unknown): boolean {
+  if (err === null || err === undefined) return false
+  if (typeof err === 'object' && (err as { code?: unknown }).code === 'ELOCKED') return true
+  const text = err instanceof Error ? err.message : String(err)
+  return /lock file is already being held/i.test(text)
+}
+
+/** Les attentes entre deux essais d'une écriture refusée par le verrou : 1,5 s en tout au plus (#350). */
+export const STORE_LOCK_WAITS_MS = [50, 100, 200, 400, 750]
+
+/**
+ * Lance `op` et la réessaie, après chaque attente de `STORE_LOCK_WAITS_MS`, tant que le store est verrouillé
+ * par une autre session (#350) ; une autre panne, ou le verrou encore tenu après la dernière attente, rend
+ * son erreur. `wait` est l'attente du moteur, injectée pour le test.
+ */
+export async function retryOnLock<T>(op: () => Promise<T>, wait: (ms: number) => Promise<void>): Promise<T> {
+  for (let i = 0; ; i++) {
+    try {
+      return await op()
+    } catch (err) {
+      if (i >= STORE_LOCK_WAITS_MS.length || !isStoreLocked(err)) throw err
+      await wait(STORE_LOCK_WAITS_MS[i])
+    }
+  }
+}

@@ -744,6 +744,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.219.2 (2026-11-06)** : panneau : une écriture du store refusée par le verrou d'une autre session se réessaie (#350)
 - **0.219.1 (2026-11-06)** : panneau : la source et la fiche d'une tâche ne s'ouvrent que si ce sont des documents du projet (#343)
 - **0.219.0 (2026-11-06)** : panneau : « Maestro » mal tapé d'une lettre (Mastero, Maestor) ouvre l'accueil et compte comme Maestro (#344)
 - **0.218.0 (2026-11-06)** : panneau : le bas de la fiche en un bloc soudé, la famille reliée en arbre puis Détails, et deux vrais boutons (#343)
