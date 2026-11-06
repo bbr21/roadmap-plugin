@@ -3388,14 +3388,49 @@ async function noteSurface($: EngineInterface, row: Omit<SurfaceRow, 'at' | 'ses
   }
 }
 
-/** Les surfaces de cette session, notées au journal quand elles ont changé depuis le dernier pas complet. */
-async function noteSurfacesSeen($: EngineInterface): Promise<void> {
+// ── Le repos d'une session cachée (#348, O12 de l'audit #337) ─────────────────
+
+/**
+ * Une session que l'app ne dessine plus nulle part (`$.session.surfaces()` vide : ni fenêtre de l'app, ni
+ * terminal, qui compte comme une surface) est au repos : sa minuterie ne relit plus rien qu'une fois par
+ * `REST_MS`. Une arrivée (`session.attach`) la réveille et la relit aussitôt. Une lecture des surfaces qui
+ * échoue ne change rien : sans signal, la session reste à 3 s, comme avant (décision de BBR, 2026-11-06).
+ */
+const REST_MS = 60_000
+let resting = false
+/** L'heure de la dernière relecture faite au repos, ou de la mise au repos. */
+let restReadAt = 0
+/** Réveillée par une arrivée : le pas qui suit relit tout, sans attendre le pas complet. */
+let wokeUp = false
+/** Un réveil arrivé pendant un pas en vol : un pas repart dès qu'il finit. */
+let pollAgain = false
+
+/** Lit les surfaces et met la session au repos (aucune) ou à l'écran ; rend les surfaces, ou rien sur un échec. */
+async function readVisibility($: EngineInterface): Promise<string[] | undefined> {
   let surfaces: string[]
   try {
     surfaces = [...(await $.session.surfaces())]
   } catch {
-    return
+    return undefined
   }
+  const hidden = surfaces.length === 0
+  if (hidden && !resting) restReadAt = await $.clock.now()
+  resting = hidden
+  return surfaces
+}
+
+/** Une arrivée de l'app : la session sort du repos et se relit tout de suite. */
+function wake($: EngineInterface): void {
+  resting = false
+  wokeUp = true
+  if (polling) pollAgain = true
+  else void poll($)
+}
+
+/** Les surfaces de cette session, notées au journal quand elles ont changé depuis le dernier pas complet. */
+async function noteSurfacesSeen($: EngineInterface): Promise<void> {
+  const surfaces = await readVisibility($)
+  if (!surfaces) return
   const seen = JSON.stringify(surfaces)
   if (seen === surfacesSeen) return
   surfacesSeen = seen
@@ -3836,7 +3871,19 @@ async function poll($: EngineInterface): Promise<void> {
   tickStats = new Map()
   try {
     pollTick++
-    const full = pollTick % (POLL_MS / TICK_MS) === 0
+    if (resting) {
+      // Au repos (#348) : la file de lancement de Maestro avance quand même ; le reste attend sa minute.
+      await checkZones($)
+      await relieveLaunches($)
+      const now = await $.clock.now()
+      if (now - restReadAt < REST_MS) return
+      restReadAt = now
+      await refresh($)
+      await retryCreated($)
+      return
+    }
+    const full = wokeUp || pollTick % (POLL_MS / TICK_MS) === 0
+    wokeUp = false
     if (full || !knownSource) await refresh($)
     else {
       await checkZones($)
@@ -3851,6 +3898,10 @@ async function poll($: EngineInterface): Promise<void> {
   } finally {
     polling = false
     tickStats = undefined
+    if (pollAgain) {
+      pollAgain = false
+      void poll($)
+    }
   }
 }
 
@@ -6078,12 +6129,15 @@ export const register: Register = (on, options) => {
   })
 
   // La sonde de visibilité (#337) : chaque arrivée et chaque départ d'une surface de l'app, au journal.
+  // Le repos (#348) : une arrivée réveille la session ; un départ qui ne laisse aucune surface la met au repos.
   on('session.attach', async ($, e, next) => {
     void noteSurface($, { event: 'attach', surface: e.surface })
+    wake($)
     return next(e)
   })
   on('session.detach', async ($, e, next) => {
     void noteSurface($, { event: 'detach', surface: e.surface, reason: e.reason })
+    if (e.reason !== 'end') void readVisibility($)
     return next(e)
   })
 
