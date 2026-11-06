@@ -5852,6 +5852,44 @@ const CODE_METHOD: readonly string[] = [
 ]
 
 /**
+ * La clause d'économie du brief de code (#327) : cadrage, spec et plan restent ici ; chaque étape du plan part
+ * chez un sous-agent du modèle qui code, que la session relit. Trois lignes au plus.
+ */
+export function economyClause(codeModel: 'opus' | 'sonnet'): string[] {
+  return [
+    `Économie (#327) : le cadrage, la spec et le plan se font ici ; chaque étape du plan part chez un sous-agent (\`superpowers:subagent-driven-development\`) avec \`model: "${codeModel}"\` passé à l'outil Agent. Tu relis le diff de chaque étape et reprends la main sur un test rouge qui résiste à deux essais.`,
+    "Une étape d'un fichier et de moins d'une vingtaine de lignes se fait ici ; une tâche simple : un seul sous-agent après le cadrage.",
+    'Une lecture large (beaucoup de fichiers) : un sous-agent qui rend sa conclusion, pas les fichiers.',
+  ]
+}
+
+/**
+ * Un fichier édité compte-t-il comme du code (#327) ? Non sous `docs/`, ni dans le dossier `roadmap/` du
+ * projet (ses fichiers directs : ROADMAP.md, bilans) ; `plugins/roadmap/hooks/x.ts` en est, lui, du code.
+ * Le chemin est relatif au worktree ou absolu.
+ */
+export function isCodeEdit(path: string): boolean {
+  return !/(^|\/)docs\//.test(path) && !/(^|\/)roadmap\/[^/]+$/.test(path)
+}
+
+/**
+ * Une ligne de `git diff --name-only` ou de `git status --porcelain` qui nomme un plan de chantier (#327) :
+ * `docs/plans/<dossier>/plan.md`, précédé ou non du code d'état de porcelain (« ?? », « M »).
+ */
+export function isPlanLine(line: string): boolean {
+  return /(^|[\s/])docs\/plans\/[^/\s]+\/plan\.md$/.test(line.trim())
+}
+
+/**
+ * Le rappel de déléguer (#327) : le tour a codé `threshold` fichiers ou plus dans la session principale, sans
+ * aucun appel à un sous-agent, alors qu'un `plan.md` existe sur la branche. Sinon rien.
+ */
+export function delegationNote(o: { edits: number; agentCalls: number; planChanged: boolean; codeModel: string; threshold?: number }): string | undefined {
+  if (o.edits < (o.threshold ?? 3) || o.agentCalls > 0 || !o.planChanged) return undefined
+  return `Ce tour a codé ${o.edits} fichiers dans la session principale après le plan : les étapes suivantes partent chez un sous-agent ${o.codeModel} (#327).`
+}
+
+/**
  * Les skills superpowers que le brief du mode Projet propose sans les exiger (#94) : le doctor les
  * cherche (`requis.json`, `projet.skills`) et ne dit qu'« À voir » s'il en manque.
  */
@@ -5895,6 +5933,7 @@ export function launchBrief(
   named: readonly string[] = [],
   tree: readonly string[] = [],
   folder: readonly string[] = [],
+  codeModel: 'opus' | 'sonnet' = 'sonnet',
 ): { title: string; prompt: string; background: string } {
   const { travail, requis, requiredOn } = projectSettings(source)
   const { files, notes } = briefFiles(source, task, found)
@@ -5930,7 +5969,7 @@ export function launchBrief(
     '',
     ...goalClause(),
     '',
-    ...(travail === 'projet' ? PROJECT_METHOD : CODE_METHOD),
+    ...(travail === 'projet' ? PROJECT_METHOD : [...CODE_METHOD, ...economyClause(codeModel)]),
     ...draftClause(),
     '',
     ...ending,
@@ -9236,10 +9275,12 @@ export type MaestroCandidate = { task: Task; title: string; unlocks: number; bri
  * La consigne d'une carte que Claude pose (Maestro, ou un lancement refusé au panneau) : l'effort si
  * l'outil l'accepte, et en mode Projet (#76) sans worktree, comme la carte du panneau.
  */
-export function cardTool(effort?: string, travail: Travail = 'code'): string {
+export function cardTool(effort?: string, travail: Travail = 'code', model?: string): string {
   return [
     'outil start_session, initiation own_initiative, contexte fresh',
     ...(effort ? [`effort ${effort} si l'outil l'accepte, sinon sans effort`] : []),
+    // #327 : le modèle qui cadre ; refusé par l'outil, la carte part sans lui.
+    ...(model ? [`model ${model} si l'outil l'accepte, sinon sans model`] : []),
     ...(travail === 'projet' ? ["use_worktree false (la session travaille dans le dossier du projet ; si l'outil refuse ce champ, sans lui)"] : []),
   ].join(', ')
 }
@@ -10270,6 +10311,8 @@ export function maestroContext(o: {
   more: number
   go: boolean
   launchEffort?: string
+  /** Le modèle qui cadre (#327), son identifiant ; absent : « hérite ». */
+  launchModel?: string
   /** Le réglage de session `autonome` (#77) : pas de menu, fusion seule, réponses aux sessions qui attendent. */
   autonome?: boolean
   /** Le réglage de session `questions` (#119) : éteint, le menu se pose dans le message, sans formulaire. Absent : allumé. */
@@ -10311,7 +10354,7 @@ export function maestroContext(o: {
   const lines: string[] = [
     header,
     // Une demande neuve passe avant l'état (#250) : cadrer puis déléguer.
-    ...(o.request === undefined ? [] : maestroRequestLines(o.request, cardTool(o.launchEffort, projectSettings(o.source).travail))),
+    ...(o.request === undefined ? [] : maestroRequestLines(o.request, cardTool(o.launchEffort, projectSettings(o.source).travail, o.launchModel))),
     // Une action de l'accueil (#141) ne montre que sa part : les sessions, ou ce qu'on peut lancer.
     ...(o.only === 'launch' ? [] : sessionLines),
     ...(o.only === 'sessions' ? [] : launchLines),
@@ -10325,7 +10368,7 @@ export function maestroContext(o: {
   )
   // Maestro suit ses sessions par sa liste d'étapes (#104), dans les deux modes.
   lines.push(MAESTRO_STEP_LIST)
-  const card = `pose sa carte de session (${cardTool(o.launchEffort, projectSettings(o.source).travail)}) avec le titre et le brief donnés ci-dessous, sans la lancer toi-même`
+  const card = `pose sa carte de session (${cardTool(o.launchEffort, projectSettings(o.source).travail, o.launchModel)}) avec le titre et le brief donnés ci-dessous, sans la lancer toi-même`
   if (o.request !== undefined) {
     lines.push(`- Pas de menu de lancement ni de carte des tâches à lancer dans ce tour : la demande d'abord ; elles restent au panneau (▶ devant chaque tâche).`)
   } else if (o.only === 'sessions') {
@@ -10971,6 +11014,19 @@ export function sweepNote(r: { local: readonly string[]; remote: readonly string
   if (r.remote.length > 0) parts.push(n > 0 ? `${r.remote.length} sur GitHub` : `${r.remote.length} sur GitHub supprimée${r.remote.length > 1 ? 's' : ''}`)
   if (r.failed.length > 0) parts.push(`${r.failed.length} branche${r.failed.length > 1 ? 's' : ''} gardée${r.failed.length > 1 ? 's' : ''} sur refus : ${r.failed.slice(0, 3).join(', ')}`)
   return parts.join(', ')
+}
+
+// #327 : les modèles des sessions lancées. « Modèle qui cadre » (launchModel) pour la session de cadrage,
+// « Modèle qui code » (codeModel) pour celle qui code, jamais plus cher que le premier.
+export const MODEL_IDS: Readonly<Record<'opus' | 'sonnet', string>> = { opus: 'claude-opus-5-5', sonnet: 'claude-sonnet-5-5' }
+
+export function launchModelOf(option: unknown): 'opus' | 'sonnet' | 'hérite' {
+  return option === 'sonnet' || option === 'hérite' ? option : 'opus'
+}
+
+export function codeModelOf(option: unknown, launch: 'opus' | 'sonnet' | 'hérite'): 'opus' | 'sonnet' {
+  const wanted = option === 'opus' ? 'opus' : 'sonnet'
+  return wanted === 'opus' && launch === 'sonnet' ? 'sonnet' : wanted
 }
 
 // ---------------------------------------------------------------- Maestro dose ses sessions (#324)

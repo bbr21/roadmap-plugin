@@ -677,6 +677,10 @@ ferme pas, un toast renvoie à ce réglage ; éteint, seul `/roadmap` l'ouvre, e
 défaut oui), `theme` (thème du panneau : auto suit le thème de Claude Code, sombre ou clair l'imposent),
 `launchEffort` (effort d'une session lancée du panneau, défaut high, borné par l'app à celui de la session
 qui lance ; une carte refusée avec son effort est reposée sans lui ; « hérite » n'en passe aucun),
+`launchModel` (« Modèle qui cadre », défaut opus : le modèle d'une session lancée du panneau ou par Maestro,
+qui cadre, planifie, relit et débogue ; borné par l'app au modèle de la session qui lance, refusé il tombe ;
+« hérite » n'en passe aucun), `codeModel` (« Modèle qui code », défaut sonnet : le modèle des sous-agents
+qui codent chaque étape du plan, que le brief nomme ; jamais plus cher que le modèle qui cadre, #327),
 `launchBypass` (« Lancer en bypass », défaut non : les sessions lancées du panneau, ou par une carte
 que pose Claude, Maestro compris, demandent le mode bypass ; l'app ne l'accorde que depuis une session déjà en bypass, sinon
 la carte est reposée sans lui et la session lancée demande elle-même le bypass à son démarrage, par
@@ -740,6 +744,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.214.0 (2026-11-05)** : maestro : optimiseur de tokens, un modèle qui cadre et un modèle qui code, les étapes du plan codées par des sous-agents, le coût de chaque tâche dans son bilan (#327)
 - **0.213.0 (2026-11-05)** : maestro : Maestro dose ses sessions, un plafond réglable de sessions au travail sur le Mac et un lancement différé sous la charge, la file montrée dans le bloc En cours (#324)
 - **0.212.0 (2026-11-05)** : panneau : la carte d'accueil de Maestro montre la frise d'activité des deux derniers mois, faites et ajoutées ; Maestro raconte les derniers travaux par thème (#325)
 - **0.211.0 (2026-11-05)** : panneau : la bande de Maestro alignée en colonnes fixes, la liste des axes aux % calés à droite et au crayon après le nom (#326)

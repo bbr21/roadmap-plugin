@@ -270,6 +270,12 @@ import {
   firstPrereq,
   prereqsOf,
   cardTool,
+  delegationNote,
+  isCodeEdit,
+  isPlanLine,
+  launchModelOf,
+  codeModelOf,
+  MODEL_IDS,
   missingPrereqs,
   projectSettings,
   chainHead,
@@ -821,7 +827,13 @@ function axisCount(tasks: Task[], axis: string): number {
 }
 
 /** Les réglages du plugin (userConfig), relus à chaque chargement du module. */
-let settings = { me: [] as string[], autoOpen: true, titleModel: 'sonnet', capture: true, theme: 'auto', launchEffort: 'high', launchBypass: false, pruneBranches: true, maxSessions: '4', axisPill: false, priorities: false, dateFormat: 'us', account: 'auto' as Account }
+let settings = { me: [] as string[], autoOpen: true, titleModel: 'sonnet', capture: true, theme: 'auto', launchEffort: 'high', launchModel: 'opus', codeModel: 'sonnet', launchBypass: false, pruneBranches: true, maxSessions: '4', axisPill: false, priorities: false, dateFormat: 'us', account: 'auto' as Account }
+
+/** L'identifiant du modèle qui cadre (#327), ou undefined s'il hérite de la session qui lance. */
+function launchModelId(): string | undefined {
+  const m = launchModelOf(settings.launchModel)
+  return m === 'hérite' ? undefined : MODEL_IDS[m]
+}
 
 /**
  * La palette du panneau. Le mod ne reçoit pas l'apparence de l'app : il lit le thème de Claude
@@ -998,10 +1010,41 @@ async function methodNote($: EngineInterface, c: Capture): Promise<string | unde
   return note
 }
 
+/**
+ * Les fichiers de code que le fil principal a édités pendant le tour, et ses appels à un sous-agent (#327) :
+ * remis à zéro au début de chaque tour de la session principale.
+ */
+let delegation = { files: new Set<string>(), agentCalls: 0 }
+
+/** Un `plan.md` sous `docs/plans/` change-t-il sur la branche (commité depuis main, ou pas encore) ? */
+async function planChanged($: EngineInterface): Promise<boolean> {
+  const root = await $.session.root()
+  const isPlan = isPlanLine
+  const branch = await $.process.run(['git', '-C', root, 'diff', '--name-only', 'main...HEAD'])
+  if (branch.exitCode !== 0) throw new Error('git illisible')
+  if (branch.stdout.split('\n').some(isPlan)) return true
+  const pending = await $.process.run(['git', '-C', root, 'status', '--porcelain'])
+  return pending.exitCode === 0 && pending.stdout.split('\n').some(isPlan)
+}
+
+/** Le rappel de déléguer (#327) : le tour a codé lui-même après le plan, sans sous-agent. */
+async function delegationReminder($: EngineInterface): Promise<string | undefined> {
+  if (delegation.files.size < 3 || delegation.agentCalls > 0) return undefined
+  const note = (planned: boolean) =>
+    delegationNote({ edits: delegation.files.size, agentCalls: delegation.agentCalls, planChanged: planned, codeModel: codeModelOf(settings.codeModel, launchModelOf(settings.launchModel)) })
+  return note(await planChanged($))
+}
+
 /** Le rappel de design (#292) : une maquette dessinée pendant le tour, aucune skill de design dans la session. */
 function designNote(c: Capture): string | undefined {
   if (c.mockupDrawn === undefined || c.designUsed) return undefined
   return designReminder(c.mockupDrawn, designSkills(c.source.design), Array.isArray(c.source.design))
+}
+
+/** Un fichier de code édité par le fil principal (#327), pour le rappel de déléguer. */
+function noteCodeEdit(e: { agentId?: unknown }, path: unknown): void {
+  if (e.agentId !== undefined || typeof path !== 'string' || !isCodeEdit(path)) return
+  delegation.files.add(path)
 }
 
 /** Une maquette dessinée par le fil principal (#292) : une page `maquettes*.html` écrite, ou un widget du module `mockup`. */
@@ -1556,6 +1599,12 @@ async function endOfTurnBlock($: EngineInterface, last: string | undefined, acti
       notes.push(await methodNote($, c))
     } catch {
       // git illisible : pas de rappel de méthode
+    }
+    try {
+      // #327 : mode Code seulement ; git illisible, pas de note.
+      if (projectSettings(c.source).travail !== 'projet') notes.push(await delegationReminder($))
+    } catch {
+      // git illisible : pas de rappel de délégation
     }
     notes.push(designNote(c))
     try {
@@ -3756,13 +3805,18 @@ async function launchSession($: EngineInterface, source: Source, task: Task, sho
     const optional: [field: string, value: unknown, note: string][] = []
     if (wantsBypass(settings.launchBypass, mode)) optional.push(['permission_mode', BYPASS_MODE, `en ${BYPASS_MODE}`])
     if (effort) optional.push(['effort', effort, `avec effort ${effort}`])
+    // #327 : le modèle qui cadre (« hérite » n'en pose aucun) ; un refus qui le nomme le fait tomber seul.
+    const launchModel = launchModelOf(settings.launchModel)
+    if (launchModel !== 'hérite') optional.push(['model', MODEL_IDS[launchModel], `avec le modèle ${launchModel}`])
     if (projet) optional.push(['use_worktree', false, 'sans worktree'])
     const withFields = () => ({ ...card, ...Object.fromEntries(optional.map(([field, value]) => [field, value])) })
     // Un refus du mode auto ne tient à aucun de ces champs : reposer la carte ne change rien.
     const refused = (r: ToolCallResult) => (r.deny !== undefined || r.isError === true) && !isAutoModeRefusal(reasonOf(r))
     let proposed = await $.tool.call(withFields())
     while (optional.length > 0 && refused(proposed)) {
-      refusals.push(`${optional.shift()![2]} : ${reasonOf(proposed)}`)
+      const modelAt = optional.findIndex(([field]) => field === 'model')
+      const dropped = optional.splice(modelAt >= 0 && /\bmodel\b/i.test(reasonOf(proposed)) ? modelAt : 0, 1)[0]!
+      refusals.push(`${dropped[2]} : ${reasonOf(proposed)}`)
       proposed = await $.tool.call(withFields())
     }
     if (proposed.deny === undefined && !proposed.isError) {
@@ -3795,7 +3849,7 @@ async function workBrief($: EngineInterface, source: Source, task: Task, shortTi
   // #194 : les fichiers que nomment la spec et la fiche ouvrent le brief, sous la mission.
   const named: string[] = []
   for (const doc of briefDocs(source, task, found)) for (const f of namedFiles((await readOr($, doc)) ?? '')) if (!named.includes(f)) named.push(f)
-  return launchBrief(source, task, shortTitle, bilanLog, maestro, found, named, await treeFor($, source, task), await folderFor($, source))
+  return launchBrief(source, task, shortTitle, bilanLog, maestro, found, named, await treeFor($, source, task), await folderFor($, source), codeModelOf(settings.codeModel, launchModelOf(settings.launchModel)))
 }
 
 /**
@@ -4002,6 +4056,7 @@ async function maestroText($: EngineInterface, go: boolean, only?: 'launch' | 's
     adhd: prefs.adhd,
     ...(othersLate > 0 ? { othersLate } : {}),
     ...(LAUNCH_EFFORTS.has(settings.launchEffort) ? { launchEffort: settings.launchEffort } : {}),
+    ...(launchModelId() ? { launchModel: launchModelId() } : {}),
     ...(only ? { only } : {}),
     ...(request !== undefined ? { request } : {}),
   })
@@ -4245,7 +4300,7 @@ async function submitLaunch($: EngineInterface, brief: { title: string; prompt: 
   const text = launchPrompt(
     brief.title,
     [
-      `Propose cette session sous forme de carte (${cardTool(LAUNCH_EFFORTS.has(settings.launchEffort) ? settings.launchEffort : undefined, travail)}), titre « ${brief.title} », avec ce brief. Pose la carte sans essayer de la lancer, puis réponds en une phrase au plus :`,
+      `Propose cette session sous forme de carte (${cardTool(LAUNCH_EFFORTS.has(settings.launchEffort) ? settings.launchEffort : undefined, travail, launchModelId())}), titre « ${brief.title} », avec ce brief. Pose la carte sans essayer de la lancer, puis réponds en une phrase au plus :`,
       '',
       brief.prompt,
       '',
@@ -5857,6 +5912,8 @@ export const register: Register = (on, options) => {
     capture: typeof options.capture === 'boolean' ? options.capture : true,
     theme: typeof options.theme === 'string' && options.theme !== '' ? options.theme : 'auto',
     launchEffort: typeof options.launchEffort === 'string' && options.launchEffort !== '' ? options.launchEffort : 'high',
+    launchModel: typeof options.launchModel === 'string' && options.launchModel !== '' ? options.launchModel : 'opus',
+    codeModel: typeof options.codeModel === 'string' && options.codeModel !== '' ? options.codeModel : 'sonnet',
     launchBypass: options.launchBypass === true,
     pruneBranches: typeof options.pruneBranches === 'boolean' ? options.pruneBranches : true,
     maxSessions: typeof options.maxSessions === 'string' && options.maxSessions !== '' ? options.maxSessions : '4',
@@ -6104,14 +6161,24 @@ export const register: Register = (on, options) => {
   // #255 : chez Maestro, une ligne écrite à la main reçoit le rappel de la skill tasks.
   // #292 : une page de maquettes écrite se note pour le rappel de design.
   on('tool.call', { tool: 'Edit' }, async ($, e, next) => {
+    noteCodeEdit(e, e.file_path)
     noteMockupDrawn(e)
     return yesNote(e, await handWriteNote($, e, 'Edit', await written($, () => next(e), e.file_path)))
   })
   on('tool.call', { tool: 'Write' }, async ($, e, next) => {
+    noteCodeEdit(e, e.file_path)
     noteMockupDrawn(e)
     return yesNote(e, await handWriteNote($, e, 'Write', await written($, () => next(e), e.file_path)))
   })
-  on('tool.call', { tool: 'NotebookEdit' }, ($, e, next) => written($, () => next(e), e.notebook_path))
+  on('tool.call', { tool: 'NotebookEdit' }, ($, e, next) => {
+    noteCodeEdit(e, e.notebook_path)
+    return written($, () => next(e), e.notebook_path)
+  })
+  // #327 : un appel à un sous-agent dispense du rappel de déléguer.
+  on('tool.call', { tool: 'Agent' }, ($, e, next) => {
+    if (!fromAgent(e)) delegation.agentCalls += 1
+    return next(e)
+  })
   // La carte New task d'une sous-session remonte à son Maestro (#67).
   // Option « Lancer en bypass » : la carte qui reste ici demande le bypass (#87).
   on('tool.call', { tool: START_SESSION_TOOL }, async ($, raw, next) => {
@@ -6322,6 +6389,7 @@ export const register: Register = (on, options) => {
       if (maestro && !wake) await update($, pendingAsksAtom, () => []).catch(() => undefined)
     }
     if (e.agentId === undefined) stepList.tools = 0
+    if (e.agentId === undefined) delegation = { files: new Set(), agentCalls: 0 }
     if (e.agentId === undefined) {
       launchTurn = { cards: [], refused: false, fromPanel: launchPending }
       launchPending = false

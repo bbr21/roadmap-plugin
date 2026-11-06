@@ -250,6 +250,8 @@ export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
     title: 'Sessions lancées',
     options: [
       { field: 'launchEffort', name: 'Effort', def: 'high' },
+      { field: 'launchModel', name: 'Modèle qui cadre', def: 'opus' },
+      { field: 'codeModel', name: 'Modèle qui code', def: 'sonnet' },
       { field: 'launchBypass', name: 'Lancer en bypass', def: 'Off' },
       { field: 'pruneBranches', name: 'Branches nettoyées', def: 'On' },
       { field: 'maxSessions', name: 'Sessions en même temps', def: '4' },

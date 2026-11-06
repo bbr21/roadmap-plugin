@@ -1,6 +1,6 @@
 {
   "name": "roadmap",
-  "version": "0.213.0",
+  "version": "0.214.0",
   "description": "Panneau Claude Code à côté du chat : la roadmap du projet de la session, filtrable, avec le détail d'une tâche et son lancement dans une nouvelle session",
   "author": {
     "name": "Bertrand Fargheon"
@@ -80,6 +80,27 @@
         "medium",
         "low",
         "hérite"
+      ]
+    },
+    "launchModel": {
+      "type": "string",
+      "title": "Modèle qui cadre",
+      "description": "Le modèle des sessions lancées (panneau et Maestro), qui cadrent, planifient, relisent et déboguent : opus par défaut. L'app le borne à celui de la session d'où tu lances ; « hérite » n'en passe aucun (#327).",
+      "default": "opus",
+      "options": [
+        "opus",
+        "sonnet",
+        "hérite"
+      ]
+    },
+    "codeModel": {
+      "type": "string",
+      "title": "Modèle qui code",
+      "description": "Le modèle des sous-agents qui codent chaque étape du plan d'une session lancée : sonnet par défaut, jamais plus cher que le modèle qui cadre (#327).",
+      "default": "sonnet",
+      "options": [
+        "sonnet",
+        "opus"
       ]
     },
     "launchBypass": {

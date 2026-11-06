@@ -139,6 +139,21 @@ to it.
   title never changes: an open session with a wrong name is not renamed, the screen shows its title.
 - **The panel's ▶**: title `#<id> · <nom>`, full brief opened by its mission, and the
   Maestro clause added by itself.
+- **Which model on the card** (#327): the card carries `model` (an id, `claude-opus-5-5` or
+  `claude-sonnet-5-5`), from the two launch settings « Modèle qui cadre » (default Opus) and
+  « Modèle qui code » (default Sonnet), read in the panel's Réglages:
+
+  | The task | Model on the card |
+  |---|---|
+  | Rename, retouch a label or a text, a doc alone, a roadmap line, a study that only reads and concludes | « Modèle qui code » |
+  | Everything else: a feature, a behaviour fix, a visual choice, an architecture, a hook, a failing test | « Modèle qui cadre » |
+  | In doubt | « Modèle qui cadre » |
+
+  The session keeps framing, spec, plan, diff review and stubborn debugging for itself and has each
+  plan step coded by a sub-agent of « Modèle qui code »: its brief says so, Maestro adds nothing.
+  The app caps a launched session at the launcher's model: Maestro runs on « Modèle qui cadre ».
+  If `get_session` on `self` shows a cheaper model, say it to the user once, in one line, before
+  the first card (« je tourne en Sonnet : mes sessions ne pourront pas partir en Opus »).
 - **The tree's context** (#237): every brief, the ▶'s and a hand-written card alike, ends its
   detail with « Contexte de l'arbre de la tâche #N »: the parent task, the sisters and their state,
   the prerequisites and what they delivered, what the task unblocks, the closed tasks that cite it

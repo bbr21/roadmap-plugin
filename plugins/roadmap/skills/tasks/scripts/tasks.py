@@ -28,6 +28,7 @@ ICI = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(ICI, "..", "..", "onboarding", "scripts"))
 sys.path.insert(0, os.path.join(ICI, "..", "..", "audit", "scripts"))
 import audit  # noqa: E402
+import cout  # noqa: E402
 import importer as im  # noqa: E402
 import onboarding as ob  # noqa: E402
 
@@ -55,7 +56,7 @@ OPS = {
 }
 # Le bilan d'une clôture (#262), au contrat de `cowork.py roadmap close --bilan-b64` : ses colonnes, les
 # valeurs admises du journal par défaut, la borne d'une ligne de conclusion.
-BILAN_COLS = ("date", "id", "fait", "souci", "ressenti", "cause", "corrections", "note")
+BILAN_COLS = ("date", "id", "fait", "souci", "ressenti", "cause", "corrections", "note", "tokens", "sonnet")
 BILAN_CLES = {"fait", "souci", "ressenti", "cause", "corrections", "note"}
 JOURNAL_DEFAUT = "ROADMAP-bilans.csv"
 RESSENTIS = ["fluide", "accroché", "bloqué"]
@@ -781,6 +782,7 @@ class _Tenue(audit._Preparation):
     def __init__(self, ctx, maintenant=None):
         super().__init__(ctx, {})
         self.maintenant = maintenant
+        self.dossier_projet = ctx.get("dossier")
         self.journal = journal_de_bilan(ctx["dossier"], os.path.dirname(ctx["roadmap"]))
         self.cles_valeurs = ctx.get("cles_valeurs") or {}
         self.axes = ctx.get("axes") or []
@@ -1034,8 +1036,27 @@ class _Tenue(audit._Preparation):
         self.vers_fait.append(im.rendre_ligne(True, libelle + suffixe, t.axe, champs, t.note))
         rang = dict(bilan) if bilan else {"fait": t.libelle, "souci": souci}
         rang.update(date=fait[:10], id=t.id)
+        rang.update(self.cout_de(t))
         self.bilans.append(rang)
         self.bilan["fermetures"] += 1
+
+    def cout_de(self, t):
+        """Les colonnes tokens et sonnet d'une tâche à `branche:` (#327) ; aucune erreur ne bloque la clôture."""
+        branche = dict(t.champs).get("branche")
+        if not branche:
+            return {}
+        try:
+            depuis = None
+            try:
+                depuis = datetime.datetime.strptime(dict(t.champs).get("ouvert", ""), "%Y-%m-%d").timestamp()
+            except ValueError:
+                pass
+            c = cout.cout_branche(branche, depuis=depuis, projet=self.dossier_projet)
+            if not c:
+                return {}
+            return {"tokens": "%.1f" % ((c["relus"] + c["ecrits"]) / 1e6), "sonnet": str(round(c["sonnet"]))}
+        except Exception:
+            return {}
 
     def rendre_bilans(self, chemin):
         """Les bilans au bout du journal, rangés par ses colonnes (#262) ; un journal absent ne se crée
@@ -1045,6 +1066,13 @@ class _Tenue(audit._Preparation):
             return texte
         texte = texte if texte is not None else ",".join(BILAN_COLS) + "\n"
         entete = next(csv.reader(io.StringIO(texte)), None) or list(BILAN_COLS)
+        neuves = [c for c in BILAN_COLS if c not in entete and any(r.get(c) for r in self.bilans)]
+        if neuves:
+            entete = entete + neuves
+            premiere, _, reste = texte.partition("\n")
+            ligne = io.StringIO()
+            csv.writer(ligne, lineterminator="").writerow(entete)
+            texte = ligne.getvalue() + ("\n" + reste if _ else "")
         sortie = io.StringIO()
         csv.writer(sortie, lineterminator="\n").writerows([[r.get(c, "") for c in entete] for r in self.bilans])
         return texte + ("" if texte.endswith("\n") or not texte else "\n") + sortie.getvalue()
