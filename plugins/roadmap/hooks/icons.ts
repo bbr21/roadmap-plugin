@@ -3,6 +3,7 @@
 // Couleurs et mesures : tokens.ts (#108) ; dessins du handoff de design (README « Icônes »). Un SVG
 // dessiné en image ne connaît pas `currentColor`, d'où la couleur passée à chaque dessin.
 
+import { activityCount, type ActivityMode } from './parse'
 import type { BandGlyph, ContextView, DurationKind, GaugeKind, SisterState, StepSegment, TodoIcon } from './parse'
 import { FONT, MIX, PALETTES, RADIUS, SIZE, STROKE, TEXT, type Palette, type ThemeName } from './tokens'
 
@@ -1114,60 +1115,57 @@ export function donutDotIcon(palette: Palette, kind: DurationKind, size = 8): st
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}"><rect width="${size}" height="${size}" rx="${RADIUS.square}" fill="${palette[DONUT_TONE[kind]]}"/></svg>`
 }
 
-/** La place des noms de bande de la frise d'activité, et l'écart entre deux carrés, en px (#325). */
-const ACTIVITY_LABEL = 60
-const ACTIVITY_GAP = 2
-/** Ce qu'un repère de mois laisse au bout, devant « aujourd’hui », en px. */
-const ACTIVITY_END = 100
+/** L'écart entre deux cases de la grille d'activité, et leur pas, en px (#335). */
+const GRID_GAP = 2
+const GRID_PITCH = { min: 7, max: 13 } as const
+/** La largeur d'un signe du texte de la grille, au plus juste, pour caler la légende sur le bord droit. */
+const GRID_CHAR = 0.56
 
 /**
- * La frise d'activité de l'accueil de Maestro (#325, maquette E) : deux bandes d'un carré par jour, « Faites »
- * puis « Ajoutées », le plus récent à droite et cerné de `ring` ; dessous, les repères de mois et
- * « aujourd’hui ». `done` et `added` : la couleur des paliers rien, peu, beaucoup. À la largeur donnée, les
- * carrés restent carrés : le Svg se pose à cette largeur et à la hauteur rendue, sans étirement.
+ * La grille d'activité de l'accueil de Maestro (#335, maquette A retouchée) : un an entier, une colonne par
+ * semaine (53), une ligne par jour, du lundi en haut au dimanche en bas, la semaine en cours à droite ; sans
+ * noms de mois ni de jours. Dessous, calés sur la première colonne, le total de l'année et, au bout,
+ * « moins ■■■■ plus ». Au survol d'une case (dessin interactif, CSS `:hover`), son jour et son chiffre
+ * prennent la place du total, et la case se cerne de `ring`. `fills` : rien, puis les trois paliers.
+ * `days` part d'un lundi ; la largeur rendue suit le pas entier des cases, au plus `width`.
  */
-export function activityIcon(o: {
-  doneTier: readonly number[]
-  addedTier: readonly number[]
-  marks: readonly { at: number; label: string }[]
-  done: readonly [string, string, string]
-  added: readonly [string, string, string]
-  ring: string
+export function activityGridIcon(o: {
+  days: readonly { when: string; done: number; added: number; doneTier: number; addedTier: number }[]
+  mode: ActivityMode
+  total: string
+  fills: readonly [string, string, string, string]
   ink: string
+  strong: string
+  ring: string
   width: number
 }): string {
-  const n = Math.max(1, o.doneTier.length)
-  const cell = Math.max(2, (o.width - ACTIVITY_LABEL - ACTIVITY_GAP * (n - 1)) / n)
+  const weeks = Math.max(1, Math.ceil(o.days.length / 7))
+  const pitch = Math.min(GRID_PITCH.max, Math.max(GRID_PITCH.min, Math.floor((o.width + GRID_GAP) / weeks)))
+  const cell = pitch - GRID_GAP
+  const width = weeks * pitch - GRID_GAP
   const font = TEXT.pill
-  const pitch = Math.max(cell + 5, font + 3)
-  const height = Math.ceil(2 * pitch + font + 4)
-  const text = (x: number, y: number, label: string, anchor = 'start') =>
-    `<text x="${x.toFixed(1)}" y="${y.toFixed(1)}" text-anchor="${anchor}" font-family="${FONT}" font-size="${font}" fill="${o.ink}">${escapeXml(label)}</text>`
-  const band = (tiers: readonly number[], fills: readonly [string, string, string], row: number, label: string) => {
-    const top = row * pitch + (pitch - cell) / 2
-    const squares = tiers.map((tier, i) => {
-      const x = ACTIVITY_LABEL + i * (cell + ACTIVITY_GAP)
-      const ring = i === tiers.length - 1 ? ` stroke="${o.ring}" stroke-width="1.2"` : ''
-      return `<rect x="${x.toFixed(2)}" y="${top.toFixed(2)}" width="${cell.toFixed(2)}" height="${cell.toFixed(2)}" rx="${Math.min(RADIUS.square, cell / 3).toFixed(2)}" fill="${fills[tier] ?? fills[0]}"${ring}/>`
-    })
-    return [text(0, top + cell / 2 + font * 0.35, label), ...squares].join('')
-  }
-  const base = 2 * pitch + font
-  const marks = o.marks
-    .map(m => ({ ...m, x: ACTIVITY_LABEL + m.at * (cell + ACTIVITY_GAP) }))
-    .filter(m => m.x < o.width - ACTIVITY_END)
-    .map(m => text(m.x, base, m.label))
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${o.width}" height="${height}" viewBox="0 0 ${o.width} ${height}">${band(o.doneTier, o.done, 0, 'Faites')}${band(o.addedTier, o.added, 1, 'Ajoutées')}${marks.join('')}${text(o.width, base, 'aujourd’hui', 'end')}</svg>`
+  const gridH = 7 * pitch - GRID_GAP
+  const base = gridH + 6 + Math.round(font * 0.8)
+  const height = gridH + 6 + font + 4
+  const radius = Math.min(RADIUS.square, cell / 3).toFixed(1)
+  const text = (x: number, label: string, extra = '') =>
+    `<text x="${x}" y="${base}"${extra} font-family="${FONT}" font-size="${font}" fill="${o.ink}">${label}</text>`
+  const cells = o.days.map((d, i) => {
+    const n = o.mode === 'done' ? d.done : d.added
+    const tier = o.mode === 'done' ? d.doneTier : d.addedTier
+    const tip = `<tspan font-weight="600" fill="${o.strong}">${escapeXml(d.when)}</tspan> : ${escapeXml(activityCount(n, o.mode))}`
+    return `<g class="d"><rect x="${Math.floor(i / 7) * pitch}" y="${(i % 7) * pitch}" width="${cell}" height="${cell}" rx="${radius}" fill="${o.fills[tier] ?? o.fills[0]}"/>${text(0, tip, ' class="t"')}</g>`
+  })
+  // La légende au bout de la ligne : « plus » sur le bord droit, ses quatre cases, puis « moins ».
+  const plus = width - Math.ceil(4 * font * GRID_CHAR)
+  const swatch = 8
+  const swatches = o.fills.map((hex, i) => `<rect x="${plus - 4 - (4 - i) * (swatch + 2) + 2}" y="${base - swatch}" width="${swatch}" height="${swatch}" rx="${RADIUS.square}" fill="${hex}"/>`)
+  const less = plus - 4 - 4 * (swatch + 2) - 2
+  const style = `<style>.t{visibility:hidden}.d:hover .t{visibility:visible}svg:has(.d:hover) .tot{visibility:hidden}.d:hover rect{stroke:${o.ring};stroke-width:1.2}</style>`
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">${style}${text(0, escapeXml(o.total), ' class="tot"')}${text(less, 'moins', ' text-anchor="end"')}${swatches.join('')}${text(width, 'plus', ' text-anchor="end"')}${cells.join('')}</svg>`
 }
 
-/** Les couleurs des paliers de la frise (#325) : rien (`sel`), peu (`hex` mêlé au fond), beaucoup (`hex`). */
-export function activityFills(hex: string, p: Pick<Palette, 'sel' | 'bg'>): [string, string, string] {
-  return [p.sel, mixOver(hex, p.bg, MIX.activity), hex]
-}
-
-/** Les carrés d'une légende de la frise (#325) : 10 px, 2 px entre eux, dans l'ordre donné. */
-export function activitySwatchIcon(hexes: readonly string[]): string {
-  const side = 10
-  const width = hexes.length * (side + 2) - 2
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${side}" viewBox="0 0 ${width} ${side}">${hexes.map((hex, i) => `<rect x="${i * (side + 2)}" y="0" width="${side}" height="${side}" rx="${RADIUS.square}" fill="${hex}"/>`).join('')}</svg>`
+/** Les couleurs des paliers de la grille (#335) : rien (`sel`), puis `hex` mêlé au fond aux parts de `MIX.activity`, puis plein. */
+export function activityFills(hex: string, p: Pick<Palette, 'sel' | 'bg'>): [string, string, string, string] {
+  return [p.sel, mixOver(hex, p.bg, MIX.activity[0]), mixOver(hex, p.bg, MIX.activity[1]), hex]
 }

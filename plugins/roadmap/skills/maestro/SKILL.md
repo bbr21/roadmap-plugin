@@ -74,10 +74,11 @@ rule at the end of a turn that executed (below).
   (#141): a card in place of the message, counted by the plugin without scanning anything (#126):
   the day's greeting, the tasks done out of the total, what is waiting today, and four buttons,
   « Ma journée », « Quoi lancer », « À relancer » when a third party is waited on, otherwise « Mes sessions » (#176),
-  hidden at zero, and « Tout scanner ». Under the done count, the card draws the activity strip (#325):
-  one square per day over the last 61 days, a band for the tasks done (`fait:`) and one for the tasks
-  added (`ouvert:`, else the first date of `src:`), each shaded none, few or many against the median of
-  its active days, with the week's done and added counts, the active days and the record. When tasks
+  hidden at zero, and « Tout scanner ». Under the done count, the card draws a one-year grid (#335, after the
+  two-month strip of #325): one column per week over 53 weeks, one square per day, either the tasks done
+  (`fait:`) or the tasks added (`ouvert:`, else the first date of `src:`), shaded in four steps against
+  the thirds of the active days; the week's done and added counts are the switch between the two, and
+  the line under the grid gives the year's total and record, or the hovered day and its count. When tasks
   were delivered yesterday or today, the plugin hands Maestro those tasks with what each delivered
   (#270): Maestro then writes, before its sentence, a **Derniers travaux** title and one short
   paragraph per theme (« Côté Maestro, … ; dans la fiche, … »), the numbers slipped into the text

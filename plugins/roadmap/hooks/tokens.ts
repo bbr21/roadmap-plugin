@@ -169,8 +169,8 @@ export const MIX = {
   faded: 0.4,
   /** `ok` sur `bg` : pastille « fluide » du bilan. */
   smooth: 0.2,
-  /** `ok` ou `live` sur `bg` : le palier « peu » de la frise d'activité de l'accueil (#325). */
-  activity: 0.45,
+  /** `ok` ou `live` sur `bg` : les paliers 1 et 2 de la grille d'activité de l'accueil (#335), le 3 en plein. */
+  activity: [0.4, 0.7] as const,
   /** `liveOn` sur `bg` : bordure de la carte de session. */
   sessionBorder: 0.3,
   /** `live` sur `border` : bordure du bloc Brouillon de la fiche (#236). */

@@ -71,8 +71,7 @@ import {
   halfDiscIcon,
   mixOver,
   activityFills,
-  activityIcon,
-  activitySwatchIcon,
+  activityGridIcon,
   personIcon,
   resolveTheme,
   ringIcon,
@@ -305,7 +304,7 @@ import {
   welcomeText,
   type MaestroAction,
   type Welcome,
-  type WelcomeActivity,
+  type ActivityMode,
   type WelcomeCardSeen,
   type WelcomePill,
   MAESTRO_MENU,
@@ -786,6 +785,8 @@ const checkMoveAtom = atom({ plugin: 'roadmap', key: 'checkMove' } as const, 0)
 const scanNoteAtom = atom({ plugin: 'roadmap', key: 'scanNote' } as const, '')
 /** La page de maquettes que le bouton de la fiche a ouverte (#306), vide sinon. */
 const mockupOpenAtom = atom({ plugin: 'roadmap', key: 'mockupOpen' } as const, '')
+/** Ce que montre la grille de l'accueil (#335) : les faites ou les ajoutées, au choix du bouton ; vaut pour toute la session. */
+const welcomeGridAtom = atom({ plugin: 'roadmap', key: 'welcomeGrid' } as const, 'done' as ActivityMode)
 const versionNoteAtom = atom({ plugin: 'roadmap', key: 'versionNote' } as const, { state: 'none', text: '', foot: '' } as VersionCheck)
 /**
  * Le bloc des réglages de session donné en dernier à la conversation (#116), vide sinon : un bloc qui
@@ -6615,7 +6616,10 @@ export const register: Register = (on, options) => {
         return next(e)
       }
       // « Maestro » seul ouvre l'accueil (#141) : le bonjour, les chiffres et les boutons ; « Maestro <axe> », compté sur l'axe.
-      const brand = opened.kind === 'maestro' && welcomeCall && !welcomeCall.scan ? { ...opened, welcome: await welcomeOf($, data, welcomeCall.axis) } : opened
+      const welcome = opened.kind === 'maestro' && welcomeCall && !welcomeCall.scan ? await welcomeOf($, data, welcomeCall.axis) : undefined
+      // Le choix du bouton de la grille (#335) : lu ici, son écriture redessine la carte.
+      if (welcome?.activity) welcome.activity = { ...welcome.activity, mode: await read($, welcomeGridAtom) }
+      const brand = welcome ? { ...opened, welcome } : opened
       const card = brandTree($, e, brand, data.palette, 'card', todayOf(await $.clock.now()))
       if ('welcome' in brand && brand.welcome) void noteWelcomeCard($, 'drawnAt')
       if (!e.props.isExpanded || brand.kind === 'maestro') return card
@@ -6826,8 +6830,11 @@ async function brandData($: EngineInterface) {
 /** La largeur de la barre de l'accueil, en px. */
 const WELCOME_BAR = 160
 
-/** La largeur de la frise d'activité de l'accueil, en px : celle de la carte, 520 au plus (#325). */
+/** La largeur de la grille d'activité de l'accueil, en px : celle de la carte, 520 au plus (#325, #335). */
 const activityWidth = (e: RenderInput<'UserMessage'> | RenderInput<'Pane'>) => surfaceWidth(e, 6, 520)
+
+/** Les deux positions du bouton de la grille (#335), dans l'ordre de la ligne. */
+const GRID_MODES: readonly ActivityMode[] = ['done', 'added']
 
 /**
  * L'accueil de Maestro sous son bonjour (#141, maquette A) : les faites sur le total et leur barre, les
@@ -6852,57 +6859,78 @@ function welcomeTree(
     live: [palette.liveTint, palette.liveOn],
     none: [palette.sel, palette.text2],
   }
-  // La frise d'activité (#325, maquette E) : un Svg posé à sa taille rendue, les carrés restent carrés ; sa
-  // légende, rien, peu, beaucoup, chaque palier en vert (faites) et en bleu (ajoutées).
-  const doneFills = activityFills(palette.ok, palette)
-  const addedFills = activityFills(palette.live, palette)
-  const activitySvg = (a: WelcomeActivity) => {
-    if (!Svg) return null
-    const width = activityWidth(e)
-    const source = activityIcon({ ...a, done: doneFills, added: addedFills, ring: palette.text, ink: palette.text2, width })
-    const height = Number(/height="(\d+)"/.exec(source)?.[1] ?? 46)
-    return <Svg source={source} alt={`Tâches faites et ajoutées par jour, les ${a.doneTier.length} derniers jours`} width={width} height={height} />
+  const Client = 'Client' in resolved && Svg ? resolved.Client : undefined
+  const a = w.activity
+  const mode: ActivityMode = a?.mode ?? 'done'
+  // Le bouton de la grille (#335, maquette A retouchée) : les chiffres de la semaine, le choisi sur un fond de
+  // bouton et en gras ; sur le bureau, un texte et sa zone de clic (un Button natif décale son texte), au
+  // terminal un bouton. Un clic écrit le choix, qui redessine la carte.
+  const choose = (to: ActivityMode) => () => void update($, welcomeGridAtom, () => to)
+  const chip = (to: ActivityMode) => {
+    if (!a) return null
+    const on = to === mode
+    const id = `welcome-grid:${to}`
+    const label = <Text size="caption" {...(on ? { weight: 'semibold' as const } : {})} color={to === 'done' ? palette.ok : palette.live}>{a.week[to]}</Text>
+    if (!Client) return <Button key={id} plain onPress={choose(to)}>{label}</Button>
+    pressHandlers.set(id, choose(to))
+    zoneDrawn(zones, 'press-hit', Date.now())
+    return (
+      <Box key={id} paddingX={SPACE.indent} {...(on ? { backgroundColor: palette.btn } : { hover: { backgroundColor: palette.hover } })}>
+        {label}
+        <Box position="absolute" top={0} left={0} right={0}>
+          <Client key={pressKey(id)} module="./press-hit.tsx" props={{ id }} width="100%" height={1} />
+        </Box>
+      </Box>
+    )
   }
-  const legendStep = (key: string, hexes: string[], label: string) => (
-    <Box key={`welcome:legend:${key}`} flexDirection="row" alignItems="center" gap={SPACE.row}>
-      {Svg && <Svg source={activitySwatchIcon(hexes)} alt="" width={hexes.length * 12 - 2} height={10} />}
-      <Text size="caption" color={palette.text2}>{label}</Text>
-    </Box>
-  )
+  // La grille d'un an (#335) : un seul dessin interactif, pour que le survol d'une case dise son jour et son
+  // chiffre sur la ligne du bas ; au terminal, la ligne du bas seule, le total de l'année.
+  const grid = () => {
+    if (!a) return null
+    if (!Svg) return <Text size="caption" color={palette.text2}>{a.total[mode]}</Text>
+    const source = activityGridIcon({
+      days: a.days,
+      mode,
+      total: a.total[mode],
+      fills: activityFills(mode === 'done' ? palette.ok : palette.live, palette),
+      ink: palette.text2,
+      strong: palette.text,
+      ring: palette.text,
+      width: activityWidth(e),
+    })
+    const width = Number(/width="(\d+)"/.exec(source)?.[1] ?? 475)
+    const height = Number(/height="(\d+)"/.exec(source)?.[1] ?? 80)
+    return <Svg source={source} alt={`Tâches ${mode === 'done' ? 'faites' : 'ajoutées'} par jour sur un an : ${a.total[mode]}`} width={width} height={height} isInteractive />
+  }
+  // Le texte du bouton, la grille et sa ligne du bas partent du même bord (#335) : la marge du fond du choisi.
+  const inset = a && Client ? { paddingLeft: SPACE.indent } : {}
   return (
     <Box key="welcome" flexDirection="column" gap={SPACE.tight}>
-      <Box flexDirection="row" alignItems="center" gap={SPACE.row} flexWrap="wrap">
+      <Box flexDirection="row" alignItems="center" gap={SPACE.row} flexWrap="wrap" {...inset}>
         <Text size="footnote" color={palette.text2}>{w.counts}</Text>
         {Svg && total > 0 && (
           <Svg source={barIcon([{ hex: palette.ok, n: done }, { hex: palette.sel, n: total - done }], palette.done, WELCOME_BAR)} alt={`${pct} % fait`} width={WELCOME_BAR} height={6} />
         )}
         {total > 0 && <Text size="footnote" color={palette.text2}>{`${pct} %`}</Text>}
       </Box>
-      {/* Un seul bloc des faites (#325, maquette E) : la semaine, la frise des faites et des ajoutées, ses chiffres. */}
-      {(w.week || w.activity?.addedWeek) && (
-        <Box key="welcome:week" flexDirection="row" alignItems="center" gap={SPACE.row} flexWrap="wrap">
-          {w.week && <Text size="caption" weight="semibold" color={palette.ok}>{w.week}</Text>}
-          {w.activity?.addedWeek && <Text size="caption" weight="semibold" color={palette.live}>{w.activity.addedWeek}</Text>}
+      {/* Le bloc des faites (#335) : les chiffres de la semaine, qui font le bouton, puis la grille d'un an. */}
+      {a ? (
+        <Box key="welcome:week" flexDirection="row" alignItems="center" gap={Client ? 0 : SPACE.row} flexWrap="wrap">
+          {GRID_MODES.map(chip)}
         </Box>
-      )}
-      {w.activity && (
-        <Box key="welcome:activity" flexDirection="column" gap={SPACE.tight}>
-          {activitySvg(w.activity)}
-          <Box flexDirection="row" alignItems="center" gap={SPACE.row} flexWrap="wrap">
-            <Box flexGrow={1} flexShrink={1} minWidth={0}>
-              <Text size="caption" color={palette.text2}>{w.activity.caption}</Text>
-            </Box>
-            {Svg && (
-              <Box flexDirection="row" alignItems="center" gap={SPACE.row} flexShrink={0}>
-                {legendStep('none', [doneFills[0]], 'rien')}
-                {legendStep('few', [doneFills[1], addedFills[1]], 'peu')}
-                {legendStep('many', [doneFills[2], addedFills[2]], 'beaucoup')}
-              </Box>
-            )}
+      ) : (
+        w.week && (
+          <Box key="welcome:week" flexDirection="row" alignItems="center" gap={SPACE.row} flexWrap="wrap">
+            <Text size="caption" weight="semibold" color={palette.ok}>{w.week}</Text>
           </Box>
+        )
+      )}
+      {a && (
+        <Box key="welcome:activity" flexDirection="column" {...inset}>
+          {grid()}
         </Box>
       )}
-      <Box flexDirection="row" alignItems="center" gap={SPACE.tight} flexWrap="wrap">
+      <Box flexDirection="row" alignItems="center" gap={SPACE.tight} flexWrap="wrap" {...inset}>
         <Text size="footnote" color={palette.text2}>Aujourd'hui</Text>
         {w.pills.map(p => pill(p.text, ...tone[p.tone]))}
       </Box>

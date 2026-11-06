@@ -8234,28 +8234,32 @@ export type WelcomeFacts = {
   extra?: { kind: 'relances' | 'sessions'; n: number }
   /** Les livrées d'hier et d'aujourd'hui (#270) ; absent quand rien n'a été livré. */
   recent?: Recent
-  /** La frise des 61 derniers jours (#325) ; absente quand rien n'a été fait ni ajouté. */
+  /** La grille d'un an (#335, avant la frise de deux mois de #325) ; absente quand rien n'a été fait ni ajouté. */
   activity?: Activity
 }
 
-/** Un jour de la frise (#325) : ses faites (`fait:`) et ses ajoutées (`addedOn`). */
+/** Un jour de la grille (#325, #335) : ses faites (`fait:`) et ses ajoutées (`addedOn`). */
 export type ActivityDay = { date: string; done: number; added: number }
-/** Le palier d'un jour : 0 rien, 1 peu (sous la médiane des jours actifs), 2 beaucoup (#325). */
-export type ActivityTier = 0 | 1 | 2
+/** Le palier d'un jour : 0 rien, puis 1 à 3 aux tiers de ses jours actifs (#335 ; trois paliers à la médiane dans #325). */
+export type ActivityTier = 0 | 1 | 2 | 3
+/** Ce que la grille montre : les faites ou les ajoutées (#335), au choix du bouton de l'accueil. */
+export type ActivityMode = 'done' | 'added'
 export type Activity = {
   days: ActivityDay[]
   doneTier: ActivityTier[]
   addedTier: ActivityTier[]
-  /** Les jours où au moins une tâche a été faite. */
-  activeDays: number
-  /** Le jour le plus fourni en faites, le plus récent à égalité ; absent sans aucune faite. */
-  record?: { n: number; date: string }
+  /** Les faites et les ajoutées de toute la grille. */
+  doneYear: number
+  addedYear: number
+  /** Le jour le plus fourni, le plus récent à égalité ; absent à zéro. */
+  doneRecord?: { n: number; date: string }
+  addedRecord?: { n: number; date: string }
   /** Les ajoutées depuis lundi. */
   addedWeek: number
 }
 
-/** Les jours de la frise d'activité, aujourd'hui compris (#325) : deux mois. */
-export const ACTIVITY_DAYS = 61
+/** Les colonnes de la grille d'un an (#335) : la semaine en cours et les 52 d'avant, du lundi au dimanche. */
+export const ACTIVITY_WEEKS = 53
 
 /** Le jour où une tâche a été ajoutée (#325) : sa date `ouvert:`, sinon la première date de sa `src:`. */
 export function addedOn(t: Task): string | undefined {
@@ -8263,24 +8267,35 @@ export function addedOn(t: Task): string | undefined {
   return t.src ? /\b(\d{4}-\d{2}-\d{2})\b/.exec(t.src)?.[1] : undefined
 }
 
-/** Les paliers d'une bande (#325) : rien à zéro, peu sous la médiane de ses jours actifs, beaucoup dès elle. */
+/**
+ * Les paliers d'une grille (#335) : rien à zéro, puis trois paliers coupés aux tiers de ses jours actifs
+ * (le jour du premier tiers, celui du deuxième), comme les quatre verts de GitHub.
+ */
 export function activityTiers(counts: readonly number[]): ActivityTier[] {
   const active = counts.filter(n => n > 0).sort((a, b) => a - b)
   if (active.length === 0) return counts.map(() => 0)
-  const mid = active.length / 2
-  const median = active.length % 2 === 1 ? active[Math.floor(mid)]! : (active[mid - 1]! + active[mid]!) / 2
-  return counts.map(n => (n === 0 ? 0 : n < median ? 1 : 2))
+  const low = active[Math.floor(active.length / 3)]!
+  const high = active[Math.floor((2 * active.length) / 3)]!
+  return counts.map(n => (n === 0 ? 0 : n < low ? 1 : n < high ? 2 : 3))
+}
+
+/** Le jour le plus fourni d'une série, le plus récent à égalité ; rien à zéro. */
+function busiest(days: readonly ActivityDay[], n: (d: ActivityDay) => number): { n: number; date: string } | undefined {
+  const best = days.reduce<ActivityDay | undefined>((top, d) => (n(d) > 0 && (!top || n(d) >= n(top)) ? d : top), undefined)
+  return best ? { n: n(best), date: best.date } : undefined
 }
 
 /**
- * La frise d'activité (#325, maquette E) : les 61 derniers jours, les faites et les ajoutées de chacun, sans
- * les mères (leurs filles le disent, #125) ; rien de fait ni d'ajouté sur la période : `undefined`.
+ * La grille d'activité (#335, maquette A retouchée) : un an entier, du lundi de la semaine d'il y a 52
+ * semaines jusqu'à aujourd'hui, les faites et les ajoutées de chaque jour, sans les mères (leurs filles le
+ * disent, #125) ; rien de fait ni d'ajouté sur l'année : `undefined`.
  */
 export function activityFacts(o: { tasks: readonly Task[]; today: string }): Activity | undefined {
   const mothers = new Set(o.tasks.flatMap(t => (t.parent !== undefined && t.parent !== t.id ? [t.parent] : [])))
   const counted = o.tasks.filter(t => !t.isParent && !(t.id !== undefined && mothers.has(t.id)))
-  const first = shiftDay(o.today, 1 - ACTIVITY_DAYS)
-  const days: ActivityDay[] = Array.from({ length: ACTIVITY_DAYS }, (_, i) => ({ date: shiftDay(first, i), done: 0, added: 0 }))
+  const monday = shiftDay(o.today, -sinceMonday(o.today))
+  const first = shiftDay(monday, -7 * (ACTIVITY_WEEKS - 1))
+  const days: ActivityDay[] = Array.from({ length: daysBetween(first, o.today) + 1 }, (_, i) => ({ date: shiftDay(first, i), done: 0, added: 0 }))
   const at = (date: string | undefined) => (date && date >= first && date <= o.today ? days[daysBetween(first, date)] : undefined)
   for (const t of counted) {
     if (t.done && t.fait) {
@@ -8291,16 +8306,24 @@ export function activityFacts(o: { tasks: readonly Task[]; today: string }): Act
     if (day) day.added++
   }
   if (days.every(d => d.done === 0 && d.added === 0)) return undefined
-  const monday = shiftDay(o.today, -sinceMonday(o.today))
-  const best = days.reduce<ActivityDay | undefined>((top, d) => (d.done > 0 && (!top || d.done >= top.done) ? d : top), undefined)
+  const doneRecord = busiest(days, d => d.done)
+  const addedRecord = busiest(days, d => d.added)
   return {
     days,
     doneTier: activityTiers(days.map(d => d.done)),
     addedTier: activityTiers(days.map(d => d.added)),
-    activeDays: days.filter(d => d.done > 0).length,
-    ...(best ? { record: { n: best.done, date: best.date } } : {}),
+    doneYear: days.reduce((sum, d) => sum + d.done, 0),
+    addedYear: days.reduce((sum, d) => sum + d.added, 0),
+    ...(doneRecord ? { doneRecord } : {}),
+    ...(addedRecord ? { addedRecord } : {}),
     addedWeek: days.filter(d => d.date >= monday).reduce((sum, d) => sum + d.added, 0),
   }
+}
+
+/** Le chiffre d'un jour ou d'une somme dans la grille (#335) : « 4 faites », « 1 ajoutée », « aucune faite ». */
+export function activityCount(n: number, mode: ActivityMode): string {
+  const word = mode === 'done' ? 'faite' : 'ajoutée'
+  return n === 0 ? `aucune ${word}` : nWord(n, word)
 }
 
 /** Une tâche livrée hier ou aujourd'hui (#270) : son #, son nom, le jour, et ce qu'elle a livré. */
@@ -8398,11 +8421,14 @@ export type WelcomeAction = { key: WelcomeKey; label: string; message: string; n
 export type WelcomePill = { tone: 'late' | 'soon' | 'wait' | 'live' | 'none'; text: string }
 /** L'encart « Derniers travaux » (#270) : le compte de la carte, et ce que Maestro raconte (huit au plus, `more` en plus). */
 export type WelcomeRecent = { counts: string; items: RecentWork[]; more: number }
+/** Une case de la grille (#335) : son jour dit (« Nov 4 », « 4 nov. »), ses chiffres et leurs paliers. */
+export type WelcomeDay = { when: string; done: number; added: number; doneTier: ActivityTier; addedTier: ActivityTier }
 /**
- * La frise de la carte (#325) : les paliers de ses deux bandes, ses repères de mois (`at`, le jour de la
- * frise), « N jours actifs · record N le … » et « + N ajoutées » (depuis lundi, absent à zéro).
+ * La grille de la carte (#335) : ses cases, du lundi de la première semaine à aujourd'hui ; les chiffres de
+ * la semaine, qui font le bouton (« + 6 faites cette semaine », « + 6 ajoutées ») ; le total de l'année et
+ * son record, que la ligne du bas dit sans survol ; `mode`, le choix du bouton, posé par le panneau.
  */
-export type WelcomeActivity = { doneTier: ActivityTier[]; addedTier: ActivityTier[]; marks: { at: number; label: string }[]; caption: string; addedWeek?: string }
+export type WelcomeActivity = { days: WelcomeDay[]; week: Record<ActivityMode, string>; total: Record<ActivityMode, string>; mode?: ActivityMode }
 export type Welcome = { hello: string; sub: string; counts: string; progress: { done: number; total: number; pct: number }; week?: string; pills: WelcomePill[]; actions: WelcomeAction[]; cheer: string; recent?: WelcomeRecent; activity?: WelcomeActivity }
 
 /** Les livrées que Maestro reçoit au plus, et la longueur d'un livré (#270). */
@@ -8471,27 +8497,18 @@ export function welcomeText(f: WelcomeFacts, o: { person: string; now: Date }): 
     actions,
     cheer,
     ...(f.recent ? { recent: welcomeRecent(f.recent) } : {}),
-    ...(f.activity ? { activity: welcomeActivity(f.activity) } : {}),
+    ...(f.activity ? { activity: welcomeActivity(f.activity, week) } : {}),
   }
 }
 
-/** Le repère de mois d'une frise : « Oct » (us), « oct. » (fr) ; le premier jour, sa date entière. */
-function monthMark(iso: string, first: boolean): string {
-  if (first) return spokenDate(iso)
-  const m = Number(iso.slice(5, 7)) - 1
-  return (dateFormat === 'fr' ? FR_MONTHS[m] : US_MONTHS[m]) ?? iso
-}
-
-/** Les mots de la frise (#325) : les repères de mois, les jours actifs et le record, les ajoutées de la semaine. */
-function welcomeActivity(a: Activity): WelcomeActivity {
-  const marks = a.days.flatMap((d, at) => (at === 0 || d.date.endsWith('-01') ? [{ at, label: monthMark(d.date, at === 0) }] : []))
-  const active = a.activeDays > 0 ? nWord(a.activeDays, 'jour actif', 'jours actifs') : 'aucune faite en deux mois'
+/** Les mots de la grille (#335) : le jour de chaque case, les chiffres de la semaine, le total de l'année et son record. */
+function welcomeActivity(a: Activity, week: string | undefined): WelcomeActivity {
+  const total = (mode: ActivityMode, n: number, record: { n: number; date: string } | undefined) =>
+    `${activityCount(n, mode)} en un an${record ? ` · record ${record.n} le ${spokenDate(record.date)}` : ''}`
   return {
-    doneTier: a.doneTier,
-    addedTier: a.addedTier,
-    marks,
-    caption: a.record ? `${active} · record ${a.record.n} le ${spokenDate(a.record.date)}` : active,
-    ...(a.addedWeek > 0 ? { addedWeek: `+ ${nWord(a.addedWeek, 'ajoutée')}` } : {}),
+    days: a.days.map((d, i) => ({ when: spokenDate(d.date), done: d.done, added: d.added, doneTier: a.doneTier[i] ?? 0, addedTier: a.addedTier[i] ?? 0 })),
+    week: { done: week ?? 'aucune faite cette semaine', added: `+ ${nWord(a.addedWeek, 'ajoutée')}` },
+    total: { done: total('done', a.doneYear, a.doneRecord), added: total('added', a.addedYear, a.addedRecord) },
   }
 }
 
@@ -8557,7 +8574,7 @@ export function maestroIntro(o: { source: Source; welcome: Welcome; cardShown?: 
     ].join('\n')
   }
   return [
-    `${Person()} a dit « Maestro » : le panneau de la roadmap ${o.source.name} vient de s'ouvrir, et la carte d'accueil s'affiche à la place de son message : « ${w.hello} », ${w.counts}${w.week ? ` (${w.week})` : ''}, aujourd'hui : ${w.pills.map(p => p.text).join(', ')}${w.activity ? ', la frise des faites et des ajoutées des deux derniers mois' : ''}, et ses boutons ${w.actions.map(a => `« ${a.label} »`).join(', ')}. Tu es Maestro, l'orchestrateur : tu lances les tâches de la roadmap, une session par tâche, tu les suis et tu fusionnes pour elles (skill roadmap:maestro).`,
+    `${Person()} a dit « Maestro » : le panneau de la roadmap ${o.source.name} vient de s'ouvrir, et la carte d'accueil s'affiche à la place de son message : « ${w.hello} », ${w.counts}${w.week ? ` (${w.week})` : ''}, aujourd'hui : ${w.pills.map(p => p.text).join(', ')}${w.activity ? ', la grille d’un an des faites ou des ajoutées' : ''}, et ses boutons ${w.actions.map(a => `« ${a.label} »`).join(', ')}. Tu es Maestro, l'orchestrateur : tu lances les tâches de la roadmap, une session par tâche, tu les suis et tu fusionnes pour elles (skill roadmap:maestro).`,
     '',
     `Rien n'est scanné : avant le clic de ${person()} sur un bouton, ne lis ni la roadmap ni tes sessions (pas de list_sessions, pas de lecture de ROADMAP.md) ; la carte dit déjà les chiffres.`,
     "- Si le bloc « Roadmap — nouvelles de tes sessions enfants » est là, dis d'abord ces nouvelles et suis leurs consignes.",

@@ -46,6 +46,8 @@ declare module 'claude-code' {
       versionNote: VersionCheck
       /** La page de maquettes que le bouton de la fiche a ouverte dans le volet navigateur (#306), chemin absolu ; vide sinon. */
       mockupOpen: string
+      /** Ce que montre la grille d'un an de l'accueil de Maestro (#335) : les faites ou les ajoutées, au choix de son bouton. */
+      welcomeGrid: 'done' | 'added'
     }
   }
 }

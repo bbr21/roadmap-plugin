@@ -744,6 +744,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.216.0 (2026-11-05)** : panneau : l'accueil de Maestro montre une grille d'un an façon GitHub, un bouton Faites ou Ajoutées, le jour et son chiffre au survol (#335)
 - **0.215.0 (2026-11-05)** : sessions : l'heure locale du Mac jointe à chaque message, « hier » se mesure contre elle (#331)
 - **0.214.0 (2026-11-05)** : maestro : optimiseur de tokens, un modèle qui cadre et un modèle qui code, les étapes du plan codées par des sous-agents, le coût de chaque tâche dans son bilan (#327)
 - **0.213.0 (2026-11-05)** : maestro : Maestro dose ses sessions, un plafond réglable de sessions au travail sur le Mac et un lancement différé sous la charge, la file montrée dans le bloc En cours (#324)
