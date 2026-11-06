@@ -11602,13 +11602,17 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
       // L'anneau fantôme du survol (#351, maquette C) : cette Box est sa propre portée de survol (sa clé). Sans
       // filet : un filet `transparent` se peignait en blanc au bureau, haut comme la ligne (#364). L'anneau est
       // le dessin de la sélection en `live` pâle, dans une Box cachée que le survol montre, centrée sur le carré.
-      <Box key={`ring:${t.id ?? keyPart(t.key)}`} position="absolute" top={0} bottom={0} left={0} width={squareHitWidth(squareCenter, markWidth)} flexDirection="row" justifyContent="center" alignItems="center">
+      // Vu au banc du bureau (#364) : un Svg à `alt` vide n'y est jamais dessiné, d'où son alt ; et une Box
+      // absolue se peint au-dessus d'un frère qui ne l'est pas, d'où le bouton dans sa Box absolue, après l'anneau.
+      <Box key={`ring:${t.id ?? keyPart(t.key)}`} position="absolute" top={0} bottom={0} left={0} width={squareHitWidth(squareCenter, markWidth)}>
         <Box position="absolute" top={0} bottom={0} left={0} right={0} flexDirection="row" justifyContent="center" alignItems="center" display="none" hover={{ display: 'flex' }}>
-          <Svg source={ghostRing} alt="" width={16} height={24} />
+          <Svg source={ghostRing} alt="Anneau de survol" width={16} height={24} />
         </Box>
-        <Button key={checkKey} plain onPress={pick}>
-          {CHECK_OVERLAY}
-        </Button>
+        <Box position="absolute" top={0} bottom={0} left={0} right={0} flexDirection="row" justifyContent="center" alignItems="center">
+          <Button key={checkKey} plain onPress={pick}>
+            {CHECK_OVERLAY}
+          </Button>
+        </Box>
       </Box>
     ) : null
     // Le repli d'une mère, sur sa marque : la zone de l'en-tête quand le dessin en a la place ; sans zone de

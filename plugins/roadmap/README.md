@@ -744,6 +744,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.226.1 (2026-11-06)** : panneau : l'anneau du survol de la case paraît et la case reprend le clic sur le bureau (#364)
 - **0.226.0 (2026-11-06)** : panneau : un clic sur la case coche ou rouvre la tâche, un clic sur son numéro la choisit (#355)
 - **0.225.1 (2026-11-06)** : panneau : la case des lignes redevient le carré seul au repos, l'anneau ne paraît qu'au survol (#364)
 - **0.225.0 (2026-11-06)** : sessions : file de lancement commune à tout le Mac, deux plafonds (par projet, sur le Mac), rang et Retirer dans le bloc En cours, départ par Maestro (#345)
