@@ -2024,14 +2024,46 @@ function files(source: Source): { open: string; done: string } {
   return { open: `${source.dir}/ROADMAP.md`, done: `${source.dir}/ROADMAP-fait.md` }
 }
 
+/**
+ * Le nom du journal des bilans d'un dossier (lu dans `cowork.json`), gardé par dossier : la minuterie ne
+ * relit plus `cowork.json` toutes les 3 s (#337, O1) ; le pas complet de 15 s (`refresh`) l'oublie.
+ */
+const bilanLogs = new Map<string, string>()
+
+async function bilanLogOf($: EngineInterface, source: Source): Promise<string> {
+  const kept = bilanLogs.get(source.dir)
+  if (kept !== undefined) return kept
+  const log = bilanConfigFor(await readOr($, `${source.dir}/cowork.json`)).log
+  bilanLogs.set(source.dir, log)
+  return log
+}
+
+/**
+ * Les `fs.stat` d'un pas de minuterie, mis en commun (#337, O1) : `matchSessions` et `stampOf` regardent les
+ * mêmes fichiers dans le même pas. Hors d'un pas (`poll`), chaque appel lit.
+ */
+let tickStats: Map<string, Promise<{ mtimeMs: number; size: number }>> | undefined
+
+function statOnce($: EngineInterface, path: string): Promise<{ mtimeMs: number; size: number }> {
+  if (!tickStats) return $.fs.stat(path)
+  const memo = tickStats
+  let stat = memo.get(path)
+  if (!stat) {
+    stat = $.fs.stat(path)
+    memo.set(path, stat)
+    stat.catch(() => memo.delete(path))
+  }
+  return stat
+}
+
 async function stampOf($: EngineInterface, source: Source): Promise<number> {
   let sum = 0
   const { open, done } = files(source)
   // Le log des bilans aussi : un bilan écrit redessine le détail de sa task.
-  const bilanLog = bilanConfigFor(await readOr($, `${source.dir}/cowork.json`)).log
+  const bilanLog = await bilanLogOf($, source)
   for (const path of [open, done, `${source.dir}/${bilanLog}`]) {
     try {
-      sum += (await $.fs.stat(path)).mtimeMs
+      sum += (await statOnce($, path)).mtimeMs
     } catch {
       // fichier absent : le panneau le dira au rendu
     }
@@ -2045,6 +2077,30 @@ async function load($: EngineInterface, path: string, file: string): Promise<Tas
   } catch (err) {
     return err instanceof Error ? err.message : String(err)
   }
+}
+
+/**
+ * Le parse d'un fichier de la roadmap, gardé tant que sa date et sa taille ne bougent pas (#337, O1) : un pas
+ * de 3 s sans changement ne relit plus les deux fichiers (250 Ko sur 600 tâches). Une lecture en panne, ou un
+ * fichier dont la date est illisible, ne se garde pas : la suivante relit. Seule la minuterie (`matchSessions`)
+ * s'en sert : un dessin dont la version a changé (« Réessayer », une écriture du plugin) relit toujours.
+ */
+const parsedFiles = new Map<string, { stamp: string; tasks: Task[] }>()
+
+async function loadParsed($: EngineInterface, path: string, file: string): Promise<Task[] | string> {
+  let stamp: string | undefined
+  try {
+    const st = await statOnce($, path)
+    stamp = `${st.mtimeMs}:${st.size}`
+  } catch {
+    stamp = undefined
+  }
+  const kept = parsedFiles.get(path)
+  if (stamp !== undefined && kept?.stamp === stamp) return kept.tasks
+  const tasks = await load($, path, file)
+  if (typeof tasks === 'string' || stamp === undefined) parsedFiles.delete(path)
+  else parsedFiles.set(path, { stamp, tasks })
+  return tasks
 }
 
 async function loadTitles($: EngineInterface): Promise<Record<string, ShortTitle>> {
@@ -3125,9 +3181,9 @@ async function matchSessions($: EngineInterface, source: Source): Promise<void> 
     const selfId = typeof (self as { sessionId?: unknown } | undefined)?.sessionId === 'string'
       ? (self as { sessionId: string }).sessionId
       : undefined
-    const tasks = await load($, files(source).open, 'ROADMAP.md')
+    const tasks = await loadParsed($, files(source).open, 'ROADMAP.md')
     if (typeof tasks === 'string') return
-    const doneTasks = await load($, files(source).done, 'ROADMAP-fait.md')
+    const doneTasks = await loadParsed($, files(source).done, 'ROADMAP-fait.md')
     // Une session « Roadmap #N · … » se rattache à sa tâche par le numéro, faite ou non : une
     // tâche close dont la session reste ouverte garde le lien vers elle.
     const numbered = [...tasks, ...(typeof doneTasks === 'string' ? [] : doneTasks)]
@@ -3265,15 +3321,57 @@ async function refreshSessions($: EngineInterface, source: Source, fast: boolean
   noteRefresh({ fast, totalMs: t2 - t0, listMs: t1 - t0, probeMs: t2 - t1, calls: toolCalls })
 }
 
+// ── La sonde de visibilité (#337, préalable d'O12) ─────────────────────────────
+
+/**
+ * Le journal des surfaces de l'app vues par chaque session (`surface-log`, toutes sessions confondues, les
+ * `SURFACE_LOG_ROWS` dernières lignes) : une arrivée (`session.attach`), un départ (`session.detach`), et au
+ * pas complet de 15 s les surfaces que dit `$.session.surfaces()` quand elles ont changé. Il dira, dans
+ * l'app, si une session prévient le plugin quand elle quitte l'écran : la condition d'O12.
+ */
+const SURFACE_LOG_KEY = 'surface-log'
+const SURFACE_LOG_ROWS = 60
+type SurfaceRow = { at: number; session?: string; event: 'attach' | 'detach' | 'tick'; surface?: string; reason?: string; surfaces?: string[] }
+let surfacesSeen: string | undefined
+
+async function noteSurface($: EngineInterface, row: Omit<SurfaceRow, 'at' | 'session'>): Promise<void> {
+  try {
+    const own = await readOwnSession($)
+    const stored = await $.store.get(SURFACE_LOG_KEY)
+    const rows = Array.isArray(stored) ? (stored as SurfaceRow[]) : []
+    const next = [...rows, { at: await $.clock.now(), ...(own.id ? { session: own.id } : {}), ...row }]
+    await $.store.set(SURFACE_LOG_KEY, next.slice(-SURFACE_LOG_ROWS))
+  } catch {
+    // store ou fiche illisible : la sonde se tait, rien d'autre ne change
+  }
+}
+
+/** Les surfaces de cette session, notées au journal quand elles ont changé depuis le dernier pas complet. */
+async function noteSurfacesSeen($: EngineInterface): Promise<void> {
+  let surfaces: string[]
+  try {
+    surfaces = [...(await $.session.surfaces())]
+  } catch {
+    return
+  }
+  const seen = JSON.stringify(surfaces)
+  if (seen === surfacesSeen) return
+  surfacesSeen = seen
+  await noteSurface($, { event: 'tick', surfaces })
+}
+
 async function refresh($: EngineInterface): Promise<void> {
   await checkZones($)
   // Rien n'a changé : aucun dessin. Chaque étape ne redessine que ce qu'elle a vu bouger.
   const before = knownSource?.dir
   const source = await sourceNow($)
   if (!source) return
+  // Le pas complet relit `cowork.json` : un journal des bilans renommé se voit dans les 15 s.
+  bilanLogs.delete(source.dir)
   if (before !== undefined && before !== source.dir) await update($, themeStampAtom, v => v + 1)
   await refreshSessions($, source, false)
   if (await restamp($, source)) await summarize($, source)
+  await noteSurfacesSeen($)
 }
 
 // ── Rafraîchir (#138) ─────────────────────────────────────────────────────
@@ -3693,6 +3791,7 @@ let polling = false
 async function poll($: EngineInterface): Promise<void> {
   if (polling) return
   polling = true
+  tickStats = new Map()
   try {
     pollTick++
     const full = pollTick % (POLL_MS / TICK_MS) === 0
@@ -3709,6 +3808,7 @@ async function poll($: EngineInterface): Promise<void> {
     // un pas raté (module rechargé, état indisponible) : le suivant réessaie, sans rejet laissé en l'air
   } finally {
     polling = false
+    tickStats = undefined
   }
 }
 
@@ -5933,6 +6033,16 @@ export const register: Register = (on, options) => {
     const result = await next(e)
     await update($, themeStampAtom, v => v + 1)
     return result
+  })
+
+  // La sonde de visibilité (#337) : chaque arrivée et chaque départ d'une surface de l'app, au journal.
+  on('session.attach', async ($, e, next) => {
+    void noteSurface($, { event: 'attach', surface: e.surface })
+    return next(e)
+  })
+  on('session.detach', async ($, e, next) => {
+    void noteSurface($, { event: 'detach', surface: e.surface, reason: e.reason })
+    return next(e)
   })
 
   on('session.start', async ($, e, next) => {

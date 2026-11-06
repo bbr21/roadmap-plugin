@@ -1,6 +1,6 @@
 # Est-il sûr de l'installer ?
 
-Version décrite : roadmap 0.216.2
+Version décrite : roadmap 0.217.0
 Un plugin de Claude Code fait tourner du code sur ta machine, donc la question se pose. Certains plugins
 malveillants ont l'air inoffensifs quand on les installe, puis téléchargent et lancent autre chose plus
 tard. Cette page dit tout ce que fait roadmap. Un test vérifie à chaque version qu'elle dit vrai, et tu
@@ -39,6 +39,7 @@ réserve (`session.*`, `turn.*`, `skill.prompt`) ; le plugin a alors un secours 
 |---|---|
 | `session.start` | ouvre le panneau Roadmap dans un projet qui a une roadmap, enregistre les commandes `/roadmap` et `/reglages` ; une fois par jour, reporte à la semaine suivante les étapes de journée passées de la roadmap (#277) |
 | `session.end`, `session.compact`, `session.measure` | garde l'état du panneau à la fin, à la compaction et au calcul de l'usage |
+| `session.attach`, `session.detach` | note dans le stockage du plugin qu'une fenêtre de l'app arrive sur la session ou la quitte (l'heure, la session, le type de fenêtre), pour mesurer si le panneau peut se reposer quand il n'est pas à l'écran (#337) ; rien d'autre |
 | `prompt.submit` | à ton message : rouvre le panneau, ajoute en contexte les rappels de la roadmap (ligne d'une idée, règles de session) |
 | `turn.start`, `turn.complete` | début et fin d'un tour : note les fichiers changés, rappelle d'inscrire le travail dans la roadmap |
 | `tool.call` | observe les outils que Claude appelle (Edit, Write, Bash, Skill, la liste d'étapes, la boîte de fin, le lancement de session) ; sur Bash, refuse une commande git interdite dans le dossier principal et place une suite de tests lourde dans la file (voir plus bas) ; chez Maestro, une ligne écrite dans ROADMAP.md hors de la skill tasks reçoit un rappel, jamais un refus (#255) |
