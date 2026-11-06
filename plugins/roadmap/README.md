@@ -744,6 +744,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.224.1 (2026-11-06)** : panneau : le volet Réglages retrouve son ⓘ et ses options, lues dans plugin.json quand /config n'en liste aucune (#356)
 - **0.224.0 (2026-11-06)** : maestro : preuve de fidélité à la maquette avant la fusion d'un rendu (capture du vrai panneau à côté de la maquette validée) (#357)
 - **0.223.0 (2026-11-06)** : panneau : titres de section en blanc, une seule tête pour Récentes et les jours, vue Done comprise (#353)
 - **0.222.0 (2026-11-06)** : panneau : la case vivante : anneau au survol, rebond et éclat à la coche, ligne teintée, plus de fond gris après un clic (#351)

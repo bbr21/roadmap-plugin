@@ -1,16 +1,16 @@
-# roadmap 0.224.0 : SHA-256 de chaque fichier installé du plugin, chemins relatifs à son dossier.
-# Vérifier une copie installée (~/.claude/plugins/cache/roadmap/roadmap/0.224.0) : plugins/roadmap/SECURITE.md, « Vérifier que ta copie est une vraie version ».
-9d75fc1a97c72e02eb73e597078456fccf4c8b16b35db9357c7d97a4f05ffa42  .claude-plugin/plugin.json
-c79ef6bd08d7f26b310b5252e4173b769d29727211c726864f4cd9efc2e82a9f  README.md
-5721ef00f22b03b2571186eb301ebd4c9e621c72f49ed82962d9021694dd8112  SECURITE.md
+# roadmap 0.224.1 : SHA-256 de chaque fichier installé du plugin, chemins relatifs à son dossier.
+# Vérifier une copie installée (~/.claude/plugins/cache/roadmap/roadmap/0.224.1) : plugins/roadmap/SECURITE.md, « Vérifier que ta copie est une vraie version ».
+a30b618ba18e97c8bbf0307ada72e3ee69e668c8c632cfe1181537e801171395  .claude-plugin/plugin.json
+3ec8cb91f75bb3a93d35ba45ac8ff578f78482580d59c2ff97c4922697dc8f13  README.md
+1814dafa74c22cf78c3a693dbee94f26e7267d58e2ac930e1a59bde44ee6cfda  SECURITE.md
 bce019cb7147413a8e5f0687df59a41394fa92545568b5d37b1df8bd6d885e30  hooks/bar-hit.tsx
 24387c7ebf678c8c7ed5c9cee4be7aa908712c43d03f08c0106f5342c16f823f  hooks/donut-hit.tsx
 d842d789476d67282d0f04b7e5fdc68a3d981ccec65dd79cfa2d11eed13fb828  hooks/hooks.json
 4a1f0da17915cdeb94a92f6855fadc81df5e9b28995d5e7276b9d64455b9ed0f  hooks/icons.ts
 9bf2c592c23cb84d40cd3996cf4851881d941683a2ae7dc67e699460714af832  hooks/parse.ts
 a29e07be4f95c637c8f3ab377dc9a97cd16de11e8e7de7062311dd2888a0833f  hooks/press-hit.tsx
-e49f973ed59657ce21175e2c86574209e01f97c312fc33e4c9af0788da574734  hooks/register.tsx
-275e220706cce835a7365ee10900d79f75033dd4cc80429dcf6b75a2d1ab578f  hooks/reglages.tsx
+56ea959031cfd748163ec5ff0ca1d85a2989fc29e8767c0bbfb15b84cfd44b70  hooks/register.tsx
+e866e365156ca6249171a4d5e3473b476c2e8aca51625af41922f6b6c323946f  hooks/reglages.tsx
 9a457e05528f838baaa49b5c37b5a07d9787c838a64f83421d3574a74c577d49  hooks/tokens.ts
 40a25201db9424dbda555e5497587c448e2ba8f5c27efa5510ca748b4e59f1ee  scripts/one-at-a-time.sh
 d8ad29856a2309a62def7e5672cb2b2bd9e400696a9e2ec8c043e6651d392afc  skills/audit/SKILL.md

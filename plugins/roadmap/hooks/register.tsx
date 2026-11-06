@@ -95,7 +95,7 @@ import {
   donutIcon,
 } from './icons'
 import { MIX, RADIUS, SIZE, SPACE, TEXT } from './tokens'
-import { SETTINGS_PANE, drawSettings, openSettings, prefsFile, redrawSettings, sessionProject, watchSettings, type SettingsProject } from './reglages'
+import { SETTINGS_PANE, drawSettings, openSettings, prefsFile, redrawSettings, rememberLoadedOptions, sessionProject, watchSettings, type SettingsProject } from './reglages'
 import {
   CLASSIC_SKIPS_OFF,
   retryOnLock,
@@ -6123,6 +6123,8 @@ async function openCommand($: EngineInterface): Promise<{ text: string }> {
 }
 
 export const register: Register = (on, options) => {
+  // Les valeurs des options de ce chargement : le volet Réglages s'en sert quand /config n'en liste aucune (#356).
+  rememberLoadedOptions(options as Readonly<Record<string, unknown>>)
   // Un chargement neuf relit tout : les données gardées en mémoire viennent du chargement d'avant.
   paneCache = undefined
   knownSource = undefined

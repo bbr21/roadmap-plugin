@@ -224,8 +224,67 @@ function setOption($: EngineInterface, o: PluginOption, value: ConfigValue): Pro
  * le volet n'en trouvait alors aucune (#227).
  */
 async function pluginOptions($: EngineInterface): Promise<PluginOption[]> {
+  let listed: PluginOption[] = []
   try {
-    return ownOptions(await $.config.list(), $.plugin.name)
+    listed = ownOptions(await $.config.list(), $.plugin.name)
+  } catch {
+    listed = []
+  }
+  return listed.length > 0 ? listed : manifestOptions($)
+}
+
+/** Les valeurs des options au chargement du plugin, telles que `register` les reçoit (#356). */
+let loadedOptions: Readonly<Record<string, unknown>> = {}
+
+/** Garde les valeurs des options du chargement : le volet s'en sert quand /config n'en liste aucune (#356). */
+export function rememberLoadedOptions(options: Readonly<Record<string, unknown>> | undefined): void {
+  loadedOptions = options ?? {}
+}
+
+/** Une entrée `userConfig` du `plugin.json`, ce que le volet en lit. */
+type ManifestOption = { type?: unknown; title?: unknown; description?: unknown; default?: unknown; options?: unknown; sensitive?: unknown; multiple?: unknown }
+
+/**
+ * Les options d'après le `userConfig` du `plugin.json` (#356) : dans une session AAFES Cowork, le moteur ne listait
+ * aucune ligne de /config pour le plugin (il les tire des plugins qu'il tient pour actifs, et l'app y voyait un plugin
+ * chargé hors de cette liste), et le volet disait les options introuvables. Chaque option prend la valeur de ce
+ * chargement, sinon son défaut ; un clic l'écrit sous la clé courte, et un refus du moteur se lit sous sa ligne.
+ * Comme le moteur, ni option secrète ni liste multiple. Un fichier illisible : aucune.
+ */
+export function optionsFromManifest(text: string, name: string, loaded: Readonly<Record<string, unknown>>): PluginOption[] {
+  let config: Record<string, ManifestOption>
+  try {
+    const parsed = JSON.parse(text) as { userConfig?: unknown }
+    config = parsed.userConfig !== null && typeof parsed.userConfig === 'object' ? (parsed.userConfig as Record<string, ManifestOption>) : {}
+  } catch {
+    return []
+  }
+  const out: PluginOption[] = []
+  for (const [field, spec] of Object.entries(config)) {
+    if (spec === null || typeof spec !== 'object' || spec.sensitive === true || spec.multiple === true) continue
+    const choices = Array.isArray(spec.options) ? spec.options.filter((o): o is string => typeof o === 'string') : undefined
+    const kind: ConfigKind = spec.type === 'boolean' ? 'boolean' : spec.type === 'number' ? 'number' : choices && choices.length > 0 ? 'choice' : 'text'
+    const raw = field in loaded ? loaded[field] : spec.default
+    const value: ConfigValue = kind === 'boolean' ? raw === true : kind === 'number' ? Number(raw ?? 0) : raw === undefined || raw === null ? '' : String(raw)
+    const key = `${name}.${field}`
+    const row = {
+      key,
+      label: typeof spec.title === 'string' ? spec.title : field,
+      ...(typeof spec.description === 'string' ? { description: spec.description } : {}),
+      kind,
+      value,
+      ...(kind === 'choice' ? { options: choices } : {}),
+      provider: { plugin: name, tier: 'user' },
+      isLocked: false,
+    } as unknown as ConfigRow
+    out.push({ field, row, keys: [key] })
+  }
+  return out
+}
+
+async function manifestOptions($: EngineInterface): Promise<PluginOption[]> {
+  try {
+    return optionsFromManifest(await $.fs.read(`${$.plugin.root}/.claude-plugin/plugin.json`), $.plugin.name, loadedOptions)
   } catch {
     return []
   }
@@ -354,7 +413,8 @@ export async function drawSettings($: EngineInterface, e: RenderInput<'Pane'>, p
 
   /**
    * Une ligne : le nom et son ⓘ à gauche, le contrôle à droite ; dessous, un champ s'il y en a un, puis
-   * l'explication quand son ⓘ l'a ouverte. Un second clic sur le ⓘ la referme.
+   * l'explication quand son ⓘ l'a ouverte. Un second clic sur le ⓘ la referme. Le ⓘ n'a pas de `label` :
+   * sur le bureau, un Button dessine son label à la place de ses enfants (« Explication : Mode ADHD », #356).
    */
   const line = (id: string, rowKey: string, name: string, control: RenderElement | false, explain: Explain, below: (RenderElement | false)[] = []) => {
     const open = openInfo === id
@@ -367,7 +427,6 @@ export async function drawSettings($: EngineInterface, e: RenderInput<'Pane'>, p
               key={`info:${id}`}
               plain
               dimColor={!open}
-              label={open ? `Fermer l'explication : ${name}` : `Explication : ${name}`}
               onPress={() => void update($, settingsInfoAtom, v => (v === id ? '' : id))}
             >
               {open ? 'ⓧ' : 'ⓘ'}
