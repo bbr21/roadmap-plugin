@@ -9308,10 +9308,18 @@ export function cartonOf(o: {
 /** Une rangée de la carte Détails (#291) : son nom, sa valeur, son complément en gris, la chasse fixe d'un nom de branche. */
 export type StoryRow = { name: string; value: string; sub?: string; mono?: boolean; file?: string; icon?: 'external' | 'document' }
 
-/** Le chemin d'une `src:` quand c'est un fichier (#343) : sans espace, avec une extension, hors URL ; sinon, de la prose. */
+/** Les documents qu'une `src:` peut ouvrir d'un clic (#343) : jamais un programme (.app, .command, .sh…). */
+const SRC_DOCS = new Set(['md', 'txt', 'html', 'htm', 'pdf', 'png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'csv', 'json', 'docx', 'xlsx', 'pptx', 'key', 'numbers', 'pages', 'eml', 'msg', 'vtt', 'srt', 'mp3', 'm4a', 'mp4', 'mov'])
+
+/**
+ * Le chemin d'une `src:` quand c'est un document du projet (#343) : sans espace, hors URL, relatif et sans `..`
+ * (le clic l'ouvre par `open` sous le dossier du projet), d'une extension de `SRC_DOCS` ; sinon, de la prose.
+ */
 export function srcFile(src: string | undefined): string | undefined {
   const t = src?.trim()
-  return t && !/\s/.test(t) && !t.includes('://') && /\.[A-Za-z0-9]{1,8}$/.test(t) ? t : undefined
+  if (!t || /\s/.test(t) || t.includes('://') || /^[/~]/.test(t) || t.split('/').includes('..')) return undefined
+  const ext = /\.([A-Za-z0-9]{1,8})$/.exec(t)?.[1]?.toLowerCase()
+  return ext && SRC_DOCS.has(ext) ? t : undefined
 }
 
 /** Le nom lisible d'un fichier et sa date (#343) : « …/2026-11-03-military-star-deck.html » → « Military star deck », « Nov 3 ». */

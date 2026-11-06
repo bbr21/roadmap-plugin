@@ -601,6 +601,7 @@ import {
   cartonOf,
   detailsStory,
   familyOf,
+  srcFile,
   gaugeLine,
   stepGauge,
   type Gauge,
@@ -8485,8 +8486,10 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     const s = short(current)
     const days = age(current)
     const line = Number(current.key.split(':').pop())
-    const fichePath = current.fiche ? `${source.dir}/${current.fiche}` : undefined
-    const srcPath = current.src ? `${source.dir}/${current.src}` : undefined
+    // La fiche et la source ne s'ouvrent que si ce sont des documents du projet (#343, `srcFile`) : jamais un
+    // programme, un chemin absolu ni un chemin qui sort du dossier par `..`.
+    const fichePath = srcFile(current.fiche) ? `${source.dir}/${current.fiche!.trim()}` : undefined
+    const srcPath = srcFile(current.src) ? `${source.dir}/${current.src!.trim()}` : undefined
     const due = current.due && !current.done ? dueLabel(current.due, today) : undefined
     const live = liveOf(current)
     const kept = doneSessionOf(current)
