@@ -226,7 +226,9 @@ import {
   pickPrune,
   pickToggle,
   caseGesture,
+  caseConfirmKeys,
   numberPickHover,
+  numberLabel,
   shiftMonth,
   type EditSpec,
   type TaskEdit,
@@ -5349,13 +5351,13 @@ let batching = false
 async function togglePick($: EngineInterface, task: Task, kids: readonly Task[]): Promise<void> {
   await setView($, v => {
     const picked = pickToggle(v.picked ?? [], task, kids)
-    return { picked, batchNote: '', ...(picked.length === 0 ? { batchMenu: '' } : {}) }
+    return { picked, batchNote: '', confirmDone: [], ...(picked.length === 0 ? { batchMenu: '' } : {}) }
   })
 }
 
 /** Le ✕ de la barre (#316) : la sélection se vide, la ligne de la liste revient. */
 async function clearPick($: EngineInterface): Promise<void> {
-  await setView($, () => ({ picked: [], batchMenu: '', batchNote: '' }))
+  await setView($, () => ({ picked: [], batchMenu: '', batchNote: '', confirmDone: [] }))
 }
 
 /** Les tâches de la roadmap, ouvertes (dates de parent comprises) et faites, relues pour un lot. */
@@ -5370,7 +5372,7 @@ async function batchTasks($: EngineInterface, source: Source): Promise<Task[]> {
  * (ou Claude, avec `ecriture`) pour son statut. Un refus ne bloque pas les autres ; le bilan se pose
  * sous la barre, et la sélection ne garde que les tâches refusées.
  */
-async function applyBatch($: EngineInterface, source: Source, change: BatchChange, what: string): Promise<void> {
+async function applyBatch($: EngineInterface, source: Source, change: BatchChange, what: string, keys?: readonly string[]): Promise<void> {
   if (batching || checking) {
     try {
       $.ui.toast('Une écriture est en cours : réessaie dans un instant.')
@@ -5382,9 +5384,10 @@ async function applyBatch($: EngineInterface, source: Source, change: BatchChang
   batching = true
   checking = true
   try {
-    await setView($, () => ({ batchNote: SAVE_BUSY }))
+    await setView($, () => ({ batchNote: SAVE_BUSY, confirmDone: [] }))
     const picked = (await read($, viewAtom)).picked ?? []
-    const steps = batchPlan(await batchTasks($, source), picked, change)
+    // La question d'une coche (#355) dit ses tâches ; sans sélection ouverte, la sélection reste vide.
+    const steps = batchPlan(await batchTasks($, source), keys ?? picked, change)
     const at = await $.clock.now()
     const outcomes: { task: Task; ok: boolean; why?: string }[] = []
     for (const step of steps) {
@@ -5393,7 +5396,9 @@ async function applyBatch($: EngineInterface, source: Source, change: BatchChang
     }
     const keep = outcomes.filter(o => !o.ok).map(o => taskKey(o.task))
     await update($, retryAtom, v => v + 1)
-    await setView($, () => ({ picked: keep, batchNote: batchSummary(outcomes, what), ...(keep.length === 0 ? { batchMenu: '' } : {}) }))
+    // Une coche seule (#355) n'ouvre pas de sélection : ses refus se lisent au bilan.
+    const kept = picked.length === 0 ? [] : keep
+    await setView($, () => ({ picked: kept, batchNote: batchSummary(outcomes, what), ...(kept.length === 0 ? { batchMenu: '' } : {}) }))
   } finally {
     batching = false
     checking = false
@@ -5434,14 +5439,16 @@ async function runBatchStep($: EngineInterface, source: Source, step: BatchStep,
 }
 
 /**
- * Le clic sur une ligne (#355, maquette C) : son numéro, ou sa case quand une sélection est ouverte,
- * choisit (`togglePick`) ; sinon la case coche l'ouverte ou rouvre la faite, une tâche seule,
- * par les mêmes gardes qu'un lot (`batchPlan` : ligne prise, mère à étapes ouvertes, communication pas
- * partie) ; ce qu'il a donné, en toast. La sélection en cours n'est pas touchée.
+ * Le clic sur une ligne (#355, maquette C ; retours de Bertrand du 2026-11-06) : son numéro choisit
+ * (`togglePick`) ; sa case pose la question d'une coche en haut (`confirmDone` : la tâche seule, ou le lot
+ * qu'elle rejoint), et le panneau remonte jusqu'à elle ; sans sélection, la case d'une faite la rouvre, sans
+ * question, par les gardes d'un lot (`batchPlan`), ce qu'il a donné en toast.
  */
 async function caseClick($: EngineInterface, source: Source, task: Task, kids: readonly Task[], via: 'case' | 'number'): Promise<void> {
-  const gesture = caseGesture({ task, picked: (await read($, viewAtom)).picked ?? [], via })
+  const picked = (await read($, viewAtom)).picked ?? []
+  const gesture = caseGesture({ task, picked, via })
   if (gesture === 'pick') return togglePick($, task, kids)
+  if (gesture === 'ask') return askDone($, caseConfirmKeys(picked, task))
   if (batching || checking) {
     try {
       $.ui.toast('Une écriture est en cours : réessaie dans un instant.')
@@ -5453,13 +5460,26 @@ async function caseClick($: EngineInterface, source: Source, task: Task, kids: r
   batching = true
   checking = true
   try {
-    const [step] = batchPlan(await batchTasks($, source), [taskKey(task)], { status: gesture === 'close' ? 'done' : 'open' })
+    const [step] = batchPlan(await batchTasks($, source), [taskKey(task)], { status: 'open' })
     if (step === undefined) return void (await afterCheck($, { error: 'a quitté la roadmap' }, ''))
     const whys = await runBatchStep($, source, step, await $.clock.now())
-    await afterCheck($, whys.length > 0 ? { error: `${task.id ? `#${task.id} ` : ''}${whys.join(' ; ')}` } : { id: task.id }, gesture === 'close' ? 'faite' : 'rouverte')
+    await afterCheck($, whys.length > 0 ? { error: `${task.id ? `#${task.id} ` : ''}${whys.join(' ; ')}` } : { id: task.id }, 'rouverte')
   } finally {
     batching = false
     checking = false
+  }
+}
+
+/**
+ * La question d'une coche (#355) : le bandeau la pose en haut pour ces tâches, et le panneau remonte jusqu'à
+ * lui (`nearest` : rien ne bouge s'il se voit déjà). « ✓ Faites » écrit par `applyBatch`, « Annuler » la retire.
+ */
+async function askDone($: EngineInterface, keys: readonly string[]): Promise<void> {
+  await setView($, () => ({ confirmDone: [...keys], batchNote: '', batchMenu: '' }))
+  try {
+    await $.ui.scroll({ to: { key: 'confirm-bar' }, in: PANE, block: 'nearest' })
+  } catch {
+    // le panneau a pu se fermer, ou la surface ne défile pas : la question reste posée
   }
 }
 
@@ -8628,6 +8648,9 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   // La sélection de la liste (#316) : les tâches choisies encore dans la roadmap.
   const picked = pickPrune(view.picked ?? [], allTasks)
   const pickedSet = new Set(picked)
+  // La question d'une coche (#355) : ses tâches encore dans la roadmap.
+  const asking = pickPrune(view.confirmDone ?? [], allTasks)
+  const askedSet = new Set(asking)
   // Un seul calcul des prérequises par tâche : la chaîne prend la première, « Débloque » toutes.
   const prereqsCache = new Map<Task, Task[]>()
   const prereqsFor = (t: Task): Task[] => {
@@ -8692,6 +8715,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   const shareCol = narrow ? 5 : 7
   // Un nombre de tâches en petite pastille (10 px, fond discret), comme le compte des sections ;
   // estompée avec sa ligne. Au terminal, le nombre seul.
+  const countPillWidth = (n: number | string) => pillIcon({ text: String(n), bg: '', fg: '', weight: TEXT.weight.soft, size: TEXT.count, height: SIZE.pill.count }).width
   const countPill = (n: number | string, dim: boolean, ink: string) => {
     if (!Svg) return <Text tabular color={ink}>{String(n)}</Text>
     const pill = pillIcon({ text: String(n), bg: mixOver(palette.sel, palette.bg, MIX.countBg), fg: palette.text2, weight: TEXT.weight.soft, size: TEXT.count, height: SIZE.pill.count })
@@ -8725,7 +8749,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
         ) : picking?.chosen && Svg ? (
           <Svg source={chosenPill.source} alt={`#${id} choisi`} width={chosenPill.width} height={chosenPill.height} />
         ) : (
-          <Text size="caption" tabular color={done ? palette.text3 : palette.text2} {...(done ? { strikethrough: true } : {})} {...(opens ? { hover: { underline: true } } : picking ? { hover: numberPickHover(id, palette) } : {})}>{`#${id}`}</Text>
+          <Text size="caption" tabular color={done ? palette.text3 : palette.text2} {...(done ? { strikethrough: true } : {})} {...(opens ? { hover: { underline: true } } : picking ? { hover: numberPickHover(id, palette) } : {})}>{numberLabel(id, pickIt !== undefined)}</Text>
         )}
         {opens && hitOnce(`num:${id}`, opens, 1)}
         {picking && Svg ? (
@@ -11531,6 +11555,8 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     // une mère hors de l'arbre (sa flèche est dans son carré), ni une mère grise, ni une ligne du bloc de Maestro.
     const checkable = !ghost && block === undefined && (!head || (tree !== undefined && !chain && Svg !== undefined))
     const chosen = checkable && pickedSet.has(taskKey(t))
+    // Dans la question d'une coche (#355) : la case cerclée du vert de la coche, à la place du bleu de la sélection.
+    const asked = checkable && askedSet.has(taskKey(t))
     const kids = head && t.id !== undefined ? allTasks.filter(k => k.parent === t.id && k.id !== t.id) : []
     // La case coche ou rouvre ; le numéro choisit, puis la case ajoute tant que la barre est ouverte (#355).
     const pick = () => void caseClick($, source, t, kids, 'case')
@@ -11549,8 +11575,8 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     const markSource =
       moving !== undefined
         ? squareCheckMoveIcon(axisHex(t.axis), palette.onAxis, t.done, moving, palette.ok)
-        : chosen
-          ? squareArmedRowIcon(axisHex(t.axis), palette.live, palette.onAxis, checkedMark)
+        : asked || chosen
+          ? squareArmedRowIcon(axisHex(t.axis), asked ? palette.ok : palette.live, palette.onAxis, checkedMark)
           : checkedMark
             ? squareCheckRowIcon(axisHex(t.axis), palette.onAxis)
             : squareRowIcon(axisHex(t.axis))
@@ -11565,8 +11591,8 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     const markWidth = child ? TREE_CHILD_PX : grouped ? MARK_SQUARE_PX : tree ? TREE_MARK_PX : 32
     const drawn = head
       ? grouped
-        ? chosen
-          ? squareArmedRowIcon(axisHex(t.axis), palette.live, palette.onAxis, false)
+        ? asked || chosen
+          ? squareArmedRowIcon(axisHex(t.axis), asked ? palette.ok : palette.live, palette.onAxis, false)
           : squareRowIcon(axisHex(t.axis))
         : treeMotherRowIcon(axisHex(t.axis), head.open, palette.text2)
       : child
@@ -11576,7 +11602,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
           : grouped
             ? markSource
             : treeAloneRowIcon(markSource, markWidth)
-    const markAlt = `${isAbandoned(t) ? 'annulée' : t.done ? 'faite' : t.axis}${chosen ? ', choisie' : ''}${chain ? `, étape ${chain.step}` : ''}${head ? (head.open ? ', replier' : ', déplier') : ''}`
+    const markAlt = `${isAbandoned(t) ? 'annulée' : t.done ? 'faite' : t.axis}${chosen ? ', choisie' : ''}${asked ? ', à confirmer' : ''}${chain ? `, étape ${chain.step}` : ''}${head ? (head.open ? ', replier' : ', déplier') : ''}`
     const checkKey = `check:${t.id ?? keyPart(t.key)}`
     const markFaded = greyed || (t.done && !checkedMark)
     const mark = Svg ? (
@@ -11860,8 +11886,10 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   }
 
   // La barre de sélection (#316, maquette C ; calendrier C1 avec « Répéter », choix de Bertrand du
-  // 2026-11-04) : le compte, « Faites » et Éditer ; éditée, Date ▾ et Statut ▾. Chaque choix s'écrit
-  // aussitôt, par `applyBatch`. Ses boutons sont ceux de l'app : aucune zone de clic de plus (ZONE_LIMIT).
+  // 2026-11-04 ; bandeau 2 de #355, choix du 2026-11-06) : « N choisies · K sujets », « ✎ Éditer » seul bouton
+  // plein, « Annuler » qui vide la sélection ; plus de « Faites » : la case d'une choisie coche le lot, après
+  // la question. Éditée, Date ▾ et Statut ▾ ; une date s'écrit aussitôt, « Faite » passe par la question.
+  // Ses boutons sont ceux de l'app : aucune zone de clic de plus (ZONE_LIMIT).
   const batchBar = () => {
     const n = picked.length
     const subjects = new Set(allTasks.filter(t => pickedSet.has(taskKey(t))).map(t => t.axis)).size
@@ -11872,8 +11900,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
       <Box key="batch" flexDirection="column" gap={SPACE.tight}>
         <Box key="batch-bar" flexDirection="row" alignItems="center" gap={SPACE.row} paddingX={SPACE.indent} backgroundColor={palette.liveTint}>
           <Box flexDirection="row" alignItems="center" gap={SPACE.row} flexGrow={1} flexShrink={1} minWidth={0}>
-            <Text weight="semibold" color={palette.liveOn} wrap="truncate-end">{`${n} choisie${n > 1 ? 's' : ''}`}</Text>
-            {!editing && <Text size="caption" color={palette.text2} wrap="truncate-end">{`${subjects} sujet${subjects > 1 ? 's' : ''}`}</Text>}
+            <Text weight="semibold" color={palette.text} wrap="truncate-end">{editing ? `${n} choisie${n > 1 ? 's' : ''}` : `${n} choisie${n > 1 ? 's' : ''} · ${subjects} sujet${subjects > 1 ? 's' : ''}`}</Text>
           </Box>
           {editing ? (
             <Box flexDirection="row" alignItems="center" gap={SPACE.row} flexShrink={0}>
@@ -11883,7 +11910,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
                   key="batch-status"
                   label="Statut"
                   options={[{ value: 'Faite' }, { value: 'Ouverte' }]}
-                  onSelect={(v: string) => (v === 'Ouverte' ? run({ status: 'open' }, 'rouvertes')() : run({ status: 'done' }, 'faites')())}
+                  onSelect={(v: string) => (v === 'Ouverte' ? run({ status: 'open' }, 'rouvertes')() : void askDone($, picked))}
                 />
               ) : (
                 <Button key="batch-status" label="Rouvrir" onPress={run({ status: 'open' }, 'rouvertes')} />
@@ -11891,13 +11918,45 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
             </Box>
           ) : (
             <Box flexDirection="row" alignItems="center" gap={SPACE.row} flexShrink={0}>
-              <Button key="batch-done" label="✓ Faites" onPress={run({ status: 'done' }, 'faites')} />
-              <Button key="batch-edit" label="✎ Éditer" onPress={() => void setView($, () => ({ batchMenu: 'edit', batchNote: '' }))} />
+              <Button key="batch-edit" variant="primary" label="✎ Éditer" onPress={() => void setView($, () => ({ batchMenu: 'edit', batchNote: '' }))} />
             </Box>
           )}
-          <Button key="batch-clear" plain dimColor label="✕" onPress={() => void clearPick($)} />
+          <Button key="batch-clear" plain dimColor label="Annuler" onPress={() => void clearPick($)} />
         </Box>
         {dateOpen && batchCalendar(run)}
+      </Box>
+    )
+  }
+
+  // La question d'une coche (#355, bandeau 2 choisi par Bertrand le 2026-11-06) : en haut, à la place de la
+  // barre de sélection ou de la ligne de la liste, sur la teinte des faites ; « Annuler » en lien, « ✓ Faites »
+  // en pastille `ok` couverte d'un bouton sans encre (un bouton de l'app ne prend pas de couleur).
+  const confirmBar = () => {
+    const n = asking.length
+    const one = n === 1 ? allTasks.find(t => taskKey(t) === asking[0]) : undefined
+    const question = one ? `${one.id ? `#${one.id}` : `« ${clip(one.label, 30)} »`} faite ?` : `${n} tâches faites ?`
+    const okLabel = n === 1 ? '✓ Faite' : '✓ Faites'
+    const ok = () => void applyBatch($, source, { status: 'done' }, n === 1 ? 'faite' : 'faites', asking)
+    const pill = Svg ? pillIcon({ text: okLabel, bg: palette.ok, fg: palette.onAxis, height: SIZE.pill.detail }) : undefined
+    if (pill) ghostPressKeys.add('confirm-ok')
+    return (
+      <Box key="confirm-bar" flexDirection="row" alignItems="center" gap={SPACE.row} paddingX={SPACE.indent} backgroundColor={palette.doneTint}>
+        <Box flexDirection="row" alignItems="center" flexGrow={1} flexShrink={1} minWidth={0}>
+          <Text weight="semibold" color={palette.text} wrap="truncate-end">{question}</Text>
+        </Box>
+        <Button key="confirm-cancel" plain dimColor label="Annuler" onPress={() => void setView($, () => ({ confirmDone: [] }))} />
+        {pill ? (
+          <Box flexShrink={0}>
+            <Svg source={pill.source} alt={okLabel} width={pill.width} height={pill.height} />
+            <Box position="absolute" top={0} bottom={0} left={0} right={0} flexDirection="row" justifyContent="center" alignItems="center">
+              <Button key="confirm-ok" plain onPress={ok}>
+                {CHECK_OVERLAY.repeat(3)}
+              </Button>
+            </Box>
+          </Box>
+        ) : (
+          <Button key="confirm-ok" variant="primary" label={okLabel} onPress={ok} />
+        )}
       </Box>
     )
   }
@@ -12239,7 +12298,9 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
                 </Box>
               )}
             </Box>
-            <Box flexDirection="row" alignItems="center" flexShrink={0}>
+            <Box flexDirection="row" alignItems="center" gap={SPACE.row} flexShrink={0}>
+              {pickAllOf(id) && Svg && <Text size="caption" weight="semibold" color={palette.liveOn}>Tout choisir</Text>}
+              {pickAllOf(id) && !Svg && <Button key={`pick-all:${keyPart(id)}`} plain label="Tout choisir" onPress={pickAllOf(id) as () => void} />}
               {countPill(count, false, palette.text2)}
             </Box>
           </Box>
@@ -12249,9 +12310,34 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
         </Box>
         {headZones && hit(`band:${id}`, toggleBand(id))}
         {axisOf !== undefined && axisPen('head', axisOf)}
+        {/* « Tout choisir » (#355) : un bouton sans encre peint après la zone de la tête, qui sinon prendrait le
+            clic ; calé à droite comme l'étiquette, devant la place du compte, que tient un dessin vide de sa largeur (avec son alt : un Svg à alt vide n'est pas dessiné au bureau, #364). */}
+        {pickAllOf(id) && Svg && (
+          <Box position="absolute" top={0} left={0} right={0} flexDirection="row" justifyContent="flex-end" alignItems="center" gap={SPACE.row}>
+            <Button key={`pick-all:${keyPart(id)}`} plain onPress={pickAllOf(id) as () => void}>
+              {CHECK_OVERLAY.repeat(4)}
+            </Button>
+            <Svg source={`<svg xmlns="http://www.w3.org/2000/svg" width="${countPillWidth(count)}" height="${SIZE.pill.count}"/>`} alt="place du compte" width={countPillWidth(count)} height={SIZE.pill.count} />
+          </Box>
+        )}
       </Box>
     </Box>
   )
+  // « Tout choisir » (#355, choix de Bertrand du 2026-11-06 : le bloc en cours) : tant qu'une tâche est
+  // choisie, sur la tête du bloc de la dernière choisie ; il choisit toutes les tâches de ce bloc, et se tait
+  // quand le bloc est tout choisi. Rend son geste, ou rien.
+  function pickAllOf(id: string): (() => void) | undefined {
+    const last = picked.at(-1)
+    if (last === undefined) return undefined
+    const lastTask = allTasks.find(t => taskKey(t) === last)
+    if (lastTask === undefined || sectionOf.get(lastTask) !== id) return undefined
+    const keys = allGroups
+      .filter(g => g.under === id)
+      .flatMap(g => [...(g.block?.head && !g.block.ghost ? [g.block.head as Task] : []), ...g.tasks])
+      .map(taskKey)
+    if (keys.every(k => pickedSet.has(k))) return undefined
+    return () => void setView($, v => ({ picked: [...new Set([...(v.picked ?? []), ...keys])], confirmDone: [], batchNote: '' }))
+  }
   const bandRow = (id: string, name: string, count: number, lead?: RenderElement, axisOf?: string, look?: BandLookOf) =>
     Svg && axisOf !== undefined && view.axisEdit === axisEditKey('head', axisOf)
       ? <Box key={`band:${id}`} flexDirection="column" paddingTop="md">{axisEditor(axisOf)}</Box>
@@ -12761,7 +12847,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
         {/* La barre de sélection (#316, maquette C) : à la place de la ligne de la liste tant qu'une tâche est
             choisie ; « Faites » coche les choisies, Éditer ouvre Date ▾ et Statut ▾ ; l'encart du calendrier et le bilan dessous. */}
         {/* Sinon, la ligne de la liste, discrète : ce qui est montré, et une seule action selon le cas. */}
-        {picked.length > 0 ? batchBar() : (
+        {asking.length > 0 ? confirmBar() : picked.length > 0 ? batchBar() : (
           <Box flexDirection="row" justifyContent="space-between" alignItems="center" paddingX={SPACE.indent}>
             <Text size="caption" color={palette.text2} wrap="truncate-end">
               {searching

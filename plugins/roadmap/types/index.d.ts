@@ -128,6 +128,8 @@ export type View = {
   liveFolded?: boolean
   /** Les tâches choisies par leur case (#316, clés `taskKey`) : la barre de sélection les édite ; vide ou absente : aucune. */
   picked?: string[]
+  /** La question d'une coche (#355), clés `taskKey` des tâches à marquer faites : le bandeau la pose en haut ; vide ou absente : aucune. */
+  confirmDone?: string[]
   /** La barre de sélection éditée (#316) : `edit` montre Date ▾ et Statut ▾, `date` ouvre l'encart du calendrier ; vide ou absent : Faites et Éditer. */
   batchMenu?: string
   /** Le mois montré par le calendrier du lot (#316), `AAAA-MM` ; absent : celui d'aujourd'hui. */

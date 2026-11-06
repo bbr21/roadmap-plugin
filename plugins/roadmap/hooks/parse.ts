@@ -7246,13 +7246,20 @@ export function pickToggle(picked: readonly string[], task: Task, kids: readonly
 }
 
 /**
- * Le geste d'un clic sur une ligne (#355, maquette C) : son numéro choisit (`pick`, sans rien écrire) ;
- * sa case choisit aussi tant qu'une sélection est ouverte, jusqu'au ✕ de la barre ; sinon, la case coche
- * une ouverte (`close`) ou rouvre une faite (`reopen`).
+ * Le geste d'un clic sur une ligne (#355, maquette C ; retours de Bertrand du 2026-11-06) : son numéro
+ * choisit (`pick`, sans rien écrire) ; sa case coche toujours, après une question (`ask`) : la tâche seule,
+ * ou tout le lot quand une sélection est ouverte ; sans sélection, la case d'une faite la rouvre, sans question.
  */
-export function caseGesture(o: { task: Task; picked: readonly string[]; via: 'case' | 'number' }): 'pick' | 'close' | 'reopen' {
-  if (o.via === 'number' || o.picked.length > 0) return 'pick'
-  return o.task.done ? 'reopen' : 'close'
+export function caseGesture(o: { task: Task; picked: readonly string[]; via: 'case' | 'number' }): 'pick' | 'ask' | 'reopen' {
+  if (o.via === 'number') return 'pick'
+  if (o.picked.length > 0) return 'ask'
+  return o.task.done ? 'reopen' : 'ask'
+}
+
+/** Les tâches de la question d'une coche (#355) : la cliquée seule, ou le lot ouvert qu'elle rejoint (clés `taskKey`). */
+export function caseConfirmKeys(picked: readonly string[], task: Task): string[] {
+  const key = taskKey(task)
+  return picked.length === 0 ? [key] : picked.includes(key) ? [...picked] : [...picked, key]
 }
 
 /**
@@ -7261,6 +7268,15 @@ export function caseGesture(o: { task: Task; picked: readonly string[]; via: 'ca
  */
 export function numberPickHover(id: string, p: { liveTint: string; liveOn: string }): { scope: string; backgroundColor: string; color: string } {
   return { scope: `pick:${id}`, backgroundColor: p.liveTint, color: p.liveOn }
+}
+
+/**
+ * Le numéro d'une ligne (#355, survol à marges égales validé par Bertrand le 2026-11-06) : dans la liste, une
+ * espace d'un quart de cadratin de chaque côté (~3 px à 12 px), si bien que le fond pâle du survol déborde du
+ * « # » et du dernier chiffre d'autant qu'en haut et en bas ; toutes les lignes l'ont, la colonne reste alignée.
+ */
+export function numberLabel(id: string, padded: boolean): string {
+  return padded ? `\u2005#${id}\u2005` : `#${id}`
 }
 
 /** Les tâches choisies encore dans la roadmap (#316) : une tâche close ailleurs, renumérotée ou effacée sort de la sélection. */

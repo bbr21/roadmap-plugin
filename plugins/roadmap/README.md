@@ -744,6 +744,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.227.0 (2026-11-06)** : panneau : la case pose sa question en haut avant de cocher, le bandeau de sélection simplifié, Tout choisir sur le bloc en cours, survol du numéro à marges égales (#355)
 - **0.226.1 (2026-11-06)** : panneau : l'anneau du survol de la case paraît et la case reprend le clic sur le bureau (#364)
 - **0.226.0 (2026-11-06)** : panneau : un clic sur la case coche ou rouvre la tâche, un clic sur son numéro la choisit (#355)
 - **0.225.1 (2026-11-06)** : panneau : la case des lignes redevient le carré seul au repos, l'anneau ne paraît qu'au survol (#364)
