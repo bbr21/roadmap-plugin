@@ -665,18 +665,27 @@ export function squareArmedRowIcon(hex: string, ringHex: string, inkHex: string,
  * à la fin sur le dessin fixe. Cocher (`done`) : le carré passe de 10 à 12 avec un petit rebond, puis
  * la coche se trace ; rouvrir : la coche s'efface, puis le carré revient au carré de 10 d'une ouverte.
  * `elapsedMs` recule le début : un redessin reprend le mouvement où il en est.
+ * Cocher (#351) : le rebond est plus franc (0,833 → 1,3 → 0,95 → 1) et un éclat part du carré, en `burstHex` :
+ * un anneau arrondi et quatre éclats en diagonale, un seul groupe animé (une échelle, une opacité), tenu dans
+ * les 16 × 24 de la case. Quatre animations SMIL au plus dans ce dessin (budget du panneau).
  */
-export function squareCheckMoveIcon(hex: string, inkHex: string, done: boolean, elapsedMs: number): string {
+export function squareCheckMoveIcon(hex: string, inkHex: string, done: boolean, elapsedMs: number, burstHex: string = hex): string {
   const begin = `begin="-${(elapsedMs / 1000).toFixed(3)}s" fill="freeze"`
   const ease = 'calcMode="spline" keySplines="0.2 0.8 0.3 1;0.2 0.8 0.3 1"'
+  const bounce = 'calcMode="spline" keySplines="0.2 0.8 0.3 1;0.4 0 0.6 1;0.3 0 0.3 1"'
   // Le carré se dessine autour de son centre (8, 12) : l'échelle le garde centré sur la ligne.
   const square = done
-    ? `<rect x="-6" y="-6" width="12" height="12" rx="${RADIUS.square}" fill="${hex}"><animateTransform attributeName="transform" type="scale" values="0.833;1.12;1" keyTimes="0;0.5;1" ${ease} dur="0.28s" ${begin}/></rect>`
+    ? `<rect x="-6" y="-6" width="12" height="12" rx="${RADIUS.square}" fill="${hex}"><animateTransform attributeName="transform" type="scale" values="0.833;1.3;0.95;1" keyTimes="0;0.4;0.7;1" ${bounce} dur="0.4s" ${begin}/></rect>`
     : `<rect x="-6" y="-6" width="12" height="12" rx="3" fill="${hex}" transform="scale(0.833)"><animateTransform attributeName="transform" type="scale" values="1;1;0.833" keyTimes="0;0.4;1" ${ease} dur="0.25s" ${begin}/></rect>`
   const trace = done
     ? `<animate attributeName="stroke-dashoffset" values="9;9;0" keyTimes="0;0.333;1" calcMode="spline" keySplines="0 0 1 1;0.3 0 0.2 1" dur="0.36s" ${begin}/>`
     : `<animate attributeName="stroke-dashoffset" values="0;9" dur="0.15s" ${begin}/>`
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="24" viewBox="0 0 16 24"><g transform="translate(8 12)">${square}</g><path d="M5.2 12.2l1.9 1.9 3.7-3.9" fill="none" stroke="${inkHex}" stroke-width="${STROKE.check}" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="9" stroke-dashoffset="${done ? 0 : 9}">${trace}</path></svg>`
+  // L'éclat, sous la coche : ses traits restent à ±6,4 du centre au plus grand (×1,25), donc dans les 16 px.
+  const spark = (sx: number, sy: number) => `<line x1="${5.4 * sx}" y1="${5.4 * sy}" x2="${5.8 * sx}" y2="${5.8 * sy}"/>`
+  const burst = done
+    ? `<g transform="translate(8 12)"><g opacity="0" fill="none" stroke="${burstHex}" stroke-linecap="round"><rect x="-5" y="-5" width="10" height="10" rx="3" stroke-width="2"/><g stroke-width="1.6">${spark(1, 1)}${spark(-1, 1)}${spark(1, -1)}${spark(-1, -1)}</g><animateTransform attributeName="transform" type="scale" values="0.7;1.25" keySplines="0.2 0.8 0.3 1" calcMode="spline" dur="0.6s" ${begin}/><animate attributeName="opacity" values="0.8;0" dur="0.6s" ${begin}/></g></g>`
+    : ''
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="24" viewBox="0 0 16 24">${burst}<g transform="translate(8 12)">${square}</g><path d="M5.2 12.2l1.9 1.9 3.7-3.9" fill="none" stroke="${inkHex}" stroke-width="${STROKE.check}" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="9" stroke-dashoffset="${done ? 0 : 9}">${trace}</path></svg>`
 }
 
 /**

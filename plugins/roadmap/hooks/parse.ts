@@ -7287,7 +7287,7 @@ export function batchSummary(outcomes: readonly { task: Task; ok: boolean; why?:
 }
 
 /** La durée du mouvement de la case (#182, maquette A) : le rebond du carré et le trait de sa coche. */
-export const CHECK_MOVE_MS = 400
+export const CHECK_MOVE_MS = 700
 /** Le délai dans lequel une case cochée doit paraître changée pour jouer son mouvement (une écriture par Claude comprise). */
 export const CHECK_WAIT_MS = 120_000
 /** Le temps qu'une tâche qu'on vient de cocher reste à sa place, mouvement compris, avant de partir dans les Done (#182). */
@@ -7750,7 +7750,7 @@ export function heldFocus(): HeldFocus {
   return { epochs: new Map() }
 }
 
-const focusBase = (key: string) => key.replace(/~\d+$/, '')
+export const focusBase = (key: string) => key.replace(/~\d+$/, '')
 
 /** Un focus de la personne : l'élément qu'elle tient, sous sa clé de base ; aucun, le cadre. */
 export function noteHeldFocus(w: HeldFocus, element: string | undefined): void {
@@ -7777,6 +7777,18 @@ export function retireActedFocus(w: HeldFocus, element: string): boolean {
   w.epochs.set(base, (w.epochs.get(base) ?? 0) + 1)
   w.held = undefined
   return true
+}
+
+/**
+ * Un clic sur un bouton fantôme (la case d'une ligne, le bouton sans encre de son titre, #351) : l'app ne
+ * lève pas `ui.focus` pour un clic dans un volet qui n'a pas le clavier, donc rien n'est « tenu » à retirer
+ * (`retireActedFocus` ne fait alors rien) et le bouton natif garde son fond gris. L'époque monte toujours ;
+ * l'élément tenu n'est vidé que s'il valait celui-ci.
+ */
+export function retirePressedFocus(w: HeldFocus, element: string): void {
+  const base = focusBase(element)
+  w.epochs.set(base, (w.epochs.get(base) ?? 0) + 1)
+  if (w.held === base) w.held = undefined
 }
 
 const FOCUSABLE = new Set(['Button', 'Input', 'Select'])

@@ -45,6 +45,8 @@ export type Palette = {
   /** Le carton d'une tâche à faire (#291) : `pri` à 13 % sur `bg`, et son filet à 22 %. */
   planTint: string
   planEdge: string
+  /** Le fond d'une ligne cochée pendant sa tenue (#351) : `ok` à 16 % sur `bg`. */
+  doneTint: string
   /** La flèche posée dans un carré d'axe (#168) : blanche dans les deux thèmes. */
   onAxis: string
   /** Boutons icône. */
@@ -101,6 +103,7 @@ export const PALETTES: Record<ThemeName, Palette> = {
     planTint: '#343434',
     planEdge: '#474746',
     onAxis: '#FFFFFF',
+    doneTint: '#243126',
     btn: '#2D2C29',
     btnHover: '#383633',
     note: '#27292C',
@@ -141,6 +144,7 @@ export const PALETTES: Record<ThemeName, Palette> = {
     planTint: '#E2E2E2',
     planEdge: '#CECECD',
     onAxis: '#FFFFFF',
+    doneTint: '#DEEBE0',
     btn: '#F1EFE9',
     btnHover: '#E7E4DB',
     note: '#F2F2F1',
@@ -177,6 +181,8 @@ export const MIX = {
   draftBorder: 0.45,
   /** Fond du bouton principal sur son entourage, au survol. */
   primaryHover: 0.88,
+  /** `live` sur `bg` : l'anneau fantôme de la case d'une ligne au survol (#351). */
+  ring: 0.55,
   /** Opacité d'un élément estompé. */
   faint: 0.4,
   /** Opacité de la barre vide et d'un segment estompé. */

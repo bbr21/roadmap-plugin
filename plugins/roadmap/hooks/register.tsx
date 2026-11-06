@@ -457,6 +457,8 @@ import {
   heldFocus,
   noteHeldFocus,
   retireActedFocus,
+  focusBase,
+  retirePressedFocus,
   retireFocusKeys,
   retireHeldFocus,
   DEFAULT_SESSION_PREFS,
@@ -691,6 +693,8 @@ function pressKey(id: string): string {
 const zones = zoneWatch()
 // L'élément du panneau que la personne tient, et ceux qu'un défilement a fait quitter (#154).
 const focusHeld = heldFocus()
+/** Les clés des boutons sans encre d'une ligne (sa case, son titre) sur le bureau, relevées au dessin (#351). */
+const ghostPressKeys = new Set<string>()
 // Où se pose chaque masque de coin, en cellules depuis les bords de la Box.
 const CORNERS: [Corner, { top?: number; bottom?: number; left?: number; right?: number }][] = [
   ['tl', { top: 0, left: 0 }],
@@ -6743,9 +6747,14 @@ export const register: Register = (on, options) => {
       notePress(e.element)
       await closeReopenAsk($, e.element)
     }
+    // Un bouton fantôme (la case ou le titre d'une ligne, #351) quitte le focus avant le dessin que son clic
+    // déclenche : l'app ne lève pas ui.focus pour un clic, rien n'est tenu à retirer, le fond gris restait.
+    const ghostPressed =
+      e.plugin === 'roadmap' && e.component === 'Pane' && e.requestId === PANE && e.surface === 'desktop' && ghostPressKeys.has(focusBase(e.element))
+    if (ghostPressed) retirePressedFocus(focusHeld, e.element)
     const result = await next(e)
     // Le bouton cliqué dans le panneau quitte le focus au dessin suivant (#228).
-    if (e.plugin === 'roadmap' && e.component === 'Pane' && e.requestId === PANE && e.surface === 'desktop') retireActedFocus(focusHeld, e.element)
+    if (e.plugin === 'roadmap' && e.component === 'Pane' && e.requestId === PANE && e.surface === 'desktop' && !ghostPressed) retireActedFocus(focusHeld, e.element)
     return result
   })
 
@@ -11242,9 +11251,11 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     // La case qui vient d'être cochée ou rouverte joue son mouvement (#182, maquette A), une fois, dans
     // le cadre interactif qui seul joue le SMIL ; ensuite, le dessin fixe.
     const moving = Svg !== undefined && !head && !ghost ? checkMoveOf($, taskKey(t), t.done, now) : undefined
+    // Une tâche faite qui reste dans les ouvertes le temps de sa tenue (#351) : sa ligne se teinte.
+    const lingering = t.done && !head && !ghost && checkLingers(checkMoves.get(taskKey(t)), now)
     const markSource =
       moving !== undefined
-        ? squareCheckMoveIcon(axisHex(t.axis), palette.onAxis, t.done, moving)
+        ? squareCheckMoveIcon(axisHex(t.axis), palette.onAxis, t.done, moving, palette.ok)
         : chosen
           ? squareArmedRowIcon(axisHex(t.axis), palette.live, palette.onAxis, checkedMark)
           : checkedMark
@@ -11291,8 +11302,13 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     // (après un trait de chaîne, après un coude), le centre ; un décalage en cellules glissait d'une app à
     // l'autre (une cellule de ~7,8 ou ~9 pt), et le bouton posé par la gauche débordait à droite.
     const squareCenter = child ? MARK_SQUARE_CENTER.child : chain ? MARK_SQUARE_CENTER.chain : MARK_SQUARE_CENTER.mark
+    if (checkable && Svg) ghostPressKeys.add(checkKey)
+    if (Svg) ghostPressKeys.add(t.key)
     const squareHit = checkable && Svg ? (
-      <Box position="absolute" top={0} bottom={0} left={0} width={squareHitWidth(squareCenter, markWidth)} flexDirection="row" justifyContent="center" alignItems="center">
+      // L'anneau fantôme du survol (#351, maquette C) : cette Box est sa propre portée de survol (sa clé), son
+      // filet arrondi est transparent au repos et `live` pâle sous le pointeur ; aucun élément de plus par ligne.
+      // Son padding à 0 : une Box à filet sans padding prend une marge d'office au bureau (#352).
+      <Box key={`ring:${t.id ?? keyPart(t.key)}`} position="absolute" top={0} bottom={0} left={0} width={squareHitWidth(squareCenter, markWidth)} flexDirection="row" justifyContent="center" alignItems="center" paddingX={0} paddingY={0} borderStyle="round" borderColor="transparent" hover={{ borderColor: mixOver(palette.live, palette.bg, MIX.ring) }}>
         <Button key={checkKey} plain onPress={pick}>
           {CHECK_OVERLAY}
         </Button>
@@ -11387,7 +11403,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
         alignItems="center"
         gap={SPACE.row}
         paddingX={SPACE.indent}
-        {...(chosen ? { backgroundColor: palette.liveTint } : { hover: { backgroundColor: palette.hover } })}
+        {...(chosen ? { backgroundColor: palette.liveTint } : lingering ? { backgroundColor: palette.doneTint, hover: { backgroundColor: palette.hover } } : { hover: { backgroundColor: palette.hover } })}
       >
         {/* Une tâche d'une chaîne, au terminal : le trait en glyphe et son étape (1 pour la tête). */}
         {(chain || child) && !Svg && (
@@ -11453,7 +11469,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
               et barrée (#198), un titre provisoire estompé ; un bouton natif imposerait son encre, sa
               graisse et sa marge. Un bouton sans encre le couvre et ouvre la fiche. Au terminal, le bouton. */}
           {Svg ? (
-            <Text wrap="truncate-end" {...(head ? { weight: 'semibold' as const } : {})} {...(t.done ? { strikethrough: true, color: palette.text3 } : greyed || !titled(t) ? { color: palette.text2 } : {})}>
+            <Text wrap="truncate-end" {...(head ? { weight: 'semibold' as const } : {})} {...(t.done ? { strikethrough: true, color: lingering ? palette.text2 : palette.text3 } : greyed || !titled(t) ? { color: palette.text2 } : {})}>
               {s.titre}
             </Text>
           ) : null}

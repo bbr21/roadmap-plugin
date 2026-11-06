@@ -1,17 +1,17 @@
-# roadmap 0.221.0 : SHA-256 de chaque fichier installé du plugin, chemins relatifs à son dossier.
-# Vérifier une copie installée (~/.claude/plugins/cache/roadmap/roadmap/0.221.0) : plugins/roadmap/SECURITE.md, « Vérifier que ta copie est une vraie version ».
-7e74eeccbacbbd90782c9337a6acdbd20b26fc40c72d5a0f460c19cbd5e4531e  .claude-plugin/plugin.json
-346735f880da4ab36ba1905432566ecc5f438188c17920d8bcb1615783dbcf86  README.md
-d70c7992f11ace81d8746cdd0ae5f268bf280ec3077c70fa04ff65ff949508a3  SECURITE.md
+# roadmap 0.222.0 : SHA-256 de chaque fichier installé du plugin, chemins relatifs à son dossier.
+# Vérifier une copie installée (~/.claude/plugins/cache/roadmap/roadmap/0.222.0) : plugins/roadmap/SECURITE.md, « Vérifier que ta copie est une vraie version ».
+f3827468a44edde29755a68cf635216c6adab8a4a12f61c967237531a3f9c467  .claude-plugin/plugin.json
+38279570365ed3b77a618e0a4c59dc999747ba433bbb761843db006596516edb  README.md
+019e5281b23d17a481a707de3b708ad859071fa9db08df159e42b5785cb902e7  SECURITE.md
 bce019cb7147413a8e5f0687df59a41394fa92545568b5d37b1df8bd6d885e30  hooks/bar-hit.tsx
 24387c7ebf678c8c7ed5c9cee4be7aa908712c43d03f08c0106f5342c16f823f  hooks/donut-hit.tsx
 d842d789476d67282d0f04b7e5fdc68a3d981ccec65dd79cfa2d11eed13fb828  hooks/hooks.json
-4a906ca8c3cd00042c5cf18ce81d999befcf52dab68ddf83e4f7d4dc4b7e722a  hooks/icons.ts
-236850cc10d78e9c3b28c59860531ec6990f1a0d1f233c172ecef6ec633d72d0  hooks/parse.ts
+4a1f0da17915cdeb94a92f6855fadc81df5e9b28995d5e7276b9d64455b9ed0f  hooks/icons.ts
+1e0b22cc262f4503e943e1122f7436720373b0bcfa75ed3a6889189c5caae8c3  hooks/parse.ts
 a29e07be4f95c637c8f3ab377dc9a97cd16de11e8e7de7062311dd2888a0833f  hooks/press-hit.tsx
-df09b04253e68ac84a0c926f820ff0bbf6295e16fa61b917aa7a7d8a50a728e4  hooks/register.tsx
+727eb555881aaf6e01a8bd7e2ddc71c55eb2703c2253795159913fa2f0482730  hooks/register.tsx
 275e220706cce835a7365ee10900d79f75033dd4cc80429dcf6b75a2d1ab578f  hooks/reglages.tsx
-9853aa32e76f85e8bbe964aab7ec053ec7a97dd8075369fdda55b1becb3f5c30  hooks/tokens.ts
+9a457e05528f838baaa49b5c37b5a07d9787c838a64f83421d3574a74c577d49  hooks/tokens.ts
 40a25201db9424dbda555e5497587c448e2ba8f5c27efa5510ca748b4e59f1ee  scripts/one-at-a-time.sh
 d8ad29856a2309a62def7e5672cb2b2bd9e400696a9e2ec8c043e6651d392afc  skills/audit/SKILL.md
 96a83357ddbfe02dc669336763cc83d53ccf0c93e2b386e65e3b88614ad79064  skills/audit/scripts/audit.py
