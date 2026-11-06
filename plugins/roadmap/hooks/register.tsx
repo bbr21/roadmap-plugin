@@ -95,7 +95,7 @@ import {
   donutDotIcon,
   donutIcon,
 } from './icons'
-import { MIX, RADIUS, SIZE, SPACE, TEXT } from './tokens'
+import { MIX, PX, RADIUS, SIZE, SPACE, TEXT } from './tokens'
 import { SETTINGS_PANE, drawSettings, openSettings, prefsFile, redrawSettings, rememberLoadedOptions, sessionProject, watchSettings, type SettingsProject } from './reglages'
 import {
   CLASSIC_SKIPS_OFF,
@@ -218,12 +218,15 @@ import {
   type FicheCard,
   type EditField,
   type BatchChange,
+  type BatchStep,
   batchDays,
   batchPlan,
   batchSummary,
   monthGrid,
   pickPrune,
   pickToggle,
+  caseGesture,
+  numberPickHover,
   shiftMonth,
   type EditSpec,
   type TaskEdit,
@@ -5383,37 +5386,77 @@ async function applyBatch($: EngineInterface, source: Source, change: BatchChang
     const picked = (await read($, viewAtom)).picked ?? []
     const steps = batchPlan(await batchTasks($, source), picked, change)
     const at = await $.clock.now()
-    const fresh = async (key: string) => (await batchTasks($, source)).find(t => taskKey(t) === key)
     const outcomes: { task: Task; ok: boolean; why?: string }[] = []
     for (const step of steps) {
-      const key = taskKey(step.task)
-      const whys: string[] = step.refused ? [step.refused] : []
-      if (Object.keys(step.edit).length > 0) {
-        const task = await fresh(key)
-        const out = task === undefined ? { error: 'a quitté la roadmap' } : await saveEdit($, source, task, step.edit).catch((err: unknown) => ({ error: err instanceof Error ? err.message : String(err) }))
-        if ('error' in out) whys.push(out.error)
-      }
-      if (step.close || step.reopen) {
-        const task = await fresh(key)
-        if (task === undefined) whys.push('a quitté la roadmap')
-        else if (!(await checkByClaude($, source, task, step.close ? 'done' : 'reopen'))) {
-          checkMoves.set(key, { done: step.close, at })
-          const out = step.close
-            ? await closeTask($, source, task, 'done', '').catch((err: unknown) => ({ error: `Clôture impossible : ${err instanceof Error ? err.message : String(err)}` }))
-            : await reopenTask($, source, task).catch((err: unknown) => ({ error: `Réouverture impossible : ${err instanceof Error ? err.message : String(err)}` }))
-          if ('error' in out) {
-            checkMoves.delete(key)
-            whys.push(out.error)
-          }
-        }
-      }
-      // Une mère qui attend sa dernière étape : fermée avec elle, ou encore ouverte si une étape a refusé.
-      if (step.motherWaits && (await fresh(key))?.done === false) whys.push('se cochera avec sa dernière étape')
+      const whys = await runBatchStep($, source, step, at)
       outcomes.push({ task: step.task, ok: whys.length === 0, ...(whys.length > 0 ? { why: whys.join(' ; ') } : {}) })
     }
     const keep = outcomes.filter(o => !o.ok).map(o => taskKey(o.task))
     await update($, retryAtom, v => v + 1)
     await setView($, () => ({ picked: keep, batchNote: batchSummary(outcomes, what), ...(keep.length === 0 ? { batchMenu: '' } : {}) }))
+  } finally {
+    batching = false
+    checking = false
+  }
+}
+
+/**
+ * Un pas d'un lot (#316), ou d'un clic sur une case (#355) : la tâche relue, ses champs réécrits par
+ * `saveEdit`, puis sa clôture (`closeTask`) ou sa réouverture (`reopenTask`), ou Claude avec `ecriture` ;
+ * la case joue son mouvement (#182). Rend ce qui ne s'est pas fait, vide quand tout a pris.
+ */
+async function runBatchStep($: EngineInterface, source: Source, step: BatchStep, at: number): Promise<string[]> {
+  const key = taskKey(step.task)
+  const fresh = async () => (await batchTasks($, source)).find(t => taskKey(t) === key)
+  const whys: string[] = step.refused ? [step.refused] : []
+  if (Object.keys(step.edit).length > 0) {
+    const task = await fresh()
+    const out = task === undefined ? { error: 'a quitté la roadmap' } : await saveEdit($, source, task, step.edit).catch((err: unknown) => ({ error: err instanceof Error ? err.message : String(err) }))
+    if ('error' in out) whys.push(out.error)
+  }
+  if (step.close || step.reopen) {
+    const task = await fresh()
+    if (task === undefined) whys.push('a quitté la roadmap')
+    else if (!(await checkByClaude($, source, task, step.close ? 'done' : 'reopen'))) {
+      checkMoves.set(key, { done: step.close, at })
+      const out = step.close
+        ? await closeTask($, source, task, 'done', '').catch((err: unknown) => ({ error: `Clôture impossible : ${err instanceof Error ? err.message : String(err)}` }))
+        : await reopenTask($, source, task).catch((err: unknown) => ({ error: `Réouverture impossible : ${err instanceof Error ? err.message : String(err)}` }))
+      if ('error' in out) {
+        checkMoves.delete(key)
+        whys.push(out.error)
+      }
+    }
+  }
+  // Une mère qui attend sa dernière étape : fermée avec elle, ou encore ouverte si une étape a refusé.
+  if (step.motherWaits && (await fresh())?.done === false) whys.push('se cochera avec sa dernière étape')
+  return whys
+}
+
+/**
+ * Le clic sur une ligne (#355, maquette C) : son numéro, ou sa case quand une sélection est ouverte,
+ * choisit (`togglePick`) ; sinon la case coche l'ouverte ou rouvre la faite, une tâche seule,
+ * par les mêmes gardes qu'un lot (`batchPlan` : ligne prise, mère à étapes ouvertes, communication pas
+ * partie) ; ce qu'il a donné, en toast. La sélection en cours n'est pas touchée.
+ */
+async function caseClick($: EngineInterface, source: Source, task: Task, kids: readonly Task[], via: 'case' | 'number'): Promise<void> {
+  const gesture = caseGesture({ task, picked: (await read($, viewAtom)).picked ?? [], via })
+  if (gesture === 'pick') return togglePick($, task, kids)
+  if (batching || checking) {
+    try {
+      $.ui.toast('Une écriture est en cours : réessaie dans un instant.')
+    } catch {
+      // pas de toast sur cette surface
+    }
+    return
+  }
+  batching = true
+  checking = true
+  try {
+    const [step] = batchPlan(await batchTasks($, source), [taskKey(task)], { status: gesture === 'close' ? 'done' : 'open' })
+    if (step === undefined) return void (await afterCheck($, { error: 'a quitté la roadmap' }, ''))
+    const whys = await runBatchStep($, source, step, await $.clock.now())
+    await afterCheck($, whys.length > 0 ? { error: `${task.id ? `#${task.id} ` : ''}${whys.join(' ; ')}` } : { id: task.id }, gesture === 'close' ? 'faite' : 'rouverte')
   } finally {
     batching = false
     checking = false
@@ -8659,9 +8702,16 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   // `open` : la tâche a une session ouverte, et un clic sur son numéro y mène.
   // `fit` (#282), dans le groupe de l'arbre qui tient la colonne : `content`, à la largeur de son texte (après la
   // flèche d'une mère) ; `grow`, il prend la place qui reste et se cale à droite (une tâche seule).
-  const taskNumber = (id: string, open?: () => void, done = false, fit?: 'content' | 'grow') => {
+  // `pickIt` (#355, maquette C, survol C2) : le numéro d'une ligne sans session la choisit ; au survol, le fond
+  // `liveTint` et l'encre `liveOn`, sans dessin ; choisie, sa pastille `live`. Sur le bureau, un bouton sans
+  // encre posé dessus, sans zone de clic, dont le survol allume le numéro (même portée de survol).
+  const taskNumber = (id: string, open?: () => void, done = false, fit?: 'content' | 'grow', pickIt?: { press: () => void; chosen: boolean }) => {
     // Une fois cliquable par dessin (#220) : la même tâche dessinée deux fois n'a qu'un numéro qui ouvre.
     const opens = open && (graphic ? numberZones.has(id) : true) && firstZone(`num:${id}`) ? open : undefined
+    // Une tâche en session garde son numéro qui mène à sa session (#220) : elle se choisit par sa case.
+    const picking = opens ? undefined : pickIt
+    if (picking && Svg) ghostPressKeys.add(`pick:${id}`)
+    const chosenPill = pillIcon({ text: `#${id}`, bg: palette.live, fg: palette.onAxis, size: PX.text.caption, height: 18 })
     return (
       // Sa colonne (#198), calée à droite, sur toutes les lignes : les tags, l'échéance et le titre suivent,
       // alignés ; à la largeur du plus long numéro (#258), dans la liste comme dans la fiche (#259). Un
@@ -8670,10 +8720,22 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
       <Box key={`n:${id}`} {...(fit === 'grow' ? { flexGrow: 1 } : fit === 'content' ? {} : { width: treeNumCells })} flexDirection="row" justifyContent="flex-end" alignItems="center" flexShrink={0}>
         {opens && !graphic ? (
           <Button key={`num:${id}`} plain dimColor onPress={opens}>{`#${id}`}</Button>
+        ) : picking && !Svg ? (
+          <Button key={`pick:${id}`} plain dimColor onPress={picking.press}>{picking.chosen ? `[#${id}]` : `#${id}`}</Button>
+        ) : picking?.chosen && Svg ? (
+          <Svg source={chosenPill.source} alt={`#${id} choisi`} width={chosenPill.width} height={chosenPill.height} />
         ) : (
-          <Text size="caption" tabular color={done ? palette.text3 : palette.text2} {...(done ? { strikethrough: true } : {})} {...(opens ? { hover: { underline: true } } : {})}>{`#${id}`}</Text>
+          <Text size="caption" tabular color={done ? palette.text3 : palette.text2} {...(done ? { strikethrough: true } : {})} {...(opens ? { hover: { underline: true } } : picking ? { hover: numberPickHover(id, palette) } : {})}>{`#${id}`}</Text>
         )}
         {opens && hitOnce(`num:${id}`, opens, 1)}
+        {picking && Svg ? (
+          // Le bouton sans encre qui choisit, calé à droite comme le numéro ; son survol allume le numéro (même portée).
+          <Box position="absolute" top={0} bottom={0} left={0} right={0} flexDirection="row" justifyContent="flex-end" alignItems="center">
+            <Button key={`pick:${id}`} plain hover={{ scope: numberPickHover(id, palette).scope }} onPress={picking.press}>
+              {CHECK_OVERLAY}
+            </Button>
+          </Box>
+        ) : null}
       </Box>
     )
   }
@@ -11470,7 +11532,9 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     const checkable = !ghost && block === undefined && (!head || (tree !== undefined && !chain && Svg !== undefined))
     const chosen = checkable && pickedSet.has(taskKey(t))
     const kids = head && t.id !== undefined ? allTasks.filter(k => k.parent === t.id && k.id !== t.id) : []
-    const pick = () => void togglePick($, t, kids)
+    // La case coche ou rouvre ; le numéro choisit, puis la case ajoute tant que la barre est ouverte (#355).
+    const pick = () => void caseClick($, source, t, kids, 'case')
+    const pickByNumber = () => void caseClick($, source, t, kids, 'number')
     // Une marque de 16 × 24 tient la hauteur de la ligne : ni cale ni coins arrondis par ligne de
     // tâche (sur une roadmap de 120 tâches dépliées, 870 dessins figeaient le panneau).
     // Une tâche d'une chaîne : le trait et son étape font partie de la marque, un seul dessin.
@@ -11628,7 +11692,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
         </Text>
       </Box>
     ) : null
-    const number = t.id ? taskNumber(t.id, rowSession ? () => void openSession($, rowSession.entry) : undefined, t.done, grouped ? (head ? 'content' : 'grow') : undefined) : undefined
+    const number = t.id ? taskNumber(t.id, rowSession ? () => void openSession($, rowSession.entry) : undefined, t.done, grouped ? (head ? 'content' : 'grow') : undefined, checkable ? { press: pickByNumber, chosen } : undefined) : undefined
     return (
       <Box
         key={`hit:${t.key}`}

@@ -7245,6 +7245,24 @@ export function pickToggle(picked: readonly string[], task: Task, kids: readonly
   return [...picked, ...family.filter(k => !picked.includes(k))]
 }
 
+/**
+ * Le geste d'un clic sur une ligne (#355, maquette C) : son numéro choisit (`pick`, sans rien écrire) ;
+ * sa case choisit aussi tant qu'une sélection est ouverte, jusqu'au ✕ de la barre ; sinon, la case coche
+ * une ouverte (`close`) ou rouvre une faite (`reopen`).
+ */
+export function caseGesture(o: { task: Task; picked: readonly string[]; via: 'case' | 'number' }): 'pick' | 'close' | 'reopen' {
+  if (o.via === 'number' || o.picked.length > 0) return 'pick'
+  return o.task.done ? 'reopen' : 'close'
+}
+
+/**
+ * Le survol du numéro qui choisit (#355, survol C2 choisi par Bertrand) : une portée partagée par le texte du
+ * numéro et le bouton sans encre posé dessus, qui allume le texte (fond `liveTint`, encre `liveOn`), sans dessin.
+ */
+export function numberPickHover(id: string, p: { liveTint: string; liveOn: string }): { scope: string; backgroundColor: string; color: string } {
+  return { scope: `pick:${id}`, backgroundColor: p.liveTint, color: p.liveOn }
+}
+
 /** Les tâches choisies encore dans la roadmap (#316) : une tâche close ailleurs, renumérotée ou effacée sort de la sélection. */
 export function pickPrune(picked: readonly string[], tasks: readonly Task[]): string[] {
   const live = new Set(tasks.map(taskKey))
