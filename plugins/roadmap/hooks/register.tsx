@@ -179,7 +179,6 @@ import {
   cardSummary,
   chainOf,
   ficheCards,
-  missionCut,
   missionBullets,
   missionShown as missionVisible,
   MISSION_FOLD,
@@ -8567,11 +8566,9 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     // #278 : un projet en `mission: puces` montre le libellé un fait par puce (maquette A de Caroline) ;
     // un libellé sans « ; » qui coupe reste une phrase.
     const bulleted = !frame.recap && projectSettings(ficheSource).mission === 'puces' ? missionBullets(frame.text) : undefined
-    // Sans récap, une ligne longue tient en trois lignes, le reste derrière « Tout voir » (#146, maquette B).
-    const cut = frame.recap || bulleted ? undefined : missionCut(frame.text)
+    // La mission toujours dépliée, son texte entier (#352, maquette A3 de BBR) : plus de coupe en signes (#146)
+    // ni de fondu (#205) ; seul le récap garde son lien vers la ligne de la roadmap.
     const missionShown = missionOpen === current.key
-    // Sur le bureau, la coupe se fait en hauteur sous un fondu (#205) ; au terminal, en signes (#146).
-    const faded = cut?.cut === true && graphic && Client !== undefined && Svg !== undefined
     const toggleMission = () => void setView($, v => ({ missionOpen: v.missionOpen === current.key ? '' : current.key }))
     const s = short(current)
     const days = age(current)
@@ -9621,15 +9618,10 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     // La mission telle que la fiche la montrait (#146, #205, #278), sur le fond du carton.
     const missionBody = (bg: string, dim: boolean) => (
       <Box key="mission-body" flexDirection="column" gap={SPACE.tight}>
-        {bulleted
-          ? missionList(bulleted)
-          : faded && !missionShown
-            ? fadeClip('mission-line', <Text wrap="wrap" {...(dim ? { color: palette.text2 } : {})}>{frame.text}</Text>, bg, toggleMission)
-            : <Text wrap="wrap" {...(dim ? { color: palette.text2 } : {})}>{cut?.cut && !missionShown && !faded ? cut.text : frame.text}</Text>}
-        {faded && missionShown && foldedRow('mission-line', true, bg, toggleMission)}
-        {(frame.recap || (cut?.cut && !faded)) && moreLink('mission-line', missionShown ? 'Replier' : frame.recap ? 'La ligne de la roadmap' : 'Tout lire', toggleMission)}
+        {bulleted ? missionList(bulleted) : <Text wrap="wrap" {...(dim ? { color: palette.text2 } : {})}>{frame.text}</Text>}
+        {frame.recap && moreLink('mission-line', missionShown ? 'Replier' : 'La ligne de la roadmap', toggleMission)}
         {frame.recap && missionShown && <Text size="caption" wrap="wrap">{current.label}</Text>}
-        {noteShown && (bulleted || (cut ? !cut.cut || missionShown : missionShown)) && linked('note', noteShown, { color: palette.text2 })}
+        {noteShown && (bulleted || !frame.recap || missionShown) && linked('note', noteShown, { color: palette.text2 })}
       </Box>
     )
     // La durée (#314, maquette A1 choisie par BBR le 2026-11-05) : dans le carton d'une close, sous la demande et
@@ -9721,7 +9713,9 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
       const picked = pickN !== undefined && line !== g.line
       const pickSeg = (i: number) => () => void setView($, v => ({ gaugePick: v.gaugePick === `${prefix}${i}` ? '' : `${prefix}${i}` }))
       return (
-        <Box key={`gauge:${kind}`} flexDirection="column" gap={SPACE.tight} paddingX={SPACE.indent}>
+        <Box key={`gauge:${kind}`} flexDirection="column" paddingX={SPACE.indent}>
+          {/* Au retrait du carton (#352, maquette A3) : le compte sur le bord droit du carton et du bloc du bas. */}
+          <Box key={`gauge-inset:${kind}`} flexDirection="column" gap={SPACE.tight} paddingX="sm" minWidth={0}>
           <Box flexDirection="row" alignItems="center" gap={SPACE.row}>
             <Text size="footnote" weight="semibold" color={kind === 'steps' ? palette.text : palette.text2} wrap="truncate-end">{g.head}</Text>
             <Box flexGrow={1} flexShrink={1} minWidth={0} flexDirection="row" justifyContent="flex-end">
@@ -9751,6 +9745,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
           <Box key={`gauge-line:${kind}`} flexDirection="column">
             <Text size="footnote" weight="semibold" wrap="truncate-end" color={line.tone === 'live' ? palette.liveOn : line.tone === 'block' && picked ? palette.blockOn : palette.text}>{line.title}</Text>
             <Text size="caption" wrap="truncate-end" color={line.tone === 'block' && !picked ? palette.blockOn : palette.text2}>{line.sub}</Text>
+          </Box>
           </Box>
         </Box>
       )
@@ -9785,7 +9780,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     const sectionHead = (id: string, name: string, summary: string) => {
       const closed = folded(id)
       return graphic && Client && Svg ? (
-        <Box key={`hit:card:${id}`} flexDirection="row" alignItems="center" paddingX={SPACE.indent} hover={{ backgroundColor: palette.hover }}>
+        <Box key={`hit:card:${id}`} flexDirection="row" alignItems="center" paddingX="sm" minWidth={0} hover={{ backgroundColor: palette.hover }}>
           <Svg source={familyChevronIcon(palette.text2, !closed)} alt={closed ? 'replié' : 'déplié'} width={FAMILY_MARK_PX} height={24} />
           <Text size="footnote" weight="semibold" color={palette.text2}>{name}</Text>
           <Box flexGrow={1} flexShrink={1} minWidth={0} flexDirection="row" justifyContent="flex-end">
@@ -9811,7 +9806,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
           key={`family:${key}`}
           flexDirection="row"
           alignItems="center"
-          paddingX={SPACE.indent}
+          paddingX="sm"
           minWidth={0}
           {...(o.here ? { backgroundColor: palette.hover } : press ? { hover: { backgroundColor: palette.hover } } : {})}
         >
@@ -9893,13 +9888,15 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
       )
     }
     // Une rangée de Détails : l'étiquette sur 10 unités, la valeur à côté ; sans filet (le filet sépare les groupes).
+    // Au retrait du carton (#352) ; la valeur et son appoint sur une seule ligne (« dans 7 j » à côté des dates),
+    // la rangée bornée à la largeur du cadre (`minWidth={0}`) : une source en prose passe à la ligne.
     const detailRow = (name: string, value: RenderElement, key: string) => (
-      <Box key={`detail:${key}`} flexDirection="row" alignItems="center" paddingX={SPACE.indent}>
+      <Box key={`detail:${key}`} flexDirection="row" alignItems="center" paddingX="sm" minWidth={0}>
         <Box width={10} flexShrink={0} flexDirection="row" alignItems="center">
           {strut(SIZE.strut.row)}
           <Text size="caption" color={palette.text3}>{name}</Text>
         </Box>
-        <Box flexDirection="row" alignItems="center" gap={SPACE.row} flexShrink={1} minWidth={0}>
+        <Box key={`detail-value:${key}`} flexDirection="row" flexWrap="nowrap" alignItems="center" gap={SPACE.row} flexShrink={1} minWidth={0}>
           {value}
         </Box>
       </Box>
@@ -9934,8 +9931,14 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
           g.map((r, ri) => {
             const text = (
               <>
-                {r.mono ? mono(r.value) : <Text size="footnote" wrap="truncate-end">{r.value}</Text>}
-                {r.sub && <Text size="caption" color={palette.text2} wrap="truncate-end">{r.sub}</Text>}
+                <Box key={`detail-main:${gi}:${ri}`} flexShrink={r.sub ? 0 : 1} minWidth={0}>
+                  {r.mono ? mono(r.value) : <Text size="footnote" wrap={r.file ? 'truncate-end' : 'wrap'}>{r.value}</Text>}
+                </Box>
+                {r.sub && (
+                  <Box key={`detail-sub:${gi}:${ri}`} flexShrink={1} minWidth={0}>
+                    <Text size="caption" color={palette.text2} wrap="truncate-end">{r.sub}</Text>
+                  </Box>
+                )}
               </>
             )
             const file = r.file && (r.icon === 'document' ? r.file : `${source.dir}/${r.file}`)
@@ -9981,7 +9984,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
       if (sections.length === 0) return null
       return (
         <Box key="bottom-block" paddingX={SPACE.indent}>
-          <Box key="bottom-frame" flexDirection="column" flexGrow={1} flexShrink={1} minWidth={0} borderStyle="round" borderColor={palette.border}>
+          <Box key="bottom-frame" flexDirection="column" flexGrow={1} flexShrink={1} minWidth={0} paddingX={0} paddingY={0} borderStyle="round" borderColor={palette.border}>
             {sections.map((x, i) => (i === 0 ? x : <Box key={`bottom-rule:${i}`} flexDirection="column">{ruleAbove}{x}</Box>))}
           </Box>
         </Box>
@@ -10056,19 +10059,23 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
                   }
                   const label = kind === 'done' ? 'Marquer faite' : 'Annuler la tâche'
                   // Deux boutons dessinés (#343) : « Marquer faite » plein, coche `ok` ; « Annuler la tâche » au filet.
+                  // Même forme (#352, maquette A3) : chacun son filet (celui du plein à la couleur de son fond), sans la
+                  // marge d'office d'une Box à filet, sur le même étai de 28 px.
+                  const look = kind === 'done' ? 'done' : 'cancel'
+                  const struck = Svg && <Svg key={`close-strut:${look}`} source={`<svg xmlns="http://www.w3.org/2000/svg" width="1" height="${SIZE.strut.field}"/>`} alt="espace" width={1} height={SIZE.strut.field} />
                   return pressable(
-                    kind === 'done' ? 'done' : 'cancel',
+                    look,
                     ask,
                     kind === 'done' ? (
-                      <Box flexDirection="row" alignItems="center" gap={SPACE.row} paddingX={SPACE.indent} backgroundColor={palette.btn} hover={{ backgroundColor: palette.btnHover }}>
+                      <Box key="close-look:done" flexDirection="row" alignItems="center" gap={SPACE.row} paddingX={SPACE.indent} paddingY={0} borderStyle="round" borderColor={palette.btn} backgroundColor={palette.btn} hover={{ backgroundColor: palette.btnHover, borderColor: palette.btnHover }}>
                         {corners(RADIUS.control, palette.bg)}
-                        {strut(SIZE.strut.row)}
+                        {struck}
                         {Svg && <Svg source={checkIcon(palette.ok, SIZE.icon.sm)} alt="icône" width={SIZE.icon.sm} height={SIZE.icon.sm} />}
                         <Text weight="semibold">{label}</Text>
                       </Box>
                     ) : (
-                      <Box flexDirection="row" alignItems="center" gap={SPACE.row} paddingX={SPACE.indent} borderStyle="round" borderColor={palette.border}>
-                        {strut(SIZE.strut.row)}
+                      <Box key="close-look:cancel" flexDirection="row" alignItems="center" gap={SPACE.row} paddingX={SPACE.indent} paddingY={0} borderStyle="round" borderColor={palette.border}>
+                        {struck}
                         {Svg && <Svg source={closeIcon(palette.text2, SIZE.icon.sm)} alt="icône" width={SIZE.icon.sm} height={SIZE.icon.sm} />}
                         <Text color={palette.text2}>{label}</Text>
                       </Box>
@@ -10703,7 +10710,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
         {!editing && gaugeBlock('steps', stepsGauge, stepsColors)}
         {!editing && stepsQuestion && (
           <Box key="steps-question" paddingX={SPACE.indent}>
-            <Text size="caption" color={palette.blockOn} wrap="wrap">{stepsQuestion}</Text>
+            <Box paddingX="sm" minWidth={0}><Text size="caption" color={palette.blockOn} wrap="wrap">{stepsQuestion}</Text></Box>
           </Box>
         )}
         {/* En édition, la mission dans son cadre (#150) et ses champs (#161, #235). */}
@@ -10719,17 +10726,11 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
               ? editInput(labelSpec)
               : bulleted
                 ? missionList(bulleted)
-                : faded && !missionShown
-                ? fadeClip('mission-line', <Text wrap="wrap">{frame.text}</Text>, palette.note, toggleMission)
-                : <Text wrap="wrap">{cut?.cut && !missionShown && !faded ? cut.text : frame.text}</Text>}
+                : <Text wrap="wrap">{frame.text}</Text>}
             {labelSpec && editBad(labelSpec) && <Text size="caption" color={palette.lateOn} wrap="wrap">{editNote}</Text>}
-            {/* Coupée (#205) : la flèche, dans le fondu ou sous le texte ouvert ; au terminal, « Tout voir ». */}
-            {!editing && faded && missionShown && foldedRow('mission-line', true, palette.note, toggleMission)}
-            {!editing &&
-              (frame.recap || (cut?.cut && !faded)) &&
-              moreLink('mission-line', missionShown ? 'Replier' : frame.recap ? 'La ligne de la roadmap' : 'Tout voir', toggleMission)}
+            {!editing && frame.recap && moreLink('mission-line', missionShown ? 'Replier' : 'La ligne de la roadmap', toggleMission)}
             {!editing && frame.recap && missionShown && <Text size="caption" wrap="wrap">{current.label}</Text>}
-            {!editing && noteShown && (bulleted || (cut ? !cut.cut || missionShown : missionShown)) && linked('note', noteShown, { color: palette.text2 })}
+            {!editing && noteShown && (bulleted || !frame.recap || missionShown) && linked('note', noteShown, { color: palette.text2 })}
           </Box>
         </Box>}
         {finBox()}

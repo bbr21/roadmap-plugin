@@ -744,6 +744,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.221.0 (2026-11-06)** : panneau : la fiche fidèle à la maquette A3 : mission entière, un seul retrait, Quand sur une ligne, boutons de même forme (#352)
 - **0.220.0 (2026-11-06)** : panneau : une session cachée se repose, relue une fois par minute et réveillée à son retour (#348)
 - **0.219.2 (2026-11-06)** : panneau : une écriture du store refusée par le verrou d'une autre session se réessaie (#350)
 - **0.219.1 (2026-11-06)** : panneau : la source et la fiche d'une tâche ne s'ouvrent que si ce sont des documents du projet (#343)
