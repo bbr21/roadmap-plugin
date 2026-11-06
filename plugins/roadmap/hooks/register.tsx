@@ -85,6 +85,11 @@ import {
   squareIcon,
   STROKE,
   gaugeIcon,
+  FAMILY_MARK_PX,
+  familyChevronIcon,
+  familyElbowIcon,
+  familyLeadIcon,
+  familySquareIcon,
   type Palette,
   donutDotIcon,
   donutIcon,
@@ -594,8 +599,8 @@ import {
   reportReminder,
   roadmapChanges,
   cartonOf,
-  chainGauge,
   detailsStory,
+  familyOf,
   gaugeLine,
   stepGauge,
   type Gauge,
@@ -9615,7 +9620,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     // Les deux jauges (#291), de la même forme : sa tête et son compte, un segment par étape ou par tâche,
     // dessous la ligne de gauche ; un clic sur un segment y met le sien, un second la rend.
     const bodyWidth = fullWidth((e.props as { bodyColumns?: number }).bodyColumns ?? 48)
-    const gaugeBlock = (kind: 'steps' | 'chain', g: Gauge | undefined, colors: Record<GaugeKind | 'ring', string>) => {
+    const gaugeBlock = (kind: 'steps', g: Gauge | undefined, colors: Record<GaugeKind | 'ring', string>) => {
       if (!g || editing) return null
       const prefix = `${kind}:${taskKey(current)}:`
       const pickN = gaugePick.startsWith(prefix) ? Number(gaugePick.slice(prefix.length)) : undefined
@@ -9661,7 +9666,6 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     const stepsAge = stepsStatus ? stepsView(stepsStatus.steps, { now, at: stepsStatus.at, fold: Infinity, closed: current.done })?.age ?? '' : ''
     const stepsGauge = stepsStatus ? stepGauge(stepsStatus.steps, { closed: current.done, age: stepsAge }) : undefined
     const stepsColors = { done: current.done ? palette.finished : palette.live, here: palette.text, pre: palette.block, next: palette.live, open: palette.sel, none: palette.text3, cancelled: palette.sel, ring: palette.text }
-    const chainOfFiche = chainGauge(current, allTasks, { isLive, prereqsOf: prereqsFor, unlocksOf: t => unlocksOf(t, allTasks, prereqsFor), titleOf: t => short(t).titre })
     const axisInk = axisHex(current.axis)
     const chainColors = { done: axisInk, here: palette.text, pre: palette.block, next: axisInk, open: palette.sel, none: palette.text3, cancelled: palette.sel, ring: palette.text }
     // La question de la session qui attend, sous la jauge des étapes, comme dans la carte Étapes (#214).
@@ -9674,54 +9678,222 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
       ...(facts ? { branch: facts.branch } : {}),
       ...(live ? { workMs: now - live.entry.startedAt } : {}),
       cles: Object.keys(cles),
+      ...(fichePath ? { fichePath } : {}),
     })
-    const storyCard = () =>
-      card(
-        'details',
-        'Détails',
-        story.summary,
-        <Box flexDirection="column">
-          {story.groups.map((g, gi) => (
-            <Box key={`story-group:${gi}`} flexDirection="column" {...(gi > 0 ? { paddingTop: 1 } : {})}>
-              {g.map((r, ri) =>
-                field(
-                  r.name,
-                  <Box flexDirection="row" alignItems="center" gap={SPACE.row} flexShrink={1} minWidth={0}>
-                    {r.mono ? mono(r.value) : <Text wrap="truncate-end">{r.value}</Text>}
-                    {r.sub && <Text size="caption" color={palette.text2} wrap="truncate-end">{r.sub}</Text>}
-                  </Box>,
-                  `story:${gi}:${ri}`,
-                ),
-              )}
-            </Box>
-          ))}
-          {/* Une prérequise introuvable se dit ici (#291) : la jauge de chaîne ne porte que les tâches trouvées. */}
-          {missingPrereqs(current, allTasks).map((n, i) => field(i === 0 ? 'Avant' : '', plain(`#${n} introuvable`), `story-missing:${n}`))}
-          {field(
-            'Attend',
-            current.attend !== undefined &&
-              (me.includes(attendWho(current.attend)) && current.attend === attendWho(current.attend) ? plain(current.attend) : linked('attend', current.attend, { size: 'caption', color: palette.text2 })),
-          )}
-          {docs.length > 0 &&
-            field(
-              'Dossier',
-              <Box flexDirection="row" gap={SPACE.row}>
-                {docs.map(d => (
-                  <Button key={`focus-doc:${d.label}`} plain dimColor label={d.label} onPress={() => void openFile($, d.path)} />
-                ))}
-              </Box>,
-            )}
-          {field('Spec', mono(current.spec))}
-          {(fichePath || srcPath) &&
-            field(
-              'Fichiers',
-              <Box key="files-buttons" flexDirection="row" alignItems="center" gap={SPACE.row}>
-                {fichePath && action('open-fiche', documentIcon(palette.text, SIZE.icon.chip), 'Fiche', () => void openFile($, fichePath), undefined, 'chip')}
-                {srcPath && action('open-src', externalIcon(palette.text, SIZE.icon.chip), 'Source', () => void openFile($, srcPath), undefined, 'chip')}
-              </Box>,
-            )}
-        </Box>,
+    // Le bas de la fiche (#343, maquette A2 alignée, choix de BBR) : un bloc soudé, un cadre arrondi, une section
+    // par contenu (la famille, puis Détails) et un filet entre elles. Trois guides : une colonne gauche de 24 px
+    // commune au chevron, au carré de la mère et au tronc de l'arbre ; un bord droit commun aux comptes et aux
+    // dates ; les boutons calés sur le bord du cadre. Une cellule n'a pas de largeur sûre en px (#172, #282) : la
+    // colonne se fait en dessins, sans écart en cellules entre la marque de 24 px et ce qui la suit.
+    const family = editing
+      ? undefined
+      : familyOf(current, allTasks, { isLive, prereqsOf: prereqsFor, unlocksOf: t => unlocksOf(t, allTasks, prereqsFor), titleOf: t => short(t).titre, today })
+    const blankMark = `<svg xmlns="http://www.w3.org/2000/svg" width="${FAMILY_MARK_PX}" height="24"/>`
+    const sectionHead = (id: string, name: string, summary: string) => {
+      const closed = folded(id)
+      return graphic && Client && Svg ? (
+        <Box key={`hit:card:${id}`} flexDirection="row" alignItems="center" paddingX={SPACE.indent} hover={{ backgroundColor: palette.hover }}>
+          <Svg source={familyChevronIcon(palette.text2, !closed)} alt={closed ? 'replié' : 'déplié'} width={FAMILY_MARK_PX} height={24} />
+          <Text size="footnote" weight="semibold" color={palette.text2}>{name}</Text>
+          <Box flexGrow={1} flexShrink={1} minWidth={0} flexDirection="row" justifyContent="flex-end">
+            {summary !== '' && <Text size="caption" color={palette.text3} wrap="truncate-end">{summary}</Text>}
+          </Box>
+          {hit(`card:${id}`, toggleCard(id))}
+        </Box>
+      ) : (
+        <Button key={`card:${id}`} plain onPress={toggleCard(id)}>
+          <Text>{closed ? '▸ ' : '▾ '}</Text>
+          <Text weight="semibold">{name}</Text>
+          {summary !== '' && <Text dimColor>{` · ${summary}`}</Text>}
+        </Button>
       )
+    }
+    // Une ligne de la famille : sa marque (24 px, puis le carré de 14 px), son titre, à droite ce qu'elle dit.
+    // La ligne de la fiche est surlignée ; un clic sur une autre ouvre sa tâche (sauf chez un enfant de Maestro, #233).
+    const familyLine = (key: string, x: Task, o: { here: boolean; marks: RenderElement; title: RenderElement; right: RenderElement; flush?: boolean }) => {
+      const opens = !o.here && !(inSession && child)
+      const press = graphic && Client && opens
+      return (
+        <Box
+          key={`family:${key}`}
+          flexDirection="row"
+          alignItems="center"
+          paddingX={SPACE.indent}
+          minWidth={0}
+          {...(o.here ? { backgroundColor: palette.hover } : press ? { hover: { backgroundColor: palette.hover } } : {})}
+        >
+          {o.marks}
+          {/* Le titre de la mère colle à sa marque (`flush`), au guide du nom de section ; celui d'une ligne suit son carré. */}
+          <Box flexShrink={1} minWidth={0} {...(o.flush ? {} : { paddingLeft: SPACE.row })}>
+            {opens && !press ? (
+              <Button key={`link:${x.key}`} plain hover={{ underline: true }} onPress={select(selectionOf(x))}>{o.title}</Button>
+            ) : (
+              o.title
+            )}
+          </Box>
+          <Box flexGrow={1} flexShrink={0} flexDirection="row" justifyContent="flex-end" alignItems="center" gap={SPACE.row} paddingLeft={SPACE.row}>
+            {o.right}
+          </Box>
+          {press && hit(`family:${x.key}`, select(selectionOf(x)))}
+        </Box>
+      )
+    }
+    const familySection = (f: NonNullable<typeof family>) => {
+      const closed = folded('chaine')
+      const lead = f.lead
+      return (
+        <Box key="family-section" flexDirection="column" paddingY="xs">
+          {sectionHead('chaine', f.head, f.count)}
+          {!closed && lead &&
+            familyLine('lead', lead.task, {
+              here: lead.here,
+              flush: true,
+              marks: Svg ? (
+                <Svg source={familyLeadIcon(axisHex(lead.task.axis))} alt="mère" width={FAMILY_MARK_PX} height={24} />
+              ) : (
+                <Text color={palette.text2}>■</Text>
+              ),
+              title: <Text weight="semibold" wrap="truncate-end">{lead.title}</Text>,
+              right: (
+                <>
+                  {Svg && <Svg source={gaugeIcon(lead.kinds, chainColors, 56, 6)} alt={`${f.count}`} width={56} height={6} />}
+                  <Text size="caption" tabular color={palette.text2}>{lead.right}</Text>
+                </>
+              ),
+            })}
+          {!closed &&
+            f.rows.map((r, i) => {
+              const sq: 'open' | 'done' | 'cancelled' = r.state === 'done' ? 'done' : r.state === 'cancelled' ? 'cancelled' : 'open'
+              const square = Svg ? (
+                <Svg source={familySquareIcon(axisHex(r.task.axis), sq, palette.onAxis)} alt={sq === 'done' ? 'faite' : r.task.axis} width={14} height={24} />
+              ) : (
+                <Text color={palette.text3}>{sq === 'done' ? '✓' : '□'}</Text>
+              )
+              const lead24 = f.tree
+                ? Svg ? (
+                    <Svg source={familyElbowIcon(palette.text3, i === f.rows.length - 1)} alt="lien" width={FAMILY_MARK_PX} height={24} />
+                  ) : (
+                    <Text color={palette.text3}>{i === f.rows.length - 1 ? '└ ' : '├ '}</Text>
+                  )
+                : Svg && <Svg source={blankMark} alt="" width={FAMILY_MARK_PX} height={24} />
+              return familyLine(r.task.key, r.task, {
+                here: r.here,
+                marks: (
+                  <>
+                    {lead24}
+                    {square}
+                  </>
+                ),
+                title: (
+                  <Text
+                    wrap="truncate-end"
+                    {...(r.here ? { weight: 'semibold' as const } : {})}
+                    {...(r.state === 'done' || r.state === 'cancelled' ? { strikethrough: true, color: palette.text3 } : {})}
+                  >
+                    {r.title}
+                  </Text>
+                ),
+                right: <Text size="caption" tabular color={r.tone === 'block' ? palette.blockOn : palette.text2} wrap="end">{r.right}</Text>,
+              })
+            })}
+        </Box>
+      )
+    }
+    // Une rangée de Détails : l'étiquette sur 10 unités, la valeur à côté ; sans filet (le filet sépare les groupes).
+    const detailRow = (name: string, value: RenderElement, key: string) => (
+      <Box key={`detail:${key}`} flexDirection="row" alignItems="center" paddingX={SPACE.indent}>
+        <Box width={10} flexShrink={0} flexDirection="row" alignItems="center">
+          {strut(SIZE.strut.row)}
+          <Text size="caption" color={palette.text3}>{name}</Text>
+        </Box>
+        <Box flexDirection="row" alignItems="center" gap={SPACE.row} flexShrink={1} minWidth={0}>
+          {value}
+        </Box>
+      </Box>
+    )
+    const detailsSection = () => {
+      const closed = folded('details')
+      // Les rangées du récit, puis celles que le récit ne dit pas : prérequise introuvable, Attend, Dossier, Spec.
+      const extras: [string, RenderElement | false | undefined, string][] = [
+        ...missingPrereqs(current, allTasks).map((n, i): [string, RenderElement, string] => [i === 0 ? 'Avant' : '', <Text key={`missing:${n}`} size="footnote" wrap="truncate-end">{`#${n} introuvable`}</Text>, `missing:${n}`]),
+        [
+          'Attend',
+          current.attend !== undefined &&
+            (me.includes(attendWho(current.attend)) && current.attend === attendWho(current.attend) ? plain(current.attend) : linked('attend', current.attend, { size: 'caption', color: palette.text2 })),
+          'attend',
+        ],
+        [
+          'Dossier',
+          docs.length > 0 && (
+            <Box key="detail-docs" flexDirection="row" gap={SPACE.row}>
+              {docs.map(d => (
+                <Button key={`focus-doc:${d.label}`} plain dimColor label={d.label} onPress={() => void openFile($, d.path)} />
+              ))}
+            </Box>
+          ),
+          'dossier',
+        ],
+        ['Spec', current.spec !== undefined && mono(current.spec), 'spec'],
+      ]
+      const tail = extras.filter(([, v]) => v)
+      const groups = [
+        ...story.groups.map((g, gi) =>
+          g.map((r, ri) => {
+            const text = (
+              <>
+                {r.mono ? mono(r.value) : <Text size="footnote" wrap="truncate-end">{r.value}</Text>}
+                {r.sub && <Text size="caption" color={palette.text2} wrap="truncate-end">{r.sub}</Text>}
+              </>
+            )
+            const file = r.file && (r.icon === 'document' ? r.file : `${source.dir}/${r.file}`)
+            const value = file
+              ? pressable(
+                  `open:${r.icon}:${r.file}`,
+                  () => void openFile($, file),
+                  <Box flexDirection="row" alignItems="center" gap={SPACE.row}>
+                    {Svg && (
+                      <Svg
+                        source={r.icon === 'document' ? documentIcon(palette.text2, SIZE.icon.chip) : externalIcon(palette.text2, SIZE.icon.chip)}
+                        alt={r.icon === 'document' ? 'fiche' : 'source'}
+                        width={SIZE.icon.chip}
+                        height={SIZE.icon.chip}
+                      />
+                    )}
+                    {text}
+                  </Box>,
+                  <Button key={`open:${r.icon}`} plain label={r.value} onPress={() => void openFile($, file)} />,
+                )
+              : text
+            return detailRow(r.name, value, `${gi}:${ri}`)
+          }),
+        ),
+        ...(tail.length > 0 ? [tail.map(([name, v, key]) => detailRow(name, v as RenderElement, key))] : []),
+      ]
+      return (
+        <Box key="details-section" flexDirection="column" paddingY="xs">
+          {sectionHead('details', 'Détails', story.summary)}
+          {!closed &&
+            groups.map((g, gi) => (
+              <Box key={`detail-group:${gi}`} flexDirection="column">
+                {gi > 0 && <Box key="detail-rule" paddingY="xs">{ruleAbove}</Box>}
+                {g}
+              </Box>
+            ))}
+        </Box>
+      )
+    }
+    const bottomBlock = (): RenderElement | null => {
+      if (editing) return null
+      const sections = [family && familySection(family), layout.cards.includes('details') && detailsSection()].filter((x): x is RenderElement => Boolean(x))
+      if (sections.length === 0) return null
+      return (
+        <Box key="bottom-block" paddingX={SPACE.indent}>
+          <Box key="bottom-frame" flexDirection="column" flexGrow={1} flexShrink={1} minWidth={0} borderStyle="round" borderColor={palette.border}>
+            {sections.map((x, i) => (i === 0 ? x : <Box key={`bottom-rule:${i}`} flexDirection="column">{ruleAbove}{x}</Box>))}
+          </Box>
+        </Box>
+      )
+    }
     // La confirmation d'une clôture (#73) : faite ou annulée, sa raison, ce qui pourrait la contredire.
     const closeAsk = () => (
       <Box key="cancel-box" flexDirection="column" gap={SPACE.block} padding="sm" borderStyle="round" borderColor={palette.border}>
@@ -9769,7 +9941,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
       </Box>
     )
     // Le pied (#291) : « Marquer faite », « Annuler la tâche » et leur confirmation ; close, sa session gardée.
-    const closeBlock = (): RenderElement | null => {
+    const closeRow = (): RenderElement | null => {
       if (editing) return null
       if (current.done)
         return kept ? (
@@ -9784,18 +9956,33 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
             <Box key="close-row" flexDirection="row" alignItems="center" gap={SPACE.row}>
               {(['done', 'abandon'] as const)
                 .filter(kind => !(asking && closeKind === kind))
-                .map(kind => (
-                  <Button
-                    key={kind === 'done' ? 'done' : 'cancel'}
-                    plain
-                    dimColor
-                    label={kind === 'done' ? 'Marquer faite' : 'Annuler la tâche'}
-                    onPress={() => {
-                      cancelReason = ''
-                      void setView($, () => ({ cancelAsk: taskKey(current), closeKind: kind, cancelNote: '' }))
-                    }}
-                  />
-                ))}
+                .map(kind => {
+                  const ask = () => {
+                    cancelReason = ''
+                    void setView($, () => ({ cancelAsk: taskKey(current), closeKind: kind, cancelNote: '' }))
+                  }
+                  const label = kind === 'done' ? 'Marquer faite' : 'Annuler la tâche'
+                  // Deux boutons dessinés (#343) : « Marquer faite » plein, coche `ok` ; « Annuler la tâche » au filet.
+                  return pressable(
+                    kind === 'done' ? 'done' : 'cancel',
+                    ask,
+                    kind === 'done' ? (
+                      <Box flexDirection="row" alignItems="center" gap={SPACE.row} paddingX={SPACE.indent} backgroundColor={palette.btn} hover={{ backgroundColor: palette.btnHover }}>
+                        {corners(RADIUS.control, palette.bg)}
+                        {strut(SIZE.strut.row)}
+                        {Svg && <Svg source={checkIcon(palette.ok, SIZE.icon.sm)} alt="icône" width={SIZE.icon.sm} height={SIZE.icon.sm} />}
+                        <Text weight="semibold">{label}</Text>
+                      </Box>
+                    ) : (
+                      <Box flexDirection="row" alignItems="center" gap={SPACE.row} paddingX={SPACE.indent} borderStyle="round" borderColor={palette.border}>
+                        {strut(SIZE.strut.row)}
+                        {Svg && <Svg source={closeIcon(palette.text2, SIZE.icon.sm)} alt="icône" width={SIZE.icon.sm} height={SIZE.icon.sm} />}
+                        <Text color={palette.text2}>{label}</Text>
+                      </Box>
+                    ),
+                    <Button key={kind === 'done' ? 'done' : 'cancel'} plain dimColor label={label} onPress={ask} />,
+                  )
+                })}
             </Box>
           )}
           {asking && closeAsk()}
@@ -10455,9 +10642,9 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
         {finBox()}
         {changesBox()}
         {editing && stepsPart && card('etapes', 'Étapes', stepsPart.summary, stepsPart.body)}
-        {layout.cards.map(c => (editing ? (editCards[c] ?? cards[c])() : c === 'details' ? storyCard() : cards[c]()))}
-        {closeBlock()}
-        {gaugeBlock('chain', chainOfFiche, chainColors)}
+        {layout.cards.filter(c => editing || c !== 'details').map(c => (editing ? (editCards[c] ?? cards[c])() : cards[c]()))}
+        {bottomBlock()}
+        {closeRow()}
         <Box flexDirection="column" gap={SPACE.block} paddingX={SPACE.indent}>
           {openNote !== '' && <Text size="caption" color={palette.text2}>{openNote}</Text>}
           {/* Après l'enregistrement : les avertissements du modèle (#125), ou ce qui n'est pas allé au bout. */}

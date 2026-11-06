@@ -858,23 +858,62 @@ export function sisterGaugeIcon(states: readonly SisterState[], index: number, c
 /**
  * Une jauge de la fiche (#291) : un segment de 6 px par entrée, celui de la fiche (`here`) à 10 px, la suivante
  * (`next`) et le vide (`none`) en contour. Écart de 3 px, de 1 px quand les segments passent sous 4 px ; un
- * segment garde au moins 1 px. Hauteur 10.
+ * segment garde au moins 1 px. Hauteur 10, ou `height` (#343 : la mini-jauge de la famille fait 56 × 6, ses
+ * segments gardent 1 px de marge au lieu de 2).
  */
-export function gaugeIcon(kinds: readonly GaugeKind[], colors: Record<GaugeKind | 'ring', string>, width: number): string {
+export function gaugeIcon(kinds: readonly GaugeKind[], colors: Record<GaugeKind | 'ring', string>, width: number, height = 10): string {
   const n = Math.max(1, kinds.length)
   const room = (gap: number) => (width - gap * (n - 1)) / n
   const gap = room(3) >= 4 ? 3 : 1
   const cell = Math.max(1, Math.floor(room(gap) * 10) / 10)
   const x = (i: number) => Math.round(i * (cell + gap) * 10) / 10
+  const pad = height >= 10 ? 2 : 1
+  const seg = height - 2 * pad
+  const rx = Math.min(3, seg / 2)
   const segs = kinds
     .map((k, i) => {
-      if (k === 'here') return `<rect x="${x(i)}" y="0" width="${cell}" height="10" rx="3" fill="${colors.here}"/>`
+      if (k === 'here') return `<rect x="${x(i)}" y="0" width="${cell}" height="${height}" rx="${Math.min(3, height / 2)}" fill="${colors.here}"/>`
       if (k === 'next' || k === 'none')
-        return `<rect x="${x(i) + 0.75}" y="2.75" width="${Math.max(1, cell - 1.5)}" height="4.5" rx="2.25" fill="none" stroke="${colors[k]}" stroke-width="1.5"/>`
-      return `<rect x="${x(i)}" y="2" width="${cell}" height="6" rx="3" fill="${colors[k]}"/>`
+        return `<rect x="${x(i) + 0.75}" y="${pad + 0.75}" width="${Math.max(1, cell - 1.5)}" height="${seg - 1.5}" rx="${(seg - 1.5) / 2}" fill="none" stroke="${colors[k]}" stroke-width="1.5"/>`
+      return `<rect x="${x(i)}" y="${pad}" width="${cell}" height="${seg}" rx="${rx}" fill="${colors[k]}"/>`
     })
     .join('')
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="10" viewBox="0 0 ${width} 10">${segs}</svg>`
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">${segs}</svg>`
+}
+
+// La famille au pied de la fiche (#343, maquette A2) : une marque de 24 px de large, le tronc à x 7, comme la
+// mère ; chaque dessin se pose seul dans la ligne, le texte suit à 24 px.
+
+/** La largeur de la marque d'une ligne de la famille (#343). */
+export const FAMILY_MARK_PX = 24
+
+/** La flèche de dépli de la mère de la famille (#343), 24 × 24, centrée à x 7, grise. */
+export function familyChevronIcon(hex: string, open: boolean): string {
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${FAMILY_MARK_PX}" height="24" viewBox="0 0 ${FAMILY_MARK_PX} 24">${innerChevron(7, 12, 3, open, hex)}</svg>`
+}
+
+/** Le carré plein de la mère (#343), 10 px, 24 × 24, centré à x 7 : d'où part le tronc de ses filles. */
+export function familyLeadIcon(hex: string): string {
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${FAMILY_MARK_PX}" height="24" viewBox="0 0 ${FAMILY_MARK_PX} 24"><rect x="2" y="7" width="10" height="10" rx="${RADIUS.square}" fill="${hex}"/></svg>`
+}
+
+/** Le coude d'une fille (#343), 24 × 24 : le tronc à x 7 (jusqu'à mi-hauteur sur la dernière) et le coude jusqu'à x 24. */
+export function familyElbowIcon(lineHex: string, last: boolean): string {
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${FAMILY_MARK_PX}" height="24" viewBox="0 0 ${FAMILY_MARK_PX} 24"><path d="M7 0V${last ? 12 : 24}M7 12H24" fill="none" stroke="${lineHex}" stroke-width="1.2"/></svg>`
+}
+
+/**
+ * Le carré d'une ligne de la famille (#343), 14 × 24, centré à x 7 : au trait, 10 px, pour une ouverte ;
+ * plein et coché comme `squareCheckRowIcon` (12 px, coche en `inkHex`) pour une faite ; au trait et barré
+ * d'une diagonale pour une annulée.
+ */
+export function familySquareIcon(hex: string, state: 'open' | 'done' | 'cancelled', inkHex: string): string {
+  const head = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="24" viewBox="0 0 14 24">'
+  if (state === 'done')
+    return `${head}<rect x="1" y="6" width="12" height="12" rx="${RADIUS.square}" fill="${hex}"/><path d="M4.2 12.2l1.9 1.9 3.7-3.9" fill="none" stroke="${inkHex}" stroke-width="${STROKE.check}" stroke-linecap="round" stroke-linejoin="round"/></svg>`
+  const box = `<rect x="2.75" y="7.75" width="8.5" height="8.5" rx="${RADIUS.square}" fill="none" stroke="${hex}" stroke-width="1.5"/>`
+  const bar = state === 'cancelled' ? `<path d="M3.5 17.5L10.5 6.5" fill="none" stroke="${hex}" stroke-width="1.5" stroke-linecap="round"/>` : ''
+  return `${head}${box}${bar}</svg>`
 }
 
 /** Les tâches nées d'un retour de l'app (`feedback:`) : une bulle de parole, pleine, sur 16 px. */

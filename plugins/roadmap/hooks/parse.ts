@@ -3126,6 +3126,99 @@ export function chainGauge(
   return { head: 'Sa chaîne', count, segs, line: { title: `${name(task)}, ici`, ...relation()! } }
 }
 
+/** Une ligne de la famille au pied de la fiche (#343) : son titre, ce qu'elle dit à droite, son état, la teinte de ce texte. */
+export type FamilyRow = {
+  title: string
+  right: string
+  state: 'done' | 'cancelled' | 'live' | 'blocked' | 'open'
+  here: boolean
+  tone: 'text' | 'block'
+  task: Task
+}
+/** La famille d'une tâche (#343) : sa tête et son compte, la mère en tête de liste, une ligne par proche, l'arbre ou la chaîne. */
+export type Family = {
+  head: string
+  count: string
+  lead?: { title: string; right: string; done: boolean; kinds: GaugeKind[]; task: Task; here: boolean }
+  rows: FamilyRow[]
+  tree: boolean
+}
+
+/** Le préfixe que toutes les lignes (au moins 2) partagent et qui finit par « · » : « MilStar novembre · ». */
+function sharedPrefix(titles: readonly string[]): string {
+  if (titles.length < 2) return ''
+  let p = titles[0]!
+  for (const t of titles) while (!t.startsWith(p)) p = p.slice(0, -1)
+  const cut = p.lastIndexOf('· ')
+  return cut < 0 ? '' : p.slice(0, cut + 2)
+}
+
+/**
+ * La famille d'une tâche (#343, maquette A2), au pied de la fiche : une fille, sa mère et ses sœurs ; une mère,
+ * elle-même et ses filles ; une tâche en chaîne, ce qui vient avant et après. Les mêmes cas que `chainGauge`,
+ * mais en lignes, sœurs et filles dans l'ordre de la mère. Titre : `#id titre`, sans le préfixe en « · » que
+ * toutes les lignes partagent. À droite : « ici · échéance », faite, annulée, en session, « après #N » (sa
+ * prérequise ouverte, en ton `block`), sinon l'échéance. Sans mère, ni fille, ni lien : rien.
+ */
+export function familyOf(
+  task: Task,
+  all: readonly Task[],
+  o: { isLive: (t: Task) => boolean; prereqsOf: (t: Task) => readonly Task[]; unlocksOf: (t: Task) => readonly Task[]; titleOf: (t: Task) => string; today: string },
+): Family | undefined {
+  const gauge = chainGauge(task, all, o)
+  if (!gauge) return undefined
+  const stateOf = (t: Task): FamilyRow['state'] =>
+    t.done ? (isAbandoned(t) ? 'cancelled' : 'done') : o.isLive(t) ? 'live' : o.prereqsOf(t).some(p => !p.done) ? 'blocked' : 'open'
+  const rowOf = (t: Task, titles: Map<Task, string>): FamilyRow => {
+    const state = stateOf(t)
+    const here = t === task
+    const blocker = o.prereqsOf(t).find(p => !p.done)
+    const day = (iso?: string) => (iso ? shortDate(iso) : '')
+    const right = here
+      ? `ici${t.due ? ` · ${dueLabel(t.due, o.today).text}` : ''}`
+      : state === 'done'
+        ? `faite${t.fait ? ` ${shortDate(t.fait)}` : ''}`
+        : state === 'cancelled'
+          ? 'annulée'
+          : state === 'live'
+            ? 'en session'
+            : state === 'blocked' && blocker
+              ? `après ${blocker.id ? `#${blocker.id}` : o.titleOf(blocker)}`
+              : day(t.due)
+    return { title: titles.get(t)!, right, state, here, tone: !here && state === 'blocked' && blocker ? 'block' : 'text', task: t }
+  }
+  const build = (tasks: readonly Task[]): FamilyRow[] => {
+    const full = tasks.map(t => `${t.id ? `#${t.id} ` : ''}${o.titleOf(t)}`)
+    // Le préfixe se cherche sur les titres seuls, le # restant en tête de chaque ligne.
+    const bare = tasks.map(t => o.titleOf(t))
+    const cut = sharedPrefix(bare).length
+    const titles = new Map(tasks.map((t, i) => [t, cut > 0 ? `${t.id ? `#${t.id} ` : ''}${bare[i]!.slice(cut)}` : full[i]!]))
+    return tasks.map(t => rowOf(t, titles))
+  }
+  // La mini-jauge de la mère suit l'ordre des lignes : la fiche, les faites, sa prérequise, ce qu'elle débloque.
+  const pres = o.prereqsOf(task)
+  const unlocks = o.unlocksOf(task)
+  const kindsOf = (rows: readonly FamilyRow[]): GaugeKind[] =>
+    rows.map(r => (r.here ? 'here' : r.state === 'done' ? 'done' : r.state === 'cancelled' ? 'cancelled' : pres.includes(r.task) ? 'pre' : unlocks.includes(r.task) ? 'next' : 'open'))
+  const chain = chainOf(task, all, o)
+  if (chain) {
+    const rows = build(chain.sisters.map(x => x.task))
+    const lead = { title: o.titleOf(chain.mother), right: `${chain.done}/${chain.total}`, done: chain.mother.done, kinds: kindsOf(rows), task: chain.mother, here: false }
+    return { head: `Fille de #${chain.mother.id}`, count: gauge.count, lead, rows, tree: true }
+  }
+  const kids = task.id === undefined ? [] : all.filter(t => t !== task && t.parent === task.id)
+  if (kids.length > 0) {
+    const sisters = chainOf(kids[0]!, all, o)?.sisters ?? []
+    const done = kids.filter(k => k.done).length
+    // Aucune fille n'est « ici » : c'est la mère qui l'est.
+    const rows = build(sisters.map(x => x.task)).map(r => ({ ...r, here: false }))
+    const lead = { title: o.titleOf(task), right: `${done}/${kids.length}`, done: task.done, kinds: kindsOf(rows), task, here: true }
+    return { head: gauge.head, count: gauge.count, lead, rows, tree: true }
+  }
+  const links = [...o.prereqsOf(task), task, ...o.unlocksOf(task)]
+  return { head: gauge.head, count: gauge.count, rows: build(links), tree: false }
+}
+
 /** La ligne sous une jauge (#291) : celle du segment cliqué, ou, sans clic (ou un rang hors de la jauge), la ligne par défaut. */
 export function gaugeLine(g: Gauge, pick: number | undefined): Gauge['line'] {
   const seg = pick === undefined ? undefined : g.segs[pick]
@@ -9172,7 +9265,22 @@ export function cartonOf(o: {
 }
 
 /** Une rangée de la carte Détails (#291) : son nom, sa valeur, son complément en gris, la chasse fixe d'un nom de branche. */
-export type StoryRow = { name: string; value: string; sub?: string; mono?: boolean }
+export type StoryRow = { name: string; value: string; sub?: string; mono?: boolean; file?: string; icon?: 'external' | 'document' }
+
+/** Le chemin d'une `src:` quand c'est un fichier (#343) : sans espace, avec une extension, hors URL ; sinon, de la prose. */
+export function srcFile(src: string | undefined): string | undefined {
+  const t = src?.trim()
+  return t && !/\s/.test(t) && !t.includes('://') && /\.[A-Za-z0-9]{1,8}$/.test(t) ? t : undefined
+}
+
+/** Le nom lisible d'un fichier et sa date (#343) : « …/2026-11-03-military-star-deck.html » → « Military star deck », « Nov 3 ». */
+export function fileTitle(path: string): { name: string; date?: string } {
+  const base = (path.split('/').pop() ?? path).replace(/\.[A-Za-z0-9]+$/, '')
+  const m = /^(\d{4}-\d{2}-\d{2})[-_ ]+(.*)$/.exec(base)
+  const words = (m ? m[2]! : base).replace(/[-_]+/g, ' ').trim()
+  const name = words ? `${words.charAt(0).toUpperCase()}${words.slice(1)}` : base
+  return m ? { name, date: shortDate(m[1]!) } : { name }
+}
 
 /**
  * La carte Détails qui raconte la tâche (#291, fiche finale) : quand (ouverte → échéance, ou → faite, et en
@@ -9182,7 +9290,7 @@ export type StoryRow = { name: string; value: string; sub?: string; mono?: boole
  */
 export function detailsStory(
   task: Task,
-  o: { today: string; sujet?: string; branch?: readonly string[]; workMs?: number; cles: readonly string[] },
+  o: { today: string; sujet?: string; branch?: readonly string[]; workMs?: number; cles: readonly string[]; fichePath?: string },
 ): { summary: string; groups: StoryRow[][] } {
   const when: StoryRow[] = []
   const end = task.done ? (task.fait ? doneLabel(task.fait) : '') : task.due ? shortDate(task.due) : ''
@@ -9204,10 +9312,17 @@ export function detailsStory(
   if (task.branche && task.branche !== task.qui) who.push({ name: 'Branche', value: task.branche, mono: true })
   if (o.branch?.[0]) who.push({ name: 'Branche', value: o.branch[0] })
   const from: StoryRow[] = []
-  if (task.src) from.push({ name: 'D’où', value: task.src })
+  if (task.src) {
+    const file = srcFile(task.src)
+    if (file) {
+      const t = fileTitle(file)
+      from.push({ name: 'D’où', value: t.name, ...(t.date ? { sub: t.date } : {}), file, icon: 'external' })
+    } else from.push({ name: 'D’où', value: task.src })
+  }
   const section = task.section !== '' && task.section !== 'En cours' ? task.section : ''
   if (o.sujet) from.push({ name: 'Sujet', value: o.sujet, ...(section ? { sub: `section ${section}` } : {}) })
   else if (section) from.push({ name: 'Section', value: section })
+  if (o.fichePath) from.push({ name: 'Fiche', value: o.fichePath.split('/').pop() ?? o.fichePath, file: o.fichePath, icon: 'document' })
   for (const k of o.cles) {
     const v = task.extra?.[k]
     if (v?.length) from.push({ name: `${k.charAt(0).toUpperCase()}${k.slice(1)}`, value: v.join(', ') })
