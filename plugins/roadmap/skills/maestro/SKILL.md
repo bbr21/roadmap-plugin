@@ -70,7 +70,8 @@ rule at the end of a turn that executed (below).
   the client itself in the browser and through the MCP, with no sub-session.
 
 - **The name**: « Maestro » (« Maestro · Abonnements »), set at launch, then it never changes.
-  Saying « Maestro » (or `/maestro`) alone at the start of a message opens the panel and the welcome
+  Saying « Maestro » (or `/maestro`) alone at the start of a message, even mistyped by one letter
+  (« Mastero », « Maestor », but not a real word such as « Maestros » or « Master », #344), opens the panel and the welcome
   (#141): a card in place of the message, counted by the plugin without scanning anything (#126):
   the day's greeting, the tasks done out of the total, what is waiting today, and four buttons,
   « Ma journée », « Quoi lancer », « À relancer » when a third party is waited on, otherwise « Mes sessions » (#176),

@@ -4235,7 +4235,45 @@ export function checkTitleFor(task: Task, shortTitle: string): string {
  * (2026-10-29, « Je déteste le terme lot ! ») : `LOT_ALIAS` garde reconnus les titres d'avant.
  */
 export function isMaestroSession(title: string): boolean {
-  return /^\s*maestro\b/i.test(title) || LOT_ALIAS.test(title)
+  const word = LEADING_WORD.exec(title)?.[1]
+  return (word !== undefined && isMaestroWord(word)) || LOT_ALIAS.test(title)
+}
+
+/** Le premier mot d'un texte, lettres seules, que ne suit ni un chiffre ni un souligné (#344). */
+const LEADING_WORD = /^\s*(\p{L}+)(?![\p{N}_])/u
+
+/** Les vrais mots à un cran de « maestro » (#344) : ils ne sont jamais l'appel. */
+const MAESTRO_LOOKALIKES = new Set(['maestra', 'maestras', 'maestre', 'maestri', 'maestros'])
+
+/**
+ * « Maestro » ou une faute d'un cran (#344, « Mastero » tapé chez Splitmybill le 2026-11-05) : une lettre
+ * en trop, en moins ou changée, ou une lettre déplacée (deux voisines inversées comprises), sauf un vrai
+ * mot proche. « Master » n'en est pas : il lui faut deux retouches.
+ */
+export function isMaestroWord(word: string): boolean {
+  const w = word.toLowerCase()
+  if (w === 'maestro') return true
+  if (MAESTRO_LOOKALIKES.has(w)) return false
+  return oneEditApart(w, 'maestro') || oneLetterMoved(w, 'maestro')
+}
+
+/** `a` et `b` à une lettre près : en trop, en moins ou changée. */
+function oneEditApart(a: string, b: string): boolean {
+  if (a.length === b.length) return [...a].filter((c, i) => c !== b[i]).length === 1
+  const [short, long] = a.length < b.length ? [a, b] : [b, a]
+  if (long.length - short.length !== 1) return false
+  for (let i = 0; i < long.length; i++) if (long.slice(0, i) + long.slice(i + 1) === short) return true
+  return false
+}
+
+/** `a` devient `b` en déplaçant une seule de ses lettres. */
+function oneLetterMoved(a: string, b: string): boolean {
+  if (a.length !== b.length || a === b) return false
+  for (let i = 0; i < a.length; i++) {
+    const rest = a.slice(0, i) + a.slice(i + 1)
+    for (let j = 0; j <= rest.length; j++) if (rest.slice(0, j) + a[i] + rest.slice(j) === b) return true
+  }
+  return false
 }
 
 /** L'alias des anciens titres « Lot … » (« Lot #1 », « Lot Service »), d'avant #112. */
@@ -8280,10 +8318,13 @@ const withoutReminders = (prompt: string) => prompt.replace(/^(?:\s*<system-remi
  * propose le scan ; « Maestro scan », « Maestro go » ou une demande après « Maestro » scannent.
  */
 export function maestroCall(prompt: string, axes: readonly string[] = []): { go: boolean; scan: boolean; action?: MaestroAction; axis?: string; request?: string } | undefined {
-  // « /maestro » (et « /roadmap:maestro ») lance la skill du même nom : il vaut « Maestro » (#112).
-  const m = /^\s*(?:\/(?:roadmap:)?)?maestro\b[\s,.:!?-]*(.*)$/is.exec(withoutReminders(prompt))
+  // « /maestro » (et « /roadmap:maestro ») lance la skill du même nom : il vaut « Maestro » (#112), exact,
+  // car il nomme une skill ; le mot nu, lui, tolère une faute d'un cran (« Mastero », #344).
+  const m = /^\s*(\/(?:roadmap:)?)?(\p{L}+)(?![\p{N}_])[\s,.:!?-]*(.*)$/isu.exec(withoutReminders(prompt))
   if (!m) return undefined
-  const rest = (m[1] ?? '').trim()
+  const word = m[2] ?? ''
+  if (m[1] ? word.toLowerCase() !== 'maestro' : !isMaestroWord(word)) return undefined
+  const rest = (m[3] ?? '').trim()
   const go = /^(go|lance|lancer|vas-y|vas y|start|démarre|demarre)\b/i.test(rest)
   const action = go ? undefined : MAESTRO_ACTIONS.find(([, re]) => re.test(rest))?.[0]
   // « Maestro Rob » (#239) : le reste entier est un axe de la roadmap ; les mots-clés passent avant,
