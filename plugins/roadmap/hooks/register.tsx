@@ -38,6 +38,7 @@ import {
   bubbleIcon,
   squareCheckRowIcon,
   squareArmedRowIcon,
+  squareGhostRingIcon,
   calendarDayIcon,
   DAY_CELL_PX,
   squareCheckMoveIcon,
@@ -11529,14 +11530,18 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     // Son survol tombe sur le carré (#282) : une Box en % de la marque, dont le centre est celui du carré
     // (après un trait de chaîne, après un coude), le centre ; un décalage en cellules glissait d'une app à
     // l'autre (une cellule de ~7,8 ou ~9 pt), et le bouton posé par la gauche débordait à droite.
+    const ghostRing = squareGhostRingIcon(mixOver(palette.live, palette.bg, MIX.ring))
     const squareCenter = child ? MARK_SQUARE_CENTER.child : chain ? MARK_SQUARE_CENTER.chain : MARK_SQUARE_CENTER.mark
     if (checkable && Svg) ghostPressKeys.add(checkKey)
     if (Svg) ghostPressKeys.add(t.key)
     const squareHit = checkable && Svg ? (
-      // L'anneau fantôme du survol (#351, maquette C) : cette Box est sa propre portée de survol (sa clé), son
-      // filet arrondi est transparent au repos et `live` pâle sous le pointeur ; aucun élément de plus par ligne.
-      // Son padding à 0 : une Box à filet sans padding prend une marge d'office au bureau (#352).
-      <Box key={`ring:${t.id ?? keyPart(t.key)}`} position="absolute" top={0} bottom={0} left={0} width={squareHitWidth(squareCenter, markWidth)} flexDirection="row" justifyContent="center" alignItems="center" paddingX={0} paddingY={0} borderStyle="round" borderColor="transparent" hover={{ borderColor: mixOver(palette.live, palette.bg, MIX.ring) }}>
+      // L'anneau fantôme du survol (#351, maquette C) : cette Box est sa propre portée de survol (sa clé). Sans
+      // filet : un filet `transparent` se peignait en blanc au bureau, haut comme la ligne (#364). L'anneau est
+      // le dessin de la sélection en `live` pâle, dans une Box cachée que le survol montre, centrée sur le carré.
+      <Box key={`ring:${t.id ?? keyPart(t.key)}`} position="absolute" top={0} bottom={0} left={0} width={squareHitWidth(squareCenter, markWidth)} flexDirection="row" justifyContent="center" alignItems="center">
+        <Box position="absolute" top={0} bottom={0} left={0} right={0} flexDirection="row" justifyContent="center" alignItems="center" display="none" hover={{ display: 'flex' }}>
+          <Svg source={ghostRing} alt="" width={16} height={24} />
+        </Box>
         <Button key={checkKey} plain onPress={pick}>
           {CHECK_OVERLAY}
         </Button>

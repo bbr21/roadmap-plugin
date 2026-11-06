@@ -661,6 +661,15 @@ export function squareArmedRowIcon(hex: string, ringHex: string, inkHex: string,
 }
 
 /**
+ * L'anneau fantôme du survol de la case (#351, maquette C ; #364) : le seul anneau de la sélection
+ * (`squareArmedRowIcon`), en `ringHex` (`live` pâle), sans carré. Il se dessine dans une Box cachée que
+ * le survol de la case montre : au repos, rien ; un filet de Box « transparent » se peignait en blanc.
+ */
+export function squareGhostRingIcon(ringHex: string): string {
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="24" viewBox="0 0 16 24"><rect x="0.75" y="4.75" width="14.5" height="14.5" rx="4" fill="none" stroke="${ringHex}" stroke-width="1.5"/></svg>`
+}
+
+/**
  * La case qui bouge (#182, maquette A) : le carré coché de `squareCheckRowIcon`, animé en SMIL, figé
  * à la fin sur le dessin fixe. Cocher (`done`) : le carré passe de 10 à 12 avec un petit rebond, puis
  * la coche se trace ; rouvrir : la coche s'efface, puis le carré revient au carré de 10 d'une ouverte.
