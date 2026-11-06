@@ -511,16 +511,26 @@ The merge itself:
   not offer the `archive` app button). On that click, and on it alone, `archive_session` with
   `session_id: "self"`.
 
-- **Dosing the launches** (#324): the panel lets at most `maxSessions` task sessions work at once on
-  the whole Mac (option « Sessions en même temps », 4 by default, all projects counted, Maestros
-  excluded). A session holds its place from its launch until it says « prête à fusionner », a partial
-  closure or « fini »; idle for 15 min (waiting for the person, a resource), it gives its place back.
-  A posted card not yet started reserves a place for 15 min. A launch also waits while the Mac's load
-  over one minute is above 2 × its cores. Beyond that, the card does not go out: the panel puts the
-  task in Maestro's queue, in the chain's order (`après:`), refuses the card with its rank
-  (« Plus de place : … #N attend son tour, 2e en file »), and posts it itself as soon as a place frees
-  up. Do not post a queued card again, do not do the task yourself: the block « En cours » lists the
-  queued tasks and what holds them; the person clicks Start when the panel posts the card.
+- **Dosing the launches** (#324, #345): one launch queue for the whole Mac, shared by every Maestro
+  of every project. Two caps: at most `projectSessions` task sessions working at once in one project
+  (« Sessions par projet », 3 by default) and `macSessions` on the whole Mac (« Sessions sur le Mac »,
+  12 by default; Maestros excluded). A session holds its place from its launch until it says
+  « prête à fusionner », a partial closure or « fini »; idle for 15 min (waiting for the person, a
+  resource), it gives its place back. A posted card not yet started reserves a place for 15 min. A
+  launch also waits while the Mac's load over one minute is above 2 × its cores. Beyond that, the
+  card does not go out: the panel puts the task in the shared queue, by order of arrival (its
+  `après:` prerequisites first), refuses the card with its rank on the Mac
+  (« #N attend son tour, 3e sur le Mac »), and the block « En cours » shows it with that rank and a « Retirer » link that
+  takes it out of the queue and back to the list. Do not post a queued card again, do not do the
+  task yourself. A card you posted that went into the queue comes back as a card at its turn (the
+  person clicks Start). A task the person queued with ▶ starts by itself, ▶ being their consent:
+  when it reaches the head of the queue (the first entry whose project has a free place)
+  and the head is yours, the panel writes in your conversation, in the person's name, « La file
+  est débloquée : #N démarre. » with the brief. Launch that session at once with `start_session`,
+  `user_asked`, as the message says; if the app refuses (Remote Control, a turn it does not take as
+  the person's), post its card (`own_initiative`) instead and say in one line that a click on Start
+  launches it. The panel also writes « #N entre en file, 3e sur le Mac … » when a ▶ queues a task:
+  answer it in one line, launch nothing.
 
 ## What the Roadmap panel does for Maestro
 

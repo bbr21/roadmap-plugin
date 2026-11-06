@@ -313,7 +313,8 @@ export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
       { field: 'codeModel', name: 'Modèle qui code', def: 'sonnet' },
       { field: 'launchBypass', name: 'Lancer en bypass', def: 'Off' },
       { field: 'pruneBranches', name: 'Branches nettoyées', def: 'On' },
-      { field: 'maxSessions', name: 'Sessions en même temps', def: '4' },
+      { field: 'projectSessions', name: 'Sessions par projet', def: '3' },
+      { field: 'macSessions', name: 'Sessions sur le Mac', def: '12' },
     ],
   },
   {

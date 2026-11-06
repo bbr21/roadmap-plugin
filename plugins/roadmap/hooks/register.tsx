@@ -428,12 +428,17 @@ import {
   PLACE_IDLE_MS,
   macLoad,
   launchGate,
-  launchQueueOrder,
+  projectTaken,
+  globalQueueOrder,
+  queueHead,
+  queueEntryText,
+  releasePrompt,
   queuedRefusal,
   placesSentence,
   placesPill,
   queuedMark,
   type QueuedLaunch,
+  type GlobalQueued,
   type MacLoad,
   type DoseWhy,
   readHeavyQueue,
@@ -883,7 +888,7 @@ function axisCount(tasks: Task[], axis: string): number {
 }
 
 /** Les réglages du plugin (userConfig), relus à chaque chargement du module. */
-let settings = { me: [] as string[], autoOpen: true, titleModel: 'sonnet', capture: true, theme: 'auto', launchEffort: 'high', launchModel: 'opus', codeModel: 'sonnet', launchBypass: false, pruneBranches: true, maxSessions: '4', axisPill: false, priorities: false, dateFormat: 'us', account: 'auto' as Account }
+let settings = { me: [] as string[], autoOpen: true, titleModel: 'sonnet', capture: true, theme: 'auto', launchEffort: 'high', launchModel: 'opus', codeModel: 'sonnet', launchBypass: false, pruneBranches: true, projectSessions: '3', macSessions: '12', axisPill: false, priorities: false, dateFormat: 'us', account: 'auto' as Account }
 
 /** L'identifiant du modèle qui cadre (#327), ou undefined s'il hérite de la session qui lance. */
 function launchModelId(): string | undefined {
@@ -3710,27 +3715,31 @@ async function restampQueue($: EngineInterface): Promise<void> {
 
 // ---------------------------------------------------------------- Maestro dose ses sessions (#324)
 
-/** La file des lancements de chaque Maestro, et ses cartes posées pas encore démarrées : dans le store, ils survivent au rechargement. */
+/**
+ * La file des lancements, commune à tous les Maestro du Mac (#345), et les cartes posées pas encore démarrées :
+ * dans le store, ils survivent au rechargement. `launch-queue:<id>` est la file par Maestro de #324, versée une fois.
+ */
+const LAUNCH_QUEUE_KEY = 'launch-queue'
 const LAUNCH_QUEUE_PREFIX = 'launch-queue:'
-const LAUNCH_CARDS_PREFIX = 'launch-cards:'
+const LAUNCH_CARDS_KEY = 'launch-cards'
 /** La charge du Mac, relue au plus toutes les 30 s, et seulement quand un lancement se décide. */
 let doseLoad: { at: number; load?: MacLoad } = { at: -Infinity }
 const DOSE_LOAD_MS = 30_000
-/** Une carte de la relève refusée par l'app : la tête de file se réessaie une minute plus tard. */
+/** Un départ raté (le message n'a pas pu se préparer) : la tête de file se réessaie une minute plus tard. */
 let doseRetryAt = 0
 const DOSE_RETRY_MS = 60_000
-/** Les tâches que la relève vient de lancer par le ▶ : leur carte passe la décision (repli par Claude compris). */
+/** Les tâches que la relève vient de lancer : leur carte passe la décision (repli par Claude compris). */
 const doseAllowed = new Map<string, number>()
-/** Ce que le dernier pas a vu de la file, pour le bloc « En cours » (maquette A) ; changé, le panneau se redessine. */
-type DoseView = { queue: QueuedLaunch[]; taken: number; max: number; others: string[]; why: DoseWhy; load?: MacLoad }
+/** Ce que le dernier pas a vu de la file de ce Maestro, pour le bloc « En cours » ; changé, le panneau se redessine. */
+type DoseView = { queue: (GlobalQueued & { rank: number })[]; projectTaken: number; projectMax: number; macTaken: number; macMax: number; why: DoseWhy; load?: MacLoad }
 let doseView: DoseView | undefined
 let doseSeenKey = ''
 let relieving = false
 
-/** Le plafond réglé (option `maxSessions`), 4 par défaut. */
-function doseMax(): number {
-  const n = Number(settings.maxSessions)
-  return Number.isInteger(n) && n > 0 ? n : 4
+/** Les deux plafonds réglés (options `projectSessions` et `macSessions`), 3 et 12 par défaut. */
+function doseMaxes(): { projectMax: number; macMax: number } {
+  const pos = (v: unknown, fallback: number) => (Number.isInteger(Number(v)) && Number(v) > 0 ? Number(v) : fallback)
+  return { projectMax: pos(settings.projectSessions, 3), macMax: pos(settings.macSessions, 12) }
 }
 
 async function readMacLoad($: EngineInterface, now: number): Promise<MacLoad | undefined> {
@@ -3745,6 +3754,65 @@ async function readMacLoad($: EngineInterface, now: number): Promise<MacLoad | u
   return doseLoad.load
 }
 
+function globalQueueOf(value: unknown): GlobalQueued[] {
+  if (!Array.isArray(value)) return []
+  return value.filter((q): q is GlobalQueued => {
+    const v = q as Partial<GlobalQueued> | null
+    return (
+      !!v && typeof v.id === 'string' && typeof v.title === 'string' && typeof v.at === 'number' && typeof v.maestro === 'string' && typeof v.project === 'string' &&
+      Array.isArray(v.match) && Array.isArray(v.after) && (typeof v.card === 'object' || typeof v.launch === 'object')
+    )
+  })
+}
+
+async function readGlobalQueue($: EngineInterface): Promise<GlobalQueued[]> {
+  return globalQueueOf(await $.store.get(LAUNCH_QUEUE_KEY).catch(() => undefined))
+}
+
+/** Les sessions que la liste donne pour archivées : leurs entrées de la file n'ont plus de Maestro pour les lancer. */
+function archivedIds(rows: readonly unknown[]): Set<string> {
+  return new Set(rows.flatMap(r => {
+    const row = r as { sessionId?: unknown; isArchived?: unknown }
+    return typeof row.sessionId === 'string' && row.isArchived === true ? [row.sessionId] : []
+  }))
+}
+
+/**
+ * Écrit la file commune : relue juste avant, `change` ne s'applique qu'aux entrées de ce Maestro, celles d'un
+ * Maestro archivé s'ôtent, celles des autres restent telles quelles. Rend la file écrite.
+ */
+async function writeOwnQueue($: EngineInterface, ownId: string, change: (own: GlobalQueued[]) => GlobalQueued[], rows?: readonly unknown[]): Promise<GlobalQueued[]> {
+  const stored = await readGlobalQueue($)
+  const gone = archivedIds(rows ?? (await readListRows($)).rows)
+  const others = stored.filter(e => e.maestro !== ownId && !gone.has(e.maestro))
+  const next = [...others, ...change(stored.filter(e => e.maestro === ownId))]
+  if (JSON.stringify(next) !== JSON.stringify(stored)) await storeSet($, LAUNCH_QUEUE_KEY, next as unknown as StoreValue)
+  return next
+}
+
+/** Les prérequis d'une tâche (`après:`), pour l'ordre de la file. */
+function prereqsIn(tasks: readonly Task[]): (id: string) => readonly string[] {
+  return id => (tasks.find(t => t.id === id)?.apres ?? '').split(/[,\s]+/).filter(Boolean)
+}
+
+/** Le projet de ce Maestro : sa racine, les préfixes de ses dossiers et son nom (le dernier segment de la racine). */
+function doseProject(): { project: string; match: string[]; name: string } {
+  const project = knownSource ? (knownSource.root ?? knownSource.dir) : ''
+  return { project, match: knownSource?.match ?? [], name: project.split('/').filter(Boolean).pop() ?? '' }
+}
+
+/** La file de #324 de ce Maestro, versée une fois dans la file commune, puis effacée. */
+async function migrateOldQueue($: EngineInterface, ownId: string): Promise<void> {
+  const oldKey = `${LAUNCH_QUEUE_PREFIX}${ownId}`
+  const old = queuedOf(await $.store.get(oldKey).catch(() => undefined))
+  if (old.length === 0 || !knownSource) return
+  const tasks = await load($, files(knownSource).open, 'ROADMAP.md')
+  const after = prereqsIn(typeof tasks === 'string' ? [] : tasks)
+  const { project, match } = doseProject()
+  await writeOwnQueue($, ownId, own => [...own, ...old.filter(q => !own.some(o => o.id === q.id)).map(q => ({ ...q, maestro: ownId, project, match, after: [...after(q.id)] }))])
+  await storeDelete($, oldKey)
+}
+
 function queuedOf(value: unknown): QueuedLaunch[] {
   if (!Array.isArray(value)) return []
   return value.filter((q): q is QueuedLaunch => {
@@ -3753,29 +3821,29 @@ function queuedOf(value: unknown): QueuedLaunch[] {
   })
 }
 
-async function doseQueue($: EngineInterface, ownId: string): Promise<QueuedLaunch[]> {
-  return queuedOf(await $.store.get(`${LAUNCH_QUEUE_PREFIX}${ownId}`).catch(() => undefined))
-}
+type DoseCard = { title: string; at: number; project: string }
 
-async function doseCards($: EngineInterface, ownId: string, now: number): Promise<{ title: string; at: number }[]> {
-  const stored: unknown = await $.store.get(`${LAUNCH_CARDS_PREFIX}${ownId}`).catch(() => undefined)
+async function doseCards($: EngineInterface, now: number): Promise<DoseCard[]> {
+  const stored: unknown = await $.store.get(LAUNCH_CARDS_KEY).catch(() => undefined)
   if (!Array.isArray(stored)) return []
-  return stored.filter((c): c is { title: string; at: number } => !!c && typeof c.title === 'string' && typeof c.at === 'number' && now - c.at < PLACE_IDLE_MS)
+  return stored.filter((c): c is DoseCard => !!c && typeof c.title === 'string' && typeof c.at === 'number' && now - c.at < PLACE_IDLE_MS).map(c => ({ ...c, project: typeof c.project === 'string' ? c.project : '' }))
 }
 
-/** Une carte posée par Maestro réserve sa place jusqu'au Start de BBR (15 min au plus). */
-async function reserveCard($: EngineInterface, ownId: string, title: string): Promise<void> {
+/** Une carte posée par Maestro réserve sa place, pour son projet et pour le Mac, jusqu'au Start de BBR (15 min au plus). */
+async function reserveCard($: EngineInterface, title: string): Promise<void> {
   try {
     const now = await $.clock.now()
-    const kept = (await doseCards($, ownId, now)).filter(c => c.title !== title)
-    await storeSet($, `${LAUNCH_CARDS_PREFIX}${ownId}`, [...kept, { title, at: now }])
+    const kept = (await doseCards($, now)).filter(c => c.title !== title)
+    await storeSet($, LAUNCH_CARDS_KEY, [...kept, { title, at: now, project: doseProject().project }])
   } catch {
     // store illisible : la place se lira à l'ouverture de la session
   }
 }
 
-/** Les places tenues sur le Mac, lues de la liste des sessions, des notes des sessions et des cartes de ce Maestro. */
-async function dosePlaces($: EngineInterface, ownId: string, now: number): Promise<{ taken: number; others: string[]; rows: unknown[] }> {
+/** Ce que les décisions de ce pas lisent : les places du Mac, les cartes réservées, la charge, les plafonds. */
+type DoseState = { rows: unknown[]; cwds: string[]; reserved: string[]; cards: DoseCard[]; macTaken: number; load?: MacLoad; projectMax: number; macMax: number }
+
+async function doseState($: EngineInterface, now: number): Promise<DoseState> {
   const rows = (await readListRows($)).rows
   const statuses = new Map<string, ChildStatus | undefined>()
   for (const raw of rows) {
@@ -3785,28 +3853,28 @@ async function dosePlaces($: EngineInterface, ownId: string, now: number): Promi
     }
   }
   const maestros = maestroSessionIds(rows, new Set(Object.keys(await loadMaestros($))))
-  const match = knownSource?.match ?? []
-  const places = launchPlaces(rows, id => statuses.get(id), await doseCards($, ownId, now), now, maestros, match)
-  return { taken: places.taken, others: places.others, rows }
+  const cards = await doseCards($, now)
+  const places = launchPlaces(rows, id => statuses.get(id), cards, now, maestros, doseProject().match)
+  const { projectMax, macMax } = doseMaxes()
+  const load = places.taken < macMax ? await readMacLoad($, now) : doseLoad.load
+  return { rows, cwds: places.cwds, reserved: places.reserved, cards, macTaken: places.taken, ...(load ? { load } : {}), projectMax, macMax }
 }
 
-/** La décision pour un lancement de Maestro : les places, puis la charge, seulement quand il reste une place. */
-async function doseGate($: EngineInterface, ownId: string, now: number): Promise<{ go: boolean; why: DoseWhy; taken: number; others: string[]; max: number; load?: MacLoad; rows: unknown[] }> {
-  const max = doseMax()
-  const places = await dosePlaces($, ownId, now)
-  const load = places.taken < max ? await readMacLoad($, now) : doseLoad.load
-  const gate = launchGate({ taken: places.taken, max, ...(load ? { load } : {}) })
-  return { go: gate.go, why: gate.go ? 'full' : gate.why, taken: places.taken, others: places.others, max, ...(load ? { load } : {}), rows: places.rows }
+/** Les places d'un projet : ses sessions (par `cwd`) et ses cartes réservées dont la session n'est pas ouverte. */
+function placesOf(state: DoseState, project: string, match: readonly string[]): number {
+  const cards = state.cards.filter(c => c.project === project && state.reserved.includes(sessionTitleId(c.title) ?? '')).length
+  return projectTaken(state.cwds, match) + cards
 }
 
-/** Les prérequis d'une tâche (`après:`), pour l'ordre de la file. */
-function prereqsIn(tasks: readonly Task[]): (id: string) => readonly string[] {
-  return id => (tasks.find(t => t.id === id)?.apres ?? '').split(/[,\s]+/).filter(Boolean)
+/** La décision pour un projet : son plafond, celui du Mac, puis la charge. */
+function gateFor(state: DoseState, project: string, match: readonly string[]) {
+  return launchGate({ projectTaken: placesOf(state, project, match), projectMax: state.projectMax, macTaken: state.macTaken, macMax: state.macMax, ...(state.load ? { load: state.load } : {}) })
 }
 
 /**
- * Le lancement d'une tâche chez Maestro passe-t-il (#324) ? Sinon il entre dans la file, à son rang de
- * la chaîne, et la réponse est le refus à dire. Hors Maestro, sans numéro, ou lancé par la relève : il passe.
+ * Le lancement d'une tâche chez Maestro passe-t-il (#324, #345) ? Il passe quand aucune entrée de la file commune
+ * n'est devant lui et que son projet a une place ; sinon il entre dans la file, à son rang du Mac, et la réponse
+ * est le refus à dire. Hors Maestro, sans numéro, ou lancé par la relève : il passe.
  */
 async function doseLaunch($: EngineInterface, id: string | undefined, entry: Omit<QueuedLaunch, 'at' | 'id'>): Promise<{ refusal?: string; ownId?: string }> {
   if (id === undefined) return {}
@@ -3814,27 +3882,61 @@ async function doseLaunch($: EngineInterface, id: string | undefined, entry: Omi
     if (!(await maestroHere($))) return {}
     const own = await readOwnSession($)
     if (!own.id) return {}
+    const ownId = own.id
     const now = await $.clock.now()
     const allowed = doseAllowed.get(id)
-    if (allowed !== undefined && now < allowed) return { ownId: own.id }
-    const queue = await doseQueue($, own.id)
-    const gate = await doseGate($, own.id, now)
-    if (gate.go && !queue.some(q => q.id !== id)) return { ownId: own.id }
+    if (allowed !== undefined && now < allowed) return { ownId }
+    await migrateOldQueue($, ownId)
+    const { project, match, name } = doseProject()
+    const state = await doseState($, now)
+    const gate = gateFor(state, project, match)
+    const queue = await readGlobalQueue($)
+    const ordered = globalQueueOrder(queue)
+    const at = ordered.findIndex(q => q.maestro === ownId && q.id === id)
+    const ahead = at < 0 ? ordered.length : at
+    if (gate.go && ahead === 0) {
+      if (at >= 0) await writeOwnQueue($, ownId, own => own.filter(q => q.id !== id), state.rows)
+      return { ownId }
+    }
     const tasks = knownSource ? await load($, files(knownSource).open, 'ROADMAP.md') : []
-    const kept = queue.filter(q => q.id !== id)
-    const ordered = launchQueueOrder([...kept, { ...entry, id, at: queue.find(q => q.id === id)?.at ?? now }], prereqsIn(typeof tasks === 'string' ? [] : tasks))
-    await storeSet($, `${LAUNCH_QUEUE_PREFIX}${own.id}`, ordered)
+    const after = [...prereqsIn(typeof tasks === 'string' ? [] : tasks)(id)]
+    const written = await writeOwnQueue($, ownId, own => [...own.filter(q => q.id !== id), { ...entry, id, at: queue.find(q => q.maestro === ownId && q.id === id)?.at ?? now, maestro: ownId, project, match, after }], state.rows)
     doseSeenKey = ''
-    const rank = ordered.findIndex(q => q.id === id) + 1
-    return { refusal: queuedRefusal({ id, rank, taken: gate.taken, max: gate.max, why: gate.why, ...(gate.load ? { load: gate.load } : {}) }) }
+    const rank = globalQueueOrder(written).findIndex(q => q.maestro === ownId && q.id === id) + 1
+    const text = { id, rank, projectName: name, projectTaken: placesOf(state, project, match), projectMax: state.projectMax, macTaken: state.macTaken, macMax: state.macMax, why: gate.go ? ('project' as const) : gate.why, ...(state.load ? { load: state.load } : {}) }
+    // Au ▶, le panneau dit l'entrée en file dans la conversation de Maestro ; à la carte du modèle, le refus est ce message.
+    if (entry.launch) queueSubmit($, queueEntryText(text))
+    return { refusal: queuedRefusal(text) }
   } catch {
     return {}
   }
 }
 
+/** Le brief que la relève donne à Maestro pour lancer l'entrée de tête : la carte stockée, ou celui du ▶ rejoué. */
+async function releaseBrief($: EngineInterface, head: GlobalQueued, source: Source | null | undefined, open: readonly Task[] | undefined): Promise<Parameters<typeof releasePrompt>[0] | undefined> {
+  // Seul un ▶ part seul (#345) : son brief se refait de la roadmap, jamais d'un texte gardé dans le store.
+  const task = open?.find(t => t.id === head.id)
+  if (!head.launch || !source || !task) return undefined
+  const brief = await briefOf($, source, task, head.launch.shortTitle, head.launch.extra ?? '', head.launch.kind ?? '')
+  const bypass = wantsBypass(settings.launchBypass, await ownMode($))
+  const effort = LAUNCH_EFFORTS.has(settings.launchEffort) ? settings.launchEffort : undefined
+  const model = launchModelId()
+  return {
+    id: head.id,
+    title: brief.title,
+    prompt: bypass ? withBypassClause(brief.prompt) : brief.prompt,
+    background: brief.background,
+    ...(effort ? { effort } : {}),
+    ...(model ? { model } : {}),
+    travail: projectSettings(source).travail,
+    bypass,
+  }
+}
+
 /**
- * La relève (#324), à chaque pas chez Maestro : la file relue ; une tâche close ou déjà en session en sort ;
- * une place libre et le Mac pas chargé, le panneau pose seul la carte de la tête de file (ou rejoue son ▶).
+ * La relève (#324, #345), à chaque pas chez Maestro : la file commune relue ; une tâche de ce Maestro close ou
+ * déjà en session en sort ; la tête éligible (la première dont le projet a une place, le Mac aussi), si elle est
+ * à ce Maestro, sort de la file et le panneau écrit dans Maestro « La file est débloquée » avec son brief.
  */
 async function relieveLaunches($: EngineInterface): Promise<void> {
   if (relieving) return
@@ -3842,7 +3944,8 @@ async function relieveLaunches($: EngineInterface): Promise<void> {
   if (!ownId) return
   relieving = true
   try {
-    let queue = await doseQueue($, ownId)
+    await migrateOldQueue($, ownId)
+    let queue = await readGlobalQueue($)
     if (queue.length === 0) {
       if (doseView) {
         doseView = undefined
@@ -3853,44 +3956,52 @@ async function relieveLaunches($: EngineInterface): Promise<void> {
     }
     const source = knownSource
     const now = await $.clock.now()
-    const gate = await doseGate($, ownId, now)
+    const state = await doseState($, now)
     const tasks = source ? await load($, files(source).open, 'ROADMAP.md') : []
     const open = typeof tasks === 'string' ? undefined : tasks
-    const held = new Set(gate.rows.flatMap(r => {
+    const held = new Set(state.rows.flatMap(r => {
       const row = r as { title?: unknown; isArchived?: unknown }
       const id = typeof row.title === 'string' && row.isArchived !== true ? sessionTitleId(row.title) : undefined
       return id !== undefined ? [id] : []
     }))
-    const kept = launchQueueOrder(
-      queue.filter(q => !held.has(q.id) && (!open || open.some(t => t.id === q.id && !t.done))),
-      prereqsIn(open ?? []),
-    )
-    if (kept.length !== queue.length || kept.some((q, i) => q.id !== queue[i]?.id)) {
-      await storeSet($, `${LAUNCH_QUEUE_PREFIX}${ownId}`, kept)
-      queue = kept
+    const gone = archivedIds(state.rows)
+    const stale = (q: GlobalQueued) => held.has(q.id) || (open !== undefined && !open.some(t => t.id === q.id && !t.done))
+    if (queue.some(q => (q.maestro === ownId && stale(q)) || gone.has(q.maestro))) {
+      queue = await writeOwnQueue($, ownId, own => own.filter(q => !stale(q)), state.rows)
     }
-    if (queue.length > 0 && gate.go && now >= doseRetryAt) {
-      const head = queue[0]
-      let posted = false
-      if (head.card) {
-        const ran = await launchWithMode($, head.card, card => $.tool.call(card as never))
-        posted = ran.deny === undefined && !ran.isError
-        if (posted) await reserveCard($, ownId, head.title)
-      } else if (head.launch && source && open) {
-        const task = open.find(t => t.id === head.id)
-        if (task) {
+    const gateOf = (e: GlobalQueued) => gateFor(state, e.project, e.match)
+    const head = queueHead(globalQueueOrder(queue), gateOf)
+    if (head && head.maestro === ownId && now >= doseRetryAt) {
+      try {
+        if (head.card) {
+          // Une carte du modèle (#345, relecture de sécurité) n'a jamais eu le clic de Bertrand : elle
+          // redevient une carte, qu'il démarre d'un clic sur Start ; seul un ▶ vaut accord pour partir seul.
           doseAllowed.set(head.id, now + PLACE_IDLE_MS)
-          await launchSession($, source, task, head.launch.shortTitle, head.launch.extra ?? '', head.launch.kind ?? '')
-          posted = true
+          const ran = await launchWithMode($, head.card, card => $.tool.call(card as never))
+          if (ran.deny !== undefined || ran.isError) throw new Error('carte refusée')
+          await reserveCard($, head.title)
+        } else {
+          const brief = await releaseBrief($, head, source, open)
+          if (!brief) throw new Error('brief introuvable')
+          doseAllowed.set(head.id, now + PLACE_IDLE_MS)
+          await reserveCard($, brief.title)
+          queueSubmit($, releasePrompt(brief))
         }
+        queue = await writeOwnQueue($, ownId, own => own.filter(q => q.id !== head.id), state.rows)
+      } catch {
+        doseAllowed.delete(head.id)
+        doseRetryAt = now + DOSE_RETRY_MS
       }
-      if (posted) {
-        queue = queue.slice(1)
-        await storeSet($, `${LAUNCH_QUEUE_PREFIX}${ownId}`, queue)
-      } else doseRetryAt = now + DOSE_RETRY_MS
     }
-    const next: DoseView | undefined = queue.length > 0 ? { queue, taken: gate.taken, max: gate.max, others: gate.others, why: gate.why, ...(gate.load ? { load: gate.load } : {}) } : undefined
-    const key = JSON.stringify(next ? [next.queue.map(q => q.id), next.taken, next.max, next.others, next.why, next.why === 'load' ? Math.round(next.load?.load ?? 0) : 0] : [])
+    const mine = doseProject()
+    const ordered = globalQueueOrder(queue)
+    const ownQueue = ordered.flatMap((q, i) => (q.maestro === ownId ? [{ ...q, rank: i + 1 }] : []))
+    const gate = gateFor(state, mine.project, mine.match)
+    const next: DoseView | undefined =
+      ownQueue.length > 0
+        ? { queue: ownQueue, projectTaken: placesOf(state, mine.project, mine.match), projectMax: state.projectMax, macTaken: state.macTaken, macMax: state.macMax, why: gate.go ? 'project' : gate.why, ...(state.load ? { load: state.load } : {}) }
+        : undefined
+    const key = JSON.stringify(next ? [next.queue.map(q => [q.id, q.rank]), next.projectTaken, next.projectMax, next.macTaken, next.macMax, next.why, next.why === 'load' ? Math.round(next.load?.load ?? 0) : 0] : [])
     doseView = next
     if (key !== doseSeenKey) {
       doseSeenKey = key
@@ -3901,6 +4012,21 @@ async function relieveLaunches($: EngineInterface): Promise<void> {
   } finally {
     relieving = false
   }
+}
+
+/** Retire une tâche de la file (#345) : l'entrée de ce Maestro sort, la tâche revient à la liste. */
+async function dequeueLaunch($: EngineInterface, id: string): Promise<void> {
+  const ownId = ownSession?.id
+  if (!ownId) return
+  try {
+    await writeOwnQueue($, ownId, own => own.filter(q => q.id !== id))
+  } catch {
+    // store illisible : la file reste, le prochain pas relit
+  }
+  if (doseView) doseView = { ...doseView, queue: doseView.queue.filter(q => q.id !== id) }
+  if (doseView?.queue.length === 0) doseView = undefined
+  doseSeenKey = ''
+  await update($, liveVersionAtom, v => v + 1)
 }
 
 /** Le numéro du pas, pour la recherche du dossier ; une relecture en vol fait sauter le pas suivant. */
@@ -3956,6 +4082,18 @@ async function poll($: EngineInterface): Promise<void> {
  * personne est la demande. Sans cet outil (terminal, autre hôte), la demande passe à Claude
  * dans la conversation en cours, qui la lance lui-même.
  */
+/** Le brief d'un lancement : la vérification, la routine ou le travail, avec le « Message additionnel » (#324 : la relève le rejoue). */
+async function briefOf($: EngineInterface, source: Source, task: Task, shortTitle: string, extra = '', kind = '', routineClosed = false): Promise<{ title: string; prompt: string; background: string }> {
+  const projet = projectSettings(source).travail === 'projet'
+  const base =
+    kind === 'check'
+      ? checkBrief(source, task, shortTitle, !projet || (await isGitDir($, source.dir)), await briefFound($, source, task))
+      : kind === 'routine'
+        ? routineBrief(source, task, shortTitle, { today: todayOf(await $.clock.now()), closed: routineClosed, found: await briefFound($, source, task) })
+        : await workBrief($, source, task, shortTitle)
+  return extra.trim() === '' ? base : { ...base, prompt: `${base.prompt}\n\nMessage additionnel :\n${extra.trim()}` }
+}
+
 /** Le « Message additionnel » tapé dans le détail, ajouté au brief ; vidé à chaque changement de tâche. */
 let launchExtra = ''
 
@@ -3966,13 +4104,7 @@ async function launchSession($: EngineInterface, source: Source, task: Task, sho
   // Le bouton se grise et dit « Lancement… » : une seule écriture.
   await setView($, v => ({ launched: v.launched.includes(key) ? v.launched : [...v.launched, key], launchNote: LAUNCHING }))
   const projet = projectSettings(source).travail === 'projet'
-  const base =
-    kind === 'check'
-      ? checkBrief(source, task, shortTitle, !projet || (await isGitDir($, source.dir)), await briefFound($, source, task))
-      : kind === 'routine'
-        ? routineBrief(source, task, shortTitle, { today: todayOf(await $.clock.now()), closed: routineClosed, found: await briefFound($, source, task) })
-        : await workBrief($, source, task, shortTitle)
-  const brief = extra.trim() === '' ? base : { ...base, prompt: `${base.prompt}\n\nMessage additionnel :\n${extra.trim()}` }
+  const brief = await briefOf($, source, task, shortTitle, extra, kind, routineClosed)
   // Un refus net de l'app ou une panne : rien n'est parti, le bouton redevient cliquable.
   const release = () => setView($, v => ({ launched: v.launched.filter(k => k !== key) }))
   // #263 : le titre vient de la ligne, mais une session ouverte (endormie, le ▶ revenu) peut déjà porter son #N.
@@ -4062,7 +4194,7 @@ async function launchSession($: EngineInterface, source: Source, task: Task, sho
       proposed = await $.tool.call(withFields())
     }
     if (proposed.deny === undefined && !proposed.isError) {
-      if (dose.ownId) await reserveCard($, dose.ownId, brief.title)
+      if (dose.ownId) await reserveCard($, brief.title)
       noteLaunch('panel')
       await setView($, () => ({ launchNote: PROPOSED }))
       return
@@ -6188,7 +6320,8 @@ export const register: Register = (on, options) => {
     codeModel: typeof options.codeModel === 'string' && options.codeModel !== '' ? options.codeModel : 'sonnet',
     launchBypass: options.launchBypass === true,
     pruneBranches: typeof options.pruneBranches === 'boolean' ? options.pruneBranches : true,
-    maxSessions: typeof options.maxSessions === 'string' && options.maxSessions !== '' ? options.maxSessions : '4',
+    projectSessions: typeof options.projectSessions === 'string' && options.projectSessions !== '' ? options.projectSessions : '3',
+    macSessions: typeof options.macSessions === 'string' && options.macSessions !== '' ? options.macSessions : '12',
     axisPill: typeof options.axisPill === 'boolean' ? options.axisPill : false,
     priorities: options.priorities === true,
     dateFormat: options.dateFormat === 'fr' ? 'fr' : 'us',
@@ -6492,7 +6625,7 @@ export const register: Register = (on, options) => {
         return { deny: dose.refusal }
       }
       const posted = await launchWithMode($, e, card => next(card as typeof e))
-      if (dose.ownId && typeof cardTitle === 'string' && posted.deny === undefined && !posted.isError) await reserveCard($, dose.ownId, cardTitle)
+      if (dose.ownId && typeof cardTitle === 'string' && posted.deny === undefined && !posted.isError) await reserveCard($, cardTitle)
       return posted
     })
     if (titleRefused) return ran
@@ -10885,7 +11018,9 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   const blockRows = maestroBrand ? liveBlockRows(maestroBrand.tasks, openTasks, isLive, t => launchOf(t, liveOf(t)?.entry.sessionId, now), doneTasks) : []
   const blockOf = new Map(blockRows.flatMap(r => (r.brand ? [[r.brand.id, r.brand] as const] : [])))
   const blockKeys = new Set(blockRows.map(r => taskKey(r.task)))
-  const inBlock = (t: Task) => blockKeys.has(taskKey(t))
+  // Une tâche en file (#345) quitte la liste tant qu'elle attend : sa ligne est dans le bloc, avec son « Retirer ».
+  const queuedIds = new Set(maestroBrand && doseView ? doseView.queue.map(q => q.id) : [])
+  const inBlock = (t: Task) => blockKeys.has(taskKey(t)) || (t.id !== undefined && queuedIds.has(String(t.id)))
   const blockTasks = blockRows.map(r => r.task)
   // La file des tests lourds (#321, maquette C) : la pastille de chaque branche prend la place de la barre
   // d'étapes sur la ligne de sa session ; les suites d'une branche sans ligne (main, Maestro) ont la leur.
@@ -12306,7 +12441,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   const liveOpen = !(view.liveFolded ?? true)
   // L'icône d'archivage d'une session close du bloc « En cours » (#218) : une zone par ligne dépliée.
   const blockArchiveZones = liveOpen ? blockRows.filter(r => r.brand?.state === 'done' && r.brand.archivable && r.brand.sessionId).length : 0
-  const fixedZones = 1 + axes.length + (blockTasks.length > 0 ? 1 : 0) + 1 + todo.filter(todoClickable).length + (todoBlock && (secondary.length > 0 || people.length > 0) ? 1 : 0) + 2 * sessionRows.size + blockArchiveZones
+  const fixedZones = 1 + axes.length + (blockTasks.length > 0 ? 1 : 0) + 1 + todo.filter(todoClickable).length + (todoBlock && (secondary.length > 0 || people.length > 0) ? 1 : 0) + 2 * sessionRows.size + blockArchiveZones + (liveOpen ? (dose?.queue.length ?? 0) : 0)
   if (graphic) {
     // Les lignes du bloc « En cours » de Maestro d'abord (#160) : leur numéro ouvre leur session.
     const shownWithSession = [...(liveOpen ? blockTasks : []), ...drawnTasks.filter(t => t.id && (liveOf(t) ?? doneSessionOf(t)))]
@@ -12339,11 +12474,14 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
       <Text size="footnote" color={palette.blockOn}>{queueLoadText(heavyLoad, nowSec, whoQueued(heavy.owner.branch))}</Text>
     </Box>
   ) : null
-  // #324 (maquette A) : sous les sessions, une ligne par tâche en file, l'horloge (l'alerte pour la tête que la
-  // charge retient), son numéro et son nom en texte secondaire, sa pastille ; puis la phrase de ce qui la retient.
-  const doseRows = (dose?.queue ?? []).map((q, i) => {
-    const mark = queuedMark(i + 1, dose?.why ?? 'full')
+  // #345 (maquette A, version 2) : sous les sessions, une ligne par tâche en file, l'horloge (l'alerte pour la tête que
+  // la charge retient), son numéro et son nom en texte secondaire, sa pastille de rang sur tout le Mac, puis le lien
+  // « Retirer » (un texte et sa zone de clic, jamais un `Button` natif dont la marge décale le texte) ; la phrase
+  // seulement quand la charge retient la file : le plafond du projet ou du Mac, la pastille de l'en-tête le dit.
+  const doseRows = (dose?.queue ?? []).map(q => {
+    const mark = queuedMark(q.rank, dose?.why ?? 'project')
     const name = q.title.includes(' · ') ? q.title.slice(q.title.indexOf(' · ') + 3) : q.title
+    const out = () => void dequeueLaunch($, q.id)
     return (
       <Box key={`dose:${keyPart(q.id)}`} flexDirection="row" alignItems="center" gap={SPACE.row} paddingX={SPACE.indent}>
         <Box width={ROW_STEPS.icon} flexShrink={0} flexDirection="row" alignItems="center" justifyContent="center">
@@ -12362,17 +12500,28 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
           <Text wrap="truncate-end" color={palette.text2}>{`#${q.id} ${name}`}</Text>
         </Box>
         <Box flexShrink={0}>{queuePill(mark)}</Box>
+        <Box key={`dose-out:${keyPart(q.id)}`} flexShrink={0} flexDirection="row" alignItems="center">
+          {graphic && Client ? (
+            <Box hover={{ backgroundColor: palette.hover }}>
+              <Text size="footnote" color={palette.text3}>Retirer</Text>
+              {hit(`dose-out:${keyPart(q.id)}`, out, 1)}
+            </Box>
+          ) : (
+            <Button plain dimColor label="Retirer" onPress={out} />
+          )}
+        </Box>
       </Box>
     )
   })
-  const doseLine = dose ? (
-    <Box key="dose:why" paddingX={SPACE.indent} paddingY="xs" backgroundColor={dose.why === 'load' ? palette.blockTint : palette.btn}>
-      <Text size="footnote" color={dose.why === 'load' ? palette.blockOn : palette.text2}>
-        {placesSentence({ taken: dose.taken, max: dose.max, others: dose.others, why: dose.why, ...(dose.load ? { load: dose.load } : {}), head: `#${dose.queue[0]?.id ?? ''}` })}
+  const doseSentence = dose ? placesSentence({ why: dose.why, ...(dose.load ? { load: dose.load } : {}), head: `#${dose.queue[0]?.id ?? ''}` }) : undefined
+  const doseLine = dose && doseSentence ? (
+    <Box key="dose:why" paddingX={SPACE.indent} paddingY="xs" backgroundColor={palette.blockTint}>
+      <Text size="footnote" color={palette.blockOn}>
+        {doseSentence}
       </Text>
     </Box>
   ) : null
-  const dosePill = dose ? placesPill({ taken: dose.taken, max: dose.max, queued: dose.queue.length, why: dose.why }) : undefined
+  const dosePill = dose ? placesPill({ projectTaken: dose.projectTaken, projectMax: dose.projectMax, macTaken: dose.macTaken, macMax: dose.macMax, queued: dose.queue.length, why: dose.why }) : undefined
   const liveBlock =
     blockTasks.length > 0 || queueRows.length > 0 || doseRows.length > 0 ? (
       <Box flexDirection="column" borderStyle="round" borderColor={palette.border} paddingY="xs">

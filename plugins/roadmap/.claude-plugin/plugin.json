@@ -1,6 +1,6 @@
 {
   "name": "roadmap",
-  "version": "0.224.2",
+  "version": "0.225.0",
   "description": "Panneau Claude Code à côté du chat : la roadmap du projet de la session, filtrable, avec le détail d'une tâche et son lancement dans une nouvelle session",
   "author": {
     "name": "Bertrand Fargheon"
@@ -115,19 +115,19 @@
       "description": "Dans un projet de code, les branches déjà fusionnées sur main que plus rien ne tient (ni une session encore ouverte, ni une ligne ouverte de la roadmap) sont supprimées, sur le Mac et sur GitHub : après l'archivage d'une session, et au démarrage d'une session (au plus toutes les 10 minutes). « Rouvrir la session » d'une tâche close recrée sa branche depuis main. Éteint : les branches restent.",
       "default": true
     },
-    "maxSessions": {
+    "projectSessions": {
       "type": "string",
-      "title": "Sessions en même temps",
-      "description": "Le nombre de sessions de tâche qui travaillent en même temps sur le Mac, tous projets confondus, que Maestro ne dépasse pas : au-delà, les tâches attendent leur tour dans l'ordre de la chaîne, et le panneau pose seul la carte de la suivante quand une session se dit prête (ou attend ta réponse depuis 15 min). Un lancement attend aussi quand la charge du Mac dépasse 2 × ses cœurs. Mesuré le 2026-11-05 : 4 tient sur un Mac de 16 Go.",
-      "default": "4",
-      "options": [
-        "2",
-        "3",
-        "4",
-        "5",
-        "6",
-        "8"
-      ]
+      "title": "Sessions par projet",
+      "description": "Le nombre de sessions de tâche qui travaillent en même temps dans un même projet, que ses Maestros ne dépassent pas. Les tâches en trop attendent dans la file commune à tous les Maestros et à tous les projets, dans l'ordre de la chaîne : une tâche lancée par ▶ démarre seule à son tour, dès qu'une place se libère ; une carte proposée par Maestro revient en carte, à démarrer d'un clic sur Start. Un lancement attend aussi quand la charge du Mac dépasse 2 × ses cœurs.",
+      "default": "3",
+      "options": ["1", "2", "3", "4", "5", "6"]
+    },
+    "macSessions": {
+      "type": "string",
+      "title": "Sessions sur le Mac",
+      "description": "Le nombre de sessions de tâche qui travaillent en même temps sur le Mac, tous projets confondus. C'est le plafond de la file commune : au-delà, les tâches de tous les Maestros attendent leur tour, et chacune démarre seule quand elle passe en tête et qu'une place se libère. Un lancement attend aussi quand la charge du Mac dépasse 2 × ses cœurs (mesuré le 2026-11-05 : 4 sessions tiennent sur un Mac de 16 Go ; monte ce plafond selon ta mémoire).",
+      "default": "12",
+      "options": ["4", "6", "8", "10", "12", "16"]
     },
     "account": {
       "type": "string",

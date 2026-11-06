@@ -1381,7 +1381,7 @@ export function deferredReminder(block: string): string {
 
 // Le lancement par Claude depuis le panneau (#140) : la conversation n'en montre que la première ligne,
 // le hook prompt.submit du plugin passe le reste en contexte caché.
-const LAUNCH_LINE = /^(Lancement de .+…)\n\n([\s\S]+)$/
+const LAUNCH_LINE = /^(Lancement de .+…|La file est débloquée : #[^\s]+ démarre\.)\n\n([\s\S]+)$/
 
 export function launchPrompt(title: string, body: string): string {
   return `Lancement de ${title}…\n\n${body}`
@@ -11412,8 +11412,10 @@ export const PLACE_IDLE_MS = 15 * 60_000
 export type QueuedLaunch = { id: string; title: string; card?: Record<string, unknown>; launch?: { shortTitle: string; extra?: string; kind?: string }; at: number }
 /** La charge du Mac sur une minute, et ses cœurs. */
 export type MacLoad = { load: number; cores: number }
-/** Ce qui retient un lancement : le plafond atteint, ou le Mac chargé. */
-export type DoseWhy = 'full' | 'load'
+/** Une tâche en file commune (#345) : son Maestro, son projet, les préfixes de ses dossiers, ses prérequis. */
+export type GlobalQueued = QueuedLaunch & { maestro: string; project: string; match: string[]; after: string[] }
+/** Ce qui retient un lancement : le plafond du projet, celui du Mac, ou le Mac chargé. */
+export type DoseWhy = 'project' | 'mac' | 'load'
 
 /** Le projet d'une session : le dossier de son `cwd`, avant `/.claude/worktrees`. */
 function projectOfCwd(cwd: string): string {
@@ -11434,8 +11436,9 @@ export function launchPlaces(
   now: number,
   maestros: ReadonlySet<string>,
   match: readonly string[],
-): { taken: number; others: string[]; reserved: string[] } {
+): { taken: number; others: string[]; reserved: string[]; cwds: string[] } {
   let taken = 0
+  const cwds: string[] = []
   const others: string[] = []
   const openIds = new Set<string>()
   for (const raw of rows) {
@@ -11454,6 +11457,7 @@ export function launchPlaces(
     if (!holds) continue
     taken++
     const cwd = typeof r.cwd === 'string' ? r.cwd : ''
+    cwds.push(cwd)
     if (cwd !== '' && !match.some(prefix => cwd.startsWith(prefix))) others.push(projectOfCwd(cwd))
   }
   const reserved: string[] = []
@@ -11463,7 +11467,12 @@ export function launchPlaces(
     reserved.push(id)
     taken++
   }
-  return { taken, others, reserved }
+  return { taken, others, reserved, cwds }
+}
+
+/** Les places d'un projet (#345) : les sessions dont le `cwd` commence par l'un de ses préfixes. */
+export function projectTaken(cwds: readonly string[], match: readonly string[]): number {
+  return cwds.filter(c => c !== '' && match.some(prefix => c.startsWith(prefix))).length
 }
 
 /** La charge d'une minute et les cœurs, lus de `sysctl -n vm.loadavg hw.ncpu` ; illisible : rien. */
@@ -11475,9 +11484,10 @@ export function macLoad(stdout: string): MacLoad | undefined {
   return Number.isFinite(load) && cores > 0 ? { load, cores } : undefined
 }
 
-/** Le lancement part-il (#324) ? Le plafond d'abord, puis la charge au-dessus de 2 × cœurs (le seuil de la file des tests, #249). */
-export function launchGate(o: { taken: number; max: number; load?: MacLoad }): { go: true } | { go: false; why: DoseWhy } {
-  if (o.taken >= o.max) return { go: false, why: 'full' }
+/** Le lancement part-il (#345) ? Le plafond du projet, puis celui du Mac, puis la charge au-dessus de 2 × cœurs (#249). */
+export function launchGate(o: { projectTaken: number; projectMax: number; macTaken: number; macMax: number; load?: MacLoad }): { go: true } | { go: false; why: DoseWhy } {
+  if (o.projectTaken >= o.projectMax) return { go: false, why: 'project' }
+  if (o.macTaken >= o.macMax) return { go: false, why: 'mac' }
   if (o.load && o.load.load > 2 * o.load.cores) return { go: false, why: 'load' }
   return { go: true }
 }
@@ -11499,30 +11509,81 @@ export function queueRank(n: number): string {
   return n === 1 ? '1re' : `${n}e`
 }
 
+/** La file commune de tous les Maestro (#345) : l'ordre d'arrivée, un prérequis (`après:`) ne comptant que dans son projet. */
+export function globalQueueOrder<T extends { id: string; project: string; after: readonly string[]; at: number }>(queue: readonly T[]): T[] {
+  const key = (e: { id: string; project: string }) => `${e.project}#${e.id}`
+  const byKey = new Map(queue.map(e => [key(e), e]))
+  return launchQueueOrder(
+    queue.map(e => ({ id: key(e), at: e.at })),
+    k => (byKey.get(k)?.after ?? []).map(a => `${byKey.get(k)?.project}#${a}`),
+  ).map(e => byKey.get(e.id) as T)
+}
+
+/** La tête éligible (#345) : la première de la file que la décision laisse partir ; un projet plein est sauté. */
+export function queueHead<T>(ordered: readonly T[], gateOf: (e: T) => { go: boolean }): T | undefined {
+  return ordered.find(e => gateOf(e).go)
+}
+
 const loadWords = (l: MacLoad) => `charge ${Math.round(l.load)} pour ${l.cores} cœurs, seuil ${2 * l.cores}`
 
-/** Le refus d'une carte mise en file, que lit le modèle de Maestro (#324). */
-export function queuedRefusal(o: { id: string; rank: number; taken: number; max: number; why: DoseWhy; load?: MacLoad }): string {
-  const turn = `#${o.id} attend son tour, ${queueRank(o.rank)} en file ; le panneau Roadmap posera sa carte`
-  const end = 'Ne la repose pas, et ne fais pas la tâche toi-même.'
-  if (o.why === 'load' && o.load) return `Le Mac est chargé (${loadWords(o.load)}). ${turn} quand la charge retombera. ${end}`
-  return `Plus de place : ${o.taken} sessions travaillent sur le Mac (plafond ${o.max}). ${turn} dès qu'une place se libère. ${end}`
+type QueueTextArgs = { id: string; rank: number; why: DoseWhy; projectName: string; projectTaken: number; projectMax: number; macTaken: number; macMax: number; load?: MacLoad }
+
+/** Ce qui retient la tâche, en une phrase (#345). */
+function heldBy(o: QueueTextArgs): string {
+  if (o.why === 'load' && o.load) return `Le Mac est chargé (${loadWords(o.load)})`
+  if (o.why === 'mac') return `Le Mac est plein (${o.macTaken} sessions, plafond ${o.macMax})`
+  return `${o.projectTaken} sessions de ${o.projectName} travaillent (plafond ${o.projectMax})`
 }
 
-/** « d'AAFES Cowork », « de Life Cowork ». */
-const ofProject = (name: string) => (/^[aeiouyhàâéèêîôû]/i.test(name) ? `d'${name}` : `de ${name}`)
-
-/** La phrase sous les lignes du bloc « En cours » (#324, maquette A) : ce qui retient la file. */
-export function placesSentence(o: { taken: number; max: number; others: readonly string[]; why: DoseWhy; load?: MacLoad; head?: string }): string {
-  if (o.why === 'load' && o.load) return `Le Mac est chargé (${loadWords(o.load)}) : ${o.head ?? 'la file'} part quand elle retombe.`
-  const projects = new Set(o.others)
-  const of = o.others.length === 0 ? '' : projects.size === 1 ? `, dont ${o.others.length} ${ofProject(o.others[0])}` : `, dont ${o.others.length} d'autres projets`
-  return `${o.taken} sessions travaillent sur le Mac (plafond ${o.max}${of}) : la suivante part quand l'une se dit prête.`
+/** Le message dans la conversation de Maestro quand une tâche entre en file (#345). */
+export function queueEntryText(o: QueueTextArgs): string {
+  return `#${o.id} entre en file, ${queueRank(o.rank)} sur le Mac : ${heldBy(o)}. Elle démarrera seule à son tour, sans nouveau clic. Réponds en une ligne, sans rien lancer.`
 }
 
-/** La pastille de l'en-tête du bloc « En cours » quand des tâches attendent (#324, maquette A). */
-export function placesPill(o: { taken: number; max: number; queued: number; why: DoseWhy }): { text: string; tone: 'live' | 'block' } {
-  return o.why === 'load' ? { text: `Mac chargé · ${o.queued} en file`, tone: 'block' } : { text: `${o.taken}/${o.max} places · ${o.queued} en file`, tone: 'live' }
+/** La première ligne du message qui débloque la tête de file (#345). */
+export function queueReleaseText(id: string): string {
+  return `La file est débloquée : #${id} démarre.`
+}
+
+/**
+ * Le message que le panneau écrit dans Maestro quand la tête de file part (#345) : sa première ligne, puis
+ * la consigne de lancer la session en `user_asked` (sinon la carte), et le brief. La conversation n'en
+ * montre que la première ligne (`splitLaunch`).
+ */
+export function releasePrompt(o: { id: string; title: string; prompt: string; background: string; effort?: string; model?: string; travail: Travail; bypass: boolean }): string {
+  const fields = [
+    ...(o.effort ? [`effort ${o.effort}`] : []),
+    ...(o.model ? [`model ${o.model}`] : []),
+    ...(o.travail === 'projet' ? ['use_worktree false'] : []),
+    ...(o.bypass ? ['permission_mode bypassPermissions'] : []),
+  ]
+  return [
+    queueReleaseText(o.id),
+    '',
+    `Lance cette session maintenant : outil start_session, initiation user_asked, contexte fresh, titre « ${o.title} »${fields.length > 0 ? `, avec ${fields.join(', ')} (chaque champ si l'outil l'accepte, sinon sans)` : ''}, avec le brief ci-dessous.`,
+    "Si l'app refuse, pose sa carte à la place (initiation own_initiative) et dis en une ligne qu'un clic sur Start la lance. Puis réponds en une phrase au plus.",
+    '',
+    o.prompt,
+    '',
+    `Contexte : ${o.background}`,
+  ].join('\n')
+}
+
+/** Le refus d'une carte du modèle mise en file (#345) : sans clic de Bertrand, elle revient en carte à son tour. */
+export function queuedRefusal(o: QueueTextArgs): string {
+  return `${heldBy(o)}. #${o.id} attend son tour, ${queueRank(o.rank)} sur le Mac ; le panneau posera sa carte à son tour, que ${person()} démarre d'un clic sur Start. Ne la repose pas, et ne fais pas la tâche toi-même.`
+}
+
+/** La phrase de charge sous le bloc « En cours » (#345) ; le plafond du projet ou du Mac n'en a plus, la pastille le dit. */
+export function placesSentence(o: { why: DoseWhy; load?: MacLoad; head?: string }): string | undefined {
+  if (o.why === 'load' && o.load) return `Le Mac est chargé (${loadWords(o.load)}) : ${o.head ?? 'la file'} part seule quand elle retombe.`
+  return undefined
+}
+
+/** La pastille de l'en-tête du bloc « En cours » quand des tâches attendent (#345) : bleue si le projet retient, orange si le Mac. */
+export function placesPill(o: { projectTaken: number; projectMax: number; macTaken: number; macMax: number; queued: number; why: DoseWhy }): { text: string; tone: 'live' | 'block' } {
+  if (o.why === 'load') return { text: `Mac chargé · ${o.macTaken}/${o.macMax} · ${o.queued} en file`, tone: 'block' }
+  return { text: `${o.projectTaken}/${o.projectMax} · Mac ${o.macTaken}/${o.macMax} · ${o.queued} en file`, tone: o.why === 'project' ? 'live' : 'block' }
 }
 
 /** La pastille d'une tâche en file (#324) : « Mac chargé » pour la tête quand la charge la retient, sinon son rang. */
