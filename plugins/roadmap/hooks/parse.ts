@@ -7767,6 +7767,59 @@ export function proposeTaskText(kind: ProposeKind): string {
   return `Proposer une task (plugin roadmap, règle fixe) : ${proposeRule()} ${proposeHow(kind)}`
 }
 
+const CLOCK_DAYS = ['dimanche', 'lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi']
+const CLOCK_MONTHS = ['janvier', 'février', 'mars', 'avril', 'mai', 'juin', 'juillet', 'août', 'septembre', 'octobre', 'novembre', 'décembre']
+const CLOCK_DAYS_EN = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+const CLOCK_MONTHS_EN = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+
+type ClockParts = { y: number; mo: number; d: number; wd: number; h: number; mi: number; offset: number; zone?: string; abbr?: string }
+
+/** L'heure murale de `ms` dans `timeZone` par Intl ; sans fuseau, celui du Mac ; un fuseau refusé : undefined. */
+function intlClock(ms: number, timeZone?: string): ClockParts | undefined {
+  try {
+    const fmt = new Intl.DateTimeFormat('en-US', { timeZone, hourCycle: 'h23', year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: 'numeric', second: 'numeric', timeZoneName: 'short' })
+    const parts: Record<string, string> = {}
+    for (const p of fmt.formatToParts(new Date(ms))) parts[p.type] = p.value
+    const y = Number(parts.year), mo = Number(parts.month) - 1, d = Number(parts.day), h = Number(parts.hour) % 24, mi = Number(parts.minute), s = Number(parts.second)
+    if ([y, mo, d, h, mi, s].some(n => !Number.isFinite(n))) return undefined
+    const wall = Date.UTC(y, mo, d, h, mi, s)
+    const offset = Math.round((wall - Math.floor(ms / 1000) * 1000) / 60_000)
+    const zone = fmt.resolvedOptions().timeZone
+    const abbr = parts.timeZoneName && !/^GMT/.test(parts.timeZoneName) ? parts.timeZoneName : undefined
+    return { y, mo, d, wd: new Date(wall).getUTCDay(), h, mi, offset, zone, abbr }
+  } catch {
+    return undefined
+  }
+}
+
+/** Sans Intl : les accesseurs locaux du runtime, qui suivent le fuseau du Mac. */
+function localClock(ms: number): ClockParts {
+  const t = new Date(ms)
+  return { y: t.getFullYear(), mo: t.getMonth(), d: t.getDate(), wd: t.getDay(), h: t.getHours(), mi: t.getMinutes(), offset: -t.getTimezoneOffset() }
+}
+
+/**
+ * L'heure locale du Mac, jointe à chaque message par prompt.submit (#331) : le 05/11 à 4:55 PM EST, une
+ * session AAFES a dit « parti hier » d'un email parti sept minutes plus tôt, sur la foi d'un changement de
+ * date de session (l'UTC était déjà au lendemain). La ligne donne le jour, la date, l'heure, le fuseau et
+ * la forme de `date`, puis la règle : « hier », « aujourd'hui » ou une durée écoulée se mesurent contre elle.
+ * `timeZone` ne sert qu'aux tests ; un fuseau inconnu retombe sur celui du Mac.
+ */
+export function localClockText(ms: number, timeZone?: string): string {
+  const c = (timeZone !== undefined ? intlClock(ms, timeZone) : undefined) ?? intlClock(ms) ?? localClock(ms)
+  const pad = (n: number) => String(n).padStart(2, '0')
+  const sign = c.offset < 0 ? '−' : '+'
+  const off = `UTC${sign}${pad(Math.floor(Math.abs(c.offset) / 60))}:${pad(Math.abs(c.offset) % 60)}`
+  const hm = `${pad(c.h)}:${pad(c.mi)}`
+  const zone = [c.abbr, off, c.zone].filter(Boolean)
+  const tz = c.abbr ?? off
+  const date = `${CLOCK_DAYS_EN[c.wd]} ${CLOCK_MONTHS_EN[c.mo]} ${c.d} ${hm} ${tz} ${c.y}`
+  return (
+    `Heure locale du Mac (plugin roadmap, à ce message) : ${CLOCK_DAYS[c.wd]} ${c.d} ${CLOCK_MONTHS[c.mo]} ${c.y}, ${hm} ${zone[0]} (${zone.slice(1).join(', ')}) ; sortie de date : ${date}. ` +
+    "« hier », « aujourd'hui », « ce matin » ou une durée écoulée (« il y a sept minutes ») se mesurent contre cette heure, jamais contre la date de la session, ni contre une date ou une heure en UTC (un horodatage en Z, une date de session déjà passée au lendemain) : convertis d'abord l'heure d'un fait dans ce fuseau, puis compare."
+  )
+}
+
 /**
  * Le cadrage de départ (#303, BBR, 2026-11-04 : « le mode auto ne doit jamais remplacer le cadrage de
  * début ») : le paragraphe Autonome faisait partir les sessions sans une question. Dit à toute session,

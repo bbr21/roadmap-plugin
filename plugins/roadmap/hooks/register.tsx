@@ -129,6 +129,7 @@ import {
   studySteps,
   studyStepsReminder,
   proposeTaskText,
+  localClockText,
   codeWithoutTests,
   isMethodSkill,
   isSwiftUISkill,
@@ -6064,6 +6065,12 @@ export const register: Register = (on, options) => {
     // Un seul hook prompt.submit par module (le moteur refuse le second) : l'appel vit ici.
     await ensurePane($)
     const texts: string[] = []
+    // L'heure locale du Mac à chaque message, projet à roadmap ou non (#331) : « hier » se mesure contre elle.
+    try {
+      texts.push(localClockText(await $.clock.now()))
+    } catch {
+      // horloge illisible : le message passe sans l'heure
+    }
     // Le lancement du panneau, envoyé par ce plugin : une ligne à montrer, le brief en contexte (#140).
     const launch = ownLaunch(e.text, e.origin as typeof e.origin | undefined)
     if (launch) {
