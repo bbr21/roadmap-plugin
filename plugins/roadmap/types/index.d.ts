@@ -81,6 +81,7 @@ export type View = {
   launchNote: string
   /** Ce qu'a donné la dernière ouverture de fichier, vide quand elle s'est faite dans Claude Code. */
   openNote: string
+  openAt: string
   /** Sections dépliées en entier, au-delà du budget de lignes d'un dessin ; vidé à chaque changement de filtre. */
   moreGroups: string[]
   /** Sections repliées sous un filtre, où tout est déplié par défaut ; vidé à chaque changement de filtre. */

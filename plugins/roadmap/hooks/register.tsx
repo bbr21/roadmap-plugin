@@ -333,6 +333,9 @@ import {
   isPreviewable,
   PREVIEW,
   type DraftPreview,
+  isDocumentPath,
+  openRefusal,
+  openVerdict,
   pathCandidates,
   thumbSvg,
   integerShares,
@@ -814,6 +817,7 @@ const VIEW: View = {
   launchNote: '',
   launched: [],
   openNote: '',
+  openAt: '',
   conclusionOpen: '',
   cancelAsk: '',
   closeKind: 'abandon',
@@ -4570,7 +4574,7 @@ async function openSession($: EngineInterface, entry: LiveEntry): Promise<void> 
       const ran = await $.tool.call({ tool: OPEN_SESSION_TOOL, session_id: entry.sessionId, target: 'focus' })
       if (ran.deny === undefined && !ran.isError) {
         opened('focus')
-        void setView($, () => ({ openNote: '' })).catch(() => undefined)
+        void setView($, () => ({ openAt: '', openNote: '' })).catch(() => undefined)
         return
       }
     } catch {
@@ -4580,10 +4584,10 @@ async function openSession($: EngineInterface, entry: LiveEntry): Promise<void> 
   if (entry.link) {
     await $.process.run(['open', entry.link])
     opened('link')
-    void setView($, () => ({ openNote: '' })).catch(() => undefined)
+    void setView($, () => ({ openAt: '', openNote: '' })).catch(() => undefined)
     return
   }
-  await setView($, () => ({ openNote: `Session « ${entry.title} » : ouvre-la depuis la barre latérale.` }))
+  await setView($, () => ({ openAt: '', openNote: `Session « ${entry.title} » : ouvre-la depuis la barre latérale.` }))
   opened('note')
 }
 
@@ -4592,12 +4596,12 @@ async function openSession($: EngineInterface, entry: LiveEntry): Promise<void> 
  * cesse aussitôt de pointer vers la session.
  */
 async function archiveSession($: EngineInterface, key: string, entry: LiveEntry): Promise<boolean> {
-  await setView($, () => ({ openNote: '' }))
+  await setView($, () => ({ openAt: '', openNote: '' }))
   if (!entry.sessionId) return false
   try {
     const ran = await $.tool.call({ tool: ARCHIVE_SESSION_TOOL, session_id: entry.sessionId })
     if (ran.deny !== undefined || ran.isError) {
-      await setView($, () => ({ openNote: `Archivage refusé : ${ran.deny ?? ran.text ?? 'sans motif'}` }))
+      await setView($, () => ({ openAt: '', openNote: `Archivage refusé : ${ran.deny ?? ran.text ?? 'sans motif'}` }))
       return false
     }
     // La session est archivée : le panneau cesse d'y pointer tout de suite, puis oublie son suivi ; la
@@ -4607,7 +4611,7 @@ async function archiveSession($: EngineInterface, key: string, entry: LiveEntry)
     // #313 : la session archivée libère son worktree ; sa branche fusionnée part au ménage qui suit.
     sweepAfterArchive($, await sourceNow($).catch(() => undefined))
     for (const [k, v] of sessionMatches) if (v.sessionId === entry.sessionId) sessionMatches.delete(k)
-    await setView($, () => ({ openNote: `Session « ${entry.title} » archivée.` }))
+    await setView($, () => ({ openAt: '', openNote: `Session « ${entry.title} » archivée.` }))
     await update($, liveVersionAtom, v => v + 1)
     try {
       const live = await loadLive($)
@@ -4619,7 +4623,7 @@ async function archiveSession($: EngineInterface, key: string, entry: LiveEntry)
     }
     return true
   } catch (err) {
-    await setView($, () => ({ openNote: `Archivage impossible : ${err instanceof Error ? err.message : String(err)}` }))
+    await setView($, () => ({ openAt: '', openNote: `Archivage impossible : ${err instanceof Error ? err.message : String(err)}` }))
     return false
   }
 }
@@ -4820,7 +4824,7 @@ function sweepAfterArchive($: EngineInterface, source: Source | undefined): void
  */
 async function reopenSession($: EngineInterface, source: Source, t: Task, row: TaskSessionRow, now: number): Promise<void> {
   reopenAskNow = ''
-  await setView($, () => ({ openNote: '', reopenAsk: '' }))
+  await setView($, () => ({ openAt: '', openNote: '', reopenAsk: '' }))
   // #313 : l'app rattache un worktree à la branche de la session par son nom ; supprimée par le ménage,
   // elle se recrée d'abord depuis la base, où son travail est déjà fusionné.
   const branch = row.branch ?? t.branche
@@ -4831,7 +4835,7 @@ async function reopenSession($: EngineInterface, source: Source, t: Task, row: T
   } catch (err) {
     outcome = { open: false, note: `Réouverture impossible : ${err instanceof Error ? err.message : String(err)}` }
   }
-  if (!outcome.open) return void (await setView($, () => ({ openNote: outcome.note })))
+  if (!outcome.open) return void (await setView($, () => ({ openAt: '', openNote: outcome.note })))
   archivedSessionIds.delete(row.sessionId)
   taskSessions.set(`${source.name}:${t.id}`, { row: { ...row, isArchived: false }, at: now })
   await update($, liveVersionAtom, v => v + 1)
@@ -5653,15 +5657,43 @@ async function togglePriority($: EngineInterface, source: Source, task: Task): P
  * Ouvre un fichier dans le panneau Fichiers de Claude Code, à la ligne voulue. Ce panneau n'ouvre
  * que les dossiers de la session : hors de ceux-là, le fichier part dans l'app par défaut du Mac.
  */
-async function openFile($: EngineInterface, path: string, line?: number): Promise<void> {
-  await setView($, () => ({ openNote: '' }))
+async function openFile($: EngineInterface, source: Source, path: string, opts: { line?: number; at?: string } = {}): Promise<void> {
+  await setView($, () => ({ openNote: '', openAt: '' }))
+  // #349 : `open` lance un programme comme il ouvre un document. Rien ne part avant que le chemin réel (liens
+  // résolus) soit un fichier ordinaire, d'une extension de document, sous le dossier du projet.
+  const realOf = async (p: string | undefined): Promise<string | undefined> => {
+    if (p === undefined) return undefined
+    try {
+      return (await $.fs.stat(p, { resolve: true })).realPath
+    } catch {
+      return undefined
+    }
+  }
+  const real = await realOf(path)
+  let kind: string | undefined
+  if (real !== undefined) {
+    try {
+      kind = (await $.fs.stat(real)).kind
+    } catch {
+      kind = undefined
+    }
+  }
+  const bases = [...new Set([await realOf(source.root ?? source.dir), await realOf(source.dir)])]
+  const verdict = openVerdict(real !== undefined && kind !== undefined ? { path: real, kind } : undefined, bases)
+  if (verdict !== 'ok') {
+    const note = openRefusal(verdict, path)
+    await setView($, () => ({ openNote: note, openAt: opts.at ?? '' }))
+    return
+  }
+  const target = real!
+  const line = opts.line
   try {
-    const ran = await $.tool.call({ tool: SHOW_PANE_TOOL, pane: 'file', path, ...(line ? { line } : {}) })
+    const ran = await $.tool.call({ tool: SHOW_PANE_TOOL, pane: 'file', path: target, ...(line ? { line } : {}) })
     if (ran.deny === undefined && !ran.isError) return
   } catch {
     // outil absent (terminal, autre hôte) : repli plus bas
   }
-  await $.process.run(['open', path])
+  await $.process.run(['open', target])
   await setView($, () => ({
     openNote: "Ouvert dans l'app par défaut : ce dossier n'est pas un dossier de la session, le panneau Fichiers ne l'affiche pas.",
   }))
@@ -5713,11 +5745,11 @@ let mockupFoldedSidebar = false
  * volet et rouvre la barre. En mode auto, ou l'ouverture refusée, la demande passe par Claude (#248).
  */
 async function toggleMockup($: EngineInterface, path: string): Promise<void> {
-  await setView($, () => ({ openNote: '' }))
+  await setView($, () => ({ openAt: '', openNote: '' }))
   const viaClaude = async () => {
     queueSubmit($, mockupAskText(path))
     // La note redessine le panneau, et ce dessin envoie le message.
-    await setView($, () => ({ openNote: 'Demandé à Claude : ouvrir les maquettes dans son volet navigateur.' }))
+    await setView($, () => ({ openAt: '', openNote: 'Demandé à Claude : ouvrir les maquettes dans son volet navigateur.' }))
   }
   if ((await ownMode($)) === 'auto') return viaClaude()
   const opened = await read($, mockupOpenAtom)
@@ -7941,31 +7973,24 @@ async function readAttachments($: EngineInterface, source: Source, task: Task, n
 /** La colonne des étiquettes d'en-tête du brouillon (« À », « Cc », « Cci », « PJ », #264), en cellules. */
 const DRAFT_LABEL_CELLS = 3
 
-/** Les pièces jointes qu'un clic ouvre (#264) : des documents, jamais un script ni une app que `open` lancerait. */
-const OPENABLE_ATTACHMENT_RE = /\.(pdf|png|jpe?g|gif|webp|heic|svg|docx?|xlsx?|pptx?|csv|txt|md|markdown|key|numbers|pages|mp4|mov)$/i
-
 /**
  * Un chemin tel qu'écrit dans un fichier du projet (une pièce jointe, #264) : le premier candidat qui existe,
- * ouvert. Le chemin vient du texte d'un brouillon : seul un document rangé sous le dossier du projet s'ouvre.
+ * ouvert par `openFile`, qui contrôle le chemin réel (#349). Le chemin vient du texte d'un brouillon : ni absolu,
+ * ni `~`, ni `..`, et d'une extension de document.
  */
-async function openWritten($: EngineInterface, source: Source, written: string): Promise<void> {
+async function openWritten($: EngineInterface, source: Source, written: string, at: string): Promise<void> {
   const inside = !written.startsWith('/') && !written.startsWith('~') && !written.split(/[\\/]/).includes('..')
-  if (!inside || !OPENABLE_ATTACHMENT_RE.test(written)) return void (await setView($, () => ({ openNote: `Pas ouvert depuis l'aperçu : ${written}` })))
-  const rel = written.replace(/^\.\//, '')
+  if (!inside || !isDocumentPath(written)) return void (await setView($, () => ({ openNote: `Pas ouvert depuis l'aperçu : ${written}`, openAt: at })))
   for (const path of pathCandidates(source, written)) {
     try {
-      // Ni lien, ni chemin réel hors du dossier ou qui n'est plus un document (un dossier parent lien compris).
-      const st = await $.fs.stat(path, { resolve: true })
-      const base = (await $.fs.stat(path.slice(0, path.length - rel.length - 1), { resolve: true })).realPath
-      const real = st.realPath
-      if (st.kind !== 'file' || st.isLink || base === undefined || real === undefined) continue
-      if (!real.startsWith(`${base}/`) || !OPENABLE_ATTACHMENT_RE.test(real)) continue
-      return void (await openFile($, path))
+      await $.fs.stat(path)
     } catch {
-      // absent ici : le suivant
+      continue // absent ici : le suivant
     }
+    return void (await openFile($, source, path, { at }))
   }
-  await setView($, () => ({ openNote: `Introuvable : ${written}` }))
+  const note = openRefusal('missing', written)
+  await setView($, () => ({ openNote: note, openAt: at }))
 }
 
 /** Le brouillon que montre la fiche (#236) : le plus récent des livrables texte trouvés, son aperçu, ou trop gros pour être lu. */
@@ -8296,7 +8321,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   ])
   const {
     axis: axisRaw, attend: attendRaw, who: whoRaw = 'all', moreFilters = false, showDone: doneChosen, groupBy, selected, openGroups, closedGroups, moreGroups,
-    launchNote, launched, openNote, conclusionOpen, missionOpen = '', draftOpen = '', draftFolded = '', reopenAsk = '', cancelAsk = '', closeKind = 'abandon', cancelNote = '',
+    launchNote, launched, openNote, openAt = '', conclusionOpen, missionOpen = '', draftOpen = '', draftFolded = '', reopenAsk = '', cancelAsk = '', closeKind = 'abandon', cancelNote = '',
     editing: editingKey = '', editNote = '', editField = '', editCount = 0, foldedCards = [], openedCards = [], gaugePick = '', briefOpen = '',
   } = view
   const data = await paneData($, source, [stamp, titlesVersion, themeStamp, retry, liveVersion].join('|'))
@@ -8441,7 +8466,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   const sortOrder = { isLive, prereqOf: prereqFor }
   const select = (key: string) => () => {
     launchExtra = ''
-    void setView($, () => ({ selected: key, launchNote: '', openNote: '', cancelAsk: '', cancelNote: '', editing: '', editNote: '', editField: '' }))
+    void setView($, () => ({ selected: key, launchNote: '', openNote: '', openAt: '', cancelAsk: '', cancelNote: '', editing: '', editNote: '', editField: '' }))
   }
 
   // Dessins et couleurs, partagés par la liste et le détail.
@@ -8521,6 +8546,13 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   // `rows` : la hauteur de la zone en lignes de texte (20 px). Sans elle, la zone prend la hauteur
   // de ce qu'elle couvre — sous une ligne (une icône de 16 px), elle tombait à zéro et ne
   // recevait aucun clic (2026-10-23).
+  // Le refus d'une ouverture (#349), dit sous la rangée cliquée (`openAt` vaut sa clé) et non plus en bas de la fiche.
+  const noteUnder = (at: string) =>
+    openAt === at && openNote !== '' ? (
+      <Text key={`open-note:${at}`} size="caption" color={palette.lateOn} wrap="wrap">
+        {openNote}
+      </Text>
+    ) : null
   const hit = (id: string, onPress: () => void, rows?: number) => (firstZone(id) ? hitOnce(id, onPress, rows) : null)
   // `hit` sans le contrôle du doublon, pour qui l'a déjà fait (`taskNumber`).
   const hitOnce = (id: string, onPress: () => void, rows?: number) => {
@@ -9019,10 +9051,10 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
             return graphic && Client ? (
               <Box key={`link:${where}:${i}`} flexShrink={1} minWidth={0} hover={{ backgroundColor: palette.hover }}>
                 <Text {...(look.size ? { size: look.size } : {})} color={palette.mine} wrap="truncate-end">{x.name}</Text>
-                {hit(id, () => void openFile($, path), 1)}
+                {hit(id, () => void openFile($, ficheSource, path), 1)}
               </Box>
             ) : (
-              <Button key={`link:${where}:${i}`} plain label={x.name} onPress={() => void openFile($, path)} />
+              <Button key={`link:${where}:${i}`} plain label={x.name} onPress={() => void openFile($, ficheSource, path)} />
             )
           })}
         </Box>
@@ -9185,7 +9217,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
       const label = sent ? 'Envoyé' : current.done ? 'Livrable' : p?.kind === 'email' ? 'Brouillon à relire' : 'Brouillon'
       const ago = now - draft.mtime
       const fresh = `à jour · ${ago < 60_000 ? "à l'instant" : `il y a ${durationLabel(ago)}`}`
-      const openIt = () => void openFile($, draft.path)
+      const openIt = () => void openFile($, ficheSource, draft.path, { at: 'brouillon:ouvrir' })
       const toggleOpen = () => void setView($, v => ({ draftOpen: v.draftOpen === key ? '' : key }))
       const toggleFold = () => void setView($, v => ({ draftFolded: v.draftFolded === key ? '' : key }))
       const lines = p ? (opened ? p.body : p.short).split('\n') : []
@@ -9212,13 +9244,13 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
       const files = (p?.attachments ?? []).map((written, i) =>
         pressable(
           `brouillon:pj:${i}`,
-          () => void openWritten($, source, written),
+          () => void openWritten($, ficheSource, written, `brouillon:pj:${i}`),
           <Box flexDirection="row" alignItems="center" gap={SPACE.tight} paddingX={SPACE.tight} backgroundColor={palette.btn} hover={{ backgroundColor: palette.btnHover }} minWidth={0}>
             {corners(RADIUS.chip, palette.bg)}
             {Svg && <Svg source={documentIcon(palette.text2, SIZE.icon.xs)} alt="pièce jointe" width={SIZE.icon.xs} height={SIZE.icon.xs} />}
             <Text size="caption" wrap="truncate-end">{written.split('/').pop() || written}</Text>
           </Box>,
-          <Button key={`brouillon:pj:${i}`} plain label={written.split('/').pop() || written} onPress={() => void openWritten($, source, written)} />,
+          <Button key={`brouillon:pj:${i}`} plain label={written.split('/').pop() || written} onPress={() => void openWritten($, ficheSource, written, `brouillon:pj:${i}`)} />,
         ),
       )
       const statusPill = p?.status && (
@@ -9278,6 +9310,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
                   <Box key="draft-head" flexDirection="column" gap={SPACE.tight}>
                     {people}
                     {files.length > 0 && headerRow('pj', 'PJ', files)}
+                    {(p?.attachments ?? []).map((_, i) => noteUnder(`brouillon:pj:${i}`))}
                   </Box>
                 )}
                 {draft.tooBig ? (
@@ -9297,6 +9330,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
                   <Box flexGrow={1} />
                   {statusPill}
                 </Box>
+                {noteUnder('brouillon:ouvrir')}
               </Box>
             )}
           </Box>
@@ -9501,7 +9535,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
         const prefix = id === 'pj' ? 'pj' : 'livrable'
         const shown = list.filter(a => a.thumb && a.path && Svg && graphic)
         const rows = list.filter(a => !shown.includes(a))
-        const open = (a: Attachment) => () => void openFile($, a.path!)
+        const open = (a: Attachment) => () => void openFile($, ficheSource, a.path!, { at: `${prefix}:${a.path}` })
         const kindWord = (a: Attachment) => (a.path === undefined ? missing : a.kind === 'image' ? 'image' : a.kind === 'pdf' ? 'PDF' : 'fichier')
         return card(
           id,
@@ -9518,6 +9552,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
                 ))}
               </Box>
             )}
+            {shown.map(a => noteUnder(`${prefix}:${a.path}`))}
             {rows.map(a => {
               const tone = a.path ? palette.text2 : palette.text3
               const mark = a.kind === 'image' ? imageIcon(tone, SIZE.icon.sm) : documentIcon(tone, SIZE.icon.sm)
@@ -9539,6 +9574,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
                   ) : (
                     <Text dimColor>{`${a.name} · ${missing}`}</Text>
                   )}
+                  {noteUnder(`${prefix}:${a.path}`)}
                 </Box>
               )
             })}
@@ -9965,10 +10001,13 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
         [
           'Dossier',
           docs.length > 0 && (
-            <Box key="detail-docs" flexDirection="row" gap={SPACE.row}>
-              {docs.map(d => (
-                <Button key={`focus-doc:${d.label}`} plain dimColor label={d.label} onPress={() => void openFile($, d.path)} />
-              ))}
+            <Box key="detail-docs" flexDirection="column" minWidth={0}>
+              <Box flexDirection="row" gap={SPACE.row}>
+                {docs.map(d => (
+                  <Button key={`focus-doc:${d.label}`} plain dimColor label={d.label} onPress={() => void openFile($, ficheSource, d.path, { at: `focus-doc:${d.label}` })} />
+                ))}
+              </Box>
+              {docs.map(d => noteUnder(`focus-doc:${d.label}`))}
             </Box>
           ),
           'dossier',
@@ -9992,10 +10031,11 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
               </>
             )
             const file = r.file && (r.icon === 'document' ? r.file : `${source.dir}/${r.file}`)
-            const value = file
+            const rowAt = `open:${r.icon}:${r.file}`
+            const opener = file
               ? pressable(
                   `open:${r.icon}:${r.file}`,
-                  () => void openFile($, file),
+                  () => void openFile($, source, file, { at: `open:${r.icon}:${r.file}` }),
                   <Box flexDirection="row" alignItems="center" gap={SPACE.row}>
                     {Svg && (
                       <Svg
@@ -10007,9 +10047,18 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
                     )}
                     {text}
                   </Box>,
-                  <Button key={`open:${r.icon}`} plain label={r.value} onPress={() => void openFile($, file)} />,
+                  <Button key={`open:${r.icon}`} plain label={r.value} onPress={() => void openFile($, source, file, { at: rowAt })} />,
                 )
               : text
+            const note = noteUnder(rowAt)
+            const value = file && note ? (
+              <Box key={`detail-open:${rowAt}`} flexDirection="column" minWidth={0}>
+                {opener}
+                {note}
+              </Box>
+            ) : (
+              opener
+            )
             return detailRow(r.name, value, `${gi}:${ri}`)
           }),
         ),
@@ -10151,10 +10200,13 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
               {docs.length > 0 &&
                 field(
                   'Dossier',
-                  <Box flexDirection="row" gap={SPACE.row}>
-                    {docs.map(d => (
-                      <Button key={`focus-doc:${d.label}`} plain dimColor label={d.label} onPress={() => void openFile($, d.path)} />
-                    ))}
+                  <Box flexDirection="column" minWidth={0}>
+                    <Box flexDirection="row" gap={SPACE.row}>
+                      {docs.map(d => (
+                        <Button key={`focus-doc:${d.label}`} plain dimColor label={d.label} onPress={() => void openFile($, ficheSource, d.path, { at: `focus-doc:${d.label}` })} />
+                      ))}
+                    </Box>
+                    {docs.map(d => noteUnder(`focus-doc:${d.label}`))}
                   </Box>,
                 )}
               {facts &&
@@ -10553,8 +10605,8 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
               field(
                 'Fichiers',
                 <Box key="files-buttons" flexDirection="row" alignItems="center" gap={SPACE.row}>
-                  {fichePath && action('open-fiche', documentIcon(palette.text, SIZE.icon.chip), 'Fiche', () => void openFile($, fichePath), undefined, 'chip')}
-                  {srcPath && action('open-src', externalIcon(palette.text, SIZE.icon.chip), 'Source', () => void openFile($, srcPath), undefined, 'chip')}
+                  {fichePath && action('open-fiche', documentIcon(palette.text, SIZE.icon.chip), 'Fiche', () => void openFile($, source, fichePath), undefined, 'chip')}
+                  {srcPath && action('open-src', externalIcon(palette.text, SIZE.icon.chip), 'Source', () => void openFile($, source, srcPath), undefined, 'chip')}
                 </Box>,
               )}
             {current.ouvert !== undefined &&
@@ -10719,7 +10771,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
       ) : (
         priorityFlag ?? pencil
       )
-    const openLine = () => void openFile($, current.done ? paths.done : paths.open, line)
+    const openLine = () => void openFile($, source, current.done ? paths.done : paths.open, { line })
     const labelSpec = editSpecs.find(spec => spec.field === 'label')
     const nameSpec = editSpecs.find(spec => spec.field === 'nom')
     return (
@@ -10790,7 +10842,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
         {bottomBlock()}
         {closeRow()}
         <Box flexDirection="column" gap={SPACE.block} paddingX={SPACE.indent}>
-          {openNote !== '' && <Text size="caption" color={palette.text2}>{openNote}</Text>}
+          {openNote !== '' && openAt === '' && <Text size="caption" color={palette.text2}>{openNote}</Text>}
           {/* Après l'enregistrement : les avertissements du modèle (#125), ou ce qui n'est pas allé au bout. */}
           {!editing && editNote !== '' && !saveBusy && <Text size="caption" color={palette.lateOn} wrap="wrap">{editNote}</Text>}
         </Box>

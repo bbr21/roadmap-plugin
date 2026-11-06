@@ -9386,8 +9386,40 @@ export function cartonOf(o: {
 /** Une rangée de la carte Détails (#291) : son nom, sa valeur, son complément en gris, la chasse fixe d'un nom de branche. */
 export type StoryRow = { name: string; value: string; sub?: string; mono?: boolean; file?: string; icon?: 'external' | 'document' }
 
-/** Les documents qu'une `src:` peut ouvrir d'un clic (#343) : jamais un programme (.app, .command, .sh…). */
-const SRC_DOCS = new Set(['md', 'txt', 'html', 'htm', 'pdf', 'png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'csv', 'json', 'docx', 'xlsx', 'pptx', 'key', 'numbers', 'pages', 'eml', 'msg', 'vtt', 'srt', 'mp3', 'm4a', 'mp4', 'mov'])
+/**
+ * Les documents que la fiche peut ouvrir d'un clic (#343, #349) : une liste de ce qui s'ouvre, jamais un
+ * programme (.app, .command, .sh, .webloc…). `heic`, `markdown`, `doc`, `xls`, `ppt` : les pièces jointes
+ * que l'aperçu du brouillon ouvrait déjà (#264).
+ */
+const SRC_DOCS = new Set(['md', 'markdown', 'txt', 'html', 'htm', 'pdf', 'png', 'jpg', 'jpeg', 'gif', 'webp', 'heic', 'svg', 'csv', 'json', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'key', 'numbers', 'pages', 'eml', 'msg', 'vtt', 'srt', 'mp3', 'm4a', 'mp4', 'mov'])
+
+/** Un chemin dont l'extension est celle d'un document que la fiche ouvre (#349). */
+export function isDocumentPath(path: string): boolean {
+  const ext = /\.([A-Za-z0-9]{1,8})$/.exec(path)?.[1]?.toLowerCase()
+  return ext !== undefined && SRC_DOCS.has(ext)
+}
+
+/** Le verdict d'`openFile` sur un fichier cliqué (#349). */
+export type OpenVerdict = 'ok' | 'missing' | 'outside' | 'notDocument'
+
+/**
+ * Ce que décide `openFile` avant tout `open` (#349) : `real`, le chemin réel (liens résolus) et son genre,
+ * `undefined` s'il n'existe pas ; `bases`, les chemins réels du projet (racine et dossier de la roadmap).
+ * Hors de toute base : refusé ; un dossier (un paquet .app) : introuvable ; une extension qui n'est pas
+ * d'un document, lue sur le chemin réel : refusée.
+ */
+export function openVerdict(real: { path: string; kind: string } | undefined, bases: (string | undefined)[]): OpenVerdict {
+  if (!real) return 'missing'
+  if (!bases.some(b => b !== undefined && b !== '' && real.path.startsWith(`${b.replace(/\/+$/, '')}/`))) return 'outside'
+  if (real.kind !== 'file') return 'missing'
+  return isDocumentPath(real.path) ? 'ok' : 'notDocument'
+}
+
+/** Ce que la rangée cliquée dit d'un refus (#349), au nom du fichier tel qu'écrit. */
+export function openRefusal(verdict: Exclude<OpenVerdict, 'ok'>, written: string): string {
+  const name = written.split('/').filter(Boolean).pop() ?? written
+  return `${verdict === 'outside' ? 'Fichier hors du projet' : verdict === 'missing' ? 'Fichier introuvable' : 'Pas un document'} : ${name}`
+}
 
 /**
  * Le chemin d'une `src:` quand c'est un document du projet (#343) : sans espace, hors URL, relatif et sans `..`
@@ -9396,8 +9428,7 @@ const SRC_DOCS = new Set(['md', 'txt', 'html', 'htm', 'pdf', 'png', 'jpg', 'jpeg
 export function srcFile(src: string | undefined): string | undefined {
   const t = src?.trim()
   if (!t || /\s/.test(t) || t.includes('://') || /^[/~]/.test(t) || t.split('/').includes('..')) return undefined
-  const ext = /\.([A-Za-z0-9]{1,8})$/.exec(t)?.[1]?.toLowerCase()
-  return ext && SRC_DOCS.has(ext) ? t : undefined
+  return isDocumentPath(t) ? t : undefined
 }
 
 /** Le nom lisible d'un fichier et sa date (#343) : « …/2026-11-03-military-star-deck.html » → « Military star deck », « Nov 3 ». */
