@@ -11817,10 +11817,12 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   // Son chevron, centré sur le titre, le déplie ; il s'ouvre replié (#251).
   const toggleLive = () => void setView($, v => ({ liveFolded: !(v.liveFolded ?? true) }))
   // La file des tests lourds (#321) : une ligne par suite d'une branche sans ligne dans le bloc (main, Maestro),
-  // puis la phrase de la charge quand elle retient le départ.
+  // puis la phrase de la charge quand elle retient le départ. Sa hauteur tient par la cale en px, comme une
+  // ligne de tâche : une minHeight de Box se compte en cellules, 24 lignes de haut chacune (#340).
   const queueRows = queueExtras.map(([branch, m]) => (
-    <Box key={`queue:${keyPart(branch)}`} flexDirection="row" alignItems="center" gap={SPACE.row} paddingX={SPACE.indent} minHeight={SIZE.strut.row}>
-      <Box width={ROW_STEPS.icon} flexShrink={0} flexDirection="row" justifyContent="center">
+    <Box key={`queue:${keyPart(branch)}`} flexDirection="row" alignItems="center" gap={SPACE.row} paddingX={SPACE.indent}>
+      <Box width={ROW_STEPS.icon} flexShrink={0} flexDirection="row" alignItems="center" justifyContent="center">
+        {strut(SIZE.strut.row)}
         {m.tone === 'neutral' ? (Svg ? <Svg source={clockIcon(palette.text3, 14)} alt="En file" width={SIZE.icon.sm} height={SIZE.icon.sm} /> : <Text dimColor>◷</Text>) : spinner()}
       </Box>
       <Box flexGrow={1} flexShrink={1} minWidth={0}>
@@ -11841,8 +11843,9 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     const mark = queuedMark(i + 1, dose?.why ?? 'full')
     const name = q.title.includes(' · ') ? q.title.slice(q.title.indexOf(' · ') + 3) : q.title
     return (
-      <Box key={`dose:${keyPart(q.id)}`} flexDirection="row" alignItems="center" gap={SPACE.row} paddingX={SPACE.indent} minHeight={SIZE.strut.row}>
-        <Box width={ROW_STEPS.icon} flexShrink={0} flexDirection="row" justifyContent="center">
+      <Box key={`dose:${keyPart(q.id)}`} flexDirection="row" alignItems="center" gap={SPACE.row} paddingX={SPACE.indent}>
+        <Box width={ROW_STEPS.icon} flexShrink={0} flexDirection="row" alignItems="center" justifyContent="center">
+          {strut(SIZE.strut.row)}
           {Svg ? (
             mark.tone === 'block' ? (
               <Svg source={alertIcon(palette.block, 14)} alt="Mac chargé" width={SIZE.icon.sm} height={SIZE.icon.sm} />

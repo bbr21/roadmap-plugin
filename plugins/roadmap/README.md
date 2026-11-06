@@ -744,6 +744,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.216.2 (2026-11-05)** : panneau : les lignes de la file du bloc En cours de Maestro reprennent la hauteur d'une ligne, plus de trou géant (#340)
 - **0.216.1 (2026-11-05)** : panneau : sous un filtre, la mère close du jour ne paraît que si elle ou une de ses filles passe le filtre (#339)
 - **0.216.0 (2026-11-05)** : panneau : l'accueil de Maestro montre une grille d'un an façon GitHub, un bouton Faites ou Ajoutées, le jour et son chiffre au survol (#335)
 - **0.215.0 (2026-11-05)** : sessions : l'heure locale du Mac jointe à chaque message, « hier » se mesure contre elle (#331)
