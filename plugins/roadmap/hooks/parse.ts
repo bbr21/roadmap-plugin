@@ -3562,18 +3562,21 @@ export type BandGlyph = 'clock' | 'sun' | 'calendar' | 'list' | 'person' | 'spar
  * sa clé : en retard (rouge, horloge), aujourd'hui (bleu, soleil), demain et cette semaine (orange,
  * calendrier), une date et plus tard (gris, calendrier), « Sans … » (gris, liste), une personne
  * (bleu si c'est moi, silhouette), Récentes (violet, étoile). Les sections de Ma journée aussi (#265) :
- * « Aujourd'hui et demain » (bleu, soleil), « Récurrentes qui tombent » (orange, calendrier).
+ * « Aujourd'hui et demain » (bleu, soleil), « Récurrentes qui tombent » (orange, calendrier), et les jours
+ * de la vue Done (`fait-jour:`, #353). Le ton ne colore plus que l'icône : le nom et le trait sont blancs (#353).
  */
 export function bandLook(key: string, today: string, me: readonly string[]): { tone: BandTone; glyph: BandGlyph } {
   const cut = key.indexOf(':')
   const kind = cut < 0 ? key : key.slice(0, cut)
   const value = cut < 0 ? '' : key.slice(cut + 1)
   if (kind === 'numero') return { tone: 'finished', glyph: 'spark' }
+  // Un jour de la vue Done (#353) prend le ton de son jour, comme un jour des ouvertes.
+  const day = kind === 'jour' || kind === 'fait-jour'
   if (value === 'late' || value === LATE) return { tone: 'late', glyph: 'clock' }
   if (value === 'sans' || value.startsWith('Sans ')) return { tone: 'neutral', glyph: 'list' }
   if (kind === 'resp') return { tone: me.includes(value) ? 'mine' : 'neutral', glyph: 'person' }
-  if ((kind === 'jour' && value === today) || value === "Aujourd'hui et demain") return { tone: 'live', glyph: 'sun' }
-  if ((kind === 'jour' && daysBetween(today, value) === 1) || value === 'Cette semaine' || value === 'Récurrentes qui tombent') return { tone: 'block', glyph: 'calendar' }
+  if ((day && value === today) || value === "Aujourd'hui et demain") return { tone: 'live', glyph: 'sun' }
+  if ((day && daysBetween(today, value) === 1) || value === 'Cette semaine' || value === 'Récurrentes qui tombent') return { tone: 'block', glyph: 'calendar' }
   return { tone: 'neutral', glyph: 'calendar' }
 }
 

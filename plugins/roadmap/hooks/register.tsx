@@ -11957,7 +11957,8 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
       : Svg && axisOf !== undefined
       ? headRow(id, name, count, axisHeadIcon(axisHex(axisOf)), palette.text, axisHex(axisOf), axisOf)
       : Svg && look
-      ? headRow(id, name, count, bandGlyphIcon(look.glyph, toneColors(look.tone).ink), toneColors(look.tone).ink, toneColors(look.tone).accent)
+      ? // Une seule tête hors sujet (#353, maquette A choisie par Bertrand) : le nom et le trait en blanc, le ton dans l'icône seule.
+        headRow(id, name, count, bandGlyphIcon(look.glyph, toneColors(look.tone).ink), palette.text, palette.text)
       : (
     <Box key={`band:${id}`} flexDirection="row" justifyContent="space-between" alignItems="center" paddingX={SPACE.indent} paddingTop="sm">
       {/* Au terminal, sans dessin : la flèche en texte devant le nom. */}
@@ -11975,7 +11976,8 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   const allGroups: ListGroup[] = searching
     ? treeGroups
     : showDone
-    ? doneSections.flatMap(sec => sectionGroups(sec.key, sec.label, sec.count, sec.items))
+    ? // Par jour, la tête des ouvertes (#353) ; par sujet, l'en-tête à chevron.
+      doneSections.flatMap(sec => sectionGroups(sec.key, sec.label, sec.count, sec.items, sec.key.startsWith('fait-jour:') ? { look: bandLook(sec.key, today, me) } : {}))
     : attend === 'relaunch'
     ? // À relancer (#99, #268) : par sujet, quel que soit le rangement, les attentes les plus vieilles en haut.
       relaunchSections(shown, order, today, me).flatMap(sec =>

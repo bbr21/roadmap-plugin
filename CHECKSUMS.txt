@@ -1,15 +1,15 @@
-# roadmap 0.222.0 : SHA-256 de chaque fichier installé du plugin, chemins relatifs à son dossier.
-# Vérifier une copie installée (~/.claude/plugins/cache/roadmap/roadmap/0.222.0) : plugins/roadmap/SECURITE.md, « Vérifier que ta copie est une vraie version ».
-f3827468a44edde29755a68cf635216c6adab8a4a12f61c967237531a3f9c467  .claude-plugin/plugin.json
-38279570365ed3b77a618e0a4c59dc999747ba433bbb761843db006596516edb  README.md
-019e5281b23d17a481a707de3b708ad859071fa9db08df159e42b5785cb902e7  SECURITE.md
+# roadmap 0.223.0 : SHA-256 de chaque fichier installé du plugin, chemins relatifs à son dossier.
+# Vérifier une copie installée (~/.claude/plugins/cache/roadmap/roadmap/0.223.0) : plugins/roadmap/SECURITE.md, « Vérifier que ta copie est une vraie version ».
+e528e76b74beec1b0ce124e67e0862111d1442037b8b567bd3a7a0de96adc191  .claude-plugin/plugin.json
+632630123533413eb828af617b4e28f14f15c713e70ec91e70e4575498728f1c  README.md
+84b3505e564e14f0ffd224db1aae1d4a018141bb65551c26f848b44842ab9aaf  SECURITE.md
 bce019cb7147413a8e5f0687df59a41394fa92545568b5d37b1df8bd6d885e30  hooks/bar-hit.tsx
 24387c7ebf678c8c7ed5c9cee4be7aa908712c43d03f08c0106f5342c16f823f  hooks/donut-hit.tsx
 d842d789476d67282d0f04b7e5fdc68a3d981ccec65dd79cfa2d11eed13fb828  hooks/hooks.json
 4a1f0da17915cdeb94a92f6855fadc81df5e9b28995d5e7276b9d64455b9ed0f  hooks/icons.ts
-1e0b22cc262f4503e943e1122f7436720373b0bcfa75ed3a6889189c5caae8c3  hooks/parse.ts
+d8770fda176a69ef74182e150b5740cef302dd507caec96dea2fb42a5d9a3c33  hooks/parse.ts
 a29e07be4f95c637c8f3ab377dc9a97cd16de11e8e7de7062311dd2888a0833f  hooks/press-hit.tsx
-727eb555881aaf6e01a8bd7e2ddc71c55eb2703c2253795159913fa2f0482730  hooks/register.tsx
+62d2cff1450e1aaad475e497b66d1d7f3401357f5b3ce38421b9b29dfe334c38  hooks/register.tsx
 275e220706cce835a7365ee10900d79f75033dd4cc80429dcf6b75a2d1ab578f  hooks/reglages.tsx
 9a457e05528f838baaa49b5c37b5a07d9787c838a64f83421d3574a74c577d49  hooks/tokens.ts
 40a25201db9424dbda555e5497587c448e2ba8f5c27efa5510ca748b4e59f1ee  scripts/one-at-a-time.sh
