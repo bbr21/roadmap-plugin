@@ -226,6 +226,7 @@ import {
   nextGrouping,
   groupingLabel,
   byTree,
+  viewKeeps,
   axisTree,
   bandLook,
   bandQuiet,
@@ -10480,7 +10481,8 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   const tree = searching
     ? searchTree([...foundShown, ...foundDoneShown], allTasks, t => short(t).titre, prereqsFor)
     : !showDone
-    ? byTree(sortTasks(treeShown, sortOrder), allTasks, t => short(t).titre, prereqsFor, today)
+    ? // Une mère close du jour (#163) passe le filtre de la vue, elle ou une de ses filles (#339).
+      byTree(sortTasks(treeShown, sortOrder), allTasks, t => short(t).titre, prereqsFor, today, true, viewKeeps({ axis, attend, who }, me, today, relanceDays, t => isLive(t) || blocked(t)))
     : []
 
   const setAxis = (a: string) => () => pressAxis($, a)

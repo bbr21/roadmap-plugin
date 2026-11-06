@@ -2276,6 +2276,32 @@ export function matches(task: Task, axis: string, attend: string, me: readonly s
   return task.attend !== undefined && attendWho(task.attend) === attend
 }
 
+/**
+ * Le filtre de la vue, tâche par tâche (#339) : l'axe, la personne (« Qui ») et la pastille choisis,
+ * comme les ouvertes que montre le panneau. Les vues de temps ne prennent que des ouvertes ; « En
+ * cours » suit `isLive` (une session, ou bloquée par sa prérequise).
+ */
+export function viewKeeps(
+  view: { axis: string; attend: string; who: string },
+  me: readonly string[],
+  today: string,
+  relanceDays = RELAUNCH_DAYS,
+  isLive: (t: Task) => boolean = () => false,
+): (t: Task) => boolean {
+  const { axis, attend, who } = view
+  const time: Record<string, (t: Task) => boolean> = {
+    late: t => isOverdue(t, today),
+    today: t => isToday(t, today),
+    tomorrow: t => isDueTomorrow(t, today),
+    soon: t => isDueSoon(t, today),
+    relaunch: t => isToRelaunch(t, today, me, relanceDays),
+    live: isLive,
+    feedback: t => t.feedback !== undefined,
+  }
+  const pick = time[attend]
+  return t => matchesWho(t, who, me) && (pick ? matches(t, axis, 'all', me) && pick(t) : matches(t, axis, attend, me))
+}
+
 /** Valeurs présentes, les plus fréquentes d'abord. */
 export function countBy(tasks: Task[], pick: (t: Task) => string | undefined): [string, number][] {
   const counts = new Map<string, number>()
@@ -3157,6 +3183,7 @@ const ALONE_LABEL = 'Tâches seules'
  * parent est fait ou introuvable, vont dans « Tâches seules ». Un cycle s'arrête où il boucle.
  * Avec `today`, un bloc ne garde que les filles faites ce jour-là (#240), son compte les comptant
  * toutes ; `closedMothers` y ajoute les mères closes ce jour-là (#163), que « Ma journée » ne veut pas.
+ * Sous un filtre, `keep` (#339) : une mère close ne paraît que si elle ou une de ses filles le passe.
  */
 export function byTree(
   tasks: readonly Task[],
@@ -3165,6 +3192,7 @@ export function byTree(
   prereqsOf: (t: Task) => readonly Task[] = () => [],
   today?: string,
   closedMothers = true,
+  keep: (t: Task) => boolean = () => true,
 ): TreeBlock[] {
   const listed = new Set(tasks)
   // Les filles faites montrées sous leur mère : celles du jour seulement, quand on le sait (#240).
@@ -3247,6 +3275,7 @@ export function byTree(
     for (const m of all) {
       const kids = m.id === undefined ? [] : (directOf.get(m.id) ?? []).filter(x => x !== m)
       if (!m.done || !m.fait?.startsWith(today) || kids.length === 0 || kids.some(x => !x.done)) continue
+      if (!keep(m) && !kids.some(keep)) continue
       if (blocks.some(b => b.head?.id === m.id)) continue
       blocks.push({
         key: `arbre:#${m.id}`,
