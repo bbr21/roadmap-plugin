@@ -11558,6 +11558,41 @@ export function queueHead<T>(ordered: readonly T[], gateOf: (e: T) => { go: bool
   return ordered.find(e => gateOf(e).go)
 }
 
+/** Une entrée d'un autre Maestro qui peut partir et ne part pas en deux minutes est tenue pour lâchée (#372). */
+export const QUEUE_STUCK_MS = 2 * 60_000
+
+/**
+ * La file qui retient (#372) : une entrée ne part que quand SON Maestro dessine, et un Maestro au repos, fermé
+ * ou refusé par le mode auto ne la relance plus : tout le Mac attendait derrière elle (Mac de BBR, 2026-11-06,
+ * sept entrées de trois Maestros, places libres partout). Une entrée d'un autre Maestro qui peut partir depuis
+ * deux minutes sans partir s'efface donc de la file que voit ce Maestro (elle reste dans le store, à son
+ * Maestro) ; retenue par son projet plein, elle garde son rang et ses deux minutes repartent de zéro.
+ * `since` garde, d'un pas à l'autre, depuis quand chaque entrée peut partir.
+ */
+export function liveQueue<T extends { id: string; maestro: string; project: string }>(
+  ordered: readonly T[],
+  gateOf: (e: T) => { go: boolean },
+  ownId: string,
+  since: Map<string, number>,
+  now: number,
+): T[] {
+  const seen = new Set<string>()
+  const out = ordered.filter(e => {
+    if (e.maestro === ownId) return true
+    const key = `${e.maestro} ${e.project}#${e.id}`
+    seen.add(key)
+    if (!gateOf(e).go) {
+      since.delete(key)
+      return true
+    }
+    const first = since.get(key) ?? now
+    since.set(key, first)
+    return now - first < QUEUE_STUCK_MS
+  })
+  for (const key of [...since.keys()]) if (!seen.has(key)) since.delete(key)
+  return out
+}
+
 const loadWords = (l: MacLoad) => `charge ${Math.round(l.load)} pour ${l.cores} cœurs, seuil ${2 * l.cores}`
 
 type QueueTextArgs = { id: string; rank: number; why: DoseWhy; projectName: string; projectTaken: number; projectMax: number; macTaken: number; macMax: number; load?: MacLoad }

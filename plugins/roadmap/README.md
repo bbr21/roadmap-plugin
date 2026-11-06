@@ -688,6 +688,7 @@ la carte d'approbation de l'app ; il faut d'abord activer le bypass dans Réglag
 Depuis une session en mode auto, l'option ne vaut pas (#248) : le contrôle du mode auto refuse un agent
 qui doit se relever en bypass, la carte part donc sans le mode ni la consigne.
 `pruneBranches` (« Branches nettoyées », défaut oui, #313) : dans un projet de code, les branches fusionnées sur main que rien ne tient (ni un worktree, ni une ligne ouverte, ni la pointe de main) partent, sur le Mac par `git branch -d` et sur GitHub par un seul `git push origin :refs/heads/…`, après l'archivage d'une session et au démarrage d'une session (au plus toutes les 10 minutes) ; « Rouvrir la session » recrée la branche depuis main.
+`launchQueue` (« File de lancement », défaut oui, #372) : chez Maestro, les lancements passent par la file commune au Mac de #345 (plafonds `projectSessions` et `macSessions`, attente de charge) ; éteint, plus de plafond ni d'attente, chaque carte et chaque ▶ partent tout de suite et les tâches déjà en file démarrent. Allumée, une entrée d'un autre Maestro qui peut partir et ne part pas en deux minutes ne retient plus la file.
 `axisPill` (« Axe en pastille », défaut non depuis #177 ; #156) : allumé, chaque tâche ouverte de la
 liste porte son axe en pastille grise, à droite du titre, avant l'âge ; jamais dans « En cours » (le bloc
 de Maestro ou le filtre, où le carré d'axe suffit et le titre garde sa place), ni sous un axe choisi, ni
@@ -744,6 +745,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.228.0 (2026-11-06)** : panneau : option File de lancement, et la file ne retient plus une tâche quand les places sont libres (#372)
 - **0.227.0 (2026-11-06)** : panneau : la case pose sa question en haut avant de cocher, le bandeau de sélection simplifié, Tout choisir sur le bloc en cours, survol du numéro à marges égales (#355)
 - **0.226.1 (2026-11-06)** : panneau : l'anneau du survol de la case paraît et la case reprend le clic sur le bureau (#364)
 - **0.226.0 (2026-11-06)** : panneau : un clic sur la case coche ou rouvre la tâche, un clic sur son numéro la choisit (#355)

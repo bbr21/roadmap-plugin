@@ -436,6 +436,7 @@ import {
   launchGate,
   projectTaken,
   globalQueueOrder,
+  liveQueue,
   queueHead,
   queueEntryText,
   releasePrompt,
@@ -894,7 +895,7 @@ function axisCount(tasks: Task[], axis: string): number {
 }
 
 /** Les réglages du plugin (userConfig), relus à chaque chargement du module. */
-let settings = { me: [] as string[], autoOpen: true, titleModel: 'sonnet', capture: true, theme: 'auto', launchEffort: 'high', launchModel: 'opus', codeModel: 'sonnet', launchBypass: false, pruneBranches: true, projectSessions: '3', macSessions: '12', axisPill: false, priorities: false, dateFormat: 'us', account: 'auto' as Account }
+let settings = { me: [] as string[], autoOpen: true, titleModel: 'sonnet', capture: true, theme: 'auto', launchEffort: 'high', launchModel: 'opus', codeModel: 'sonnet', launchBypass: false, pruneBranches: true, launchQueue: true, projectSessions: '3', macSessions: '12', axisPill: false, priorities: false, dateFormat: 'us', account: 'auto' as Account }
 
 /** L'identifiant du modèle qui cadre (#327), ou undefined s'il hérite de la session qui lance. */
 function launchModelId(): string | undefined {
@@ -3736,6 +3737,8 @@ let doseRetryAt = 0
 const DOSE_RETRY_MS = 60_000
 /** Les tâches que la relève vient de lancer : leur carte passe la décision (repli par Claude compris). */
 const doseAllowed = new Map<string, number>()
+/** Depuis quand chaque entrée d'un autre Maestro peut partir sans partir (#372, `liveQueue`). */
+const queueSince = new Map<string, number>()
 /** Ce que le dernier pas a vu de la file de ce Maestro, pour le bloc « En cours » ; changé, le panneau se redessine. */
 type DoseView = { queue: (GlobalQueued & { rank: number })[]; projectTaken: number; projectMax: number; macTaken: number; macMax: number; why: DoseWhy; load?: MacLoad }
 let doseView: DoseView | undefined
@@ -3879,11 +3882,13 @@ function gateFor(state: DoseState, project: string, match: readonly string[]) {
 
 /**
  * Le lancement d'une tâche chez Maestro passe-t-il (#324, #345) ? Il passe quand aucune entrée de la file commune
- * n'est devant lui et que son projet a une place ; sinon il entre dans la file, à son rang du Mac, et la réponse
- * est le refus à dire. Hors Maestro, sans numéro, ou lancé par la relève : il passe.
+ * qui peut partir n'est devant lui et que son projet a une place ; sinon il entre dans la file, à son rang du Mac,
+ * et la réponse est le refus à dire. Une entrée devant retenue par son projet plein, ou lâchée par son Maestro
+ * (`liveQueue`), ne le retient pas (#372). Hors Maestro, sans numéro, lancé par la relève, ou l'option « File de
+ * lancement » éteinte (#372) : il passe.
  */
 async function doseLaunch($: EngineInterface, id: string | undefined, entry: Omit<QueuedLaunch, 'at' | 'id'>): Promise<{ refusal?: string; ownId?: string }> {
-  if (id === undefined) return {}
+  if (id === undefined || !settings.launchQueue) return {}
   try {
     if (!(await maestroHere($))) return {}
     const own = await readOwnSession($)
@@ -3897,18 +3902,17 @@ async function doseLaunch($: EngineInterface, id: string | undefined, entry: Omi
     const state = await doseState($, now)
     const gate = gateFor(state, project, match)
     const queue = await readGlobalQueue($)
-    const ordered = globalQueueOrder(queue)
-    const at = ordered.findIndex(q => q.maestro === ownId && q.id === id)
-    const ahead = at < 0 ? ordered.length : at
-    if (gate.go && ahead === 0) {
-      if (at >= 0) await writeOwnQueue($, ownId, own => own.filter(q => q.id !== id), state.rows)
+    const gateOf = (e: GlobalQueued) => gateFor(state, e.project, e.match)
+    const head = queueHead(liveQueue(globalQueueOrder(queue), gateOf, ownId, queueSince, now), gateOf)
+    if (gate.go && (!head || (head.maestro === ownId && head.id === id))) {
+      if (queue.some(q => q.maestro === ownId && q.id === id)) await writeOwnQueue($, ownId, own => own.filter(q => q.id !== id), state.rows)
       return { ownId }
     }
     const tasks = knownSource ? await load($, files(knownSource).open, 'ROADMAP.md') : []
     const after = [...prereqsIn(typeof tasks === 'string' ? [] : tasks)(id)]
     const written = await writeOwnQueue($, ownId, own => [...own.filter(q => q.id !== id), { ...entry, id, at: queue.find(q => q.maestro === ownId && q.id === id)?.at ?? now, maestro: ownId, project, match, after }], state.rows)
     doseSeenKey = ''
-    const rank = globalQueueOrder(written).findIndex(q => q.maestro === ownId && q.id === id) + 1
+    const rank = liveQueue(globalQueueOrder(written), gateOf, ownId, queueSince, now).findIndex(q => q.maestro === ownId && q.id === id) + 1
     const text = { id, rank, projectName: name, projectTaken: placesOf(state, project, match), projectMax: state.projectMax, macTaken: state.macTaken, macMax: state.macMax, why: gate.go ? ('project' as const) : gate.why, ...(state.load ? { load: state.load } : {}) }
     // Au ▶, le panneau dit l'entrée en file dans la conversation de Maestro ; à la carte du modèle, le refus est ce message.
     if (entry.launch) queueSubmit($, queueEntryText(text))
@@ -3942,7 +3946,11 @@ async function releaseBrief($: EngineInterface, head: GlobalQueued, source: Sour
 /**
  * La relève (#324, #345), à chaque pas chez Maestro : la file commune relue ; une tâche de ce Maestro close ou
  * déjà en session en sort ; la tête éligible (la première dont le projet a une place, le Mac aussi), si elle est
- * à ce Maestro, sort de la file et le panneau écrit dans Maestro « La file est débloquée » avec son brief.
+ * à ce Maestro, sort de la file et le panneau écrit dans Maestro « La file est débloquée » avec son brief. Une
+ * entrée d'un autre Maestro qui peut partir et ne part pas en deux minutes ne retient plus la file (#372,
+ * `liveQueue`). L'option « File de lancement » éteinte (#372) : chaque tâche de ce Maestro en file part à son
+ * tour de pas, sans plafond ni charge, une par pas (le message d'un ▶ part au dessin), et le bloc ne montre
+ * plus de file.
  */
 async function relieveLaunches($: EngineInterface): Promise<void> {
   if (relieving) return
@@ -3975,8 +3983,10 @@ async function relieveLaunches($: EngineInterface): Promise<void> {
     if (queue.some(q => (q.maestro === ownId && stale(q)) || gone.has(q.maestro))) {
       queue = await writeOwnQueue($, ownId, own => own.filter(q => !stale(q)), state.rows)
     }
-    const gateOf = (e: GlobalQueued) => gateFor(state, e.project, e.match)
-    const head = queueHead(globalQueueOrder(queue), gateOf)
+    const fileOn = settings.launchQueue
+    const gateOf = fileOn ? (e: GlobalQueued) => gateFor(state, e.project, e.match) : () => ({ go: true as const })
+    const counted = (q: readonly GlobalQueued[]) => (fileOn ? liveQueue(globalQueueOrder(q), gateOf, ownId, queueSince, now) : globalQueueOrder(q).filter(e => e.maestro === ownId))
+    const head = queueHead(counted(queue), gateOf)
     if (head && head.maestro === ownId && now >= doseRetryAt) {
       try {
         if (head.card) {
@@ -4000,8 +4010,8 @@ async function relieveLaunches($: EngineInterface): Promise<void> {
       }
     }
     const mine = doseProject()
-    const ordered = globalQueueOrder(queue)
-    const ownQueue = ordered.flatMap((q, i) => (q.maestro === ownId ? [{ ...q, rank: i + 1 }] : []))
+    const ordered = counted(queue)
+    const ownQueue = fileOn ? ordered.flatMap((q, i) => (q.maestro === ownId ? [{ ...q, rank: i + 1 }] : [])) : []
     const gate = gateFor(state, mine.project, mine.match)
     const next: DoseView | undefined =
       ownQueue.length > 0
@@ -6384,6 +6394,7 @@ export const register: Register = (on, options) => {
     codeModel: typeof options.codeModel === 'string' && options.codeModel !== '' ? options.codeModel : 'sonnet',
     launchBypass: options.launchBypass === true,
     pruneBranches: typeof options.pruneBranches === 'boolean' ? options.pruneBranches : true,
+    launchQueue: typeof options.launchQueue === 'boolean' ? options.launchQueue : true,
     projectSessions: typeof options.projectSessions === 'string' && options.projectSessions !== '' ? options.projectSessions : '3',
     macSessions: typeof options.macSessions === 'string' && options.macSessions !== '' ? options.macSessions : '12',
     axisPill: typeof options.axisPill === 'boolean' ? options.axisPill : false,

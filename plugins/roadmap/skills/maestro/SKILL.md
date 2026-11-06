@@ -511,7 +511,7 @@ The merge itself:
   not offer the `archive` app button). On that click, and on it alone, `archive_session` with
   `session_id: "self"`.
 
-- **Dosing the launches** (#324, #345): one launch queue for the whole Mac, shared by every Maestro
+- **Dosing the launches** (#324, #345, #372): one launch queue for the whole Mac, shared by every Maestro
   of every project. Two caps: at most `projectSessions` task sessions working at once in one project
   (« Sessions par projet », 3 by default) and `macSessions` on the whole Mac (« Sessions sur le Mac »,
   12 by default; Maestros excluded). A session holds its place from its launch until it says
@@ -531,6 +531,11 @@ The merge itself:
   the person's), post its card (`own_initiative`) instead and say in one line that a click on Start
   launches it. The panel also writes « #N entre en file, 3e sur le Mac … » when a ▶ queues a task:
   answer it in one line, launch nothing.
+  An entry of another Maestro that could start and has not started for two minutes (its Maestro
+  idle, closed, or refused by auto mode) no longer holds the queue (#372): the next one starts.
+  With the option « File de lancement » (`launchQueue`) off, there is no queue at all: no cap, no
+  load wait, every card and every ▶ goes out at once, and the tasks already queued start (a ▶ is
+  launched, a card comes back as a card); the two caps apply only with the queue on.
 
 ## What the Roadmap panel does for Maestro
 
