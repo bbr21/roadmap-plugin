@@ -157,6 +157,10 @@ import {
   methodReminder,
   isMockupCall,
   isRenderFile,
+  fidelityGaps,
+  fidelityImage,
+  fidelityNoteText,
+  fidelityRequired,
   mockupApproval,
   formApproval,
   mockupYesReminder,
@@ -1423,6 +1427,35 @@ async function changesNote($: EngineInterface, last: string | undefined): Promis
 }
 
 /**
+ * Le rappel de fidélité (#357) : la session se dit prête à fusionner, sa branche (commits et fichiers pas
+ * encore commités) code un rendu d'après une maquette, et aucune page `fidelite.html` n'est complète.
+ */
+async function fidelityNote($: EngineInterface, last: string | undefined): Promise<string | undefined> {
+  const c = capture
+  if (closingTurn.wake || !settings.capture || !c || projectSettings(c.source).travail === 'projet') return undefined
+  const said = { ...(wakeBox.recap !== undefined ? { recap: wakeBox.recap } : {}), ...(last !== undefined ? { answer: last } : {}) }
+  if (childWake(said).kind !== 'ready') return undefined
+  const root = await $.session.root()
+  const names = await gitIn($, root, 'diff', '--name-only', 'main...HEAD')
+  if (names.code !== 0) return undefined
+  const pending = await gitIn($, root, 'status', '--porcelain', '--untracked-files=all')
+  const files = [...new Set([
+    ...names.out.split('\n'),
+    ...(pending.code === 0 ? pending.out.split('\n').map(l => l.slice(3).replace(/^.* -> /, '')) : []),
+  ].map(f => f.trim()).filter(f => f !== ''))]
+  if (!fidelityRequired(files)) return undefined
+  const proofs: string[][] = []
+  for (const page of files.filter(f => /(^|\/)fidelite\.html$/.test(f))) {
+    const html = await $.fs.read(`${root}/${page}`).catch(() => undefined)
+    const image = fidelityImage(html)
+    const dir = page.includes('/') ? page.slice(0, page.lastIndexOf('/') + 1) : ''
+    const found = image !== undefined && (await $.fs.exists(`${root}/${dir}${image}`).catch(() => false))
+    proofs.push(fidelityGaps(html, found))
+  }
+  return fidelityNoteText({ ...said, files, proofs, script: `${$.plugin.root}/skills/maestro/scripts/fidelite.py` })
+}
+
+/**
  * La garde de l'archivage à la boîte de fin (#124) : « Archiver cette session ? » alors que la ligne de
  * la session est encore ouverte. Une boîte sans cette question, ou une roadmap illisible, passe.
  */
@@ -1669,6 +1702,12 @@ async function endOfTurnBlock($: EngineInterface, last: string | undefined, acti
     } catch {
       // git ou store illisibles : pas de rappel
     }
+  }
+  // La fidélité à la maquette (#357) : prête, un rendu tiré d'une maquette sans sa preuve.
+  try {
+    notes.push(await fidelityNote($, last))
+  } catch {
+    // git illisible : pas de rappel de fidélité
   }
   // La clôture partielle (#245) : finie, sa ligne attend encore un tiers.
   if (settings.capture && c) {

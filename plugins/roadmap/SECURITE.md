@@ -1,6 +1,6 @@
 # Est-il sûr de l'installer ?
 
-Version décrite : roadmap 0.223.0
+Version décrite : roadmap 0.224.0
 Un plugin de Claude Code fait tourner du code sur ta machine, donc la question se pose. Certains plugins
 malveillants ont l'air inoffensifs quand on les installe, puis téléchargent et lancent autre chose plus
 tard. Cette page dit tout ce que fait roadmap. Un test vérifie à chaque version qu'elle dit vrai, et tu
@@ -58,6 +58,7 @@ réserve (`session.*`, `turn.*`, `skill.prompt`) ; le plugin a alors un secours 
 | `python3` | `hooks/register.tsx` | cocher une tâche dans un dossier Cowork qui déclare son propre outil d'écriture (voir plus bas), isolé par `-I` |
 | `open` | `hooks/register.tsx` | ouvrir un lien ou un fichier que tu as cliqué dans le panneau, avec l'app par défaut du Mac |
 | `sips`, `mktemp`, `rm` | `hooks/register.tsx` | faire la vignette d'une pièce jointe dans un dossier privé de `$TMPDIR`, puis la retirer |
+| `osascript`, `screencapture`, `sips` | `skills/maestro/scripts/fidelite.py` | seulement quand une session lance `fidelite.py poser --fenetre` pour prouver qu'un rendu est fidèle à sa maquette (#357) : lister les fenêtres à l'écran (JavaScript for Automation, lecture seule) pour trouver celle de Claude, la capturer (macOS le refuse tant que tu n'as pas coché Claude dans Enregistrement de l'écran), puis la recadrer sur le panneau ; rien ne sort de la machine |
 | `claude` | `skills/doctor/scripts/doctor.py` | `claude plugin list --json`, pour voir quelles copies du plugin sont installées |
 | `node` | `skills/doctor/scripts/doctor.py` | lancer le contrôle du projet lui-même, `scripts/check.mjs` |
 | `rm` | `scripts/one-at-a-time.sh` | rendre la place dans la file des tests lourds |
@@ -114,8 +115,9 @@ le moteur saute les hooks).
 | la roadmap du projet, après une copie de sauvegarde à côté d'elle | `skills/audit/scripts/audit.py` | quand tu valides un audit, ou une écriture de la skill tasks, qui passe par lui |
 | les fichiers que pose l'onboarding dans le projet (`CLAUDE.md`, `docs/`, `roadmap/`, `scripts/`, `.claude/roadmap.json`…) | `skills/onboarding/scripts/onboarding.py` | quand tu lances l'onboarding et valides son plan |
 | la roadmap importée, après une copie de sauvegarde | `skills/onboarding/scripts/importer.py` | quand l'onboarding reprend une roadmap existante |
+| `fidelite.html` et `capture-panneau.png`, dans le dossier du chantier (`docs/plans/<type>-<slug>/`) | `skills/maestro/scripts/fidelite.py` | quand une session pose la preuve de fidélité d'un rendu à sa maquette (#357) |
 
-Le module ne modifie jamais ton code : il n'écrit que la roadmap, ses propres réglages et son état.
+Le module ne modifie jamais ton code : il n'écrit que la roadmap, ses propres réglages et son état ; la preuve de fidélité ne s'écrit que dans le dossier du chantier.
 
 ## Ce que l'onboarding pose dans ton projet
 

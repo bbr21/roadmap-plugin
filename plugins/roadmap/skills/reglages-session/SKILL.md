@@ -24,6 +24,14 @@ first three are on when the file does not exist, `autonome` is off.
 | `francais` | Answers in French, recaps and end box included. |
 | `autonome` | With or without code, off by default (#77, #105). After the starting framing (below, #303), Claude follows its own recommendation instead of asking the question, until the merge, and says in one line what it chose. No more question, except a new fact that changes the direction; an architecture choice the framing did not see is one: a choice that would be written in `docs/decisions.md` (a contract between components, a new dependency or service, the vision or a non-goal touched). The setting is the standing permission to merge and publish (a plugin release, a deployment, a push of `main`): no session asks « je fusionne ? » or « je publie ? », it does it and then says so in one line; a publishing skill that asks to validate the substance treats it as validated by the task. Maestro merges on its own the ready branch of one of its sessions (tests green, up to date with `main`, diff reviewed by it), one at a time, tests rerun after each merge, and hands over a unique resource on its own, publishing included. When off, the session gets an « Autonome éteint » paragraph instead (#304): merging, publishing, writing outside the code, a choice that belongs to the user met along the way, and for Maestro the launch menu, answering a session and handing over publishing wait for the user's yes, asked once per gesture when it is ready, through the end box's question and button; reading, coding, testing, committing and pushing one's own branch, taking one's roadmap line, what the files settle, handing over the simulator and posting a card go on without asking. A project rule that says « sans attendre » says how, not when. The table is in the plugin README (« Autonome éteint »), held to the code by `tools/test_reglages.py`. Launching a session and archiving still need their click; a message sent on their behalf or a payment is always asked for. |
 
+The plugin also states, in every session, the rule **« Maquettes avant un choix visuel »**: 2 or 3
+mockups on the project's design system, the person chooses, only the validated version is coded
+(#96, #322). In a code project, the coded render is then compared to the validated mockup before
+saying it is ready (#357): the capture of the real render next to it (`fidelite.py poser`, skill
+`roadmap:maestro`, in the chantier's folder), gaps listed then fixed, `fidelite.py verifier` green;
+no merge without that proof. A session that says « prête à fusionner » without it gets a reminder
+at the end of its turn.
+
 The plugin also states, in every session, the **starting framing** (« Cadrage de départ », #303):
 at the start of each task (▶, Maestro card, request in the conversation), before the first gesture
 that codes or executes, the session rereads the line, its fiche and its folder, then decides.

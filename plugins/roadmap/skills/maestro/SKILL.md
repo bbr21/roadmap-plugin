@@ -189,6 +189,13 @@ to it.
     your browser pane, ask the choice yourself (form, one option per mockup), say
     « attend une réponse : choix de maquette, <chemin> » at the top of your report and end your
     turn: the person answers in the session itself, Maestro does not relay it (#151);
+  - a render coded from a mockup (#357): before saying « prête à fusionner », put the capture of
+    the real render next to the validated mockup with `fidelite.py poser <chantier> --maquette
+    maquettes.html#<anchor> --fenetre --zone x,y,l,h` (this skill's `scripts/`; `--capture <image>`
+    for another render), list each gap in its `fidelite.html` (`data-ecart="ouvert"`), fix them,
+    capture again, mark them `corrige` (a single `aucun` when faithful) until `fidelite.py verifier`
+    is green, and commit the page and its capture; capture refused (exit 3): « bloquée :
+    autorisation Enregistrement de l'écran »;
   - do not tick your line: your last report says what was done and the problem met;
   - your line closed (read in `ROADMAP-fait.md`, never assumed) and nothing left pending, your last
     turn ends on « fini, rien en attente », then your conclusion (#243): its title, then
@@ -394,7 +401,13 @@ takes a resource without Maestro's go-ahead, even if it is free.
 
 The merge order, from the first criterion to the last:
 
-1. **Ready**: tests green on its branch, diff reviewed by Maestro, up to date with `main`.
+1. **Ready**: tests green on its branch, diff reviewed by Maestro, up to date with `main`, and, for a
+   branch that codes a render from a mockup (a `maquettes*.html` page and a render file), its
+   fidelity proof complete (#357): `etat_maestro.py` says « fidélité à prouver » until the chantier's
+   `fidelite.html` puts the capture of the real render next to the validated mockup, every gap
+   fixed. Maestro opens that page while reviewing the diff and **never merges a render without
+   it**: it sends the branch back to its session, by message, with what is missing
+   (`fidelite.py verifier <chantier>`).
 2. **Prerequisites first**: what unblocks other tasks (`après:`) goes ahead.
 3. **What frees** a unique resource or a file another task is waiting for.
 4. **When tied**, the smallest, the least exposed to conflicts.

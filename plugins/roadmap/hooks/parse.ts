@@ -1145,6 +1145,68 @@ export function isRenderFile(path: string | undefined): boolean {
   return typeof path === 'string' && UI_FILE.test(path) && !TEST_FILE.test(path) && !isMockupPage(path)
 }
 
+// --- La fidélité à la maquette (#357, BBR, 2026-11-06) -----------------------------------------
+// Le panneau n'était jamais comparé à sa maquette avant la fusion (#352 a existé pour rendre la fiche
+// fidèle à A3 après #343). Une branche qui code un rendu d'après une maquette pose la capture du vrai
+// rendu à côté d'elle (`fidelite.py` de la skill maestro, son `fidelite.html`), écarts listés puis
+// corrigés. Les mêmes règles que `fidelite.py`, que `test_fidelite.py` vérifie de son côté.
+
+/** Une page du dossier d'un chantier (`docs/plans/…`) n'est pas un rendu : maquettes, fidélité. */
+const PLANS_DIR = /(^|\/)docs\/plans\//
+
+/** Une branche porte un rendu tiré d'une maquette (#357) : une page de maquettes et un fichier de rendu. */
+export function fidelityRequired(files: readonly string[]): boolean {
+  return files.some(f => isMockupPage(f)) && files.some(f => isRenderFile(f) && !PLANS_DIR.test(f))
+}
+
+const FIDELITY_LIST = /<ol id="ecarts">[\s\S]*?<\/ol>/
+const FIDELITY_IMG = /<img[^>]*\bclass="capture"[^>]*\bsrc="([^"]+)"|<img[^>]*\bsrc="([^"]+)"[^>]*\bclass="capture"/
+
+/** L'image de la capture que cite une page `fidelite.html` (#357). */
+export function fidelityImage(html: string | undefined): string | undefined {
+  const m = FIDELITY_IMG.exec(html ?? '')
+  return m ? (m[1] ?? m[2]) : undefined
+}
+
+/** Ce qui manque à une preuve de fidélité (#357) ; vide quand elle est complète. */
+export function fidelityGaps(html: string | undefined, imageFound: boolean): string[] {
+  if (html === undefined) return ['pas de fidelite.html']
+  const out: string[] = []
+  if (!imageFound) out.push(`capture absente (${fidelityImage(html) ?? 'capture-panneau.png'})`)
+  const list = FIDELITY_LIST.exec(html)?.[0] ?? ''
+  const states = [...list.matchAll(/<li\b([^>]*)>/gi)]
+    .map(m => /data-ecart\s*=\s*["']([^"']*)["']/i.exec(m[1] ?? '')?.[1])
+    .filter((v): v is string => v !== undefined)
+    .map(v => (['ouvert', 'corrige', 'aucun'].includes(v.trim().toLowerCase()) ? v.trim().toLowerCase() : 'ouvert'))
+  if (states.length === 0) out.push('aucun écart listé (« aucun » si la capture est fidèle)')
+  const open = states.filter(v => v === 'ouvert').length
+  if (open > 0) out.push(`${open} écart${open > 1 ? 's' : ''} encore ouvert${open > 1 ? 's' : ''}`)
+  return out
+}
+
+/** La règle de fidélité (#357), dite par la clause de Maestro et la règle des maquettes. */
+export const fidelityRule = (): string =>
+  "Un rendu codé d'après une maquette (#357) : avant de te dire « prête à fusionner », pose la capture du vrai rendu à côté de la maquette validée, par `fidelite.py` de la skill `roadmap:maestro` (dossier `skills/maestro/scripts/` du plugin roadmap) : `python3 fidelite.py poser docs/plans/<type>-<slug> --maquette maquettes.html#<ancre> --fenetre --zone x,y,l,h` (la fenêtre de Claude, recadrée sur le panneau ; `--capture <image>` pour un autre rendu, simulateur ou navigateur). Dans sa page `fidelite.html`, liste chaque écart (`<li data-ecart=\"ouvert\">`), corrige-les, relance `poser`, passe-les à `corrige` (un seul `aucun` si la capture est fidèle), jusqu'à `fidelite.py verifier` vert ; la page et sa capture se committent dans ta branche. Sans elle, Maestro ne fusionne pas. Capture refusée (code 3) : la première phrase de ton compte rendu dit « bloquée : autorisation Enregistrement de l'écran » et le geste qui revient à " + person() + '.'
+
+/**
+ * Le rappel de fin de tour (#357) : la session se dit prête, sa branche code un rendu d'après une
+ * maquette, et aucune de ses pages `fidelite.html` n'est complète (`proofs` : les manques de chacune).
+ */
+export function fidelityNoteText(o: { recap?: string; answer?: string; files: readonly string[]; proofs: readonly (readonly string[])[]; script: string }): string | undefined {
+  const w = childWake({ ...(o.recap !== undefined ? { recap: o.recap } : {}), ...(o.answer !== undefined ? { answer: o.answer } : {}) })
+  if (w.kind !== 'ready' || !fidelityRequired(o.files)) return undefined
+  if (o.proofs.some(p => p.length === 0)) return undefined
+  const gaps = o.proofs[0] ?? fidelityGaps(undefined, false)
+  const mockup = o.files.find(f => isMockupPage(f) && PLANS_DIR.test(f)) ?? o.files.find(f => isMockupPage(f)) ?? 'docs/plans/<type>-<slug>/maquettes.html'
+  const folder = mockup.includes('/') ? mockup.slice(0, mockup.lastIndexOf('/')) : '.'
+  const name = mockup.slice(mockup.lastIndexOf('/') + 1)
+  return [
+    `Plugin roadmap (#357) : tu te dis prête à fusionner, et ta branche code un rendu d'après une maquette sans preuve de fidélité complète : ${gaps.join(' ; ')}.`,
+    `Pose la capture du vrai rendu à côté de la maquette validée : \`python3 "${o.script}" poser ${folder} --maquette ${name}#<ancre de la version validée> --fenetre --zone x,y,l,h\` (la zone du panneau, en points de la fenêtre ; \`--capture <image>\` pour un autre rendu). Puis liste les écarts dans \`${folder}/fidelite.html\`, corrige-les, relance \`poser\`, et \`python3 "${o.script}" verifier ${folder}\` vert ; committe la page et sa capture.`,
+    `D'ici là, ta première phrase ne dit pas « prête à fusionner » : « en cours : fidélité à la maquette ». Capture refusée (code 3) : « bloquée : autorisation Enregistrement de l'écran », avec le geste de ${person()}.`,
+  ].join('\n')
+}
+
 /** Le rappel d'un fichier de rendu édité sans oui depuis la dernière maquette dessinée (#322). */
 export function mockupYesReminder(file: string, what: string): string {
   return `Plugin roadmap : tu modifies un fichier de rendu (${file}) et ${person()} n'a pas dit oui à la dernière maquette dessinée (${what}). Une correction de sa part (« plutôt X », « plus petit ») n'est pas un oui : redessine la maquette avec elle, montre-la, demande « Je code cette version ? », et ne code le rendu qu'après son oui. Si ce fichier ne porte pas le rendu de cette maquette, ou si ${person()} a déjà validé cette version exacte, dis-le en une ligne et continue.`
@@ -4578,6 +4640,7 @@ export function maestroClause(maestro: string, travail: Travail = 'code'): strin
     '- La première phrase de chaque compte rendu de fin de tour dit ton état, avec ton étape : « en cours : étape 3/7 … », « prête à fusionner (tests : …) », « attend le simulateur », « attend une réponse : … » ou « bloquée : … ». Tiens ta liste d\'étapes (update_plan) : c\'est par elle que Maestro voit où tu en es.',
     '- Maestro peut te demander de mettre ta branche à jour après une autre fusion : merge de main dans ta branche, jamais de rebase d\'une branche poussée.',
     `- ${maestroMockups('dans le dossier du chantier, `docs/plans/<type>-<slug>/maquettes.html`')}`,
+    `- ${fidelityRule()}`,
     '- Ne coche pas ta ligne : Maestro la coche à la fusion, avec son bilan. Ton dernier compte rendu dit ce qui a été fait et le souci rencontré.',
     `- Ton compte rendu « prête à fusionner » finit par le bloc « Ce qui a changé », que la fiche de ta tâche montre (#269) : ${CHANGES_BLOCK_RULE}.`,
     `- ${PARTIAL_CLOSE_CHILD}`,
@@ -4729,7 +4792,7 @@ function wakeTodo(w: ChildWake, id: string | undefined): string {
   const after = id ? `après:${id}` : 'après: sur cette tâche'
   switch (w.kind) {
     case 'ready':
-      return `relis son diff, puis fusionne-la si ses tests sont verts sur sa branche à jour de main (§ 5), et préviens aussitôt les sessions dont la ligne porte ${after}.`
+      return `relis son diff, puis fusionne-la si ses tests sont verts sur sa branche à jour de main (§ 5), et préviens aussitôt les sessions dont la ligne porte ${after}. Si sa branche code un rendu d'après une maquette, sa preuve de fidélité est exigée (#357, \`etat_maestro.py\` la dit « fidélité à prouver », ou \`fidelite.py verifier\` du chantier) ; incomplète, ne fusionne pas et renvoie-la par message, avec ce qui manque.`
     case 'partial':
       return `vérifie sa preuve (le message parti au tiers), puis écris les deux lignes par la skill roadmap:tasks, opération handoff : à la fusion de sa branche en mode Code (§ 5), aussitôt en mode Projet ; dis « #A close, la suite chez <tiers> passe en #B ». ${partialCloseRule('maestro')}`
     case 'blocked':
@@ -7900,7 +7963,7 @@ function gesturesText(autonome: boolean): string {
 // Toute maquette s'appuie sur le design system que le projet déclare (#129, après celui du plugin, #108),
 // ou propose d'en poser un : la cohérence d'un projet ne tient plus à la mémoire de la session.
 function mockupText(design?: Design): string {
-  return "- **Maquettes avant un choix visuel** (avec ou sans code) : tout choix dont le résultat se voit (dans un projet de code : un écran, une vue, un panneau, un volet, un composant, une mise en page, un graphique ; sans code : la mise en page d'un document, d'un tableau ou d'une présentation) passe par 2 ou 3 maquettes simples, jamais par une description seule. Chacune a un parti net et son compromis, ta recommandation en premier ; " + person() + " choisit, et alors seulement tu codes ou tu décides. Tu ne codes que la version exacte qu'il a vue et validée d'un oui : une correction de sa part (« plutôt X », « plus petit ») n'est pas un oui, elle donne une nouvelle maquette, montrée, puis la question « Je code cette version ? » ; le plugin rappelle une édition d'un fichier de rendu faite sans oui depuis la dernière maquette dessinée (#322). Prends le support le plus léger qui permet de décider : l'aperçu de chaque option du formulaire à choix (champ `preview`) pour un petit choix (une disposition, un ordre, un libellé) ; un widget de maquette (`mcp__visualize__show_widget`, module `mockup`, après `read_me`) pour un écran ou un panneau ; une page HTML statique ouverte dans le volet navigateur (`preview_start` avec son url `file://`) pour une interface riche ou qui se clique, posée dans le dossier du projet (hors de lui, le volet n'en montre qu'un instantané). " + designSkillText(design) + " " + designText(design) + " Le réglage autonome ne s'y applique pas : un choix visuel revient à " + person() + ". Sans personne pour répondre, garde les maquettes dans le dossier du chantier, suis ta recommandation et dis-le. Pas pour un choix sans rendu (une règle, un format, un correctif de logique), ni pour un rendu déjà choisi sur maquette."
+  return "- **Maquettes avant un choix visuel** (avec ou sans code) : tout choix dont le résultat se voit (dans un projet de code : un écran, une vue, un panneau, un volet, un composant, une mise en page, un graphique ; sans code : la mise en page d'un document, d'un tableau ou d'une présentation) passe par 2 ou 3 maquettes simples, jamais par une description seule. Chacune a un parti net et son compromis, ta recommandation en premier ; " + person() + " choisit, et alors seulement tu codes ou tu décides. Tu ne codes que la version exacte qu'il a vue et validée d'un oui : une correction de sa part (« plutôt X », « plus petit ») n'est pas un oui, elle donne une nouvelle maquette, montrée, puis la question « Je code cette version ? » ; le plugin rappelle une édition d'un fichier de rendu faite sans oui depuis la dernière maquette dessinée (#322). Prends le support le plus léger qui permet de décider : l'aperçu de chaque option du formulaire à choix (champ `preview`) pour un petit choix (une disposition, un ordre, un libellé) ; un widget de maquette (`mcp__visualize__show_widget`, module `mockup`, après `read_me`) pour un écran ou un panneau ; une page HTML statique ouverte dans le volet navigateur (`preview_start` avec son url `file://`) pour une interface riche ou qui se clique, posée dans le dossier du projet (hors de lui, le volet n'en montre qu'un instantané). " + designSkillText(design) + " " + designText(design) + " Dans un projet de code, le rendu codé se compare à la maquette validée avant de se dire prêt (#357) : la capture du vrai rendu posée à côté d'elle par `fidelite.py poser` (skill `roadmap:maestro`, dossier du chantier), les écarts listés puis corrigés, `fidelite.py verifier` vert ; sans cette preuve, pas de fusion. Le réglage autonome ne s'y applique pas : un choix visuel revient à " + person() + ". Sans personne pour répondre, garde les maquettes dans le dossier du chantier, suis ta recommandation et dis-le. Pas pour un choix sans rendu (une règle, un format, un correctif de logique), ni pour un rendu déjà choisi sur maquette."
 }
 
 /** La skill de design dans la règle des maquettes (#292) : avant la première maquette, puis la relecture. */

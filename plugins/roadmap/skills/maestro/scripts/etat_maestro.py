@@ -9,6 +9,9 @@ MAESTRO.json (« - » : l'entrée standard), écrit par Maestro :
   {"base": "main", "taches": [{"id": 95, "titre": "Carte de Maestro", "branche": "feat/x",
    "tests": "verts" | "rouges" (absent : à lancer), "relue": true, "apres": [94]}]}
 
+Une branche qui code un rendu d'après une maquette (une page `maquettes*.html` et un fichier de rendu)
+reste « fidélité à prouver » tant que son `fidelite.html` n'est pas complet (#357, `fidelite.py`).
+
 Lecture seule sur le dépôt : git log, rev-list, diff et merge-tree (conflits réels, git 2.38 et
 plus ; plus ancien, ils sont dits inconnus). Rien n'est fusionné, aucun test n'est lancé. Code de
 retour 2 sur un MAESTRO.json illisible, vide ou en double, ou sur un dépôt ou une base introuvables.
@@ -22,8 +25,11 @@ import re
 import subprocess
 import sys
 
+import fidelite
+
 INTROUVABLE, RIEN, CONFLIT, INCONNU = "introuvable", "rien à fusionner", "conflit avec main", "conflits inconnus"
 ROUGES, A_LANCER, A_RELIRE, RETARD, PRETE = "tests rouges", "tests à lancer", "à relire", "à mettre à jour", "prête"
+FIDELITE = "fidélité à prouver"
 HORS_ORDRE = (INTROUVABLE, RIEN)
 SEP = "\x1f"
 FORMAT_COMMIT = "%h" + SEP + "%an" + SEP + "%ct" + SEP + "%s"
@@ -129,6 +135,9 @@ def analyser(entree, faits, conflits):
             etat = A_LANCER
         elif not t.get("relue"):
             etat = A_RELIRE
+        elif fa.get("fidelite"):
+            # #357 : un rendu codé d'après une maquette prouve sa fidélité avant la fusion.
+            etat = FIDELITE
         elif fa["retard"] > 0:
             etat = RETARD
         else:
@@ -218,6 +227,26 @@ def depart_de(depot, base, b):
     return commit_lu(un.stdout.strip(), "depart") if un and un.returncode == 0 and un.stdout.strip() else None
 
 
+def fidelite_de(depot, b, fichiers):
+    """Ce qui manque à la preuve de fidélité de la branche (#357) : vide si l'une de ses pages est complète."""
+    pages = [f for f in fichiers if f.endswith("/" + fidelite.PAGE) or f == fidelite.PAGE]
+    if not pages:
+        return fidelite.manques(None, False)
+    meilleurs = None
+    for chemin in pages:
+        r = lancer_git(depot, "show", "%s:%s" % (b, chemin))
+        html = r.stdout if r and r.returncode == 0 else None
+        image = fidelite.image_de(html) if html is not None else None
+        dossier = chemin.rsplit("/", 1)[0] + "/" if "/" in chemin else ""
+        vu = lancer_git(depot, "cat-file", "-e", "%s:%s%s" % (b, dossier, image)) if image is not None else None
+        existe = vu is not None and vu.returncode == 0
+        reste = fidelite.manques(html, existe)
+        if not reste:
+            return []
+        meilleurs = meilleurs if meilleurs is not None else reste
+    return meilleurs
+
+
 def collecter(depot, entree):
     """Les faits git de chaque branche face à la base (avance, retard, fichiers, lignes, commits de
     chaque côté depuis le départ commun, conflits avec la base), et les conflits entre deux branches."""
@@ -260,6 +289,8 @@ def collecter(depot, entree):
         faits[b] = {"existe": True, "avance": avance, "retard": retard, "fichiers": sorted(fichiers),
                     "conflits_main": conflits_main, "commits": commits, "plus": plus, "moins": moins,
                     "depart": depart_de(depot, base, b)}
+        if fidelite.requise(fichiers):
+            faits[b]["fidelite"] = fidelite_de(depot, b, fichiers)
     vivantes = [b for b, f in faits.items() if f["existe"] and f["avance"]]
     conflits = {}
     for i, a in enumerate(vivantes):
@@ -309,6 +340,12 @@ def texte(analyse):
     else:
         out.append("Aucun fichier touché par deux branches.")
     out.append("")
+    sans_preuve = [t for t in analyse["taches"] if t["etat"] == FIDELITE]
+    if sans_preuve:
+        out.append("Fidélité à la maquette (#357), pas de fusion sans elle :")
+        for t in sans_preuve:
+            out.append("- #%s : %s (%s)" % (t["id"], FIDELITE, " ; ".join(t["faits"]["fidelite"])))
+        out.append("")
     out.append("Ordre de fusion proposé : %s" % (", ".join("#%s" % i for i in analyse["ordre"]) or "aucune branche à fusionner"))
     if analyse["boucle"]:
         out.append("Dépendances en boucle : %s" % ", ".join("#%s" % i for i in analyse["boucle"]))
