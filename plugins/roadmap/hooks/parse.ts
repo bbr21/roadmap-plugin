@@ -4744,9 +4744,55 @@ export function proposalRetryNote(maestro: string, reason: 'offer' | 'fork', ini
 
 /** L'état d'une fin de tour de session, dit à Maestro : son genre, sa phrase, et la clé qui évite le doublon. */
 export type ChildWake = {
-  kind: 'ready' | 'partial' | 'blocked' | 'waiting' | 'answer' | 'question' | 'done' | 'stopped' | 'other'
+  kind: 'ready' | 'partial' | 'blocked' | 'waiting' | 'answer' | 'question' | 'done' | 'stopped' | 'background' | 'other'
   said: string
   key: string
+  /** Pour `background` : ce qu'elle attend, dit en une locution (« attend son sous-agent »). */
+  waits?: string
+}
+
+/** Le travail qui tourne encore quand la session finit son tour : sous-agents et commandes en arrière-plan. */
+export type BackgroundWork = { agents: number; commands: number }
+
+const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v)
+
+/**
+ * Le travail de fond d'une fin de tour (#347). `stopTasks` (`background_tasks` du hook Stop) fait foi
+ * quand c'est un tableau ; sinon les agents en vol sans parent, plus les commandes connues.
+ */
+export function backgroundWork(o: { stopTasks?: unknown; agents?: unknown; commands?: readonly string[] }): BackgroundWork | undefined {
+  let agents = 0
+  let commands = 0
+  if (Array.isArray(o.stopTasks)) {
+    for (const t of o.stopTasks) {
+      if (!isRecord(t)) continue
+      if (t.type === 'subagent') agents++
+      else commands++
+    }
+  } else {
+    if (Array.isArray(o.agents)) {
+      for (const a of o.agents) {
+        if (isRecord(a) && ['pending', 'running', 'waiting'].includes(String(a.status)) && a.parentId === undefined) agents++
+      }
+    }
+    commands = o.commands?.length ?? 0
+  }
+  return agents + commands > 0 ? { agents, commands } : undefined
+}
+
+/** « attend son sous-agent et sa commande en arrière-plan » : les morceaux joints par « et ». */
+export function backgroundWaitText(b: BackgroundWork): string {
+  const parts: string[] = []
+  if (b.agents > 0) parts.push(b.agents === 1 ? 'son sous-agent' : `ses ${b.agents} sous-agents`)
+  if (b.commands > 0) parts.push(b.commands === 1 ? 'sa commande en arrière-plan' : `ses ${b.commands} commandes en arrière-plan`)
+  return `attend ${parts.join(' et ')}`
+}
+
+/** Les commandes de fond restantes une fois la notification d'une tâche reçue : celles qu'elle cite sont finies. */
+export function shellsAfterNotice(shells: ReadonlyMap<string, number>, text: string): Map<string, number> {
+  const out = new Map<string, number>()
+  for (const [id, at] of shells) if (id === '' || !text.includes(id)) out.set(id, at)
+  return out
 }
 
 /**
@@ -4769,13 +4815,23 @@ function firstSentence(text: string): string {
  * fin), sinon de sa réponse : les états de la clause de Maestro. Une question de formulaire en
  * cours (`question`), de la boîte de fin (`ask`) ou « attend une réponse » attend la personne
  * (`answer`, #151), toute autre attente une ressource ; « en cours » en fin de tour veut dire
- * arrêtée avant la fin.
+ * arrêtée avant la fin, sauf quand un sous-agent ou une commande de fond tourne encore : elle attend
+ * leur retour (`background`, #347).
  */
-export function childWake(o: { recap?: string; ask?: string; answer?: string; question?: string }): ChildWake {
+export function childWake(o: { recap?: string; ask?: string; answer?: string; question?: string; background?: BackgroundWork }): ChildWake {
   const make = (kind: ChildWake['kind'], said: string): ChildWake => ({ kind, said, key: `${kind}|${said}` })
   if (o.question !== undefined) return make('question', clip(o.question, 200))
   const said = firstSentence(o.recap?.trim() ? o.recap : (o.answer ?? ''))
   const s = said.toLowerCase()
+  const w = childWakeBase(o, said, s, make)
+  // #347 : du travail de fond en vol ; « arrêtée » serait faux, Maestro ne la relance pas.
+  if (o.background && (w.kind === 'stopped' || w.kind === 'waiting' || w.kind === 'other')) {
+    return { kind: 'background', said, waits: backgroundWaitText(o.background), key: 'background|' }
+  }
+  return w
+}
+
+function childWakeBase(o: { ask?: string }, said: string, s: string, make: (kind: ChildWake['kind'], said: string) => ChildWake): ChildWake {
   // #245 : la session propose une clôture partielle ; Maestro écrit les deux lignes.
   if (/^\W*cl[ôo]ture partielle/u.test(s)) return make('partial', said)
   if (/^\W*pr[êe]te?s? (à|a) fusionner/u.test(s)) return make('ready', said)
@@ -4804,6 +4860,8 @@ function wakeTodo(w: ChildWake, id: string | undefined): string {
       return `${Person()} y répond dans la session elle-même : ne lui relaie pas la question, ni par formulaire ni par une ligne, et ne lui dis rien dans ce tour : ta liste d'étapes le montre (« t'attend : <la question en trois mots> »). Réponds-lui par message seulement si le code, la roadmap ou les règles tranchent. Encore en attente dans 15 min, le panneau te la redonne : relis alors qu'elle attend toujours (get_session : isRunning ; list_events : son dernier message), puis rappelle-la-lui en une ligne, avec son lien.`
     case 'done':
       return `vérifie que sa ligne est close (§ 6), puis propose son archivage à ${person()}.`
+    case 'background':
+      return "elle attend le retour de son travail en arrière-plan (sous-agent ou commande) : ne la relance pas et ne lui écris pas pour ça ; l'app la réveille seule à leur retour, et elle te redira alors son état."
     case 'stopped':
       return "elle s'est arrêtée avant la fin : relance-la par message (« continue : … »), sauf si elle attend quelque chose de toi."
     default:
@@ -4820,6 +4878,7 @@ const WAKE_STATE = (): Record<ChildWake['kind'], string> => ({
   question: `attend la réponse de ${person()}`,
   done: 'finie',
   stopped: 'arrêtée en cours de route',
+  background: 'attend son travail en arrière-plan',
   other: 'a fini son tour',
 })
 
@@ -4832,7 +4891,7 @@ export function childWakeText(w: ChildWake, child: { id: string; title: string; 
   const branch = child.branch ? `, branche ${child.branch}` : ''
   const quote = w.kind === 'question' ? `Sa question : « ${w.said} ».` : w.said !== '' ? `Son compte rendu : « ${w.said} ».` : 'Aucun compte rendu.'
   return [
-    `Roadmap — nouvelle de ta session « ${child.title || child.id} » (${child.id}${branch}) : ${WAKE_STATE()[w.kind]}. ${quote}`,
+    `Roadmap — nouvelle de ta session « ${child.title || child.id} » (${child.id}${branch}) : ${w.kind === 'background' && w.waits ? w.waits : WAKE_STATE()[w.kind]}. ${quote}`,
     `Ce message vient du panneau Roadmap, pas de ${person()} : la session te prévient elle-même, car l'app ne te réveille que quand toutes tes sessions sont au repos.`,
     `À toi, dès maintenant (skill roadmap:maestro) : ${wakeTodo(w, id)} Puis mets ta liste d'étapes à jour.`,
   ].join('\n')

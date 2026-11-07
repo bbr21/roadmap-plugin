@@ -268,6 +268,9 @@ to it.
   answer** (a form, an end-box question, « attend une réponse : … »), no relay (below, #151);
   **stopped midway**,
   restart it by message (« continue : … ») unless it is waiting for something from Maestro;
+  **waiting for its subagent** (« attend son sous-agent », « attend sa commande en arrière-plan »:
+  a subagent or a background command still runs, #347), leave it alone: no restart, no message, nor
+  on the app's note that follows; the app wakes it when that work returns, and it reports again;
   **finished**, § 6. Then it updates its list, without a word to the person except a need of theirs
   (above, #133). The same turn gives it the news of all its children (below): a silent one is
   restarted from that wake-up. The app note that arrives next on the same status is not handled

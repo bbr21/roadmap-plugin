@@ -556,6 +556,9 @@ import {
   maestroProposalText,
   proposalSentNote,
   type MaestroProposal,
+  type BackgroundWork,
+  backgroundWork,
+  shellsAfterNotice,
   childWake,
   childWakeText,
   type ChildWake,
@@ -1623,7 +1626,14 @@ function deliveryNote(): string | undefined {
  * (sinon sec-default l'a sauté), et si son message a reçu le rappel du tour d'avant (#140 ; il tient alors le rôle du
  * deuxième arrêt d'un tour, `stop_hook_active`).
  */
-let stopTurn = { id: '', stopRan: false, fromReminder: false }
+let stopTurn: { id: string; stopRan: boolean; fromReminder: boolean; background?: unknown } = { id: '', stopRan: false, fromReminder: false }
+
+/** Les commandes `run_in_background` du fil principal encore en vol (identifiant → heure de départ), #347. */
+let backgroundShells = new Map<string, number>()
+/** Une commande de fond suivie plus d'une heure est tenue pour finie (sa notification a pu se perdre). */
+const BACKGROUND_SHELL_MAX_MS = 3_600_000
+/** Le message qui lance le tour est la notification d'une tâche de fond : pas un vrai message (#347). */
+let noticeTurn = false
 
 /**
  * Les tours finis sans Stop de ce chargement (#219) : sous sec-default, l'app dit « hook was skipped » pour
@@ -2665,15 +2675,49 @@ let toldMaestro: string | undefined
 /** Ce que la boîte de fin du tour a dit (récap et question), lu à la fin du tour. */
 let wakeBox: { recap?: string; ask?: string } = {}
 
+/** L'heure du moteur, sinon celle du processus : une horloge en panne ne coupe pas le suivi (#347). */
+async function clockOrDate($: EngineInterface): Promise<number> {
+  try {
+    return await $.clock.now()
+  } catch {
+    return Date.now()
+  }
+}
+
+/**
+ * Le travail de fond en vol à la fin du tour (#347) : le `background_tasks` du Stop du même tour fait foi ;
+ * sans lui (Stop sauté), les agents de `$.agent.list()` et les commandes suivies depuis moins d'une heure.
+ * Ne lève jamais : une panne ou un refus compte pour « rien en vol ».
+ */
+async function inFlight($: EngineInterface, turnId: string): Promise<BackgroundWork | undefined> {
+  try {
+    if (stopTurn.id === turnId && Array.isArray(stopTurn.background)) return backgroundWork({ stopTasks: stopTurn.background })
+    let agents: unknown = []
+    try {
+      agents = await $.agent.list()
+    } catch {
+      agents = []
+    }
+    const now = await clockOrDate($)
+    backgroundShells = new Map([...backgroundShells].filter(([, at]) => now - at < BACKGROUND_SHELL_MAX_MS))
+    return backgroundWork({ agents, commands: [...backgroundShells.keys()] })
+  } catch {
+    return undefined
+  }
+}
+
 /**
  * Une session lancée par Maestro lui dit, par message, l'état où elle s'arrête (#131) : l'app ne le
  * réveille que quand toutes ses sessions sont au repos. Une fois par état ; rien sans Maestro pour
  * parent ; aucune panne (fiche, message refusé) ne bloque le tour.
  */
-async function tellMaestro($: EngineInterface, wake: ChildWake): Promise<void> {
-  if (wake.key === toldMaestro) return
+async function tellMaestro($: EngineInterface, said: ChildWake | (() => Promise<ChildWake>)): Promise<void> {
+  if (typeof said !== 'function' && said.key === toldMaestro) return
   try {
     if (!(await parentIsMaestro($))) return
+    // Lue seulement chez une fille de Maestro : le travail de fond coûte un appel au moteur (#347).
+    const wake = typeof said === 'function' ? await said() : said
+    if (wake.key === toldMaestro) return
     const me = await ownParent($)
     if (!me) return
     const ran = await $.tool.call({ tool: GET_SESSION_TOOL, session_id: 'self' })
@@ -6984,6 +7028,11 @@ export const register: Register = (on, options) => {
     // Le panneau toujours ouvert (#117) : le message de la personne rouvre le panneau qui manque ou attend.
     // Un seul hook prompt.submit par module (le moteur refuse le second) : l'appel vit ici.
     await ensurePane($)
+    // #347 : le retour d'une tâche de fond relance la session ; ses commandes citées sont finies.
+    if ((e.origin as { kind?: string } | undefined)?.kind === 'task-notification' || (typeof e.text === 'string' && e.text.includes('<task-notification>'))) {
+      backgroundShells = shellsAfterNotice(backgroundShells, e.text ?? '')
+      noticeTurn = true
+    }
     const texts: string[] = []
     // L'heure locale du Mac à chaque message, projet à roadmap ou non (#331) : « hier » se mesure contre elle.
     try {
@@ -7286,6 +7335,11 @@ export const register: Register = (on, options) => {
       const said = [result?.stdout, result?.stderr].filter((x): x is string => typeof x === 'string').join('\n')
       await noteTiming($, (t, now) => (t ? timingBash(t, said, now - began) : t))
     }
+    // #347 : une commande lancée en arrière-plan reste en vol jusqu'à sa notification.
+    const shellId = (ran.result as { backgroundTaskId?: unknown } | undefined)?.backgroundTaskId
+    if (!fromAgent(e) && ran.deny === undefined && typeof shellId === 'string' && shellId !== '') {
+      backgroundShells.set(shellId, await clockOrDate($))
+    }
     if (fromAgent(e) || ran.deny !== undefined || ran.isError === true) return ran
     // Une fusion sur main ou une publication (#136) : la liste d'étapes se renvoie avant la commande suivante.
     try {
@@ -7303,6 +7357,11 @@ export const register: Register = (on, options) => {
     if (e.agentId === undefined) {
       stopTurn = { id: e.turnId, stopRan: false, fromReminder: reminderCarried }
       reminderCarried = false
+      // Le même retour, quand le message ne passe pas par prompt.submit (#347).
+      if (typeof e.text === 'string' && e.text.includes('<task-notification>')) {
+        backgroundShells = shellsAfterNotice(backgroundShells, e.text)
+        noticeTurn = true
+      }
     }
     if (e.agentId === undefined) {
       // Le genre du tour (#133) : un réveil de Maestro par une de ses sessions, ou un tour de la personne,
@@ -7323,7 +7382,9 @@ export const register: Register = (on, options) => {
     }
     // Un vrai message (de Maestro ou de Bertrand) relance la session : sa réponse sera une nouvelle à dire (#131).
     if (e.agentId === undefined) wakeBox = {}
-    if (e.agentId === undefined) toldMaestro = undefined
+    // Sauf le tour relancé par le retour d'une tâche de fond, qui n'est pas un vrai message (#347).
+    if (e.agentId === undefined && !noticeTurn) toldMaestro = undefined
+    if (e.agentId === undefined) noticeTurn = false
     if (e.agentId === undefined) {
       reportTurn = freshReport()
       if (settings.capture && capture) reportTurn.questionsAtTurn = await readOr($, questionsPath(capture.source))
@@ -7364,7 +7425,7 @@ export const register: Register = (on, options) => {
     // Et le temps du tour (#314), même interrompu.
     await noteTiming($, (t, now) => (t ? timingTurnEnd(t, now, { asked: timingAsked && !e.isAborted, ...(typeof e.answer === 'string' && !e.isAborted ? { answer: e.answer } : {}) }) : t))
     // Une session de Maestro prévient Maestro de l'état où elle s'arrête (#131) ; interrompue, la personne est là.
-    if (!e.isAborted) await tellMaestro($, childWake({ ...wakeBox, answer: e.answer }))
+    if (!e.isAborted) await tellMaestro($, async () => childWake({ ...wakeBox, answer: e.answer, background: await inFlight($, e.turnId) }))
     // Un réveil de Maestro ne laisse pas de rappel, qui ferait écrire son fil (#133).
     if (e.turnId === stopTurn.id && !stopTurn.stopRan && e.reason === 'answer' && !closingTurn.wake) {
       const block = await endOfTurnBlock($, e.answer, stopTurn.fromReminder, false)
@@ -7401,6 +7462,7 @@ export const register: Register = (on, options) => {
   if (settings.account !== 'team') {
     on('classic.Stop', async ($, e, next) => {
       stopTurn.stopRan = true
+      stopTurn.background = (e as { background_tasks?: unknown }).background_tasks
       // La conclusion se garde ici (#307) : si ce Stop relance Claude, la fin de tour ne lira que la réponse relancée.
       await saveEndFiche($, e.last_assistant_message)
       const result = await next(e)
