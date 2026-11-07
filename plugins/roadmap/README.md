@@ -745,6 +745,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.228.1 (2026-11-06)** : panneau : le nom et la couleur d'un axe, et le nom d'une tâche, s'affichent dès Enregistrer, l'écriture tourne en fond (#354)
 - **0.228.0 (2026-11-06)** : panneau : option File de lancement, et la file ne retient plus une tâche quand les places sont libres (#372)
 - **0.227.0 (2026-11-06)** : panneau : la case pose sa question en haut avant de cocher, le bandeau de sélection simplifié, Tout choisir sur le bloc en cours, survol du numéro à marges égales (#355)
 - **0.226.1 (2026-11-06)** : panneau : l'anneau du survol de la case paraît et la case reprend le clic sur le bureau (#364)

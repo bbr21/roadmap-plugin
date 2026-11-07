@@ -217,6 +217,7 @@ import {
   type ChangeZone,
   type FicheCard,
   type EditField,
+  type LintRules,
   type BatchChange,
   type BatchStep,
   batchDays,
@@ -3373,17 +3374,29 @@ type PaneData = {
 }
 let paneCache: PaneData | undefined
 
+function parsePending(text: string, file: string): Task[] | string {
+  try {
+    return parseRoadmap(text, file)
+  } catch (err) {
+    return err instanceof Error ? err.message : String(err)
+  }
+}
+
 async function paneData($: EngineInterface, source: Source, version: string): Promise<PaneData> {
-  const key = `${source.dir}\u0000${version}`
+  // L'attente d'affichage (#354) entre dans la clé ici, pas chez l'appelant : la marque (`brandData`) partage
+  // ce cache, et deux clés différentes pour les mêmes données le faisaient relire à chaque dessin.
+  const key = `${source.dir}\u0000${version}\u0000${pendingRev}`
   if (paneCache?.key === key) {
     perfCached = true
     return paneCache
   }
   const paths = files(source)
+  // Une édition enregistrée et pas encore écrite (#354) : le panneau montre ce que la roadmap dira.
+  const pending = pendingFor(source)
   const [palette, open, done, titles, live, ignored, bilan] = await Promise.all([
     paletteOf($),
-    load($, paths.open, 'ROADMAP.md'),
-    load($, paths.done, 'ROADMAP-fait.md'),
+    pending?.open !== undefined ? parsePending(pending.open, 'ROADMAP.md') : load($, paths.open, 'ROADMAP.md'),
+    pending?.done !== undefined ? parsePending(pending.done, 'ROADMAP-fait.md') : load($, paths.done, 'ROADMAP-fait.md'),
     loadTitles($),
     loadLive($),
     loadIgnored($).catch(() => ({}) as Record<string, string[]>),
@@ -5086,6 +5099,7 @@ async function closeTask(
   kind: CloseKind,
   reason: string,
 ): Promise<{ id?: string; note?: string } | { error: string }> {
+  await afterBackgroundWrites()
   const now = new Date(await $.clock.now())
   const day = todayOf(now.getTime())
   const moment = `${day} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`
@@ -5247,6 +5261,7 @@ async function confirmClose($: EngineInterface, source: Source, task: Task, kind
  * n'a pas de réouverture dans `cowork.py` : rien ne s'écrit, la note le dit.
  */
 async function reopenTask($: EngineInterface, source: Source, task: Task): Promise<{ id?: string; note?: string } | { error: string }> {
+  await afterBackgroundWrites()
   if (await coworkPyFor($, source)) {
     return { error: `cowork.py ne sait pas rouvrir une tâche : demande-le à Claude (« rouvre #${task.id ?? ''} »). Rien n'a été écrit.` }
   }
@@ -5394,6 +5409,7 @@ async function applyBatch($: EngineInterface, source: Source, change: BatchChang
   batching = true
   checking = true
   try {
+    await afterBackgroundWrites()
     await setView($, () => ({ batchNote: SAVE_BUSY, confirmDone: [] }))
     const picked = (await read($, viewAtom)).picked ?? []
     // La question d'une coche (#355) dit ses tâches ; sans sélection ouverte, la sélection reste vide.
@@ -5470,6 +5486,7 @@ async function caseClick($: EngineInterface, source: Source, task: Task, kids: r
   batching = true
   checking = true
   try {
+    await afterBackgroundWrites()
     const [step] = batchPlan(await batchTasks($, source), [taskKey(task)], { status: 'open' })
     if (step === undefined) return void (await afterCheck($, { error: 'a quitté la roadmap' }, ''))
     const whys = await runBatchStep($, source, step, await $.clock.now())
@@ -5546,6 +5563,76 @@ const editDrafts = new Map<string, string>()
 const SAVE_BUSY = '…'
 let saving = false
 
+/**
+ * L'édition affichée sans attendre (#354). Enregistrer pose ici ce que la roadmap dira une fois écrite, le
+ * panneau le dessine aussitôt, et l'écriture (pull, fichiers, commit, push) tourne en fond, une à la fois
+ * (`inBackground`). D'affichage seul : les écritures relisent toujours les vrais fichiers, jamais ceci.
+ * `open` et `done` sont les textes des deux fichiers à montrer, `axes` les styles d'axe à appliquer dans l'ordre.
+ */
+type AxisMove = { from: string; to: string; style: AxisStyle }
+type PendingEdit = { dir: string; open?: string; done?: string; axes: AxisMove[] }
+let pendingEdit: PendingEdit | undefined
+/** Change à chaque pose ou retrait de l'attente : la clé des données gardées en mémoire. */
+let pendingRev = 0
+let backgroundJobs = 0
+let backgroundChain: Promise<unknown> = Promise.resolve()
+
+function setPending(next: PendingEdit | undefined): void {
+  pendingEdit = next
+  pendingRev++
+  paneCache = undefined
+}
+
+/** L'attente de cette source, s'il y en a une. */
+function pendingFor(source: { dir: string }): PendingEdit | undefined {
+  return pendingEdit && pendingEdit.dir === source.dir ? pendingEdit : undefined
+}
+
+/** Les styles d'axe d'une source, les mouvements en attente appliqués : `from` retiré, `to` reçoit son style. */
+function applyAxisMoves(axes: Readonly<Record<string, AxisStyle>> | undefined, moves: readonly AxisMove[]): Record<string, AxisStyle> {
+  const out: Record<string, AxisStyle> = { ...(axes ?? {}) }
+  for (const m of moves) {
+    delete out[m.from]
+    if (m.style.color !== undefined || m.style.label !== undefined) out[m.to] = m.style
+    else delete out[m.to]
+  }
+  return out
+}
+
+/** Les textes que le panneau montre : l'attente d'abord, sinon les fichiers. */
+async function shownTexts($: EngineInterface, source: Source): Promise<{ open: string; done: string | undefined }> {
+  const { open, done } = files(source)
+  const pending = pendingFor(source)
+  return { open: pending?.open ?? (await $.fs.read(open)), done: pending?.done ?? (await readOr($, done)) }
+}
+
+/**
+ * Une écriture en fond, après les précédentes. `job` rend `true` quand elle a réussi. Elle ne lève jamais.
+ * Succès : plus rien en attente que pour les écritures qui suivent, les données se relisent. Échec : l'attente
+ * s'efface tout de suite (`job` a rouvert l'édition), les fichiers relus font foi.
+ */
+/**
+ * Attend la fin des écritures en fond (#354) : une autre écriture de la roadmap (clore, rouvrir, cocher, le
+ * drapeau) part après elles, jamais en même temps. Jamais depuis un job de la chaîne : il s'attendrait lui-même.
+ */
+async function afterBackgroundWrites(): Promise<void> {
+  await backgroundChain.catch(() => undefined)
+}
+
+function inBackground($: EngineInterface, job: () => Promise<boolean>): void {
+  backgroundJobs++
+  backgroundChain = backgroundChain
+    .then(job)
+    .catch(() => false)
+    .then(async ok => {
+      backgroundJobs--
+      if (!ok || backgroundJobs === 0) setPending(undefined)
+      else paneCache = undefined
+      knownSource = undefined
+      await update($, retryAtom, v => v + 1).catch(() => undefined)
+    })
+}
+
 /** Les brouillons d'une tâche, par champ. */
 function draftsOf(key: string): Record<string, string> {
   const out: Record<string, string> = {}
@@ -5555,6 +5642,12 @@ function draftsOf(key: string): Record<string, string> {
 
 function clearDrafts(key: string): void {
   for (const k of [...editDrafts.keys()]) if (k.startsWith(`${key}|`)) editDrafts.delete(k)
+}
+
+/** Les règles du projet qui contrôlent la ligne éditée (#155), les parents clos compris : refusés à la fiche comme à l'écriture (#289). */
+async function editRules($: EngineInterface, source: Source): Promise<Partial<LintRules>> {
+  const settings = projectSettings(source)
+  return { requis: settings.requis, requiredOn: settings.requiredOn, cles: settings.cles, closed: doneIds(await readOr($, files(source).done)) }
 }
 
 /**
@@ -5570,10 +5663,8 @@ async function saveEdit(
   task: Task,
   edit: TaskEdit,
 ): Promise<{ id?: string; warnings: string[]; note?: string; asked?: string } | { error: string; field?: EditField }> {
-  const settings = projectSettings(source)
-  const { open, done: doneFile } = files(source)
-  // Un parent: clos ou introuvable se refuse à la fiche comme à l'écriture (#289).
-  const rules = { requis: settings.requis, requiredOn: settings.requiredOn, cles: settings.cles, closed: doneIds(await readOr($, doneFile)) }
+  const { open } = files(source)
+  const rules = await editRules($, source)
   const cowork = await coworkPyFor($, source)
   const route = editRoute({ ecriture: source.ecriture, cowork, task, edit })
   if (route.via === 'claude') {
@@ -5695,10 +5786,22 @@ async function axisConfigOf($: EngineInterface, source: Source): Promise<{ path:
 
 let axisSaving = false
 
+/** Un toast, sans lever sur une surface qui n'en a pas. */
+function sayToast($: EngineInterface, text: string): void {
+  try {
+    $.ui.toast(text)
+  } catch {
+    // pas de toast sur cette surface
+  }
+}
+
 /**
  * Enregistre l'édition d'un axe (#286) : le renommage d'abord, quand le slug du nom change (le panneau écrit
  * ROADMAP.md et ROADMAP-fait.md ; Cowork et `ecriture` : la demande part à Claude), puis la couleur et le
- * libellé dans la config. Un refus se dit sous le champ, l'édition reste ouverte.
+ * libellé dans la config. Un refus connu d'avance (nom sans slug, axe déjà pris) se dit sous le champ, l'édition
+ * reste ouverte. Le reste s'affiche aussitôt et s'écrit en fond (#354) : l'édition se ferme, le nouveau nom est
+ * dessiné ; un échec remet l'ancien nom, rouvre l'édition avec le brouillon et l'erreur, et le dit en toast.
+ * La voie `claude` n'attend rien : la roadmap est écrite plus tard par Claude, la config ici, comme avant.
  */
 async function saveAxisEdit($: EngineInterface, source: Source, from: string, label: string, color: AxisStyle['color']): Promise<void> {
   if (axisSaving) return
@@ -5709,43 +5812,76 @@ async function saveAxisEdit($: EngineInterface, source: Source, from: string, la
     const to = axisSlug(name)
     if (to === '') return void (await fail('Ce nom ne donne aucun slug : mets-y au moins une lettre ou un chiffre.'))
     await setView($, () => ({ axisNote: SAVE_BUSY }))
-    const { open, done } = files(source)
-    let note = ''
-    if (to !== from) {
-      const check = renameAxisInTexts(await $.fs.read(open), await readOr($, done), from, to)
-      if ('error' in check) return void (await fail(check.error))
-      const route = renameAxisRoute({ ecriture: source.ecriture, cowork: await coworkPyFor($, source), from, to })
-      if (route.via === 'claude') {
-        queueSubmit($, route.text)
-        note = route.note
-      } else {
-        const out = await writeRoadmapFiles($, source, ['ROADMAP.md', 'ROADMAP-fait.md'], `roadmap: axe ${from} → ${to}`, async () => {
-          const fresh = renameAxisInTexts(await $.fs.read(open), await readOr($, done), from, to)
-          if ('error' in fresh) return fresh
-          return { 'ROADMAP.md': fresh.open, ...(fresh.done !== undefined ? { 'ROADMAP-fait.md': fresh.done } : {}) }
-        })
-        if ('error' in out) return void (await fail(out.error))
-        note = out.note ?? ''
-      }
-    }
+    const origin = (await read($, viewAtom)).axisEdit ?? ''
+    const shown = await shownTexts($, source)
+    const check = to !== from ? renameAxisInTexts(shown.open, shown.done, from, to) : undefined
+    if (check && 'error' in check) return void (await fail(check.error))
+    const route = to !== from ? renameAxisRoute({ ecriture: source.ecriture, cowork: await coworkPyFor($, source), from, to }) : undefined
     // Le libellé ne se garde que s'il dit autre chose que l'axe à majuscule.
     const style: AxisStyle = { ...(color ? { color } : {}), ...(name !== axisName(to, undefined) ? { label: name } : {}) }
     const before = source.axes?.[from] ?? {}
-    if (to !== from || before.color !== style.color || before.label !== style.label) {
-      const where = await axisConfigOf($, source)
-      const text = await readOr($, where.path)
-      const next = where.perso !== undefined && text !== undefined ? withPersoAxisStyle(text, where.perso, { from, to, style }) : withAxisStyle(text, { from, to, style })
-      await $.fs.write(where.path, next)
-    }
-    await update($, stampAtom, v => v + 1)
-    await setView($, v => ({ axisEdit: '', axisDraft: undefined, axisPick: '', axisNote: '', ...(v.axis === from ? { axis: to } : {}) }))
-    if (note !== '') {
+    const styleChanged = to !== from || before.color !== style.color || before.label !== style.label
+    const closeEdit = () =>
+      setView($, v => ({ axisEdit: '', axisDraft: undefined, axisPick: '', axisNote: '', ...(v.axis === from ? { axis: to } : {}) }))
+    if (!styleChanged) return void (await closeEdit())
+    /** Les écritures : les fichiers de la roadmap (voie du panneau), puis la config. */
+    const write = async (): Promise<{ note: string } | { error: string }> => {
       try {
-        $.ui.toast(note)
-      } catch {
-        // pas de toast sur cette surface
+        let note = ''
+        if (route?.via === 'panel') {
+          const out = await writeRoadmapFiles($, source, ['ROADMAP.md', 'ROADMAP-fait.md'], `roadmap: axe ${from} → ${to}`, async () => {
+            const { open, done } = files(source)
+            const fresh = renameAxisInTexts(await $.fs.read(open), await readOr($, done), from, to)
+            if ('error' in fresh) return fresh
+            return { 'ROADMAP.md': fresh.open, ...(fresh.done !== undefined ? { 'ROADMAP-fait.md': fresh.done } : {}) }
+          })
+          if ('error' in out) return out
+          note = out.note ?? ''
+        }
+        const where = await axisConfigOf($, source)
+        const text = await readOr($, where.path)
+        const next = where.perso !== undefined && text !== undefined ? withPersoAxisStyle(text, where.perso, { from, to, style }) : withAxisStyle(text, { from, to, style })
+        await $.fs.write(where.path, next)
+        return { note }
+      } catch (err) {
+        return { error: `Rien d'écrit : ${err instanceof Error ? err.message : String(err)}` }
       }
     }
+    if (route?.via === 'claude') {
+      // Claude écrit la roadmap, le panneau la config, tout de suite : rien à afficher en attente.
+      queueSubmit($, route.text)
+      const out = await write()
+      if ('error' in out) return void (await fail(out.error))
+      knownSource = undefined
+      await update($, stampAtom, v => v + 1)
+      await closeEdit()
+      sayToast($, [route.note, out.note].filter(n => n !== '').join(' ; '))
+      return
+    }
+    // Le nouveau nom se dessine aussitôt (#354) ; l'écriture suit en fond, derrière les précédentes.
+    const prev = pendingFor(source)
+    const open = check ? check.open : prev?.open
+    const done = check ? (check.done ?? prev?.done) : prev?.done
+    setPending({ dir: source.dir, ...(open !== undefined ? { open } : {}), ...(done !== undefined ? { done } : {}), axes: [...(prev?.axes ?? []), { from, to, style }] })
+    await closeEdit()
+    inBackground($, async () => {
+      const out = await write()
+      if ('error' in out) {
+        setPending(undefined)
+        await setView($, v => ({
+          axisEdit: origin !== '' ? origin : `head:${from}`,
+          axisDraft: label,
+          axisPick: color ?? '',
+          axisNote: out.error,
+          ...(to !== from && v.axis === to ? { axis: from } : {}),
+        }))
+        sayToast($, `Pas enregistré : ${out.error}`)
+        return false
+      }
+      await update($, stampAtom, v => v + 1)
+      if (out.note !== '') sayToast($, out.note)
+      return true
+    })
   } catch (err) {
     await fail(`Rien d'écrit : ${err instanceof Error ? err.message : String(err)}`)
   } finally {
@@ -5803,7 +5939,12 @@ async function rollDayStepsOnStart($: EngineInterface, source: Source): Promise<
   if ((await git('pull', '--rebase', '-q')).exitCode === 0) await git('push', '-q')
 }
 
-/** Le clic sur « Enregistrer » (#161) : une écriture à la fois ; rien de changé, la fiche se referme. */
+/**
+ * Le clic sur « Enregistrer » (#161) : une écriture à la fois ; rien de changé, la fiche se referme. La ligne se
+ * contrôle d'abord sur le texte affiché : refusée, le refus se dit sous le champ, la fiche reste ouverte. Sinon
+ * (#354) la fiche se ferme et montre la ligne éditée aussitôt, l'écriture tourne en fond ; un échec rouvre la
+ * fiche avec le brouillon et l'erreur, et le dit en toast. La voie `claude` (`ecriture`) n'attend rien : comme avant.
+ */
 async function confirmEdit($: EngineInterface, source: Source, task: Task, specs: readonly EditSpec[]): Promise<void> {
   if (saving) return
   saving = true
@@ -5816,22 +5957,43 @@ async function confirmEdit($: EngineInterface, source: Source, task: Task, specs
       return
     }
     await setView($, () => ({ editNote: SAVE_BUSY, editField: '' }))
-    const out = await saveEdit($, source, task, edit).catch((err: unknown) => ({
-      error: `Enregistrement impossible : ${err instanceof Error ? err.message : String(err)}`,
-    }))
-    if ('error' in out) {
-      await setView($, () => ({ editNote: out.error, editField: 'field' in out && out.field ? out.field : '' }))
-      return
+    const refuse = (out: { error: string; field?: EditField }) => setView($, () => ({ editNote: out.error, editField: out.field ?? '' }))
+    const shown = await shownTexts($, source).catch(() => undefined)
+    const rules = await editRules($, source)
+    const first = shown ? editInTexts(shown.open, task, edit, rules) : undefined
+    if (first && 'error' in first) return void (await refuse(first))
+    const route = editRoute({ ecriture: source.ecriture, cowork: await coworkPyFor($, source), task, edit })
+    const finish = async (out: { id?: string; warnings: string[]; note?: string; asked?: string }, inFront: boolean) => {
+      clearDrafts(key)
+      // En fond, la fiche est déjà fermée (peut-être rouverte sur une autre tâche) : seul le toast le dit.
+      if (inFront) {
+        const note = [...(out.asked ? [`Demandé à Claude : ${out.asked}`] : []), ...out.warnings, ...(out.note ? [out.note] : [])].join(' ; ')
+        await setView($, () => ({ editing: '', editNote: note, editField: '', ...(out.id ? { selected: `id:${out.id}` } : {}) }))
+      }
+      await update($, retryAtom, v => v + 1)
+      sayToast($, out.asked ? `Demandé à Claude : ${out.asked}` : `${out.id ? `#${out.id} ` : 'Tâche '}enregistrée${out.note ? ` : ${out.note}` : ''}`)
     }
-    clearDrafts(key)
-    const note = [...(out.asked ? [`Demandé à Claude : ${out.asked}`] : []), ...out.warnings, ...(out.note ? [out.note] : [])].join(' ; ')
-    await setView($, () => ({ editing: '', editNote: note, editField: '', ...(out.id ? { selected: `id:${out.id}` } : {}) }))
-    await update($, retryAtom, v => v + 1)
-    try {
-      $.ui.toast(out.asked ? `Demandé à Claude : ${out.asked}` : `${out.id ? `#${out.id} ` : 'Tâche '}enregistrée${out.note ? ` : ${out.note}` : ''}`)
-    } catch {
-      // pas de toast sur cette surface : la fiche le montre
+    const caught = (err: unknown) => ({ error: `Enregistrement impossible : ${err instanceof Error ? err.message : String(err)}` })
+    if (!first || !first.changed || route.via === 'claude') {
+      // Rien à écrire, ou Claude l'écrit plus tard : pas d'attente d'affichage, l'écriture se fait ici.
+      const out = await saveEdit($, source, task, edit).catch(caught)
+      if ('error' in out) return void (await refuse(out))
+      return void (await finish(out, true))
     }
+    const prev = pendingFor(source)
+    setPending({ dir: source.dir, open: first.open, ...(prev?.done !== undefined ? { done: prev.done } : {}), axes: prev?.axes ?? [] })
+    await setView($, () => ({ editing: '', editNote: '', editField: '', ...(task.id ? { selected: `id:${task.id}` } : {}) }))
+    inBackground($, async () => {
+      const out = await saveEdit($, source, task, edit).catch(caught)
+      if ('error' in out) {
+        setPending(undefined)
+        await setView($, () => ({ editing: key, editNote: out.error, editField: out.field ?? '', editCount: 0 }))
+        sayToast($, `Pas enregistré : ${out.error}`)
+        return false
+      }
+      await finish(out, false)
+      return true
+    })
   } finally {
     saving = false
   }
@@ -5845,6 +6007,7 @@ async function togglePriority($: EngineInterface, source: Source, task: Task): P
   if (saving) return
   saving = true
   try {
+    await afterBackgroundWrites()
     const out = await saveEdit($, source, task, { prio: isPriority(task) ? '' : 'oui' }).catch((err: unknown) => ({
       error: `Enregistrement impossible : ${err instanceof Error ? err.message : String(err)}`,
     }))
@@ -8502,7 +8665,10 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
 
   // La source se relit quand le titre de la session arrive ou change : « #N · … » cherche sa tâche (#213).
   const ownTitle = (await readOwnSession($)).title
-  const source = knownSource === undefined || sourceTitle !== ownTitle ? await sourceNow($) : (knownSource ?? undefined)
+  const fromDisk = knownSource === undefined || sourceTitle !== ownTitle ? await sourceNow($) : (knownSource ?? undefined)
+  // Les axes enregistrés et pas encore écrits (#354) : leur nom et leur couleur se montrent aussitôt.
+  const pendingAxes = fromDisk ? pendingFor(fromDisk)?.axes ?? [] : []
+  const source = fromDisk && pendingAxes.length > 0 ? { ...fromDisk, axes: applyAxisMoves(fromDisk.axes, pendingAxes) } : fromDisk
   if (!source) {
     // Pas de roadmap pour le dossier de la session : ce qui en déclare une.
     const p = await paletteOf($)
