@@ -400,6 +400,15 @@ import {
   writesRoadmap,
   taskForSessionTitle,
   launchTitleRefusal,
+  originSession,
+  publishedRelease,
+  releaseCommandIds,
+  testLaterReminder,
+  testReminder,
+  testSessionNote,
+  testsUnder,
+  testTitle,
+  withoutTests,
   sessionName,
   searchSummary,
   searchTasks,
@@ -1611,6 +1620,47 @@ async function deliveredBy($: EngineInterface, command: unknown): Promise<Delive
     if (repo !== undefined && repo.top === repo.main) kinds.push('fusion')
   }
   return kinds
+}
+
+/** #366 : les #N publiés par ce Maestro dans ce chargement, en test jusqu'au « c'est bon » de la personne. */
+let publishedTests: string[] = []
+
+/**
+ * Le rappel « en test » d'une publication de Maestro (#366) : la version et les #N ouverts lus dans la
+ * sortie de `release.py release`, la session d'origine de chacun, la carte de test entière. Publication
+ * lancée en arrière-plan (pas de sortie) : le rappel de la poser à sa fin. Rien sans #N ouvert.
+ */
+async function testAfterRelease($: EngineInterface, command: string, stdout: string): Promise<string | undefined> {
+  const pub = publishedRelease(stdout)
+  const ids = pub ? pub.ids : releaseCommandIds(command)
+  if (ids.length === 0) return undefined
+  const source = await sourceNow($)
+  if (!source) return undefined
+  const open = await load($, files(source).open, 'ROADMAP.md')
+  if (typeof open === 'string') return undefined
+  const kept = ids.flatMap(id => open.filter(t => t.id === id && !t.done))
+  if (kept.length === 0) return undefined
+  publishedTests = [...new Set([...publishedTests, ...kept.map(t => t.id as string)])]
+  if (!pub) return testLaterReminder(kept.map(t => t.id as string))
+  const titles = await loadTitles($)
+  const rows = (await readListRows($)).rows
+  const own = await readOwnSession($)
+  const tasks = kept.map(t => {
+    const id = t.id as string
+    const origin = originSession(rows, id)
+    return { id, name: t.nom ?? cachedTitle(t, titles) ?? fallbackTitle(t.label), ...(origin ? { origin } : {}) }
+  })
+  return testReminder({ version: pub.version, tasks, ...(own.id ? { maestro: own.id } : {}) })
+}
+
+/** La consigne d'une session de test (#366), à chaque message de la personne : rien hors d'une session « Tester #N · X.Y.Z ». */
+async function testSessionText($: EngineInterface): Promise<string | undefined> {
+  // La fiche déjà lue seulement : un message ne relit pas la fiche de la session (le brief porte les règles d'ici là).
+  const own = ownSession
+  const test = own ? testTitle(own.title) : undefined
+  if (!own || !test) return undefined
+  const origin = originSession((await readListRows($)).rows, test.id)
+  return testSessionNote({ ...test, ...(origin ? { origin } : {}), ...(own.parent ? { maestro: own.parent } : {}) })
 }
 
 /** Le rappel de fin de tour d'une livraison sans liste renvoyée (#136), une seule fois. */
@@ -2988,7 +3038,8 @@ async function childAlertContext($: EngineInterface): Promise<string | undefined
       // roadmap illisible : les nouvelles d'avant, sans la clôture partielle
     }
   }
-  const alerts = childAlerts({ children, statuses, finished, alerted, now: await $.clock.now(), lines: openLines, me })
+  // #366 : une tâche en test (sa session d'origine, sa session de test) attend la personne : ni « prête » ni « silencieuse ».
+  const alerts = withoutTests(childAlerts({ children, statuses, finished, alerted, now: await $.clock.now(), lines: openLines, me }), testsUnder(rows, publishedTests))
   // Les relances de cette fois s'ajoutent, avec l'étape de l'enfant ; un enfant qui n'est plus listé sort.
   const next: Record<string, ChildRelaunch> = {}
   for (const child of children) if (alerted[child.id] !== undefined) next[child.id] = alerted[child.id] as ChildRelaunch
@@ -7046,6 +7097,13 @@ export const register: Register = (on, options) => {
       texts.push(launch.context)
       launchPending = true
     }
+    // #366 : dans une session « Tester #N · X.Y.Z », chaque message de la personne reçoit la consigne de relais.
+    try {
+      const test = await testSessionText($)
+      if (test) texts.push(test)
+    } catch {
+      // fiche ou liste illisible : le message passe sans la consigne
+    }
     // Le rappel de fin de tour laissé par le tour précédent sous sec-default (#140).
     if (pendingReminder !== undefined) {
       texts.push(deferredReminder(pendingReminder))
@@ -7347,7 +7405,12 @@ export const register: Register = (on, options) => {
       if (kinds.length === 0) return ran
       const maestro = await maestroHere($)
       delivered = { kinds: [...new Set([...delivered.kinds, ...kinds])], maestro: maestro || delivered.maestro }
-      return { ...ran, context: [...(ran.context ?? []), deliveryReminder(kinds, maestro, false, closingTurn.wake)] }
+      // #366 : chez Maestro, la tâche publiée passe en test ; le rappel porte sa carte.
+      const said = (ran.result as { stdout?: unknown } | undefined)?.stdout
+      const test = maestro && kinds.includes('publication')
+        ? await testAfterRelease($, e.command, typeof said === 'string' ? said : (ran.text ?? '')).catch(() => undefined)
+        : undefined
+      return { ...ran, context: [...(ran.context ?? []), deliveryReminder(kinds, maestro, false, closingTurn.wake), ...(test ? [test] : [])] }
     } catch {
       return ran
     }

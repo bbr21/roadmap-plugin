@@ -4612,6 +4612,172 @@ export function partialCloseNote(o: { id: string; attend: string | undefined; me
   return `${lead} ${partialCloseRule('solo')} Ici : clos #${o.id} et ouvre sa suite chez ${tiers}, puis dis « #${o.id} close, la suite chez ${tiers} passe en #<suite> ». Notre part pas encore faite : dis-le, ta tâche n'est pas finie.`
 }
 
+// #366 : une tâche publiée passe en test. Après la publication, Maestro pose la carte « Tester #N · X.Y.Z » ;
+// la session de test relaie les retours de la personne à la session d'origine, gardée ouverte, et la tâche
+// se coche au « c'est bon ». L'état « en test » se déduit des titres de session, sans contrat nouveau.
+
+const TEST_TITLE = /^\s*tester\s+#([1-9]\d*)\s*·\s*(\d+\.\d+\.\d+)\s*$/i
+
+/** Le numéro et la version d'un titre de session de test « Tester #N · X.Y.Z », sinon rien. */
+export function testTitle(title: string): { id: string; version: string } | undefined {
+  const m = TEST_TITLE.exec(title)
+  return m?.[1] !== undefined && m[2] !== undefined ? { id: m[1], version: m[2] } : undefined
+}
+
+/** Le titre de la carte d'une session de test : point médian (U+00B7) et espaces autour. */
+export function testCardTitle(id: string, version: string): string {
+  return `Tester #${id} · ${version}`
+}
+
+/** Ce que dit la sortie de `release.py release` : le plugin, la version publiée et les `#N` du message (sans doublon). */
+export function publishedRelease(output: string): { plugin: string; version: string; ids: string[] } | undefined {
+  const m = /^\s*Publié\s*:\s*(\S+)\s+(\d+\.\d+\.\d+)\s*\(était[^)]*\)\s*:\s*(.*)$/mu.exec(output)
+  if (!m || m[1] === undefined || m[2] === undefined) return undefined
+  const ids: string[] = []
+  for (const n of (m[3] ?? '').matchAll(/#([1-9]\d*)/g)) {
+    if (n[1] !== undefined && !ids.includes(n[1])) ids.push(n[1])
+  }
+  return { plugin: m[1], version: m[2], ids }
+}
+
+/** La ligne « en test » de la clause de Maestro, dite à la session qui a codé la tâche. */
+export function testChild(): string {
+  const p = person()
+  return `En test (#366) : après la fusion et la publication de ta tâche, Maestro pose la carte « Tester #N · X.Y.Z » d'une session de test ; ta tâche passe en test et ta session reste ouverte. Chaque retour de ${p} t'arrive par message « Retour de test #N (X.Y.Z) : … » : code-le sur ta branche (merge de main d'abord, jamais de rebase d'une branche poussée), rejoue les tests, pousse, puis « prête à fusionner » ; Maestro fusionne, publie et pose la carte de la version suivante. Ta ligne se coche au « c'est bon » de ${p} dans la session de test : alors seulement « fini » et l'archivage.`
+}
+
+/** `testChild()` pour la personne connue au chargement ; `maestroClause` lit `testChild()` à chaque appel. */
+export const TEST_CHILD: string = testChild()
+
+/** Les règles de relais de la session de test, dites dans son brief et redites à chaque message (`testSessionNote`). */
+function testRelayRules(o: { id: string; version: string; origin?: string; maestro?: string }): string[] {
+  const p = person()
+  const maestro = o.maestro !== undefined ? `Maestro (session ${o.maestro})` : 'Maestro'
+  const origin = o.origin !== undefined
+    ? `la session d'origine de #${o.id} (session ${o.origin})`
+    : `Maestro (session d'origine introuvable : envoie chaque retour à Maestro, qui relance une session sur la tâche)`
+  return [
+    `Ne code rien : tu ne fais que relayer.`,
+    `Un retour de ${p} (défaut, demande, capture) part tel quel, sans le réécrire, à ${origin} par SendMessage : « Retour de test #${o.id} (${o.version}) : … ». Dis ensuite en une ligne qu'il est transmis.`,
+    `Quand ${p} dit « c'est bon », envoie à ${maestro} : « Test validé : #${o.id} ${o.version}, c'est bon de ${p} ».`,
+    `Une question de ${p} se répond ici, sans la relayer.`,
+  ]
+}
+
+/** Le brief de la carte « Tester #N · X.Y.Z » : tout écrit par le plugin, identifiants compris. */
+export function testBrief(o: { id: string; name: string; version: string; origin?: string; maestro?: string }): string {
+  const p = person()
+  return [
+    `Mission : tester #${o.id} · ${o.name} dans la version ${o.version} du plugin, avec ${p}`,
+    `Fini quand : ${p} dit « c'est bon »`,
+    '---',
+    `Tu ouvres une session de test : ${p} essaie la version ${o.version} et te dit ce qui va ou non.`,
+    `Vérifie d'abord la version chargée : \`python3 tools/release.py status\`, ligne « Dans l'app ». Si elle est en retard, dis à ${p} le geste que la ligne donne.`,
+    ...testRelayRules(o),
+    `Finis sur « Archiver cette session ? » (avec le bouton « Oui, archiver ») quand Maestro dit « #${o.id} close », ou qu'une version plus récente de #${o.id} a sa propre carte de test.`,
+  ].join('\n')
+}
+
+/**
+ * Le rappel à Maestro après une publication (#366) : les tâches du message passent en test. Une carte
+ * par tâche, que Maestro recopie telle quelle. Rien sans tâche.
+ */
+export function testReminder(o: { version: string; tasks: { id: string; name: string; origin?: string }[]; maestro?: string }): string | undefined {
+  if (o.tasks.length === 0) return undefined
+  const p = person()
+  const ids = o.tasks.map(t => `#${t.id}`).join(', ')
+  const cards = o.tasks.map(t => {
+    const brief = testBrief({ id: t.id, name: t.name, version: o.version, ...(t.origin !== undefined ? { origin: t.origin } : {}), ...(o.maestro !== undefined ? { maestro: o.maestro } : {}) })
+    return [
+      `Carte de #${t.id} : start_session, initiation: own_initiative, context: fresh, use_worktree: false, titre « ${testCardTitle(t.id, o.version)} », prompt (recopie-le tel quel) :`,
+      '<<<',
+      brief,
+      '>>>',
+    ].join('\n')
+  })
+  return [
+    `Roadmap — publication ${o.version} : ${ids} passe${o.tasks.length > 1 ? 'nt' : ''} en test (#366).`,
+    `Dis « Nouvelle version ${o.version} : ${ids} » en une ligne, même sur un tour réveillé : c'est un besoin de ${p}.`,
+    `Ne coche pas ${ids} : l'étape devient « · en test ${o.version} », ce qui l'emporte sur « livrée » du rappel de livraison ; la ligne se coche au « Test validé » de ${p}.`,
+    `Pose une carte de test par tâche :`,
+    ...cards,
+  ].join('\n')
+}
+
+/**
+ * Le contrôle d'une carte de test, appelé en tête de `launchTitleRefusal` : rien quand le titre n'est pas
+ * un titre de test ou que la carte peut partir ; un refus quand #N est close ou absente, ou qu'une session
+ * ouverte porte déjà ce titre.
+ */
+export function testCardRefusal(o: { title: string; open: readonly Task[]; done: readonly Task[]; sessions: readonly { title: string }[] }): string | undefined {
+  const t = testTitle(o.title)
+  if (!t) return undefined
+  const head = 'Carte de test refusée (#366) :'
+  if (!o.open.some(x => x.id === t.id)) {
+    const closed = o.done.some(x => x.id === t.id)
+    return `${head} #${t.id} ${closed ? 'est close (ROADMAP-fait.md)' : "n'existe pas dans ROADMAP.md"} : un test se pose sur une tâche ouverte.`
+  }
+  const wanted = normalizeTitle(o.title)
+  if (o.sessions.some(s => normalizeTitle(s.title) === wanted)) {
+    return `${head} la session « ${o.title} » est déjà ouverte : une seule session de test par version.`
+  }
+  return undefined
+}
+
+/** La consigne redite à chaque message de la personne dans une session de test. */
+export function testSessionNote(o: { id: string; version: string; origin?: string; maestro?: string }): string {
+  return `Roadmap — session de test de #${o.id} (${o.version}). ${testRelayRules(o).join(' ')}`
+}
+
+/** Les `#N` en test : sessions de test ouvertes (rangées de `list_sessions`), plus les `#N` publiés dans ce chargement. */
+export function testsUnder(rows: readonly unknown[], published: readonly string[]): Set<string> {
+  const ids = new Set<string>(published)
+  for (const raw of rows) {
+    if (typeof raw !== 'object' || raw === null) continue
+    const r = raw as { title?: unknown; isArchived?: unknown }
+    if (r.isArchived === true || typeof r.title !== 'string') continue
+    const t = testTitle(r.title)
+    if (t) ids.add(t.id)
+  }
+  return ids
+}
+
+/** Les nouvelles des enfants sans « prête » ni « silencieuse » pour une tâche en test : elle attend la personne par nature. */
+export function withoutTests(alerts: readonly ChildAlert[], ids: ReadonlySet<string>): ChildAlert[] {
+  return alerts.filter(a => {
+    if (a.kind !== 'ready' && a.kind !== 'silent') return true
+    const id = testTitle(a.child.title)?.id ?? sessionTitleId(a.child.title)
+    return id === undefined || !ids.has(id)
+  })
+}
+
+/** La session d'origine d'une tâche (#366) : la session ouverte « #N · … » qui la réalise (ni test, ni vérification, ni routine). */
+export function originSession(rows: readonly unknown[], id: string): string | undefined {
+  for (const raw of rows) {
+    if (typeof raw !== 'object' || raw === null) continue
+    const r = raw as { sessionId?: unknown; title?: unknown; isArchived?: unknown }
+    if (r.isArchived === true || typeof r.sessionId !== 'string' || typeof r.title !== 'string') continue
+    if (sessionTitleId(r.title) === id && sessionTitleKind(r.title) === 'work' && !isRoutineTitle(r.title)) return r.sessionId
+  }
+  return undefined
+}
+
+/** Les `#N` du message d'un `release.py release` (#366), lus dans la commande : la publication lancée en arrière-plan n'a pas encore de sortie. */
+export function releaseCommandIds(command: string): string[] {
+  const at = command.search(/(?:^|[\s/])release\.py\s+release(?=\s|$)/)
+  if (at < 0) return []
+  const ids: string[] = []
+  for (const n of command.slice(at).matchAll(/#([1-9]\d*)/g)) if (n[1] !== undefined && !ids.includes(n[1])) ids.push(n[1])
+  return ids
+}
+
+/** Le rappel d'une publication lancée en arrière-plan (#366) : la carte de test se pose quand sa sortie dit la version. */
+export function testLaterReminder(ids: readonly string[]): string | undefined {
+  if (ids.length === 0) return undefined
+  const list = ids.map(id => `#${id}`).join(', ')
+  return `Roadmap — publication lancée en arrière-plan pour ${list} (#366) : à sa fin, quand sa sortie dit « Publié : <plugin> X.Y.Z … », ne coche pas ${list} : dis « Nouvelle version X.Y.Z : ${list} » en une ligne, mets l'étape à « · en test X.Y.Z », et pose une carte par tâche titrée « ${ids.map(id => testCardTitle(id, 'X.Y.Z')).join(' », « ')} » (start_session, own_initiative, fresh, use_worktree: false), brief de test avec l'identifiant de la session d'origine et le tien (skill roadmap:maestro, § 6, « A published task goes to test »).`
+}
+
 export function maestroClause(maestro: string, travail: Travail = 'code'): string[] {
   // Sans code (#76, #176) : ni branche, ni PR, ni fusion ; la session se dit « prête à clore ».
   if (travail === 'projet') {
@@ -4642,6 +4808,7 @@ export function maestroClause(maestro: string, travail: Travail = 'code'): strin
     `- ${maestroMockups('dans le dossier du chantier, `docs/plans/<type>-<slug>/maquettes.html`')}`,
     `- ${fidelityRule()}`,
     '- Ne coche pas ta ligne : Maestro la coche à la fusion, avec son bilan. Ton dernier compte rendu dit ce qui a été fait et le souci rencontré.',
+    `- ${testChild()}`,
     `- Ton compte rendu « prête à fusionner » finit par le bloc « Ce qui a changé », que la fiche de ta tâche montre (#269) : ${CHANGES_BLOCK_RULE}.`,
     `- ${PARTIAL_CLOSE_CHILD}`,
     `- ${maestroClauseEnd()} Rien de non commité ne doit rester dans ton worktree.`,
@@ -5522,6 +5689,7 @@ export function launchTitleRefusal(o: {
   sessions: readonly { title: string }[]
   titleOf: (t: Task) => string | undefined
 }): string | undefined {
+  if (testTitle(o.title)) return testCardRefusal(o)
   const head = 'Carte refusée (#263, une session, un #N) :'
   const tail = 'Le titre se tire de la ligne écrite : relis la ligne dans ROADMAP.md, puis repose la carte.'
   const titled = (t: Task) => `« ${sessionTitleFor(t, t.nom ?? o.titleOf(t) ?? fallbackTitle(t.label))} »`

@@ -21,6 +21,7 @@ import json
 import math
 import os
 import re
+import subprocess
 import sys
 import unicodedata
 
@@ -330,7 +331,9 @@ def rapprocher(ctx, texte, n=5, zone=None, apres=None):
     """Les tâches ouvertes et closes du même sujet qu'une action, par la part pondérée de ses mots
     qu'elles portent (celle d'un enfant compte le libellé de son parent), les mots partagés, et le
     cas probable. Un mot pèse sa rareté dans la roadmap (#255). Plus, par le contexte des tâches
-    ouvertes et la zone de l'action, celles où la verser (`a_verser`, #320). Claude tranche."""
+    ouvertes et la zone de l'action, celles où la verser (`a_verser`, #320). Et `en_cours_memes_fichiers`
+    (#366) : les tâches prises dont la branche change, ou dont le contexte nomme, un fichier que l'action
+    touche, avec `meme_but` quand l'action les cite ou leur ressemble. Claude tranche."""
     cible = audit.mots(texte)
     par_id = {t["id"]: t for t in ctx["taches"]}
     closes_ctx = ctx.get("closes") or []
@@ -369,6 +372,7 @@ def rapprocher(ctx, texte, n=5, zone=None, apres=None):
         cas = "nouvelle"
     return {"texte": texte, "ouvertes": ouvertes[:n], "closes": closes[:n], "cas_probable": cas,
             "a_verser": a_verser(ctx, texte, zone, apres),
+            "en_cours_memes_fichiers": en_cours_memes_fichiers(ctx, texte, zone, apres),
             "faites_au_meme_endroit": faites_au_meme_endroit(ctx, texte, zone, apres)}
 
 
@@ -526,6 +530,56 @@ def a_verser(ctx, texte, zone=None, apres=None):
     return _au_meme_endroit(ctx["dossier"], ctx["taches"], texte, lieux, cites, feuilles=True)
 
 
+def fichiers_de_branche(dossier, branche):
+    """#366 : les fichiers qu'une branche change (noms de base, en minuscules), par `git diff --name-only
+    <base>...<branche>`, base `main` puis `master`. Toute erreur (git absent, branche inconnue, pas un dépôt) : vide."""
+    branche = audit._propre(branche)
+    if not branche or branche.startswith("-"):
+        return set()
+    for base in ("main", "master"):
+        try:
+            r = subprocess.run(["git", "-C", dossier, "diff", "--name-only", "%s...%s" % (base, branche)],
+                               capture_output=True, text=True, timeout=10)
+        except (OSError, subprocess.SubprocessError, ValueError):
+            return set()
+        if r.returncode == 0:
+            return {os.path.basename(l).lower() for l in r.stdout.splitlines() if l.strip()}
+    return set()
+
+
+def en_cours_memes_fichiers(ctx, texte, zone=None, apres=None):
+    """#366 : les tâches ouvertes prises (`qui:` et `branche:`) dont la branche change, ou dont le contexte
+    nomme, un fichier que l'action touche (genre `fichier` de sa zone et de son texte). `meme_but` : l'action
+    cite la tâche, ou l'action et le contexte citent un même `#N`, ou le score de contexte atteint
+    SEUIL_CONTEXTE avec deux mots communs. Rangées par but puis nombre de fichiers, CANDIDATES_MAX au plus."""
+    lieux, cites = _lieux_et_chaine(texte, zone, apres)
+    fichiers = {l for l, g in lieux.items() if g == "fichier"}
+    prises = [t for t in ctx["taches"] if t["champs"].get("qui") and t["champs"].get("branche")]
+    if not fichiers or not prises:
+        return []
+    contextes = {t["id"]: contexte_tache(ctx["dossier"], t) for t in ctx["taches"]}
+    cible = audit.mots(texte)
+    poids = poids_des_mots([c["texte"] for c in contextes.values()])
+    total = sum(poids.get(w, POIDS_INCONNU) for w in cible)
+    sortie = []
+    for t in prises:
+        c = contextes[t["id"]]
+        branche = t["champs"]["branche"]
+        du_contexte = {l for l, g in c["lieux"].items() if g == "fichier"}
+        communs = sorted(fichiers & (fichiers_de_branche(ctx["dossier"], branche) | du_contexte))
+        if not communs:
+            continue
+        mots = cible & audit.mots(c["texte"])
+        score = round(sum(poids[w] for w in mots) / total, 2) if total else 0.0
+        meme_but = (t["id"] in cites or bool(cites & set(CITE_RE.findall(c["texte"])))
+                    or (score >= SEUIL_CONTEXTE and len(mots) >= 2))
+        sortie.append({"id": t["id"], "libelle": t["libelle"], "branche": branche, "fichiers_communs": communs,
+                       "meme_but": meme_but})
+    sortie.sort(key=lambda x: (not x["meme_but"], -len(x["fichiers_communs"]),
+                               int(x["id"]) if x["id"].isdigit() else 0))
+    return sortie[:CANDIDATES_MAX]
+
+
 def faites_au_meme_endroit(ctx, texte, zone=None, apres=None):
     """#320 : ce qui a été fait. Les tâches closes au même endroit et au même but qu'une action (leur
     libellé, leur bilan, leur fiche ou leur spec) : l'action en est la suite, ou elle est déjà faite."""
@@ -679,6 +733,24 @@ def un_sujet(ctx, operations):
     return retenues, questions
 
 
+def _question_memes_fichiers(k, libelle, texte, ajout, entrees):
+    """#366 : l'action touche les fichiers d'une tâche en cours (kind `merge`) : « Verser dans #N, tenue par la
+    session de <branche> » (`relay`, sans opération) pour chacune, puis « Tâche à part » ; « (recommandé) » sur
+    la première quand elle a le même but, sinon sur « Tâche à part »."""
+    options = [{"label": "Verser dans #%s, tenue par la session de %s" % (e["id"], e["branche"]),
+                "operations": [], "relay": {"id": e["id"], "branche": e["branche"], "action": texte}} for e in entrees]
+    a_part = {"label": "Tâche à part", "operations": [dict(ajout, distinct=A_PART)]}
+    if entrees[0]["meme_but"]:
+        options[0]["label"] += " (recommandé)"
+    else:
+        a_part["label"] += " (recommandé)"
+    e = entrees[0]
+    return {"key": "merge-%s" % k, "about": libelle, "kind": "merge",
+            "question": "« %s » touche les fichiers de #%s en cours (%s, session de %s) ; la verser dans #%s, ou en tâche à part ?"
+                        % (_court(libelle), e["id"], ", ".join(e["fichiers_communs"]), e["branche"], e["id"]),
+            "options": options + [a_part]}
+
+
 def un_lot(ctx, operations, retenues):
     """#320 : un ajout sans parent, sans `distinct`, que #288 n'a pas retenu et que rien dans le lot ne vise,
     devient une question (kind `merge`) quand `a_verser` lui trouve une tâche ouverte : « Verser dans #N »
@@ -701,6 +773,11 @@ def un_lot(ctx, operations, retenues):
         apres = (a.get("fields") or {}).get("après")
         candidates = a_verser(ctx_ouvert, texte, zone, apres)
         if not candidates:
+            en_cours = en_cours_memes_fichiers(ctx_ouvert, texte, zone, apres)
+            if en_cours:
+                questions.append(_question_memes_fichiers(k, libelle, texte, a, en_cours))
+                cles.add(k)
+                continue
             faites = faites_au_meme_endroit(ctx, texte, zone, apres)
             if faites:
                 f = faites[0]

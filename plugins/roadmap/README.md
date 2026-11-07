@@ -745,6 +745,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.230.0 (2026-11-07)** : sessions : une tâche publiée passe en test, Maestro pose la carte Tester #N, les retours de la session de test vont à la session d'origine et la tâche se coche au « c'est bon » (#366)
 - **0.229.1 (2026-11-07)** : sessions : une session qui attend son sous-agent ou sa commande de fond ne s'annonce plus arrêtée à Maestro, et ne le réveille qu'une fois (#347)
 - **0.229.0 (2026-11-07)** : panneau : centre de contrôle des sessions, une tâche prioritaire passe devant et met en pause la session qui cède, le bloc En cours devient une ligne de compteurs (#367)
 - **0.228.1 (2026-11-06)** : panneau : le nom et la couleur d'un axe, et le nom d'une tâche, s'affichent dès Enregistrer, l'écriture tourne en fond (#354)

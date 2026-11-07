@@ -1,6 +1,6 @@
 # Est-il sûr de l'installer ?
 
-Version décrite : roadmap 0.229.1
+Version décrite : roadmap 0.230.0
 Un plugin de Claude Code fait tourner du code sur ta machine, donc la question se pose. Certains plugins
 malveillants ont l'air inoffensifs quand on les installe, puis téléchargent et lancent autre chose plus
 tard. Cette page dit tout ce que fait roadmap. Un test vérifie à chaque version qu'elle dit vrai, et tu
@@ -52,7 +52,7 @@ réserve (`session.*`, `turn.*`, `skill.prompt`) ; le plugin a alors un secours 
 
 | Programme | Lancé par | Quand et pourquoi |
 |---|---|---|
-| `git` | `hooks/register.tsx`, `hooks/reglages.tsx`, `scripts/one-at-a-time.sh`, `skills/doctor/scripts/doctor.py`, `skills/impact/scripts/impact.py`, `skills/maestro/scripts/etat_maestro.py`, `skills/onboarding/scripts/onboarding.py` | lire l'état du dépôt du projet (branche, commits, fichiers changés, copies de travail ; la carte d'impact lit le diff et la liste des fichiers suivis) ; et, quand tu coches, rouvres ou édites une tâche dans le panneau, ou au report du jour des étapes de journée (#277), committer et pousser les seuls fichiers de la roadmap vers le dépôt distant du projet ; et, l'option « Branches nettoyées » allumée (#313), supprimer les branches déjà fusionnées sur main que rien ne tient (`git branch -d`, `git fetch --prune`, `git push origin :refs/heads/…`) |
+| `git` | `hooks/register.tsx`, `hooks/reglages.tsx`, `scripts/one-at-a-time.sh`, `skills/doctor/scripts/doctor.py`, `skills/impact/scripts/impact.py`, `skills/maestro/scripts/etat_maestro.py`, `skills/onboarding/scripts/onboarding.py`, `skills/tasks/scripts/tasks.py` | lire l'état du dépôt du projet (branche, commits, fichiers changés, copies de travail ; la carte d'impact lit le diff et la liste des fichiers suivis ; la skill tasks lit les fichiers que change la branche d'une tâche en cours, #366) ; et, quand tu coches, rouvres ou édites une tâche dans le panneau, ou au report du jour des étapes de journée (#277), committer et pousser les seuls fichiers de la roadmap vers le dépôt distant du projet ; et, l'option « Branches nettoyées » allumée (#313), supprimer les branches déjà fusionnées sur main que rien ne tient (`git branch -d`, `git fetch --prune`, `git push origin :refs/heads/…`) |
 | `curl` | `hooks/register.tsx`, `skills/doctor/scripts/doctor.py` | quand tu cliques sur Rafraîchir dans le panneau : lire la dernière version publiée du plugin, pour te dire qu'une mise à jour existe ; dans le doctor, lire les empreintes publiées de ta version pour vérifier ta copie (voir plus bas) |
 | `gh` | `hooks/register.tsx`, `skills/doctor/scripts/doctor.py`, `skills/onboarding/scripts/onboarding.py` | la même lecture de version quand `curl` manque ; dans le doctor, vérifier que GitHub CLI est connecté (voir plus bas) ; à l'onboarding, lire les pull requests du projet pour en tirer la roadmap |
 | `python3` | `hooks/register.tsx` | cocher une tâche dans un dossier Cowork qui déclare son propre outil d'écriture (voir plus bas), isolé par `-I` |

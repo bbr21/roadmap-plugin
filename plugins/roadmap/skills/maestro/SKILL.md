@@ -51,7 +51,13 @@ rule at the end of a turn that executed (below).
      whose result stays small, receives the action rather than a new line and a new session.
      When `write` asks « Verser dans #N », put the question to the person; if #N is taken by a
      session (`relay`), check with `list_sessions` that it is open and send it the action
-     (`SendMessage`), instead of opening a session; closed, take « Tâche à part ». Then
+     (`SendMessage`), instead of opening a session; closed, take « Tâche à part ». Read also
+     `en_cours_memes_fichiers` (#366): an open task held by a session whose branch changes (or whose
+     context names) a file of the action's zone, even a single shared file. Before writing, say it to
+     the person in one line (« ça touche register.tsx, que #355 change en ce moment ») and put the
+     question `write` asks (« Verser dans #N, tenue par la session de … » or « Tâche à part »): case of
+     2026-11-06, #365 opened apart while #355, in progress, changed the same selection. So give `match`
+     the files in `--zone`, not only words. Then
      `tasks.py write`, dry run, then `--apply`. A `followup` question says a closed task already
      did the work or that the action follows it: put it to the person before opening anything. A line written in `ROADMAP.md`
      by `Write`, `Edit` or a shell command outside `tasks.py` brings back the hook's reminder in the
@@ -296,7 +302,8 @@ to it.
   turn.
   - **One step per launched task**, labelled `#<id> <libellé court> · <état>`, the status in plain
     words: « en cours : étape 3/7 », « t'attend : <la question en trois mots> »,
-    « attend le simulateur », « en relecture », « prête à fusionner », « livrée ». Example:
+    « attend le simulateur », « en relecture », « prête à fusionner », « en test 0.230.0 » (published,
+    waiting for the person's « c'est bon », § 6), « livrée ». Example:
     `#99 Priorités et filtres · en relecture`.
   - **In the merge order** of § 5; a delivered task (merged, or closed in a folder without code) is ticked
     (`completed`) and keeps its place at the top.
@@ -448,8 +455,31 @@ The merge itself:
 
 ## 6. Close a task, then Maestro
 
-- **After the merge**, Maestro ticks the line (`fait:`, what was delivered, the PR), moves it to the
+- **After the merge** (after the « c'est bon » for a published task in test, below), Maestro ticks the line (`fait:`, what was delivered, the PR), moves it to the
   top of `ROADMAP-fait.md` and writes its bilan from the sub-session's last report.
+- **A published task goes to test** (#366, the person's request of 2026-11-06): a version is only
+  loaded by the sessions opened after the plugin's sync, so the person tries it in a new session, and
+  their feedback goes to the session that coded the task, kept open. The panel adds the instruction
+  to the result of a `release.py release` whose message cites `#N`:
+  1. Say it in one line, even on a turn woken by a session (it is a need of the person: testing):
+     « Nouvelle version X.Y.Z : #N <ce qui change> ».
+  2. Do not tick #N. Its step reads `#N <libellé court> · en test X.Y.Z`; its session stays open.
+  3. Post one card per task, the one the reminder writes: title `Tester #N · X.Y.Z`,
+     `own_initiative`, `fresh`, in the main folder (`use_worktree: false`), its brief copied as is
+     (it carries the ids of the original session and of Maestro). That title does not start with
+     `#N ·`: the test session does not hold the task (no tree, no clause, no launch queue), and the
+     panel checks it by its own rule (#N open, no open test session with the same title).
+  4. The test session codes nothing: each piece of feedback from the person goes, as is, to the
+     original session (« Retour de test #N (X.Y.Z) : … »), which codes it on its branch (merge of
+     `main` first), reruns its tests, pushes and says « prête à fusionner »: § 5, then a new
+     publication and a new card `Tester #N · X.Y.Z+1`; tell the old test session by message that a
+     newer version has its card, it offers its archiving.
+  5. « c'est bon » in the test session reaches Maestro (« Test validé : #N X.Y.Z, c'est bon de … »):
+     tick #N with its bilan (`tasks` skill), then tell both sessions by message « #N close » (one line
+     each): each concludes and ends on « Archiver cette session ? ».
+  While a task is in test, the children's news do not call its two sessions « prête » or
+  « silencieuse »: they wait for the person by nature. A publication that cites no `#N`, or a merge
+  without publication, closes as before (after the merge).
 - **No study closed with a step left over** (#293): a study, a spike or an audit whose last report
   recommends steps is not ticked while one of those steps has neither a line (open, or the task it
   was attached to) nor a reason to be set aside, said in the report. Maestro reads the report's
@@ -606,6 +636,10 @@ The merge itself:
   session already running (§ 2, #122).
 - Maestro's brief and the children's news remind it to keep its step list (§ 3); it no longer asks
   for a card (#97 removed by #104).
+- After a publication whose message cites `#N` (#366), it adds to the command's result the « en
+  test » instruction and the full card `Tester #N · X.Y.Z` (§ 6); in the test session, each of the
+  person's messages gets the relay rule; the children's news skip « prête » and « silencieuse » for a
+  task in test.
 - After a merge into `main` or a publication, it reminds Maestro to send its step list again and
   say its recap line (in the command's result), then says it again at the end of the turn if the
   list has not moved (§ 3, #136); it refuses its « à archiver » end without the table of its tasks

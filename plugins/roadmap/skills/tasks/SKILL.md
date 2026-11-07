@@ -127,6 +127,16 @@ its reasons (`lieux_communs`, `fichiers_communs`, `chaine`, `score_contexte`, `b
   two shared words;
 - **a small result**: the task has no open child, and both labels hold in 1,200 characters.
 
+**A task in progress on the same files (#366).** `match` also gives `en_cours_memes_fichiers`: the
+open tasks held by a session (`qui:` and `branche:`) whose branch changes a file of the action
+(`git diff --name-only main...<branche>`), or whose context names it; here a single shared file is
+enough, since two sessions on the same file collide (#365 opened apart on 2026-11-06 while #355, in
+progress, changed the same selection in `register.tsx`). Each entry: `id`, `libelle`, `branche`,
+`fichiers_communs`, `meme_but` (a chain link, or the context's words). Give `--zone` the files, not
+only words. When `a_verser` finds nothing, `write` turns the first entry into the same `merge`
+question: « Verser dans #N, tenue par la session de <branch> » (recommended when `meme_but`), or
+« Tâche à part » (recommended otherwise). Say it to the person before writing.
+
 Read their context before writing (the purpose is yours to judge, the script only shows where).
 `write` holds it as a question, never a refusal: an `add` without `parent`, without `distinct`,
 that the subject rule did not hold and that nothing else in the batch points to, becomes a `merge`
