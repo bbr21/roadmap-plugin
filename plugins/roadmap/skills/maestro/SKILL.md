@@ -520,8 +520,7 @@ The merge itself:
   launch also waits while the Mac's load over one minute is above 2 × its cores. Beyond that, the
   card does not go out: the panel puts the task in the shared queue, by order of arrival (its
   `après:` prerequisites first), refuses the card with its rank on the Mac
-  (« #N attend son tour, 3e sur le Mac »), and the block « En cours » shows it with that rank and a « Retirer » link that
-  takes it out of the queue and back to the list. Do not post a queued card again, do not do the
+  (« #N attend son tour, 3e sur le Mac »), and the control center shows it with that rank (#367). Do not post a queued card again, do not do the
   task yourself. A card you posted that went into the queue comes back as a card at its turn (the
   person clicks Start). A task the person queued with ▶ starts by itself, ▶ being their consent:
   when it reaches the head of the queue (the first entry whose project has a free place)
@@ -536,6 +535,22 @@ The merge itself:
   With the option « File de lancement » (`launchQueue`) off, there is no queue at all: no cap, no
   load wait, every card and every ▶ goes out at once, and the tasks already queued start (a ▶ is
   launched, a card comes back as a card); the two caps apply only with the queue on.
+- **Priority and pauses** (#367): a `prio:oui` task (or one marked « Prioritaire » in the control
+  center) does not wait its turn: it goes to the head of the queue, and when no place is free the
+  panel asks the parent Maestro of one session to stop it (the app's Stop, `stop_session`): never a
+  priority session; first one that is idle, then the heaviest (its branch in the heavy-test queue,
+  then a worktree session), then the last launched. A task the person moves into « En cours » without
+  priority forces nothing: the last launched session finishes its turn, then pauses. A paused session
+  holds no place and resumes by itself at its turn: the panel writes to it
+  « Tu as été mise en pause pour laisser passer #N. Reprends où tu en étais. »
+  Requests live in the store (`session-pauses`);
+  your panel runs the ones for your daughters. Do not stop, pause or resume a session yourself, and
+  do not relaunch a paused task: it is already launched.
+- **Control center** (#367): the pane `controle` (`/controle`, or the counters line « En cours ·
+  N ici · Mac X/Y · N en file » of the panel) shows every task session of every Maestro, all
+  projects, prioritaires first then by launch order, then the queue below its « File d'attente »
+  step; the person sets priority, reorders the queue (take, then drop), pauses, resumes and opens a
+  session there. Nothing is launched from it.
 
 ## What the Roadmap panel does for Maestro
 

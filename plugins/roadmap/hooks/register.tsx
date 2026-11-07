@@ -48,6 +48,7 @@ import {
   rowMark,
   type Corner,
   chevronIcon,
+  controlIcon,
   lockIcon,
   handIcon,
   mergeIcon,
@@ -65,7 +66,6 @@ import {
   pencilIcon,
   priorityIcon,
   PRIORITY_PX,
-  clockIcon,
   gearIcon,
   todoIcon,
   discIcon,
@@ -96,6 +96,7 @@ import {
   donutIcon,
 } from './icons'
 import { MIX, PX, RADIUS, SIZE, SPACE, TEXT } from './tokens'
+import { CONTROL_PANE, drawControl, openControl, redrawControl, type ControlDeps } from './controle'
 import { SETTINGS_PANE, drawSettings, openSettings, prefsFile, redrawSettings, rememberLoadedOptions, sessionProject, watchSettings, type SettingsProject } from './reglages'
 import {
   CLASSIC_SKIPS_OFF,
@@ -438,22 +439,29 @@ import {
   projectTaken,
   globalQueueOrder,
   liveQueue,
+  PRIO_MARKS_KEY,
+  QUEUE_STUCK_MS,
+  rootOfCwd,
+  SESSION_PAUSES_KEY,
+  pickYield,
+  prioMarksOf,
+  queueAtBetween,
+  resumeText,
+  sessionPausesOf,
+  sessionWeight,
+  type SessionPause,
+  type YieldCandidate,
   queueHead,
   queueEntryText,
   releasePrompt,
   queuedRefusal,
-  placesSentence,
-  placesPill,
-  queuedMark,
+  countersLine,
   type QueuedLaunch,
   type GlobalQueued,
   type MacLoad,
   type DoseWhy,
   readHeavyQueue,
   queueMarks,
-  queueLoadText,
-  queueWho,
-  branchOfHead,
   OPENING_VIEW,
   openingView,
   roadmapAxes,
@@ -749,6 +757,8 @@ const STORE_KEY = 'titles-langue'
 const START_SESSION_TOOL = 'mcp__ccd_session__start_session'
 /** Le message d'une session à une autre : la proposition d'une sous-session part à son Maestro. */
 const SEND_MESSAGE_TOOL = 'mcp__ccd_session_mgmt__send_message'
+/** L'arrêt net d'une session (#367) : la pause d'une session cédée à une prioritaire ou mise en pause à la main. */
+export const STOP_SESSION_TOOL = 'mcp__ccd_session_mgmt__stop_session'
 /** Les propositions gardées pour leur Maestro quand le message direct est refusé (#67). */
 const PROPOSALS_KEY = 'lot-proposals'
 /** Une proposition gardée plus d'une semaine sans que son Maestro reprenne la main : retirée. */
@@ -3711,18 +3721,6 @@ async function readQueue($: EngineInterface): Promise<HeavyQueue | undefined> {
   }
 }
 
-/** La branche du dossier de la session (#321), lue de son HEAD sans git : son `.git`, dossier ou fichier `gitdir:` d'un worktree. */
-async function headBranch($: EngineInterface): Promise<string | undefined> {
-  try {
-    const cwd = (await $.session.cwd()).replace(/\/+$/, '')
-    const git = await $.fs.stat(`${cwd}/.git`)
-    const gitDir = git.kind === 'dir' ? `${cwd}/.git` : /^gitdir:\s*(.+?)\s*$/m.exec(await $.fs.read(`${cwd}/.git`))?.[1]
-    return gitDir ? branchOfHead(await $.fs.read(`${gitDir}/HEAD`)) : undefined
-  } catch {
-    return undefined
-  }
-}
-
 /** Un pas de la minuterie chez Maestro : la file relue ; changée (ou une minute passée tant qu'elle n'est pas vide), le panneau se redessine. */
 async function restampQueue($: EngineInterface): Promise<void> {
   if (!queueWanted) return
@@ -3753,9 +3751,11 @@ const doseAllowed = new Map<string, number>()
 /** Depuis quand chaque entrée d'un autre Maestro peut partir sans partir (#372, `liveQueue`). */
 const queueSince = new Map<string, number>()
 /** Ce que le dernier pas a vu de la file de ce Maestro, pour le bloc « En cours » ; changé, le panneau se redessine. */
-type DoseView = { queue: (GlobalQueued & { rank: number })[]; projectTaken: number; projectMax: number; macTaken: number; macMax: number; why: DoseWhy; load?: MacLoad }
+type DoseView = { queue: (GlobalQueued & { rank: number })[]; projectTaken: number; projectMax: number; macTaken: number; macMax: number; queued: number; why: DoseWhy; load?: MacLoad }
 let doseView: DoseView | undefined
 let doseSeenKey = ''
+/** La liste des sessions que le dernier pas à file vide a comptée (#367) : la même, rien à recompter. */
+let idleRowsSeen: unknown[] | undefined
 let relieving = false
 
 /** Les deux plafonds réglés (options `projectSessions` et `macSessions`), 3 et 12 par défaut. */
@@ -3782,7 +3782,8 @@ function globalQueueOf(value: unknown): GlobalQueued[] {
     const v = q as Partial<GlobalQueued> | null
     return (
       !!v && typeof v.id === 'string' && typeof v.title === 'string' && typeof v.at === 'number' && typeof v.maestro === 'string' && typeof v.project === 'string' &&
-      Array.isArray(v.match) && Array.isArray(v.after) && (typeof v.card === 'object' || typeof v.launch === 'object')
+      Array.isArray(v.match) && Array.isArray(v.after) &&
+      (typeof v.card === 'object' || typeof v.launch === 'object' || (v.kind === 'resume' && typeof v.sessionId === 'string'))
     )
   })
 }
@@ -3862,11 +3863,29 @@ async function reserveCard($: EngineInterface, title: string): Promise<void> {
   }
 }
 
-/** Ce que les décisions de ce pas lisent : les places du Mac, les cartes réservées, la charge, les plafonds. */
-type DoseState = { rows: unknown[]; cwds: string[]; reserved: string[]; cards: DoseCard[]; macTaken: number; load?: MacLoad; projectMax: number; macMax: number }
+/** Les pauses du store (#367) : `session-pauses`, les valeurs mal formées ignorées. */
+export async function readPauses($: EngineInterface): Promise<Record<string, SessionPause>> {
+  return sessionPausesOf(await $.store.get(SESSION_PAUSES_KEY).catch(() => undefined))
+}
 
-async function doseState($: EngineInterface, now: number): Promise<DoseState> {
-  const rows = (await readListRows($)).rows
+/** Pose (ou, sans `p`, ôte) la pause d'une session (#367) : la clé relue juste avant, écrite par `storeSet`, effacée quand elle se vide. */
+export async function writePause($: EngineInterface, sessionId: string, p: SessionPause | undefined): Promise<void> {
+  const current = await readPauses($)
+  const next = { ...current }
+  if (p) next[sessionId] = p
+  else delete next[sessionId]
+  if (JSON.stringify(next) === JSON.stringify(current)) return
+  if (Object.keys(next).length === 0) await storeDelete($, SESSION_PAUSES_KEY)
+  else await storeSet($, SESSION_PAUSES_KEY, next as unknown as StoreValue)
+}
+
+/** Ce que les décisions de ce pas lisent : les places du Mac, les cartes réservées, la charge, les plafonds. */
+type DoseState = { pauses: Record<string, SessionPause>; maestros: Set<string>; statuses: Map<string, ChildStatus | undefined>; rows: unknown[]; cwds: string[]; reserved: string[]; cards: DoseCard[]; macTaken: number; load?: MacLoad; projectMax: number; macMax: number }
+
+async function doseState($: EngineInterface, now: number, read?: Record<string, SessionPause>, cached = false): Promise<DoseState> {
+  const pauses = read ?? (await readPauses($))
+  // `cached` (#367) : la dernière liste lue, sans appel d'outil ; la file vide ne fait pas relire la liste à chaque pas (#348).
+  const rows = cached ? lastListRows : (await readListRows($)).rows
   const statuses = new Map<string, ChildStatus | undefined>()
   for (const raw of rows) {
     const r = raw as { sessionId?: unknown; title?: unknown; isRunning?: unknown }
@@ -3876,10 +3895,12 @@ async function doseState($: EngineInterface, now: number): Promise<DoseState> {
   }
   const maestros = maestroSessionIds(rows, new Set(Object.keys(await loadMaestros($))))
   const cards = await doseCards($, now)
-  const places = launchPlaces(rows, id => statuses.get(id), cards, now, maestros, doseProject().match)
+  // #367 : une session en pause ne tient aucune place
+  const paused = new Set(Object.entries(pauses).flatMap(([id, p]) => (p.state === 'paused' ? [id] : [])))
+  const places = launchPlaces(rows, id => statuses.get(id), cards, now, maestros, doseProject().match, paused)
   const { projectMax, macMax } = doseMaxes()
   const load = places.taken < macMax ? await readMacLoad($, now) : doseLoad.load
-  return { rows, cwds: places.cwds, reserved: places.reserved, cards, macTaken: places.taken, ...(load ? { load } : {}), projectMax, macMax }
+  return { pauses, maestros, statuses, rows, cwds: places.cwds, reserved: places.reserved, cards, macTaken: places.taken, ...(load ? { load } : {}), projectMax, macMax }
 }
 
 /** Les places d'un projet : ses sessions (par `cwd`) et ses cartes réservées dont la session n'est pas ouverte. */
@@ -3918,12 +3939,19 @@ async function doseLaunch($: EngineInterface, id: string | undefined, entry: Omi
     const gateOf = (e: GlobalQueued) => gateFor(state, e.project, e.match)
     const head = queueHead(liveQueue(globalQueueOrder(queue), gateOf, ownId, queueSince, now), gateOf)
     if (gate.go && (!head || (head.maestro === ownId && head.id === id))) {
-      if (queue.some(q => q.maestro === ownId && q.id === id)) await writeOwnQueue($, ownId, own => own.filter(q => q.id !== id), state.rows)
+      if (queue.some(q => q.maestro === ownId && q.id === id && q.kind !== 'resume')) await writeOwnQueue($, ownId, own => own.filter(q => q.id !== id || q.kind === 'resume'), state.rows)
       return { ownId }
     }
     const tasks = knownSource ? await load($, files(knownSource).open, 'ROADMAP.md') : []
     const after = [...prereqsIn(typeof tasks === 'string' ? [] : tasks)(id)]
-    const written = await writeOwnQueue($, ownId, own => [...own.filter(q => q.id !== id), { ...entry, id, at: queue.find(q => q.maestro === ownId && q.id === id)?.at ?? now, maestro: ownId, project, match, after }], state.rows)
+    // #367 : une tâche `prio:oui` entre en file prioritaire.
+    const prio = typeof tasks !== 'string' && tasks.some(t => t.id === id && isPriority(t))
+    const written = await writeOwnQueue(
+      $,
+      ownId,
+      own => [...own.filter(q => q.id !== id || q.kind === 'resume'), { ...entry, id, at: queue.find(q => q.maestro === ownId && q.id === id && q.kind !== 'resume')?.at ?? now, maestro: ownId, project, match, after, ...(prio ? { prio: true as const } : {}) }],
+      state.rows,
+    )
     doseSeenKey = ''
     const rank = liveQueue(globalQueueOrder(written), gateOf, ownId, queueSince, now).findIndex(q => q.maestro === ownId && q.id === id) + 1
     const text = { id, rank, projectName: name, projectTaken: placesOf(state, project, match), projectMax: state.projectMax, macTaken: state.macTaken, macMax: state.macMax, why: gate.go ? ('project' as const) : gate.why, ...(state.load ? { load: state.load } : {}) }
@@ -3956,6 +3984,156 @@ async function releaseBrief($: EngineInterface, head: GlobalQueued, source: Sour
   }
 }
 
+/** Une session en pause relancée à la main tourne dès qu'elle a reçu son arrêt : sa pause ne s'efface qu'après ce délai, le temps que la liste le dise (#367). */
+const PAUSE_SETTLE_MS = 15_000
+
+/**
+ * Le `at` de l'entrée `resume` d'une session mise en pause (#367) : cédée à une prioritaire, devant la première non
+ * prioritaire ; cédée à une tâche passée devant, juste après son entrée (devant les non prioritaires si elle est
+ * déjà partie) ; à la main, en bout de file.
+ */
+function resumeAt(queue: readonly GlobalQueued[], p: Pick<SessionPause, 'by' | 'for'>, now: number): number {
+  const plain = queue.filter(e => !e.prio)
+  const front = () => queueAtBetween(undefined, plain.length > 0 ? Math.min(...plain.map(e => e.at)) : undefined, now)
+  if (p.by === 'hand') return queueAtBetween(queue.length > 0 ? Math.max(...queue.map(e => e.at)) : undefined, undefined, now)
+  const target = p.by === 'order' ? queue.find(e => e.id === p.for && e.kind !== 'resume') : undefined
+  if (!target) return front()
+  const later = plain.filter(e => e.at > target.at).map(e => e.at)
+  return queueAtBetween(target.at, later.length > 0 ? Math.min(...later) : undefined, now)
+}
+
+/** La rangée de la liste d'une session ouverte (#367). */
+type PauseRow = { sessionId: string; title: string; cwd: string; startedBy?: string; isRunning: boolean }
+function openRowOf(rows: readonly unknown[], sessionId: string): PauseRow | undefined {
+  for (const raw of rows) {
+    const r = raw as { sessionId?: unknown; title?: unknown; cwd?: unknown; startedBy?: unknown; isArchived?: unknown; isRunning?: unknown }
+    if (r.sessionId !== sessionId || r.isArchived === true) continue
+    return { sessionId, title: typeof r.title === 'string' ? r.title : '', cwd: typeof r.cwd === 'string' ? r.cwd : '', ...(typeof r.startedBy === 'string' ? { startedBy: r.startedBy } : {}), isRunning: r.isRunning === true }
+  }
+  return undefined
+}
+
+/**
+ * Qui cède sa place à la prioritaire `first` (#367) : parmi les sessions de tâche ouvertes du Mac qui tiennent une
+ * place et ne sont pas déjà en pause, `pickYield` (jamais une prioritaire, d'abord celle qui ne tourne pas, puis la
+ * plus lourde, puis la dernière lancée). La demande revient au Maestro parent de la session (`startedBy`), sinon à
+ * celui-ci. Une prioritaire se reconnaît à la marque du centre de contrôle, ou à `prio:` dans la roadmap de ce Maestro.
+ */
+async function pickVictim(
+  $: EngineInterface,
+  ownId: string,
+  state: DoseState,
+  queue: readonly GlobalQueued[],
+  first: GlobalQueued,
+  pauses: Record<string, SessionPause>,
+  tasks: readonly Task[] | string,
+  now: number,
+): Promise<{ sessionId: string; maestro: string } | undefined> {
+  const gate = gateFor(state, first.project, first.match)
+  if (gate.go) return undefined
+  const mine = doseProject()
+  const marks = prioMarksOf(await $.store.get(PRIO_MARKS_KEY).catch(() => undefined))
+  const heavyQueue = await readQueue($)
+  const heavy = new Set([...(heavyQueue?.owner ? [heavyQueue.owner.branch] : []), ...(heavyQueue?.waiting.map(w => w.branch) ?? [])])
+  const known = [{ project: mine.project, match: mine.match }, ...queue.map(e => ({ project: e.project, match: e.match }))]
+  const open = typeof tasks === 'string' ? [] : tasks
+  const found: { row: Record<string, unknown>; sessionId: string; id: string }[] = []
+  for (const raw of state.rows) {
+    const row = raw as Record<string, unknown>
+    const sessionId = row.sessionId
+    const id = typeof row.title === 'string' ? sessionTitleId(row.title) : undefined
+    if (typeof sessionId !== 'string' || id === undefined || pauses[sessionId] || row.isArchived === true) continue
+    // seule une session qui tient une place en libère une en la quittant (ni Maestro, ni au repos depuis plus de 15 min)
+    if (launchPlaces([raw], sid => state.statuses.get(sid), [], now, state.maestros, [], undefined).taken !== 1) continue
+    found.push({ row, sessionId, id })
+  }
+  await learnCreated($, found.map(f => f.sessionId), now)
+  const candidates: YieldCandidate[] = found.map(({ row, sessionId, id }) => {
+    const cwd = typeof row.cwd === 'string' ? row.cwd : ''
+    const root = cwd.split('/.claude/worktrees')[0].replace(/\/+$/, '')
+    const owner = known.find(k => k.match.some(prefix => cwd.startsWith(prefix)))
+    const project = owner?.project ?? root
+    const prio = marks.has(`${project}#${id}`) || (project === mine.project && open.some(t => t.id === id && isPriority(t)))
+    // la rangée de la liste ne porte pas toujours sa branche : celle de la ligne de roadmap (`branche:`) de ce projet
+    const branch = typeof row.branch === 'string' ? row.branch : project === mine.project ? (open.find(t => t.id === id)?.branche ?? '') : ''
+    return { sessionId, id, running: row.isRunning === true, prio, weight: sessionWeight(cwd, branch !== '' && heavy.has(branch)), createdAt: createdBySession.get(sessionId) ?? 0, cwd }
+  })
+  const picked = pickYield(candidates, gate.why, first.match)
+  if (!picked) return undefined
+  const parent = found.find(f => f.sessionId === picked.sessionId)?.row.startedBy
+  return { sessionId: picked.sessionId, maestro: typeof parent === 'string' && parent !== '' ? parent : ownId }
+}
+
+/**
+ * Ce que le volet Centre de contrôle (#367) demande à ce module : la liste des sessions, la file, les pauses, les
+ * marques de priorité, la roadmap de ce projet et l'ouverture d'une session. `controle.tsx` n'importe pas ce fichier.
+ */
+function controlDeps($: EngineInterface): ControlDeps {
+  const ownSource = async () => (knownSource !== undefined ? knownSource : await sourceNow($))
+  return {
+    rows: () => readListRows($),
+    pauses: () => readPauses($),
+    writePause: (sessionId, p) => writePause($, sessionId, p),
+    queue: () => readGlobalQueue($),
+    writeQueue: next => storeSet($, LAUNCH_QUEUE_KEY, next as unknown as StoreValue),
+    marks: async () => prioMarksOf(await $.store.get(PRIO_MARKS_KEY).catch(() => undefined)),
+    writeMarks: next => (next.length === 0 ? storeDelete($, PRIO_MARKS_KEY) : storeSet($, PRIO_MARKS_KEY, next)),
+    ownPrio: async () => {
+      const source = await ownSource()
+      if (!source) return undefined
+      const tasks = await loadParsed($, files(source).open, 'ROADMAP.md')
+      if (typeof tasks === 'string') return undefined
+      return { project: source.root ?? source.dir, ids: new Set(tasks.flatMap(t => (!t.done && t.id && isPriority(t) ? [t.id] : []))) }
+    },
+    togglePriority: async id => {
+      const source = await ownSource()
+      if (!source) return
+      const tasks = await loadParsed($, files(source).open, 'ROADMAP.md')
+      const task = typeof tasks === 'string' ? undefined : tasks.find(t => !t.done && t.id === id)
+      if (task) await togglePriority($, source, task)
+    },
+    statusOf: sessionId => readSteps($, sessionId),
+    learnCreated: async ids => learnCreated($, ids, await $.clock.now()),
+    createdOf: sessionId => createdBySession.get(sessionId),
+    heavyBranches: async () => {
+      const queue = await readQueue($)
+      return new Set([...(queue?.owner ? [queue.owner.branch] : []), ...(queue?.waiting.map(w => w.branch) ?? [])])
+    },
+    maestros: async rows => maestroSessionIds(rows, new Set(Object.keys(await loadMaestros($)))),
+    places: async (rows, statusOf, pauses) => {
+      const now = await $.clock.now()
+      const maestros = maestroSessionIds(rows, new Set(Object.keys(await loadMaestros($))))
+      const paused = new Set(Object.entries(pauses).flatMap(([id, p]) => (p.state === 'paused' ? [id] : [])))
+      return { taken: launchPlaces(rows, statusOf, await doseCards($, now), now, maestros, [], paused).taken, max: doseMaxes().macMax }
+    },
+    projectOf: queue => {
+      const mine = doseProject()
+      const known = [{ project: mine.project, match: mine.match }, ...queue.map(e => ({ project: e.project, match: e.match }))].filter(k => k.project !== '')
+      return cwd => known.find(k => k.match.some(prefix => cwd.startsWith(prefix)))?.project ?? rootOfCwd(cwd)
+    },
+    ownId: async () => (await readOwnSession($)).id ?? '',
+    open: (sessionId, title) => openSession($, { sessionId, title } as LiveEntry),
+    closed: async () => {
+      const source = await ownSource()
+      if (!source) return new Set<string>()
+      const tasks = await loadParsed($, files(source).done, 'ROADMAP-fait.md')
+      if (typeof tasks === 'string') return new Set<string>()
+      return new Set(tasks.flatMap(t => (t.done && t.id ? [`${source.root ?? source.dir}#${t.id}`] : [])))
+    },
+    archive: async sessionId => {
+      const ran = await $.tool.call({ tool: ARCHIVE_SESSION_TOOL, session_id: sessionId })
+      if (ran.deny !== undefined || ran.isError) throw new Error(`archivage refusé : ${ran.deny ?? ran.text ?? 'sans motif'}`)
+      archivedSessionIds.add(sessionId)
+      sweepAfterArchive($, await sourceNow($).catch(() => undefined))
+    },
+    pressZone: async (id, onPress) => {
+      pressHandlers.set(id, onPress)
+      zoneDrawn(zones, 'press-hit', await $.clock.now())
+      return `${pressKey(id)}-g${await read($, zoneGenAtom)}`
+    },
+  }
+}
+
 /**
  * La relève (#324, #345), à chaque pas chez Maestro : la file commune relue ; une tâche de ce Maestro close ou
  * déjà en session en sort ; la tête éligible (la première dont le projet a une place, le Mac aussi), si elle est
@@ -3973,17 +4151,22 @@ async function relieveLaunches($: EngineInterface): Promise<void> {
   try {
     await migrateOldQueue($, ownId)
     let queue = await readGlobalQueue($)
-    if (queue.length === 0) {
-      if (doseView) {
-        doseView = undefined
-        doseSeenKey = ''
-        await update($, liveVersionAtom, v => v + 1)
-      }
+    const pauses = await readPauses($)
+    if (queue.length === 0 && Object.keys(pauses).length === 0) {
+      // #367 : même file vide, la ligne des compteurs du panneau a besoin des places du Mac.
+      // Sans relecture de la liste ni du store tant que la liste n'a pas changé (le repos de #348 tient).
+      if (doseView && doseView.queue.length === 0 && doseView.queued === 0 && lastListRows === idleRowsSeen) return
+      idleRowsSeen = lastListRows
+      const now0 = await $.clock.now()
+      const idle = await doseState($, now0, pauses, true)
+      const at = doseProject()
+      const gate0 = gateFor(idle, at.project, at.match)
+      await showDose($, { queue: [], projectTaken: placesOf(idle, at.project, at.match), projectMax: idle.projectMax, macTaken: idle.macTaken, macMax: idle.macMax, queued: 0, why: gate0.go ? 'project' : gate0.why, ...(idle.load ? { load: idle.load } : {}) })
       return
     }
     const source = knownSource
     const now = await $.clock.now()
-    const state = await doseState($, now)
+    const state = await doseState($, now, pauses)
     const tasks = source ? await load($, files(source).open, 'ROADMAP.md') : []
     const open = typeof tasks === 'string' ? undefined : tasks
     const held = new Set(state.rows.flatMap(r => {
@@ -3992,17 +4175,106 @@ async function relieveLaunches($: EngineInterface): Promise<void> {
       return id !== undefined ? [id] : []
     }))
     const gone = archivedIds(state.rows)
-    const stale = (q: GlobalQueued) => held.has(q.id) || (open !== undefined && !open.some(t => t.id === q.id && !t.done))
+    // #367 : l'entrée `resume` d'une session en pause n'est jamais « déjà en session » : sa session est ouverte, c'est tout son sens.
+    const stale = (q: GlobalQueued) => q.kind !== 'resume' && (held.has(q.id) || (open !== undefined && !open.some(t => t.id === q.id && !t.done)))
     if (queue.some(q => (q.maestro === ownId && stale(q)) || gone.has(q.maestro))) {
       queue = await writeOwnQueue($, ownId, own => own.filter(q => !stale(q)), state.rows)
     }
     const fileOn = settings.launchQueue
     const gateOf = fileOn ? (e: GlobalQueued) => gateFor(state, e.project, e.match) : () => ({ go: true as const })
     const counted = (q: readonly GlobalQueued[]) => (fileOn ? liveQueue(globalQueueOrder(q), gateOf, ownId, queueSince, now) : globalQueueOrder(q).filter(e => e.maestro === ownId))
-    const head = queueHead(counted(queue), gateOf)
+    // --- les pauses (#367) ---
+    // Des rangées illisibles (liste en panne) ne disent rien d'une session : ni pause effacée, ni victime choisie.
+    const listed = state.rows.length > 0
+    let changed = false
+    const dropResume = async (sessionId: string) => {
+      queue = await writeOwnQueue($, ownId, own => own.filter(q => !(q.kind === 'resume' && q.sessionId === sessionId)), state.rows)
+    }
+    const clearPause = async (sessionId: string) => {
+      await writePause($, sessionId, undefined)
+      delete pauses[sessionId]
+      await dropResume(sessionId)
+      changed = true
+    }
+    // (b) une session en pause qui tourne de nouveau (relancée à la main), ou fermée : pause et entrée s'effacent
+    if (listed) {
+      for (const [sessionId, p] of Object.entries(pauses)) {
+        if (p.state !== 'paused') continue
+        const row = openRowOf(state.rows, sessionId)
+        if (!row || (row.isRunning && now - p.at > PAUSE_SETTLE_MS)) await clearPause(sessionId)
+      }
+      // une entrée `resume` de ce Maestro sans pause exécutée (reprise faite ailleurs, pause ôtée) n'a plus de raison d'être
+      const orphans = queue.filter(q => q.maestro === ownId && q.kind === 'resume' && pauses[q.sessionId ?? '']?.state !== 'paused')
+      if (orphans.length > 0) queue = await writeOwnQueue($, ownId, own => own.filter(q => !orphans.includes(q)), state.rows)
+    }
+    // (a) les demandes de pause de ce Maestro (et celles d'un autre, restées deux minutes sans réponse)
+    const runPauses = async () => {
+      for (const [sessionId, p] of Object.entries(pauses)) {
+        if (p.state !== 'asked' || (p.maestro !== ownId && now - p.at <= QUEUE_STUCK_MS)) continue
+        const row = openRowOf(state.rows, sessionId)
+        if (!row) {
+          if (listed) await clearPause(sessionId)
+          continue
+        }
+        if (p.mode === 'soft' && row.isRunning) continue
+        if (p.mode === 'stop') {
+          try {
+            const ran = await $.tool.call({ tool: STOP_SESSION_TOOL, session_id: sessionId })
+            if (ran.deny !== undefined || ran.isError) continue
+          } catch {
+            continue
+          }
+        }
+        const taskId = sessionTitleId(row.title)
+        // L'entrée avant la pause : une pause sans entrée ne reprendrait jamais ; une entrée sans pause s'ôte au pas suivant.
+        if (fileOn && taskId !== undefined && !queue.some(q => q.kind === 'resume' && q.sessionId === sessionId)) {
+          const mine = doseProject()
+          const inMine = mine.match.some(prefix => row.cwd.startsWith(prefix))
+          const root = row.cwd.split('/.claude/worktrees')[0].replace(/\/+$/, '')
+          const at = resumeAt(queue, p, now)
+          queue = await writeOwnQueue(
+            $,
+            ownId,
+            own => [...own, { id: taskId, title: row.title, at, kind: 'resume', sessionId, maestro: ownId, project: inMine ? mine.project : root, match: inMine ? mine.match : [root], after: [] }],
+            state.rows,
+          )
+        }
+        const done: SessionPause = { ...p, state: 'paused', maestro: ownId, at: now }
+        await writePause($, sessionId, done)
+        pauses[sessionId] = done
+        changed = true
+      }
+    }
+    await runPauses()
+    // (c) la tête prioritaire est refusée et personne n'a déjà demandé de pause pour elle : une session cède sa place
+    const first = fileOn && !changed ? counted(queue)[0] : undefined
+    if (first?.prio && first.kind !== 'resume' && !gateFor(state, first.project, first.match).go) {
+      const fresh = await readPauses($)
+      if (!Object.values(fresh).some(p => p.state === 'asked' && p.for === first.id)) {
+        const victim = await pickVictim($, ownId, state, queue, first, fresh, tasks, now)
+        if (victim) {
+          const ask: SessionPause = { mode: 'stop', state: 'asked', by: 'prio', for: first.id, maestro: victim.maestro, at: now }
+          await writePause($, victim.sessionId, ask)
+          pauses[victim.sessionId] = ask
+          await runPauses()
+          changed = true
+        }
+      }
+    }
+    // (d) et (e) : la tête, une entrée `resume` à reprendre ou une tâche à lancer ; un pas qui vient de poser ou lever une pause attend le suivant
+    const head = changed ? undefined : queueHead(counted(queue), gateOf)
     if (head && head.maestro === ownId && now >= doseRetryAt) {
       try {
-        if (head.card) {
+        if (head.kind === 'resume') {
+          const p = pauses[head.sessionId ?? '']
+          if (p && head.sessionId) {
+            const ran = await $.tool.call({ tool: SEND_MESSAGE_TOOL, session_id: head.sessionId, message: resumeText(p.by, p.for) })
+            if (ran.deny !== undefined || ran.isError) throw new Error('reprise refusée')
+            await writePause($, head.sessionId, undefined)
+            delete pauses[head.sessionId]
+          }
+          queue = await writeOwnQueue($, ownId, own => own.filter(q => q.id !== head.id || q.kind !== 'resume'), state.rows)
+        } else if (head.card) {
           // Une carte du modèle (#345, relecture de sécurité) n'a jamais eu le clic de Bertrand : elle
           // redevient une carte, qu'il démarre d'un clic sur Start ; seul un ▶ vaut accord pour partir seul.
           doseAllowed.set(head.id, now + PLACE_IDLE_MS)
@@ -4016,7 +4288,7 @@ async function relieveLaunches($: EngineInterface): Promise<void> {
           await reserveCard($, brief.title)
           queueSubmit($, releasePrompt(brief))
         }
-        queue = await writeOwnQueue($, ownId, own => own.filter(q => q.id !== head.id), state.rows)
+        if (head.kind !== 'resume') queue = await writeOwnQueue($, ownId, own => own.filter(q => q.id !== head.id || q.kind === 'resume'), state.rows)
       } catch {
         doseAllowed.delete(head.id)
         doseRetryAt = now + DOSE_RETRY_MS
@@ -4024,18 +4296,10 @@ async function relieveLaunches($: EngineInterface): Promise<void> {
     }
     const mine = doseProject()
     const ordered = counted(queue)
-    const ownQueue = fileOn ? ordered.flatMap((q, i) => (q.maestro === ownId ? [{ ...q, rank: i + 1 }] : [])) : []
+    // #367 : une entrée `resume` compte au rang du Mac mais ne se montre pas comme une tâche en file
+    const ownQueue = fileOn ? ordered.flatMap((q, i) => (q.maestro === ownId && q.kind !== 'resume' ? [{ ...q, rank: i + 1 }] : [])) : []
     const gate = gateFor(state, mine.project, mine.match)
-    const next: DoseView | undefined =
-      ownQueue.length > 0
-        ? { queue: ownQueue, projectTaken: placesOf(state, mine.project, mine.match), projectMax: state.projectMax, macTaken: state.macTaken, macMax: state.macMax, why: gate.go ? 'project' : gate.why, ...(state.load ? { load: state.load } : {}) }
-        : undefined
-    const key = JSON.stringify(next ? [next.queue.map(q => [q.id, q.rank]), next.projectTaken, next.projectMax, next.macTaken, next.macMax, next.why, next.why === 'load' ? Math.round(next.load?.load ?? 0) : 0] : [])
-    doseView = next
-    if (key !== doseSeenKey) {
-      doseSeenKey = key
-      await update($, liveVersionAtom, v => v + 1)
-    }
+    await showDose($, { queue: ownQueue, projectTaken: placesOf(state, mine.project, mine.match), projectMax: state.projectMax, macTaken: state.macTaken, macMax: state.macMax, queued: ordered.filter(q => q.kind !== 'resume').length, why: gate.go ? 'project' : gate.why, ...(state.load ? { load: state.load } : {}) })
   } catch {
     // un pas raté : le suivant relit
   } finally {
@@ -4043,19 +4307,14 @@ async function relieveLaunches($: EngineInterface): Promise<void> {
   }
 }
 
-/** Retire une tâche de la file (#345) : l'entrée de ce Maestro sort, la tâche revient à la liste. */
-async function dequeueLaunch($: EngineInterface, id: string): Promise<void> {
-  const ownId = ownSession?.id
-  if (!ownId) return
-  try {
-    await writeOwnQueue($, ownId, own => own.filter(q => q.id !== id))
-  } catch {
-    // store illisible : la file reste, le prochain pas relit
+/** Ce que le dernier pas a vu (#345, #367) : le panneau se redessine seulement si un compteur a changé. */
+async function showDose($: EngineInterface, next: DoseView): Promise<void> {
+  const key = JSON.stringify([next.queue.map(q => [q.id, q.rank]), next.queued, next.projectTaken, next.projectMax, next.macTaken, next.macMax, next.why, next.why === 'load' ? Math.round(next.load?.load ?? 0) : 0])
+  doseView = next
+  if (key !== doseSeenKey) {
+    doseSeenKey = key
+    await update($, liveVersionAtom, v => v + 1)
   }
-  if (doseView) doseView = { ...doseView, queue: doseView.queue.filter(q => q.id !== id) }
-  if (doseView?.queue.length === 0) doseView = undefined
-  doseSeenKey = ''
-  await update($, liveVersionAtom, v => v + 1)
 }
 
 /** Le numéro du pas, pour la recherche du dossier ; une relecture en vol fait sauter le pas suivant. */
@@ -6615,6 +6874,11 @@ export const register: Register = (on, options) => {
       name: 'reglages',
       description: 'Ouvrir le volet des réglages : chaque réglage, son état, changé d\'un clic',
     })
+    // Le centre de contrôle (#367) vaut dans toute session : il lit la liste des sessions du Mac et la file commune.
+    await $.command.register({
+      name: 'controle',
+      description: 'Ouvrir le centre de contrôle : toutes les sessions de tâche du Mac, leur file, pause et priorité',
+    })
     // Un rechargement (une option changée dans le volet, une mise à jour) garde le volet dessiné avec
     // les boutons de l'ancien module : il se redessine, comme le panneau plus bas.
     let settingsOpen = false
@@ -6627,6 +6891,7 @@ export const register: Register = (on, options) => {
         await redrawSettings($)
         await watchSettings($)
       }
+      if (panes.some(p => p.id === CONTROL_PANE)) await redrawControl($)
     } catch {
       // liste des volets indisponible : le volet se redessinera au prochain clic
     }
@@ -7219,6 +7484,8 @@ export const register: Register = (on, options) => {
 
   on('command.run', { command: 'reglages' }, async $ => openSettings($))
 
+  on('command.run', { command: 'controle' }, async $ => openControl($))
+
   on('command.run', { command: BAR_COMMAND }, async $ => forceBar($))
 
   // La skill des réglages tapée seule ouvre le volet sans passer par le modèle ; suivie d'une demande
@@ -7367,6 +7634,7 @@ export const register: Register = (on, options) => {
   })
 
   on('ui.render', { component: 'Pane', requestId: SETTINGS_PANE }, async ($, e) => drawSettings($, e, await paletteOf($), await settingsProject($)))
+  on('ui.render', { component: 'Pane', requestId: CONTROL_PANE }, async ($, e) => drawControl($, e, await paletteOf($), controlDeps($)))
 }
 
 /** Le dessin du panneau : la vue d'ensemble, le détail d'une tâche, ou ce qui manque. */
@@ -11282,7 +11550,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   const blockRows = maestroBrand ? liveBlockRows(maestroBrand.tasks, openTasks, isLive, t => launchOf(t, liveOf(t)?.entry.sessionId, now), doneTasks) : []
   const blockOf = new Map(blockRows.flatMap(r => (r.brand ? [[r.brand.id, r.brand] as const] : [])))
   const blockKeys = new Set(blockRows.map(r => taskKey(r.task)))
-  // Une tâche en file (#345) quitte la liste tant qu'elle attend : sa ligne est dans le bloc, avec son « Retirer ».
+  // Une tâche en file (#345) quitte la liste tant qu'elle attend : le centre de contrôle la montre (#367).
   const queuedIds = new Set(maestroBrand && doseView ? doseView.queue.map(q => q.id) : [])
   const inBlock = (t: Task) => blockKeys.has(taskKey(t)) || (t.id !== undefined && queuedIds.has(String(t.id)))
   const blockTasks = blockRows.map(r => r.task)
@@ -11292,13 +11560,6 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   const heavy = maestroBrand ? await readQueue($) : undefined
   const nowSec = Math.floor(now / 1000)
   const heavyMarks: Map<string, QueueMark> = heavy ? queueMarks(heavy, nowSec) : new Map()
-  const blockBranches = new Set(blockTasks.map(t => t.branche).filter((b): b is string => b !== undefined))
-  const ownBranch = heavy ? await headBranch($) : undefined
-  const whoQueued = (branch: string) => {
-    const owned = openTasks.find(t => t.branche === branch && t.id !== undefined)
-    return queueWho(branch, ownBranch, owned ? { id: owned.id as string, title: short(owned).titre } : undefined)
-  }
-  const queueExtras = [...heavyMarks].filter(([branch]) => !blockBranches.has(branch))
   // Les tâches qui attendent leur place (#324, maquette A), lues par la relève au dernier pas.
   const dose = maestroBrand ? doseView : undefined
   // Une tâche qu'on vient de cocher reste à sa place le temps de son mouvement (#182, maquette A), puis
@@ -12773,117 +13034,52 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   // Les axes toujours dépliés (#160) : plus de ligne repliée (#149) ; les faites s'ouvrent par le lien de l'en-tête (#152).
   // Les zones fixes : le compte des faites, les axes, le chevron du bloc « En cours », la roue, les
   // pastilles cliquables et « Plus › » (#115), les boutons de session des faites.
-  // Replié tant que Bertrand ne l'a pas déplié (#251) : la bande au-dessus de la saisie redit ses sessions.
-  const liveOpen = !(view.liveFolded ?? true)
-  // L'icône d'archivage d'une session close du bloc « En cours » (#218) : une zone par ligne dépliée.
-  const blockArchiveZones = liveOpen ? blockRows.filter(r => r.brand?.state === 'done' && r.brand.archivable && r.brand.sessionId).length : 0
-  const fixedZones = 1 + axes.length + (blockTasks.length > 0 ? 1 : 0) + 1 + todo.filter(todoClickable).length + (todoBlock && (secondary.length > 0 || people.length > 0) ? 1 : 0) + 2 * sessionRows.size + blockArchiveZones + (liveOpen ? (dose?.queue.length ?? 0) : 0)
+  const showLive = blockTasks.length > 0 || (dose?.queued ?? 0) > 0
+  const fixedZones = 1 + axes.length + (showLive ? 1 : 0) + 1 + todo.filter(todoClickable).length + (todoBlock && (secondary.length > 0 || people.length > 0) ? 1 : 0) + 2 * sessionRows.size
   if (graphic) {
-    // Les lignes du bloc « En cours » de Maestro d'abord (#160) : leur numéro ouvre leur session.
-    const shownWithSession = [...(liveOpen ? blockTasks : []), ...drawnTasks.filter(t => t.id && (liveOf(t) ?? doneSessionOf(t)))]
+    const shownWithSession = [...drawnTasks.filter(t => t.id && (liveOf(t) ?? doneSessionOf(t)))]
     numberZones = new Set(shownWithSession.slice(0, Math.max(0, ZONE_LIMIT - fixedZones)).map(t => t.id as string))
   }
   headZones = graphic && fixedZones + numberZones.size + groups.filter(g => !g.bare).length <= ZONE_LIMIT
 
-  // Le bloc « En cours » de Maestro (#160, maquette A) : encadré, en tête des filtres, ses sessions en
-  // lignes de la liste (roue ou main, barre, compte) ; toujours là, quels que soient filtre, axe ou recherche.
-  // Son chevron, centré sur le titre, le déplie ; il s'ouvre replié (#251).
-  const toggleLive = () => void setView($, v => ({ liveFolded: !(v.liveFolded ?? true) }))
-  // La file des tests lourds (#321) : une ligne par suite d'une branche sans ligne dans le bloc (main, Maestro),
-  // puis la phrase de la charge quand elle retient le départ. Sa hauteur tient par la cale en px, comme une
-  // ligne de tâche : une minHeight de Box se compte en cellules, 24 lignes de haut chacune (#340).
-  const queueRows = queueExtras.map(([branch, m]) => (
-    <Box key={`queue:${keyPart(branch)}`} flexDirection="row" alignItems="center" gap={SPACE.row} paddingX={SPACE.indent}>
-      <Box width={ROW_STEPS.icon} flexShrink={0} flexDirection="row" alignItems="center" justifyContent="center">
-        {strut(SIZE.strut.row)}
-        {m.tone === 'neutral' ? (Svg ? <Svg source={clockIcon(palette.text3, 14)} alt="En file" width={SIZE.icon.sm} height={SIZE.icon.sm} /> : <Text dimColor>◷</Text>) : spinner()}
-      </Box>
-      <Box flexGrow={1} flexShrink={1} minWidth={0}>
-        <Text wrap="truncate-end">{`${whoQueued(branch)} · ${m.command}`}</Text>
-      </Box>
-      <Box flexShrink={0}>{queuePill(m)}</Box>
-    </Box>
-  ))
-  const heavyLoad = heavy?.owner?.load
-  const loadLine = heavyLoad && heavy?.owner ? (
-    <Box key="queue:load" paddingX={SPACE.indent} paddingY="xs" backgroundColor={palette.blockTint}>
-      <Text size="footnote" color={palette.blockOn}>{queueLoadText(heavyLoad, nowSec, whoQueued(heavy.owner.branch))}</Text>
-    </Box>
-  ) : null
-  // #345 (maquette A, version 2) : sous les sessions, une ligne par tâche en file, l'horloge (l'alerte pour la tête que
-  // la charge retient), son numéro et son nom en texte secondaire, sa pastille de rang sur tout le Mac, puis le lien
-  // « Retirer » (un texte et sa zone de clic, jamais un `Button` natif dont la marge décale le texte) ; la phrase
-  // seulement quand la charge retient la file : le plafond du projet ou du Mac, la pastille de l'en-tête le dit.
-  const doseRows = (dose?.queue ?? []).map(q => {
-    const mark = queuedMark(q.rank, dose?.why ?? 'project')
-    const name = q.title.includes(' · ') ? q.title.slice(q.title.indexOf(' · ') + 3) : q.title
-    const out = () => void dequeueLaunch($, q.id)
-    return (
-      <Box key={`dose:${keyPart(q.id)}`} flexDirection="row" alignItems="center" gap={SPACE.row} paddingX={SPACE.indent}>
-        <Box width={ROW_STEPS.icon} flexShrink={0} flexDirection="row" alignItems="center" justifyContent="center">
-          {strut(SIZE.strut.row)}
-          {Svg ? (
-            mark.tone === 'block' ? (
-              <Svg source={alertIcon(palette.block, 14)} alt="Mac chargé" width={SIZE.icon.sm} height={SIZE.icon.sm} />
-            ) : (
-              <Svg source={clockIcon(palette.text3, 14)} alt="En file" width={SIZE.icon.sm} height={SIZE.icon.sm} />
-            )
-          ) : (
-            <Text dimColor>◷</Text>
-          )}
-        </Box>
-        <Box flexGrow={1} flexShrink={1} minWidth={0}>
-          <Text wrap="truncate-end" color={palette.text2}>{`#${q.id} ${name}`}</Text>
-        </Box>
-        <Box flexShrink={0}>{queuePill(mark)}</Box>
-        <Box key={`dose-out:${keyPart(q.id)}`} flexShrink={0} flexDirection="row" alignItems="center">
-          {graphic && Client ? (
-            <Box hover={{ backgroundColor: palette.hover }}>
-              <Text size="footnote" color={palette.text3}>Retirer</Text>
-              {hit(`dose-out:${keyPart(q.id)}`, out, 1)}
-            </Box>
-          ) : (
-            <Button plain dimColor label="Retirer" onPress={out} />
-          )}
-        </Box>
-      </Box>
-    )
+  // Le bloc « En cours » de Maestro (#367, choix 1 de la maquette) : une ligne encadrée de compteurs, « N ici »,
+  // « Mac X/Y » (orange quand le Mac retient la file), « N en file », puis l'icône du centre de contrôle. Toute la
+  // ligne l'ouvre ; ses sessions et sa file y vivent, plus ici. La liste dessous ne redit toujours pas ces tâches.
+  const openControlPane = () => void openControl($)
+  // Sans pas de relève encore (la minuterie y vient dans les 3 s) : ses sessions comptent seules pour le Mac.
+  const counters = countersLine({
+    here: blockTasks.length,
+    macTaken: dose?.macTaken ?? blockTasks.length,
+    macMax: dose?.macMax ?? doseMaxes().macMax,
+    queued: dose?.queued ?? 0,
+    hot: dose !== undefined && dose.why !== 'project',
   })
-  const doseSentence = dose ? placesSentence({ why: dose.why, ...(dose.load ? { load: dose.load } : {}), head: `#${dose.queue[0]?.id ?? ''}` }) : undefined
-  const doseLine = dose && doseSentence ? (
-    <Box key="dose:why" paddingX={SPACE.indent} paddingY="xs" backgroundColor={palette.blockTint}>
-      <Text size="footnote" color={palette.blockOn}>
-        {doseSentence}
-      </Text>
-    </Box>
-  ) : null
-  const dosePill = dose ? placesPill({ projectTaken: dose.projectTaken, projectMax: dose.projectMax, macTaken: dose.macTaken, macMax: dose.macMax, queued: dose.queue.length, why: dose.why }) : undefined
+  const counterPill = (c: { text: string; tone: 'live' | 'block' | 'neutral' }) => {
+    const tone = c.tone === 'block' ? { bg: palette.blockTint, fg: palette.blockOn } : c.tone === 'live' ? { bg: palette.liveTint, fg: palette.liveOn } : { bg: palette.sel, fg: palette.text2 }
+    return drawnPill({ text: c.text, bg: tone.bg, fg: tone.fg, weight: TEXT.weight.soft })
+  }
   const liveBlock =
-    blockTasks.length > 0 || queueRows.length > 0 || doseRows.length > 0 ? (
-      <Box flexDirection="column" borderStyle="round" borderColor={palette.border} paddingY="xs">
-        <Box key="hit:live-fold" flexDirection="row" alignItems="center" gap={SPACE.row} paddingX={SPACE.indent} hover={{ backgroundColor: palette.hover }}>
-          {graphic && Svg ? (
-            <Box flexDirection="row" alignItems="center" flexShrink={0}>
-              <Svg source={rowMark(chevronIcon(palette.text3, liveOpen))} alt={liveOpen ? 'replier' : 'déplier'} width={16} height={24} />
-            </Box>
-          ) : (
-            <Button key="live-fold" plain dimColor label={liveOpen ? '⌄' : '›'} onPress={toggleLive} />
-          )}
+    showLive ? (
+      <Box flexDirection="column" borderStyle="round" borderColor={dose && dose.why !== 'project' ? palette.block : palette.border} paddingX={0} paddingY="xs">
+        <Box key="hit:live-open" flexDirection="row" alignItems="center" gap={SPACE.row} paddingX={SPACE.indent} hover={{ backgroundColor: palette.hover }}>
+          <Box flexDirection="row" alignItems="center" flexShrink={0}>
+            {spinner()}
+          </Box>
           <Box flexGrow={1} flexShrink={1} minWidth={0}>
             <Text size="footnote" weight="semibold" color={palette.text2}>En cours</Text>
           </Box>
-          <Box flexShrink={0}>
-            {dosePill
-              ? drawnPill({ text: dosePill.text, bg: dosePill.tone === 'block' ? palette.blockTint : palette.liveTint, fg: dosePill.tone === 'block' ? palette.blockOn : palette.liveOn, weight: TEXT.weight.soft })
-              : drawnPill({ text: `${blockTasks.length} session${blockTasks.length > 1 ? 's' : ''}`, bg: palette.liveTint, fg: palette.liveOn, weight: TEXT.weight.soft })}
-          </Box>
-          {graphic && hit('live-fold', toggleLive)}
+          <Box flexShrink={0}>{counterPill(counters.here)}</Box>
+          <Box flexShrink={0}>{counterPill(counters.mac)}</Box>
+          <Box flexShrink={0}>{counterPill(counters.queued)}</Box>
+          {graphic && Svg ? (
+            <Box flexDirection="row" alignItems="center" flexShrink={0}>
+              <Svg source={controlIcon(palette.text3, 16)} alt="Centre de contrôle" width={SIZE.icon.md} height={SIZE.icon.md} />
+            </Box>
+          ) : (
+            <Button key="live-open" plain dimColor label="Centre de contrôle" onPress={openControlPane} />
+          )}
+          {graphic && hit('live-open', openControlPane)}
         </Box>
-        {liveOpen && blockTasks.map(t => row(t, undefined, undefined, blockOf.get(t.id as string)))}
-        {liveOpen && queueRows}
-        {liveOpen && loadLine}
-        {liveOpen && doseRows}
-        {liveOpen && doseLine}
       </Box>
     ) : null
 

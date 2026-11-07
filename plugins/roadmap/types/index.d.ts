@@ -46,6 +46,10 @@ declare module 'claude-code' {
       versionNote: VersionCheck
       /** La page de maquettes que le bouton de la fiche a ouverte dans le volet navigateur (#306), chemin absolu ; vide sinon. */
       mockupOpen: string
+      /** Monte quand ce que montre le volet Centre de contrôle change (sessions, file, pauses, marques) : le volet se redessine (#367). */
+      controlStamp: number
+      /** La carte « prise » par sa poignée dans le volet Centre de contrôle, prête à être posée (#367) : sa clé, vide sinon. */
+      controlLifted: string
       /** Ce que montre la grille d'un an de l'accueil de Maestro (#335) : les faites ou les ajoutées, au choix de son bouton. */
       welcomeGrid: 'done' | 'added'
     }

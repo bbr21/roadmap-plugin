@@ -11447,7 +11447,18 @@ export type QueuedLaunch = { id: string; title: string; card?: Record<string, un
 /** La charge du Mac sur une minute, et ses cœurs. */
 export type MacLoad = { load: number; cores: number }
 /** Une tâche en file commune (#345) : son Maestro, son projet, les préfixes de ses dossiers, ses prérequis. */
-export type GlobalQueued = QueuedLaunch & { maestro: string; project: string; match: string[]; after: string[] }
+export type GlobalQueued = QueuedLaunch & {
+  maestro: string
+  project: string
+  match: string[]
+  after: string[]
+  /** Prioritaire (#367) : elle passe devant les autres de la file. */
+  prio?: true
+  /** Reprise (#367) : l'entrée d'une session mise en pause, qui attend sa place pour reprendre (ni `card` ni `launch`). */
+  kind?: 'resume'
+  /** La session à reprendre (#367), pour une entrée `resume`. */
+  sessionId?: string
+}
 /** Ce qui retient un lancement : le plafond du projet, celui du Mac, ou le Mac chargé. */
 export type DoseWhy = 'project' | 'mac' | 'load'
 
@@ -11470,6 +11481,7 @@ export function launchPlaces(
   now: number,
   maestros: ReadonlySet<string>,
   match: readonly string[],
+  paused?: ReadonlySet<string>,
 ): { taken: number; others: string[]; reserved: string[]; cwds: string[] } {
   let taken = 0
   const cwds: string[] = []
@@ -11481,6 +11493,7 @@ export function launchPlaces(
     const id = sessionTitleId(r.title)
     if (id === undefined || isMaestroSession(r.title) || maestros.has(r.sessionId)) continue
     openIds.add(id)
+    if (paused?.has(r.sessionId)) continue // une session en pause ne tient aucune place (tâche 367)
     let holds = r.isRunning === true
     if (!holds) {
       const last = typeof r.lastActivityAt === 'string' ? Date.parse(r.lastActivityAt) : Number.NaN
@@ -11543,14 +11556,227 @@ export function queueRank(n: number): string {
   return n === 1 ? '1re' : `${n}e`
 }
 
-/** La file commune de tous les Maestro (#345) : l'ordre d'arrivée, un prérequis (`après:`) ne comptant que dans son projet. */
-export function globalQueueOrder<T extends { id: string; project: string; after: readonly string[]; at: number }>(queue: readonly T[]): T[] {
+/**
+ * La file commune de tous les Maestro (#345) : l'ordre d'arrivée, un prérequis (`après:`) ne comptant que dans son
+ * projet. Depuis #367, les prioritaires passent devant (par leur arrivée entre elles) ; une prioritaire dont le
+ * prérequis est encore en file passe quand même après lui.
+ */
+export function globalQueueOrder<T extends { id: string; project: string; after: readonly string[]; at: number; prio?: true }>(queue: readonly T[]): T[] {
   const key = (e: { id: string; project: string }) => `${e.project}#${e.id}`
   const byKey = new Map(queue.map(e => [key(e), e]))
+  const minAt = queue.reduce((m, e) => Math.min(m, e.at), 0)
+  const span = queue.reduce((m, e) => Math.max(m, e.at), 0) - minAt + 1
   return launchQueueOrder(
-    queue.map(e => ({ id: key(e), at: e.at })),
+    // le rang prioritaire est un décalage d'arrivée plus grand que toute la file : le tri de #345 reste le seul tri
+    queue.map(e => ({ id: key(e), at: e.prio ? e.at - span : e.at })),
     k => (byKey.get(k)?.after ?? []).map(a => `${byKey.get(k)?.project}#${a}`),
   ).map(e => byKey.get(e.id) as T)
+}
+
+/** Les pauses (#367) : la clé du store, `Record<sessionId, SessionPause>`. */
+export const SESSION_PAUSES_KEY = 'session-pauses'
+/** Les tâches marquées prioritaires (#367) : la clé du store, `string[]` de `<racine du projet>#<id>`. */
+export const PRIO_MARKS_KEY = 'prio-marks'
+
+/**
+ * Une session mise en pause (#367) : `stop` arrête net, `soft` laisse finir le tour ; `asked` demandée, `paused`
+ * exécutée par le Maestro parent ; `by` dit pourquoi (une prioritaire, une tâche passée devant, la main de BBR),
+ * `for` pour quel numéro, `maestro` qui l'exécute.
+ */
+export type SessionPause = { mode: 'stop' | 'soft'; state: 'asked' | 'paused'; by: 'prio' | 'order' | 'hand'; for?: string; maestro: string; at: number }
+
+/** Les pauses lues du store (#367) : les valeurs mal formées sont ignorées. */
+export function sessionPausesOf(value: unknown): Record<string, SessionPause> {
+  const out: Record<string, SessionPause> = {}
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return out
+  for (const [id, raw] of Object.entries(value)) {
+    const p = raw as Partial<SessionPause> | null
+    if (typeof p !== 'object' || p === null) continue
+    if ((p.mode !== 'stop' && p.mode !== 'soft') || (p.state !== 'asked' && p.state !== 'paused')) continue
+    if (p.by !== 'prio' && p.by !== 'order' && p.by !== 'hand') continue
+    if (typeof p.maestro !== 'string' || typeof p.at !== 'number' || !Number.isFinite(p.at)) continue
+    if (p.for !== undefined && typeof p.for !== 'string') continue
+    out[id] = { mode: p.mode, state: p.state, by: p.by, ...(p.for !== undefined ? { for: p.for } : {}), maestro: p.maestro, at: p.at }
+  }
+  return out
+}
+
+/** Les marques de priorité lues du store (#367) : seules les clés texte comptent. */
+export function prioMarksOf(value: unknown): Set<string> {
+  return new Set(Array.isArray(value) ? value.filter((k): k is string => typeof k === 'string') : [])
+}
+
+/** Le poids d'une session (#367) : 2 sa branche est dans la file des tests lourds, 1 elle travaille dans un worktree, 0 le reste. */
+export function sessionWeight(cwd: string, heavy: boolean): 0 | 1 | 2 {
+  if (heavy) return 2
+  return cwd.includes('/.claude/worktrees/') ? 1 : 0
+}
+
+/** Une session qui pourrait céder sa place (#367). */
+export type YieldCandidate = { sessionId: string; id: string; running: boolean; prio: boolean; weight: number; createdAt: number; cwd: string }
+
+/** Qui cède, dans l'ordre (#367) : jamais une prioritaire ; d'abord celle qui ne tourne pas, puis la plus lourde, puis la dernière lancée. */
+export function yieldOrder(c: readonly YieldCandidate[]): YieldCandidate[] {
+  return c
+    .filter(x => !x.prio)
+    .sort((a, b) => Number(a.running) - Number(b.running) || b.weight - a.weight || b.createdAt - a.createdAt)
+}
+
+/** Celle qui cède (#367) : projet plein, la première de `yieldOrder` dans un dossier du projet ; Mac plein ou chargé, la première de toutes. */
+export function pickYield(c: readonly YieldCandidate[], why: DoseWhy, match: readonly string[]): YieldCandidate | undefined {
+  const ordered = yieldOrder(c)
+  return why === 'project' ? ordered.find(x => match.some(prefix => x.cwd.startsWith(prefix))) : ordered[0]
+}
+
+/** Le `at` d'une entrée posée entre deux voisines de la file (#367) : le milieu ; en tête un cran avant, en bout un cran après, file vide `now`. */
+export function queueAtBetween(before: number | undefined, after: number | undefined, now: number): number {
+  if (before !== undefined && after !== undefined) return (before + after) / 2
+  if (after !== undefined) return after - 1
+  if (before !== undefined) return before + 1
+  return now
+}
+
+/** Le message qui fait reprendre une session mise en pause (#367). */
+export function resumeText(by: 'prio' | 'order' | 'hand', forId?: string): string {
+  return by === 'hand'
+    ? 'Tu as été mise en pause depuis le centre de contrôle. Reprends où tu en étais.'
+    : `Tu as été mise en pause pour laisser passer #${forId ?? ''}. Reprends où tu en étais.`
+}
+
+/**
+ * Une carte du volet Centre de contrôle (#367) : une session de tâche qui tourne ou attend, ou une entrée de la file.
+ * `state` : `run` tourne, `wait` t'attend, `pausing` se met en pause, `paused` en pause (dans la file), `queued` pas
+ * encore lancée, `done` finie (sa tâche est close, ou sa note dit prête, partielle ou finie : elle n'attend plus que
+ * son archivage). `tone` : l'index d'axe (couleur du tag), stable d'après le nom du projet.
+ */
+export type ControlCard = {
+  key: string
+  id: string
+  title: string
+  project: string
+  tone: number
+  state: 'run' | 'wait' | 'pausing' | 'paused' | 'queued' | 'done'
+  prio: boolean
+  steps?: { done: number; total: number; current: string }
+  sessionId?: string
+  heavy: boolean
+}
+
+/** L'index d'axe d'un nom (#367) : la somme de ses codes modulo 8, la même couleur d'un dessin à l'autre. */
+export function toneOf(name: string): number {
+  let sum = 0
+  for (let i = 0; i < name.length; i++) sum += name.charCodeAt(i)
+  return sum % 8
+}
+
+/** La clé de la carte d'une entrée de la file (#367) : la session d'une reprise, sinon `<projet>#<numéro>`. */
+export function queueCardKey(e: { id: string; project: string; kind?: string; sessionId?: string }): string {
+  return e.kind === 'resume' && e.sessionId ? `q:${e.sessionId}` : `q:${e.project}#${e.id}`
+}
+
+/** Le titre d'une session sans son « #N · » (#367). */
+function bareTitle(title: string): string {
+  return title.replace(SESSION_PREFIX, '').trim()
+}
+
+/** La racine d'un projet d'après le `cwd` d'une session : le dossier avant `/.claude/worktrees` (#367). */
+export function rootOfCwd(cwd: string): string {
+  return cwd.split('/.claude/worktrees')[0].replace(/\/+$/, '')
+}
+
+/** Les étapes d'une session pour la carte (#367) : faites, total, et l'étape en cours (la première à faire sinon). */
+function cardSteps(status: ChildStatus | undefined): ControlCard['steps'] {
+  const steps = status?.steps ?? []
+  if (steps.length === 0) return undefined
+  const now = steps.find(s => s.status === 'in_progress') ?? steps.find(s => s.status === 'pending')
+  return { done: steps.filter(s => s.status === 'completed').length, total: steps.length, current: now?.content ?? '' }
+}
+
+/** Les étapes d'une session finie (tâche 367) : toutes faites, la dernière étape dite ; sans liste, rien. */
+function doneSteps(status: ChildStatus | undefined): ControlCard['steps'] {
+  const steps = status?.steps ?? []
+  if (steps.length === 0) return undefined
+  return { done: steps.length, total: steps.length, current: steps[steps.length - 1].content }
+}
+
+/**
+ * Ce que montre le volet Centre de contrôle (#367) : `running`, les sessions de tâche ouvertes (ni Maestro, ni
+ * archivée, ni en pause exécutée), les prioritaires en tête puis par création ; `queued`, la file commune dans l'ordre
+ * de lancement (`globalQueueOrder`), une entrée `resume` étant une session « en pause ». `projectOf` donne la racine
+ * du projet d'un `cwd` (celle des sources connues), sinon le dossier avant `/.claude/worktrees` ; la marque de
+ * priorité est `<racine>#<numéro>`.
+ */
+export function controlView(o: {
+  rows: readonly unknown[]
+  queue: readonly GlobalQueued[]
+  pauses: Record<string, SessionPause>
+  marks: ReadonlySet<string>
+  statusOf: (sessionId: string) => ChildStatus | undefined
+  createdOf: (sessionId: string) => number | undefined
+  heavyBranches: ReadonlySet<string>
+  maestros: ReadonlySet<string>
+  projectOf?: (cwd: string) => string
+  /** Les tâches closes de la roadmap, `<racine>#<numéro>` : leur session est finie. */
+  closed?: ReadonlySet<string>
+}): { running: ControlCard[]; queued: ControlCard[] } {
+  const projectOf = o.projectOf ?? rootOfCwd
+  const name = (root: string) => root.split('/').filter(Boolean).pop() ?? root
+  const running: ControlCard[] = []
+  for (const raw of o.rows) {
+    const r = raw as { sessionId?: unknown; title?: unknown; cwd?: unknown; isArchived?: unknown; isRunning?: unknown; branch?: unknown }
+    if (typeof r.sessionId !== 'string' || typeof r.title !== 'string' || r.isArchived === true) continue
+    const id = sessionTitleId(r.title)
+    if (id === undefined || isMaestroSession(r.title) || o.maestros.has(r.sessionId)) continue
+    const pause = o.pauses[r.sessionId]
+    if (pause?.state === 'paused') continue
+    const root = projectOf(typeof r.cwd === 'string' ? r.cwd : '')
+    const project = name(root)
+    const status = o.statusOf(r.sessionId)
+    const kind = status?.recap ? childWake({ recap: status.recap }).kind : 'other'
+    const finished = o.closed?.has(`${root}#${id}`) === true || kind === 'ready' || kind === 'partial' || kind === 'done'
+    const steps = finished ? doneSteps(status) : cardSteps(status)
+    running.push({
+      key: `run:${r.sessionId}`,
+      id,
+      title: bareTitle(r.title),
+      project,
+      tone: toneOf(project),
+      state: finished ? 'done' : pause?.state === 'asked' ? 'pausing' : r.isRunning === true ? 'run' : 'wait',
+      prio: o.marks.has(`${root}#${id}`),
+      ...(steps ? { steps } : {}),
+      sessionId: r.sessionId,
+      heavy: typeof r.branch === 'string' && o.heavyBranches.has(r.branch),
+    })
+  }
+  const created = (c: ControlCard) => o.createdOf(c.sessionId as string)
+  const sorted = running
+    .map((c, i) => ({ c, i }))
+    .sort((a, b) => {
+      if (a.c.prio !== b.c.prio) return a.c.prio ? -1 : 1
+      const [x, y] = [created(a.c), created(b.c)]
+      if (x !== undefined && y !== undefined && x !== y) return x - y
+      if ((x === undefined) !== (y === undefined)) return x === undefined ? 1 : -1
+      return a.i - b.i
+    })
+    .map(x => x.c)
+  const queued: ControlCard[] = globalQueueOrder(o.queue).map(e => {
+    const resume = e.kind === 'resume'
+    const project = name(e.project)
+    const steps = resume && e.sessionId ? cardSteps(o.statusOf(e.sessionId)) : undefined
+    return {
+      key: queueCardKey(e),
+      id: e.id,
+      title: bareTitle(e.title),
+      project,
+      tone: toneOf(project),
+      state: resume ? 'paused' : 'queued',
+      prio: e.prio === true || o.marks.has(`${e.project}#${e.id}`),
+      ...(steps ? { steps } : {}),
+      ...(resume && e.sessionId ? { sessionId: e.sessionId } : {}),
+      heavy: false,
+    }
+  })
+  return { running: sorted, queued }
 }
 
 /** La tête éligible (#345) : la première de la file que la décision laisse partir ; un projet plein est sauté. */
@@ -11653,6 +11879,22 @@ export function placesSentence(o: { why: DoseWhy; load?: MacLoad; head?: string 
 export function placesPill(o: { projectTaken: number; projectMax: number; macTaken: number; macMax: number; queued: number; why: DoseWhy }): { text: string; tone: 'live' | 'block' } {
   if (o.why === 'load') return { text: `Mac chargé · ${o.macTaken}/${o.macMax} · ${o.queued} en file`, tone: 'block' }
   return { text: `${o.projectTaken}/${o.projectMax} · Mac ${o.macTaken}/${o.macMax} · ${o.queued} en file`, tone: o.why === 'project' ? 'live' : 'block' }
+}
+
+/**
+ * La ligne des compteurs du panneau Roadmap chez Maestro (#367, choix 1 de la maquette) : « N ici » (les sessions de ce
+ * Maestro), « Mac X/Y » (orange quand le Mac retient la file), « N en file » ; le détail vit dans le centre de contrôle.
+ */
+export function countersLine(o: { here: number; macTaken: number; macMax: number; queued: number; hot: boolean }): {
+  here: { text: string; tone: 'live' }
+  mac: { text: string; tone: 'block' | 'neutral' }
+  queued: { text: string; tone: 'neutral' }
+} {
+  return {
+    here: { text: `${o.here} ici`, tone: 'live' },
+    mac: { text: `Mac ${o.macTaken}/${o.macMax}`, tone: o.hot ? 'block' : 'neutral' },
+    queued: { text: `${o.queued} en file`, tone: 'neutral' },
+  }
 }
 
 /** La pastille d'une tâche en file (#324) : « Mac chargé » pour la tête quand la charge la retient, sinon son rang. */

@@ -1,6 +1,6 @@
 # Est-il sûr de l'installer ?
 
-Version décrite : roadmap 0.228.1
+Version décrite : roadmap 0.229.0
 Un plugin de Claude Code fait tourner du code sur ta machine, donc la question se pose. Certains plugins
 malveillants ont l'air inoffensifs quand on les installe, puis téléchargent et lancent autre chose plus
 tard. Cette page dit tout ce que fait roadmap. Un test vérifie à chaque version qu'elle dit vrai, et tu
@@ -76,6 +76,7 @@ lire l'état des sessions :
 | `mcp__ccd_session__start_session` | lancer une session sur une tâche (bouton ▶), ou la session du jour d'une routine, qui lance la skill nommée par sa ligne (`skill:`, #280) |
 | `mcp__ccd_session_mgmt__list_sessions`, `mcp__ccd_session_mgmt__get_session` | lire les sessions liées et leur état, pour Maestro et la fiche d'une tâche |
 | `mcp__ccd_session_mgmt__send_message` | envoyer un message à une session que tu choisis dans le panneau |
+| `mcp__ccd_session_mgmt__stop_session` | arrêter le tour d'une session de tâche pour la mettre en pause : pour laisser passer une tâche prioritaire, ou à ton clic sur Pause dans le centre de contrôle ; elle reprend seule à son tour |
 | `mcp__ccd_session_mgmt__set_session_permission_mode` | passer une session lancée en bypass, si tu as allumé le réglage « Lancer en bypass » |
 | `mcp__ccd_session_mgmt__archive_session`, `mcp__ccd_session_mgmt__unarchive_session` | archiver ou désarchiver une session, à ton clic |
 | `mcp__ccd_window__open_session_in` | ouvrir une session à côté, à ton clic |
