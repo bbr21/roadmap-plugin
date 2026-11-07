@@ -185,6 +185,9 @@ export const MIX = {
   ring: 0.55,
   /** Opacité d'un élément estompé. */
   faint: 0.4,
+  /** `bg` sur la teinte du carton : l'étiquette « ▸ Mission » de la fiche (#341), au repos et au survol. */
+  tag: 0.35,
+  tagHover: 0.6,
   /** Opacité de la barre vide et d'un segment estompé. */
   track: 0.3,
   /** Opacité du cercle de fond de la roue. */

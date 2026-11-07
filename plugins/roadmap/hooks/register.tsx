@@ -198,6 +198,13 @@ import {
   parseEndFiche,
   recapKey,
   recapOf,
+  pitchBlocks,
+  pitchKey,
+  pitchOf,
+  liveHead,
+  stepTimes,
+  stepsSpent,
+  bilanRows,
   askedOf,
   changeZones,
   changesCard,
@@ -1378,6 +1385,23 @@ async function saveEndFiche($: EngineInterface, answer: string | undefined): Pro
     await storeSet($, recapKey(c.source.name, id), { ...fiche, at: await $.clock.now() })
   } catch {
     // store ou fiche de session illisibles : la fiche de tâche garde son cadre
+  }
+}
+
+/**
+ * Les phrases « Ce qu'on va lancer » d'un message de Claude (#341, C1), gardées sous leur tâche dans le store,
+ * comme « Ce qu'on a fait » : un bloc `**Ce qu'on va lancer (#N).** …` par tâche ouverte ou reprise.
+ */
+async function savePitches($: EngineInterface, answer: string | undefined): Promise<void> {
+  const c = capture
+  if (!settings.capture || !c || !answer) return
+  const blocks = pitchBlocks(answer)
+  if (blocks.length === 0) return
+  try {
+    const at = await $.clock.now()
+    for (const b of blocks) await storeSet($, pitchKey(c.source.name, b.id), { text: b.text, at })
+  } catch {
+    // store illisible : la fiche garde la mission seule
   }
 }
 
@@ -7260,7 +7284,7 @@ export const register: Register = (on, options) => {
       // La liste renvoyée entière : la livraison est dite (#136).
       if (Array.isArray((e as { items?: unknown }).items)) delivered = { kinds: [], maestro: false }
       ownSteps = applyPlan(ownSteps, e as never)
-      await noteChild($, s => ({ ...withoutQuestion(s), steps: applyPlan(s.steps, e as never) }))
+      await noteChild($, (s, now) => ({ ...withoutQuestion(s), steps: applyPlan(s.steps, e as never, now) }))
     }
     return next(e)
   })
@@ -7353,7 +7377,7 @@ export const register: Register = (on, options) => {
     // Acceptée sur sa dernière étape, la boîte coche la liste de l'app sans passer par update_plan : la note
     // aussi (#145). En cours de tâche, l'app garde sa liste, la note aussi (#172). Refusée, rien ne change.
     if (!fromAgent(e) && ran.deny === undefined && ran.isError !== true) {
-      await noteChild($, s => ({ ...s, steps: boxSteps(s.steps) }))
+      await noteChild($, (s, now) => ({ ...s, steps: boxSteps(s.steps, now) }))
     }
     // Le message de fin suit la boîte : le compte rendu à recopier vient avec elle (#244).
     if (report !== undefined && report.markdown !== reportTurn.given && ran.deny === undefined) {
@@ -7484,6 +7508,8 @@ export const register: Register = (on, options) => {
     await markOwnRunning($, false)
     // La fiche de fin de la session se garde pour la fiche de sa tâche (#144).
     if (!e.isAborted) await saveEndFiche($, e.answer)
+    // Et ce qu'elle va lancer, pour la fiche d'une tâche à lancer (#341).
+    if (!e.isAborted) await savePitches($, e.answer)
     // Et ce que la session a changé, zone par zone (#269).
     if (!e.isAborted) await saveChanges($, e.answer)
     // Et le temps du tour (#314), même interrompu.
@@ -7529,6 +7555,7 @@ export const register: Register = (on, options) => {
       stopTurn.background = (e as { background_tasks?: unknown }).background_tasks
       // La conclusion se garde ici (#307) : si ce Stop relance Claude, la fin de tour ne lira que la réponse relancée.
       await saveEndFiche($, e.last_assistant_message)
+      await savePitches($, e.last_assistant_message)
       const result = await next(e)
       const block = await endOfTurnBlock($, e.last_assistant_message, e.stop_hook_active === true, result.block !== undefined)
       return block === undefined ? result : { ...result, block }
@@ -9454,6 +9481,8 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     const storedChanges = current.id ? changesOf(await $.store.get(changesKey(ficheSource.name, current.id)).catch(() => undefined)) : undefined
     // Le relevé des temps de sa session (#314) : la durée d'une close et où elle est passée.
     const storedTiming = current.done && current.id ? timingOf(await $.store.get(timingKey(ficheSource.name, current.id)).catch(() => undefined)) : undefined
+    // Ce qu'on va lancer (#341, C1) : les phrases simples qu'a écrites Claude en ouvrant la ligne.
+    const storedPitch = !current.done && current.id ? pitchOf(await $.store.get(pitchKey(ficheSource.name, current.id)).catch(() => undefined)) : undefined
     // Le morceau « livré : … » de la note d'une close va dans la carte Fin (#150) ; le reste de la note reste.
     const noteShown = current.done ? livreOfNote(current.note).rest : current.note
     // #278 : un projet en `mission: puces` montre le libellé un fait par puce (maquette A de Caroline) ;
@@ -9742,8 +9771,12 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
       if (!fin) return null
       const opened = conclusionOpen === current.key
       // Le Fait, le Souci et la version livrée sont dans le carton (#291) : la carte Fin ne les redit pas.
-      const own = fin.rows.filter(r => editing || !cartonFin.has(r.name))
-      if (own.length === 0 && fin.more.length === 0 && !fin.recap) return null
+      // #341 (A2) : la carte Bilan s'ouvre sur ce qui a accroché, « À essayer » suit ; close, ni État ni Fait.
+      const own = bilanRows(fin.rows, { done: current.done }).filter(r => editing || !cartonFin.has(r.name))
+      // « Ce qu'on a fait » d'une close est dans le carton.
+      const recapHere = fin.recap && !current.done ? fin.recap : undefined
+      // Une conclusion réclamée garde sa carte, ne serait-ce que pour sa pastille.
+      if (own.length === 0 && fin.more.length === 0 && !recapHere && !fin.missing) return null
       const shown = [...own, ...(opened ? fin.more : [])].map(r => ({ ...r, fold: opened ? { md: r.md, cut: false } : foldCell(r.md) }))
       const canOpen = fin.more.length > 0 || shown.some(r => r.fold.cut)
       // Sur le bureau, une cellule longue garde son texte entier sous le fondu (#205), la flèche au bout de la
@@ -9759,13 +9792,13 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
             : { bg: palette.sel, fg: palette.text }
       return card(
         'fin',
-        'Fin',
+        'Bilan',
         fin.when,
         <Box flexDirection="column" gap={SPACE.tight}>
           {/* Le « Ce qu'on a fait » de la conclusion en tête, au-dessus du tableau (#307, maquette A). */}
-          {fin.recap && (
+          {recapHere && (
             <Box key="fin-recap" flexDirection="column">
-              <Markdown text={codeKeptWhole(`**Ce qu'on a fait.** ${fin.recap}`)} />
+              <Markdown text={codeKeptWhole(`**Ce qu'on a fait.** ${recapHere}`)} />
             </Box>
           )}
           {/* Le tableau : la colonne d'étiquettes des champs de la carte Détails, sans écart de plus, pour que
@@ -10402,8 +10435,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     const topAction = (): RenderElement | null => {
       if (editing || current.done) return null
       if (live) {
-        const waiting = live.state === 'open' && live.entry.sessionId !== undefined && runningBySession.get(live.entry.sessionId) === false
-        const spinning = live.state === 'open' && !waiting
+        // La durée et la roue montent dans la tête du carton (#341, B1).
         const openIt = () => void openSession($, live.entry)
         // Une vérification se distingue d'une réalisation (#291) : le mot du bouton dit laquelle il ouvre.
         const openWord = sessionTitleKind(live.entry.title) === 'check' ? 'Ouvrir la vérification' : 'Ouvrir la session'
@@ -10418,10 +10450,8 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
                 {Svg && <Svg source={externalIcon(palette.bg, 14)} alt="Ouvrir" width={SIZE.icon.sm} height={SIZE.icon.sm} />}
                 <Text weight="semibold" color={palette.bg}>{openWord}</Text>
                 <Box flexGrow={1} />
-                {Svg && spinning && <Svg source={spinnerIcon(palette.bg, 14, undefined, false, now)} alt="en cours" width={SIZE.icon.sm} height={SIZE.icon.sm} isInteractive />}
-                <Text tabular color={palette.bg}>{durationLabel(now - live.entry.startedAt)}</Text>
               </Box>,
-              <Button key="open-session" variant="primary" label={`${openWord} · ${durationLabel(now - live.entry.startedAt)}`} onPress={openIt} />,
+              <Button key="open-session" variant="primary" label={openWord} onPress={openIt} />,
               true,
             )}
           </Box>
@@ -10491,7 +10521,8 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     const version = livreRow ? /\b\d+\.\d+\.\d+\b/.exec(livreRow.md)?.[0] : undefined
     // La ligne Livré quitte la carte Fin quand elle ne dit que la version, que le titre du carton reprend.
     const versionOnly = livreRow !== undefined && /^\s*(roadmap\s+)?v?\d+\.\d+\.\d+\.?\s*$/.test(livreRow.md)
-    const cartonFin = new Set(current.done ? ['Fait', 'Souci', ...(versionOnly ? ['Livré'] : [])] : [])
+    // #341 (A2) : le souci quitte le carton pour la carte Bilan ; le Fait y reste, ou « Ce qu'on a fait » à sa place.
+    const cartonFin = new Set(current.done ? ['Fait', ...(versionOnly ? ['Livré'] : [])] : [])
     // Une session qui tourne sans état de bande (une session « #N · … » hors Maestro) reste « en session ».
     const cartonState = headState ?? (live ? 'live' : undefined)
     const carton = cartonOf({
@@ -10521,80 +10552,119 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
         {noteShown && (bulleted || !frame.recap || missionShown) && linked('note', noteShown, { color: palette.text2 })}
       </Box>
     )
-    // La durée (#314, maquette A1 choisie par BBR le 2026-11-05) : dans le carton d'une close, sous la demande et
-    // au-dessus du souci, le petit donut et le temps total ; un clic sur une part ne montre que sa ligne, son nom,
-    // son temps et sa précision ; un second clic, sur la part ou sur sa ligne, revient au total.
-    const durationBlock = (): RenderElement | null => {
-      if (!duration || editing) return null
-      const prefix = `duree:${taskKey(current)}:`
-      const pickN = gaugePick.startsWith(prefix) && gaugePick.length > prefix.length ? Number(gaugePick.slice(prefix.length)) : undefined
-      const part = pickN !== undefined ? duration.parts[pickN] : undefined
-      const total = spanLabel(duration.total)
-      const toggle = (i: number) => () => void setView($, v => ({ gaugePick: v.gaugePick === `${prefix}${i}` ? '' : `${prefix}${i}` }))
-      return (
-        <Box key="duree" flexDirection="row" gap={SPACE.row} alignItems="center">
-          {Svg && (
-            <Box key="duree-donut" flexDirection="column" flexShrink={0}>
-              <Svg source={donutIcon(palette, duration.parts, DURATION_DONUT, part ? pickN : undefined)} alt={`Durée ${total}`} width={DURATION_DONUT} height={DURATION_DONUT} />
-              {graphic && Client && (
-                <Box position="absolute" top={0} left={0} right={0} bottom={0}>
-                  <Client key={zoneKey(DONUT_HIT, 'donut-hit')} module="./donut-hit.tsx" props={{ shares: duration.parts.map(p => p.ms), pick: prefix }} width="100%" height="100%" />
-                </Box>
-              )}
-            </Box>
-          )}
-          <Box key="duree-side" flexDirection="column" flexGrow={1} flexShrink={1} minWidth={0}>
-            {part && pickN !== undefined ? (
-              <Box key="duree-part" flexDirection="column">
-                <Box flexDirection="row" gap={SPACE.row} alignItems="center" flexWrap="wrap">
-                  {Svg && <Svg source={donutDotIcon(palette, part.kind)} alt="" width={8} height={8} />}
-                  <Text>{part.label}</Text>
-                  <Text weight="semibold" tabular>{spanLabel(part.ms)}</Text>
-                </Box>
-                <Text size="caption" color={palette.text2} wrap="wrap">{part.note}</Text>
-                {hit('duree-part', toggle(pickN))}
-              </Box>
-            ) : (
-              <Box key="duree-total" flexDirection="column">
-                <Box flexDirection="row" gap={SPACE.row}>
-                  <Text weight="semibold" tabular>{total}</Text>
-                  <Text color={palette.text2}>au total</Text>
-                </Box>
-                {Svg && graphic && Client && <Text size="caption" color={palette.text3}>clique une part</Text>}
-              </Box>
-            )}
-            {/* Sans dessin (le terminal), les parts en boutons. */}
-            {!(Svg && graphic && Client) && (
-              <Box flexDirection="row" flexWrap="wrap" gap={SPACE.row}>
-                {duration.parts.map((p, i) => <Button key={`duree:${p.kind}`} plain dimColor={pickN !== i} label={p.label} onPress={toggle(i)} />)}
+    // La durée (#314), montée en haut à droite du carton (#341, A2) : le temps total à gauche du petit donut ;
+    // un clic sur une part ne montre que sa ligne, son nom et son temps, sa précision sous la tête du carton ;
+    // un second clic, sur la part ou sur sa ligne, revient au total.
+    const dureePrefix = `duree:${taskKey(current)}:`
+    const dureePick = gaugePick.startsWith(dureePrefix) && gaugePick.length > dureePrefix.length ? Number(gaugePick.slice(dureePrefix.length)) : undefined
+    const dureePart = duration && dureePick !== undefined ? duration.parts[dureePick] : undefined
+    const dureeToggle = (i: number) => () => void setView($, v => ({ gaugePick: v.gaugePick === `${dureePrefix}${i}` ? '' : `${dureePrefix}${i}` }))
+    const drawsDonut = Boolean(Svg && graphic && Client)
+    // Le haut d'une tâche en cours (#341, B1) : depuis quand elle tourne, son étape et depuis quand, sa question.
+    // Calculé au dessin du carton : les étapes de la session se lisent plus bas.
+    const liveTopOf = () => live && !current.done && !editing
+      ? liveHead({ startedAt: live.entry.startedAt, now, steps: stepsStatus?.steps ?? [], ...(stepsStatus?.question ? { question: stepsStatus.question } : {}) })
+      : undefined
+    const timeSide = (big: string, small: string, pick?: () => void) => (
+      <Box key="carton-time-side" flexDirection="column" alignItems="flex-end">
+        <Text weight="semibold" tabular>{big}</Text>
+        <Text size="caption" color={palette.text2}>{small}</Text>
+        {pick && hit('duree-part', pick)}
+      </Box>
+    )
+    const timeBox = (liveTop: ReturnType<typeof liveTopOf>): RenderElement | null => {
+      if (editing) return null
+      if (current.done && duration) {
+        const total = spanLabel(duration.total)
+        return (
+          <Box key="carton-time" flexDirection="row" alignItems="center" gap={SPACE.row} flexShrink={0}>
+            {dureePart && dureePick !== undefined ? timeSide(spanLabel(dureePart.ms), dureePart.label, dureeToggle(dureePick)) : timeSide(total, 'au total')}
+            {Svg && (
+              <Box key="duree-donut" flexDirection="column" flexShrink={0}>
+                <Svg source={donutIcon(palette, duration.parts, DURATION_DONUT, dureePart ? dureePick : undefined)} alt={`Durée ${total}`} width={DURATION_DONUT} height={DURATION_DONUT} />
+                {drawsDonut && (
+                  <Box position="absolute" top={0} left={0} right={0} bottom={0}>
+                    <Client key={zoneKey(DONUT_HIT, 'donut-hit')} module="./donut-hit.tsx" props={{ shares: duration.parts.map(p => p.ms), pick: dureePrefix }} width="100%" height="100%" />
+                  </Box>
+                )}
               </Box>
             )}
           </Box>
-        </Box>
-      )
+        )
+      }
+      if (liveTop && live) {
+        const waiting = live.state === 'open' && live.entry.sessionId !== undefined && runningBySession.get(live.entry.sessionId) === false
+        const spinning = live.state === 'open' && !waiting
+        return (
+          <Box key="carton-time" flexDirection="row" alignItems="center" gap={SPACE.row} flexShrink={0}>
+            {timeSide(liveTop.total, 'tourne depuis')}
+            {Svg && spinning && <Svg source={spinnerIcon(cartonLook.on, 14, undefined, false, now)} alt="en cours" width={SIZE.icon.sm} height={SIZE.icon.sm} isInteractive />}
+          </Box>
+        )
+      }
+      return null
     }
     const finLine = (r: FinRow) => (
       <Box key={`carton-fin:${r.name}`} flexDirection="row" gap={SPACE.row}>
-        {r.name === 'Souci' && <Text color={palette.block}>●</Text>}
         <Box flexGrow={1} flexShrink={1} minWidth={0}>{finValue(r, r.md)}</Box>
       </Box>
     )
+    // Le texte du carton (#341) : close, « Ce qu'on a fait » à la place du Fait du bilan (A2) ; à lancer ou en
+    // cours, « Ce qu'on va lancer » (C1). La ligne de la roadmap passe alors sous l'étiquette « ▸ Mission ».
+    const lead = current.done ? (fin?.recap ? `**Ce qu'on a fait.** ${fin.recap}` : undefined) : storedPitch ? `**Ce qu'on va lancer.** ${storedPitch.text}` : undefined
+    const missionTag = () => {
+      const label = `${missionShown ? '▾' : '▸'} Mission`
+      return graphic && Client ? (
+        <Box key="mission-tag-row" flexDirection="row">
+          <Box key="hit:mission-tag" flexDirection="row" alignItems="center" paddingX="xs" backgroundColor={mixOver(palette.bg, cartonLook.bg, MIX.tag)} hover={{ backgroundColor: mixOver(palette.bg, cartonLook.bg, MIX.tagHover) }}>
+            {corners(RADIUS.chip, cartonLook.bg)}
+            {strut(SIZE.strut.chip)}
+            <Text size="caption" weight="medium" color={palette.text2}>{label}</Text>
+            {hit('mission-tag', toggleMission, 1)}
+          </Box>
+        </Box>
+      ) : (
+        <Button key="mission-tag" plain dimColor label={label} onPress={toggleMission} />
+      )
+    }
     const cartonBox = () => {
-      const finShown = fin ? fin.rows.filter(r => cartonFin.has(r.name) && r.name !== 'Livré') : []
+      const liveTop = liveTopOf()
+      const finShown = fin && !(current.done && lead) ? fin.rows.filter(r => cartonFin.has(r.name) && r.name !== 'Livré') : []
       return (
         <Box key="carton-row" paddingX={SPACE.indent}>
           <Box key="carton" flexDirection="column" gap={SPACE.tight} padding="sm" flexGrow={1} borderStyle="round" borderColor={cartonLook.edge} backgroundColor={cartonLook.bg}>
-            <Box flexDirection="row" alignItems="center" gap={SPACE.row}>
-              <Text size="heading" weight="semibold" color={cartonLook.on}>{carton.title}</Text>
-              <Box flexGrow={1} flexShrink={1} minWidth={0} flexDirection="row" justifyContent="flex-end">
+            <Box key="carton-head" flexDirection="row" alignItems="flex-start" gap={SPACE.row}>
+              <Box flexDirection="column" flexGrow={1} flexShrink={1} minWidth={0}>
+                <Text size="heading" weight="semibold" color={cartonLook.on}>{carton.title}</Text>
                 {carton.meta !== '' && <Text size="caption" tabular color={palette.text2} wrap="truncate-end">{carton.meta}</Text>}
               </Box>
+              {timeBox(liveTop)}
             </Box>
-            {finShown.filter(r => r.name !== 'Souci').map(finLine)}
-            {finShown.length > 0 && Svg && <Svg source={ruleIcon(cartonLook.edge, fullWidth((e.props as { bodyColumns?: number }).bodyColumns ?? 48))} alt="séparateur" height={1} />}
-            {missionBody(cartonLook.bg, current.done)}
-            {durationBlock()}
-            {finShown.filter(r => r.name === 'Souci').map(finLine)}
+            {dureePart && <Text key="duree-note" size="caption" color={palette.text2} wrap="wrap">{dureePart.note}</Text>}
+            {/* Sans dessin (le terminal), les parts du donut en boutons. */}
+            {current.done && duration && !editing && !drawsDonut && (
+              <Box flexDirection="row" flexWrap="wrap" gap={SPACE.row}>
+                {duration.parts.map((p, i) => <Button key={`duree:${p.kind}`} plain dimColor={dureePick !== i} label={p.label} onPress={dureeToggle(i)} />)}
+              </Box>
+            )}
+            {liveTop?.step && <Text key="live-step" size="footnote" tabular color={palette.liveOn} wrap="wrap">{liveTop.step}</Text>}
+            {liveTop?.ask && (
+              <Box key="live-ask" flexDirection="row" gap={SPACE.row}>
+                <Text size="footnote" color={palette.block}>●</Text>
+                <Box flexShrink={1} minWidth={0}><Text size="footnote" tabular color={palette.blockOn} wrap="wrap">{liveTop.ask}</Text></Box>
+              </Box>
+            )}
+            {finShown.map(finLine)}
+            {lead ? (
+              <Box key="carton-lead" flexDirection="column" gap={SPACE.tight}>
+                <Markdown text={codeKeptWhole(lead)} />
+                {missionTag()}
+                {missionShown && <Text key="mission-line" size="caption" wrap="wrap">{current.label}</Text>}
+                {missionShown && noteShown && linked('note', noteShown, { color: palette.text2 })}
+              </Box>
+            ) : (
+              missionBody(cartonLook.bg, current.done)
+            )}
           </Box>
         </Box>
       )
@@ -10602,7 +10672,30 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     // Les deux jauges (#291), de la même forme : sa tête et son compte, un segment par étape ou par tâche,
     // dessous la ligne de gauche ; un clic sur un segment y met le sien, un second la rend.
     const bodyWidth = fullWidth((e.props as { bodyColumns?: number }).bodyColumns ?? 48)
-    const gaugeBlock = (kind: 'steps', g: Gauge | undefined, colors: Record<GaugeKind | 'ring', string>) => {
+    // #341 (B1) : sous la barre, la liste des étapes, chacune avec sa durée ; elle remplace la ligne du segment.
+    const stepRows = (steps: readonly ChildStep[], times: readonly string[]) => (
+      <Box key="step-rows" flexDirection="column">
+        {steps.map((x, i) => {
+          const cur = x.status === 'in_progress' && !current.done
+          const ok = x.status === 'completed' || current.done
+          return (
+            <Box key={`step-row:${i}`} flexDirection="row" alignItems="center" gap={SPACE.row} minWidth={0}>
+              <Text size="caption" color={cur ? palette.liveOn : ok ? palette.ok : palette.text3}>{cur ? '●' : ok ? '✓' : '○'}</Text>
+              <Box flexGrow={1} flexShrink={1} minWidth={0}>
+                <Text size="footnote" wrap="truncate-end" {...(cur ? { weight: 'semibold' as const } : { color: ok ? palette.text2 : palette.text3 })}>{x.content}</Text>
+              </Box>
+              {/* La durée ne se coupe jamais : c'est le nom qui cède sa place (fidélité de #341). */}
+              {times[i] !== '' && (
+                <Box key={`step-time:${i}`} flexShrink={0}>
+                  <Text size="caption" tabular wrap="truncate-end" color={cur ? palette.liveOn : palette.text2}>{times[i]}</Text>
+                </Box>
+              )}
+            </Box>
+          )
+        })}
+      </Box>
+    )
+    const gaugeBlock = (kind: 'steps', g: Gauge | undefined, colors: Record<GaugeKind | 'ring', string>, list?: { steps: readonly ChildStep[]; times: readonly string[]; spent: string }) => {
       if (!g || editing) return null
       const prefix = `${kind}:${taskKey(current)}:`
       const pickN = gaugePick.startsWith(prefix) ? Number(gaugePick.slice(prefix.length)) : undefined
@@ -10616,13 +10709,13 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
           <Box flexDirection="row" alignItems="center" gap={SPACE.row}>
             <Text size="footnote" weight="semibold" color={kind === 'steps' ? palette.text : palette.text2} wrap="truncate-end">{g.head}</Text>
             <Box flexGrow={1} flexShrink={1} minWidth={0} flexDirection="row" justifyContent="flex-end">
-              <Text size="caption" tabular color={palette.text2}>{g.count}</Text>
+              <Text size="caption" tabular color={palette.text2}>{list && list.spent !== '' ? `${g.count} · ${list.spent}` : g.count}</Text>
             </Box>
           </Box>
           {Svg ? (
             <Box key={`gauge-bar:${kind}`} flexDirection="column">
               <Svg source={gaugeIcon(g.segs.map(x => x.kind), colors, bodyWidth)} alt={`${g.head} · ${g.count}`} height={10} />
-              {graphic && Client && (
+              {graphic && Client && !list && (
                 <Box position="absolute" top={0} left={0} right={0} flexDirection="row">
                   {g.segs.map((x, i) => (
                     <Box key={`gauge-seg:${kind}:${i}`} flexGrow={1} flexShrink={1} minWidth={0}>
@@ -10639,10 +10732,14 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
               ))}
             </Box>
           )}
-          <Box key={`gauge-line:${kind}`} flexDirection="column">
-            <Text size="footnote" weight="semibold" wrap="truncate-end" color={line.tone === 'live' ? palette.liveOn : line.tone === 'block' && picked ? palette.blockOn : palette.text}>{line.title}</Text>
-            <Text size="caption" wrap="truncate-end" color={line.tone === 'block' && !picked ? palette.blockOn : palette.text2}>{line.sub}</Text>
-          </Box>
+          {list ? (
+            stepRows(list.steps, list.times)
+          ) : (
+            <Box key={`gauge-line:${kind}`} flexDirection="column">
+              <Text size="footnote" weight="semibold" wrap="truncate-end" color={line.tone === 'live' ? palette.liveOn : line.tone === 'block' && picked ? palette.blockOn : palette.text}>{line.title}</Text>
+              <Text size="caption" wrap="truncate-end" color={line.tone === 'block' && !picked ? palette.blockOn : palette.text2}>{line.sub}</Text>
+            </Box>
+          )}
           </Box>
         </Box>
       )
@@ -11620,8 +11717,9 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
         {/* En édition (#161) : la barre sous l'en-tête, à la place du crayon. */}
         {editing && editBar()}
         {!editing && cartonBox()}
-        {!editing && gaugeBlock('steps', stepsGauge, stepsColors)}
-        {!editing && stepsQuestion && (
+        {!editing && gaugeBlock('steps', stepsGauge, stepsColors, stepsStatus ? { steps: stepsStatus.steps, times: stepTimes(stepsStatus.steps, { now, closed: current.done, at: stepsStatus.at }), spent: stepsSpent(stepsStatus.steps, { now, closed: current.done, at: stepsStatus.at }) } : undefined)}
+        {/* La question en attente monte dans le carton d'une tâche en cours (#341, B1). */}
+        {!editing && stepsQuestion && !(live && !current.done) && (
           <Box key="steps-question" paddingX={SPACE.indent}>
             <Box paddingX="sm" minWidth={0}><Text size="caption" color={palette.blockOn} wrap="wrap">{stepsQuestion}</Text></Box>
           </Box>

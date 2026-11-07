@@ -136,6 +136,11 @@ to it.
     merge);
   - then `---`, then the detailed brief (the line to reread, the context, the framing's answers
     in a `Cadrage :` paragraph when Maestro framed the request, the Maestro clause).
+- **What will be launched** (#341): every line Maestro opens, and every open line it launches
+  that never had one, gets in Maestro's answer a block `**Ce qu'on va lancer (#N).** …`: two or
+  three everyday sentences on what the task will do and what it will change for the person, no
+  file name or id in the text, ended by a blank line. The panel keeps it for the task's « À
+  lancer » card (`pitch:<project>#<id>`), the roadmap line folded under « ▸ Mission ».
 - **The title comes from the written line** (#263): reread the line after writing it and take its
   `id:` and its `nom:` from the file, never a number foreseen before writing (Adbricks Cowork,
   2026-11-03: « #420 · Récap Slack à Martial » while #420 was the Meta renaming and the recap had

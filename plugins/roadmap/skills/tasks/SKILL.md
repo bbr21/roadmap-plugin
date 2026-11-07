@@ -354,6 +354,13 @@ Then:
    `operations.json`, then `write` again (dry run, then `--apply`), which prints a new report.
    No `- ?` line: no form. The roadmap plugin refuses the end-of-turn box once while questions
    wait and no form was asked (#244).
+5. **What will be launched** (#341). For each task this run adds, and for an open task it updates
+   that has never had one, write in the answer, after the report, one block per task:
+   `**Ce qu'on va lancer (#N).** …`, two or three everyday sentences (in the person's language)
+   that say what the task will do and what it will change for them, no file name, no field, no
+   id in the text. The block ends at the first blank line. The roadmap plugin keeps it in its
+   store (`pitch:<project>#<id>`) and shows it in the task's « À lancer » card, the roadmap line
+   folded under « ▸ Mission » ; a new block for the same task replaces the old one.
 
 ## Partial closure (#245)
 

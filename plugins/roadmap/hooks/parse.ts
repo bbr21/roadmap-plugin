@@ -1906,6 +1906,67 @@ export type FinRow = { name: string; md: string; tone?: 'ok' | 'dim' }
  * `when` : l'heure de la fiche de fin, ou « tiré de la roadmap » ; `missing` : close, bilan dû et absent ;
  * `recap` : le « Ce qu'on a fait » de la conclusion, en tête de la carte (#307, maquette A).
  */
+/**
+ * Les lignes de la carte Bilan (#341, maquette A2) : elle s'ouvre sur ce qui a accroché (le Souci), « À toi »
+ * devient « À essayer » ; close, ni l'État (le carton le dit) ni le Fait (au carton, ou « Ce qu'on a fait »).
+ */
+/** Le Souci devenu « Accroché » (#341, A2) : en texte normal, sauf « tout a roulé », qui reste vert. */
+function accroche(r: FinRow): FinRow {
+  const { tone, ...rest } = r
+  return { ...rest, name: 'Accroché', ...(tone === 'ok' ? { tone } : {}) }
+}
+
+export function bilanRows(rows: readonly FinRow[], o: { done: boolean }): FinRow[] {
+  const named = rows
+    .filter(r => !(o.done && (r.name === 'État' || r.name === 'Fait')))
+    .map(r => (r.name === 'Souci' ? accroche(r) : r.name === 'À toi' ? { ...r, name: 'À essayer' } : r))
+  const rank = (r: FinRow) => (r.name === 'Fait' ? 0 : r.name === 'Accroché' ? 1 : 2)
+  return named.map((r, i) => ({ r, i })).sort((a, b) => rank(a.r) - rank(b.r) || a.i - b.i).map(x => x.r)
+}
+
+/** La clé des phrases « Ce qu'on va lancer » d'une tâche dans le store (#341), comme le récap. */
+export function pitchKey(project: string, id: string): string {
+  return `pitch:${project}#${id}`
+}
+
+/** Les phrases « Ce qu'on va lancer » gardées (#341) : un texte non vide et son heure. */
+export type StoredPitch = { text: string; at: number }
+
+export function pitchOf(value: unknown): StoredPitch | undefined {
+  const v = value as { text?: unknown; at?: unknown } | null
+  if (typeof v !== 'object' || v === null || typeof v.text !== 'string' || v.text.trim() === '' || typeof v.at !== 'number') return undefined
+  return { text: v.text.trim(), at: v.at }
+}
+
+const PITCH_HEAD = /^\s*\*\*\s*Ce qu['’]on va lancer\s*\(#(\d+)\)\s*[.:]?\s*\*\*\s*:?\s*(.*)$/i
+
+/**
+ * Les blocs « **Ce qu'on va lancer (#N).** … » d'un message de Claude (#341, C1) : quelques phrases simples
+ * sur ce qu'une tâche va lancer, écrites quand Claude ouvre ou reprend sa ligne ; le bloc court jusqu'à la
+ * ligne vide. Le numéro dit la tâche.
+ */
+export function pitchBlocks(text: string): { id: string; text: string }[] {
+  const out: { id: string; text: string }[] = []
+  let cur: { id: string; parts: string[] } | undefined
+  const flush = () => {
+    if (cur) {
+      const t = cur.parts.join(' ').replace(/\s+/g, ' ').trim()
+      if (t !== '') out.push({ id: cur.id, text: t })
+    }
+    cur = undefined
+  }
+  for (const line of text.split('\n')) {
+    const head = PITCH_HEAD.exec(line)
+    if (head) {
+      flush()
+      cur = { id: head[1] as string, parts: [head[2] ?? ''] }
+    } else if (line.trim() === '') flush()
+    else if (cur) cur.parts.push(line.trim())
+  }
+  flush()
+  return out
+}
+
 export type FinCard = { emoji?: string; ressenti?: string; missing: boolean; when: string; recap?: string; rows: FinRow[]; more: FinRow[] }
 
 /**
@@ -5070,7 +5131,8 @@ export function childWakeText(w: ChildWake, child: { id: string; title: string; 
 // est à archiver ; rien quand tout avance, pour ne pas saturer l'orchestrateur.
 
 /** Une étape de la liste d'une session (`update_plan`). */
-export type ChildStep = { content: string; status: 'pending' | 'in_progress' | 'completed' }
+/** Une étape ; `start` et `end` (#341) : ses heures de passage en cours et de fin, en ms, posées à la note. */
+export type ChildStep = { content: string; status: 'pending' | 'in_progress' | 'completed'; start?: number; end?: number }
 /**
  * Ce qu'un enfant note de lui : sa liste d'étapes, sa question en attente, son dernier récap. Une
  * question `from: 'box'` vient de sa boîte de fin (#121) : elle tombe au tour suivant de l'enfant.
@@ -5134,11 +5196,19 @@ function stepNumbers(value: unknown): number[] {
  * cours et démarre la suivante à faire ; `done` coche et `start` démarre, par numéro. Un champ
  * illisible ne change rien.
  */
-export function applyPlan(steps: readonly ChildStep[], input: { items?: unknown; advance?: unknown; done?: unknown; start?: unknown }): ChildStep[] {
+export function applyPlan(steps: readonly ChildStep[], input: { items?: unknown; advance?: unknown; done?: unknown; start?: unknown }, now?: number): ChildStep[] {
   let out: ChildStep[] = steps.map(s => ({ ...s }))
   if (Array.isArray(input.items)) {
     const items = input.items.filter(isChildStep)
-    if (items.length === input.items.length) out = items.map(i => ({ content: i.content, status: i.status }))
+    if (items.length === input.items.length) {
+      // Une liste redonnée garde les heures de ses étapes de même libellé (#341).
+      const left = steps.slice()
+      out = items.map(i => {
+        const at = left.findIndex(p => p.content === i.content)
+        const prev = at >= 0 ? left.splice(at, 1)[0] : undefined
+        return { content: i.content, status: i.status, ...stepStamps(prev) }
+      })
+    }
   }
   if (input.advance === true) {
     const at = out.findIndex(s => s.status === 'in_progress')
@@ -5148,7 +5218,73 @@ export function applyPlan(steps: readonly ChildStep[], input: { items?: unknown;
   }
   for (const n of stepNumbers(input.done)) if (out[n - 1]) (out[n - 1] as ChildStep).status = 'completed'
   for (const n of stepNumbers(input.start)) if (out[n - 1]) (out[n - 1] as ChildStep).status = 'in_progress'
-  return out
+  return stamped(out, now)
+}
+
+/** Les heures lisibles d'une étape (#341) : des nombres finis, sinon rien. */
+function stepStamps(s: ChildStep | undefined): Pick<ChildStep, 'start' | 'end'> {
+  const ok = (n: unknown): n is number => typeof n === 'number' && Number.isFinite(n)
+  return { ...(ok(s?.start) ? { start: s.start } : {}), ...(ok(s?.end) ? { end: s.end } : {}) }
+}
+
+/**
+ * Les heures d'une liste à l'heure de sa note (#341) : une étape en cours sans début le prend, une étape
+ * cochée qui a un début prend sa fin ; une étape rouverte perd sa fin. Sans heure, la liste telle quelle.
+ */
+function stamped(steps: ChildStep[], now: number | undefined): ChildStep[] {
+  if (now === undefined) return steps
+  return steps.map(s => {
+    const { start, end } = stepStamps(s)
+    const base: ChildStep = { content: s.content, status: s.status }
+    if (s.status === 'in_progress') return { ...base, start: start ?? now }
+    if (s.status === 'completed') return start === undefined ? base : { ...base, start, end: end ?? now }
+    return base
+  })
+}
+
+/**
+ * La durée de chaque étape, pour la fiche (#341, maquette B1) : faite, de son début à sa fin ; en cours,
+ * jusqu'à maintenant, suivie de « … » (close : jusqu'à la dernière note `at`) ; sans début, rien.
+ */
+export function stepTimes(steps: readonly ChildStep[], o: { now: number; closed?: boolean; at?: number }): string[] {
+  return steps.map(s => {
+    const { start, end } = stepStamps(s)
+    if (start === undefined) return ''
+    if (end !== undefined) return durationLabel(end - start)
+    if (s.status === 'pending') return ''
+    if (o.closed) return o.at !== undefined && o.at > start ? durationLabel(o.at - start) : ''
+    return s.status === 'in_progress' ? `${durationLabel(o.now - start)}…` : ''
+  })
+}
+
+/** Le temps mesuré de toutes les étapes (#341), pour la tête de la jauge : vide sans aucune heure. */
+export function stepsSpent(steps: readonly ChildStep[], o: { now: number; closed?: boolean; at?: number }): string {
+  let ms = 0
+  let seen = false
+  for (const s of steps) {
+    const { start, end } = stepStamps(s)
+    if (start === undefined || s.status === 'pending') continue
+    const stop = end ?? (o.closed ? o.at : s.status === 'in_progress' ? o.now : undefined)
+    if (stop === undefined || stop < start) continue
+    ms += stop - start
+    seen = true
+  }
+  return seen ? durationLabel(ms) : ''
+}
+
+/** Le haut du carton d'une tâche en cours (#341, maquette B1) : depuis quand elle tourne, son étape, sa question. */
+export type LiveHead = { total: string; step?: string; ask?: string }
+
+export function liveHead(o: { startedAt: number; now: number; steps: readonly ChildStep[]; question?: { text: string; since: number } }): LiveHead {
+  const head: LiveHead = { total: durationLabel(o.now - o.startedAt) }
+  const at = o.steps.findIndex(s => s.status === 'in_progress')
+  if (at >= 0) {
+    const s = o.steps[at] as ChildStep
+    const { start } = stepStamps(s)
+    head.step = `Étape ${at + 1}/${o.steps.length} · ${s.content}${start !== undefined ? ` · depuis ${durationLabel(o.now - start)}` : ''}`
+  }
+  if (o.question && o.question.text.trim() !== '') head.ask = `T’attend depuis ${durationLabel(o.now - o.question.since)} : ${o.question.text.trim()}`
+  return head
 }
 
 /**
@@ -5156,9 +5292,9 @@ export function applyPlan(steps: readonly ChildStep[], input: { items?: unknown;
  * rien n'est à faire (sa dernière étape en cours) ; une boîte posée en cours de tâche la laisse telle
  * quelle, et l'`advance` suivant repart de l'étape en cours (#168 : boîte à 4/7, puis « step 5 of 7 »).
  */
-export function boxSteps(steps: readonly ChildStep[]): ChildStep[] {
+export function boxSteps(steps: readonly ChildStep[], now?: number): ChildStep[] {
   if (steps.some(s => s.status === 'pending')) return steps.map(s => ({ ...s }))
-  return steps.map(s => ({ ...s, status: 'completed' as const }))
+  return stamped(steps.map(s => ({ ...s, status: 'completed' as const })), now)
 }
 
 /** L'étape que le panneau ajoute aux étapes d'une session de code (#191). */
