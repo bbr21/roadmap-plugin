@@ -96,6 +96,7 @@ import {
   donutIcon,
 } from './icons'
 import { MIX, PX, RADIUS, SIZE, SPACE, TEXT } from './tokens'
+import { drawWrittenMessage, splitWritten, writtenCards } from './cartes'
 import { CONTROL_PANE, drawControl, openControl, redrawControl, type ControlDeps } from './controle'
 import { SETTINGS_PANE, drawSettings, openSettings, prefsFile, redrawSettings, rememberLoadedOptions, sessionProject, watchSettings, type SettingsProject } from './reglages'
 import {
@@ -7686,6 +7687,26 @@ export const register: Register = (on, options) => {
       const reason = err instanceof Error ? err.message : String(err)
       $.ui.log(`roadmap : carte d'ouverture non dessinée (${reason})`, { to: 'debug' })
       if (welcomeCall && !welcomeCall.scan) void noteWelcomeCard($, 'failedAt', reason)
+      return next(e)
+    }
+  })
+
+  // Les lignes « - Roadmap : #N … » du compte rendu (#244), dessinées en une carte par tâche (#371, maquette A).
+  // Sans ligne, résumé de bloc ou lecture en panne, le message garde son dessin : le texte reste lisible.
+  on('ui.render', { component: 'AssistantMessage' }, async ($, e, next) => {
+    if (e.props.isSummary) return next(e)
+    const parts = splitWritten(e.props.text)
+    if (!parts.some(part => part.kind === 'cards')) return next(e)
+    try {
+      const source = knownSource === undefined ? await sourceNow($) : (knownSource ?? undefined)
+      if (!source) return next(e)
+      const version = await Promise.all([read($, stampAtom), read($, titlesVersionAtom), read($, themeStampAtom), read($, retryAtom), read($, liveVersionAtom)])
+      const data = await paneData($, source, version.join('|'))
+      if (typeof data.open === 'string') return next(e)
+      const tasks = [...data.open, ...data.done]
+      return drawWrittenMessage($.ui.resolve(e), parts, lines => writtenCards(lines, tasks, t => shownTitle(t, data.titles)), data.palette)
+    } catch (err) {
+      $.ui.log(`roadmap : cartes des tâches écrites non dessinées (${err instanceof Error ? err.message : String(err)})`, { to: 'debug' })
       return next(e)
     }
   })
