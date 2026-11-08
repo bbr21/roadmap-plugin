@@ -316,6 +316,7 @@ export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
       { field: 'launchQueue', name: 'File de lancement', def: 'On' },
       { field: 'projectSessions', name: 'Sessions par projet', def: '3' },
       { field: 'macSessions', name: 'Sessions sur le Mac', def: '12' },
+      { field: 'idleMinutes', name: 'Repos avant de rendre sa place', def: '10' },
     ],
   },
   {

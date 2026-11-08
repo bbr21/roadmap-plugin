@@ -9,6 +9,7 @@ import {
   keyPart,
   queueAtBetween,
   queueCardKey,
+  queuedLine,
   queueRank,
   type ChildStatus,
   type ControlCard,
@@ -55,7 +56,8 @@ export type ControlDeps = {
   projectOf: (queue: readonly GlobalQueued[]) => (cwd: string) => string
   /** L'identifiant de cette session, pour une demande dont la session n'a pas de Maestro. */
   ownId: () => Promise<string>
-  open: (sessionId: string, title: string) => Promise<void>
+  /** Ouvre la session ; le lien `claude://` sert de repli (#374). Ratée, elle lève, et le volet le dit. */
+  open: (sessionId: string, title: string, link?: string) => Promise<void>
   /** Les tâches closes de la roadmap de cette session (`<racine>#<numéro>`) : leur session est finie. */
   closed: () => Promise<Set<string>>
   /** Archive la session (l'outil de l'app) ; lève avec le motif d'un refus. */
@@ -114,14 +116,14 @@ let controlNote = ''
 /** Ce qu'a fait le dernier geste qui change l'ordre (#362) : « #N est maintenant 2e » ; vide sinon. */
 let controlInfo = ''
 
-function act($: EngineInterface, work: () => Promise<void>): Promise<void> {
+function act($: EngineInterface, work: () => Promise<void>, failPrefix = "Rien d'écrit : "): Promise<void> {
   acting = acting.then(async () => {
     try {
       controlInfo = ''
       await work()
       controlNote = ''
     } catch (err) {
-      controlNote = `Rien d'écrit : ${err instanceof Error ? err.message : String(err)}`
+      controlNote = `${failPrefix}${err instanceof Error ? err.message : String(err)}`
     }
     await update($, controlStampAtom, v => v + 1)
   })
@@ -297,7 +299,7 @@ export async function drawControl($: EngineInterface, e: RenderInput<'Pane'>, pa
   if (Client) {
     for (const c of [...running, ...queued]) {
       if (!c.sessionId || numberZones.has(c.key)) continue
-      numberZones.set(c.key, await deps.pressZone(`ctl:num:${keyPart(c.key)}`, () => void act($, () => deps.open(c.sessionId as string, c.title))))
+      numberZones.set(c.key, await deps.pressZone(`ctl:num:${keyPart(c.key)}`, () => void act($, () => deps.open(c.sessionId as string, c.title, c.link), '')))
     }
   }
 
@@ -346,7 +348,7 @@ export async function drawControl($: EngineInterface, e: RenderInput<'Pane'>, pa
     const text = `#${c.id}`
     const zone = numberZones.get(c.key)
     if (!c.sessionId) return <Text color={palette.text3} tabular>{text}</Text>
-    if (!Client || !zone) return <Button key={`ctl:num:${keyPart(c.key)}`} plain label={text} onPress={() => void act($, () => deps.open(c.sessionId as string, c.title))} />
+    if (!Client || !zone) return <Button key={`ctl:num:${keyPart(c.key)}`} plain label={text} onPress={() => void act($, () => deps.open(c.sessionId as string, c.title, c.link), '')} />
     return (
       <Box key={`num:${c.key}`} flexShrink={0}>
         <Text color={palette.text3} tabular>{text}</Text>
@@ -378,10 +380,10 @@ export async function drawControl($: EngineInterface, e: RenderInput<'Pane'>, pa
       : c.steps
         ? `${c.steps.done}/${c.steps.total}${c.steps.current ? ` · ${c.steps.current}` : ''}`
         : undefined
-    const queuedLine =
+    const waitLine =
       c.state === 'paused'
         ? `en pause${c.steps ? ` · ${c.steps.done}/${c.steps.total} faites` : ''} · reprend seule à son tour`
-        : 'pas encore lancée · démarrera seule à son tour'
+        : queuedLine(c)
     const bar =
       c.steps && zone === 'run' && Svg
         ? (() => {
@@ -404,7 +406,7 @@ export async function drawControl($: EngineInterface, e: RenderInput<'Pane'>, pa
     } else {
       buttons.push(gesture(`ctl:pass:${keyPart(c.key)}`, playIcon(palette.live, 14), 'Reprendre', c.state === 'paused' ? 'Reprendre' : 'Passer en cours', () => void act($, () => passIn($, deps, c.key))))
     }
-    if (c.sessionId) buttons.push(gesture(`ctl:open:${keyPart(c.key)}`, externalIcon(palette.text3, 14), 'Ouvrir la session', 'Ouvrir', () => void act($, () => deps.open(c.sessionId as string, c.title))))
+    if (c.sessionId) buttons.push(gesture(`ctl:open:${keyPart(c.key)}`, externalIcon(palette.text3, 14), 'Ouvrir la session', 'Ouvrir', () => void act($, () => deps.open(c.sessionId as string, c.title, c.link), '')))
     if (zone === 'queue') {
       buttons.push(
         <Box key={`move:${c.key}`} flexDirection="row" alignItems="center" flexGrow={1} justifyContent="flex-end" gap={SPACE.tight}>
@@ -432,7 +434,7 @@ export async function drawControl($: EngineInterface, e: RenderInput<'Pane'>, pa
               {zone === 'run' ? (
                 progress ? <Text size="caption" color={palette.text2} wrap="truncate-end">{progress}</Text> : null
               ) : (
-                <Text size="caption" color={palette.text3} wrap="truncate-end">{queuedLine}</Text>
+                <Text size="caption" color={palette.text3} wrap="truncate-end">{waitLine}</Text>
               )}
             </Box>
             {pills}

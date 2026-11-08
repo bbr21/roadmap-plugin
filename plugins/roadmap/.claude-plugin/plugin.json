@@ -1,6 +1,6 @@
 {
   "name": "roadmap",
-  "version": "0.234.0",
+  "version": "0.235.0",
   "description": "Panneau Claude Code à côté du chat : la roadmap du projet de la session, filtrable, avec le détail d'une tâche et son lancement dans une nouvelle session",
   "author": {
     "name": "Bertrand Fargheon"
@@ -118,13 +118,13 @@
     "launchQueue": {
       "type": "boolean",
       "title": "File de lancement",
-      "description": "Chez Maestro, les lancements de tâche passent par la file commune à tous les Maestros du Mac : les plafonds « Sessions par projet » et « Sessions sur le Mac », et l'attente quand la charge du Mac dépasse 2 × ses cœurs. Éteint : plus de plafond ni d'attente de charge, chaque carte de Maestro et chaque ▶ partent tout de suite, rien n'entre dans la file, et les tâches déjà en file démarrent (un ▶ se lance, une carte revient en carte).",
+      "description": "Chez Maestro, les lancements de tâche passent par la file commune à tous les Maestros du Mac : les plafonds « Sessions par projet » et « Sessions sur le Mac », et l'attente quand la charge du Mac dépasse 2 × ses cœurs. Éteint : plus de plafond ni d'attente de charge, chaque carte de Maestro et chaque ▶ partent tout de suite, rien n'entre dans la file, et les tâches déjà en file démarrent.",
       "default": true
     },
     "projectSessions": {
       "type": "string",
       "title": "Sessions par projet",
-      "description": "Le nombre de sessions de tâche qui travaillent en même temps dans un même projet, que ses Maestros ne dépassent pas. Les tâches en trop attendent dans la file commune à tous les Maestros et à tous les projets, dans l'ordre de la chaîne : une tâche lancée par ▶ démarre seule à son tour, dès qu'une place se libère ; une carte proposée par Maestro revient en carte, à démarrer d'un clic sur Start. Un lancement attend aussi quand la charge du Mac dépasse 2 × ses cœurs. Ne vaut que la « File de lancement » allumée.",
+      "description": "Le nombre de sessions de tâche qui travaillent en même temps dans un même projet, que ses Maestros ne dépassent pas. Les tâches en trop attendent dans la file commune à tous les Maestros et à tous les projets, dans l'ordre de la chaîne : une tâche lancée par ▶ ou par une carte de Maestro démarre seule à son tour, dès qu'une place se libère ; un départ refusé reste en file, avec son motif au centre de contrôle, et un Maestro qui tourne reprend l'entrée d'un Maestro qui ne la lance pas en deux minutes. Un lancement attend aussi quand la charge du Mac dépasse 2 × ses cœurs. Ne vaut que la « File de lancement » allumée.",
       "default": "3",
       "options": ["1", "2", "3", "4", "5", "6"]
     },
@@ -134,6 +134,13 @@
       "description": "Le nombre de sessions de tâche qui travaillent en même temps sur le Mac, tous projets confondus. C'est le plafond de la file commune : au-delà, les tâches de tous les Maestros attendent leur tour, et chacune démarre seule quand elle passe en tête et qu'une place se libère. Un lancement attend aussi quand la charge du Mac dépasse 2 × ses cœurs (mesuré le 2026-11-05 : 4 sessions tiennent sur un Mac de 16 Go ; monte ce plafond selon ta mémoire). Ne vaut que la « File de lancement » allumée.",
       "default": "12",
       "options": ["4", "6", "8", "10", "12", "16"]
+    },
+    "idleMinutes": {
+      "type": "string",
+      "title": "Repos avant de rendre sa place",
+      "description": "Le nombre de minutes après lequel une session de tâche au repos (qui attend ta réponse, sans s'être dite prête ou finie) rend sa place dans la file de lancement, et après lequel une carte posée par Maestro et pas encore démarrée cesse de réserver la sienne. Une session qui tourne garde toujours sa place. Ne vaut que la « File de lancement » allumée.",
+      "default": "10",
+      "options": ["5", "10", "15", "20", "30"]
     },
     "account": {
       "type": "string",

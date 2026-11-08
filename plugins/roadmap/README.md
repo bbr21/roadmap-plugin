@@ -688,7 +688,8 @@ la carte d'approbation de l'app ; il faut d'abord activer le bypass dans Réglag
 Depuis une session en mode auto, l'option ne vaut pas (#248) : le contrôle du mode auto refuse un agent
 qui doit se relever en bypass, la carte part donc sans le mode ni la consigne.
 `pruneBranches` (« Branches nettoyées », défaut oui, #313) : dans un projet de code, les branches fusionnées sur main que rien ne tient (ni un worktree, ni une ligne ouverte, ni la pointe de main) partent, sur le Mac par `git branch -d` et sur GitHub par un seul `git push origin :refs/heads/…`, après l'archivage d'une session et au démarrage d'une session (au plus toutes les 10 minutes) ; « Rouvrir la session » recrée la branche depuis main.
-`launchQueue` (« File de lancement », défaut oui, #372) : chez Maestro, les lancements passent par la file commune au Mac de #345 (plafonds `projectSessions` et `macSessions`, attente de charge) ; éteint, plus de plafond ni d'attente, chaque carte et chaque ▶ partent tout de suite et les tâches déjà en file démarrent. Allumée, une entrée d'un autre Maestro qui peut partir et ne part pas en deux minutes ne retient plus la file.
+`launchQueue` (« File de lancement », défaut oui, #372) : chez Maestro, les lancements passent par la file commune au Mac de #345 (plafonds `projectSessions` et `macSessions`, attente de charge) ; éteint, plus de plafond ni d'attente, chaque carte et chaque ▶ partent tout de suite et les tâches déjà en file démarrent. Allumée, une entrée d'un autre Maestro qui peut partir et ne part pas en deux minutes ne retient plus la file, et le premier Maestro qui tourne la reprend et la lance (#374) ; une tâche en file part seule à son tour, qu'elle vienne d'un ▶ ou d'une carte de Maestro, et un départ refusé reste en file, avec son motif et son heure au centre de contrôle.
+`idleMinutes` (« Repos avant de rendre sa place », défaut 10, #374) : les minutes après lesquelles une session de tâche au repos rend sa place dans la file, et une carte posée pas encore démarrée cesse de réserver la sienne ; avant, 15 min fixes.
 `axisPill` (« Axe en pastille », défaut non depuis #177 ; #156) : allumé, chaque tâche ouverte de la
 liste porte son axe en pastille grise, à droite du titre, avant l'âge ; jamais dans « En cours » (le bloc
 de Maestro ou le filtre, où le carré d'axe suffit et le titre garde sa place), ni sous un axe choisi, ni
@@ -745,6 +746,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.235.0 (2026-11-08)** : maestro : la file de lancement avance seule (un Maestro qui tourne reprend l'entrée d'un Maestro au repos, une carte en file part seule, un départ refusé reste en file avec sa trace), délai de repos réglable (10 min), « Ouvrir » du centre de contrôle réparé (#374)
 - **0.234.0 (2026-11-08)** : panneau : la carte d'une tâche écrite dit son axe en clair, des infos selon le cas (version et bilan, échéance, avant → après) et « Ouvrir la session » quand une session la tient (#371)
 - **0.233.0 (2026-11-08)** : panneau : les tâches écrites dans un message se dessinent en cartes façon « New session » (bandeau, titre, description), avec l'avant → après et un clic qui ouvre la fiche (#371)
 - **0.232.3 (2026-11-08)** : fiche : le bouton d'archive de la bande Done ne déborde plus (#341)

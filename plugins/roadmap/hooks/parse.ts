@@ -11821,8 +11821,17 @@ export function codeModelOf(option: unknown, launch: 'opus' | 'sonnet' | 'hérit
 // Mesures du 2026-11-05 (docs/plans/feat-maestro-dose/spec.md) : charge 70 pour 10 cœurs, 19 processus
 // claude pour 5 sessions qui tournent, swap plein à 85 %. Maestro ne pose pas plus de cartes que de places.
 
-/** Une session au repos (ou une carte posée, pas encore démarrée) tient sa place 15 min (cadrage de BBR). */
-export const PLACE_IDLE_MS = 15 * 60_000
+/**
+ * Une session au repos (ou une carte posée, pas encore démarrée) tient sa place ce délai : 10 min par défaut,
+ * l'option « Repos avant de rendre sa place » (`idleMinutes`, #374) le règle ; 15 min fixes avant.
+ */
+export const PLACE_IDLE_MS = 10 * 60_000
+
+/** Le délai de repos réglé (#374) : des minutes entières positives, sinon `PLACE_IDLE_MS`. */
+export function placeIdleMs(option: unknown): number {
+  const n = Number(option)
+  return typeof option === 'string' && option.trim() !== '' && Number.isInteger(n) && n > 0 ? n * 60_000 : PLACE_IDLE_MS
+}
 
 /** Une tâche qui attend sa place : son numéro, le titre de sa carte, la carte à poser (ou le ▶ à rejouer), son arrivée. */
 export type QueuedLaunch = { id: string; title: string; card?: Record<string, unknown>; launch?: { shortTitle: string; extra?: string; kind?: string }; at: number }
@@ -11840,6 +11849,20 @@ export type GlobalQueued = QueuedLaunch & {
   kind?: 'resume'
   /** La session à reprendre (#367), pour une entrée `resume`. */
   sessionId?: string
+  /** En vol (#374) : le message de départ est parti, la session n'a pas encore démarré. */
+  launching?: { at: number }
+  /** Le dernier départ raté (#374) : son heure et le motif de l'app, lisibles au centre de contrôle. */
+  failed?: { at: number; reason: string }
+  /** Reprise (#374) : l'entrée venait d'un autre Maestro, qui ne la lançait pas. */
+  taken?: { from: string; at: number }
+}
+
+/** Un départ en vol sans session au bout de ce délai est tenu pour raté (#374) : Maestro occupé, message perdu. */
+export const LAUNCH_PENDING_MS = 5 * 60_000
+
+/** L'entrée est-elle en vol (#374) : son départ est parti il y a moins de `LAUNCH_PENDING_MS`. */
+export function launchInFlight(e: { launching?: { at: number } }, now: number): boolean {
+  return e.launching !== undefined && now - e.launching.at < LAUNCH_PENDING_MS
 }
 /** Ce qui retient un lancement : le plafond du projet, celui du Mac, ou le Mac chargé. */
 export type DoseWhy = 'project' | 'mac' | 'load'
@@ -11864,6 +11887,7 @@ export function launchPlaces(
   maestros: ReadonlySet<string>,
   match: readonly string[],
   paused?: ReadonlySet<string>,
+  idleMs: number = PLACE_IDLE_MS,
 ): { taken: number; others: string[]; reserved: string[]; cwds: string[] } {
   let taken = 0
   const cwds: string[] = []
@@ -11881,7 +11905,7 @@ export function launchPlaces(
       const last = typeof r.lastActivityAt === 'string' ? Date.parse(r.lastActivityAt) : Number.NaN
       const recap = statusOf(r.sessionId)?.recap
       const kind = recap ? childWake({ recap }).kind : 'other'
-      holds = !Number.isNaN(last) && now - last < PLACE_IDLE_MS && kind !== 'ready' && kind !== 'partial' && kind !== 'done'
+      holds = !Number.isNaN(last) && now - last < idleMs && kind !== 'ready' && kind !== 'partial' && kind !== 'done'
     }
     if (!holds) continue
     taken++
@@ -11892,7 +11916,7 @@ export function launchPlaces(
   const reserved: string[] = []
   for (const c of cards) {
     const id = sessionTitleId(c.title)
-    if (id === undefined || openIds.has(id) || now - c.at >= PLACE_IDLE_MS || reserved.includes(id)) continue
+    if (id === undefined || openIds.has(id) || now - c.at >= idleMs || reserved.includes(id)) continue
     reserved.push(id)
     taken++
   }
@@ -12033,6 +12057,12 @@ export function resumeText(by: 'prio' | 'order' | 'hand', forId?: string): strin
  */
 export type ControlCard = {
   key: string
+  /** Le lien `claude://` de la session (#374) : « Ouvrir » s'en sert quand l'outil est refusé. */
+  link?: string
+  /** L'entrée en file dont le départ est parti (#374). */
+  launching?: true
+  /** Le dernier départ raté de l'entrée en file (#374). */
+  failed?: { at: number; reason: string }
   id: string
   title: string
   project: string
@@ -12119,6 +12149,7 @@ export function controlView(o: {
     const steps = finished ? doneSteps(status) : cardSteps(status)
     running.push({
       key: `run:${r.sessionId}`,
+      ...(typeof (raw as { link?: unknown }).link === 'string' ? { link: (raw as { link: string }).link } : {}),
       id,
       title: bareTitle(r.title),
       project,
@@ -12155,10 +12186,33 @@ export function controlView(o: {
       prio: e.prio === true || o.marks.has(`${e.project}#${e.id}`),
       ...(steps ? { steps } : {}),
       ...(resume && e.sessionId ? { sessionId: e.sessionId } : {}),
+      ...(e.launching ? { launching: true as const } : {}),
+      ...(e.failed ? { failed: e.failed } : {}),
       heavy: false,
     }
   })
   return { running: sorted, queued }
+}
+
+/** La ligne d'une entrée en file au centre de contrôle (#374) : en file, en vol, ou ratée avec son heure et son motif. */
+export function queuedLine(c: { launching?: boolean; failed?: { at: number; reason: string } }): string {
+  if (c.launching) return "démarre… · la session va s'ouvrir"
+  if (c.failed) {
+    const d = new Date(c.failed.at)
+    const hm = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+    return `départ raté à ${hm} · ${c.failed.reason} · réessaie à son tour`
+  }
+  return 'pas encore lancée · démarrera seule à son tour'
+}
+
+/**
+ * Les essais de « Ouvrir » (#374), dans l'ordre : l'outil de l'app (`focus`), le lien `claude://` de la session
+ * (`link`), puis la note qui dit la barre latérale. En mode auto, ou juste après un refus du mode auto, l'appel
+ * d'outil parti d'un clic est refusé (#248) : le lien d'abord, sans essayer l'outil.
+ */
+export function openSteps(o: { mode: string | undefined; link?: string; autoRefused?: boolean }): ('focus' | 'link' | 'note')[] {
+  const link = o.link ? (['link'] as const) : []
+  return o.mode === 'auto' || o.autoRefused ? [...link, 'note'] : ['focus', ...link, 'note']
 }
 
 /** La tête éligible (#345) : la première de la file que la décision laisse partir ; un projet plein est sauté. */
@@ -12177,7 +12231,7 @@ export const QUEUE_STUCK_MS = 2 * 60_000
  * Maestro) ; retenue par son projet plein, elle garde son rang et ses deux minutes repartent de zéro.
  * `since` garde, d'un pas à l'autre, depuis quand chaque entrée peut partir.
  */
-export function liveQueue<T extends { id: string; maestro: string; project: string }>(
+export function liveQueue<T extends { id: string; maestro: string; project: string; launching?: { at: number } }>(
   ordered: readonly T[],
   gateOf: (e: T) => { go: boolean },
   ownId: string,
@@ -12189,7 +12243,8 @@ export function liveQueue<T extends { id: string; maestro: string; project: stri
     if (e.maestro === ownId) return true
     const key = `${e.maestro} ${e.project}#${e.id}`
     seen.add(key)
-    if (!gateOf(e).go) {
+    // #374 : une entrée en vol attend sa session, elle n'est pas lâchée ; ses deux minutes partent de la fin du vol.
+    if (!gateOf(e).go || launchInFlight(e, now)) {
       since.delete(key)
       return true
     }
@@ -12227,8 +12282,9 @@ export function queueReleaseText(id: string): string {
  * la consigne de lancer la session en `user_asked` (sinon la carte), et le brief. La conversation n'en
  * montre que la première ligne (`splitLaunch`).
  */
-export function releasePrompt(o: { id: string; title: string; prompt: string; background: string; effort?: string; model?: string; travail: Travail; bypass: boolean }): string {
+export function releasePrompt(o: { id: string; title: string; prompt: string; background: string; effort?: string; model?: string; travail: Travail; bypass: boolean; card?: boolean; cwd?: string }): string {
   const fields = [
+    ...(o.cwd ? [`cwd ${o.cwd}`] : []),
     ...(o.effort ? [`effort ${o.effort}`] : []),
     ...(o.model ? [`model ${o.model}`] : []),
     ...(o.travail === 'projet' ? ['use_worktree false'] : []),
@@ -12237,7 +12293,14 @@ export function releasePrompt(o: { id: string; title: string; prompt: string; ba
   return [
     queueReleaseText(o.id),
     '',
-    `Lance cette session maintenant : outil start_session, initiation user_asked, contexte fresh, titre « ${o.title} »${fields.length > 0 ? `, avec ${fields.join(', ')} (chaque champ si l'outil l'accepte, sinon sans)` : ''}, avec le brief ci-dessous.`,
+    ...(o.card
+      ? [
+          // #374 : la carte que ce Maestro a posée et qui est entrée en file ; son brief est dans sa conversation, jamais rejoué du store.
+          // Relecture de sécurité : les champs viennent de ce message (les réglages de BBR), jamais de la carte (bypass compris).
+          `Lance maintenant la carte « ${o.title} » que tu as posée plus haut et qui attendait en file : outil start_session, initiation user_asked, avec le brief de cette carte et les champs de la consigne suivante, pas ses autres champs. Si tu ne la retrouves pas dans cette conversation, lance-la avec le brief ci-dessous.`,
+        ]
+      : []),
+    `${o.card ? 'Sinon, lance' : 'Lance'} cette session maintenant : outil start_session, initiation user_asked, contexte fresh, titre « ${o.title} »${fields.length > 0 ? `, avec ${fields.join(', ')} (chaque champ si l'outil l'accepte, sinon sans)` : ''}, avec le brief ci-dessous.`,
     "Si l'app refuse, pose sa carte à la place (initiation own_initiative) et dis en une ligne qu'un clic sur Start la lance. Puis réponds en une phrase au plus.",
     '',
     o.prompt,
@@ -12246,9 +12309,9 @@ export function releasePrompt(o: { id: string; title: string; prompt: string; ba
   ].join('\n')
 }
 
-/** Le refus d'une carte du modèle mise en file (#345) : sans clic de Bertrand, elle revient en carte à son tour. */
+/** Le refus d'une carte du modèle mise en file (#345) : la mise en file vaut accord (#374), elle démarrera seule à son tour. */
 export function queuedRefusal(o: QueueTextArgs): string {
-  return `${heldBy(o)}. #${o.id} attend son tour, ${queueRank(o.rank)} sur le Mac ; le panneau posera sa carte à son tour, que ${person()} démarre d'un clic sur Start. Ne la repose pas, et ne fais pas la tâche toi-même.`
+  return `${heldBy(o)}. #${o.id} attend son tour, ${queueRank(o.rank)} sur le Mac ; elle démarrera seule à son tour : le panneau t'écrira « La file est débloquée » pour la lancer. Ne la repose pas, et ne fais pas la tâche toi-même.`
 }
 
 /** La phrase de charge sous le bloc « En cours » (#345) ; le plafond du projet ou du Mac n'en a plus, la pastille le dit. */

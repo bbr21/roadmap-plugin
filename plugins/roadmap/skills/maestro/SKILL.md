@@ -554,30 +554,39 @@ The merge itself:
   not offer the `archive` app button). On that click, and on it alone, `archive_session` with
   `session_id: "self"`.
 
-- **Dosing the launches** (#324, #345, #372): one launch queue for the whole Mac, shared by every Maestro
+- **Dosing the launches** (#324, #345, #372, #374): one launch queue for the whole Mac, shared by every Maestro
   of every project. Two caps: at most `projectSessions` task sessions working at once in one project
   (« Sessions par projet », 3 by default) and `macSessions` on the whole Mac (« Sessions sur le Mac »,
   12 by default; Maestros excluded). A session holds its place from its launch until it says
-  « prête à fusionner », a partial closure or « fini »; idle for 15 min (waiting for the person, a
-  resource), it gives its place back. A posted card not yet started reserves a place for 15 min. A
+  « prête à fusionner », a partial closure or « fini »; idle for the delay of the option « Repos avant
+  de rendre sa place » (`idleMinutes`, 10 min by default; waiting for the person, a resource), it gives
+  its place back. A posted card not yet started reserves a place for the same delay, and the counters
+  (« N ici », « Mac N/M ») show only sessions. A
   launch also waits while the Mac's load over one minute is above 2 × its cores. Beyond that, the
   card does not go out: the panel puts the task in the shared queue, by order of arrival (its
   `après:` prerequisites first), refuses the card with its rank on the Mac
   (« #N attend son tour, 3e sur le Mac »), and the control center shows it with that rank (#367). Do not post a queued card again, do not do the
-  task yourself. A card you posted that went into the queue comes back as a card at its turn (the
-  person clicks Start). A task the person queued with ▶ starts by itself, ▶ being their consent:
-  when it reaches the head of the queue (the first entry whose project has a free place)
-  and the head is yours, the panel writes in your conversation, in the person's name, « La file
-  est débloquée : #N démarre. » with the brief. Launch that session at once with `start_session`,
-  `user_asked`, as the message says; if the app refuses (Remote Control, a turn it does not take as
-  the person's), post its card (`own_initiative`) instead and say in one line that a click on Start
-  launches it. The panel also writes « #N entre en file, 3e sur le Mac … » when a ▶ queues a task:
+  task yourself. A queued task starts by itself, whether the person queued it with ▶ or you posted
+  its card (#374: queueing is consent, the person's choice): when it reaches the head of the queue
+  (the first entry whose project has a free place) and the head is yours, the panel writes in your
+  conversation, in the person's name, « La file est débloquée : #N démarre. » with the brief rebuilt
+  from the roadmap. Launch that session at once with `start_session`, `user_asked`, as the message
+  says (for your own card: your card's brief, with the message's fields, never the card's own); if
+  the app refuses (Remote Control, a turn it does not take as the person's), post its card
+  (`own_initiative`) instead and say in one line that a click on Start launches it. The entry stays
+  in the queue until the app answers: accepted, it leaves; refused, it stays with the reason and
+  the time, shown in the control center, and is retried at most once a minute; no answer within
+  5 min, it comes back with « aucune session n'a démarré ». The panel also writes « #N entre en file, 3e sur le Mac … » when a ▶ queues a task:
   answer it in one line, launch nothing.
   An entry of another Maestro that could start and has not started for two minutes (its Maestro
-  idle, closed, or refused by auto mode) no longer holds the queue (#372): the next one starts.
+  idle, closed, or refused by auto mode) no longer holds the queue (#372): the next one starts. And
+  the first open Maestro that is running takes it over (#374): the entry becomes yours (« taken »),
+  and at the next step the panel writes « La file est débloquée » to you with the brief and the
+  folder of its project (`cwd`): launch it there, it reports to you. An entry of an archived
+  Maestro is taken over at once.
   With the option « File de lancement » (`launchQueue`) off, there is no queue at all: no cap, no
-  load wait, every card and every ▶ goes out at once, and the tasks already queued start (a ▶ is
-  launched, a card comes back as a card); the two caps apply only with the queue on.
+  load wait, every card and every ▶ goes out at once, and the tasks already queued start; the two
+  caps apply only with the queue on.
 - **Priority and pauses** (#367): a `prio:oui` task (or one marked « Prioritaire » in the control
   center) does not wait its turn: it goes to the head of the queue, and when no place is free the
   panel asks the parent Maestro of one session to stop it (the app's Stop, `stop_session`): never a
