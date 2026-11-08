@@ -27,9 +27,6 @@ export const CONTROL_PANE = 'controle'
 /** Monte quand ce que montre le volet change, ou après chaque geste : le volet se redessine. */
 export const controlStampAtom = atom({ plugin: 'roadmap', key: 'controlStamp' } as const, 0)
 
-/** La carte « prise » par sa poignée, prête à être posée : sa clé, vide sinon (le kit n'a pas de glisser-déposer). */
-export const controlLiftedAtom = atom({ plugin: 'roadmap', key: 'controlLifted' } as const, '')
-
 /** Ce que le volet demande à l'extérieur : injecté par `register.tsx`, qui tient la liste des sessions, le store et les outils de l'app. */
 export type ControlDeps = {
   /** La liste des sessions (la dernière lue quand elle ne se lit plus) et le mot sur son état. */
@@ -114,10 +111,13 @@ function signatureOf(d: ControlData): string {
 let acting: Promise<void> = Promise.resolve()
 /** Ce qu'a dit le dernier geste quand il a échoué ; vide sinon. */
 let controlNote = ''
+/** Ce qu'a fait le dernier geste qui change l'ordre (#362) : « #N est maintenant 2e » ; vide sinon. */
+let controlInfo = ''
 
 function act($: EngineInterface, work: () => Promise<void>): Promise<void> {
   acting = acting.then(async () => {
     try {
+      controlInfo = ''
       await work()
       controlNote = ''
     } catch (err) {
@@ -176,21 +176,23 @@ async function passIn($: EngineInterface, deps: ControlDeps, key: string): Promi
   await moveEntry(deps, entry, headAt(globalQueueOrder(d.queue), entry, now))
 }
 
-/** Poser la carte prise à l'emplacement `slot` (son rang dans la file affichée) ; `run` : la passer en cours. */
-async function placeLifted($: EngineInterface, deps: ControlDeps, lifted: string, slot: number | 'run'): Promise<void> {
-  if (slot === 'run') return passIn($, deps, lifted)
+/**
+ * Monter ou descendre d'un rang (#362, flèches de la maquette A) : l'entrée échange sa place avec sa voisine de
+ * son groupe (les prioritaires entre elles, les autres entre elles) ; sans voisine, rien ne bouge.
+ */
+async function moveByOne($: EngineInterface, deps: ControlDeps, key: string, by: -1 | 1): Promise<void> {
   const d = await controlData(deps)
-  const ordered = globalQueueOrder(d.queue)
-  const entry = entryOf(d.queue, lifted)
+  const entry = entryOf(d.queue, key)
   if (!entry) return
-  // une prioritaire ne se pose qu'au milieu des prioritaires, les autres derrière elles
-  const prios = ordered.filter(e => e.prio).length
-  const from = ordered.findIndex(e => queueCardKey(e) === lifted)
-  const index = slot > from ? slot - 1 : slot
-  const group = ordered.filter(e => e !== ordered[from] && Boolean(e.prio) === Boolean(entry.prio))
-  const base = entry.prio ? 0 : prios
-  const at = Math.min(Math.max(index - base, 0), group.length)
-  await moveEntry(deps, entry, queueAtBetween(group[at - 1]?.at, group[at]?.at, await $.clock.now()))
+  const ordered = globalQueueOrder(d.queue)
+  const group = ordered.filter(e => Boolean(e.prio) === Boolean(entry.prio))
+  const i = group.indexOf(entry)
+  const j = i + by
+  if (i < 0 || j < 0 || j >= group.length) return
+  const at = by < 0 ? queueAtBetween(group[j - 1]?.at, group[j].at, await $.clock.now()) : queueAtBetween(group[j].at, group[j + 1]?.at, await $.clock.now())
+  await moveEntry(deps, entry, at)
+  const rank = globalQueueOrder(await deps.queue()).findIndex(e => queueCardKey(e) === key) + 1
+  if (rank > 0) controlInfo = `#${entry.id} est maintenant ${queueRank(rank)}`
 }
 
 /** Prioritaire : la marque du projet, la priorité de l'entrée de la file, et `prio:oui` dans la roadmap de cette session si la tâche en est. */
@@ -284,7 +286,6 @@ export async function drawControl($: EngineInterface, e: RenderInput<'Pane'>, pa
   const Svg = 'Svg' in resolved ? resolved.Svg : undefined
   const Client = 'Client' in resolved && Svg ? resolved.Client : undefined
   await read($, controlStampAtom)
-  const lifted = await read($, controlLiftedAtom)
   liveDeps = deps
   const d = await controlData(deps)
   lastSignature = signatureOf(d)
@@ -311,11 +312,14 @@ export async function drawControl($: EngineInterface, e: RenderInput<'Pane'>, pa
     </Text>
   )
 
-  /** Un geste : son icône, puis un bouton écrit ; l'actif prend le bouton principal. */
-  const gesture = (key: string, mark: string | false, markAlt: string, label: string, onPress: () => void, o: { on?: boolean } = {}) => (
+  /**
+   * Un geste : son icône, puis un bouton écrit. Allumé, il reste simple (#362, fidélité à la maquette) : son icône
+   * dit l'état (le drapeau rouge), le bouton principal du bureau le dessinait en gros bouton blanc.
+   */
+  const gesture = (key: string, mark: string | false, markAlt: string, label: string, onPress: () => void) => (
     <Box key={`g:${key}`} flexDirection="row" alignItems="center" flexShrink={0}>
       {mark && icon(mark, markAlt, 14)}
-      {o.on ? <Button key={key} variant="primary" label={label} onPress={onPress} /> : <Button key={key} plain label={label} onPress={onPress} />}
+      <Button key={key} plain label={label} onPress={onPress} />
     </Box>
   )
 
@@ -353,13 +357,12 @@ export async function drawControl($: EngineInterface, e: RenderInput<'Pane'>, pa
     )
   }
 
-  const card = (c: ControlCard, rank: number, zone: 'run' | 'queue') => {
-    const lock = lifted === c.key
+  const card = (c: ControlCard, rank: number, zone: 'run' | 'queue', moves: { up: boolean; down: boolean } = { up: false, down: false }) => {
     const [mark, markAlt] = stateMark(c)
     const done = c.state === 'done'
     const nodeKind = done ? 'done' : c.prio ? 'prio' : c.state === 'wait' ? 'wait' : c.state === 'pausing' ? 'pausing' : zone === 'queue' ? 'queued' : 'run'
     const node = controlNodeIcon(palette, { kind: nodeKind, n: rank })
-    const border = done ? palette.finished : lock ? palette.live : c.prio ? palette.late : c.state === 'pausing' ? palette.block : palette.border
+    const border = done ? palette.finished : c.prio ? palette.late : c.state === 'pausing' ? palette.block : palette.border
     const pills: RenderElement[] = []
     if (done) pills.push(pill('Done', palette.finishedTint, palette.finishedOn))
     else if (c.state === 'pausing') pills.push(pill('pause en fin de tour', palette.blockTint, palette.blockOn))
@@ -391,7 +394,7 @@ export async function drawControl($: EngineInterface, e: RenderInput<'Pane'>, pa
     if (done) {
       buttons.push(gesture(`ctl:archive:${keyPart(c.key)}`, archiveIcon(palette.text3, 14), 'Archiver', 'Archiver', () => void act($, () => deps.archive(c.sessionId as string))))
     } else {
-      buttons.push(gesture(`ctl:prio:${keyPart(c.key)}`, Svg ? priorityIcon(c.prio, palette, 14) : false, c.prio ? 'Prioritaire' : 'Sans priorité', 'Prioritaire', () => void act($, () => togglePrio(deps, c)), { on: c.prio }))
+      buttons.push(gesture(`ctl:prio:${keyPart(c.key)}`, Svg ? priorityIcon(c.prio, palette, 14) : false, c.prio ? 'Prioritaire' : 'Sans priorité', 'Prioritaire', () => void act($, () => togglePrio(deps, c))))
     }
     if (done) {
       // rien à mettre en pause : la session est finie
@@ -404,8 +407,9 @@ export async function drawControl($: EngineInterface, e: RenderInput<'Pane'>, pa
     if (c.sessionId) buttons.push(gesture(`ctl:open:${keyPart(c.key)}`, externalIcon(palette.text3, 14), 'Ouvrir la session', 'Ouvrir', () => void act($, () => deps.open(c.sessionId as string, c.title))))
     if (zone === 'queue') {
       buttons.push(
-        <Box key={`grip:${c.key}`} flexDirection="row" alignItems="center" flexGrow={1} justifyContent="flex-end">
-          <Button key={`ctl:grip:${keyPart(c.key)}`} plain dimColor={!lock} label={lock ? '⋮⋮ prise' : '⋮⋮'} onPress={() => void update($, controlLiftedAtom, v => (v === c.key ? '' : c.key))} />
+        <Box key={`move:${c.key}`} flexDirection="row" alignItems="center" flexGrow={1} justifyContent="flex-end" gap={SPACE.tight}>
+          <Button key={`ctl:up:${keyPart(c.key)}`} plain dimColor={!moves.up} label="↑" onPress={() => void (moves.up && act($, () => moveByOne($, deps, c.key, -1)))} />
+          <Button key={`ctl:down:${keyPart(c.key)}`} plain dimColor={!moves.down} label="↓" onPress={() => void (moves.down && act($, () => moveByOne($, deps, c.key, 1)))} />
         </Box>,
       )
     }
@@ -413,7 +417,7 @@ export async function drawControl($: EngineInterface, e: RenderInput<'Pane'>, pa
     return (
       <Box key={`card:${c.key}`} flexDirection="row" alignItems="flex-start" gap={SPACE.row}>
         <Box flexShrink={0}>{icon(node.source, c.prio ? 'prioritaire' : `rang ${rank}`, node.width, node.height)}</Box>
-        <Box flexGrow={1} flexShrink={1} minWidth={0} flexDirection="column" gap={SPACE.tight} borderStyle="round" borderColor={border} paddingX="sm" paddingY="xs" {...(lock ? { backgroundColor: palette.liveTint } : {})}>
+        <Box flexGrow={1} flexShrink={1} minWidth={0} flexDirection="column" gap={SPACE.tight} borderStyle="round" borderColor={border} paddingX="sm" paddingY="xs">
           <Box flexDirection="row" alignItems="center" gap={SPACE.row}>
             <Box flexShrink={0}>{icon(mark, markAlt, 14)}</Box>
             {number(c)}
@@ -441,20 +445,13 @@ export async function drawControl($: EngineInterface, e: RenderInput<'Pane'>, pa
     )
   }
 
-  /** Un emplacement où poser la carte prise, avec son rang. */
-  const slot = (i: number, text: string) => (
-    <Box key={`slot:${i}`} paddingX={SPACE.indent}>
-      <Button key={`ctl:slot:${i}`} plain label={text} onPress={() => void act($, async () => { await update($, controlLiftedAtom, () => ''); await placeLifted($, deps, lifted, i) })} />
-    </Box>
-  )
-
   const unreadable = d.note !== ''
   const queueBody: RenderElement[] = []
   queued.forEach((c, i) => {
-    if (lifted !== '') queueBody.push(slot(i, `Poser ici, ${queueRank(i + 1)}`))
-    queueBody.push(card(c, i + 1, 'queue'))
+    // une voisine du même groupe : les prioritaires montent et descendent entre elles, les autres aussi
+    const same = (o: ControlCard | undefined) => o !== undefined && Boolean(o.prio) === Boolean(c.prio)
+    queueBody.push(card(c, i + 1, 'queue', { up: same(queued[i - 1]), down: same(queued[i + 1]) }))
   })
-  if (lifted !== '' && queued.length > 0) queueBody.push(slot(queued.length, 'Poser ici, en dernier'))
 
   return (
     <Box flexDirection="column" gap={SPACE.block} paddingX={SPACE.indent} paddingTop="sm" paddingBottom="md">
@@ -469,6 +466,7 @@ export async function drawControl($: EngineInterface, e: RenderInput<'Pane'>, pa
       </Box>
       {unreadable && <Box key="note">{caption(d.note, palette.lateOn)}</Box>}
       {controlNote !== '' && <Box key="act-note">{caption(controlNote, palette.lateOn)}</Box>}
+      {controlInfo !== '' && <Box key="act-info">{caption(controlInfo, palette.text2)}</Box>}
 
       <Box key="run-head" flexDirection="row" alignItems="center" gap={SPACE.row}>
         {icon(spinnerIcon(palette.live, 14), 'en cours', 14)}
@@ -479,11 +477,6 @@ export async function drawControl($: EngineInterface, e: RenderInput<'Pane'>, pa
           {caption(`${running.length} · prioritaires en tête, puis par ordre de lancement`, palette.text3)}
         </Box>
       </Box>
-      {lifted !== '' && (
-        <Box key="slot-run" paddingX={SPACE.indent}>
-          <Button key="ctl:slot:run" plain label="Poser ici : passer en cours" onPress={() => void act($, async () => { await update($, controlLiftedAtom, () => ''); await placeLifted($, deps, lifted, 'run') })} />
-        </Box>
-      )}
       <Box key="run-list" flexDirection="column" gap={SPACE.tight}>
         {running.map((c, i) => card(c, i + 1, 'run'))}
         {running.length === 0 && (unreadable ? null : caption('Rien ne tourne.', palette.text3))}
