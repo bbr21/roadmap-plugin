@@ -470,8 +470,13 @@ The merge itself:
      « Nouvelle version X.Y.Z : #N <ce qui change> ».
   2. Do not tick #N. Its step reads `#N <libellé court> · en test X.Y.Z`; its session stays open.
   3. Post one card per task, the one the reminder writes: title `Tester #N · X.Y.Z`,
-     `own_initiative`, `fresh`, in the main folder (`use_worktree: false`), its brief copied as is
-     (it carries the ids of the original session and of Maestro). That title does not start with
+     `own_initiative`, `fresh`, without a worktree of its own (`use_worktree: false`), its brief copied
+     as is: it carries the ids of the original session and of Maestro, what the task changed (its
+     « Ce qui a changé », else its label), and the main folder from which the version is read (a
+     worktree copy may lag behind; the loaded plugin does not depend on it). The test session runs the
+     checks its tools allow first, then asks the person only what shows in the app alone: three points
+     at most, each with where to look and what to see (the person, first test of #366: « Je dois
+     tester quoi, soit clair ! »). That title does not start with
      `#N ·`: the test session does not hold the task (no tree, no clause, no launch queue), and the
      panel checks it by its own rule (#N open, no open test session with the same title).
   4. The test session codes nothing: each piece of feedback from the person goes, as is, to the

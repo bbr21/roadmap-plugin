@@ -1670,12 +1670,20 @@ async function testAfterRelease($: EngineInterface, command: string, stdout: str
   const titles = await loadTitles($)
   const rows = (await readListRows($)).rows
   const own = await readOwnSession($)
-  const tasks = kept.map(t => {
+  // Ce que la tâche a changé (#269, gardé dans le store à chaque fin de tour) : la session de test dit quoi essayer.
+  const tasks = await Promise.all(kept.map(async t => {
     const id = t.id as string
     const origin = originSession(rows, id)
-    return { id, name: t.nom ?? cachedTitle(t, titles) ?? fallbackTitle(t.label), ...(origin ? { origin } : {}) }
-  })
-  return testReminder({ version: pub.version, tasks, ...(own.id ? { maestro: own.id } : {}) })
+    const changes = changesOf(await $.store.get(changesKey(source.name, id)).catch(() => undefined))?.zones ?? []
+    return {
+      id,
+      name: t.nom ?? cachedTitle(t, titles) ?? fallbackTitle(t.label),
+      label: t.label,
+      changes: changes.map(z => ({ name: z.name, ...(z.why !== undefined ? { why: z.why } : {}) })),
+      ...(origin ? { origin } : {}),
+    }
+  }))
+  return testReminder({ version: pub.version, tasks, main: source.root ?? source.dir, ...(own.id ? { maestro: own.id } : {}) })
 }
 
 /** La consigne d'une session de test (#366), à chaque message de la personne : rien hors d'une session « Tester #N · X.Y.Z ». */

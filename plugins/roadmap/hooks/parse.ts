@@ -4725,15 +4725,31 @@ function testRelayRules(o: { id: string; version: string; origin?: string; maest
   ]
 }
 
-/** Le brief de la carte « Tester #N · X.Y.Z » : tout écrit par le plugin, identifiants compris. */
-export function testBrief(o: { id: string; name: string; version: string; origin?: string; maestro?: string }): string {
+/** Ce qu'une tâche a changé, dit à la session de test : une zone et sa phrase (« Ce qui a changé », #269). */
+export type TestChange = { name: string; why?: string }
+
+/**
+ * Le brief de la carte « Tester #N · X.Y.Z » : tout écrit par le plugin, identifiants compris. Il dit quoi
+ * essayer (ce qui a changé, sinon le libellé) et demande à la session de faire elle-même les essais que ses
+ * outils permettent, puis de ne demander à la personne que ce qui ne se voit que dans l'app (retour de BBR
+ * au premier test de #366 : « Je dois tester quoi, soit clair ! Tu peux pas faire les tests toi-même ? »).
+ * `main` : le dossier principal, d'où la version se lit (la copie de travail de la session peut être en retard).
+ */
+export function testBrief(o: { id: string; name: string; version: string; origin?: string; maestro?: string; main?: string; label?: string; changes?: readonly TestChange[] }): string {
   const p = person()
+  const said = (o.changes ?? []).filter(c => c.why !== undefined && c.why.trim() !== '')
+  const what = said.length > 0
+    ? [`Ce que #${o.id} change :`, ...said.map(c => `- ${c.name} : ${c.why}`)]
+    : o.label !== undefined ? [`Ce que #${o.id} change : ${o.label}`] : []
+  const status = `python3 ${o.main !== undefined ? `${o.main}/` : ''}tools/release.py status`
   return [
     `Mission : tester #${o.id} · ${o.name} dans la version ${o.version} du plugin, avec ${p}`,
     `Fini quand : ${p} dit « c'est bon »`,
+    ...what,
     '---',
     `Tu ouvres une session de test : ${p} essaie la version ${o.version} et te dit ce qui va ou non.`,
-    `Vérifie d'abord la version chargée : \`python3 tools/release.py status\`, ligne « Dans l'app ». Si elle est en retard, dis à ${p} le geste que la ligne donne.`,
+    `Vérifie d'abord la version chargée : \`${status}\`, ligne « Dans l'app »${o.main !== undefined ? ' (lis le dépôt par le dossier principal : ta copie de travail peut être en retard, le plugin chargé ne dépend pas d\'elle)' : ''}. Si elle est en retard, dis à ${p} le geste que la ligne donne.`,
+    `Fais d'abord toi-même les essais que tes outils permettent (commandes, fichiers, tests, le volet navigateur pour une page) et dis en une ligne ce que tu as vu. Puis ne demande à ${p} que ce qui ne se voit que dans l'app : trois points au plus, en mots simples, chacun avec où regarder ou cliquer et ce qu'il doit voir. Ton premier message ouvre là-dessus, sans attendre qu'on te demande quoi tester.`,
     ...testRelayRules(o),
     `Finis sur « Archiver cette session ? » (avec le bouton « Oui, archiver ») quand Maestro dit « #${o.id} close », ou qu'une version plus récente de #${o.id} a sa propre carte de test.`,
   ].join('\n')
@@ -4743,12 +4759,12 @@ export function testBrief(o: { id: string; name: string; version: string; origin
  * Le rappel à Maestro après une publication (#366) : les tâches du message passent en test. Une carte
  * par tâche, que Maestro recopie telle quelle. Rien sans tâche.
  */
-export function testReminder(o: { version: string; tasks: { id: string; name: string; origin?: string }[]; maestro?: string }): string | undefined {
+export function testReminder(o: { version: string; tasks: { id: string; name: string; origin?: string; label?: string; changes?: readonly TestChange[] }[]; maestro?: string; main?: string }): string | undefined {
   if (o.tasks.length === 0) return undefined
   const p = person()
   const ids = o.tasks.map(t => `#${t.id}`).join(', ')
   const cards = o.tasks.map(t => {
-    const brief = testBrief({ id: t.id, name: t.name, version: o.version, ...(t.origin !== undefined ? { origin: t.origin } : {}), ...(o.maestro !== undefined ? { maestro: o.maestro } : {}) })
+    const brief = testBrief({ ...t, version: o.version, ...(o.maestro !== undefined ? { maestro: o.maestro } : {}), ...(o.main !== undefined ? { main: o.main } : {}) })
     return [
       `Carte de #${t.id} : start_session, initiation: own_initiative, context: fresh, use_worktree: false, titre « ${testCardTitle(t.id, o.version)} », prompt (recopie-le tel quel) :`,
       '<<<',

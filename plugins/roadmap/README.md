@@ -745,6 +745,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.232.1 (2026-11-08)** : sessions : la carte de test dit quoi essayer, fait les essais elle-même et lit la version par le dossier principal (#366)
 - **0.232.0 (2026-11-07)** : panneau : le haut de la fiche dit depuis quand une tâche tourne, la durée de chaque étape, ce qu'on va lancer, et le donut monte en haut à droite du carton Livré ; la carte Bilan s'ouvre sur Accroché (#341)
 - **0.231.0 (2026-11-07)** : panneau : les lignes « - Roadmap : #N … » d'un message de Claude deviennent une carte par tâche, numéro, sorte, axe et échéance (#371)
 - **0.230.0 (2026-11-07)** : sessions : une tâche publiée passe en test, Maestro pose la carte Tester #N, les retours de la session de test vont à la session d'origine et la tâche se coche au « c'est bon » (#366)
