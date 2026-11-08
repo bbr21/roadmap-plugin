@@ -745,6 +745,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.232.3 (2026-11-08)** : fiche : le bouton d'archive de la bande Done ne déborde plus (#341)
 - **0.232.2 (2026-11-08)** : centre de contrôle : flèches ↑ ↓ au lieu de la poignée, « Prioritaire » reste un bouton simple (#362)
 - **0.232.1 (2026-11-08)** : sessions : la carte de test dit quoi essayer, fait les essais elle-même et lit la version par le dossier principal (#366)
 - **0.232.0 (2026-11-07)** : panneau : le haut de la fiche dit depuis quand une tâche tourne, la durée de chaque étape, ce qu'on va lancer, et le donut monte en haut à droite du carton Livré ; la carte Bilan s'ouvre sur Accroché (#341)

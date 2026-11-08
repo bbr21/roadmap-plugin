@@ -10021,7 +10021,9 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
       return pressable(
         'reopen-arm',
         press,
-        <Box flexDirection="row" alignItems="center" paddingX={SPACE.tight} borderStyle="round" borderColor={tone}>
+        // Une Box à filet pose son paddingY, 0 compris : sinon la marge d'office du bureau en fait une pilule
+        // haute qui déborde de la bande (#352 ; capture de BBR au test de #341 en 0.232.0).
+        <Box flexDirection="row" alignItems="center" paddingX={SPACE.tight} paddingY={0} borderStyle="round" borderColor={tone}>
           {strut(SIZE.strut.row)}
           {Svg && <Svg source={unarchiveIcon(reopenAsking ? palette.blockOn : fg, SIZE.icon.sm)} alt="Désarchiver la session" width={SIZE.icon.sm} height={SIZE.icon.sm} />}
         </Box>,
