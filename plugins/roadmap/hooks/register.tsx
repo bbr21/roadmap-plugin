@@ -96,7 +96,7 @@ import {
   donutIcon,
 } from './icons'
 import { MIX, PX, RADIUS, SIZE, SPACE, TEXT } from './tokens'
-import { BEFORE_KEY, beforeMap, drawWrittenMessage, keepBefore, splitWritten, testVersions, writtenCards, type WrittenLine, type WrittenWho } from './cartes'
+import { BEFORE_KEY, beforeMap, drawWrittenMessage, keepBefore, splitWritten, testSessions, writtenCards, type WrittenLine, type WrittenWho } from './cartes'
 import { CONTROL_PANE, drawControl, openControl, redrawControl, type ControlDeps } from './controle'
 import { SETTINGS_PANE, drawSettings, openSettings, prefsFile, redrawSettings, rememberLoadedOptions, sessionProject, watchSettings, type SettingsProject } from './reglages'
 import {
@@ -7773,16 +7773,27 @@ export const register: Register = (on, options) => {
       const updated = parts.some(part => part.kind === 'cards' && part.lines.some(l => l.kind === 'upd'))
       const before = updated ? beforeMap(await $.store.get(BEFORE_KEY).catch(() => undefined)) : undefined
       // Qui tient la tâche : ce que le module sait déjà des sessions (jamais un nouvel appel d'outil).
-      const tests = testVersions(sessionRows)
+      const tests = testSessions(sessionRows)
+      // La session qui tient chaque tâche : le bouton de sa carte l'ouvre, par le chemin de « Ouvrir la session » de la fiche.
+      const sessions = new Map<string, LiveEntry>()
       const who = (t: Task): WrittenWho | undefined => {
         const test = t.id === undefined ? undefined : tests.get(t.id)
-        if (test !== undefined) return { text: `en test ${test}`, tone: 'wait' }
+        if (test !== undefined) {
+          sessions.set(t.id as string, { sessionId: test.sessionId, startedAt: now, title: test.title })
+          return { text: `en test ${test.version}`, tone: 'wait', session: true }
+        }
         const found = t.done ? undefined : trackedSession(source, t, data.live, data.ignored, now)
         if (!found) return undefined
-        return found.entry.sessionId !== undefined && runningBySession.get(found.entry.sessionId) === false ? { text: "t'attend", tone: 'soon' } : { text: 'en session', tone: 'live' }
+        if (t.id !== undefined) sessions.set(t.id, found.entry)
+        return found.entry.sessionId !== undefined && runningBySession.get(found.entry.sessionId) === false ? { text: "t'attend", tone: 'soon', session: true } : { text: 'en session', tone: 'live', session: true }
       }
-      const cards = (lines: WrittenLine[]) => writtenCards(lines, tasks, { short: t => shownTitle(t, data.titles), today: todayOf(now), me: source.me, who, ...(before ? { before } : {}) })
-      return drawWrittenMessage($.ui.resolve(e), parts, cards, data.palette, { open: id => void openTaskFiche($, source, id) })
+      // Les bilans : ce que le panneau a déjà en mémoire (`paneData`), jamais une nouvelle lecture.
+      const cards = (lines: WrittenLine[]) => writtenCards(lines, tasks, { short: t => shownTitle(t, data.titles), today: todayOf(now), me: source.me, who, bilans: data.bilan.bilans, ...(before ? { before } : {}) })
+      const openSessionOf = (id: string) => {
+        const entry = sessions.get(id)
+        void (entry ? openSession($, entry) : openTaskFiche($, source, id))
+      }
+      return drawWrittenMessage($.ui.resolve(e), parts, cards, data.palette, { open: id => void openTaskFiche($, source, id), openSession: openSessionOf })
     } catch (err) {
       $.ui.log(`roadmap : cartes des tâches écrites non dessinées (${err instanceof Error ? err.message : String(err)})`, { to: 'debug' })
       return next(e)

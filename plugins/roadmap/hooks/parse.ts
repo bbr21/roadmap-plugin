@@ -25,6 +25,8 @@ export type Task = {
   spec?: string
   /** `après:` : le numéro de la tâche à faire d'abord, ou le début de son libellé (ou son titre court). */
   apres?: string
+  /** `après:-` : écrit, « rien ne la précède » (la carte d'une nouvelle tâche dit « n'attend rien »). */
+  sansApres?: true
   /** `id:` : le numéro de la tâche, unique dans le dossier, gardé quand elle passe dans les faites. */
   id?: string
   /** `nom:` : le nom court choisi à la main (#235), qui l'emporte sur le titre tiré par le modèle ; `nom:-` le laisse absent. */
@@ -590,6 +592,7 @@ export function parseRoadmap(text: string, file: string): Task[] {
       } else if ((FIELDS as readonly string[]).includes(k)) task[k as (typeof FIELDS)[number]] = v
       // `-` veut dire « aucune » : ni prérequise, ni parent.
       else if (k === 'après' && v !== '' && v !== '-') task.apres = v
+      else if (k === 'après' && v === '-') task.sansApres = true
       else if (k === 'parent' && PARENT_RE.test(v)) task.parent = v.replace(/^#/, '')
       else if (k === 'id' && ID_RE.test(v)) task.id = v
       else if (k === 'nom') {

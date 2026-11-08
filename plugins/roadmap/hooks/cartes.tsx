@@ -5,9 +5,8 @@
 
 import type { EngineInterface, RenderElement } from 'claude-code'
 
-import { axisColor } from './icons'
-import { daysBetween, dueLabel, isPriority, isThirdParty, roadmapAxes, shortAttend, testTitle, type Task } from './parse'
-import { RADIUS, SPACE, type Palette } from './tokens'
+import { daysBetween, dueLabel, isPriority, isThirdParty, roadmapAxes, shortAttend, testTitle, type Bilan, type Task } from './parse'
+import { SPACE, type Palette } from './tokens'
 
 /** La sorte d'une ligne : une tâche neuve, mise à jour, faite ou annulée. */
 export type WrittenKind = 'new' | 'upd' | 'done' | 'cancel'
@@ -80,21 +79,27 @@ export function splitWritten(text: string): MessagePart[] {
   return parts
 }
 
-/** La couleur d'une pastille d'échéance ou de « qui » : la même famille que les pastilles du panneau. */
+/** La couleur d'une échéance ou de « qui » : la même famille que les pastilles du panneau. */
 export type WrittenDue = { text: string; tone: 'late' | 'soon' | 'none' }
-export type WrittenWho = { text: string; tone: 'live' | 'wait' | 'soon' }
+/** `session` : une session tient la tâche, le bouton de la carte ouvre cette session (« en session », « t'attend », « en test »). */
+export type WrittenWho = { text: string; tone: 'live' | 'wait' | 'soon'; session?: true }
 
-/** Une carte prête à dessiner : la ligne, enrichie de sa tâche dans la roadmap (maquette A2, version 3). */
+/** L'encre d'un morceau du pied : les couleurs du panneau, sans fond. */
+export type FootInk = 'text' | 'text2' | 'late' | 'soon' | 'wait' | 'live'
+/** Un morceau de texte du pied, dans son encre ; `strong` : poids doux (le nom de l'axe). */
+export type FootRun = { text: string; ink: FootInk; strong?: true }
+
+/**
+ * Une carte prête à dessiner (maquette R2, version 4) : le titre, la description (`change`) et le pied, une liste de
+ * morceaux (« Axe sessions », « livrée 0.232.2 », « en 2 j »…) que le dessin sépare par « · ». `session` : le bouton ouvre la session.
+ */
 export type WrittenCard = {
   id: string
   kind: WrittenKind
   title: string
   change: string
-  axis?: { name: string; index: number }
-  due?: WrittenDue
-  who?: WrittenWho
-  /** « sous #P », sinon « après #N » : sa place dans la chaîne. */
-  chain?: string
+  foot: FootRun[][]
+  session?: true
 }
 
 /** Ce que la mémoire de l'avant garde d'une tâche (#371) : les trois champs que la carte montre en « avant → après ». */
@@ -115,20 +120,38 @@ function isoOfDdmm(text: string, today: string): string | undefined {
   return daysBetween(today, at(year)) < -180 ? at(year + 1) : at(year)
 }
 
-/** L'échéance relative d'une pastille : « 2 j de retard » rouge, « aujourd'hui » et « demain » orange, sinon neutre. */
+/** L'échéance relative d'un morceau du pied : « 2 j de retard » rouge, « aujourd'hui », « demain » et « après-demain » orange, sinon neutre. */
 function dueOf(due: string, today: string): WrittenDue {
   const label = dueLabel(due, today)
+  if (!label.late && daysBetween(today, due) === 2) return { text: 'après-demain', tone: 'soon' }
   return { text: label.text, tone: label.late ? 'late' : label.text === "aujourd'hui" || label.text === 'demain' ? 'soon' : 'none' }
 }
 
-/** Sa place dans la chaîne : le parent d'abord, sinon la première prérequise (`après:`) encore ouverte. */
-function chainOf(task: Task, tasks: readonly Task[]): string | undefined {
-  if (task.parent) return `sous #${task.parent}`
+/** Le numéro de la première prérequise (`après:`) encore ouverte. */
+function openPrereq(task: Task, tasks: readonly Task[]): string | undefined {
   for (const raw of (task.apres ?? '').split(',')) {
     const n = /^\s*#?(\d+)\s*$/.exec(raw)?.[1]
-    if (n && tasks.some(t => t.id === n && !t.done)) return `après #${n}`
+    if (n && tasks.some(t => t.id === n && !t.done)) return n
   }
   return undefined
+}
+
+const DUE_INK: Record<WrittenDue['tone'], FootInk> = { late: 'late', soon: 'soon', none: 'text2' }
+const WHO_INK: Record<WrittenWho['tone'], FootInk> = { live: 'live', wait: 'wait', soon: 'soon' }
+
+/** Le « fait » d'un bilan : la version entre parenthèses à la fin (`0.232.2`) lue puis retirée, et une phrase terminée par un point. */
+export function doneFait(fait: string): { text: string; version?: string } {
+  const m = /\s*\(([^()]*\b\d+\.\d+\.\d+\b[^()]*)\)\s*$/.exec(fait)
+  if (!m) return { text: fait }
+  const head = fait.slice(0, m.index).trimEnd()
+  return { text: /[.!?…]$/.test(head) ? head : `${head}.`, version: /\d+\.\d+\.\d+/.exec(m[1]!)![0] }
+}
+
+/** Les jours de `ouvert:` à `fait:` d'une tâche faite, dits : « en 2 j », « le jour même ». */
+function tookDays(task: Task): string | undefined {
+  if (!task.ouvert || !task.fait) return undefined
+  const n = daysBetween(task.ouvert.slice(0, 10), task.fait.slice(0, 10))
+  return Number.isNaN(n) || n < 0 ? undefined : n === 0 ? 'le jour même' : `en ${n} j`
 }
 
 /**
@@ -191,40 +214,50 @@ export type WrittenCardsOptions = {
   me?: readonly string[]
   /** L'avant de chaque tâche mise à jour (mémoire `written-before`). */
   before?: ReadonlyMap<string, WrittenBefore>
+  /** Les bilans de la roadmap (`ROADMAP-bilans.csv`, déjà en mémoire du panneau) : la description et la version d'une faite. */
+  bilans?: ReadonlyMap<string, Bilan>
 }
 
 /**
- * Chaque ligne enrichie de sa tâche (trouvée par `id:`) : nom court, axe (son rang parmi ceux de la roadmap), échéance
- * relative, « qui » et chaîne. Une tâche introuvable se dessine quand même, avec le libellé de la ligne et sans axe.
+ * Chaque ligne enrichie de sa tâche (trouvée par `id:`) : nom court, description et pied (maquette R2). Le pied, une liste
+ * de morceaux : « Axe <nom> » d'abord, puis selon la sorte : nouvelle → échéance, « prioritaire », « attend #N » ou « n'attend
+ * rien » ; mise à jour → échéance, qui, « attend #N » ; faite → « livrée <version> », « en N j » ; annulée → l'axe seul.
+ * Une tâche introuvable se dessine quand même, avec le libellé de la ligne et sans axe.
  */
 export function writtenCards(lines: readonly WrittenLine[], tasks: readonly Task[], o: WrittenCardsOptions): WrittenCard[] {
-  const axes = roadmapAxes(tasks)
   return lines.map(line => {
     const task = line.id === '?' ? undefined : tasks.find(t => t.id === line.id)
     const title = task ? o.short(task) : line.label || `#${line.id}`
     const open = line.kind === 'new' || line.kind === 'upd'
-    const dueIso = task ? (open && !task.done ? task.due : undefined) : line.due ? isoOfDdmm(line.due, o.today) : undefined
+    const live = task !== undefined && open && !task.done
+    const dueIso = task ? (live ? task.due : undefined) : line.due ? isoOfDdmm(line.due, o.today) : undefined
     const due = dueIso ? dueOf(dueIso, o.today) : undefined
-    const who = task && open && !task.done ? (o.who?.(task) ?? (isThirdParty(task.attend, o.me ?? []) ? { text: `attend ${shortAttend(task.attend as string)}`, tone: 'wait' as const } : undefined)) : undefined
-    const chain = task ? chainOf(task, tasks) : line.parent ? `sous #${line.parent}` : undefined
-    const axisIndex = task && task.axis !== '' ? axes.indexOf(task.axis) : -1
+    const who = live ? (o.who?.(task) ?? (isThirdParty(task.attend, o.me ?? []) ? { text: `attend ${shortAttend(task.attend as string)}`, tone: 'wait' as const } : undefined)) : undefined
     const known = task ? o.before?.get(line.id) : undefined
+    const bilan = line.kind === 'done' && task ? o.bilans?.get(line.id) : undefined
+    const fait = bilan && bilan.fait.trim() !== '' ? doneFait(bilan.fait.trim()) : undefined
     const change =
       line.kind === 'new'
         ? [line.label !== '' && line.label !== title ? line.label : '', dueIso ? '' : 'sans échéance'].filter(x => x !== '').join(' · ')
         : line.kind === 'upd' && task && known
           ? beforeAfter(line.change, known, task)
-          : line.change
-    return {
-      id: line.id,
-      kind: line.kind,
-      title,
-      change,
-      ...(task && axisIndex >= 0 ? { axis: { name: task.axis, index: axisIndex } } : {}),
-      ...(due ? { due } : {}),
-      ...(who ? { who } : {}),
-      ...(chain ? { chain } : {}),
+          : (fait?.text ?? line.change)
+    const foot: FootRun[][] = []
+    if (task && task.axis !== '') foot.push([{ text: 'Axe ', ink: 'text2' }, { text: task.axis, ink: 'text', strong: true }])
+    if (open && due) foot.push([{ text: due.text, ink: DUE_INK[due.tone] }])
+    if (line.kind === 'new' && live && isPriority(task)) foot.push([{ text: 'prioritaire', ink: 'late' }])
+    if (live && line.kind === 'upd' && who) foot.push([{ text: who.text, ink: WHO_INK[who.tone] }])
+    if (live) {
+      const n = openPrereq(task, tasks)
+      if (n) foot.push([{ text: 'attend ', ink: 'text2' }, { text: `#${n}`, ink: 'text' }])
+      else if (line.kind === 'new' && task.sansApres) foot.push([{ text: "n'attend rien", ink: 'text2' }])
     }
+    if (line.kind === 'done' && task) {
+      foot.push(fait?.version ? [{ text: 'livrée ', ink: 'text2' }, { text: fait.version, ink: 'text' }] : [{ text: 'livrée', ink: 'text2' }])
+      const took = tookDays(task)
+      if (took) foot.push([{ text: took, ink: 'text2' }])
+    }
+    return { id: line.id, kind: line.kind, title, change, foot, ...(who?.session ? { session: true as const } : {}) }
   })
 }
 
@@ -264,6 +297,19 @@ export function keepBefore(stored: unknown, fresh: readonly (readonly [string, W
   return out.slice(-BEFORE_MAX)
 }
 
+/** Les sessions « Tester #N · X.Y.Z » ouvertes (archivées exclues), par `#N` : leur version, leur session et leur titre. */
+export function testSessions(rows: readonly unknown[]): Map<string, { version: string; sessionId: string; title: string }> {
+  const out = new Map<string, { version: string; sessionId: string; title: string }>()
+  for (const raw of rows) {
+    if (typeof raw !== 'object' || raw === null) continue
+    const r = raw as { title?: unknown; isArchived?: unknown; sessionId?: unknown }
+    if (r.isArchived === true || typeof r.title !== 'string' || typeof r.sessionId !== 'string') continue
+    const t = testTitle(r.title)
+    if (t) out.set(t.id, { version: t.version, sessionId: r.sessionId, title: r.title })
+  }
+  return out
+}
+
 /** Les `#N` en test et leur version, d'après les titres « Tester #N · X.Y.Z » des sessions listées (archivées exclues). */
 export function testVersions(rows: readonly unknown[]): Map<string, string> {
   const out = new Map<string, string>()
@@ -296,55 +342,38 @@ export function clampDescription(text: string, max = DESCRIPTION_MAX): string {
   return `${(at > 0 ? cut.slice(0, at) : cut.slice(0, max)).trimEnd().replace(/[,;:.\s]+$/, '')}…`
 }
 
-/** Le ton d'une échéance et de « qui » : l'encre du texte, sans fond (la carte native n'a pas de pastille). */
-const dueInk = (p: Palette, tone: WrittenDue['tone']): string => (tone === 'late' ? p.lateOn : tone === 'soon' ? p.blockOn : p.text2)
-const whoInk = (p: Palette, tone: WrittenWho['tone']): string => (tone === 'live' ? p.liveOn : tone === 'wait' ? p.waitOn : p.blockOn)
-
-/** Le carré de l'axe, 10 × 10, à sa couleur. */
-const axisSquare = (hex: string): string => `<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 10 10"><rect width="10" height="10" rx="${RADIUS.square}" fill="${hex}"/></svg>`
+/** L'encre d'un morceau du pied. */
+const footInk = (p: Palette, ink: FootInk): string => ({ text: p.text, text2: p.text2, late: p.lateOn, soon: p.blockOn, wait: p.waitOn, live: p.liveOn })[ink]
 
 /** Ce que le hook donne au dessin en plus des cartes : l'ouverture de la fiche d'une tâche (le bouton « Ouvrir la fiche »). */
-export type WrittenDrawOptions = { open?: (id: string) => void }
+export type WrittenDrawOptions = { open?: (id: string) => void; openSession?: (id: string) => void }
 
 /**
  * Le message redessiné : le texte en Markdown, les lignes du compte rendu en une carte par tâche, à leur place
  * (maquette n1b, la forme de la carte « New session » de l'app) : le bandeau qui dit la sorte, le titre « #N · Nom », la
- * description, puis le pied (l'axe, l'échéance, qui, la chaîne ; à droite « Ouvrir la fiche »). `cards` enrichit les lignes
- * d'une pile ; `el` est ce que rend `$.ui.resolve(e)` ; `o.open(id)` ouvre la fiche de la tâche.
+ * description, puis le pied en un seul `Text` coupé d'une ellipse (maquette R2 : « Axe sessions · livrée 0.232.2 · en 2 j » ;
+ * à droite « Ouvrir la fiche », ou « Ouvrir la session » quand `session`). `cards` enrichit les lignes d'une pile ;
+ * `el` est ce que rend `$.ui.resolve(e)` ; `o.open(id)` ouvre la fiche, `o.openSession(id)` la session qui tient la tâche (au clic).
  */
 export function drawWrittenMessage(el: ReturnType<EngineInterface['ui']['resolve']>, parts: readonly MessagePart[], cards: (lines: WrittenLine[]) => WrittenCard[], palette: Palette, o: WrittenDrawOptions = {}): RenderElement {
   const { Box, Text, Markdown, Button } = el
-  const Svg = 'Svg' in el ? el.Svg : undefined
   const seen = new Map<string, number>()
-  const dot = (key: string) => <Text key={key} color={palette.text3}>·</Text>
   const card = (c: WrittenCard) => {
     const n = seen.get(c.id) ?? 0
     seen.set(c.id, n + 1)
     const suffix = n === 0 ? '' : `:${n}`
     const cancelled = c.kind === 'cancel'
-    const closed = c.kind === 'done' || cancelled
-    const accent = c.axis ? axisColor(palette, c.axis.index) : undefined
-    const axisItem =
-      c.axis && accent !== undefined ? (
-        <Box key="axis" flexDirection="row" alignItems="center" gap={SPACE.tight}>
-          {Svg && <Svg key="sq" source={axisSquare(accent)} alt={`Axe ${c.axis.name}`} width={10} height={10} />}
-          <Text color={palette.text2}>{c.axis.name}</Text>
-        </Box>
-      ) : null
-    const items = [
-      axisItem,
-      !closed && c.due ? <Text key="due" color={dueInk(palette, c.due.tone)}>{c.due.text}</Text> : null,
-      !closed && c.who ? <Text key="who" color={whoInk(palette, c.who.tone)}>{c.who.text}</Text> : null,
-      !closed && c.chain ? (
-        <Text key="chain" color={palette.text2}>
-          {c.chain.split(/(#\d+)/).filter(x => x !== '').map((x, i) => (/^#\d+$/.test(x) ? <Text key={i} color={palette.text}>{x}</Text> : x)) as never}
-        </Text>
-      ) : null,
-    ].filter(x => x !== null)
-    const meta = items.flatMap((x, i) => (i === 0 ? [x] : [dot(`dot${i}`), x]))
+    // Le pied : un seul Text coupé d'une ellipse, un Text imbriqué par morceau, « · » en text3 entre eux.
+    const foot = c.foot.flatMap((part, i) => {
+      const runs = part.map((r, j) => (
+        <Text key={`r${i}-${j}`} color={footInk(palette, r.ink)} {...(r.strong ? { weight: 'medium' as const } : {})}>{r.text}</Text>
+      ))
+      return i === 0 ? runs : [<Text key={`dot${i}`} color={palette.text3}>{' · '}</Text>, ...runs]
+    })
     return (
       <Box key={`written:${c.id}${suffix}`} flexDirection="column" borderStyle="round" borderColor={palette.border} paddingX={0} paddingY={0}>
-        <Box key={`written-band:${c.id}${suffix}`} backgroundColor={palette.hover} paddingX="lg" paddingY="sm">
+        {/* Le filet du bandeau est de la couleur de son fond : ses coins s'arrondissent dans ceux de la carte. */}
+        <Box key={`written-band:${c.id}${suffix}`} backgroundColor={palette.hover} borderStyle="round" borderColor={palette.hover} paddingX="lg" paddingY="sm">
           <Text size="footnote" color={palette.text2}>{KIND_WORD[c.kind]}</Text>
         </Box>
         <Box key="written-body" flexDirection="column" gap={SPACE.tight} paddingX="lg" paddingTop="md" paddingBottom="xs">
@@ -352,10 +381,19 @@ export function drawWrittenMessage(el: ReturnType<EngineInterface['ui']['resolve
           {c.change !== '' && <Text size="body" color={palette.text2} wrap="wrap">{clampDescription(c.change)}</Text>}
         </Box>
         <Box key="written-foot" flexDirection="row" alignItems="center" justifyContent="space-between" gap={SPACE.block} paddingLeft="lg" paddingRight="md" paddingTop="xs" paddingBottom="md">
-          <Box key={meta.length > 0 ? `written-meta:${c.id}${suffix}` : 'written-space'} flexDirection="row" alignItems="center" gap={SPACE.tight} flexGrow={1} flexShrink={1} minWidth={0} flexWrap="wrap">
-            {meta}
+          <Box key="written-foot-left" flexDirection="row" alignItems="center" flexGrow={1} flexShrink={1} minWidth={0}>
+            {foot.length > 0 && (
+              <Text key={`written-meta:${c.id}${suffix}`} size="body" color={palette.text2} wrap="truncate-end">
+                {foot as never}
+              </Text>
+            )}
           </Box>
-          <Button key={n === 0 ? `written-open:${c.id}` : `written-open:${c.id}${suffix}`} variant="primary" label="Ouvrir la fiche" onPress={() => o.open?.(c.id)} />
+          <Button
+            key={n === 0 ? `written-open:${c.id}` : `written-open:${c.id}${suffix}`}
+            variant="primary"
+            label={c.session ? 'Ouvrir la session' : 'Ouvrir la fiche'}
+            onPress={() => (c.session ? o.openSession?.(c.id) : o.open?.(c.id))}
+          />
         </Box>
       </Box>
     )
