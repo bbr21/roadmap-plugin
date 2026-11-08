@@ -5,9 +5,9 @@
 
 import type { EngineInterface, RenderElement } from 'claude-code'
 
-import { axisColor, axisPillIcon, pillIcon } from './icons'
-import { roadmapAxes, type Task } from './parse'
-import { SIZE, SPACE, TEXT, type Palette } from './tokens'
+import { axisColor } from './icons'
+import { daysBetween, dueLabel, isPriority, isThirdParty, roadmapAxes, shortAttend, testTitle, type Task } from './parse'
+import { RADIUS, SPACE, type Palette } from './tokens'
 
 /** La sorte d'une ligne : une tâche neuve, mise à jour, faite ou annulée. */
 export type WrittenKind = 'new' | 'upd' | 'done' | 'cancel'
@@ -80,8 +80,25 @@ export function splitWritten(text: string): MessagePart[] {
   return parts
 }
 
-/** Une carte prête à dessiner : la ligne, enrichie de sa tâche dans la roadmap. */
-export type WrittenCard = { id: string; kind: WrittenKind; title: string; change: string; axis?: { name: string; index: number }; due?: string }
+/** La couleur d'une pastille d'échéance ou de « qui » : la même famille que les pastilles du panneau. */
+export type WrittenDue = { text: string; tone: 'late' | 'soon' | 'none' }
+export type WrittenWho = { text: string; tone: 'live' | 'wait' | 'soon' }
+
+/** Une carte prête à dessiner : la ligne, enrichie de sa tâche dans la roadmap (maquette A2, version 3). */
+export type WrittenCard = {
+  id: string
+  kind: WrittenKind
+  title: string
+  change: string
+  axis?: { name: string; index: number }
+  due?: WrittenDue
+  who?: WrittenWho
+  /** « sous #P », sinon « après #N » : sa place dans la chaîne. */
+  chain?: string
+}
+
+/** Ce que la mémoire de l'avant garde d'une tâche (#371) : les trois champs que la carte montre en « avant → après ». */
+export type WrittenBefore = Pick<Task, 'due' | 'attend' | 'prio'>
 
 /** « 2026-11-12 » → « 12/11 » : les cartes disent les dates en jour/mois, comme les lignes du compte rendu. */
 const ddmm = (iso: string): string => {
@@ -89,22 +106,115 @@ const ddmm = (iso: string): string => {
   return m && d ? `${d}/${m}` : iso
 }
 
+/** La date `JJ/MM` d'une nouvelle introuvable, ramenée à l'année qui la rend proche d'aujourd'hui. */
+function isoOfDdmm(text: string, today: string): string | undefined {
+  const m = /^(\d{2})\/(\d{2})$/.exec(text)
+  if (!m) return undefined
+  const year = Number(today.slice(0, 4))
+  const at = (y: number) => `${y}-${m[2]}-${m[1]}`
+  return daysBetween(today, at(year)) < -180 ? at(year + 1) : at(year)
+}
+
+/** L'échéance relative d'une pastille : « 2 j de retard » rouge, « aujourd'hui » et « demain » orange, sinon neutre. */
+function dueOf(due: string, today: string): WrittenDue {
+  const label = dueLabel(due, today)
+  return { text: label.text, tone: label.late ? 'late' : label.text === "aujourd'hui" || label.text === 'demain' ? 'soon' : 'none' }
+}
+
+/** Sa place dans la chaîne : le parent d'abord, sinon la première prérequise (`après:`) encore ouverte. */
+function chainOf(task: Task, tasks: readonly Task[]): string | undefined {
+  if (task.parent) return `sous #${task.parent}`
+  for (const raw of (task.apres ?? '').split(',')) {
+    const n = /^\s*#?(\d+)\s*$/.exec(raw)?.[1]
+    if (n && tasks.some(t => t.id === n && !t.done)) return `après #${n}`
+  }
+  return undefined
+}
+
 /**
- * Chaque ligne enrichie de sa tâche (trouvée par `id:`) : nom court, axe (son rang parmi ceux de la roadmap) et
- * échéance. Une tâche introuvable se dessine quand même, avec le libellé de la ligne et sans axe.
+ * « ce qui a changé » avec l'avant gardé : `redatée au …` / `due retiré` deviennent `échéance 12/11 → 13/11` à leur place,
+ * les clés `prio` et `attend` de `complétée : …` (ou `… retiré`) deviennent `priorité non → oui` et `attend X → Y` en fin de
+ * ligne. Un morceau que la ligne ne dit pas, ou dont l'avant égale l'état d'aujourd'hui, garde son texte.
  */
-export function writtenCards(lines: readonly WrittenLine[], tasks: readonly Task[], short: (t: Task) => string): WrittenCard[] {
+export function beforeAfter(change: string, before: WrittenBefore, now: Task): string {
+  const dueB = before.due
+  const dueN = now.ownDue ?? now.due
+  const dueDiffers = dueB !== dueN
+  const prioB = isPriority(before) ? 'oui' : 'non'
+  const prioN = isPriority(now) ? 'oui' : 'non'
+  const attendB = before.attend === undefined ? 'aucun' : shortAttend(before.attend)
+  const attendN = now.attend === undefined ? 'aucun' : shortAttend(now.attend)
+  const swap = { prio: prioB !== prioN, attend: attendB !== attendN }
+  const out: string[] = []
+  const tail: string[] = []
+  const pushed = new Set<string>()
+  const add = (key: 'prio' | 'attend') => {
+    if (pushed.has(key)) return
+    pushed.add(key)
+    tail.push(key === 'prio' ? `priorité ${prioB} → ${prioN}` : `attend ${attendB} → ${attendN}`)
+  }
+  for (const part of change.split(' · ')) {
+    if (dueDiffers && (/^redatée au \d{2}\/\d{2}$/.test(part) || part === 'due retiré')) {
+      out.push(`échéance ${dueB ? ddmm(dueB) : 'aucune'} → ${dueN ? ddmm(dueN) : 'aucune'}`)
+      continue
+    }
+    const retired = /^(prio|attend) retiré$/.exec(part)?.[1] as 'prio' | 'attend' | undefined
+    if (retired && swap[retired]) {
+      add(retired)
+      continue
+    }
+    const keys = /^complétée : (.+)$/.exec(part)?.[1]
+    if (keys) {
+      const kept = keys.split(', ').filter(k => {
+        if ((k === 'prio' || k === 'attend') && swap[k]) {
+          add(k)
+          return false
+        }
+        return true
+      })
+      if (kept.length > 0) out.push(`complétée : ${kept.join(', ')}`)
+      continue
+    }
+    out.push(part)
+  }
+  return [...out, ...tail].join(' · ')
+}
+
+export type WrittenCardsOptions = {
+  /** Le nom court d'une tâche. */
+  short: (t: Task) => string
+  /** Aujourd'hui, `AAAA-MM-JJ` : l'échéance se dit en jours. */
+  today: string
+  /** Qui tient la tâche (une session, un test, la personne) : un état déjà en mémoire du module, jamais un nouvel appel. */
+  who?: (t: Task) => WrittenWho | undefined
+  /** Mes noms : l'attente d'un autre dit « attend <Nom> ». */
+  me?: readonly string[]
+  /** L'avant de chaque tâche mise à jour (mémoire `written-before`). */
+  before?: ReadonlyMap<string, WrittenBefore>
+}
+
+/**
+ * Chaque ligne enrichie de sa tâche (trouvée par `id:`) : nom court, axe (son rang parmi ceux de la roadmap), échéance
+ * relative, « qui » et chaîne. Une tâche introuvable se dessine quand même, avec le libellé de la ligne et sans axe.
+ */
+export function writtenCards(lines: readonly WrittenLine[], tasks: readonly Task[], o: WrittenCardsOptions): WrittenCard[] {
   const axes = roadmapAxes(tasks)
   return lines.map(line => {
     const task = line.id === '?' ? undefined : tasks.find(t => t.id === line.id)
-    const title = task ? short(task) : line.label || `#${line.id}`
+    const title = task ? o.short(task) : line.label || `#${line.id}`
     const open = line.kind === 'new' || line.kind === 'upd'
-    const due = task ? (open && !task.done && task.due ? ddmm(task.due) : undefined) : line.due
+    const dueIso = task ? (open && !task.done ? task.due : undefined) : line.due ? isoOfDdmm(line.due, o.today) : undefined
+    const due = dueIso ? dueOf(dueIso, o.today) : undefined
+    const who = task && open && !task.done ? (o.who?.(task) ?? (isThirdParty(task.attend, o.me ?? []) ? { text: `attend ${shortAttend(task.attend as string)}`, tone: 'wait' as const } : undefined)) : undefined
+    const chain = task ? chainOf(task, tasks) : line.parent ? `sous #${line.parent}` : undefined
     const axisIndex = task && task.axis !== '' ? axes.indexOf(task.axis) : -1
+    const known = task ? o.before?.get(line.id) : undefined
     const change =
       line.kind === 'new'
-        ? [line.parent ? `sous #${line.parent}` : '', line.label !== '' && line.label !== title ? line.label : '', due ? '' : 'sans échéance'].filter(x => x !== '').join(' · ')
-        : line.change
+        ? [line.label !== '' && line.label !== title ? line.label : '', dueIso ? '' : 'sans échéance'].filter(x => x !== '').join(' · ')
+        : line.kind === 'upd' && task && known
+          ? beforeAfter(line.change, known, task)
+          : line.change
     return {
       id: line.id,
       kind: line.kind,
@@ -112,99 +222,154 @@ export function writtenCards(lines: readonly WrittenLine[], tasks: readonly Task
       change,
       ...(task && axisIndex >= 0 ? { axis: { name: task.axis, index: axisIndex } } : {}),
       ...(due ? { due } : {}),
+      ...(who ? { who } : {}),
+      ...(chain ? { chain } : {}),
     }
   })
 }
 
-const KIND_WORD: Record<WrittenKind, string> = { new: '+ Nouvelle', upd: 'Mise à jour', done: 'Done', cancel: 'Annulée' }
+// ── La mémoire de l'avant et les sessions de test (#371) ─────────────────────
 
-/** Le fond et l'encre de la pastille d'une sorte, puis la couleur du numéro. */
-function kindTones(palette: Palette, kind: WrittenKind): { bg: string; fg: string; num: string } {
-  switch (kind) {
-    case 'new':
-      return { bg: palette.doneTint, fg: palette.ok, num: palette.ok }
-    case 'upd':
-      return { bg: palette.liveTint, fg: palette.liveOn, num: palette.liveOn }
-    case 'done':
-      return { bg: palette.finishedTint, fg: palette.finishedOn, num: palette.finishedOn }
-    case 'cancel':
-      return { bg: palette.sel, fg: palette.text2, num: palette.text3 }
-  }
+/** La clé du store qui garde l'avant des tâches mises à jour : `[id, avant][]`, les plus récentes en dernier. */
+export const BEFORE_KEY = 'written-before'
+const BEFORE_MAX = 200
+
+/** Une liste `[id, avant][]` lue dans le store, sans ce qui n'en a pas la forme. */
+function beforeEntries(stored: unknown): [string, WrittenBefore][] {
+  if (!Array.isArray(stored)) return []
+  return stored.flatMap(x => {
+    if (!Array.isArray(x) || typeof x[0] !== 'string' || typeof x[1] !== 'object' || x[1] === null) return []
+    const b = x[1] as Record<string, unknown>
+    return [[x[0], { ...(typeof b.due === 'string' ? { due: b.due } : {}), ...(typeof b.attend === 'string' ? { attend: b.attend } : {}), ...(b.prio === 'oui' || b.prio === '1' || b.prio === '2' || b.prio === '3' ? { prio: b.prio } : {}) }] as [string, WrittenBefore]]
+  })
+}
+
+/** La mémoire de l'avant, lue du store : `id` → ce que la tâche était avant l'écriture. */
+export function beforeMap(stored: unknown): Map<string, WrittenBefore> {
+  return new Map(beforeEntries(stored))
 }
 
 /**
- * Le message redessiné : le texte en Markdown, les lignes du compte rendu en une pile de cartes à leur place
- * (maquette A). `cards` enrichit les lignes d'une pile ; `el` est ce que rend `$.ui.resolve(e)`.
+ * La mémoire de l'avant après un tour : l'avant de chaque tâche mise à jour (échéance, attente, priorité seulement),
+ * les plus récentes en dernier, 200 au plus. Une liste en liste de paires, non un objet : les clés « 375 » d'un objet
+ * se rangent par numéro, et l'ordre d'écriture se perdrait.
  */
-export function drawWrittenMessage(el: ReturnType<EngineInterface['ui']['resolve']>, parts: readonly MessagePart[], cards: (lines: WrittenLine[]) => WrittenCard[], palette: Palette): RenderElement {
-  const { Box, Text, Markdown } = el
+export function keepBefore(stored: unknown, fresh: readonly (readonly [string, WrittenBefore])[]): [string, WrittenBefore][] {
+  const out = beforeEntries(stored)
+  for (const [id, b] of fresh) {
+    const at = out.findIndex(([k]) => k === id)
+    if (at >= 0) out.splice(at, 1)
+    out.push([id, { ...(b.due !== undefined ? { due: b.due } : {}), ...(b.attend !== undefined ? { attend: b.attend } : {}), ...(b.prio !== undefined ? { prio: b.prio } : {}) }])
+  }
+  return out.slice(-BEFORE_MAX)
+}
+
+/** Les `#N` en test et leur version, d'après les titres « Tester #N · X.Y.Z » des sessions listées (archivées exclues). */
+export function testVersions(rows: readonly unknown[]): Map<string, string> {
+  const out = new Map<string, string>()
+  for (const raw of rows) {
+    if (typeof raw !== 'object' || raw === null) continue
+    const r = raw as { title?: unknown; isArchived?: unknown }
+    if (r.isArchived === true || typeof r.title !== 'string') continue
+    const t = testTitle(r.title)
+    if (t) out.set(t.id, t.version)
+  }
+  return out
+}
+
+// ── Le dessin (maquette n1b : la carte native, version 3) ────────────────────
+
+/** Le mot du bandeau : la sorte de la ligne, dite en mots. */
+export const KIND_WORD: Record<WrittenKind, string> = { new: 'Nouvelle tâche', upd: 'Tâche mise à jour', done: 'Tâche faite', cancel: 'Tâche annulée' }
+
+/**
+ * La longueur au-delà de laquelle la description est coupée : deux lignes de `body` dans la carte (~65 signes par ligne).
+ * Le kit n'a pas de nombre de lignes maximal : le texte se coupe ici, au mot, par « … ».
+ */
+export const DESCRIPTION_MAX = 130
+
+/** La description tenue en deux lignes : coupée au dernier mot entier avant `max`, puis « … ». */
+export function clampDescription(text: string, max = DESCRIPTION_MAX): string {
+  if (text.length <= max) return text
+  const cut = text.slice(0, max + 1)
+  const at = cut.lastIndexOf(' ')
+  return `${(at > 0 ? cut.slice(0, at) : cut.slice(0, max)).trimEnd().replace(/[,;:.\s]+$/, '')}…`
+}
+
+/** Le ton d'une échéance et de « qui » : l'encre du texte, sans fond (la carte native n'a pas de pastille). */
+const dueInk = (p: Palette, tone: WrittenDue['tone']): string => (tone === 'late' ? p.lateOn : tone === 'soon' ? p.blockOn : p.text2)
+const whoInk = (p: Palette, tone: WrittenWho['tone']): string => (tone === 'live' ? p.liveOn : tone === 'wait' ? p.waitOn : p.blockOn)
+
+/** Le carré de l'axe, 10 × 10, à sa couleur. */
+const axisSquare = (hex: string): string => `<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 10 10"><rect width="10" height="10" rx="${RADIUS.square}" fill="${hex}"/></svg>`
+
+/** Ce que le hook donne au dessin en plus des cartes : l'ouverture de la fiche d'une tâche (le bouton « Ouvrir la fiche »). */
+export type WrittenDrawOptions = { open?: (id: string) => void }
+
+/**
+ * Le message redessiné : le texte en Markdown, les lignes du compte rendu en une carte par tâche, à leur place
+ * (maquette n1b, la forme de la carte « New session » de l'app) : le bandeau qui dit la sorte, le titre « #N · Nom », la
+ * description, puis le pied (l'axe, l'échéance, qui, la chaîne ; à droite « Ouvrir la fiche »). `cards` enrichit les lignes
+ * d'une pile ; `el` est ce que rend `$.ui.resolve(e)` ; `o.open(id)` ouvre la fiche de la tâche.
+ */
+export function drawWrittenMessage(el: ReturnType<EngineInterface['ui']['resolve']>, parts: readonly MessagePart[], cards: (lines: WrittenLine[]) => WrittenCard[], palette: Palette, o: WrittenDrawOptions = {}): RenderElement {
+  const { Box, Text, Markdown, Button } = el
   const Svg = 'Svg' in el ? el.Svg : undefined
   const seen = new Map<string, number>()
-  const pill = (text: string, bg: string, fg: string, weight?: 500 | 600) => {
-    if (!Svg) return <Text key={text} size="caption" color={fg}>{` ${text} `}</Text>
-    const p = pillIcon({ text, bg, fg, height: SIZE.pill.row, ...(weight ? { weight } : {}) })
-    return <Svg key={text} source={p.source} alt={text} width={p.width} height={p.height} />
-  }
+  const dot = (key: string) => <Text key={key} color={palette.text3}>·</Text>
   const card = (c: WrittenCard) => {
-    const tones = kindTones(palette, c.kind)
     const n = seen.get(c.id) ?? 0
     seen.set(c.id, n + 1)
+    const suffix = n === 0 ? '' : `:${n}`
     const cancelled = c.kind === 'cancel'
+    const closed = c.kind === 'done' || cancelled
     const accent = c.axis ? axisColor(palette, c.axis.index) : undefined
-    // La pastille d'axe de la maquette A : le carré de l'axe sur un fond de bouton, le nom en texte secondaire.
-    const axisPill =
+    const axisItem =
       c.axis && accent !== undefined ? (
-        Svg ? (
-          (() => {
-            const a = axisPillIcon({ name: c.axis.name, hex: accent, bg: palette.btn, fg: palette.text2 })
-            return <Svg key="axis" source={a.source} alt={c.axis.name} width={a.width} height={a.height} />
-          })()
-        ) : (
-          <Text key="axis" size="caption" color={accent}>{c.axis.name}</Text>
-        )
-      ) : null
-    const duePill = c.due ? pill(`due ${c.due}`, palette.sel, palette.text2, TEXT.weight.soft) : null
-    return (
-      <Box key={n === 0 ? `written:${c.id}` : `written:${c.id}:${n}`} flexDirection="row" alignItems="flex-start" gap={SPACE.row} borderStyle="round" borderColor={palette.border} paddingX="sm" paddingY="xs">
-        <Box minWidth={6} flexShrink={0} alignItems="flex-end">
-          <Text size="title" weight="semibold" color={tones.num}>{`#${c.id}`}</Text>
+        <Box key="axis" flexDirection="row" alignItems="center" gap={SPACE.tight}>
+          {Svg && <Svg key="sq" source={axisSquare(accent)} alt={`Axe ${c.axis.name}`} width={10} height={10} />}
+          <Text color={palette.text2}>{c.axis.name}</Text>
         </Box>
-        <Box flexDirection="column" flexGrow={1} flexShrink={1} minWidth={0} gap={SPACE.tight}>
-          <Box flexDirection="row" alignItems="center" gap={SPACE.block}>
-            <Box key="written-title" flexGrow={1} flexShrink={1} minWidth={0}>
-              <Text size="heading" weight="semibold" wrap="truncate-end" {...(cancelled ? { strikethrough: true, color: palette.text3 } : {})}>{c.title}</Text>
-            </Box>
-            {pill(KIND_WORD[c.kind], tones.bg, tones.fg)}
+      ) : null
+    const items = [
+      axisItem,
+      !closed && c.due ? <Text key="due" color={dueInk(palette, c.due.tone)}>{c.due.text}</Text> : null,
+      !closed && c.who ? <Text key="who" color={whoInk(palette, c.who.tone)}>{c.who.text}</Text> : null,
+      !closed && c.chain ? (
+        <Text key="chain" color={palette.text2}>
+          {c.chain.split(/(#\d+)/).filter(x => x !== '').map((x, i) => (/^#\d+$/.test(x) ? <Text key={i} color={palette.text}>{x}</Text> : x)) as never}
+        </Text>
+      ) : null,
+    ].filter(x => x !== null)
+    const meta = items.flatMap((x, i) => (i === 0 ? [x] : [dot(`dot${i}`), x]))
+    return (
+      <Box key={`written:${c.id}${suffix}`} flexDirection="column" borderStyle="round" borderColor={palette.border} paddingX={0} paddingY={0}>
+        <Box key={`written-band:${c.id}${suffix}`} backgroundColor={palette.hover} paddingX="lg" paddingY="sm">
+          <Text size="footnote" color={palette.text2}>{KIND_WORD[c.kind]}</Text>
+        </Box>
+        <Box key="written-body" flexDirection="column" gap={SPACE.tight} paddingX="lg" paddingTop="md" paddingBottom="xs">
+          <Text size="body" weight="medium" wrap="truncate-end" {...(cancelled ? { strikethrough: true, color: palette.text3 } : { color: palette.text })}>{`#${c.id} · ${c.title}`}</Text>
+          {c.change !== '' && <Text size="body" color={palette.text2} wrap="wrap">{clampDescription(c.change)}</Text>}
+        </Box>
+        <Box key="written-foot" flexDirection="row" alignItems="center" justifyContent="space-between" gap={SPACE.block} paddingLeft="lg" paddingRight="md" paddingTop="xs" paddingBottom="md">
+          <Box key={meta.length > 0 ? `written-meta:${c.id}${suffix}` : 'written-space'} flexDirection="row" alignItems="center" gap={SPACE.tight} flexGrow={1} flexShrink={1} minWidth={0} flexWrap="wrap">
+            {meta}
           </Box>
-          {c.change !== '' && <Text size="footnote" color={palette.text2} wrap="truncate-end">{inkRefs(c.change, Text, palette.text)}</Text>}
-          {(axisPill || duePill) && (
-            <Box flexDirection="row" alignItems="center" gap={SPACE.block}>
-              {axisPill}
-              {duePill}
-            </Box>
-          )}
+          <Button key={n === 0 ? `written-open:${c.id}` : `written-open:${c.id}${suffix}`} variant="primary" label="Ouvrir la fiche" onPress={() => o.open?.(c.id)} />
         </Box>
       </Box>
     )
   }
   return (
     <Box flexDirection="column" gap={SPACE.block}>
-      {parts.map((part, i) =>
-        part.kind === 'text' ? (
-          <Markdown key={`text:${i}`} text={part.text} />
-        ) : (
+      {parts.map((part, i) => {
+        if (part.kind === 'text') return <Markdown key={`text:${i}`} text={part.text} />
+        return (
           <Box key={`cards:${i}`} flexDirection="column" gap={SPACE.block}>
             {cards(part.lines).map(card)}
           </Box>
-        ),
-      )}
+        )
+      })}
     </Box>
   )
-}
-
-/** « ce qui a changé » : les `#N` et les dates `JJ/MM` en encre pleine, le reste en texte secondaire. */
-function inkRefs(text: string, Text: ReturnType<EngineInterface['ui']['resolve']>['Text'], ink: string): RenderElement[] | string {
-  const pieces = text.split(/(#\d+|\b\d{2}\/\d{2}\b)/)
-  if (pieces.length === 1) return text
-  return pieces.filter(x => x !== '').map((x, i) => (/^(#\d+|\d{2}\/\d{2})$/.test(x) ? <Text key={i} color={ink}>{x}</Text> : x)) as never
 }

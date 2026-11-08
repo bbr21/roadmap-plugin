@@ -96,7 +96,7 @@ import {
   donutIcon,
 } from './icons'
 import { MIX, PX, RADIUS, SIZE, SPACE, TEXT } from './tokens'
-import { drawWrittenMessage, splitWritten, writtenCards } from './cartes'
+import { BEFORE_KEY, beforeMap, drawWrittenMessage, keepBefore, splitWritten, testVersions, writtenCards, type WrittenLine, type WrittenWho } from './cartes'
 import { CONTROL_PANE, drawControl, openControl, redrawControl, type ControlDeps } from './controle'
 import { SETTINGS_PANE, drawSettings, openSettings, prefsFile, redrawSettings, rememberLoadedOptions, sessionProject, watchSettings, type SettingsProject } from './reglages'
 import {
@@ -1254,6 +1254,33 @@ let reportTurn: ReportTurn = freshReport()
 
 const questionsPath = (source: Source) => files(source).open.replace(/[^/]*$/, 'ROADMAP-questions.json')
 
+/** Le dernier avant gardé (#371) : le même tour relu ne réécrit pas le store. */
+let writtenBeforeSig = ''
+
+/**
+ * L'avant des tâches mises à jour dans ce tour (#371), gardé dans le store pour que la carte d'un message dise
+ * « échéance 12/11 → 13/11 » : l'avant de `reportTurn.changes`, jamais réécrit s'il n'a pas changé.
+ */
+async function keepWrittenBefore($: EngineInterface): Promise<void> {
+  const fresh = reportTurn.changes.flatMap(c => (c.before !== undefined && c.after?.id !== undefined ? [[c.after.id, c.before] as const] : []))
+  const sig = JSON.stringify(fresh)
+  if (fresh.length === 0 || sig === writtenBeforeSig) return
+  try {
+    const kept = keepBefore(await $.store.get(BEFORE_KEY), fresh)
+    await storeSet($, BEFORE_KEY, kept as StoreValue)
+    writtenBeforeSig = sig
+  } catch {
+    // store illisible : les cartes gardent le texte de leurs lignes
+  }
+}
+
+/** Le clic sur une carte de tâche écrite (#371) : le panneau s'ouvre, sur la fiche de la tâche (le geste d'un clic sur sa ligne). */
+async function openTaskFiche($: EngineInterface, source: Source, id: string): Promise<void> {
+  await openPane($, source)
+  launchExtra = ''
+  await setView($, () => ({ selected: `id:${id}`, launchNote: '', openNote: '', openAt: '', cancelAsk: '', cancelNote: '', editing: '', editNote: '', editField: '' }))
+}
+
 /** Le compte rendu du tour, ou rien quand le tour n'a écrit ni la roadmap ni une question. */
 async function turnReport($: EngineInterface): Promise<{ markdown: string; waiting: number } | undefined> {
   if (!settings.capture || !capture) return undefined
@@ -1263,6 +1290,7 @@ async function turnReport($: EngineInterface): Promise<{ markdown: string; waiti
   // #245 : une close et sa suite chez un tiers, dites en une ligne ; le tiers se juge par les noms `me` du projet.
   const data = reportOf(reportTurn.changes, waiting, capture.source.me)
   if (data.ajoutees.length + data.mises_a_jour.length + data.t_attendent.length === 0) return undefined
+  await keepWrittenBefore($)
   let now = Date.now()
   try {
     now = await $.clock.now()
@@ -7726,8 +7754,9 @@ export const register: Register = (on, options) => {
     }
   })
 
-  // Les lignes « - Roadmap : #N … » du compte rendu (#244), dessinées en une carte par tâche (#371, maquette A).
-  // Sans ligne, résumé de bloc ou lecture en panne, le message garde son dessin : le texte reste lisible.
+  // Les lignes « - Roadmap : #N … » du compte rendu (#244), dessinées en une carte par tâche (#371, maquette A2 v3) :
+  // l'échéance relative, qui tient la tâche, sa place dans la chaîne, l'avant → après (store `written-before`) et un clic
+  // qui ouvre sa fiche. Sans ligne, résumé de bloc ou lecture en panne, le message garde son dessin : le texte reste lisible.
   on('ui.render', { component: 'AssistantMessage' }, async ($, e, next) => {
     if (e.props.isSummary) return next(e)
     const parts = splitWritten(e.props.text)
@@ -7739,7 +7768,21 @@ export const register: Register = (on, options) => {
       const data = await paneData($, source, version.join('|'))
       if (typeof data.open === 'string') return next(e)
       const tasks = [...data.open, ...data.done]
-      return drawWrittenMessage($.ui.resolve(e), parts, lines => writtenCards(lines, tasks, t => shownTitle(t, data.titles)), data.palette)
+      const now = await $.clock.now()
+      // L'avant : une seule lecture du store par message, et seulement si une ligne dit une mise à jour.
+      const updated = parts.some(part => part.kind === 'cards' && part.lines.some(l => l.kind === 'upd'))
+      const before = updated ? beforeMap(await $.store.get(BEFORE_KEY).catch(() => undefined)) : undefined
+      // Qui tient la tâche : ce que le module sait déjà des sessions (jamais un nouvel appel d'outil).
+      const tests = testVersions(sessionRows)
+      const who = (t: Task): WrittenWho | undefined => {
+        const test = t.id === undefined ? undefined : tests.get(t.id)
+        if (test !== undefined) return { text: `en test ${test}`, tone: 'wait' }
+        const found = t.done ? undefined : trackedSession(source, t, data.live, data.ignored, now)
+        if (!found) return undefined
+        return found.entry.sessionId !== undefined && runningBySession.get(found.entry.sessionId) === false ? { text: "t'attend", tone: 'soon' } : { text: 'en session', tone: 'live' }
+      }
+      const cards = (lines: WrittenLine[]) => writtenCards(lines, tasks, { short: t => shownTitle(t, data.titles), today: todayOf(now), me: source.me, who, ...(before ? { before } : {}) })
+      return drawWrittenMessage($.ui.resolve(e), parts, cards, data.palette, { open: id => void openTaskFiche($, source, id) })
     } catch (err) {
       $.ui.log(`roadmap : cartes des tâches écrites non dessinées (${err instanceof Error ? err.message : String(err)})`, { to: 'debug' })
       return next(e)
