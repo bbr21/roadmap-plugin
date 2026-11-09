@@ -578,7 +578,13 @@ The merge itself:
   conversation, in the person's name, « La file est débloquée : #N démarre. » with the brief rebuilt
   from the roadmap. Launch that session at once with `start_session`, `user_asked`, as the message
   says (for your own card: your card's brief, with the message's fields, never the card's own); if
-  the app refuses (Remote Control, a turn it does not take as the person's), post its card
+  the app refuses because the person is « working over Remote Control » (#382), post no card:
+  the app takes any message the panel writes as a remote turn and refuses the card too, until the
+  person types in this conversation; the panel answers the refusal with the gesture, say it in one
+  line (« tape un mot ici, par exemple go, et #N démarre »), once, and do not retry. The entry stays
+  held (« retenue par Remote Control »), the panel writes no more « La file est débloquée » for it,
+  and the next message the person types here carries its launch instruction: launch it then, with
+  `user_asked`, while answering their message. For any other refusal, post its card
   (`own_initiative`) instead and say in one line that a click on Start launches it. The entry stays
   in the queue until the app answers: accepted, it leaves; refused, it stays with the reason and
   the time, shown in the control center, and is retried at most once a minute; no answer within

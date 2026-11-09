@@ -11918,7 +11918,7 @@ export type GlobalQueued = QueuedLaunch & {
   /** En vol (#374) : le message de départ est parti, la session n'a pas encore démarré. */
   launching?: { at: number }
   /** Le dernier départ raté (#374) : son heure et le motif de l'app, lisibles au centre de contrôle. */
-  failed?: { at: number; reason: string }
+  failed?: { at: number; reason: string; remote?: true }
   /** Reprise (#374) : l'entrée venait d'un autre Maestro, qui ne la lançait pas. */
   taken?: { from: string; at: number }
 }
@@ -12128,7 +12128,7 @@ export type ControlCard = {
   /** L'entrée en file dont le départ est parti (#374). */
   launching?: true
   /** Le dernier départ raté de l'entrée en file (#374). */
-  failed?: { at: number; reason: string }
+  failed?: { at: number; reason: string; remote?: true }
   id: string
   title: string
   project: string
@@ -12260,12 +12260,28 @@ export function controlView(o: {
   return { running: sorted, queued }
 }
 
+/** #382 : le refus de l'app quand la personne travaille en Remote Control (start_session ou carte), reconnu à son texte. */
+export function isRemoteControlRefusal(text: string): boolean {
+  return /working over Remote Control/i.test(text)
+}
+
+/** #382 : ce que Maestro reçoit à la place du refus de l'app sous Remote Control. */
+export function remoteHeldText(id: string): string {
+  return `Remote Control est allumé sur cette session : l'app a pris le message du panneau pour un tour à distance et refuse de lancer #${id}, carte comprise. Ne pose pas de carte et ne réessaie pas. Dis en une ligne à la personne : « tape un mot ici (par exemple « go ») pour lancer #${id} » ; #${id} reste en file et partira sur son prochain message.`
+}
+
+/** #382 : l'en-tête du départ joint au message tapé par la personne, qui débloque la file. */
+export function typedReleaseText(release: string): string {
+  return `Ce message de la personne débloque aussi la file (Remote Control retenait la tâche) :\n\n${release}`
+}
+
 /** La ligne d'une entrée en file au centre de contrôle (#374) : en file, en vol, ou ratée avec son heure et son motif. */
-export function queuedLine(c: { launching?: boolean; failed?: { at: number; reason: string } }): string {
+export function queuedLine(c: { launching?: boolean; failed?: { at: number; reason: string; remote?: true } }): string {
   if (c.launching) return "démarre… · la session va s'ouvrir"
   if (c.failed) {
     const d = new Date(c.failed.at)
     const hm = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+    if (c.failed.remote) return `retenue par Remote Control depuis ${hm} · tape un mot dans Maestro pour la lancer`
     return `départ raté à ${hm} · ${c.failed.reason} · réessaie à son tour`
   }
   return 'pas encore lancée · démarrera seule à son tour'
@@ -12367,7 +12383,7 @@ export function releasePrompt(o: { id: string; title: string; prompt: string; ba
         ]
       : []),
     `${o.card ? 'Sinon, lance' : 'Lance'} cette session maintenant : outil start_session, initiation user_asked, contexte fresh, titre « ${o.title} »${fields.length > 0 ? `, avec ${fields.join(', ')} (chaque champ si l'outil l'accepte, sinon sans)` : ''}, avec le brief ci-dessous.`,
-    "Si l'app refuse, pose sa carte à la place (initiation own_initiative) et dis en une ligne qu'un clic sur Start la lance. Puis réponds en une phrase au plus.",
+    `Si l'app refuse parce que la personne travaille en Remote Control (« working over Remote Control »), ne pose pas de carte : dis-lui en une ligne de taper un mot ici pour lancer #${o.id}. Pour un autre refus, pose sa carte à la place (initiation own_initiative) et dis en une ligne qu'un clic sur Start la lance. Puis réponds en une phrase au plus.`,
     '',
     o.prompt,
     '',

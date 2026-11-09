@@ -480,6 +480,9 @@ import {
   queueHead,
   queueEntryText,
   releasePrompt,
+  isRemoteControlRefusal,
+  remoteHeldText,
+  typedReleaseText,
   queuedRefusal,
   countersLine,
   ficheQueuePill,
@@ -3995,7 +3998,10 @@ async function takeEntry($: EngineInterface, ownId: string, lost: GlobalQueued, 
   const same = (e: GlobalQueued) => e.maestro === lost.maestro && e.id === lost.id && e.project === lost.project && e.kind !== 'resume'
   const found = stored.find(same)
   if (!found || launchInFlight(found, now)) return stored
-  const { launching: _, ...rest } = found
+  const { launching: _, ...kept } = found
+  // #382 : la retenue de Remote Control tenait au Maestro d'avant ; reprise, l'entrée part normalement d'ici.
+  const { failed: held, ...plain } = kept
+  const rest = held?.remote ? plain : kept
   const next = stored.map(e => (same(e) ? { ...rest, maestro: ownId, taken: { from: found.maestro, at: now } } : e))
   await storeSet($, LAUNCH_QUEUE_KEY, next as unknown as StoreValue)
   return next
@@ -4077,28 +4083,34 @@ async function unreserveCard($: EngineInterface, title: string): Promise<void> {
  * La réponse de l'app à la carte `#N` de ce Maestro (#374) : acceptée, l'entrée `#N` sort de la file ; refusée
  * (Remote Control, mode auto), elle y reste, sans vol, avec la trace du refus, et sa place se rend.
  */
-async function settleQueued($: EngineInterface, ownId: string, title: string, ran: ToolCallResult): Promise<void> {
+async function settleQueued($: EngineInterface, ownId: string, title: string, ran: ToolCallResult): Promise<boolean> {
   const id = sessionTitleId(title)
-  if (id === undefined) return
+  if (id === undefined) return false
   const stored = await readGlobalQueue($)
-  if (!stored.some(q => q.maestro === ownId && q.id === id && q.kind !== 'resume')) return
+  const mine = stored.find(q => q.maestro === ownId && q.id === id && q.kind !== 'resume')
+  if (!mine) return false
   if (ran.deny === undefined && !ran.isError) {
     await writeOwnQueue($, ownId, own => own.filter(q => q.id !== id || q.kind === 'resume'))
-    return
+    return false
   }
   const now = await $.clock.now()
-  const reason = clip((ran.deny ?? ran.text ?? 'refusée sans motif').replace(/\s+/g, ' ').trim(), 200)
-  await writeOwnQueue($, ownId, own => own.map(q => (q.id === id && q.kind !== 'resume' ? failedEntry(q, now, reason) : q)))
+  const said = ran.deny ?? ran.text ?? 'refusée sans motif'
+  // #382 : Remote Control retient l'entrée jusqu'au prochain mot de la personne ; une entrée déjà retenue le reste, sans réécriture.
+  const remote = isRemoteControlRefusal(said)
+  if (remote && mine.failed?.remote) return true
+  const reason = clip(said.replace(/\s+/g, ' ').trim(), 200)
+  await writeOwnQueue($, ownId, own => own.map(q => (q.id === id && q.kind !== 'resume' ? failedEntry(q, now, reason, remote) : q)))
   await unreserveCard($, title)
   doseAllowed.delete(id)
   doseRetryAt = now + DOSE_RETRY_MS
   doseSeenKey = ''
+  return remote
 }
 
-/** L'entrée dont le départ a raté (#374) : plus en vol, la trace de son refus. */
-function failedEntry(q: GlobalQueued, at: number, reason: string): GlobalQueued {
+/** L'entrée dont le départ a raté (#374) : plus en vol, la trace de son refus ; `remote` (#382) : retenue par Remote Control. */
+function failedEntry(q: GlobalQueued, at: number, reason: string, remote = false): GlobalQueued {
   const { launching: _, ...rest } = q
-  return { ...rest, failed: { at, reason } }
+  return { ...rest, failed: { at, reason, ...(remote ? { remote: true as const } : {}) } }
 }
 
 /** Les pauses du store (#367) : `session-pauses`, les valeurs mal formées ignorées. */
@@ -4177,7 +4189,8 @@ async function doseLaunch($: EngineInterface, id: string | undefined, entry: Omi
     const gateOf = (e: GlobalQueued) => gateFor(state, e.project, e.match)
     const head = queueHead(liveQueue(globalQueueOrder(queue), gateOf, ownId, queueSince, now), gateOf)
     if (gate.go && (!head || (head.maestro === ownId && head.id === id))) {
-      if (queue.some(q => q.maestro === ownId && q.id === id && q.kind !== 'resume')) await writeOwnQueue($, ownId, own => own.filter(q => q.id !== id || q.kind === 'resume'), state.rows)
+      // #382 : une entrée retenue par Remote Control reste en file ; la réponse de l'app à la carte la règle (`settleQueued`).
+      if (queue.some(q => q.maestro === ownId && q.id === id && q.kind !== 'resume' && !q.failed?.remote)) await writeOwnQueue($, ownId, own => own.filter(q => q.id !== id || q.kind === 'resume'), state.rows)
       return { ownId }
     }
     const tasks = knownSource ? await load($, files(knownSource).open, 'ROADMAP.md') : []
@@ -4524,13 +4537,15 @@ async function relieveLaunches($: EngineInterface): Promise<void> {
     // est archivé est reprise ici ; elle ne part qu'au pas suivant, si ce Maestro la tient encore.
     if (fileOn && !changed) {
       const live = new Set(counted(queue))
-      const lost = globalQueueOrder(queue).find(e => e.maestro !== ownId && e.kind !== 'resume' && !launchInFlight(e, now) && (gone.has(e.maestro) || (!live.has(e) && gateOf(e).go)))
+      const lost = globalQueueOrder(queue).find(e => e.maestro !== ownId && e.kind !== 'resume' && !launchInFlight(e, now) && (gone.has(e.maestro) || (!e.failed?.remote && !live.has(e) && gateOf(e).go)))
       if (lost) queue = await takeEntry($, ownId, lost, now)
     }
     // (d) et (e) : la tête, une entrée `resume` à reprendre ou une tâche à lancer ; un pas qui vient de poser ou lever une pause attend le suivant.
     // Une entrée en vol (#374) n'est plus une tête : elle attend sa session ; une entrée reprise à ce pas attend le suivant.
     const head = changed ? undefined : queueHead(counted(queue).filter(q => !launchInFlight(q, now) && q.taken?.at !== now), gateOf)
-    if (head && head.maestro === ownId && now >= doseRetryAt) {
+    // #382 : une entrée de ce Maestro retenue par Remote Control n'est relancée que par un mot de la personne (`typedRelease`) ; les reprises (`resume`) partent toujours.
+    const remoteHeld = queue.some(q => q.maestro === ownId && q.kind !== 'resume' && q.failed?.remote)
+    if (head && head.maestro === ownId && now >= doseRetryAt && (head.kind === 'resume' || !remoteHeld)) {
       try {
         if (head.kind === 'resume') {
           const p = pauses[head.sessionId ?? '']
@@ -4542,23 +4557,8 @@ async function relieveLaunches($: EngineInterface): Promise<void> {
           }
           queue = await writeOwnQueue($, ownId, own => own.filter(q => q.id !== head.id || q.kind !== 'resume'), state.rows)
         } else {
-          // #374 : un ▶ comme une carte du modèle partent seuls (la mise en file vaut accord, choix de BBR) ; le panneau
-          // ne lance rien lui-même (l'app refuse `user_asked` à un plugin) : il l'écrit à Claude dans Maestro. L'entrée
-          // reste en file, en vol, jusqu'à la réponse de l'app à la carte (`settleQueued`).
-          // Une entrée reprise d'un autre Maestro (#374) part avec la roadmap de son projet, dans son dossier ; sa carte
-          // n'est pas dans cette conversation.
-          const at = await entrySource($, head, { source, open })
-          if (!at) throw new Error(`projet introuvable : ${head.project}`)
-          const mineCard = head.card !== undefined && head.taken === undefined
-          const found = await releaseBrief($, head, at.source, at.open)
-          const brief = found && at.away ? { ...found, cwd: head.project } : found
-          // Relecture de sécurité (#374) : seule une tâche ouverte de la roadmap part seule, carte comprise.
-          if (!brief) throw new Error('tâche introuvable dans la roadmap')
-          const text = releasePrompt({ ...brief, ...(mineCard ? { card: true } : {}) })
-          doseAllowed.set(head.id, now + PLACE_IDLE_MS)
-          await reserveCard($, brief.title)
-          queue = await writeOwnQueue($, ownId, own => own.map(q => (q.id === head.id && q.kind !== 'resume' ? { ...q, launching: { at: now } } : q)), state.rows)
-          queueSubmit($, text)
+          // #374 : un ▶ comme une carte du modèle partent seuls (voir `startEntry`).
+          queueSubmit($, await startEntry($, ownId, head, { source, open }, now, state.rows))
         }
       } catch (err) {
         doseAllowed.delete(head.id)
@@ -4578,6 +4578,66 @@ async function relieveLaunches($: EngineInterface): Promise<void> {
     // un pas raté : le suivant relit
   } finally {
     relieving = false
+  }
+}
+
+/**
+ * Le départ d'une entrée non `resume` (#374, #382) : le brief refait de la roadmap, la place réservée, l'entrée passée en
+ * vol (sa trace de refus ôtée). Rend le texte à écrire dans Maestro, sans l'envoyer : la relève l'envoie par `queueSubmit`,
+ * le mot tapé par la personne le joint à son message (`typedRelease`). Lève si la tâche n'est plus lançable.
+ */
+async function startEntry($: EngineInterface, ownId: string, head: GlobalQueued, ctx: { source: Source | null | undefined; open: readonly Task[] | undefined }, now: number, rows: unknown[]): Promise<string> {
+  // Le panneau ne lance rien lui-même (l'app refuse `user_asked` à un plugin) : il l'écrit à Claude dans Maestro. L'entrée
+  // reste en file, en vol, jusqu'à la réponse de l'app à la carte (`settleQueued`).
+  // Une entrée reprise d'un autre Maestro (#374) part avec la roadmap de son projet, dans son dossier ; sa carte
+  // n'est pas dans cette conversation.
+  const at = await entrySource($, head, ctx)
+  if (!at) throw new Error(`projet introuvable : ${head.project}`)
+  const mineCard = head.card !== undefined && head.taken === undefined
+  const found = await releaseBrief($, head, at.source, at.open)
+  const brief = found && at.away ? { ...found, cwd: head.project } : found
+  // Relecture de sécurité (#374) : seule une tâche ouverte de la roadmap part seule, carte comprise.
+  if (!brief) throw new Error('tâche introuvable dans la roadmap')
+  const text = releasePrompt({ ...brief, ...(mineCard ? { card: true } : {}) })
+  doseAllowed.set(head.id, now + PLACE_IDLE_MS)
+  await reserveCard($, brief.title)
+  await writeOwnQueue(
+    $,
+    ownId,
+    own => own.map(q => {
+      if (q.id !== head.id || q.kind === 'resume') return q
+      // #382 : la retenue de Remote Control s'ôte au départ ; la trace d'un autre échec reste (#374).
+      if (!q.failed?.remote) return { ...q, launching: { at: now } }
+      const { failed: _, ...rest } = q
+      return { ...rest, launching: { at: now } }
+    }),
+    rows,
+  )
+  return text
+}
+
+/**
+ * Le départ que joint le message tapé par la personne (#382) : la première entrée de ce Maestro retenue par Remote Control
+ * (ordre de la file) dont le projet a une place part, son texte est rendu. Rien à lancer ou tout échec : `undefined`, l'entrée reste retenue.
+ */
+async function typedRelease($: EngineInterface): Promise<string | undefined> {
+  try {
+    const ownId = ownSession?.id
+    if (!ownId) return undefined
+    const queue = await readGlobalQueue($)
+    if (!queue.some(q => q.maestro === ownId && q.kind !== 'resume' && q.failed?.remote)) return undefined
+    const now = await $.clock.now()
+    const state = await doseState($, now)
+    const head = globalQueueOrder(queue).find(e => e.maestro === ownId && e.kind !== 'resume' && e.failed?.remote && gateFor(state, e.project, e.match).go)
+    if (!head) return undefined
+    const source = knownSource
+    const tasks = source ? await load($, files(source).open, 'ROADMAP.md') : []
+    const open = typeof tasks === 'string' ? undefined : tasks
+    const text = await startEntry($, ownId, head, { source, open }, now, state.rows)
+    doseSeenKey = ''
+    return typedReleaseText(text)
+  } catch {
+    return undefined
   }
 }
 
@@ -7316,6 +7376,18 @@ export const register: Register = (on, options) => {
       texts.push(launch.context)
       launchPending = true
     }
+    // #382 : le mot tapé par la personne chez Maestro débloque l'entrée retenue par Remote Control (le tour est le sien, l'app accepte `user_asked`).
+    try {
+      const origin = (e.origin as { kind?: string } | undefined)?.kind
+      const typed = typeof e.text === 'string' && (origin === undefined || origin === 'human') && !launch && !wakeTurn(e.text) && !e.text.includes('<task-notification>')
+      // Pas de `maestroHere` (un get_session à chaque message) : seule une entrée retenue de ce Maestro, lue au store, fait partir.
+      if (typed) {
+        const released = await typedRelease($)
+        if (released !== undefined) texts.push(released)
+      }
+    } catch {
+      // file illisible : le message passe sans le départ
+    }
     // #366 : dans une session « Tester #N · X.Y.Z », chaque message de la personne reçoit la consigne de relais.
     try {
       const test = await testSessionText($)
@@ -7459,7 +7531,12 @@ export const register: Register = (on, options) => {
       const posted = await launchWithMode($, e, card => next(card as typeof e))
       if (dose.ownId && typeof cardTitle === 'string' && posted.deny === undefined && !posted.isError) await reserveCard($, cardTitle)
       // #374 : la réponse de l'app règle l'entrée en file : acceptée, elle sort ; refusée, elle reste avec sa trace.
-      if (dose.ownId && typeof cardTitle === 'string') await settleQueued($, dose.ownId, cardTitle, posted).catch(() => undefined)
+      if (dose.ownId && typeof cardTitle === 'string') {
+        const held = await settleQueued($, dose.ownId, cardTitle, posted).catch(() => false)
+        // #382 : sous Remote Control, Maestro reçoit la consigne de dire le geste, à la place du refus de l'app.
+        const heldId = sessionTitleId(cardTitle)
+        if (held && heldId !== undefined) return { deny: remoteHeldText(heldId) }
+      }
       return posted
     })
     if (titleRefused) return ran
