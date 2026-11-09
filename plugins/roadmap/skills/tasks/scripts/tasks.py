@@ -889,21 +889,6 @@ class _Tenue(audit._Preparation):
                 raise Erreur("%s : %s:%s hors des valeurs admises (%s)" % (quoi, k, hors[0], ", ".join(admises)))
         return val
 
-    def poser_qui(self, champs, qui, quoi):
-        """`qui:` d'une ligne neuve (#255) : la personne (`me`), donnée ou posée quand le projet l'exige ;
-        une ligne neuve n'est jamais prise, `qui:<branche>` avec `branche:` se pose à la prise."""
-        if qui is not None:
-            val = audit._propre(qui)
-            if val not in self.me:
-                raise Erreur("%s : qui ne vaut que la personne (%s) sur une ligne neuve ; une session prend sa ligne "
-                             "à la main, qui:<branche> et branche:<branche>" % (quoi, ", ".join(self.me) or "aucune déclarée"))
-            champs["qui"] = val
-        elif "qui" in self.requis:
-            if not self.me:
-                raise Erreur("%s : champ exigé qui sans valeur : déclare la personne (me) dans .claude/roadmap.json"
-                             % quoi)
-            champs["qui"] = self.me[0]
-
     def enfants_ouverts(self, t):
         return [e for e in self.ouvertes() if e is not t and _sans_parent(e) == t.id]
 

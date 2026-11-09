@@ -105,7 +105,9 @@ unique in the file). An unknown key is refused, as is a wrong type (`"after": "1
 `fields` are checked as the panel checks them: dates as YYYY-MM-DD, `prio` oui, keys of the
 grammar or declared in `roadmap.json`. They never carry `id`, `qui`, `branche`, `verrou`, `fait`,
 `parent` or `après`: the audit sets `parent:` itself (split, group) and `après:` goes through
-`after`.
+`after`. One exception (#346): a new group parent may carry `qui` set to the person (`me`), as
+`tasks` allows on a new line (#255); left out in a project that requires `qui:`, it gets the
+person. A new group parent never requires `due:`: it is dated by its children (#125).
 
 **Splitting a bundle**:
 

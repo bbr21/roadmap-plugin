@@ -697,6 +697,7 @@ class _Preparation:
         self.rdir = os.path.dirname(releve["roadmap"])
         self.jour = releve["jour"]
         self.requis = releve.get("requis") or []
+        self.me = releve.get("me") or []
         self.heritage = [k for k in props.get("inherit", releve.get("heritage") or []) if k not in NON_HERITES]
         self.declarees = set(releve.get("cles") or [])
         self.gardes = set()
@@ -770,10 +771,26 @@ class _Preparation:
         self.bilan["ids_crees"].append(i)
         return i
 
-    def completer(self, champs, mere, quoi):
-        """Les champs exigés qui manquent, pris à la mère (`après:` à `-`) ; refus s'il en manque encore."""
+    def poser_qui(self, champs, qui, quoi):
+        """`qui:` d'une ligne neuve (#255, #346) : la personne (`me`), donnée ou posée quand le projet l'exige ;
+        une ligne neuve n'est jamais prise, `qui:<branche>` avec `branche:` se pose à la prise."""
+        if qui is not None:
+            val = _propre(qui)
+            if val not in self.me:
+                raise Erreur("%s : qui ne vaut que la personne (%s) sur une ligne neuve ; une session prend sa ligne "
+                             "à la main, qui:<branche> et branche:<branche>" % (quoi, ", ".join(self.me) or "aucune déclarée"))
+            champs["qui"] = val
+        elif "qui" in self.requis:
+            if not self.me:
+                raise Erreur("%s : champ exigé qui sans valeur : déclare la personne (me) dans .claude/roadmap.json"
+                             % quoi)
+            champs["qui"] = self.me[0]
+
+    def completer(self, champs, mere, quoi, sauf=()):
+        """Les champs exigés qui manquent, pris à la mère (`après:` à `-`) ; refus s'il en manque encore.
+        `sauf` : ceux que la ligne n'exige pas (une mère est datée par ses enfants, #125)."""
         for k in self.requis:
-            if k in champs or k == "id":
+            if k in champs or k == "id" or k in sauf:
                 continue
             v = "-" if k == "après" else (mere.get(k) if mere else None)
             if not v:
@@ -858,12 +875,16 @@ class _Preparation:
             if not _propre(m.get("axis")) and len(axes) > 1:
                 raise Erreur("%s : enfants sur deux axes (%s) : donne l'axe de la mère (axis), "
                              "ou regroupe-les à part" % (quoi, ", ".join(axes)))
-            champs = self.champs_proposes(m.get("fields"), quoi)
+            brut = dict(m.get("fields") or {})
+            qui = brut.pop("qui", None)
+            champs = self.champs_proposes(brut, quoi)
             champs.setdefault("ouvert", self.jour)
             for k in ("parent", "après"):
                 if k in self.requis:
                     champs.setdefault(k, "-")
-            self.completer(champs, None, quoi)
+            # #346 : `qui:` la personne, et pas de due: exigée d'une mère, datée par ses enfants (#125).
+            self.poser_qui(champs, qui, quoi)
+            self.completer(champs, None, quoi, sauf=("due",))
             champs["id"] = self.numero(m.get("key"))
             mere = _Tache(id=champs["id"], libelle=_propre(m.get("label")), note=_propre(m.get("note")),
                           axe=_propre(m.get("axis")) or (axes[0] if axes else "dossier"), champs=_ordonnes(champs))
