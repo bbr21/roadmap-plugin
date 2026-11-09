@@ -596,6 +596,8 @@ import {
   childWake,
   childWakeText,
   stoppedState,
+  taskSessionState,
+  brandStateOf,
   withWake,
   type ChildWake,
   applyPlan,
@@ -4277,6 +4279,36 @@ function resumeAt(queue: readonly GlobalQueued[], p: Pick<SessionPause, 'by' | '
   return queueAtBetween(target.at, later.length > 0 ? Math.min(...later) : undefined, now)
 }
 
+/**
+ * Une session arrêtée passe en pause (#367, #383) : son entrée de reprise d'abord (une pause sans entrée ne
+ * reprendrait jamais ; une entrée sans pause s'ôte au pas suivant), puis la pause exécutée. Une pause à la main ne
+ * reprend qu'au « Reprendre » de la personne, jamais seule dès qu'une place se libère. Sert à la relève et au clic.
+ */
+async function parkStopped($: EngineInterface, ownId: string, sessionId: string, p: SessionPause, rows: readonly unknown[], now: number, fileOn = settings.launchQueue): Promise<{ pause: SessionPause; queue?: GlobalQueued[] }> {
+  const row = openRowOf(rows, sessionId)
+  const taskId = row ? sessionTitleId(row.title) : undefined
+  let queue: GlobalQueued[] | undefined
+  if (row && fileOn && taskId !== undefined) {
+    const stored = await readGlobalQueue($)
+    if (!stored.some(q => q.kind === 'resume' && q.sessionId === sessionId)) {
+      const mine = doseProject()
+      const inMine = mine.match.some(prefix => row.cwd.startsWith(prefix))
+      const root = row.cwd.split('/.claude/worktrees')[0].replace(/\/+$/, '')
+      const at = resumeAt(stored, p, now)
+      queue = await writeOwnQueue(
+        $,
+        ownId,
+        own => [...own, { id: taskId, title: row.title, at, kind: 'resume', sessionId, maestro: ownId, project: inMine ? mine.project : root, match: inMine ? mine.match : [root], after: [], ...(p.by === 'hand' ? { held: { at: now, reason: 'mise en pause à la main', cause: 'refused' as const } } : {}) }],
+        [...rows],
+      )
+    }
+  }
+  const { failed: _failed, ...asked } = p
+  const pause: SessionPause = { ...asked, state: 'paused', maestro: ownId, at: now }
+  await writePause($, sessionId, pause)
+  return { pause, ...(queue ? { queue } : {}) }
+}
+
 /** La rangée de la liste d'une session ouverte (#367). */
 type PauseRow = { sessionId: string; title: string; cwd: string; startedBy?: string; isRunning: boolean }
 function openRowOf(rows: readonly unknown[], sessionId: string): PauseRow | undefined {
@@ -4389,6 +4421,16 @@ function controlDeps($: EngineInterface): ControlDeps {
     },
     ownId: async () => (await readOwnSession($)).id ?? '',
     ownIsMaestro: () => maestroHere($),
+    // #383, retour de test : la Pause cliquée arrête la session tout de suite quand l'app le permet, sans attendre
+    // le pas d'un Maestro (celui de la session pouvait ne pas tourner : #658, son Maestro dans un autre dossier).
+    stopNow: async (sessionId, p) => {
+      const ran = await $.tool.call({ tool: STOP_SESSION_TOOL, session_id: sessionId })
+      if (ran.deny !== undefined || ran.isError) return false
+      const ownId = (await readOwnSession($)).id ?? p.maestro
+      const now = await $.clock.now()
+      await parkStopped($, ownId, sessionId, p, lastListRows, now)
+      return true
+    },
     // #374 : le lien de la rangée sert de repli ; rien n'a ouvert la session, le volet lui-même le dit.
     open: async (sessionId, title, link) => {
       // L'identifiant de cette session, gardé dès le premier pas : son mode se lit dans la liste, sans appel au clic.
@@ -4529,25 +4571,9 @@ async function relieveLaunches($: EngineInterface): Promise<void> {
             continue
           }
         }
-        const taskId = sessionTitleId(row.title)
-        // L'entrée avant la pause : une pause sans entrée ne reprendrait jamais ; une entrée sans pause s'ôte au pas suivant.
-        if (fileOn && taskId !== undefined && !queue.some(q => q.kind === 'resume' && q.sessionId === sessionId)) {
-          const mine = doseProject()
-          const inMine = mine.match.some(prefix => row.cwd.startsWith(prefix))
-          const root = row.cwd.split('/.claude/worktrees')[0].replace(/\/+$/, '')
-          const at = resumeAt(queue, p, now)
-          queue = await writeOwnQueue(
-            $,
-            ownId,
-            // #383 : une pause à la main ne reprend qu'au « Reprendre » de la personne, jamais seule dès qu'une place se libère.
-            own => [...own, { id: taskId, title: row.title, at, kind: 'resume', sessionId, maestro: ownId, project: inMine ? mine.project : root, match: inMine ? mine.match : [root], after: [], ...(p.by === 'hand' ? { held: { at: now, reason: 'mise en pause à la main', cause: 'refused' as const } } : {}) }],
-            state.rows,
-          )
-        }
-        const { failed: _failed, ...asked } = p
-        const done: SessionPause = { ...asked, state: 'paused', maestro: ownId, at: now }
-        await writePause($, sessionId, done)
-        pauses[sessionId] = done
+        const parked = await parkStopped($, ownId, sessionId, p, state.rows, now, fileOn)
+        if (parked.queue) queue = parked.queue
+        pauses[sessionId] = parked.pause
         changed = true
       }
     }
@@ -10679,7 +10705,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     if (!inSession) await refreshAhead($, source, [stepsSession], now)
     const aheadNow = stepsSession ? aheadBySession.get(stepsSession)?.ahead : undefined
     const headState: BrandTask['state'] | undefined =
-      waitState === 'wait' ? stoppedState({ asking: stepsNote?.question !== undefined, ahead: aheadNow, status: stepsNote }) : waitState
+      waitState === 'wait' ? brandStateOf(taskSessionState({ asking: stepsNote?.question !== undefined, ahead: aheadNow ?? 0, ...(stepsNote ? { status: stepsNote } : {}) })) : waitState
     const fullBrand = focusBrand ?? taskBrandOf(current, source, allTasks, { label: s.titre, prereqs: prereqsFor })
     // #291 : la voie (stations d'avant et d'après) quitte l'en-tête ; la jauge de chaîne, au pied, la remplace.
     // En édition (#342), l'en-tête reste celui de la fiche : rien ne bouge.
@@ -12749,7 +12775,8 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     // #191 : finie, sa branche en avance, sans question : à fusionner, ni la main ni la roue.
     const sid = liveOf(t)?.entry.sessionId
     // #384 : et prête (verdict ou étapes cochées) ; en attente de son travail de fond, la roue.
-    const stopped = !block && waitingOn(t) ? stoppedState({ asking: status?.question !== undefined, ahead: sid ? aheadBySession.get(sid)?.ahead : undefined, status }) : undefined
+    // #383 : l'état unique (`taskSessionState`), la règle du centre de contrôle et de la bande.
+    const stopped = !block && waitingOn(t) ? brandStateOf(taskSessionState({ asking: status?.question !== undefined, ahead: (sid ? aheadBySession.get(sid)?.ahead : undefined) ?? 0, ...(status ? { status } : {}) })) : undefined
     const merging = block ? block.state === 'merge' : stopped === 'merge'
     const waiting = block ? block.state === 'wait' : stopped === 'wait'
     // Close (#218) : la coche, violette quand la session ne tourne plus, et sa jauge pleine, comme la bande.

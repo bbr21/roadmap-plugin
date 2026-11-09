@@ -614,8 +614,8 @@ The merge itself:
   « Tu as été mise en pause pour laisser passer #N. Reprends où tu en étais. »
   Requests live in the store (`session-pauses`);
   your panel runs the ones for your daughters. A Pause the person clicks in the control center is
-  a stop (« arrêt demandé », never « pause en fin de tour »): the Maestro that receives the click
-  runs it, and any open Maestro runs a person's pause or one whose Maestro is not open (#383); a
+  a stop (« arrêt demandé », never « pause en fin de tour »): the click itself stops the session when
+  the app allows it, otherwise the Maestro that receives the click runs it, and any open Maestro runs a person's pause or one whose Maestro is not open (#383); a
   stop the app refuses shows its reason and is retried once a minute; a session paused by hand
   resumes only at « Reprendre », never by itself when a place frees. A task has a single place:
   a resume entry whose pause is gone leaves the queue, and a task already in « En cours » never

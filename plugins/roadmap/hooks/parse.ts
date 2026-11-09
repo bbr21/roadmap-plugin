@@ -5502,6 +5502,42 @@ export function stoppedState(o: { asking: boolean; ahead?: number; status?: Chil
   return mergeReady(o.status) ? 'merge' : 'wait'
 }
 
+/** L'état unique d'une session (#383) : ce que lisent le centre de contrôle, la ligne En cours, la bande et la fiche. */
+export type TaskSessionState =
+  | { kind: 'done' }
+  | { kind: 'paused' }
+  | { kind: 'pausing'; mode: 'stop' | 'soft' }
+  | { kind: 'run' }
+  | { kind: 'test'; version: string }
+  | { kind: 'merge' }
+  | { kind: 'wait' }
+
+/**
+ * L'état unique d'une session (#383, dans la lignée de `stoppedState`, #384), calculé ici seulement, dans cet ordre :
+ * tâche close ; pause exécutée, puis demandée ; elle tourne ; publiée et en test (une session « Tester #N · X.Y.Z »
+ * ouverte) ; du travail de fond en vol (ses tests) ; elle s'est dite en pause ; une question qui attend ; prête
+ * (verdict, étapes cochées, clôture partielle ou « fini ») ; sinon elle t'attend. Avec l'avance de sa branche connue
+ * (`ahead`), la règle de #384 décide de « prête ».
+ */
+export function taskSessionState(o: { closed?: boolean; running?: boolean; pause?: SessionPause; test?: string; asking?: boolean; ahead?: number; status?: ChildStatus }): TaskSessionState {
+  if (o.closed) return { kind: 'done' }
+  if (o.pause?.state === 'paused') return { kind: 'paused' }
+  if (o.pause?.state === 'asked') return { kind: 'pausing', mode: o.pause.mode }
+  if (o.running) return { kind: 'run' }
+  if (o.test !== undefined) return { kind: 'test', version: o.test }
+  if (o.status?.waits) return { kind: 'run' }
+  if (selfPaused(o.status?.recap)) return { kind: 'paused' }
+  if (o.asking) return { kind: 'wait' }
+  if (o.ahead !== undefined) return stoppedState({ asking: false, ahead: o.ahead, ...(o.status ? { status: o.status } : {}) }) === 'merge' ? { kind: 'merge' } : { kind: 'wait' }
+  const kind = o.status?.recap ? childWake({ recap: o.status.recap }).kind : 'other'
+  return (o.status !== undefined && mergeReady(o.status)) || kind === 'partial' || kind === 'done' ? { kind: 'merge' } : { kind: 'wait' }
+}
+
+/** L'état unique traduit pour la bande, la fiche et la ligne En cours (#383) : la roue, la fusion, ou la main. */
+export function brandStateOf(st: TaskSessionState): 'live' | 'merge' | 'wait' {
+  return st.kind === 'run' ? 'live' : st.kind === 'merge' ? 'merge' : 'wait'
+}
+
 /** L'empreinte des notes d'étapes suivies (#143) : elle change avec une étape, pas avec l'ordre des clés. */
 export function stepsStamp(statuses: Record<string, ChildStatus | undefined>): string {
   return JSON.stringify(
@@ -9604,7 +9640,8 @@ export function maestroBrandTasks(
       id: e.id,
       label: e.label,
       // À l'arrêt : prête, c'est Maestro qui fusionne (#191) ; sinon elle attend ou travaille encore (#384).
-      state: (e.done || !e.open ? 'done' : e.running ? 'live' : stoppedState({ asking: e.asking === true, ahead: e.ahead, status: e.status })) as BrandTask['state'],
+      // #383 : l'état unique (`taskSessionState`) ; l'avance de la branche décide de « prête », comme #384.
+      state: (e.done || !e.open ? 'done' : brandStateOf(taskSessionState({ running: e.running === true, asking: e.asking === true, ahead: e.ahead ?? 0, ...(e.status ? { status: e.status } : {}) }))) as BrandTask['state'],
       ...(e.sessionId ? { sessionId: e.sessionId } : {}),
       ...(e.done ? { closed: true as const } : {}),
       ...(e.done && !(e.open && e.running) ? { finished: true as const } : {}),
@@ -12212,6 +12249,8 @@ export type ControlCard = {
   pause?: { mode: 'stop' | 'soft'; failed?: { at: number; reason: string } }
   /** L'entrée retenue (#383). */
   held?: { at: number; reason: string; cause: 'refused' }
+  /** La version en test (#383, #366) : une session « Tester #N · X.Y.Z » est ouverte pour la tâche. */
+  test?: string
   id: string
   title: string
   project: string
@@ -12284,6 +12323,13 @@ export function controlView(o: {
   const name = (root: string) => root.split('/').filter(Boolean).pop() ?? root
   const running: ControlCard[] = []
   const rowCwd = new Map<string, string>()
+  // #383 : la version en test de chaque tâche, d'après les sessions « Tester #N · X.Y.Z » ouvertes.
+  const tests = new Map<string, string>()
+  for (const raw of o.rows) {
+    const r = raw as { title?: unknown; isArchived?: unknown }
+    const t = typeof r.title === 'string' && r.isArchived !== true ? testTitle(r.title) : undefined
+    if (t) tests.set(t.id, t.version)
+  }
   for (const raw of o.rows) {
     const r = raw as { sessionId?: unknown; title?: unknown; cwd?: unknown; isArchived?: unknown; isRunning?: unknown; branch?: unknown }
     if (typeof r.sessionId !== 'string' || typeof r.title !== 'string' || r.isArchived === true) continue
@@ -12295,9 +12341,11 @@ export function controlView(o: {
     rowCwd.set(r.sessionId, typeof r.cwd === 'string' ? r.cwd : '')
     const project = name(root)
     const status = o.statusOf(r.sessionId)
-    const kind = status?.recap ? childWake({ recap: status.recap }).kind : 'other'
-    // #384 : une session qui tourne n'est jamais finie ; à l'arrêt, prête, clôture partielle ou « fini ».
-    const finished = o.closed?.has(`${root}#${id}`) === true || (r.isRunning !== true && ((status !== undefined && mergeReady(status)) || kind === 'partial' || kind === 'done'))
+    // #383 : l'état unique de la session (`taskSessionState`), la même règle que la ligne En cours, la bande et la fiche.
+    const test = tests.get(id)
+    const closed = o.closed?.has(`${root}#${id}`) === true
+    const st = taskSessionState({ closed, running: r.isRunning === true, ...(pause ? { pause } : {}), ...(test !== undefined ? { test } : {}), ...(status ? { status } : {}) })
+    const finished = st.kind === 'done' || st.kind === 'merge' || st.kind === 'test'
     const steps = finished ? doneSteps(status) : cardSteps(status)
     running.push({
       key: `run:${r.sessionId}`,
@@ -12307,7 +12355,8 @@ export function controlView(o: {
       project,
       tone: toneOf(project),
       ...(!finished && pause?.state === 'asked' ? { pause: { mode: pause.mode, ...(pause.failed ? { failed: pause.failed } : {}) } } : {}),
-      state: finished ? 'done' : pause?.state === 'asked' ? 'pausing' : r.isRunning === true || status?.waits ? 'run' : 'wait',
+      ...(st.kind === 'test' ? { test: st.version } : {}),
+      state: finished ? 'done' : st.kind === 'pausing' ? 'pausing' : st.kind === 'paused' ? 'paused' : st.kind === 'run' ? 'run' : 'wait',
       prio: o.marks.has(`${root}#${id}`),
       ...(steps ? { steps } : {}),
       sessionId: r.sessionId,
@@ -12356,6 +12405,11 @@ export function controlView(o: {
     }
   })
   return { running: sorted, queued }
+}
+
+/** La session s'est-elle dite en pause (#383) : « en pause » en tête de son récap (« La session est en pause : … »). */
+export function selfPaused(recap: string | undefined): boolean {
+  return /^\W*(?:la session est |je suis |je me mets |je me suis mise? )?en pause\b/iu.test(firstSentence(recap ?? '').trim())
 }
 
 /** La pastille d'une session dont l'arrêt est demandé (#383). */

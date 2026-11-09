@@ -59,6 +59,11 @@ export type ControlDeps = {
   ownId: () => Promise<string>
   /** Cette session est-elle un Maestro (#383) ? Alors c'est elle qui exécute la Pause qu'on y clique. */
   ownIsMaestro: () => Promise<boolean>
+  /**
+   * Arrête la session tout de suite, au clic (#383, retour de test) : l'outil de l'app, puis la pause exécutée et son
+   * entrée de reprise. Refusé (mode auto, Remote Control) : `false`, la demande reste au Maestro.
+   */
+  stopNow: (sessionId: string, p: SessionPause) => Promise<boolean>
   /** Ouvre la session ; le lien `claude://` sert de repli (#374). Ratée, elle lève, et le volet le dit. */
   open: (sessionId: string, title: string, link?: string) => Promise<void>
   /** Les tâches closes de la roadmap de cette session (`<racine>#<numéro>`) : leur session est finie. */
@@ -136,17 +141,32 @@ function act($: EngineInterface, work: () => Promise<void>, failPrefix = "Rien d
 /** L'entrée de la file d'une carte, relue de la file stockée. */
 const entryOf = (queue: readonly GlobalQueued[], key: string) => queue.find(e => queueCardKey(e) === key)
 
-/** Pause : une demande d'arrêt net « à la main » au Maestro de la session ; une demande pas encore exécutée s'annule. */
-async function togglePause($: EngineInterface, deps: ControlDeps, card: ControlCard): Promise<void> {
+/**
+ * Pause : un arrêt net « à la main ». Depuis le retour de test de #383, le clic arrête la session lui-même quand l'app
+ * le laisse faire ; sinon la demande reste au Maestro qui l'exécute à son pas. Un second clic ne l'annule jamais : une
+ * demande en cours a son propre bouton, « Annuler la pause » (`cancelPause`).
+ */
+async function pauseNow($: EngineInterface, deps: ControlDeps, card: ControlCard): Promise<void> {
   const id = card.sessionId
   if (!id) return
   const d = await controlData(deps)
-  if (d.pauses[id]?.state === 'asked') return deps.writePause(id, undefined)
+  if (d.pauses[id] !== undefined) return
   const startedBy = (d.rows.find(r => (r as { sessionId?: unknown }).sessionId === id) as { startedBy?: unknown } | undefined)?.startedBy
   // #383 : le Maestro qui reçoit le clic l'exécute ; ailleurs, le Maestro de la session (tout Maestro ouvert la reprend).
   const here = await deps.ownIsMaestro().catch(() => false)
   const maestro = !here && typeof startedBy === 'string' && startedBy !== '' ? startedBy : await deps.ownId()
-  await deps.writePause(id, { mode: 'stop', state: 'asked', by: 'hand', maestro, at: await $.clock.now() })
+  const asked: SessionPause = { mode: 'stop', state: 'asked', by: 'hand', maestro, at: await $.clock.now() }
+  await deps.writePause(id, asked)
+  const stopped = await deps.stopNow(id, asked).catch(() => false)
+  controlInfo = stopped ? `#${card.id} est arrêtée et passe en pause` : `#${card.id} : arrêt demandé, Maestro l'exécute à son pas`
+}
+
+/** Annuler la pause : une demande pas encore exécutée s'efface. */
+async function cancelPause(deps: ControlDeps, card: ControlCard): Promise<void> {
+  const id = card.sessionId
+  if (!id) return
+  const d = await controlData(deps)
+  if (d.pauses[id]?.state === 'asked') await deps.writePause(id, undefined)
 }
 
 /** Le `at` d'une entrée remise en tête de son groupe (les prioritaires d'un côté, le reste de l'autre). */
@@ -378,7 +398,7 @@ export async function drawControl($: EngineInterface, e: RenderInput<'Pane'>, pa
     const node = controlNodeIcon(palette, { kind: nodeKind, n: rank })
     const border = done ? palette.finished : c.prio ? palette.late : c.state === 'pausing' ? palette.block : palette.border
     const pills: RenderElement[] = []
-    if (done) pills.push(pill('Done', palette.finishedTint, palette.finishedOn))
+    if (done) pills.push(pill(c.test ? `en test ${c.test}` : 'Done', palette.finishedTint, palette.finishedOn))
     else if (c.state === 'pausing') pills.push(pill(pausingPill(c.pause?.mode ?? 'soft'), palette.blockTint, palette.blockOn))
     else if (c.prio) pills.push(pill('prioritaire', palette.lateTint, palette.lateOn))
     else if (c.state === 'wait') pills.push(pill("t'attend", palette.waitTint, palette.waitOn))
@@ -406,7 +426,10 @@ export async function drawControl($: EngineInterface, e: RenderInput<'Pane'>, pa
         : null
 
     const buttons: RenderElement[] = []
-    if (done) {
+    // #383 : une tâche en test garde sa session ouverte (les retours de test y arrivent) : pas d'archivage d'ici.
+    if (done && c.test) {
+      // la session attend les retours de test
+    } else if (done) {
       buttons.push(gesture(`ctl:archive:${keyPart(c.key)}`, archiveIcon(palette.text3, 14), 'Archiver', 'Archiver', () => void act($, () => deps.archive(c.sessionId as string))))
     } else {
       buttons.push(gesture(`ctl:prio:${keyPart(c.key)}`, Svg ? priorityIcon(c.prio, palette, 14) : false, c.prio ? 'Prioritaire' : 'Sans priorité', 'Prioritaire', () => void act($, () => togglePrio(deps, c))))
@@ -414,8 +437,9 @@ export async function drawControl($: EngineInterface, e: RenderInput<'Pane'>, pa
     if (done) {
       // rien à mettre en pause : la session est finie
     } else if (zone === 'run') {
-      const asked = c.state === 'pausing'
-      buttons.push(gesture(`ctl:pause:${c.sessionId}`, asked ? playIcon(palette.live, 14) : pauseIcon(palette.text3, 14), asked ? 'Annuler la pause' : 'Pause', asked ? 'Annuler la pause' : 'Pause', () => void act($, () => togglePause($, deps, c))))
+      // #383 : Pause et Annuler ont chacun leur clé : un double clic ne défait plus la pause qu'il vient de poser.
+      if (c.state === 'pausing') buttons.push(gesture(`ctl:unpause:${c.sessionId}`, playIcon(palette.live, 14), 'Annuler la pause', 'Annuler la pause', () => void act($, () => cancelPause(deps, c))))
+      else if (c.state !== 'paused') buttons.push(gesture(`ctl:pause:${c.sessionId}`, pauseIcon(palette.text3, 14), 'Pause', 'Pause', () => void act($, () => pauseNow($, deps, c))))
     } else {
       buttons.push(gesture(`ctl:pass:${keyPart(c.key)}`, playIcon(palette.live, 14), 'Reprendre', c.state === 'paused' ? 'Reprendre' : 'Passer en cours', () => void act($, () => passIn($, deps, c.key))))
     }
