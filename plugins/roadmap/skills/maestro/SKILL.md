@@ -588,8 +588,13 @@ The merge itself:
   (`own_initiative`) instead and say in one line that a click on Start launches it. The entry stays
   in the queue until the app answers: accepted, it leaves; refused, it stays with the reason and
   the time, shown in the control center, and is retried at most once a minute; no answer within
-  5 min, it comes back with « aucune session n'a démarré ». The panel also writes « #N entre en file, 3e sur le Mac … » when a ▶ queues a task:
-  answer it in one line, launch nothing.
+  5 min, it comes back with « aucune session n'a démarré ». If the person told you not to launch it
+  (« Ne la lance pas »), do not launch it and do not ask again: a release turn that ends without
+  `start_session` for `#N` marks the entry « retenue », and it starts again only at the person's ▶
+  (or « Reprendre » in the control center). The panel also writes « #N entre en file, 3e sur le Mac … » when a ▶ queues a task,
+  with the real reason of the wait (the Mac's load and its threshold, the places taken, or the task
+  that starts before it): answer it in one line that repeats that reason as written, add nothing,
+  launch nothing.
   An entry of another Maestro that could start and has not started for two minutes (its Maestro
   idle, closed, or refused by auto mode) no longer holds the queue (#372): the next one starts. And
   the first open Maestro that is running takes it over (#374): the entry becomes yours (« taken »),
@@ -608,7 +613,13 @@ The merge itself:
   holds no place and resumes by itself at its turn: the panel writes to it
   « Tu as été mise en pause pour laisser passer #N. Reprends où tu en étais. »
   Requests live in the store (`session-pauses`);
-  your panel runs the ones for your daughters. Do not stop, pause or resume a session yourself, and
+  your panel runs the ones for your daughters. A Pause the person clicks in the control center is
+  a stop (« arrêt demandé », never « pause en fin de tour »): the Maestro that receives the click
+  runs it, and any open Maestro runs a person's pause or one whose Maestro is not open (#383); a
+  stop the app refuses shows its reason and is retried once a minute; a session paused by hand
+  resumes only at « Reprendre », never by itself when a place frees. A task has a single place:
+  a resume entry whose pause is gone leaves the queue, and a task already in « En cours » never
+  shows in the queue too. Do not stop, pause or resume a session yourself, and
   do not relaunch a paused task: it is already launched.
 - **Control center** (#367): the pane `controle` (`/controle`, or the icon at the end of the
   « En cours · N ici » line of the panel, #381) shows every task session of every Maestro, all

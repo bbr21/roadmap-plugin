@@ -11921,6 +11921,22 @@ export type GlobalQueued = QueuedLaunch & {
   failed?: { at: number; reason: string; remote?: true }
   /** Reprise (#374) : l'entrée venait d'un autre Maestro, qui ne la lançait pas. */
   taken?: { from: string; at: number }
+  /**
+   * Retenue (#383) : non lancée à son tour de relève (la personne a dit de ne pas la lancer), ou la reprise d'une
+   * pause à la main : elle attend un ▶ (ou « Reprendre »). Remote Control a sa propre retenue (`failed.remote`, #382).
+   */
+  held?: { at: number; reason: string; cause: 'refused' }
+}
+
+/** Une entrée retenue (#383) n'est jamais tête de file. */
+export function queueHeld(e: { held?: unknown }): boolean {
+  return e.held !== undefined
+}
+
+/** Le numéro d'un tour de relève (#383) : sa première ligne non vide est exactement `La file est débloquée : #N démarre.` */
+export function releaseTurnId(text: string | undefined): string | undefined {
+  const first = (text ?? '').split('\n').find(l => l.trim() !== '')
+  return first?.trim().match(/^La file est débloquée : #(\S+) démarre\.$/)?.[1]
 }
 
 /** Un départ en vol sans session au bout de ce délai est tenu pour raté (#374) : Maestro occupé, message perdu. */
@@ -12055,7 +12071,7 @@ export const PRIO_MARKS_KEY = 'prio-marks'
  * exécutée par le Maestro parent ; `by` dit pourquoi (une prioritaire, une tâche passée devant, la main de BBR),
  * `for` pour quel numéro, `maestro` qui l'exécute.
  */
-export type SessionPause = { mode: 'stop' | 'soft'; state: 'asked' | 'paused'; by: 'prio' | 'order' | 'hand'; for?: string; maestro: string; at: number }
+export type SessionPause = { mode: 'stop' | 'soft'; state: 'asked' | 'paused'; by: 'prio' | 'order' | 'hand'; for?: string; maestro: string; at: number; /** Un arrêt refusé par l'app (#383) : l'heure et le motif. */ failed?: { at: number; reason: string } }
 
 /** Les pauses lues du store (#367) : les valeurs mal formées sont ignorées. */
 export function sessionPausesOf(value: unknown): Record<string, SessionPause> {
@@ -12068,9 +12084,25 @@ export function sessionPausesOf(value: unknown): Record<string, SessionPause> {
     if (p.by !== 'prio' && p.by !== 'order' && p.by !== 'hand') continue
     if (typeof p.maestro !== 'string' || typeof p.at !== 'number' || !Number.isFinite(p.at)) continue
     if (p.for !== undefined && typeof p.for !== 'string') continue
-    out[id] = { mode: p.mode, state: p.state, by: p.by, ...(p.for !== undefined ? { for: p.for } : {}), maestro: p.maestro, at: p.at }
+    const f = (p as { failed?: unknown }).failed as { at?: unknown; reason?: unknown } | null | undefined
+    const failed = typeof f === 'object' && f !== null && typeof f.at === 'number' && Number.isFinite(f.at) && typeof f.reason === 'string' ? { at: f.at, reason: f.reason } : undefined
+    out[id] = { mode: p.mode, state: p.state, by: p.by, ...(p.for !== undefined ? { for: p.for } : {}), maestro: p.maestro, at: p.at, ...(failed ? { failed } : {}) }
   }
   return out
+}
+
+/** Un arrêt refusé n'est pas réessayé avant cette durée (#383). */
+export const PAUSE_RETRY_MS = 60_000
+
+/**
+ * Cette pause demandée peut-elle être exécutée par ce Maestro (#383) ? La sienne, un clic à la main (exécuté tout de
+ * suite par le Maestro qui tourne), celle d'un Maestro fermé, ou une pause qui traîne depuis plus de deux minutes ;
+ * jamais un arrêt refusé depuis moins d'une minute.
+ */
+export function pauseRunnable(p: SessionPause, ownId: string, now: number, openMaestros: ReadonlySet<string>): boolean {
+  if (p.state !== 'asked') return false
+  if (p.failed && now - p.failed.at < PAUSE_RETRY_MS) return false
+  return p.maestro === ownId || p.by === 'hand' || !openMaestros.has(p.maestro) || now - p.at > QUEUE_STUCK_MS
 }
 
 /** Les marques de priorité lues du store (#367) : seules les clés texte comptent. */
@@ -12129,6 +12161,10 @@ export type ControlCard = {
   launching?: true
   /** Le dernier départ raté de l'entrée en file (#374). */
   failed?: { at: number; reason: string; remote?: true }
+  /** La pause demandée d'une session qui s'arrête (#383) : son mode, et l'arrêt refusé par l'app. */
+  pause?: { mode: 'stop' | 'soft'; failed?: { at: number; reason: string } }
+  /** L'entrée retenue (#383). */
+  held?: { at: number; reason: string; cause: 'refused' }
   id: string
   title: string
   project: string
@@ -12200,6 +12236,7 @@ export function controlView(o: {
   const projectOf = o.projectOf ?? rootOfCwd
   const name = (root: string) => root.split('/').filter(Boolean).pop() ?? root
   const running: ControlCard[] = []
+  const rowCwd = new Map<string, string>()
   for (const raw of o.rows) {
     const r = raw as { sessionId?: unknown; title?: unknown; cwd?: unknown; isArchived?: unknown; isRunning?: unknown; branch?: unknown }
     if (typeof r.sessionId !== 'string' || typeof r.title !== 'string' || r.isArchived === true) continue
@@ -12208,6 +12245,7 @@ export function controlView(o: {
     const pause = o.pauses[r.sessionId]
     if (pause?.state === 'paused') continue
     const root = projectOf(typeof r.cwd === 'string' ? r.cwd : '')
+    rowCwd.set(r.sessionId, typeof r.cwd === 'string' ? r.cwd : '')
     const project = name(root)
     const status = o.statusOf(r.sessionId)
     const kind = status?.recap ? childWake({ recap: status.recap }).kind : 'other'
@@ -12220,6 +12258,7 @@ export function controlView(o: {
       title: bareTitle(r.title),
       project,
       tone: toneOf(project),
+      ...(!finished && pause?.state === 'asked' ? { pause: { mode: pause.mode, ...(pause.failed ? { failed: pause.failed } : {}) } } : {}),
       state: finished ? 'done' : pause?.state === 'asked' ? 'pausing' : r.isRunning === true ? 'run' : 'wait',
       prio: o.marks.has(`${root}#${id}`),
       ...(steps ? { steps } : {}),
@@ -12238,7 +12277,17 @@ export function controlView(o: {
       return a.i - b.i
     })
     .map(x => x.c)
-  const queued: ControlCard[] = globalQueueOrder(o.queue).map(e => {
+  const runningKeys = new Set<string>()
+  const runningSessions = new Set<string>()
+  for (const c of running) {
+    runningKeys.add(`${projectOf(rowCwd.get(c.sessionId as string) ?? '')}#${c.id}`)
+    runningSessions.add(c.sessionId as string)
+  }
+  const shown = globalQueueOrder(o.queue).filter(e => {
+    if (e.kind === 'resume') return e.sessionId !== undefined && o.pauses[e.sessionId]?.state === 'paused' && !runningSessions.has(e.sessionId)
+    return !runningKeys.has(`${e.project}#${e.id}`)
+  })
+  const queued: ControlCard[] = shown.map(e => {
     const resume = e.kind === 'resume'
     const project = name(e.project)
     const steps = resume && e.sessionId ? cardSteps(o.statusOf(e.sessionId)) : undefined
@@ -12254,10 +12303,16 @@ export function controlView(o: {
       ...(resume && e.sessionId ? { sessionId: e.sessionId } : {}),
       ...(e.launching ? { launching: true as const } : {}),
       ...(e.failed ? { failed: e.failed } : {}),
+      ...(e.held ? { held: e.held } : {}),
       heavy: false,
     }
   })
   return { running: sorted, queued }
+}
+
+/** La pastille d'une session dont l'arrêt est demandé (#383). */
+export function pausingPill(mode: 'stop' | 'soft'): string {
+  return mode === 'stop' ? 'arrêt demandé' : 'pause en fin de tour'
 }
 
 /** #382 : le refus de l'app quand la personne travaille en Remote Control (start_session ou carte), reconnu à son texte. */
@@ -12276,8 +12331,9 @@ export function typedReleaseText(release: string): string {
 }
 
 /** La ligne d'une entrée en file au centre de contrôle (#374) : en file, en vol, ou ratée avec son heure et son motif. */
-export function queuedLine(c: { launching?: boolean; failed?: { at: number; reason: string; remote?: true } }): string {
+export function queuedLine(c: { launching?: boolean; held?: { at: number; reason: string; cause: 'refused' }; failed?: { at: number; reason: string; remote?: true } }): string {
   if (c.launching) return "démarre… · la session va s'ouvrir"
+  if (c.held) return "retenue · ne repart qu'à ton ▶"
   if (c.failed) {
     const d = new Date(c.failed.at)
     const hm = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
@@ -12340,10 +12396,11 @@ export function liveQueue<T extends { id: string; maestro: string; project: stri
 
 const loadWords = (l: MacLoad) => `charge ${Math.round(l.load)} pour ${l.cores} cœurs, seuil ${2 * l.cores}`
 
-type QueueTextArgs = { id: string; rank: number; why: DoseWhy; projectName: string; projectTaken: number; projectMax: number; macTaken: number; macMax: number; load?: MacLoad }
+type QueueTextArgs = { id: string; rank: number; why: DoseWhy; projectName: string; projectTaken: number; projectMax: number; macTaken: number; macMax: number; load?: MacLoad; /** Le numéro qui part avant elle (#383). */ ahead?: string }
 
 /** Ce qui retient la tâche, en une phrase (#345). */
 function heldBy(o: QueueTextArgs): string {
+  if (o.ahead) return `#${o.ahead} part avant elle`
   if (o.why === 'load' && o.load) return `Le Mac est chargé (${loadWords(o.load)})`
   if (o.why === 'mac') return `Le Mac est plein (${o.macTaken} sessions, plafond ${o.macMax})`
   return `${o.projectTaken} sessions de ${o.projectName} travaillent (plafond ${o.projectMax})`
@@ -12351,7 +12408,7 @@ function heldBy(o: QueueTextArgs): string {
 
 /** Le message dans la conversation de Maestro quand une tâche entre en file (#345). */
 export function queueEntryText(o: QueueTextArgs): string {
-  return `#${o.id} entre en file, ${queueRank(o.rank)} sur le Mac : ${heldBy(o)}. Elle démarrera seule à son tour, sans nouveau clic. Réponds en une ligne, sans rien lancer.`
+  return `#${o.id} entre en file, ${queueRank(o.rank)} sur le Mac : ${heldBy(o)}. Elle démarrera seule à son tour, sans nouveau clic. Réponds en une ligne qui reprend cette raison telle quelle, sans rien ajouter ni rien lancer.`
 }
 
 /** La première ligne du message qui débloque la tête de file (#345). */

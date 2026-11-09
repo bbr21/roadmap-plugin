@@ -6,6 +6,7 @@ import { SPACE } from './tokens'
 import {
   controlView,
   globalQueueOrder,
+  pausingPill,
   keyPart,
   queueAtBetween,
   queueCardKey,
@@ -56,6 +57,8 @@ export type ControlDeps = {
   projectOf: (queue: readonly GlobalQueued[]) => (cwd: string) => string
   /** L'identifiant de cette session, pour une demande dont la session n'a pas de Maestro. */
   ownId: () => Promise<string>
+  /** Cette session est-elle un Maestro (#383) ? Alors c'est elle qui exécute la Pause qu'on y clique. */
+  ownIsMaestro: () => Promise<boolean>
   /** Ouvre la session ; le lien `claude://` sert de repli (#374). Ratée, elle lève, et le volet le dit. */
   open: (sessionId: string, title: string, link?: string) => Promise<void>
   /** Les tâches closes de la roadmap de cette session (`<racine>#<numéro>`) : leur session est finie. */
@@ -140,7 +143,9 @@ async function togglePause($: EngineInterface, deps: ControlDeps, card: ControlC
   const d = await controlData(deps)
   if (d.pauses[id]?.state === 'asked') return deps.writePause(id, undefined)
   const startedBy = (d.rows.find(r => (r as { sessionId?: unknown }).sessionId === id) as { startedBy?: unknown } | undefined)?.startedBy
-  const maestro = typeof startedBy === 'string' && startedBy !== '' ? startedBy : await deps.ownId()
+  // #383 : le Maestro qui reçoit le clic l'exécute ; ailleurs, le Maestro de la session (tout Maestro ouvert la reprend).
+  const here = await deps.ownIsMaestro().catch(() => false)
+  const maestro = !here && typeof startedBy === 'string' && startedBy !== '' ? startedBy : await deps.ownId()
   await deps.writePause(id, { mode: 'stop', state: 'asked', by: 'hand', maestro, at: await $.clock.now() })
 }
 
@@ -151,9 +156,16 @@ function headAt(ordered: readonly GlobalQueued[], entry: GlobalQueued, now: numb
 }
 
 /** Réécrit la file avec un autre `at` pour une entrée. */
-async function moveEntry(deps: ControlDeps, entry: GlobalQueued, at: number): Promise<void> {
+async function moveEntry(deps: ControlDeps, entry: GlobalQueued, at: number, release = false): Promise<void> {
   const key = queueCardKey(entry)
-  await deps.writeQueue((await deps.queue()).map(e => (queueCardKey(e) === key ? { ...e, at } : e)))
+  await deps.writeQueue(
+    (await deps.queue()).map(e => {
+      if (queueCardKey(e) !== key) return e
+      // #383 : « Reprendre » vaut le ▶ de la personne : l'entrée retenue repart.
+      const { held: _held, ...rest } = e
+      return release ? { ...rest, at } : { ...e, at }
+    }),
+  )
 }
 
 /**
@@ -175,7 +187,7 @@ async function passIn($: EngineInterface, deps: ControlDeps, key: string): Promi
       await deps.writePause(last.sessionId, { mode: 'soft', state: 'asked', by: 'order', for: entry.id, maestro, at: now })
     }
   }
-  await moveEntry(deps, entry, headAt(globalQueueOrder(d.queue), entry, now))
+  await moveEntry(deps, entry, headAt(globalQueueOrder(d.queue), entry, now), true)
 }
 
 /**
@@ -339,7 +351,7 @@ export async function drawControl($: EngineInterface, e: RenderInput<'Pane'>, pa
     if (c.state === 'wait') return [handIcon(palette.wait, 14), "t'attend"]
     if (c.state === 'paused') return [pausedIcon(palette.block, 14), 'en pause']
     if (c.state === 'queued') return [clockIcon(palette.text3, 14), 'en file']
-    if (c.state === 'pausing') return [pausingIcon(palette.block, 14), 'se met en pause']
+    if (c.state === 'pausing') return [pausingIcon(palette.block, 14), c.pause?.mode === 'stop' ? "s'arrête" : 'se met en pause']
     return [spinnerIcon(palette.live, 14), 'tourne']
   }
 
@@ -367,13 +379,14 @@ export async function drawControl($: EngineInterface, e: RenderInput<'Pane'>, pa
     const border = done ? palette.finished : c.prio ? palette.late : c.state === 'pausing' ? palette.block : palette.border
     const pills: RenderElement[] = []
     if (done) pills.push(pill('Done', palette.finishedTint, palette.finishedOn))
-    else if (c.state === 'pausing') pills.push(pill('pause en fin de tour', palette.blockTint, palette.blockOn))
+    else if (c.state === 'pausing') pills.push(pill(pausingPill(c.pause?.mode ?? 'soft'), palette.blockTint, palette.blockOn))
     else if (c.prio) pills.push(pill('prioritaire', palette.lateTint, palette.lateOn))
     else if (c.state === 'wait') pills.push(pill("t'attend", palette.waitTint, palette.waitOn))
     if (c.heavy && c.state === 'run') pills.push(pill('tests lourds', palette.btn, palette.text2))
     if (c.state === 'paused') pills.push(pill('en pause', palette.blockTint, palette.blockOn))
 
-    const progress = done
+    const refusedStop = c.pause?.failed ? `arrêt refusé · ${c.pause.failed.reason} · réessaie chaque minute` : undefined
+    const progress = refusedStop ? refusedStop : done
       ? c.steps
         ? `${c.steps.done}/${c.steps.total} · ${c.steps.current || 'prête à fusionner'}`
         : 'prête à fusionner'
@@ -382,7 +395,7 @@ export async function drawControl($: EngineInterface, e: RenderInput<'Pane'>, pa
         : undefined
     const waitLine =
       c.state === 'paused'
-        ? `en pause${c.steps ? ` · ${c.steps.done}/${c.steps.total} faites` : ''} · reprend seule à son tour`
+        ? `en pause${c.steps ? ` · ${c.steps.done}/${c.steps.total} faites` : ''} · ${c.held ? 'reprend à ton « Reprendre »' : 'reprend seule à son tour'}`
         : queuedLine(c)
     const bar =
       c.steps && zone === 'run' && Svg
@@ -495,7 +508,7 @@ export async function drawControl($: EngineInterface, e: RenderInput<'Pane'>, pa
       <Box key="queue-zone" flexDirection="column" gap={SPACE.tight} paddingX="sm" paddingY="xs" backgroundColor={palette.note}>
         {queueBody}
         {queued.length === 0 && caption("Personne n'attend : chaque tâche lancée part tout de suite.", palette.text3)}
-        {queued.some(c => c.state === 'paused') && caption('Une session en pause reprend seule quand une place se libère, à son rang.', palette.blockOn)}
+        {queued.some(c => c.state === 'paused') && caption('Une session cédée à une autre reprend seule quand une place se libère ; mise en pause à la main, elle attend « Reprendre ».', palette.blockOn)}
       </Box>
     </Box>
   )

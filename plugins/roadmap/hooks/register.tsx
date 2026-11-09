@@ -463,6 +463,9 @@ import {
   globalQueueOrder,
   liveQueue,
   launchInFlight,
+  pauseRunnable,
+  queueHeld,
+  releaseTurnId,
   openSteps,
   LAUNCH_PENDING_MS,
   PRIO_MARKS_KEY,
@@ -4101,10 +4104,17 @@ async function settleQueued($: EngineInterface, ownId: string, title: string, ra
   const reason = clip(said.replace(/\s+/g, ' ').trim(), 200)
   await writeOwnQueue($, ownId, own => own.map(q => (q.id === id && q.kind !== 'resume' ? failedEntry(q, now, reason, remote) : q)))
   await unreserveCard($, title)
-  doseAllowed.delete(id)
+  // #383 : la carte de repli du même tour passe la décision, au lieu de rentrer en file.
+  doseAllowed.set(id, now + DOSE_RETRY_MS * 2)
   doseRetryAt = now + DOSE_RETRY_MS
   doseSeenKey = ''
   return remote
+}
+
+/** L'entrée retenue (#383) : plus en vol, ni départ raté ; elle attend un ▶ de la personne. */
+function heldEntry(q: GlobalQueued, at: number, reason: string, cause: 'refused'): GlobalQueued {
+  const { launching: _, failed: __, ...rest } = q
+  return { ...rest, held: { at, reason, cause } }
 }
 
 /** L'entrée dont le départ a raté (#374) : plus en vol, la trace de son refus ; `remote` (#382) : retenue par Remote Control. */
@@ -4187,7 +4197,8 @@ async function doseLaunch($: EngineInterface, id: string | undefined, entry: Omi
     const gate = gateFor(state, project, match)
     const queue = await readGlobalQueue($)
     const gateOf = (e: GlobalQueued) => gateFor(state, e.project, e.match)
-    const head = queueHead(liveQueue(globalQueueOrder(queue), gateOf, ownId, queueSince, now), gateOf)
+    // #383 : ni une entrée retenue ni une entrée en vol (sa place est déjà réservée) ne sont tête.
+    const head = queueHead(liveQueue(globalQueueOrder(queue), gateOf, ownId, queueSince, now).filter(e => !queueHeld(e) && !launchInFlight(e, now)), gateOf)
     if (gate.go && (!head || (head.maestro === ownId && head.id === id))) {
       // #382 : une entrée retenue par Remote Control reste en file ; la réponse de l'app à la carte la règle (`settleQueued`).
       if (queue.some(q => q.maestro === ownId && q.id === id && q.kind !== 'resume' && !q.failed?.remote)) await writeOwnQueue($, ownId, own => own.filter(q => q.id !== id || q.kind === 'resume'), state.rows)
@@ -4205,7 +4216,7 @@ async function doseLaunch($: EngineInterface, id: string | undefined, entry: Omi
     )
     doseSeenKey = ''
     const rank = liveQueue(globalQueueOrder(written), gateOf, ownId, queueSince, now).findIndex(q => q.maestro === ownId && q.id === id) + 1
-    const text = { id, rank, projectName: name, projectTaken: placesOf(state, project, match), projectMax: state.projectMax, macTaken: state.macTaken, macMax: state.macMax, why: gate.go ? ('project' as const) : gate.why, ...(state.load ? { load: state.load } : {}) }
+    const text = { id, rank, projectName: name, projectTaken: placesOf(state, project, match), projectMax: state.projectMax, macTaken: state.macTaken, macMax: state.macMax, why: gate.go ? ('project' as const) : gate.why, ...(state.load ? { load: state.load } : {}), ...(gate.go && head ? { ahead: head.id } : {}) }
     // Au ▶, le panneau dit l'entrée en file dans la conversation de Maestro ; à la carte du modèle, le refus est ce message.
     if (entry.launch) queueSubmit($, queueEntryText(text))
     return { refusal: queuedRefusal(text) }
@@ -4365,6 +4376,7 @@ function controlDeps($: EngineInterface): ControlDeps {
       return cwd => known.find(k => k.match.some(prefix => cwd.startsWith(prefix)))?.project ?? rootOfCwd(cwd)
     },
     ownId: async () => (await readOwnSession($)).id ?? '',
+    ownIsMaestro: () => maestroHere($),
     // #374 : le lien de la rangée sert de repli ; rien n'a ouvert la session, le volet lui-même le dit.
     open: async (sessionId, title, link) => {
       // L'identifiant de cette session, gardé dès le premier pas : son mode se lit dans la liste, sans appel au clic.
@@ -4453,6 +4465,8 @@ async function relieveLaunches($: EngineInterface): Promise<void> {
     let changed = false
     const dropResume = async (sessionId: string) => {
       queue = await writeOwnQueue($, ownId, own => own.filter(q => !(q.kind === 'resume' && q.sessionId === sessionId)), state.rows)
+      // #383 : la pause effacée, son entrée s'ôte aussi chez un autre Maestro.
+      if (queue.some(q => q.kind === 'resume' && q.sessionId === sessionId)) queue = await dropOrphanResumes($, pauses)
     }
     const clearPause = async (sessionId: string) => {
       await writePause($, sessionId, undefined)
@@ -4470,11 +4484,15 @@ async function relieveLaunches($: EngineInterface): Promise<void> {
       // une entrée `resume` de ce Maestro sans pause exécutée (reprise faite ailleurs, pause ôtée) n'a plus de raison d'être
       const orphans = queue.filter(q => q.maestro === ownId && q.kind === 'resume' && pauses[q.sessionId ?? '']?.state !== 'paused')
       if (orphans.length > 0) queue = await writeOwnQueue($, ownId, own => own.filter(q => !orphans.includes(q)), state.rows)
+      // #383 : celle d'un autre Maestro dont la pause a disparu aussi : une tâche n'a qu'une place (En cours et « en pause » à la fois, #336 et #371).
+      if (queue.some(q => q.maestro !== ownId && q.kind === 'resume' && pauses[q.sessionId ?? ''] === undefined)) queue = await dropOrphanResumes($, pauses)
     }
     // (a) les demandes de pause de ce Maestro (et celles d'un autre, restées deux minutes sans réponse)
     const runPauses = async () => {
+      // #383 : la pause de Bertrand, ou celle d'un Maestro fermé, s'exécute ici tout de suite.
+      const openMaestros = new Set([ownId, ...[...state.maestros].filter(id => openRowOf(state.rows, id) !== undefined)])
       for (const [sessionId, p] of Object.entries(pauses)) {
-        if (p.state !== 'asked' || (p.maestro !== ownId && now - p.at <= QUEUE_STUCK_MS)) continue
+        if (!pauseRunnable(p, ownId, now, openMaestros)) continue
         const row = openRowOf(state.rows, sessionId)
         if (!row) {
           if (listed) await clearPause(sessionId)
@@ -4482,10 +4500,20 @@ async function relieveLaunches($: EngineInterface): Promise<void> {
         }
         if (p.mode === 'soft' && row.isRunning) continue
         if (p.mode === 'stop') {
+          // #383 : un arrêt refusé dit son motif au centre de contrôle, et se réessaie une fois par minute.
+          const refused = async (reason: string) => {
+            const failed: SessionPause = { ...p, failed: { at: now, reason: clip(reason.replace(/\s+/g, ' ').trim(), 200) } }
+            await writePause($, sessionId, failed)
+            pauses[sessionId] = failed
+          }
           try {
             const ran = await $.tool.call({ tool: STOP_SESSION_TOOL, session_id: sessionId })
-            if (ran.deny !== undefined || ran.isError) continue
-          } catch {
+            if (ran.deny !== undefined || ran.isError) {
+              await refused(ran.deny ?? ran.text ?? 'arrêt refusé sans motif')
+              continue
+            }
+          } catch (err) {
+            await refused(err instanceof Error ? err.message : String(err))
             continue
           }
         }
@@ -4499,11 +4527,13 @@ async function relieveLaunches($: EngineInterface): Promise<void> {
           queue = await writeOwnQueue(
             $,
             ownId,
-            own => [...own, { id: taskId, title: row.title, at, kind: 'resume', sessionId, maestro: ownId, project: inMine ? mine.project : root, match: inMine ? mine.match : [root], after: [] }],
+            // #383 : une pause à la main ne reprend qu'au « Reprendre » de la personne, jamais seule dès qu'une place se libère.
+            own => [...own, { id: taskId, title: row.title, at, kind: 'resume', sessionId, maestro: ownId, project: inMine ? mine.project : root, match: inMine ? mine.match : [root], after: [], ...(p.by === 'hand' ? { held: { at: now, reason: 'mise en pause à la main', cause: 'refused' as const } } : {}) }],
             state.rows,
           )
         }
-        const done: SessionPause = { ...p, state: 'paused', maestro: ownId, at: now }
+        const { failed: _failed, ...asked } = p
+        const done: SessionPause = { ...asked, state: 'paused', maestro: ownId, at: now }
         await writePause($, sessionId, done)
         pauses[sessionId] = done
         changed = true
@@ -4512,7 +4542,7 @@ async function relieveLaunches($: EngineInterface): Promise<void> {
     await runPauses()
     // (c) la tête prioritaire est refusée et personne n'a déjà demandé de pause pour elle : une session cède sa place
     // #374 : une entrée en vol a déjà sa place réservée : elle ne demande pas une autre pause.
-    const first = fileOn && !changed ? counted(queue).filter(q => !launchInFlight(q, now))[0] : undefined
+    const first = fileOn && !changed ? counted(queue).filter(q => !launchInFlight(q, now) && !queueHeld(q))[0] : undefined
     if (first?.prio && first.kind !== 'resume' && !gateFor(state, first.project, first.match).go) {
       const fresh = await readPauses($)
       if (!Object.values(fresh).some(p => p.state === 'asked' && p.for === first.id)) {
@@ -4537,12 +4567,12 @@ async function relieveLaunches($: EngineInterface): Promise<void> {
     // est archivé est reprise ici ; elle ne part qu'au pas suivant, si ce Maestro la tient encore.
     if (fileOn && !changed) {
       const live = new Set(counted(queue))
-      const lost = globalQueueOrder(queue).find(e => e.maestro !== ownId && e.kind !== 'resume' && !launchInFlight(e, now) && (gone.has(e.maestro) || (!e.failed?.remote && !live.has(e) && gateOf(e).go)))
+      const lost = globalQueueOrder(queue).find(e => e.maestro !== ownId && e.kind !== 'resume' && !launchInFlight(e, now) && !queueHeld(e) && (gone.has(e.maestro) || (!e.failed?.remote && !live.has(e) && gateOf(e).go)))
       if (lost) queue = await takeEntry($, ownId, lost, now)
     }
     // (d) et (e) : la tête, une entrée `resume` à reprendre ou une tâche à lancer ; un pas qui vient de poser ou lever une pause attend le suivant.
     // Une entrée en vol (#374) n'est plus une tête : elle attend sa session ; une entrée reprise à ce pas attend le suivant.
-    const head = changed ? undefined : queueHead(counted(queue).filter(q => !launchInFlight(q, now) && q.taken?.at !== now), gateOf)
+    const head = changed ? undefined : queueHead(counted(queue).filter(q => !launchInFlight(q, now) && !queueHeld(q) && q.taken?.at !== now), gateOf)
     // #382 : une entrée de ce Maestro retenue par Remote Control n'est relancée que par un mot de la personne (`typedRelease`) ; les reprises (`resume`) partent toujours.
     const remoteHeld = queue.some(q => q.maestro === ownId && q.kind !== 'resume' && q.failed?.remote)
     if (head && head.maestro === ownId && now >= doseRetryAt && (head.kind === 'resume' || !remoteHeld)) {
@@ -4579,6 +4609,36 @@ async function relieveLaunches($: EngineInterface): Promise<void> {
   } finally {
     relieving = false
   }
+}
+
+/**
+ * Ôte de la file commune, quel que soit leur Maestro, les entrées `resume` dont la session n'a plus de pause (#383).
+ * La file est relue juste avant ; une pause encore demandée garde son entrée (son Maestro l'écrit avant la pause).
+ */
+async function dropOrphanResumes($: EngineInterface, pauses: Record<string, SessionPause>): Promise<GlobalQueued[]> {
+  const stored = await readGlobalQueue($)
+  const next = stored.filter(q => q.kind !== 'resume' || pauses[q.sessionId ?? ''] !== undefined)
+  if (next.length !== stored.length) await storeSet($, LAUNCH_QUEUE_KEY, next as unknown as StoreValue)
+  return next
+}
+
+/**
+ * Le tour de relève de ce Maestro (#383) : ouvert par « La file est débloquée : #N démarre. », fini sans
+ * `start_session` pour `#N`, il retient l'entrée : la personne a dit de ne pas la lancer ; elle ne repart qu'à son ▶.
+ */
+let releaseTurn: { id: string; tried: boolean } | undefined
+
+async function holdUnlaunched($: EngineInterface, id: string): Promise<void> {
+  const ownId = ownSession?.id
+  if (!ownId) return
+  const stored = await readGlobalQueue($)
+  const entry = stored.find(q => q.maestro === ownId && q.id === id && q.kind !== 'resume')
+  if (!entry) return
+  const now = await $.clock.now()
+  await writeOwnQueue($, ownId, own => own.map(q => (q === entry || (q.id === id && q.kind !== 'resume') ? heldEntry(q, now, "pas lancée au tour de sa relève", 'refused') : q)))
+  await unreserveCard($, entry.title)
+  doseAllowed.delete(id)
+  doseSeenKey = ''
 }
 
 /**
@@ -7513,6 +7573,9 @@ export const register: Register = (on, options) => {
     let titleRefused = false
     const ran = await forwardProposal($, e, next.origin.plugin, async () => {
       if (next.origin.plugin !== 'engine') return next(e)
+      // #383 : Maestro a essayé de lancer la tâche de sa relève ; un refus de l'app se règle par `settleQueued`.
+      const tried = (e as { title?: unknown }).title
+      if (releaseTurn && typeof tried === 'string' && sessionTitleId(tried) === releaseTurn.id) releaseTurn.tried = true
       const refusal = await launchRefusal($, e)
       if (refusal !== undefined) {
         titleRefused = true
@@ -7743,6 +7806,9 @@ export const register: Register = (on, options) => {
     if (e.agentId === undefined) {
       launchTurn = { cards: [], refused: false, fromPanel: launchPending }
       launchPending = false
+      // #383 : le tour qu'ouvre la relève d'une tâche de la file.
+      const released = releaseTurnId(e.text)
+      releaseTurn = released !== undefined ? { id: released, tried: false } : undefined
     }
     // Un vrai message (de Maestro ou de Bertrand) relance la session : sa réponse sera une nouvelle à dire (#131).
     if (e.agentId === undefined) wakeBox = {}
@@ -7782,6 +7848,9 @@ export const register: Register = (on, options) => {
     const result = await next(e)
     if (e.agentId !== undefined) return result
     await markOwnRunning($, false)
+    // #383 : la relève finie sans lancement : l'entrée est retenue, au lieu de revenir à chaque pas.
+    if (releaseTurn && !releaseTurn.tried) await holdUnlaunched($, releaseTurn.id).catch(() => undefined)
+    releaseTurn = undefined
     // La fiche de fin de la session se garde pour la fiche de sa tâche (#144).
     if (!e.isAborted) await saveEndFiche($, e.answer)
     // Et ce qu'elle va lancer, pour la fiche d'une tâche à lancer (#341).
