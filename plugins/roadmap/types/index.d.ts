@@ -118,8 +118,10 @@ export type View = {
   editNote?: string
   /** Le champ que nomme le refus (`EditField`), son étiquette en rouge ; vide ou absente sinon. */
   editField?: string
-  /** Le nombre de champs changés de la fiche en édition, « N changements » ; absent : 0. */
-  editCount?: number
+  /** Le champ de la fiche en édition qui est ouvert en saisie (`EditField`, #342) ; vide ou absent : aucun. */
+  editOpen?: string
+  /** Le dernier champ enregistré, qui porte le V « enregistré » (`EditField`, #342) ; vide ou absent : aucun. */
+  editSaved?: string
   /** La tâche (son numéro) dont la carte d'étapes est épinglée dans l'arbre de Maestro (#143) ; vide ou absente : aucune. */
   stepsPin?: string
   /** Les cartes de la fiche repliées par leur tête (#199), par nom (`fin`, `etapes`, `details`…), pour toutes les tâches ; absent : toutes dépliées. */

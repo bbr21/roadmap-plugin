@@ -7906,7 +7906,7 @@ export function editableFields(
     // Le nom court choisi à la main (#235), au-dessus du libellé : vide, le panneau tire le sien.
     { field: 'nom', name: 'Nom', card: 'mission', value: value('nom') === '-' ? '' : value('nom') },
     { field: 'label', name: 'Mission', card: 'mission', value: m?.[2] ?? task.label },
-    { field: 'attend', name: 'Attend', card: 'avancement', value: value('attend') },
+    // L'état (en session, l'attente) ne s'édite pas à la main (#342, BBR) : pas de champ « Attend ».
     { field: 'apres', name: 'Après', card: 'chaine', value: value('après') },
     { field: 'parent', name: 'Parent', card: 'chaine', value: value('parent') },
     { field: 'axis', name: 'Axe', card: 'details', value: fields[0] ?? task.axis, ...options(o.axes) },
@@ -7916,6 +7916,30 @@ export function editableFields(
       .map((k): EditSpec => ({ field: `cle:${k}`, name: `${k.charAt(0).toUpperCase()}${k.slice(1)}`, card: 'details', value: value(k), ...options(o.cles[k] ?? []) })),
     { field: 'due', name: 'Échéance', card: 'details', value: value('due') },
   ]
+}
+
+/** Où un champ s'édite dans la fiche (#342, maquette B′) : là où il s'affiche. */
+export type EditPlace = 'title' | 'axis' | 'due' | 'mission' | 'chaine' | 'details'
+
+export function editPlace(field: EditField): EditPlace {
+  if (field === 'nom') return 'title'
+  if (field === 'axis' || field === 'due') return field
+  if (field === 'label') return 'mission'
+  if (field === 'apres' || field === 'parent') return 'chaine'
+  return 'details'
+}
+
+/** L'écriture d'un seul champ validé par Entrée (#342) : vide quand la valeur ne change pas. */
+export function fieldEdit(spec: EditSpec, draft: string): TaskEdit {
+  return draft.trim() === spec.value.trim() ? {} : { [spec.field]: draft }
+}
+
+/**
+ * Le carton s'édite-t-il en place (#342) ? Seul « À lancer » : le texte de « Ce que fait la session » est à la
+ * session, il ne s'édite pas, comme l'état (BBR au banc, 2026-11-08 : pas de surlignage gris).
+ */
+export function missionEditable(tone: string): boolean {
+  return tone === 'plan'
 }
 
 /** Les champs tapés qui changent la ligne (#161), et leur nombre : « N changements ». */
@@ -9767,10 +9791,10 @@ export function ficheCards(o: {
   attachments?: number
   /** Les livrables de la ligne (`livrable:`, #234) : leur carte vient avant les pièces jointes. */
   deliverables?: number
-  /** En édition (#161, maquette C) : les cartes qui portent un champ, sans « Lancer ». */
+  /** En édition (#161, #342) : les cartes du pied qui portent un champ, Sa chaîne et Détails. */
   editing?: boolean
 }): { cards: FicheCard[] } {
-  if (o.editing) return { cards: ['avancement', 'chaine', 'details'] }
+  if (o.editing) return { cards: ['chaine', 'details'] }
   // #291 (fiche finale) : le geste (Lancer, Ouvrir la session) monte en tête de fiche, la chaîne descend en
   // jauge au pied, et ce que disait Avancement (dossier, branche, attente) rejoint la carte Détails.
   const cards: FicheCard[] = []

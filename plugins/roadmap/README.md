@@ -63,13 +63,15 @@ les sessions toutes les 3 s (le dossier de la roadmap toutes les 15 s), et montr
   par jour, une ouverte se range au jour de son `ouvert:` (« En retard » reste en tête), une faite
   au jour de son `fait:` ; sans choix, les ouvertes vont en arbre par sujet, dans tout projet
   (#168, #238 : plus de `vue` déclarée) et les faites par jour ;
-- la modification d'une tâche ouverte depuis sa fiche (#161) : le crayon à droite du titre met la
-  fiche en édition, champs en place dans ses cartes, préremplis de la ligne (libellé dans la Mission,
-  Attend, Après et Parent, Axe, Responsable (`resp:`, la personne, #176), les clés
-  que le projet déclare dans `cles`, Échéance en `AAAA-MM-JJ`) ; un menu sur bureau quand le projet
-  liste les valeurs admises ; « N changements », puis « Enregistrer » réécrit la seule ligne, les
-  autres champs et la note gardés à leur place, contrôlée par les règles du projet : un refus nomme
-  le champ, rien n'est écrit, la saisie reste ; « Annuler » ne touche à rien. L'écriture suit celle
+- la modification d'une tâche ouverte depuis sa fiche (#161, en place depuis #342) : le petit crayon
+  à droite du titre devient « Terminé » ; la fiche garde sa mise en page et chaque valeur (nom,
+  mission (au carton « À lancer » seulement), Après, Parent, Axe, Responsable (`resp:`, la personne, #176), les clés que le
+  projet déclare dans `cles`, Échéance en `AAAA-MM-JJ`) s'ouvre d'un clic, un champ à la fois, préremplie
+  de la ligne (un menu sur bureau quand le projet liste les valeurs admises) ; Entrée enregistre ce
+  champ seul, réécrit la seule ligne, les autres champs et la note gardés à leur place, contrôlée par
+  les règles du projet, et la valeur montre « ✓ enregistré » ; un refus s'écrit en rouge sous le champ,
+  rien n'est écrit, la saisie reste. Pas de bouton Enregistrer ni Annuler, et la bande d'état ne
+  s'édite pas. L'écriture suit celle
   de « Marquer faite » : `cowork.py roadmap update` dans un dossier Cowork (sauf celui dont `cowork.json`
   confie la roadmap au plugin, `"roadmap": "plugin-roadmap"`, #262), sinon, avec `ecriture`,
   la demande à Claude (#164, voir « Les règles du projet »), sinon le panneau écrit ROADMAP.md, sur
@@ -315,7 +317,7 @@ filtres, « Qui », les rangements) vaut dans tout projet.
   `source:requête`, ou `"#Preuves"`, une section du fichier de règles). Le doctor contrôle les
   chemins (ligne « Règles du projet »), l'onboarding les propose (réponse « Règles »). Avec
   `ecriture` (#164), le panneau n'écrit plus la roadmap : « Marquer faite », « Annuler la tâche »
-  et « Enregistrer » gardent leur confirmation, puis envoient la demande dans la session
+  et l'édition d'un champ gardent leur confirmation, puis envoient la demande dans la session
   (« Coche #N par la skill tasks », « Abandonne #N : <raison> », « Modifie #N par la skill tasks :
   due:…, sans attend »), et l'encart dit « Confié à Claude : ce projet écrit sa roadmap par
   <outil> ». La skill `tasks` cherche la preuve, puis écrit par l'outil du projet. Une récurrente
@@ -746,6 +748,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.236.0 (2026-11-08)** : fiche : édition en place, un champ à la fois (Entrée, V « enregistré »), sans bouton Enregistrer ; crayon plus petit ; l'état ne s'édite plus à la main (#342)
 - **0.235.1 (2026-11-08)** : fiche : durée sur la ligne du titre, durée d'une étape cochée d'un coup, « tourne depuis » compté depuis la création de la session, libellés longs coupés à trois lignes (#341)
 - **0.235.0 (2026-11-08)** : maestro : la file de lancement avance seule (un Maestro qui tourne reprend l'entrée d'un Maestro au repos, une carte en file part seule, un départ refusé reste en file avec sa trace), délai de repos réglable (10 min), « Ouvrir » du centre de contrôle réparé (#374)
 - **0.234.0 (2026-11-08)** : panneau : la carte d'une tâche écrite dit son axe en clair, des infos selon le cas (version et bilan, échéance, avant → après) et « Ouvrir la session » quand une session la tient (#371)

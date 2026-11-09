@@ -228,6 +228,7 @@ import {
   type ChangeZone,
   type FicheCard,
   type EditField,
+  type EditPlace,
   type LintRules,
   type BatchChange,
   type BatchStep,
@@ -275,10 +276,12 @@ import {
   checkRoute,
   closeWithParentInTexts,
   editInTexts,
+  missionEditable,
   editRoute,
   entrustedNote,
   editableFields,
-  editDiff,
+  editPlace,
+  fieldEdit,
   declaredAxes,
   withParentDates,
   bandsOf,
@@ -1284,7 +1287,7 @@ async function keepWrittenBefore($: EngineInterface): Promise<void> {
 async function openTaskFiche($: EngineInterface, source: Source, id: string): Promise<void> {
   await openPane($, source)
   launchExtra = ''
-  await setView($, () => ({ selected: `id:${id}`, launchNote: '', openNote: '', openAt: '', cancelAsk: '', cancelNote: '', editing: '', editNote: '', editField: '' }))
+  await setView($, () => ({ selected: `id:${id}`, launchNote: '', openNote: '', openAt: '', cancelAsk: '', cancelNote: '', editing: '', editOpen: '', editSaved: '', editNote: '', editField: '' }))
 }
 
 /** Le compte rendu du tour, ou rien quand le tour n'a écrit ni la roadmap ni une question. */
@@ -6182,13 +6185,6 @@ function inBackground($: EngineInterface, job: () => Promise<boolean>): void {
     })
 }
 
-/** Les brouillons d'une tâche, par champ. */
-function draftsOf(key: string): Record<string, string> {
-  const out: Record<string, string> = {}
-  for (const [k, v] of editDrafts) if (k.startsWith(`${key}|`)) out[k.slice(key.length + 1)] = v
-  return out
-}
-
 function clearDrafts(key: string): void {
   for (const k of [...editDrafts.keys()]) if (k.startsWith(`${key}|`)) editDrafts.delete(k)
 }
@@ -6489,35 +6485,39 @@ async function rollDayStepsOnStart($: EngineInterface, source: Source): Promise<
 }
 
 /**
- * Le clic sur « Enregistrer » (#161) : une écriture à la fois ; rien de changé, la fiche se referme. La ligne se
- * contrôle d'abord sur le texte affiché : refusée, le refus se dit sous le champ, la fiche reste ouverte. Sinon
- * (#354) la fiche se ferme et montre la ligne éditée aussitôt, l'écriture tourne en fond ; un échec rouvre la
- * fiche avec le brouillon et l'erreur, et le dit en toast. La voie `claude` (`ecriture`) n'attend rien : comme avant.
+ * Entrée dans un champ ouvert de la fiche (#342, remplace « Enregistrer » de #161) : ce seul champ s'écrit.
+ * Valeur inchangée : le champ se referme, rien n'est écrit. La ligne se contrôle d'abord sur le texte affiché :
+ * refusée, le refus se dit sous le champ, qui reste ouvert. Sinon (#354) le champ se referme, la fiche montre
+ * la ligne éditée aussitôt avec le V « enregistré », et l'écriture tourne en fond, une à la fois : un second
+ * champ peut s'enchaîner pendant ce temps. Un échec rouvre ce champ avec son brouillon et l'erreur, et le dit
+ * en toast. La voie `claude` (`ecriture`) n'attend rien : l'écriture se fait ici, comme avant.
  */
-async function confirmEdit($: EngineInterface, source: Source, task: Task, specs: readonly EditSpec[]): Promise<void> {
+async function confirmField($: EngineInterface, source: Source, task: Task, spec: EditSpec, value: string): Promise<void> {
   if (saving) return
   saving = true
   const key = taskKey(task)
+  const draftKey = `${key}|${spec.field}`
   try {
-    const { edit, count } = editDiff(specs, draftsOf(key))
-    if (count === 0) {
-      clearDrafts(key)
-      await setView($, () => ({ editing: '', editNote: '', editField: '' }))
+    const edit = fieldEdit(spec, value)
+    if (Object.keys(edit).length === 0) {
+      editDrafts.delete(draftKey)
+      await setView($, () => ({ editOpen: '', editNote: '', editField: '' }))
       return
     }
-    await setView($, () => ({ editNote: SAVE_BUSY, editField: '' }))
-    const refuse = (out: { error: string; field?: EditField }) => setView($, () => ({ editNote: out.error, editField: out.field ?? '' }))
+    editDrafts.set(draftKey, value)
+    await setView($, () => ({ editNote: SAVE_BUSY, editField: spec.field }))
+    const refuse = (out: { error: string; field?: EditField }) => setView($, () => ({ editNote: out.error, editField: spec.field }))
     const shown = await shownTexts($, source).catch(() => undefined)
     const rules = await editRules($, source)
     const first = shown ? editInTexts(shown.open, task, edit, rules) : undefined
     if (first && 'error' in first) return void (await refuse(first))
     const route = editRoute({ ecriture: source.ecriture, cowork: await coworkPyFor($, source), task, edit })
     const finish = async (out: { id?: string; warnings: string[]; note?: string; asked?: string }, inFront: boolean) => {
-      clearDrafts(key)
-      // En fond, la fiche est déjà fermée (peut-être rouverte sur une autre tâche) : seul le toast le dit.
+      editDrafts.delete(draftKey)
+      // En fond, l'édition a déjà avancé (peut-être rouverte sur un autre champ) : seul le toast le dit.
       if (inFront) {
         const note = [...(out.asked ? [`Demandé à Claude : ${out.asked}`] : []), ...out.warnings, ...(out.note ? [out.note] : [])].join(' ; ')
-        await setView($, () => ({ editing: '', editNote: note, editField: '', ...(out.id ? { selected: `id:${out.id}` } : {}) }))
+        await setView($, () => ({ editOpen: '', editSaved: spec.field, editNote: note, editField: '', ...(out.id ? { selected: `id:${out.id}` } : {}) }))
       }
       await update($, retryAtom, v => v + 1)
       sayToast($, out.asked ? `Demandé à Claude : ${out.asked}` : `${out.id ? `#${out.id} ` : 'Tâche '}enregistrée${out.note ? ` : ${out.note}` : ''}`)
@@ -6531,12 +6531,14 @@ async function confirmEdit($: EngineInterface, source: Source, task: Task, specs
     }
     const prev = pendingFor(source)
     setPending({ dir: source.dir, open: first.open, ...(prev?.done !== undefined ? { done: prev.done } : {}), axes: prev?.axes ?? [] })
-    await setView($, () => ({ editing: '', editNote: '', editField: '', ...(task.id ? { selected: `id:${task.id}` } : {}) }))
+    await setView($, () => ({ editOpen: '', editSaved: spec.field, editNote: '', editField: '', ...(task.id ? { selected: `id:${task.id}` } : {}) }))
     inBackground($, async () => {
       const out = await saveEdit($, source, task, edit).catch(caught)
       if ('error' in out) {
+        // Les écritures qui suivaient s'appuyaient sur celle-ci : l'attente s'efface, les fichiers font foi.
         setPending(undefined)
-        await setView($, () => ({ editing: key, editNote: out.error, editField: out.field ?? '', editCount: 0 }))
+        // Un autre champ ouvert depuis : il reste tel quel, le brouillon de celui-ci est gardé et le toast le dit.
+        await setView($, v => (v.editOpen && v.editOpen !== spec.field && v.editing === key ? {} : { editing: key, editOpen: spec.field, editSaved: '', editNote: out.error, editField: spec.field }))
         sayToast($, `Pas enregistré : ${out.error}`)
         return false
       }
@@ -8296,6 +8298,12 @@ function brandTree(
   titleEnd?: RenderElement,
   // En tête de la fiche, à la place de la marque : la flèche retour vers la roadmap (#165, maquette A).
   onBack?: { key: string; press: () => void },
+  // L'édition en place de la fiche (#342) : `title` prend la place du texte du titre (le `#N` reste, le clic ouvre
+  // le champ au lieu de la ligne) ; `pills` dessine la rangée axe + échéance à partir de ses pastilles.
+  slots?: {
+    title?: RenderElement
+    pills?: (p: { axis: RenderElement; meta: RenderElement[]; pill: (label: string) => RenderElement }) => RenderElement
+  },
 ): RenderElement {
   const { Box, Text, Button } = $.ui.resolve(e)
   const resolved = $.ui.resolve(e)
@@ -8454,11 +8462,13 @@ function brandTree(
     <Box flexDirection="row" gap={SPACE.row}>
       {numbered && <Text size={titleSize} weight="semibold" color={accent}>{`#${brand.id}`}</Text>}
       <Box flexShrink={1} minWidth={0}>
-        <Text size={titleSize} weight="semibold" wrap="wrap" hover={onTitle?.hit ? { underline: true } : undefined}>{brand.label}</Text>
+        {slots?.title ?? <Text size={titleSize} weight="semibold" wrap="wrap" hover={onTitle?.hit ? { underline: true } : undefined}>{brand.label}</Text>}
       </Box>
     </Box>
   )
-  const title = onTitle?.hit ? (
+  const title = slots?.title ? (
+    plainTitle
+  ) : onTitle?.hit ? (
     // Sur le bureau, un bouton de l'app est natif : il écrit son texte à sa taille et ignore celle des Text
     // (#181 resté sans effet) ; le titre en texte et sa zone de clic, comme « Tout voir » (#173, #193).
     <Box key={`hit:${onTitle.key}`} flexShrink={1} minWidth={0}>
@@ -8501,10 +8511,14 @@ function brandTree(
       ) : (
         title
       )}
-      <Box flexDirection="row" alignItems="center" gap={SPACE.row}>
-        {axis}
-        {words.meta.map(m => pill(m, palette.sel, palette.text2))}
-      </Box>
+      {slots?.pills ? (
+        slots.pills({ axis, meta: words.meta.map(m => pill(m, palette.sel, palette.text2)), pill: label => pill(label, palette.sel, palette.text2) })
+      ) : (
+        <Box flexDirection="row" alignItems="center" gap={SPACE.row}>
+          {axis}
+          {words.meta.map(m => pill(m, palette.sel, palette.text2))}
+        </Box>
+      )}
       {stations && Svg && <Svg source={stations.source} alt={words.stations?.here ?? ''} width={stations.width} height={stations.height} />}
     </Box>
   )
@@ -9339,7 +9353,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   const {
     axis: axisRaw, attend: attendRaw, who: whoRaw = 'all', moreFilters = false, showDone: doneChosen, groupBy, selected, openGroups, closedGroups, moreGroups,
     launchNote, launched, openNote, openAt = '', conclusionOpen, missionOpen = '', draftOpen = '', draftFolded = '', reopenAsk = '', cancelAsk = '', closeKind = 'abandon', cancelNote = '',
-    editing: editingKey = '', editNote = '', editField = '', editCount = 0, foldedCards = [], openedCards = [], gaugePick = '', briefOpen = '',
+    editing: editingKey = '', editOpen = '', editSaved = '', editNote = '', editField = '', foldedCards = [], openedCards = [], gaugePick = '', briefOpen = '',
   } = view
   const data = await paneData($, source, [stamp, titlesVersion, themeStamp, retry, liveVersion].join('|'))
   const { palette, bilan: bilanData, titles, live: liveEntries, ignored } = data
@@ -9486,7 +9500,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   const sortOrder = { isLive, prereqOf: prereqFor }
   const select = (key: string) => () => {
     launchExtra = ''
-    void setView($, () => ({ selected: key, launchNote: '', openNote: '', openAt: '', cancelAsk: '', cancelNote: '', editing: '', editNote: '', editField: '' }))
+    void setView($, () => ({ selected: key, launchNote: '', openNote: '', openAt: '', cancelAsk: '', cancelNote: '', editing: '', editOpen: '', editSaved: '', editNote: '', editField: '' }))
   }
 
   // Dessins et couleurs, partagés par la liste et le détail.
@@ -9723,7 +9737,8 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     // les valeurs tapées gardées hors de l'état (`editDrafts`) pour qu'un redessin ne les perde pas.
     const editKey = taskKey(current)
     const editing = !current.done && editingKey === editKey
-    const editText = editing ? (await readOr($, paths.open)) ?? '' : ''
+    // Le texte que la fiche montre : l'écriture en fond d'un champ précédent comprise (#354).
+    const editText = editing ? pendingFor(source)?.open ?? (await readOr($, paths.open)) ?? '' : ''
     const editSpecs = editing
       ? editableFields(current, editText.split('\n')[line - 1] ?? '', { axes: declaredAxes(editText), cles })
       : []
@@ -9824,7 +9839,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
       return (
         <Box key="mission-bullets" flexDirection="column" gap={SPACE.tight}>
           <Text weight="semibold" wrap="wrap">{b.mission}</Text>
-          {!editing && foldable && moreLink('mission-line', missionShown ? 'Replier' : `${shown.hidden} plus anciennes`, toggleMission)}
+          {foldable && moreLink('mission-line', missionShown ? 'Replier' : `${shown.hidden} plus anciennes`, toggleMission)}
           {shown.items.map((item, i) => (
             <Box key={`mission-bullet:${start + i}`} flexDirection="row" gap={SPACE.row}>
               <Text color={palette.text2}>•</Text>
@@ -9844,7 +9859,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     // droite, se clique pour la replier ou la déplier. Repliée par son nom, pour toutes les tâches ; en
     // édition, toutes dépliées. Au terminal, la tête est un bouton de l'app.
     // Une Done ouvre ses Étapes repliées (#210) ; un choix fait à la main l'emporte.
-    const folded = (id: string) => !editing && cardFolded(id, { foldedCards, openedCards }, current.done)
+    const folded = (id: string) => !(editing && (id === 'chaine' || id === 'details')) && cardFolded(id, { foldedCards, openedCards }, current.done)
     const toggleCard = (id: string) => () => void setView($, v => toggleFold(id, v, current.done))
     const card = (id: string, name: string, summary: string, body: RenderElement, o: { before?: RenderElement | false | null; after?: RenderElement | false | null } = {}) => {
       const closed = folded(id)
@@ -9882,7 +9897,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
       value ? (
         <Box key={`field:${key}`} flexDirection="column">
           {ruleAbove}
-          <Box key={`field-row:${key}`} flexDirection="row" alignItems="center">
+          <Box key={`field-row:${key}`} flexDirection="row" alignItems="center" gap={SPACE.row}>
             <Box width={10} flexShrink={0} flexDirection="row" alignItems="center">
               {strut(SIZE.strut.field)}
               <Text color={palette.text2}>{name}</Text>
@@ -9977,7 +9992,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
       const opened = conclusionOpen === current.key
       // Le Fait, le Souci et la version livrée sont dans le carton (#291) : la carte Fin ne les redit pas.
       // #341 (A2) : la carte Bilan s'ouvre sur ce qui a accroché, « À essayer » suit ; close, ni État ni Fait.
-      const own = bilanRows(fin.rows, { done: current.done }).filter(r => editing || !cartonFin.has(r.name))
+      const own = bilanRows(fin.rows, { done: current.done }).filter(r => !cartonFin.has(r.name))
       // « Ce qu'on a fait » d'une close est dans le carton.
       const recapHere = fin.recap && !current.done ? fin.recap : undefined
       // Une conclusion réclamée garde sa carte, ne serait-ce que pour sa pastille.
@@ -10259,7 +10274,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     // #264, sans filet), le corps coupé à puces « • » en retrait pendant, sa dernière ligne grise ;
     // « Ouvrir », « Voir tout · +N lignes », le statut. Au terminal, du texte et des boutons.
     const draftBlock = () => {
-      if (!draft || editing) return null
+      if (!draft) return null
       const p = draft.preview
       const key = current.key
       const folded = draftFolded === key
@@ -10423,7 +10438,6 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
       details: detailCount,
       attachments: attachments.length,
       deliverables: deliverables.length,
-      editing,
     })
     // L'état en pastille : celui que Maestro voit dans sa session, celui de la session qui y travaille ailleurs.
     const ownRunning = focusBrand && ownBrand?.data.own.id !== undefined ? runningBySession.get(ownBrand.data.own.id) : undefined
@@ -10449,9 +10463,8 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
       waitState === 'wait' && stepsNote?.question === undefined && (aheadNow ?? 0) > 0 ? 'merge' : waitState
     const fullBrand = focusBrand ?? taskBrandOf(current, source, allTasks, { label: s.titre, prereqs: prereqsFor })
     // #291 : la voie (stations d'avant et d'après) quitte l'en-tête ; la jauge de chaîne, au pied, la remplace.
-    // En édition, l'en-tête garde la sienne : la fiche d'édition ne change pas.
-    const { before: _before, next: _next, ...bareBrand } = fullBrand
-    const headBrand = editingKey === taskKey(current) && !current.done ? fullBrand : bareBrand
+    // En édition (#342), l'en-tête reste celui de la fiche : rien ne bouge.
+    const { before: _before, next: _next, ...headBrand } = fullBrand
     // Le résumé de la tête de chaque carte, ce qu'elle garde repliée (#199).
     const summaries: Record<FicheCard, string> = {
       avancement: cardSummary('avancement', {
@@ -10640,7 +10653,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     const launchNow = () => void (isRoutine(current) ? launchRoutine($, source, current, s.titre) : launchSession($, source, current, s.titre, launchExtra))
     const toggleBrief = () => void setView($, v => ({ briefOpen: v.briefOpen === taskKey(current) ? '' : taskKey(current) }))
     const topAction = (): RenderElement | null => {
-      if (editing || current.done) return null
+      if (current.done) return null
       if (live) {
         // La durée et la roue montent dans la tête du carton (#341, B1).
         const openIt = () => void openSession($, live.entry)
@@ -10769,7 +10782,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     const drawsDonut = Boolean(Svg && graphic && Client)
     // Le haut d'une tâche en cours (#341, B1) : depuis quand elle tourne, son étape et depuis quand, sa question.
     // Calculé au dessin du carton : les étapes de la session se lisent plus bas.
-    const liveTopOf = () => live && !current.done && !editing
+    const liveTopOf = () => live && !current.done
       ? liveHead({ startedAt: liveSince(live.entry.startedAt, live.entry.sessionId ? createdBySession.get(live.entry.sessionId) : undefined), now, steps: stepsStatus?.steps ?? [], ...(stepsStatus?.question ? { question: stepsStatus.question } : {}) })
       : undefined
     const timeSide = (big: string, small: string, pick?: () => void) => (
@@ -10780,7 +10793,6 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
       </Box>
     )
     const timeBox = (liveTop: ReturnType<typeof liveTopOf>): RenderElement | null => {
-      if (editing) return null
       if (current.done && duration) {
         const total = spanLabel(duration.total)
         return (
@@ -10850,7 +10862,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
             </Box>
             {dureePart && <Text key="duree-note" size="caption" color={palette.text2} wrap="wrap">{dureePart.note}</Text>}
             {/* Sans dessin (le terminal), les parts du donut en boutons. */}
-            {current.done && duration && !editing && !drawsDonut && (
+            {current.done && duration && !drawsDonut && (
               <Box flexDirection="row" flexWrap="wrap" gap={SPACE.row}>
                 {duration.parts.map((p, i) => <Button key={`duree:${p.kind}`} plain dimColor={dureePick !== i} label={p.label} onPress={dureeToggle(i)} />)}
               </Box>
@@ -10863,22 +10875,27 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
               </Box>
             )}
             {finShown.map(finLine)}
-            {lead ? (
-              <Box key="carton-lead" flexDirection="column" gap={SPACE.tight}>
-                <Markdown text={codeKeptWhole(lead)} />
-                {missionTag()}
-                {missionShown && <Text key="mission-line" size="caption" wrap="wrap">{current.label}</Text>}
-                {missionShown && noteShown && linked('note', noteShown, { color: palette.text2 })}
-              </Box>
-            ) : shortLabel.cut ? (
-              // Une ligne sans phrases (#341, retour de test) : trois lignes du libellé, le reste sous « ▸ Mission ».
-              <Box key="carton-lead" flexDirection="column" gap={SPACE.tight}>
-                <Text key="mission-short" wrap="wrap" {...(current.done ? { color: palette.text2 } : {})}>{missionShown ? frame.text : shortLabel.text}</Text>
-                {missionTag()}
-                {missionShown && noteShown && linked('note', noteShown, { color: palette.text2 })}
-              </Box>
-            ) : (
-              missionBody(cartonLook.bg, current.done)
+            {/* En édition (#342), le texte du carton « À lancer » s'ouvre en champ : le libellé de la mission. Celui de la session, non. */}
+            {editSlot(
+              missionEditable(carton.tone) ? editSpecs.find(spec => spec.field === 'label') : undefined,
+              lead ? (
+                <Box key="carton-lead" flexDirection="column" gap={SPACE.tight}>
+                  <Markdown text={codeKeptWhole(lead)} />
+                  {missionTag()}
+                  {missionShown && <Text key="mission-line" size="caption" wrap="wrap">{current.label}</Text>}
+                  {missionShown && noteShown && linked('note', noteShown, { color: palette.text2 })}
+                </Box>
+              ) : shortLabel.cut ? (
+                // Une ligne sans phrases (#341, retour de test) : trois lignes du libellé, le reste sous « ▸ Mission ».
+                <Box key="carton-lead" flexDirection="column" gap={SPACE.tight}>
+                  <Text key="mission-short" wrap="wrap" {...(current.done ? { color: palette.text2 } : {})}>{missionShown ? frame.text : shortLabel.text}</Text>
+                  {missionTag()}
+                  {missionShown && noteShown && linked('note', noteShown, { color: palette.text2 })}
+                </Box>
+              ) : (
+                missionBody(cartonLook.bg, current.done)
+              ),
+              clip(current.label, 80),
             )}
           </Box>
         </Box>
@@ -10911,7 +10928,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
       </Box>
     )
     const gaugeBlock = (kind: 'steps', g: Gauge | undefined, colors: Record<GaugeKind | 'ring', string>, list?: { steps: readonly ChildStep[]; times: readonly string[]; spent: string }) => {
-      if (!g || editing) return null
+      if (!g) return null
       const prefix = `${kind}:${taskKey(current)}:`
       const pickN = gaugePick.startsWith(prefix) ? Number(gaugePick.slice(prefix.length)) : undefined
       const line = gaugeLine(g, pickN)
@@ -11201,7 +11218,8 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
       )
     }
     const bottomBlock = (): RenderElement | null => {
-      if (editing) return null
+      // En édition (#342), les deux cartes qui portent les champs du pied prennent la place du bloc.
+      if (editing) return editFootCards()
       const sections = [family && familySection(family), layout.cards.includes('details') && detailsSection()].filter((x): x is RenderElement => Boolean(x))
       if (sections.length === 0) return null
       return (
@@ -11260,7 +11278,6 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     )
     // Le pied (#291) : « Marquer faite », « Annuler la tâche » et leur confirmation ; close, sa session gardée.
     const closeRow = (): RenderElement | null => {
-      if (editing) return null
       if (current.done)
         return kept ? (
           <Box key="kept-row" flexDirection="row" alignItems="stretch" gap={SPACE.row} paddingX={SPACE.indent}>
@@ -11754,21 +11771,25 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     const saveBusy = editNote === SAVE_BUSY
     // Le champ « Nom » vide montre en attente le nom que le panneau tire du libellé (#235).
     const drawnTitle = titles[hashLabel(current.label)]?.titre ?? fallbackTitle(current.label)
+    const specOf = (field: EditField) => editSpecs.find(spec => spec.field === field)
+    const editId = (spec: EditSpec) => `edit-open:${keyPart(editKey)}:${keyPart(spec.field)}`
+    // Le champ ouvert : un champ de saisie, ou un menu quand le projet liste ses valeurs. Entrée enregistre ce
+    // seul champ, un menu s'enregistre au choix (#342) ; la frappe garde le brouillon hors de l'état.
     const editInput = (spec: EditSpec) => {
       const draftKey = `${editKey}|${spec.field}`
       const value = editDrafts.get(draftKey) ?? spec.value
       const key = `edit:${keyPart(editKey)}:${keyPart(spec.field)}`
-      const onValue = (v: string) => {
-        editDrafts.set(draftKey, v)
-        // Le compte ne redessine qu'à son changement : la frappe ne redessine pas à chaque lettre.
-        const count = editDiff(editSpecs, draftsOf(editKey)).count
-        if (count !== editCount) void setView($, () => ({ editCount: count }))
-      }
       if (Select && spec.options) {
         const none = '—'
         const options = [...(value === '' ? [none] : []), ...(spec.options.includes(value) || value === '' ? [] : [value]), ...spec.options]
         return (
-          <Select key={key} label={spec.name} options={options.map(o => ({ value: o }))} value={value === '' ? none : value} onSelect={(v: string) => onValue(v === none ? '' : v)} />
+          <Select
+            key={key}
+            label={spec.name}
+            options={options.map(o => ({ value: o }))}
+            value={value === '' ? none : value}
+            onSelect={(v: string) => void confirmField($, source, current, spec, v === none ? '' : v)}
+          />
         )
       }
       if (!Input) return <Text wrap="wrap">{value}</Text>
@@ -11778,103 +11799,157 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
           {...(spec.field === 'label' ? { rows: 3 } : {})}
           placeholder={spec.field === 'nom' ? drawnTitle : spec.field === 'due' ? 'AAAA-MM-JJ' : spec.options ? spec.options.join(', ') : spec.field === 'apres' || spec.field === 'parent' ? 'N, ou -' : ''}
           value={value}
-          submitLabel="enregistrer"
-          onInput={onValue}
-          onSubmit={(v: string) => {
-            onValue(v)
-            void confirmEdit($, source, current, editSpecs)
-          }}
+          submitLabel="↵"
+          onInput={(v: string) => void editDrafts.set(draftKey, v)}
+          onSubmit={(v: string) => void confirmField($, source, current, spec, v)}
         />
       )
     }
     const editBad = (spec: EditSpec) => !saveBusy && editNote !== '' && editField === spec.field
-    const editRows = (where: EditSpec['card']) => (
-      <Box flexDirection="column" gap={SPACE.tight}>
-        {editSpecs
-          .filter(spec => spec.card === where)
-          .map(spec => (
-            <Box key={`edit-row:${keyPart(spec.field)}`} flexDirection="column" gap={SPACE.tight}>
-              {ruleAbove}
-              <Box flexDirection="row" alignItems="center">
-                <Box width={10} flexShrink={0} flexDirection="row" alignItems="center">
-                  {strut(SIZE.strut.field)}
-                  <Text color={editBad(spec) ? palette.lateOn : palette.text2}>{spec.name}</Text>
-                </Box>
-                <Box flexGrow={1} flexShrink={1} minWidth={0}>
-                  {editInput(spec)}
-                </Box>
-              </Box>
-              {editBad(spec) && <Text size="caption" color={palette.lateOn} wrap="wrap">{editNote}</Text>}
-            </Box>
-          ))}
-      </Box>
-    )
-    const editCards: Partial<Record<FicheCard, () => RenderElement>> = editing
-      ? {
-          avancement: () => card('avancement', 'Avancement', '', editRows('avancement')),
-          chaine: () => card('chaine', 'Chaîne', '', editRows('chaine')),
-          details: () => card('details', 'Détails', '', editRows('details')),
-        }
-      : {}
-    const stopEditing = () => {
-      clearDrafts(editKey)
-      void setView($, () => ({ editing: '', editNote: '', editField: '', editCount: 0 }))
-    }
-    // Sous l'en-tête : « N changements » (ou le refus), Annuler, Enregistrer.
-    const editBar = () => {
-      const named = editSpecs.find(spec => spec.field === editField)
-      const said = saveBusy
-        ? 'Enregistrement…'
-        : editNote !== ''
-          ? named
-            ? `Pas enregistré : voir ${named.name}`
-            : `Pas enregistré : ${editNote}`
-          : editCount === 0
-            ? 'Aucun changement'
-            : `${editCount} changement${editCount > 1 ? 's' : ''}`
-      return (
-        <Box key="edit-bar" paddingX={SPACE.indent}>
-          <Box flexDirection="column" gap={SPACE.tight} paddingX={SPACE.indent} paddingY="xs" flexGrow={1} borderStyle="round" borderColor={palette.border}>
-            <Box flexDirection="row" alignItems="center" gap={SPACE.row}>
-              <Box flexGrow={1} flexShrink={1} minWidth={0}>
-                <Text size="caption" color={editNote !== '' && !saveBusy ? palette.lateOn : palette.text2} wrap="wrap">{said}</Text>
-              </Box>
-              <Button key="edit-cancel" plain dimColor label="Annuler" onPress={stopEditing} />
-              <Button key="edit-save" variant="primary" label={saveBusy ? 'Enregistrement…' : 'Enregistrer'} onPress={() => void confirmEdit($, source, current, editSpecs)} />
-            </Box>
-            {(live || launched.includes(editKey)) && (
-              <Text size="caption" color={palette.lateOn} wrap="wrap">Une session tient cette tâche : elle peut encore l'écrire.</Text>
-            )}
-            {source.ecriture && !bilanData.viaCowork && (
-              <Text size="caption" color={palette.text2} wrap="wrap">{entrustedNote(source.ecriture)}</Text>
-            )}
+    // Le V vert posé à côté d'une valeur qui vient d'être enregistrée, jusqu'au geste suivant (#342).
+    const savedMark = (spec: EditSpec) =>
+      editSaved === spec.field && (
+        <Box key={`saved:${keyPart(spec.field)}`} flexDirection="row" alignItems="center" gap={SPACE.tight} flexShrink={0}>
+          {Svg ? <Svg source={checkIcon(palette.ok, SIZE.icon.xs)} alt="coche" width={SIZE.icon.xs} height={SIZE.icon.xs} /> : <Text color={palette.ok}>✓</Text>}
+          <Text size="caption" color={palette.ok}>enregistré</Text>
+        </Box>
+      )
+    // Un élément éditable de la fiche (#342, maquette B′) : fermé, sa valeur telle que la fiche la montre, un fond
+    // au survol, un clic l'ouvre ; ouvert, le champ à sa place avec le refus dessous. Un seul champ ouvert à la
+    // fois ; l'ouvrir referme l'autre et efface son brouillon. `text` : la valeur au terminal, où le bouton la porte.
+    const editSlot = (spec: EditSpec | undefined, shown: RenderElement, text: string): RenderElement => {
+      if (!editing || !spec) return shown
+      if (editOpen === spec.field) {
+        return (
+          <Box key={`edit-slot:${keyPart(spec.field)}`} flexDirection="column" gap={SPACE.tight} flexGrow={1} flexShrink={1} minWidth={0}>
+            {editInput(spec)}
+            {editBad(spec) && <Text size="caption" color={palette.lateOn} wrap="wrap">{editNote}</Text>}
+            {saveBusy && editField === spec.field && <Text size="caption" color={palette.text2}>Enregistrement…</Text>}
           </Box>
+        )
+      }
+      const id = editId(spec)
+      const open = () => {
+        editDrafts.delete(`${editKey}|${spec.field}`)
+        void setView($, () => ({ editOpen: spec.field, editSaved: '', editNote: '', editField: '' }))
+      }
+      return (
+        <Box key={`edit-slot:${keyPart(spec.field)}`} flexDirection="row" alignItems="center" gap={SPACE.row} flexShrink={1} minWidth={0}>
+          {graphic && Client ? (
+            <Box key={`hit:${id}`} flexShrink={1} minWidth={0} hover={{ backgroundColor: palette.hover }}>
+              {shown}
+              {hit(id, open)}
+            </Box>
+          ) : (
+            <Button key={id} plain label={text} onPress={open} />
+          )}
+          {savedMark(spec)}
         </Box>
       )
     }
-    // Le crayon, à droite du titre d'une ouverte (#161) : « Modifier » ferme l'encart de clôture. Un petit
-    // bouton gris d'une ligne, 24 px, sous un titre de 22 px (#193, maquette B).
-    const pencil =
-      !current.done && !editing
-        ? action(
-            'edit-task',
-            pencilIcon(palette.text, SIZE.icon.sm),
-            'Modifier',
-            () => {
-              clearDrafts(editKey)
-              void setView($, () => ({ editing: editKey, editNote: '', editField: '', editCount: 0, cancelAsk: '', cancelNote: '' }))
-            },
-            undefined,
-            true,
+    // Les lignes « étiquette | valeur » d'une carte du pied : la valeur vide (ou `-`) dit « + ajouter » ; une
+    // prérequise ou un parent se lit par son numéro et son titre, comme la maquette B′ (fidélité de #342).
+    const shownValue = (spec: EditSpec): string => {
+      const v = spec.value.trim()
+      if (v === '' || v === '-') return ''
+      if (spec.field !== 'apres' && spec.field !== 'parent') return v
+      return v
+        .split(',')
+        .map(n => n.trim().replace(/^#/, ''))
+        .filter(n => n !== '')
+        .map(n => {
+          const x = allTasks.find(y => y !== current && y.id === n)
+          return x ? `#${n} ${short(x).titre}` : `#${n}`
+        })
+        .join(', ')
+    }
+    const editRows = (where: EditPlace) => (
+      <Box flexDirection="column" gap={SPACE.tight}>
+        {editSpecs
+          .filter(spec => editPlace(spec.field) === where)
+          .map(spec => {
+            const shown = shownValue(spec)
+            return field(
+              spec.name,
+              editSlot(
+                spec,
+                shown !== '' ? <Text wrap="truncate-end" hover={{ underline: true }}>{shown}</Text> : <Text color={palette.text3} hover={{ underline: true }}>+ ajouter</Text>,
+                shown !== '' ? shown : '+ ajouter',
+              ),
+              keyPart(spec.field),
+            )
+          })}
+      </Box>
+    )
+    // Au pied, en édition : « Sa chaîne » (Après, Parent) et « Détails » (Responsable, clés du projet), puis
+    // ce que la fiche en édition doit encore dire.
+    const editFootCards = (): RenderElement => (
+      <Box key="edit-foot" flexDirection="column" gap={SPACE.root}>
+        {card('chaine', 'Sa chaîne', '', editRows('chaine'))}
+        {card('details', 'Détails', '', editRows('details'))}
+        {(live || launched.includes(editKey) || (source.ecriture && !bilanData.viaCowork)) && (
+          <Box key="edit-notes" flexDirection="column" gap={SPACE.tight} paddingX={SPACE.indent}>
+            {(live || launched.includes(editKey)) && (
+              <Text size="caption" color={palette.lateOn} wrap="wrap">Une session tient cette tâche : elle peut encore l'écrire.</Text>
+            )}
+            {source.ecriture && !bilanData.viaCowork && <Text size="caption" color={palette.text2} wrap="wrap">{entrustedNote(source.ecriture)}</Text>}
+          </Box>
+        )}
+      </Box>
+    )
+    const stopEditing = () => {
+      clearDrafts(editKey)
+      void setView($, () => ({ editing: '', editOpen: '', editSaved: '', editNote: '', editField: '' }))
+    }
+    // Le crayon, à droite du titre d'une ouverte (#161) : « Modifier » ferme l'encart de clôture. En édition (#342), il devient
+    // « Terminé », à la même place : un champ ouvert mais pas validé se perd.
+    const pencil = current.done
+      ? undefined
+      : editing
+        ? pressable(
+            'edit-done',
+            stopEditing,
+            <Box
+              flexDirection="row"
+              justifyContent="center"
+              alignItems="center"
+              gap={SPACE.row}
+              paddingX={SPACE.indent}
+              backgroundColor={palette.pri}
+              hover={{ backgroundColor: mixOver(palette.pri, palette.bg, MIX.primaryHover) }}
+            >
+              {corners(RADIUS.control, palette.bg)}
+              {strut(SIZE.strut.row)}
+              {Svg && <Svg source={checkIcon(palette.priText, SIZE.icon.sm)} alt="coche" width={SIZE.icon.sm} height={SIZE.icon.sm} />}
+              <Text weight="semibold" color={palette.priText}>Terminé</Text>
+            </Box>,
+            <Button key="edit-done" variant="primary" label="Terminé" onPress={stopEditing} />,
           )
-        : undefined
+        : (() => {
+            // Plus petit (#342, option 1, retour de BBR au test de #341) : le crayon gris de 12 px, sans fond ;
+            // le fond du bouton n'apparaît qu'au survol.
+            const startEditing = () => {
+              clearDrafts(editKey)
+              void setView($, () => ({ editing: editKey, editOpen: '', editSaved: '', editNote: '', editField: '', cancelAsk: '', cancelNote: '' }))
+            }
+            return pressable(
+              'edit-task',
+              startEditing,
+              <Box flexDirection="row" justifyContent="center" alignItems="center" paddingX={SPACE.tight} hover={{ backgroundColor: palette.btnHover }}>
+                {corners(RADIUS.chip, palette.bg)}
+                {strut(SIZE.strut.row)}
+                {Svg && <Svg source={pencilIcon(palette.text2, SIZE.icon.xs)} alt="Modifier" width={SIZE.icon.xs} height={SIZE.icon.xs} />}
+              </Box>,
+              <Button key="edit-task" plain label="Modifier" onPress={startEditing} />,
+            )
+          })()
     // Le drapeau de priorité (#300, F1, choix de BBR) : à gauche du crayon, le réglage « Priorités »
     // allumé, sur une ouverte hors édition ; posé, carré rouge et drapeau blanc ; ôté, carré gris clair.
     const priorityOn = isPriority(current)
     const priorityLabel = priorityOn ? 'Retirer la priorité' : 'Marquer prioritaire'
     const pressPriority = () => void togglePriority($, source, current)
     const priorityFlag =
-      settings.priorities && !current.done && !editing
+      settings.priorities && !current.done
         ? pressable(
             'prio-task',
             pressPriority,
@@ -11886,8 +11961,8 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
           )
         : undefined
     // La durée tout en haut à droite, au bout de la ligne du titre (retour de test de #341, BBR le 2026-11-08) :
-    // close, le donut et son total ; en cours, depuis quand elle tourne.
-    const timeTop = editing ? null : timeBox(liveTopOf())
+    // close, le donut et son total ; en cours, depuis quand elle tourne. En édition aussi : rien ne bouge (#342).
+    const timeTop = timeBox(liveTopOf())
     const titleParts = [priorityFlag, pencil, timeTop].filter((x): x is NonNullable<typeof x> => Boolean(x))
     const titleEnd =
       titleParts.length > 1 || timeTop ? (
@@ -11898,8 +11973,26 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
         titleParts[0]
       )
     const openLine = () => void openFile($, source, current.done ? paths.done : paths.open, { line })
-    const labelSpec = editSpecs.find(spec => spec.field === 'label')
-    const nameSpec = editSpecs.find(spec => spec.field === 'nom')
+    const nameSpec = specOf('nom')
+    const axisSpec = specOf('axis')
+    const dueSpec = specOf('due')
+    // Le titre et les pastilles de l'en-tête, éditables en place (#342) : le titre tiré du libellé tant qu'aucun
+    // nom n'est posé ; l'échéance vide se pose par « + échéance ».
+    const titleSlot = editing && nameSpec
+      ? editSlot(
+          nameSpec,
+          <Text size="title" weight="semibold" wrap="wrap" hover={{ underline: true }}>{headBrand.kind === 'maestro' ? '' : headBrand.label}</Text>,
+          headBrand.kind === 'maestro' ? '' : headBrand.label,
+        )
+      : undefined
+    const pillsSlot = editing && axisSpec && dueSpec
+      ? (p: { axis: RenderElement; meta: RenderElement[]; pill: (label: string) => RenderElement }) => (
+          <Box flexDirection="row" alignItems="center" gap={SPACE.row} flexWrap="wrap">
+            {editSlot(axisSpec, p.axis, axisSpec.value || current.axis)}
+            {editSlot(dueSpec, p.meta[0] ?? p.pill('+ échéance'), dueSpec.value !== '' ? dueSpec.value : '+ échéance')}
+          </Box>
+        )
+      : undefined
     return (
       <Box flexDirection="column" gap={SPACE.root} paddingX={SPACE.indent}>
         {/* L'en-tête Voies (#137) ; son titre ouvre la ligne dans la roadmap, sa flèche ramène à la
@@ -11922,56 +12015,34 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
               : {
                   key: 'back',
                   press: inSession
-                    ? () => void setView($, () => ({ whole: true, editing: '', editNote: '', editField: '' }))
+                    ? () => void setView($, () => ({ whole: true, editing: '', editOpen: '', editSaved: '', editNote: '', editField: '' }))
                     : select(''),
                 },
+            { ...(titleSlot ? { title: titleSlot } : {}), ...(pillsSlot ? { pills: pillsSlot } : {}) },
           )}
         </Box>
         {/* La fiche finale (#291) : en session, la bande d'état se fond dans « Ouvrir la session ». */}
-        {(editing || headState !== 'live' || !live) && stateBox()}
-        {!editing && topAction()}
+        {(headState !== 'live' || !live) && stateBox()}
+        {topAction()}
         {mockupBand()}
         {draftBlock()}
-        {/* En édition (#161) : la barre sous l'en-tête, à la place du crayon. */}
-        {editing && editBar()}
-        {!editing && cartonBox()}
-        {!editing && gaugeBlock('steps', stepsGauge, stepsColors, stepsStatus ? { steps: stepsStatus.steps, times: stepTimes(stepsStatus.steps, { now, closed: current.done, at: stepsStatus.at }), spent: stepsSpent(stepsStatus.steps, { now, closed: current.done, at: stepsStatus.at }) } : undefined)}
+        {cartonBox()}
+        {gaugeBlock('steps', stepsGauge, stepsColors, stepsStatus ? { steps: stepsStatus.steps, times: stepTimes(stepsStatus.steps, { now, closed: current.done, at: stepsStatus.at }), spent: stepsSpent(stepsStatus.steps, { now, closed: current.done, at: stepsStatus.at }) } : undefined)}
         {/* La question en attente monte dans le carton d'une tâche en cours (#341, B1). */}
-        {!editing && stepsQuestion && !(live && !current.done) && (
+        {stepsQuestion && !(live && !current.done) && (
           <Box key="steps-question" paddingX={SPACE.indent}>
             <Box paddingX="sm" minWidth={0}><Text size="caption" color={palette.blockOn} wrap="wrap">{stepsQuestion}</Text></Box>
           </Box>
         )}
-        {/* En édition, la mission dans son cadre (#150) et ses champs (#161, #235). */}
-        {editing && <Box paddingX={SPACE.indent}>
-          <Box flexDirection="column" gap={SPACE.tight} paddingX={SPACE.indent} paddingY="sm" flexGrow={1} backgroundColor={palette.note}>
-            {corners(RADIUS.control, palette.bg)}
-            {/* En édition, le nom court au-dessus du libellé (#235) : vide, le panneau tire le sien. */}
-            {nameSpec && <Text size="caption" weight="medium" color={editBad(nameSpec) ? palette.lateOn : palette.text2}>Nom</Text>}
-            {nameSpec && editInput(nameSpec)}
-            {nameSpec && editBad(nameSpec) && <Text size="caption" color={palette.lateOn} wrap="wrap">{editNote}</Text>}
-            <Text size="caption" weight="medium" color={labelSpec && editBad(labelSpec) ? palette.lateOn : palette.text2}>Mission</Text>
-            {labelSpec
-              ? editInput(labelSpec)
-              : bulleted
-                ? missionList(bulleted)
-                : <Text wrap="wrap">{frame.text}</Text>}
-            {labelSpec && editBad(labelSpec) && <Text size="caption" color={palette.lateOn} wrap="wrap">{editNote}</Text>}
-            {!editing && frame.recap && moreLink('mission-line', missionShown ? 'Replier' : 'La ligne de la roadmap', toggleMission)}
-            {!editing && frame.recap && missionShown && <Text size="caption" wrap="wrap">{current.label}</Text>}
-            {!editing && noteShown && (bulleted || !frame.recap || missionShown) && linked('note', noteShown, { color: palette.text2 })}
-          </Box>
-        </Box>}
         {finBox()}
         {changesBox()}
-        {editing && stepsPart && card('etapes', 'Étapes', stepsPart.summary, stepsPart.body)}
-        {layout.cards.filter(c => editing || c !== 'details').map(c => (editing ? (editCards[c] ?? cards[c])() : cards[c]()))}
+        {layout.cards.filter(c => c !== 'details').map(c => cards[c]())}
         {bottomBlock()}
         {closeRow()}
         <Box flexDirection="column" gap={SPACE.block} paddingX={SPACE.indent}>
           {openNote !== '' && openAt === '' && <Text size="caption" color={palette.text2}>{openNote}</Text>}
           {/* Après l'enregistrement : les avertissements du modèle (#125), ou ce qui n'est pas allé au bout. */}
-          {!editing && editNote !== '' && !saveBusy && <Text size="caption" color={palette.lateOn} wrap="wrap">{editNote}</Text>}
+          {editNote !== '' && !saveBusy && editField === '' && <Text size="caption" color={palette.lateOn} wrap="wrap">{editNote}</Text>}
         </Box>
       </Box>
     )
