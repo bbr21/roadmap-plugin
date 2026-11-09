@@ -748,6 +748,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.240.0 (2026-11-09)** : maestro : la capture de fidélité se prend par Bertrand sur la consigne exacte de la session, posée par fidelite.py poser --capture ; la session ne capture plus l'écran (#377)
 - **0.239.0 (2026-11-09)** : panneau : la carte d'une tâche écrite fait 60 % de large, se ferme d'une croix, ouvre la tâche (« Ouvrir la task ») et dit sa sorte en couleur dans le bandeau (#371)
 - **0.238.0 (2026-11-09)** : fiche : « Archiver cette session » dans la fiche close de la session de sa tâche, « Ouvrir la session » retiré de son propre panneau (#336)
 - **0.237.1 (2026-11-09)** : fiche : la durée se cale au bord droit de la ligne du titre (#341)

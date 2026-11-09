@@ -2,7 +2,7 @@
 """La preuve de fidélité d'un rendu (#357) : la capture du vrai rendu posée à côté de la maquette
 validée, les écarts listés puis corrigés, avant de se dire « prête à fusionner ».
 
-  python3 fidelite.py poser CHANTIER --maquette maquettes.html#a3 (--fenetre | --capture IMAGE) [--zone x,y,l,h]
+  python3 fidelite.py poser CHANTIER --maquette maquettes.html#a3 --capture IMAGE [--zone x,y,l,h]
   python3 fidelite.py verifier CHANTIER
 
 CHANTIER est le dossier du chantier (`docs/plans/<type>-<slug>/`). `poser` y écrit `capture-panneau.png`
@@ -11,14 +11,17 @@ et `fidelite.html` : la capture à gauche, la maquette (son chemin relatif au ch
 écart, que la session tient à la main. Relancé après les corrections, `poser` reprend la capture et
 garde la liste.
 
-`--fenetre` capture la plus grande fenêtre de Claude à l'écran (`screencapture`, qui demande que Claude
-soit coché dans Réglages Système > Confidentialité et sécurité > Enregistrement de l'écran) ;
-`--fenetre-id` en choisit une autre ; `--zone x,y,l,h`, en points de la fenêtre, recadre le panneau
-(`sips`). `--capture` prend une image déjà faite (simulateur iOS, navigateur).
+La capture, c'est l'utilisateur qui la prend (#377), jamais la session : elle lui écrit, en un seul
+message, une liste numérotée, et pour chaque capture quelle fenêtre ou session ouvrir, quel onglet,
+quel état mettre à l'écran (quelle carte, quel clic), quelle zone prendre (⌘⌃⇧4, puis glisser autour
+de …), et de la coller dans le chat. Une image collée arrive avec son chemin sur le disque
+(`[Image: source: /private/tmp/…/images/1.png]`) : `--capture` prend ce chemin et copie l'image dans
+le chantier. `--zone x,y,l,h`, en pixels de l'image, recadre une capture trop large (`sips`).
+`--fenetre` (l'ancienne capture de la fenêtre de Claude par la session) est refusé, code 2.
 
 `verifier` rend 0 quand la preuve est complète : la page, l'image qu'elle cite, au moins un écart
 listé (« aucun » si la capture est fidèle), aucun encore ouvert ; 1 sinon, avec ce qui manque.
-Codes : 2 sur une entrée illisible, 3 quand la capture de la fenêtre est impossible.
+Code 2 sur une entrée illisible ou sans `--capture`.
 
 Python 3.9 et plus, bibliothèque standard seulement.
 """
@@ -26,7 +29,6 @@ Python 3.9 et plus, bibliothèque standard seulement.
 import argparse
 import datetime
 import html as html_lib
-import json
 import os
 import re
 import shutil
@@ -37,8 +39,9 @@ import tempfile
 PAGE = "fidelite.html"
 IMAGE = "capture-panneau.png"
 ETATS = ("ouvert", "corrige", "aucun")
-REGLAGE = ("Claude n'a pas le droit de capturer l'écran : coche Claude dans Réglages Système > "
-           "Confidentialité et sécurité > Enregistrement de l'écran, puis relance.")
+CONSIGNE = ("la capture se prend par l'utilisateur, plus par la session (#377) : écris-lui, en un seul message, "
+            "chaque capture à faire (quelle fenêtre ou session, quel onglet, quel état à l'écran, quelle zone "
+            "par ⌘⌃⇧4), qu'il colle dans le chat, puis relance poser avec --capture <chemin de l'image collée>.")
 
 # Les mêmes règles que le panneau (`isRenderFile`, `isMockupPage`, hooks/parse.ts) : un fichier
 # d'interface, ni test ni page du dossier d'un chantier.
@@ -55,10 +58,6 @@ IMG = re.compile(r'<img[^>]*\bclass="capture"[^>]*\bsrc="([^"]+)"|<img[^>]*\bsrc
 
 class Erreur(Exception):
     """Une entrée illisible (code 2)."""
-
-
-class CaptureImpossible(Exception):
-    """La fenêtre de Claude ne se capture pas (code 3)."""
 
 
 # ---------------------------------------------------------------- analyse (pure)
@@ -144,20 +143,6 @@ def page(maquette, image, liste_html, quand):
 """ % (html_lib.escape(quand), i, m, liste_html)
 
 
-def fenetre_claude(fenetres):
-    """La plus grande fenêtre de Claude au niveau normal : `(id, largeur en points)`, ou None."""
-    cands = [w for w in fenetres if w.get("kCGWindowOwnerName") == "Claude" and w.get("kCGWindowLayer") == 0]
-    if not cands:
-        return None
-    w = max(cands, key=lambda w: w["kCGWindowBounds"]["Width"] * w["kCGWindowBounds"]["Height"])
-    return (w["kCGWindowNumber"], w["kCGWindowBounds"]["Width"])
-
-
-def zone_en_pixels(zone, largeur_px, largeur_pt):
-    k = largeur_px / float(largeur_pt)
-    return tuple(int(round(v * k)) for v in zone)
-
-
 # ---------------------------------------------------------------- effets
 
 
@@ -173,40 +158,9 @@ def lire_zone(texte):
     return zone
 
 
-def fenetres_a_l_ecran():
-    script = ('ObjC.import("CoreGraphics"); JSON.stringify(ObjC.deepUnwrap(ObjC.castRefToObject('
-              '$.CGWindowListCopyWindowInfo($.kCGWindowListOptionOnScreenOnly, 0))))')
-    r = subprocess.run(["osascript", "-l", "JavaScript", "-e", script], capture_output=True, text=True)
-    if r.returncode != 0:
-        raise CaptureImpossible("liste des fenêtres illisible : %s" % r.stderr.strip())
-    return json.loads(r.stdout or "[]")
-
-
-def largeur_px(chemin):
-    r = subprocess.run(["sips", "-g", "pixelWidth", chemin], capture_output=True, text=True)
-    m = re.search(r"pixelWidth:\s*(\d+)", r.stdout)
-    if not m:
-        raise Erreur("image illisible : %s" % chemin)
-    return int(m.group(1))
-
-
-def capturer(sortie, fenetre_id=None):
-    """Capture la fenêtre de Claude dans `sortie` ; rend sa largeur en points (None si inconnue)."""
-    largeur_pt = None
-    if fenetre_id is None:
-        trouvee = fenetre_claude(fenetres_a_l_ecran())
-        if trouvee is None:
-            raise CaptureImpossible("aucune fenêtre de Claude à l'écran")
-        fenetre_id, largeur_pt = trouvee
-    r = subprocess.run(["screencapture", "-x", "-o", "-l", str(fenetre_id), sortie], capture_output=True, text=True)
-    if r.returncode != 0 or not os.path.exists(sortie):
-        raise CaptureImpossible(REGLAGE)
-    return largeur_pt
-
-
-def recadrer(chemin, zone, largeur_pt):
-    px = largeur_px(chemin)
-    x, y, l, h = zone_en_pixels(zone, px, largeur_pt or px)
+def recadrer(chemin, zone):
+    """Recadre l'image sur `zone` (x, y, largeur, hauteur), en pixels de l'image."""
+    x, y, l, h = (int(round(v)) for v in zone)
     r = subprocess.run(["sips", "-c", str(h), str(l), "--cropOffset", str(y), str(x), chemin], capture_output=True, text=True)
     if r.returncode != 0:
         raise Erreur("recadrage impossible : %s" % r.stderr.strip())
@@ -220,23 +174,19 @@ def lire(chemin):
         return None
 
 
-def poser(chantier, maquette, capture=None, fenetre=False, fenetre_id=None, zone=None):
+def poser(chantier, maquette, capture, zone=None):
+    if capture is None:
+        raise Erreur(CONSIGNE)
     if not os.path.isdir(chantier):
         raise Erreur("dossier du chantier introuvable : %s" % chantier)
-    if capture is not None and not os.path.isfile(capture):
+    if not os.path.isfile(capture):
         raise Erreur("capture introuvable : %s" % capture)
     zone = lire_zone(zone)
     with tempfile.TemporaryDirectory() as tmp:
         brut = os.path.join(tmp, IMAGE)
-        largeur_pt = None
-        if capture is not None:
-            shutil.copyfile(capture, brut)
-        elif fenetre or fenetre_id is not None:
-            largeur_pt = capturer(brut, fenetre_id)
-        else:
-            raise Erreur("--capture ou --fenetre attendu")
+        shutil.copyfile(capture, brut)
         if zone is not None:
-            recadrer(brut, zone, largeur_pt)
+            recadrer(brut, zone)
         shutil.copyfile(brut, os.path.join(chantier, IMAGE))
     ancienne = lire(os.path.join(chantier, PAGE))
     m = LISTE.search(ancienne or "")
@@ -259,15 +209,18 @@ def main(argv=None):
     po.add_argument("chantier")
     po.add_argument("--maquette", required=True)
     po.add_argument("--capture")
-    po.add_argument("--fenetre", action="store_true")
-    po.add_argument("--fenetre-id", type=int)
+    # Refusés (#377) : la session ne capture plus l'écran, l'utilisateur prend la capture.
+    po.add_argument("--fenetre", action="store_true", help=argparse.SUPPRESS)
+    po.add_argument("--fenetre-id", help=argparse.SUPPRESS)
     po.add_argument("--zone")
     ve = sub.add_parser("verifier")
     ve.add_argument("chantier")
     a = p.parse_args(argv)
     try:
         if a.cmd == "poser":
-            poser(a.chantier, a.maquette, a.capture, a.fenetre, a.fenetre_id, a.zone)
+            if a.fenetre or a.fenetre_id is not None:
+                raise Erreur("--fenetre refusé : " + CONSIGNE)
+            poser(a.chantier, a.maquette, a.capture, a.zone)
             print("Posée : %s. Liste les écarts (ouvert, puis corrige), corrige-les, relance poser, puis verifier."
                   % os.path.join(a.chantier, PAGE))
             return 0
@@ -275,9 +228,6 @@ def main(argv=None):
     except Erreur as e:
         print("fidelite : %s" % e, file=sys.stderr)
         return 2
-    except CaptureImpossible as e:
-        print("fidelite : %s" % e, file=sys.stderr)
-        return 3
     if reste:
         print("Preuve de fidélité incomplète : %s." % " ; ".join(reste))
         return 1
