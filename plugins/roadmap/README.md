@@ -746,6 +746,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.235.1 (2026-11-08)** : fiche : durée sur la ligne du titre, durée d'une étape cochée d'un coup, « tourne depuis » compté depuis la création de la session, libellés longs coupés à trois lignes (#341)
 - **0.235.0 (2026-11-08)** : maestro : la file de lancement avance seule (un Maestro qui tourne reprend l'entrée d'un Maestro au repos, une carte en file part seule, un départ refusé reste en file avec sa trace), délai de repos réglable (10 min), « Ouvrir » du centre de contrôle réparé (#374)
 - **0.234.0 (2026-11-08)** : panneau : la carte d'une tâche écrite dit son axe en clair, des infos selon le cas (version et bilan, échéance, avant → après) et « Ouvrir la session » quand une session la tient (#371)
 - **0.233.0 (2026-11-08)** : panneau : les tâches écrites dans un message se dessinent en cartes façon « New session » (bandeau, titre, description), avec l'avant → après et un clic qui ouvre la fiche (#371)

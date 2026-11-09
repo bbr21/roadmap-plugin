@@ -1710,6 +1710,18 @@ export function missionCut(label: string): { text: string; cut: boolean } {
   return { text: `${(word || head).replace(/[\s,;:—-]+$/, '')}…`, cut: true }
 }
 
+/**
+ * Le libellé d'une ligne sans « Ce qu'on a fait » ni « Ce qu'on va lancer » (#341, retour de test, BBR le
+ * 2026-11-08) : jusqu'à 180 signes, entier ; plus long, ses 160 premiers signes (trois lignes environ du volet),
+ * coupés comme `missionCut` ; le reste se lit sous « ▸ Mission ».
+ */
+export function missionShort(label: string): { text: string; cut: boolean } {
+  if (label.length <= 180) return { text: label, cut: false }
+  const head = label.slice(0, 160)
+  const word = label.charAt(160) === ' ' ? head : head.replace(/\s+\S*$/, '')
+  return { text: `${(word || head).replace(/[\s,;:—-]+$/, '')}…`, cut: true }
+}
+
 /** Le rendu du cadre Mission (#278) : `phrase`, le libellé entier ou coupé (défaut) ; `puces`, un fait par puce. */
 export type MissionStyle = 'phrase' | 'puces'
 const MISSION_STYLES: readonly MissionStyle[] = ['phrase', 'puces']
@@ -5217,14 +5229,18 @@ function stepNumbers(value: unknown): number[] {
  */
 export function applyPlan(steps: readonly ChildStep[], input: { items?: unknown; advance?: unknown; done?: unknown; start?: unknown }, now?: number): ChildStep[] {
   let out: ChildStep[] = steps.map(s => ({ ...s }))
+  // Le statut d'avant de chaque étape (#341) : une étape qui devient faite sans début part de la fin de celle d'avant.
+  let was: (ChildStep['status'] | undefined)[] = steps.map(s => s.status)
   if (Array.isArray(input.items)) {
     const items = input.items.filter(isChildStep)
     if (items.length === input.items.length) {
       // Une liste redonnée garde les heures de ses étapes de même libellé (#341).
       const left = steps.slice()
+      was = []
       out = items.map(i => {
         const at = left.findIndex(p => p.content === i.content)
         const prev = at >= 0 ? left.splice(at, 1)[0] : undefined
+        was.push(prev?.status)
         return { content: i.content, status: i.status, ...stepStamps(prev) }
       })
     }
@@ -5237,7 +5253,7 @@ export function applyPlan(steps: readonly ChildStep[], input: { items?: unknown;
   }
   for (const n of stepNumbers(input.done)) if (out[n - 1]) (out[n - 1] as ChildStep).status = 'completed'
   for (const n of stepNumbers(input.start)) if (out[n - 1]) (out[n - 1] as ChildStep).status = 'in_progress'
-  return stamped(out, now)
+  return stamped(out, now, was)
 }
 
 /** Les heures lisibles d'une étape (#341) : des nombres finis, sinon rien. */
@@ -5250,14 +5266,21 @@ function stepStamps(s: ChildStep | undefined): Pick<ChildStep, 'start' | 'end'> 
  * Les heures d'une liste à l'heure de sa note (#341) : une étape en cours sans début le prend, une étape
  * cochée qui a un début prend sa fin ; une étape rouverte perd sa fin. Sans heure, la liste telle quelle.
  */
-function stamped(steps: ChildStep[], now: number | undefined): ChildStep[] {
+function stamped(steps: ChildStep[], now: number | undefined, was: readonly (ChildStep['status'] | undefined)[] = []): ChildStep[] {
   if (now === undefined) return steps
-  return steps.map(s => {
-    const { start, end } = stepStamps(s)
+  let lastEnd: number | undefined
+  return steps.map((s, i) => {
+    const stamps = stepStamps(s)
     const base: ChildStep = { content: s.content, status: s.status }
-    if (s.status === 'in_progress') return { ...base, start: start ?? now }
-    if (s.status === 'completed') return start === undefined ? base : { ...base, start, end: end ?? now }
-    return base
+    let out: ChildStep = base
+    if (s.status === 'in_progress') out = { ...base, start: stamps.start ?? now }
+    else if (s.status === 'completed') {
+      // Cochée d'un coup, sans être passée en cours : elle part de la fin de l'étape d'avant (#341, retour de test).
+      const start = stamps.start ?? (was[i] !== 'completed' ? lastEnd : undefined)
+      out = start === undefined ? base : { ...base, start, end: stamps.end ?? now }
+    }
+    if (out.end !== undefined) lastEnd = out.end
+    return out
   })
 }
 
@@ -5291,6 +5314,14 @@ export function stepsSpent(steps: readonly ChildStep[], o: { now: number; closed
   return seen ? durationLabel(ms) : ''
 }
 
+/**
+ * Depuis quand une session tourne (#341, retour de test) : sa date de création quand elle est connue et plus
+ * ancienne ; une session repérée par son titre n'a sinon que sa dernière activité (« 1 min » sur des jours).
+ */
+export function liveSince(startedAt: number, created: number | undefined): number {
+  return created !== undefined && Number.isFinite(created) && created < startedAt ? created : startedAt
+}
+
 /** Le haut du carton d'une tâche en cours (#341, maquette B1) : depuis quand elle tourne, son étape, sa question. */
 export type LiveHead = { total: string; step?: string; ask?: string }
 
@@ -5313,7 +5344,7 @@ export function liveHead(o: { startedAt: number; now: number; steps: readonly Ch
  */
 export function boxSteps(steps: readonly ChildStep[], now?: number): ChildStep[] {
   if (steps.some(s => s.status === 'pending')) return steps.map(s => ({ ...s }))
-  return stamped(steps.map(s => ({ ...s, status: 'completed' as const })), now)
+  return stamped(steps.map(s => ({ ...s, status: 'completed' as const })), now, steps.map(s => s.status))
 }
 
 /** L'étape que le panneau ajoute aux étapes d'une session de code (#191). */

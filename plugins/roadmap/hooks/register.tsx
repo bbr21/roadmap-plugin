@@ -202,6 +202,8 @@ import {
   pitchKey,
   pitchOf,
   liveHead,
+  liveSince,
+  missionShort,
   stepTimes,
   stepsSpent,
   bilanRows,
@@ -9701,6 +9703,9 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     const srcPath = srcFile(current.src) ? `${source.dir}/${current.src!.trim()}` : undefined
     const due = current.due && !current.done ? dueLabel(current.due, today) : undefined
     const live = liveOf(current)
+    // Depuis quand elle tourne (#341) : la date de création de sa session, apprise une fois, en fond ; sans elle,
+    // une session repérée par son titre n'a que sa dernière activité.
+    if (live?.entry.sessionId && !current.done) void learnCreated($, [live.entry.sessionId], now)
     const kept = doneSessionOf(current)
     // Close, sa session archivée (#206, #302) : l'icône d'archive dans la bande d'état, une confirmation
     // avant de désarchiver ; une recherche en panne se dit sous la bande.
@@ -10765,7 +10770,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     // Le haut d'une tâche en cours (#341, B1) : depuis quand elle tourne, son étape et depuis quand, sa question.
     // Calculé au dessin du carton : les étapes de la session se lisent plus bas.
     const liveTopOf = () => live && !current.done && !editing
-      ? liveHead({ startedAt: live.entry.startedAt, now, steps: stepsStatus?.steps ?? [], ...(stepsStatus?.question ? { question: stepsStatus.question } : {}) })
+      ? liveHead({ startedAt: liveSince(live.entry.startedAt, live.entry.sessionId ? createdBySession.get(live.entry.sessionId) : undefined), now, steps: stepsStatus?.steps ?? [], ...(stepsStatus?.question ? { question: stepsStatus.question } : {}) })
       : undefined
     const timeSide = (big: string, small: string, pick?: () => void) => (
       <Box key="carton-time-side" flexDirection="column" alignItems="flex-end">
@@ -10829,6 +10834,8 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
         <Button key="mission-tag" plain dimColor label={label} onPress={toggleMission} />
       )
     }
+    // « Oui coupe les anciennes ! » (BBR, 2026-11-08) : sans phrases, un libellé long se coupe à trois lignes.
+    const shortLabel = lead || bulleted ? { text: frame.text, cut: false } : missionShort(frame.text)
     const cartonBox = () => {
       const liveTop = liveTopOf()
       const finShown = fin && !(current.done && lead) ? fin.rows.filter(r => cartonFin.has(r.name) && r.name !== 'Livré') : []
@@ -10840,7 +10847,6 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
                 <Text size="heading" weight="semibold" color={cartonLook.on}>{carton.title}</Text>
                 {carton.meta !== '' && <Text size="caption" tabular color={palette.text2} wrap="truncate-end">{carton.meta}</Text>}
               </Box>
-              {timeBox(liveTop)}
             </Box>
             {dureePart && <Text key="duree-note" size="caption" color={palette.text2} wrap="wrap">{dureePart.note}</Text>}
             {/* Sans dessin (le terminal), les parts du donut en boutons. */}
@@ -10862,6 +10868,13 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
                 <Markdown text={codeKeptWhole(lead)} />
                 {missionTag()}
                 {missionShown && <Text key="mission-line" size="caption" wrap="wrap">{current.label}</Text>}
+                {missionShown && noteShown && linked('note', noteShown, { color: palette.text2 })}
+              </Box>
+            ) : shortLabel.cut ? (
+              // Une ligne sans phrases (#341, retour de test) : trois lignes du libellé, le reste sous « ▸ Mission ».
+              <Box key="carton-lead" flexDirection="column" gap={SPACE.tight}>
+                <Text key="mission-short" wrap="wrap" {...(current.done ? { color: palette.text2 } : {})}>{missionShown ? frame.text : shortLabel.text}</Text>
+                {missionTag()}
                 {missionShown && noteShown && linked('note', noteShown, { color: palette.text2 })}
               </Box>
             ) : (
@@ -11872,14 +11885,17 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
             <Button key="prio-task" plain label={priorityLabel} onPress={pressPriority} />,
           )
         : undefined
+    // La durée tout en haut à droite, au bout de la ligne du titre (retour de test de #341, BBR le 2026-11-08) :
+    // close, le donut et son total ; en cours, depuis quand elle tourne.
+    const timeTop = editing ? null : timeBox(liveTopOf())
+    const titleParts = [priorityFlag, pencil, timeTop].filter((x): x is NonNullable<typeof x> => Boolean(x))
     const titleEnd =
-      priorityFlag && pencil ? (
-        <Box flexDirection="row" alignItems="center" gap={SPACE.row}>
-          {priorityFlag}
-          {pencil}
+      titleParts.length > 1 || timeTop ? (
+        <Box key="title-end" flexDirection="row" alignItems="center" gap={SPACE.row}>
+          {titleParts}
         </Box>
       ) : (
-        priorityFlag ?? pencil
+        titleParts[0]
       )
     const openLine = () => void openFile($, source, current.done ? paths.done : paths.open, { line })
     const labelSpec = editSpecs.find(spec => spec.field === 'label')
