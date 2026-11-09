@@ -748,6 +748,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.244.2 (2026-11-09)** : panneau : la famille au pied de la fiche reprend l'arbre de la liste, une rangée par ligne, coude et case d'une fille en un seul dessin, jauge de la mère à côté de son compte (#368)
 - **0.244.1 (2026-11-09)** : maestro : seul un Maestro tient la file de lancement commune, une entrée prise à tort lui revient et une entrée retenue ne bloque plus celles qui suivent (#389)
 - **0.244.0 (2026-11-09)** : panneau : au centre de contrôle, le numéro et le titre d'une carte ouvrent la fiche de sa tâche ; une tâche d'un autre projet ouvre sa session (#386)
 - **0.243.1 (2026-11-09)** : maestro : la Pause du centre de contrôle arrête la session dès le clic, et un état unique de la session sert le centre de contrôle, la ligne En cours, la bande et la fiche (en test, en pause) (#383)

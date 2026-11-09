@@ -88,9 +88,9 @@ import {
   gaugeIcon,
   FAMILY_MARK_PX,
   familyChevronIcon,
-  familyElbowIcon,
+  familyCase,
   familyLeadIcon,
-  familySquareIcon,
+  familyRowIcon,
   type Palette,
   donutDotIcon,
   donutIcon,
@@ -11336,7 +11336,6 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     const family = editing
       ? undefined
       : familyOf(current, allTasks, { isLive, prereqsOf: prereqsFor, unlocksOf: t => unlocksOf(t, allTasks, prereqsFor), titleOf: t => short(t).titre, today })
-    const blankMark = `<svg xmlns="http://www.w3.org/2000/svg" width="${FAMILY_MARK_PX}" height="24"/>`
     const sectionHead = (id: string, name: string, summary: string) => {
       const closed = folded(id)
       return graphic && Client && Svg ? (
@@ -11358,7 +11357,9 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     }
     // Une ligne de la famille : sa marque (24 px, puis le carré de 14 px), son titre, à droite ce qu'elle dit.
     // La ligne de la fiche est surlignée ; un clic sur une autre ouvre sa tâche (sauf chez un enfant de Maestro, #233).
-    const familyLine = (key: string, x: Task, o: { here: boolean; marks: RenderElement; title: RenderElement; right: RenderElement; flush?: boolean }) => {
+    // #368 (maquette A) : rien n'y est un groupe sans boîte (`<>…</>`), qui devient une colonne au bureau : la marque
+    // est un seul dessin, ce qui va à droite est une liste d'éléments posés dans la rangée de droite.
+    const familyLine = (key: string, x: Task, o: { here: boolean; marks: RenderElement; title: RenderElement; right: RenderElement[] }) => {
       const opens = !o.here && !(inSession && child)
       const press = graphic && Client && opens
       return (
@@ -11371,8 +11372,8 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
           {...(o.here ? { backgroundColor: palette.hover } : press ? { hover: { backgroundColor: palette.hover } } : {})}
         >
           {o.marks}
-          {/* Le titre de la mère colle à sa marque (`flush`), au guide du nom de section ; celui d'une ligne suit son carré. */}
-          <Box flexShrink={1} minWidth={0} {...(o.flush ? {} : { paddingLeft: SPACE.row })}>
+          {/* Le titre suit sa marque d'une cellule : celui de la mère tombe au-dessus de la case de ses filles, comme dans la liste. */}
+          <Box flexShrink={1} minWidth={0} paddingLeft={SPACE.row}>
             {opens && !press ? (
               <Button key={`link:${x.key}`} plain hover={{ underline: true }} onPress={select(selectionOf(x))}>{o.title}</Button>
             ) : (
@@ -11395,43 +11396,35 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
           {!closed && lead &&
             familyLine('lead', lead.task, {
               here: lead.here,
-              flush: true,
               marks: Svg ? (
                 <Svg source={familyLeadIcon(axisHex(lead.task.axis))} alt="mère" width={FAMILY_MARK_PX} height={24} />
               ) : (
                 <Text color={palette.text2}>■</Text>
               ),
               title: <Text weight="semibold" wrap="truncate-end">{lead.title}</Text>,
-              right: (
-                <>
-                  {Svg && <Svg source={gaugeIcon(lead.kinds, chainColors, 56, 6)} alt={`${f.count}`} width={56} height={6} />}
-                  <Text size="caption" tabular color={palette.text2}>{lead.right}</Text>
-                </>
-              ),
+              right: [
+                ...(Svg ? [<Svg key="family-gauge" source={gaugeIcon(lead.kinds, chainColors, 56, 6)} alt={`${f.count}`} width={56} height={6} />] : []),
+                <Text key="family-count" size="caption" tabular color={palette.text2}>{lead.right}</Text>,
+              ],
             })}
           {!closed &&
             f.rows.map((r, i) => {
-              const sq: 'open' | 'done' | 'cancelled' = r.state === 'done' ? 'done' : r.state === 'cancelled' ? 'cancelled' : 'open'
-              const square = Svg ? (
-                <Svg source={familySquareIcon(axisHex(r.task.axis), sq, palette.onAxis)} alt={sq === 'done' ? 'faite' : r.task.axis} width={14} height={24} />
+              // La marque de la liste (#368, maquette A) : coude et case en un seul dessin, la case sous le titre de la mère.
+              const last = i === f.rows.length - 1
+              const alt = r.state === 'cancelled' ? 'annulée' : r.state === 'done' ? 'faite' : r.task.axis
+              const marks = Svg ? (
+                <Svg
+                  source={familyRowIcon(familyCase(axisHex(r.task.axis), r.state, palette.onAxis), f.tree ? (last ? 'last' : 'mid') : 'none', palette.border)}
+                  alt={alt}
+                  width={TREE_CHILD_PX}
+                  height={24}
+                />
               ) : (
-                <Text color={palette.text3}>{sq === 'done' ? '✓' : '□'}</Text>
+                <Text color={palette.text3}>{`${f.tree ? (last ? '└ ' : '├ ') : '  '}${r.state === 'done' || r.state === 'cancelled' ? '✓' : '■'}`}</Text>
               )
-              const lead24 = f.tree
-                ? Svg ? (
-                    <Svg source={familyElbowIcon(palette.text3, i === f.rows.length - 1)} alt="lien" width={FAMILY_MARK_PX} height={24} />
-                  ) : (
-                    <Text color={palette.text3}>{i === f.rows.length - 1 ? '└ ' : '├ '}</Text>
-                  )
-                : Svg && <Svg source={blankMark} alt="" width={FAMILY_MARK_PX} height={24} />
               return familyLine(r.task.key, r.task, {
                 here: r.here,
-                marks: (
-                  <>
-                    {lead24}
-                    {square}
-                  </>
-                ),
+                marks,
                 title: (
                   <Text
                     wrap="truncate-end"
@@ -11441,7 +11434,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
                     {r.title}
                   </Text>
                 ),
-                right: <Text size="caption" tabular color={r.tone === 'block' ? palette.blockOn : palette.text2} wrap="end">{r.right}</Text>,
+                right: [<Text key="family-right" size="caption" tabular color={r.tone === 'block' ? palette.blockOn : palette.text2} wrap="end">{r.right}</Text>],
               })
             })}
         </Box>

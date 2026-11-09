@@ -939,39 +939,41 @@ export function gaugeIcon(kinds: readonly GaugeKind[], colors: Record<GaugeKind 
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">${segs}</svg>`
 }
 
-// La famille au pied de la fiche (#343, maquette A2) : une marque de 24 px de large, le tronc à x 7, comme la
-// mère ; chaque dessin se pose seul dans la ligne, le texte suit à 24 px.
+// La famille au pied de la fiche (#343 ; #368, maquette A) : l'arbre de la liste, trait pour trait. La tête et la
+// mère ont une marque de 24 px centrée à x 8, comme le carré de la liste ; une fille, le dessin d'une fille de
+// l'arbre (`treeChildRowIcon`) : coude et case en UN SEUL dessin, car deux dessins côte à côte dans un groupe sans
+// boîte s'empilaient au bureau (le coude une demi-ligne au-dessus de sa case, capture de BBR du 2026-11-06).
 
-/** La largeur de la marque d'une ligne de la famille (#343). */
+/** La largeur de la marque de la tête et de la mère de la famille (#343). */
 export const FAMILY_MARK_PX = 24
 
-/** La flèche de dépli de la mère de la famille (#343), 24 × 24, centrée à x 7, grise. */
+/** La flèche de dépli d'une section du pied de la fiche (#343), 24 × 24, centrée à x 8 (#368), grise. */
 export function familyChevronIcon(hex: string, open: boolean): string {
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${FAMILY_MARK_PX}" height="24" viewBox="0 0 ${FAMILY_MARK_PX} 24">${innerChevron(7, 12, 3, open, hex)}</svg>`
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${FAMILY_MARK_PX}" height="24" viewBox="0 0 ${FAMILY_MARK_PX} 24">${innerChevron(8, 12, 3, open, hex)}</svg>`
 }
 
-/** Le carré plein de la mère (#343), 10 px, 24 × 24, centré à x 7 : d'où part le tronc de ses filles. */
+/** Le carré de la mère (#343 ; #368 : celui de la liste, `squareRowIcon`, 10 px à x 3), 24 × 24 : d'où part le tronc. */
 export function familyLeadIcon(hex: string): string {
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${FAMILY_MARK_PX}" height="24" viewBox="0 0 ${FAMILY_MARK_PX} 24"><rect x="2" y="7" width="10" height="10" rx="${RADIUS.square}" fill="${hex}"/></svg>`
-}
-
-/** Le coude d'une fille (#343), 24 × 24 : le tronc à x 7 (jusqu'à mi-hauteur sur la dernière) et le coude jusqu'à x 24. */
-export function familyElbowIcon(lineHex: string, last: boolean): string {
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${FAMILY_MARK_PX}" height="24" viewBox="0 0 ${FAMILY_MARK_PX} 24"><path d="M7 0V${last ? 12 : 24}M7 12H24" fill="none" stroke="${lineHex}" stroke-width="1.2"/></svg>`
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${FAMILY_MARK_PX}" height="24" viewBox="0 0 ${FAMILY_MARK_PX} 24"><rect x="3" y="7" width="10" height="10" rx="${RADIUS.square}" fill="${hex}"/></svg>`
 }
 
 /**
- * Le carré d'une ligne de la famille (#343), 14 × 24, centré à x 7 : au trait, 10 px, pour une ouverte ;
- * plein et coché comme `squareCheckRowIcon` (12 px, coche en `inkHex`) pour une faite ; au trait et barré
- * d'une diagonale pour une annulée.
+ * La case d'une ligne de la famille (#368, maquette A) : celle de la liste, le carré d'axe pour une ouverte, le
+ * carré coché pour une faite ou une annulée (comme `checkedMark` des lignes de la liste).
  */
-export function familySquareIcon(hex: string, state: 'open' | 'done' | 'cancelled', inkHex: string): string {
-  const head = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="24" viewBox="0 0 14 24">'
-  if (state === 'done')
-    return `${head}<rect x="1" y="6" width="12" height="12" rx="${RADIUS.square}" fill="${hex}"/><path d="M4.2 12.2l1.9 1.9 3.7-3.9" fill="none" stroke="${inkHex}" stroke-width="${STROKE.check}" stroke-linecap="round" stroke-linejoin="round"/></svg>`
-  const box = `<rect x="2.75" y="7.75" width="8.5" height="8.5" rx="${RADIUS.square}" fill="none" stroke="${hex}" stroke-width="1.5"/>`
-  const bar = state === 'cancelled' ? `<path d="M3.5 17.5L10.5 6.5" fill="none" stroke="${hex}" stroke-width="1.5" stroke-linecap="round"/>` : ''
-  return `${head}${box}${bar}</svg>`
+export function familyCase(hex: string, state: 'done' | 'cancelled' | 'live' | 'blocked' | 'open', inkHex: string): string {
+  return state === 'done' || state === 'cancelled' ? squareCheckRowIcon(hex, inkHex) : squareRowIcon(hex)
+}
+
+/**
+ * La marque d'une fille de la famille (#368, maquette A), `TREE_CHILD_PX` × 24, un seul dessin : dans un arbre,
+ * celui d'une fille de la liste (le coude ├, └ pour la dernière, puis sa case sous le titre de la mère) ; hors
+ * d'un arbre (« Sa chaîne »), la case à la même place, sans tronc ni coude.
+ */
+export function familyRowIcon(mark: string, link: 'mid' | 'last' | 'none', lineHex: string): string {
+  if (link !== 'none') return treeChildRowIcon(mark, link === 'last', lineHex)
+  const inner = mark.replace(/^<svg /, '<svg x="29" y="0" ')
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${TREE_CHILD_PX}" height="24" viewBox="0 0 ${TREE_CHILD_PX} 24">${inner}</svg>`
 }
 
 /** Les tâches nées d'un retour de l'app (`feedback:`) : une bulle de parole, pleine, sur 16 px. */
