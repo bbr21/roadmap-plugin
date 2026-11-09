@@ -1453,6 +1453,16 @@ export function ownLineState(id: string | undefined, openText: string | undefine
 }
 
 /**
+ * Le refus de l'archivage depuis la fiche (#336) : la ligne de la session doit être close dans la
+ * roadmap au moment du clic. `closed` (état d'`ownLineState`) et `done` valent la même chose.
+ */
+export function selfArchiveRefusal(id: string, state: OwnLine['state'] | 'done'): string | undefined {
+  if (state === 'open') return `#${id} est encore ouverte : Maestro la close d'abord.`
+  if (state === 'absent') return `#${id} introuvable dans la roadmap : archivage suspendu.`
+  return undefined
+}
+
+/**
  * Ce que dit la conclusion d'une session dont la tâche est close (#124) : la date lue dans
  * ROADMAP-fait, Maestro nommé quand c'est lui qui tient la ligne. « Maestro clôt la ligne », au
  * présent, avait fait douter Bertrand (#341, 2026-10-30).

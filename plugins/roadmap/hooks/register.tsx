@@ -537,6 +537,7 @@ import {
   archivedOpenText,
   type ArchivedOpen,
   ownLineState,
+  selfArchiveRefusal,
   lineOpenRefusal,
   type OwnLineContext,
   STEP_LIST_MIN_TOOLS,
@@ -5303,6 +5304,25 @@ async function openSession($: EngineInterface, entry: LiveEntry): Promise<OpenRo
   }
   await setView($, () => ({ openAt: '', openNote: `Session « ${entry.title} » : ouvre-la depuis la barre latérale.` }))
   return opened('note')
+}
+
+/**
+ * L'archivage de sa propre session depuis la fiche (#336) : la roadmap est relue au clic, et la ligne doit
+ * être close ; sinon la note du refus, sans appel à l'outil.
+ */
+async function archiveSelf($: EngineInterface, source: Source, task: { id?: string }, own: { id?: string; title?: string }): Promise<void> {
+  const note = (openNote: string) => setView($, () => ({ openAt: '', openNote }))
+  if (!own.id) return await note('Session introuvable : archivage impossible.')
+  let state: Parameters<typeof selfArchiveRefusal>[1]
+  try {
+    const now = await roadmapNow($, source)
+    state = ownLineState(task.id, now.open, now.done).state
+  } catch {
+    return await note('Roadmap illisible : archivage suspendu.')
+  }
+  const refusal = selfArchiveRefusal(task.id ?? '?', state)
+  if (refusal !== undefined) return await note(refusal)
+  await archiveSession($, `session:${own.id}`, { sessionId: own.id, startedAt: Date.now(), title: own.title ?? task.id ?? '' })
 }
 
 /**
@@ -10677,8 +10697,40 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     const launchable = !current.done && !live && !launched.includes(taskKey(current))
     const launchNow = () => void (isRoutine(current) ? launchRoutine($, source, current, s.titre) : launchSession($, source, current, s.titre, launchExtra))
     const toggleBrief = () => void setView($, v => ({ briefOpen: v.briefOpen === taskKey(current) ? '' : taskKey(current) }))
+    // #336 (maquette A) : dans la session de sa tâche close, la bande grise « Archiver cette session » ; relue au clic.
+    const archiveSelfBand = (): RenderElement => {
+      const press = () => void archiveSelf($, ficheSource, current, own)
+      if (!Svg) {
+        return (
+          <Box key="top-action" paddingX={SPACE.indent}>
+            <Button key="archive-self" label="Archiver cette session" onPress={press} />
+          </Box>
+        )
+      }
+      return (
+        <Box key="top-action" paddingX={SPACE.indent} flexDirection="row">
+          {pressable(
+            'archive-self',
+            press,
+            <Box flexDirection="row" alignItems="center" gap={SPACE.row} paddingX={SPACE.indent} flexGrow={1} minWidth={0} backgroundColor={palette.btn} hover={{ backgroundColor: palette.btnHover }}>
+              {corners(RADIUS.control, palette.bg)}
+              {strut(SIZE.strut.control)}
+              <Svg source={archiveIcon(palette.text, SIZE.icon.md)} alt="Archiver" width={SIZE.icon.md} height={SIZE.icon.md} />
+              <Text size="footnote" weight="semibold" color={palette.text}>Archiver cette session</Text>
+              <Box flexGrow={1} flexShrink={1} minWidth={0} alignItems="flex-end">
+                <Text size="caption" color={palette.text2} wrap="truncate-end">réversible</Text>
+              </Box>
+            </Box>,
+            <Button key="archive-self" label="Archiver cette session" onPress={press} />,
+            true,
+          )}
+        </Box>
+      )
+    }
     const topAction = (): RenderElement | null => {
-      if (current.done) return null
+      if (current.done) return inSession ? archiveSelfBand() : null
+      // Dans sa propre session, « Ouvrir la session » n'a pas de sens (#336) : la bande d'état suffit.
+      if (live && inSession) return null
       if (live) {
         // La durée et la roue montent dans la tête du carton (#341, B1).
         const openIt = () => void openSession($, live.entry)
@@ -11304,7 +11356,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     // Le pied (#291) : « Marquer faite », « Annuler la tâche » et leur confirmation ; close, sa session gardée.
     const closeRow = (): RenderElement | null => {
       if (current.done)
-        return kept ? (
+        return kept && !inSession ? (
           <Box key="kept-row" flexDirection="row" alignItems="stretch" gap={SPACE.row} paddingX={SPACE.indent}>
             {primary('open-session', externalIcon(palette.priText, 14), 'Ouvrir la session', () => void openSession($, kept.entry))}
             {action('archive-session', archiveIcon(palette.text), 'Archiver la session', () => void archiveSession($, kept.key, kept.entry))}
@@ -12073,7 +12125,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
           )}
         </Box>
         {/* La fiche finale (#291) : en session, la bande d'état se fond dans « Ouvrir la session ». */}
-        {(headState !== 'live' || !live) && stateBox()}
+        {(headState !== 'live' || !live || inSession) && stateBox()}
         {topAction()}
         {mockupBand()}
         {draftBlock()}
