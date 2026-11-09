@@ -748,6 +748,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.243.0 (2026-11-09)** : panneau : une tâche n'est « à fusionner » que quand sa session s'est dite prête ou a coché ses étapes ; pendant ses tests elle reste en session (#384)
 - **0.242.0 (2026-11-09)** : maestro : une Pause cliquée arrête vraiment la session et libère sa place, une tâche n'a qu'une place, la file dit la vraie raison d'attente, et une tâche qu'on refuse de lancer ne revient plus qu'au ▶ (#383)
 - **0.241.1 (2026-11-09)** : audit : une mère de regroupement neuve prend qui: la personne et n'exige pas de due: dans un projet qui exige qui: (#346)
 - **0.241.0 (2026-11-09)** : maestro : sous Remote Control, une tâche débloquée de la file part sur le prochain mot tapé dans Maestro, et le geste n'est dit qu'une fois (#382)

@@ -595,6 +595,8 @@ import {
   shellsAfterNotice,
   childWake,
   childWakeText,
+  stoppedState,
+  withWake,
   type ChildWake,
   applyPlan,
   boxSteps,
@@ -2875,11 +2877,21 @@ function childStatusOf(value: unknown): ChildStatus | undefined {
     if (typeof q !== 'object' || q === null || typeof q.text !== 'string' || typeof q.since !== 'number' || !Number.isFinite(q.since)) return undefined
   }
   // Un contexte d'un autre format tombe seul : la note garde ses étapes (#157).
+  let out = value as ChildStatus
   if ((value as { context?: unknown }).context !== undefined && !contextUseOf((value as { context?: unknown }).context)) {
-    const { context: _, ...rest } = value as ChildStatus
-    return rest
+    const { context: _, ...rest } = out
+    out = rest
   }
-  return value as ChildStatus
+  // #384 : un verdict ou une attente mal formés tombent seuls, la note garde ses étapes.
+  if (out.ready !== undefined && typeof out.ready !== 'boolean') {
+    const { ready: _, ...rest } = out
+    out = rest
+  }
+  if (out.waits !== undefined && typeof out.waits !== 'string') {
+    const { waits: _, ...rest } = out
+    out = rest
+  }
+  return out
 }
 
 /** La note sans sa question : l'outil a rendu sa réponse, ou le tour a repris. */
@@ -7860,7 +7872,16 @@ export const register: Register = (on, options) => {
     // Et le temps du tour (#314), même interrompu.
     await noteTiming($, (t, now) => (t ? timingTurnEnd(t, now, { asked: timingAsked && !e.isAborted, ...(typeof e.answer === 'string' && !e.isAborted ? { answer: e.answer } : {}) }) : t))
     // Une session de Maestro prévient Maestro de l'état où elle s'arrête (#131) ; interrompue, la personne est là.
-    if (!e.isAborted) await tellMaestro($, async () => childWake({ ...wakeBox, answer: e.answer, background: await inFlight($, e.turnId) }))
+    // #384 : le même réveil dit à Maestro et noté (verdict, attente de fond) ; calculé une fois, pour une session qui a un parent.
+    let wakeOnce: Promise<ChildWake> | undefined
+    const wakeNow = () => (wakeOnce ??= (async () => childWake({ ...wakeBox, answer: e.answer, background: await inFlight($, e.turnId) }))())
+    if (!e.isAborted) await tellMaestro($, wakeNow)
+    try {
+      const wake = e.isAborted ? undefined : (await ownParent($)) ? await wakeNow() : undefined
+      await noteChild($, s => withWake(s, wake), { keepAt: true })
+    } catch {
+      // réveil illisible : la note garde son dernier verdict
+    }
     // Un réveil de Maestro ne laisse pas de rappel, qui ferait écrire son fil (#133).
     if (e.turnId === stopTurn.id && !stopTurn.stopRan && e.reason === 'answer' && !closingTurn.wake) {
       const block = await endOfTurnBlock($, e.answer, stopTurn.fromReminder, false)
@@ -8262,7 +8283,9 @@ async function maestroTasksOf(
   await learnCreated($, found.map(f => f.sessionId), now)
   // #191 : l'avance de leur branche, et la question qui attend, séparent « à fusionner » de « t'attend ».
   await refreshAhead($, source, found.map(f => f.sessionId), now)
-  const asking = new Map(await Promise.all(found.map(async f => [f.sessionId, (await readSteps($, f.sessionId))?.question !== undefined] as const)))
+  // #384 : une seule lecture de la note par session ; sa question et son verdict disent l'état à l'arrêt.
+  const notes = new Map(await Promise.all(found.map(async f => [f.sessionId, await readSteps($, f.sessionId)] as const)))
+  const asking = new Map([...notes].map(([sid, n]) => [sid, n?.question !== undefined] as const))
   return maestroBrandTasks(
     found.map(({ task: t, sessionId: sid }) => ({
       id: t.id as string,
@@ -8276,6 +8299,7 @@ async function maestroTasksOf(
       launchedAt: launchOf(t, sid, now),
       ...(aheadBySession.get(sid)?.ahead !== undefined ? { ahead: aheadBySession.get(sid)?.ahead as number } : {}),
       asking: asking.get(sid) === true,
+      ...(notes.get(sid) ? { status: notes.get(sid) as ChildStatus } : {}),
     })),
   )
 }
@@ -10655,7 +10679,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     if (!inSession) await refreshAhead($, source, [stepsSession], now)
     const aheadNow = stepsSession ? aheadBySession.get(stepsSession)?.ahead : undefined
     const headState: BrandTask['state'] | undefined =
-      waitState === 'wait' && stepsNote?.question === undefined && (aheadNow ?? 0) > 0 ? 'merge' : waitState
+      waitState === 'wait' ? stoppedState({ asking: stepsNote?.question !== undefined, ahead: aheadNow, status: stepsNote }) : waitState
     const fullBrand = focusBrand ?? taskBrandOf(current, source, allTasks, { label: s.titre, prereqs: prereqsFor })
     // #291 : la voie (stations d'avant et d'après) quitte l'en-tête ; la jauge de chaîne, au pied, la remplace.
     // En édition (#342), l'en-tête reste celui de la fiche : rien ne bouge.
@@ -12724,8 +12748,10 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     const status = block ? blockSteps.get(block.id) : rowSteps.get(taskKey(t))
     // #191 : finie, sa branche en avance, sans question : à fusionner, ni la main ni la roue.
     const sid = liveOf(t)?.entry.sessionId
-    const merging = block ? block.state === 'merge' : waitingOn(t) && status?.question === undefined && (sid ? (aheadBySession.get(sid)?.ahead ?? 0) : 0) > 0
-    const waiting = (block ? block.state === 'wait' : waitingOn(t)) && !merging
+    // #384 : et prête (verdict ou étapes cochées) ; en attente de son travail de fond, la roue.
+    const stopped = !block && waitingOn(t) ? stoppedState({ asking: status?.question !== undefined, ahead: sid ? aheadBySession.get(sid)?.ahead : undefined, status }) : undefined
+    const merging = block ? block.state === 'merge' : stopped === 'merge'
+    const waiting = block ? block.state === 'wait' : stopped === 'wait'
     // Close (#218) : la coche, violette quand la session ne tourne plus, et sa jauge pleine, comme la bande.
     const completed = block?.state === 'done'
     const view = status ? stepsView(status.steps, { now, at: status.at, closed: t.done }) : undefined

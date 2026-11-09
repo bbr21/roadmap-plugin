@@ -5180,7 +5180,17 @@ export type ChildStep = { content: string; status: 'pending' | 'in_progress' | '
  * question `from: 'box'` vient de sa boîte de fin (#121) : elle tombe au tour suivant de l'enfant.
  * `context` : son contexte utilisé à la fin de son dernier tour (#157), écrit sans changer `at`.
  */
-export type ChildStatus = { steps: ChildStep[]; question?: { text: string; since: number; from?: 'box' }; recap?: string; context?: ContextUse; at: number }
+export type ChildStatus = {
+  steps: ChildStep[]
+  question?: { text: string; since: number; from?: 'box' }
+  recap?: string
+  context?: ContextUse
+  /** Le dernier tour a fini sur « Prête à fusionner » (#384) ; absent sur une note d'avant, qui se lit par son `recap`. */
+  ready?: boolean
+  /** Le dernier tour a laissé du travail de fond en vol, dit en une locution (#384). */
+  waits?: string
+  at: number
+}
 
 /** Le contexte utilisé d'une session (#157) : les jetons du dernier tour sur la fenêtre de son modèle. */
 export type ContextUse = { tokens: number; window: number }
@@ -5457,6 +5467,41 @@ export function filRows(view: StepsView, question?: string): FilRow[] {
   })
 }
 
+/** La note d'étapes avec le verdict et l'attente de fond du dernier tour (#384) ; la note elle-même si rien ne change. */
+export function withWake(s: ChildStatus, w: ChildWake | undefined): ChildStatus {
+  const ready = w?.kind === 'ready'
+  const waits = w?.kind === 'background' ? w.waits : undefined
+  if (s.ready === ready && s.waits === waits) return s
+  const { waits: _old, ...rest } = s
+  return { ...rest, ready, ...(waits !== undefined ? { waits } : {}) }
+}
+
+/** Les étapes avant « Fusionner » sont au moins une et toutes cochées (#384). */
+export function stepsReady(steps: readonly ChildStep[]): boolean {
+  const at = steps.findIndex(x => x.content.trim().toLowerCase().startsWith(MERGE_STEP.toLowerCase()))
+  const own = at < 0 ? steps : steps.slice(0, at)
+  return own.length > 0 && own.every(x => x.status === 'completed')
+}
+
+/** La session est prête à fusionner : son verdict (ou, sur une note d'avant, son récap), ou ses étapes cochées (#384). */
+export function mergeReady(s: ChildStatus): boolean {
+  const verdict = s.ready ?? childWake({ recap: s.recap }).kind === 'ready'
+  return verdict || stepsReady(s.steps)
+}
+
+/**
+ * L'état d'une session à l'arrêt (#384), la seule règle de la fiche, de la bande, de la pastille et du centre de
+ * contrôle : une question la fait attendre, du travail de fond la garde en session, la branche en avance et prête
+ * (ou sans liste d'étapes, #191) la donne à fusionner.
+ */
+export function stoppedState(o: { asking: boolean; ahead?: number; status?: ChildStatus }): 'wait' | 'live' | 'merge' {
+  if (o.asking) return 'wait'
+  if (o.status?.waits) return 'live'
+  if ((o.ahead ?? 0) <= 0) return 'wait'
+  if (!o.status || o.status.steps.length === 0) return 'merge'
+  return mergeReady(o.status) ? 'merge' : 'wait'
+}
+
 /** L'empreinte des notes d'étapes suivies (#143) : elle change avec une étape, pas avec l'ordre des clés. */
 export function stepsStamp(statuses: Record<string, ChildStatus | undefined>): string {
   return JSON.stringify(
@@ -5464,7 +5509,7 @@ export function stepsStamp(statuses: Record<string, ChildStatus | undefined>): s
       .sort()
       .map(id => {
         const s = statuses[id]
-        return [id, s ? s.at : null, s ? s.steps.map(x => x.status[0]).join('') : null, s?.question?.since ?? null]
+        return [id, s ? s.at : null, s ? s.steps.map(x => x.status[0]).join('') : null, s?.question?.since ?? null, s?.ready ?? null, s?.waits ?? null]
       }),
   )
 }
@@ -9545,6 +9590,8 @@ export function maestroBrandTasks(
     ahead?: number
     /** Sa session a posé une question qui attend (formulaire, boîte avec question). */
     asking?: boolean
+    /** Sa note d'étapes : sans verdict ni étapes cochées, elle n'est pas « à fusionner » (#384). */
+    status?: ChildStatus
   }[],
 ): BrandTask[] {
   // Par premier lancement, la plus ancienne en haut, closes à leur place (#143, #195, demande de
@@ -9556,8 +9603,8 @@ export function maestroBrandTasks(
     .map(e => ({
       id: e.id,
       label: e.label,
-      // À l'arrêt sans question, sa branche en avance : c'est Maestro qui fusionne, pas toi qu'on attend (#191).
-      state: (e.done || !e.open ? 'done' : e.running ? 'live' : !e.asking && (e.ahead ?? 0) > 0 ? 'merge' : 'wait') as BrandTask['state'],
+      // À l'arrêt : prête, c'est Maestro qui fusionne (#191) ; sinon elle attend ou travaille encore (#384).
+      state: (e.done || !e.open ? 'done' : e.running ? 'live' : stoppedState({ asking: e.asking === true, ahead: e.ahead, status: e.status })) as BrandTask['state'],
       ...(e.sessionId ? { sessionId: e.sessionId } : {}),
       ...(e.done ? { closed: true as const } : {}),
       ...(e.done && !(e.open && e.running) ? { finished: true as const } : {}),
@@ -12249,7 +12296,8 @@ export function controlView(o: {
     const project = name(root)
     const status = o.statusOf(r.sessionId)
     const kind = status?.recap ? childWake({ recap: status.recap }).kind : 'other'
-    const finished = o.closed?.has(`${root}#${id}`) === true || kind === 'ready' || kind === 'partial' || kind === 'done'
+    // #384 : une session qui tourne n'est jamais finie ; à l'arrêt, prête, clôture partielle ou « fini ».
+    const finished = o.closed?.has(`${root}#${id}`) === true || (r.isRunning !== true && ((status !== undefined && mergeReady(status)) || kind === 'partial' || kind === 'done'))
     const steps = finished ? doneSteps(status) : cardSteps(status)
     running.push({
       key: `run:${r.sessionId}`,
@@ -12259,7 +12307,7 @@ export function controlView(o: {
       project,
       tone: toneOf(project),
       ...(!finished && pause?.state === 'asked' ? { pause: { mode: pause.mode, ...(pause.failed ? { failed: pause.failed } : {}) } } : {}),
-      state: finished ? 'done' : pause?.state === 'asked' ? 'pausing' : r.isRunning === true ? 'run' : 'wait',
+      state: finished ? 'done' : pause?.state === 'asked' ? 'pausing' : r.isRunning === true || status?.waits ? 'run' : 'wait',
       prio: o.marks.has(`${root}#${id}`),
       ...(steps ? { steps } : {}),
       sessionId: r.sessionId,
