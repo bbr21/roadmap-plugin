@@ -465,6 +465,11 @@ import {
   launchInFlight,
   pauseRunnable,
   queueHeld,
+  queueRetained,
+  sessionIsMaestro,
+  queueMaestroIds,
+  heldByNonMaestro,
+  projectMaestroOpen,
   releaseTurnId,
   openSteps,
   LAUNCH_PENDING_MS,
@@ -583,7 +588,6 @@ import {
   AUTO_BLOCKED,
   autoBypassNote,
   maestroParentOf,
-  maestroRootOf,
   PROPOSAL_OPTIONS,
   ELSEWHERE_OPTIONS,
   proposalRetryNote,
@@ -2593,12 +2597,8 @@ async function ownIsMaestro($: EngineInterface, own: { id: string | undefined; t
     const listedRows: unknown = JSON.parse(ran.text ?? '[]')
     if (!Array.isArray(listedRows)) return named
     // La liste exclut cette session : sa rangée, avec son parent, la rejoint.
-    const rows = typeof own.parent === 'string'
-      ? withSelfRow(listedRows, { sessionId: own.id, title: own.title, startedBy: own.parent, isArchived: false })
-      : listedRows
-    const maestros = new Set(Object.keys(marks))
-    if (maestroRootOf(own.id, undefined, rows, maestros, named)) return false
-    return named || maestroSessionIds(rows, maestros).has(own.id)
+    // #389 : la même règle que la relève de la file (`sessionIsMaestro`).
+    return listedRows.length === 0 ? named : sessionIsMaestro(own, listedRows, new Set(Object.keys(marks)))
   } catch {
     return named
   }
@@ -4010,15 +4010,24 @@ async function writeOwnQueue($: EngineInterface, ownId: string, change: (own: Gl
  * vol devient celle de ce Maestro, avec la trace de la reprise. Deux Maestros qui la reprennent au même pas : la
  * dernière écriture l'emporte, et chacun ne la lance qu'au pas suivant, s'il la tient encore. Rend la file écrite.
  */
-async function takeEntry($: EngineInterface, ownId: string, lost: GlobalQueued, now: number): Promise<GlobalQueued[]> {
+async function takeEntry($: EngineInterface, ownId: string, lost: GlobalQueued, now: number, wrongful = false): Promise<GlobalQueued[]> {
   const stored = await readGlobalQueue($)
   const same = (e: GlobalQueued) => e.maestro === lost.maestro && e.id === lost.id && e.project === lost.project && e.kind !== 'resume'
   const found = stored.find(same)
   if (!found || launchInFlight(found, now)) return stored
+  // #389 : l'entrée prise à tort double celle qu'un autre Maestro tient encore (#187, deux fois en file le 2026-11-09) : elle sort.
+  if (wrongful && stored.some(e => !same(e) && e.id === found.id && e.project === found.project && e.kind !== 'resume')) {
+    const next = stored.filter(e => !same(e))
+    await storeSet($, LAUNCH_QUEUE_KEY, next as unknown as StoreValue)
+    return next
+  }
   const { launching: _, ...kept } = found
   // #382 : la retenue de Remote Control tenait au Maestro d'avant ; reprise, l'entrée part normalement d'ici.
   const { failed: held, ...plain } = kept
-  const rest = held?.remote ? plain : kept
+  const unheld = held?.remote ? plain : kept
+  // #389 : la retenue posée chez une session qui n'est pas un Maestro (son tour de relève fini sans lancement) ne vaut rien.
+  const { held: _held, ...free } = unheld
+  const rest = wrongful ? free : unheld
   const next = stored.map(e => (same(e) ? { ...rest, maestro: ownId, taken: { from: found.maestro, at: now } } : e))
   await storeSet($, LAUNCH_QUEUE_KEY, next as unknown as StoreValue)
   return next
@@ -4154,7 +4163,7 @@ export async function writePause($: EngineInterface, sessionId: string, p: Sessi
 }
 
 /** Ce que les décisions de ce pas lisent : les places du Mac, les cartes réservées, la charge, les plafonds. */
-type DoseState = { pauses: Record<string, SessionPause>; maestros: Set<string>; statuses: Map<string, ChildStatus | undefined>; rows: unknown[]; cwds: string[]; reserved: string[]; cards: DoseCard[]; macTaken: number; macSessions: number; load?: MacLoad; projectMax: number; macMax: number }
+type DoseState = { pauses: Record<string, SessionPause>; maestros: Set<string>; marks: Set<string>; statuses: Map<string, ChildStatus | undefined>; rows: unknown[]; cwds: string[]; reserved: string[]; cards: DoseCard[]; macTaken: number; macSessions: number; load?: MacLoad; projectMax: number; macMax: number }
 
 async function doseState($: EngineInterface, now: number, read?: Record<string, SessionPause>, cached = false): Promise<DoseState> {
   const pauses = read ?? (await readPauses($))
@@ -4167,14 +4176,15 @@ async function doseState($: EngineInterface, now: number, read?: Record<string, 
       statuses.set(r.sessionId, childStatusOf(await $.store.get(`${CHILD_STATUS_PREFIX}${r.sessionId}`).catch(() => undefined)))
     }
   }
-  const maestros = maestroSessionIds(rows, new Set(Object.keys(await loadMaestros($))))
+  const marks = new Set(Object.keys(await loadMaestros($)))
+  const maestros = maestroSessionIds(rows, marks)
   const cards = await doseCards($, now)
   // #367 : une session en pause ne tient aucune place
   const paused = new Set(Object.entries(pauses).flatMap(([id, p]) => (p.state === 'paused' ? [id] : [])))
   const places = launchPlaces(rows, id => statuses.get(id), cards, now, maestros, doseProject().match, paused, doseIdleMs())
   const { projectMax, macMax } = doseMaxes()
   const load = places.taken < macMax ? await readMacLoad($, now) : doseLoad.load
-  return { pauses, maestros, statuses, rows, cwds: places.cwds, reserved: places.reserved, cards, macTaken: places.taken, macSessions: places.taken - places.reserved.length, ...(load ? { load } : {}), projectMax, macMax }
+  return { pauses, maestros, marks, statuses, rows, cwds: places.cwds, reserved: places.reserved, cards, macTaken: places.taken, macSessions: places.taken - places.reserved.length, ...(load ? { load } : {}), projectMax, macMax }
 }
 
 /** Les places d'un projet : ses sessions (par `cwd`) et ses cartes réservées dont la session n'est pas ouverte. */
@@ -4212,7 +4222,8 @@ async function doseLaunch($: EngineInterface, id: string | undefined, entry: Omi
     const queue = await readGlobalQueue($)
     const gateOf = (e: GlobalQueued) => gateFor(state, e.project, e.match)
     // #383 : ni une entrée retenue ni une entrée en vol (sa place est déjà réservée) ne sont tête.
-    const head = queueHead(liveQueue(globalQueueOrder(queue), gateOf, ownId, queueSince, now).filter(e => !queueHeld(e) && !launchInFlight(e, now)), gateOf)
+    // #389 : une entrée retenue par Remote Control non plus : elle garde son rang, la suivante passe.
+    const head = queueHead(liveQueue(globalQueueOrder(queue), gateOf, ownId, queueSince, now).filter(e => !queueRetained(e) && !launchInFlight(e, now)), gateOf)
     if (gate.go && (!head || (head.maestro === ownId && head.id === id))) {
       // #382 : une entrée retenue par Remote Control reste en file ; la réponse de l'app à la carte la règle (`settleQueued`).
       if (queue.some(q => q.maestro === ownId && q.id === id && q.kind !== 'resume' && !q.failed?.remote)) await writeOwnQueue($, ownId, own => own.filter(q => q.id !== id || q.kind === 'resume'), state.rows)
@@ -4499,6 +4510,23 @@ async function relieveLaunches($: EngineInterface): Promise<void> {
     const source = knownSource
     const now = await $.clock.now()
     const state = await doseState($, now, pauses)
+    const fileOn = settings.launchQueue
+    const gateOf = fileOn ? (e: GlobalQueued) => gateFor(state, e.project, e.match) : () => ({ go: true as const })
+    const counted = (q: readonly GlobalQueued[]) => (fileOn ? liveQueue(globalQueueOrder(q), gateOf, ownId, queueSince, now) : globalQueueOrder(q).filter(e => e.maestro === ownId))
+    // Les compteurs du panneau ; ses propres entrées en file, chez un Maestro seulement.
+    const showCounts = async (mine: boolean) => {
+      const at = doseProject()
+      const ordered = counted(queue)
+      // #367 : une entrée `resume` compte au rang du Mac mais ne se montre pas comme une tâche en file
+      const ownQueue = fileOn && mine ? ordered.flatMap((q, i) => (q.maestro === ownId && q.kind !== 'resume' && !launchInFlight(q, now) ? [{ ...q, rank: i + 1 }] : [])) : []
+      const gate = gateFor(state, at.project, at.match)
+      await showDose($, { queue: ownQueue, projectTaken: projectTaken(state.cwds, at.match), projectMax: state.projectMax, macTaken: state.macSessions, macMax: state.macMax, queued: ordered.filter(q => q.kind !== 'resume' && !launchInFlight(q, now)).length, why: gate.go ? 'project' : gate.why, ...(state.load ? { load: state.load } : {}) })
+    }
+    // #389 : seul un Maestro tient la file (prend, lance, met en pause) ; une session de tâche ou planifiée ne fait que compter les places.
+    if (!sessionIsMaestro(ownSession ?? { id: ownId, title: '' }, state.rows, state.marks)) {
+      await showCounts(false)
+      return
+    }
     const tasks = source ? await load($, files(source).open, 'ROADMAP.md') : []
     const open = typeof tasks === 'string' ? undefined : tasks
     // #374 : « déjà en session » se juge dans les dossiers de l'entrée (un même numéro vit dans plusieurs projets).
@@ -4516,9 +4544,6 @@ async function relieveLaunches($: EngineInterface): Promise<void> {
     if (queue.some(q => q.maestro === ownId && stale(q))) {
       queue = await writeOwnQueue($, ownId, own => own.filter(q => !stale(q)), state.rows)
     }
-    const fileOn = settings.launchQueue
-    const gateOf = fileOn ? (e: GlobalQueued) => gateFor(state, e.project, e.match) : () => ({ go: true as const })
-    const counted = (q: readonly GlobalQueued[]) => (fileOn ? liveQueue(globalQueueOrder(q), gateOf, ownId, queueSince, now) : globalQueueOrder(q).filter(e => e.maestro === ownId))
     // --- les pauses (#367) ---
     // Des rangées illisibles (liste en panne) ne disent rien d'une session : ni pause effacée, ni victime choisie.
     const listed = state.rows.length > 0
@@ -4586,7 +4611,7 @@ async function relieveLaunches($: EngineInterface): Promise<void> {
     await runPauses()
     // (c) la tête prioritaire est refusée et personne n'a déjà demandé de pause pour elle : une session cède sa place
     // #374 : une entrée en vol a déjà sa place réservée : elle ne demande pas une autre pause.
-    const first = fileOn && !changed ? counted(queue).filter(q => !launchInFlight(q, now) && !queueHeld(q))[0] : undefined
+    const first = fileOn && !changed ? counted(queue).filter(q => !launchInFlight(q, now) && !queueRetained(q))[0] : undefined
     if (first?.prio && first.kind !== 'resume' && !gateFor(state, first.project, first.match).go) {
       const fresh = await readPauses($)
       if (!Object.values(fresh).some(p => p.state === 'asked' && p.for === first.id)) {
@@ -4609,14 +4634,28 @@ async function relieveLaunches($: EngineInterface): Promise<void> {
     }
     // #374 : l'entrée d'un autre Maestro lâchée (elle peut partir et ne part pas en deux minutes) ou dont le Maestro
     // est archivé est reprise ici ; elle ne part qu'au pas suivant, si ce Maestro la tient encore.
+    // #389 : l'entrée tenue par une session qui n'est pas un Maestro est reprise tout de suite, retenue comprise, d'abord
+    // par un Maestro de son projet ; elle attend seulement la fin d'un départ en vol.
     if (fileOn && !changed) {
       const live = new Set(counted(queue))
-      const lost = globalQueueOrder(queue).find(e => e.maestro !== ownId && e.kind !== 'resume' && !launchInFlight(e, now) && !queueHeld(e) && (gone.has(e.maestro) || (!e.failed?.remote && !live.has(e) && gateOf(e).go)))
-      if (lost) queue = await takeEntry($, ownId, lost, now)
+      const maestros = queueMaestroIds(state.rows, state.marks)
+      // Le doublon tenu à tort d'une entrée qu'un autre tient encore (#187, deux fois en file le 2026-11-09) sort : `globalQueueOrder`,
+      // qui range par projet et numéro, le cachait derrière son jumeau.
+      const twinOf = (e: GlobalQueued, all: readonly GlobalQueued[]) => all.some(o => o !== e && o.id === e.id && o.project === e.project && o.kind !== 'resume' && !heldByNonMaestro(o, state.rows, maestros))
+      const twin = (all: readonly GlobalQueued[]) => (e: GlobalQueued) => listed && e.kind !== 'resume' && e.maestro !== ownId && heldByNonMaestro(e, state.rows, maestros) && twinOf(e, all)
+      if (queue.some(twin(queue))) {
+        const stored = await readGlobalQueue($)
+        const next = stored.filter(e => !twin(stored)(e))
+        if (next.length !== stored.length) await storeSet($, LAUNCH_QUEUE_KEY, next as unknown as StoreValue)
+        queue = next
+      }
+      const wrongful = (e: GlobalQueued) => listed && heldByNonMaestro(e, state.rows, maestros) && (e.project === ownProject || !projectMaestroOpen(e, state.rows, maestros))
+      const lost = globalQueueOrder(queue).find(e => e.maestro !== ownId && e.kind !== 'resume' && !launchInFlight(e, now) && (wrongful(e) || (!queueHeld(e) && (gone.has(e.maestro) || (!e.failed?.remote && !live.has(e) && gateOf(e).go)))))
+      if (lost) queue = await takeEntry($, ownId, lost, now, wrongful(lost))
     }
     // (d) et (e) : la tête, une entrée `resume` à reprendre ou une tâche à lancer ; un pas qui vient de poser ou lever une pause attend le suivant.
     // Une entrée en vol (#374) n'est plus une tête : elle attend sa session ; une entrée reprise à ce pas attend le suivant.
-    const head = changed ? undefined : queueHead(counted(queue).filter(q => !launchInFlight(q, now) && !queueHeld(q) && q.taken?.at !== now), gateOf)
+    const head = changed ? undefined : queueHead(counted(queue).filter(q => !launchInFlight(q, now) && !queueRetained(q) && q.taken?.at !== now), gateOf)
     // #382 : une entrée de ce Maestro retenue par Remote Control n'est relancée que par un mot de la personne (`typedRelease`) ; les reprises (`resume`) partent toujours.
     const remoteHeld = queue.some(q => q.maestro === ownId && q.kind !== 'resume' && q.failed?.remote)
     if (head && head.maestro === ownId && now >= doseRetryAt && (head.kind === 'resume' || !remoteHeld)) {
@@ -4642,12 +4681,7 @@ async function relieveLaunches($: EngineInterface): Promise<void> {
         if (head.kind !== 'resume') queue = await writeOwnQueue($, ownId, own => own.map(q => (q.id === head.id && q.kind !== 'resume' ? failedEntry(q, now, reason) : q)), state.rows).catch(() => queue)
       }
     }
-    const mine = doseProject()
-    const ordered = counted(queue)
-    // #367 : une entrée `resume` compte au rang du Mac mais ne se montre pas comme une tâche en file
-    const ownQueue = fileOn ? ordered.flatMap((q, i) => (q.maestro === ownId && q.kind !== 'resume' && !launchInFlight(q, now) ? [{ ...q, rank: i + 1 }] : [])) : []
-    const gate = gateFor(state, mine.project, mine.match)
-    await showDose($, { queue: ownQueue, projectTaken: projectTaken(state.cwds, mine.match), projectMax: state.projectMax, macTaken: state.macSessions, macMax: state.macMax, queued: ordered.filter(q => q.kind !== 'resume' && !launchInFlight(q, now)).length, why: gate.go ? 'project' : gate.why, ...(state.load ? { load: state.load } : {}) })
+    await showCounts(true)
   } catch {
     // un pas raté : le suivant relit
   } finally {
@@ -4732,14 +4766,31 @@ async function typedRelease($: EngineInterface): Promise<string | undefined> {
     if (!queue.some(q => q.maestro === ownId && q.kind !== 'resume' && q.failed?.remote)) return undefined
     const now = await $.clock.now()
     const state = await doseState($, now)
-    const head = globalQueueOrder(queue).find(e => e.maestro === ownId && e.kind !== 'resume' && e.failed?.remote && gateFor(state, e.project, e.match).go)
-    if (!head) return undefined
+    // #389 : le mot tapé dans une session qui n'est pas un Maestro ne lance rien ; un Maestro reprend l'entrée.
+    if (!sessionIsMaestro(ownSession ?? { id: ownId, title: '' }, state.rows, state.marks)) return undefined
+    // #389 : Remote Control retient tout départ écrit par le panneau dans ce Maestro (#382), pas seulement celui qui a été refusé ;
+    // le mot de la personne lance donc, dans l'ordre de la file, chaque tâche de ce Maestro qui a sa place (retenue ou non).
     const source = knownSource
     const tasks = source ? await load($, files(source).open, 'ROADMAP.md') : []
     const open = typeof tasks === 'string' ? undefined : tasks
-    const text = await startEntry($, ownId, head, { source, open }, now, state.rows)
+    const added = new Map<string, number>()
+    let macAdded = 0
+    const texts: string[] = []
+    for (const e of globalQueueOrder(queue)) {
+      if (e.maestro !== ownId || e.kind === 'resume' || queueHeld(e) || launchInFlight(e, now)) continue
+      const gate = launchGate({ projectTaken: placesOf(state, e.project, e.match) + (added.get(e.project) ?? 0), projectMax: state.projectMax, macTaken: state.macTaken + macAdded, macMax: state.macMax, ...(state.load ? { load: state.load } : {}) })
+      if (!gate.go) continue
+      try {
+        texts.push(await startEntry($, ownId, e, { source, open }, now, state.rows))
+        added.set(e.project, (added.get(e.project) ?? 0) + 1)
+        macAdded++
+      } catch {
+        // tâche ou projet introuvable : les autres partent quand même
+      }
+    }
+    if (texts.length === 0) return undefined
     doseSeenKey = ''
-    return typedReleaseText(text)
+    return typedReleaseText(texts)
   } catch {
     return undefined
   }

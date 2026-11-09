@@ -601,6 +601,15 @@ The merge itself:
   and at the next step the panel writes « La file est débloquée » to you with the brief and the
   folder of its project (`cwd`): launch it there, it reports to you. An entry of an archived
   Maestro is taken over at once.
+  Only a Maestro holds the queue (#389): a task session or a scheduled session counts the places
+  but never takes, launches or pauses an entry, and never receives « La file est débloquée ». An
+  entry held by such a session (taken there by mistake before #389) is taken over at once, its
+  hold dropped, first by an open Maestro of its own project; a duplicate of an entry a Maestro still
+  holds just leaves the queue. A retained entry (held after its release turn, or held by Remote
+  Control) keeps its rank but never holds the head: the next one starts, and a ▶ that finds a free
+  place does not wait behind it. Under Remote Control the panel writes no release in this Maestro
+  (the app would refuse it, #382): the next word the person types here launches, in queue order,
+  every task of this Maestro that has its place, each by its own `start_session`.
   With the option « File de lancement » (`launchQueue`) off, there is no queue at all: no cap, no
   load wait, every card and every ▶ goes out at once, and the tasks already queued start; the two
   caps apply only with the queue on.

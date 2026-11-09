@@ -4539,6 +4539,59 @@ export function maestroRootOf(
 }
 
 /**
+ * Cette session est-elle un Maestro (#389) ? Son titre ou sa marque, ou sa famille (`maestroSessionIds`), sauf sous
+ * un Maestro racine (#132). `rows` est la liste de l'app, qui l'exclut : sa rangée la rejoint avec son parent. Une
+ * liste vide (illisible) laisse le titre et la marque juger seuls.
+ */
+export function sessionIsMaestro(
+  own: { id: string | undefined; title: string; parent?: string | null },
+  rows: readonly unknown[],
+  marks: ReadonlySet<string>,
+): boolean {
+  const named = isMaestroSession(own.title) || (own.id !== undefined && marks.has(own.id))
+  if (own.id === undefined || rows.length === 0) return named
+  const all = typeof own.parent === 'string'
+    ? withSelfRow(rows, { sessionId: own.id, title: own.title, startedBy: own.parent, isArchived: false })
+    : rows
+  if (maestroRootOf(own.id, undefined, all, marks, named)) return false
+  return named || maestroSessionIds(all, marks).has(own.id)
+}
+
+/**
+ * Les Maestros ouverts de la liste (#389) : titre ou marque sans Maestro racine au-dessus, ou famille
+ * (`maestroSessionIds`). Seuls eux tiennent une entrée de la file commune.
+ */
+export function queueMaestroIds(rows: readonly unknown[], marks: ReadonlySet<string>): Set<string> {
+  const out = maestroSessionIds(rows, marks)
+  for (const raw of rows) {
+    if (typeof raw !== 'object' || raw === null) continue
+    const r = raw as { sessionId?: unknown; title?: unknown; isArchived?: unknown }
+    if (typeof r.sessionId !== 'string' || r.isArchived === true) continue
+    const named = (typeof r.title === 'string' && isMaestroSession(r.title)) || marks.has(r.sessionId)
+    if (named && !maestroRootOf(r.sessionId, undefined, rows, marks, true)) out.add(r.sessionId)
+  }
+  return out
+}
+
+/**
+ * L'entrée est-elle tenue à tort (#389) : son `maestro` est une session ouverte de la liste qui n'est pas un Maestro
+ * (une session de tâche, une session planifiée). Absente de la liste, elle ne se juge pas (l'archivée a sa propre reprise).
+ */
+export function heldByNonMaestro(e: { maestro: string }, rows: readonly unknown[], maestros: ReadonlySet<string>): boolean {
+  const row = rowOf(rows, e.maestro)
+  return row !== undefined && row.isArchived !== true && !maestros.has(e.maestro)
+}
+
+/** Un autre Maestro ouvert travaille-t-il dans le projet de l'entrée (#389, ses dossiers `match`) ? Elle lui revient d'abord. */
+export function projectMaestroOpen(e: { maestro: string; match: readonly string[] }, rows: readonly unknown[], maestros: ReadonlySet<string>): boolean {
+  return [...maestros].some(id => {
+    if (id === e.maestro) return false
+    const row = rowOf(rows, id) as { cwd?: unknown; isArchived?: unknown } | undefined
+    return row !== undefined && row.isArchived !== true && typeof row.cwd === 'string' && e.match.some(prefix => (row.cwd as string).startsWith(prefix))
+  })
+}
+
+/**
  * Maestro d'une sous-session (demande de Bertrand du 2026-10-27) : son Maestro racine (`maestroRootOf`,
  * #132). Une session sans parent ou détachée n'en a pas ; un Maestro racine non plus : ses cartes
  * restent chez lui. `self` est sa fiche (`get_session self`), `rows` la liste de sa famille
@@ -12017,6 +12070,14 @@ export function queueHeld(e: { held?: unknown }): boolean {
   return e.held !== undefined
 }
 
+/**
+ * Une entrée retenue, par un refus (#383) ou par Remote Control (#382), garde son rang mais ne tient jamais la tête (#389) :
+ * le 2026-11-09, #548 retenue sous Remote Control faisait attendre #187 chez le Maestro AAFES, places libres partout.
+ */
+export function queueRetained(e: { held?: unknown; failed?: { remote?: true } }): boolean {
+  return e.held !== undefined || e.failed?.remote === true
+}
+
 /** Le numéro d'un tour de relève (#383) : sa première ligne non vide est exactement `La file est débloquée : #N démarre.` */
 export function releaseTurnId(text: string | undefined): string | undefined {
   const first = (text ?? '').split('\n').find(l => l.trim() !== '')
@@ -12428,8 +12489,11 @@ export function remoteHeldText(id: string): string {
 }
 
 /** #382 : l'en-tête du départ joint au message tapé par la personne, qui débloque la file. */
-export function typedReleaseText(release: string): string {
-  return `Ce message de la personne débloque aussi la file (Remote Control retenait la tâche) :\n\n${release}`
+export function typedReleaseText(release: string | readonly string[]): string {
+  const all = typeof release === 'string' ? [release] : release
+  // #389 : un seul mot lance toutes les tâches de ce Maestro qui ont leur place, chacune par son propre départ.
+  const what = all.length > 1 ? `les ${all.length} tâches ci-dessous, chacune par son propre start_session` : 'la tâche'
+  return `Ce message de la personne débloque aussi la file (Remote Control retenait ${what}) :\n\n${all.join('\n\n---\n\n')}`
 }
 
 /** La ligne d'une entrée en file au centre de contrôle (#374) : en file, en vol, ou ratée avec son heure et son motif. */
