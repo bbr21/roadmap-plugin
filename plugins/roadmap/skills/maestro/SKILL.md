@@ -598,8 +598,8 @@ The merge itself:
   Requests live in the store (`session-pauses`);
   your panel runs the ones for your daughters. Do not stop, pause or resume a session yourself, and
   do not relaunch a paused task: it is already launched.
-- **Control center** (#367): the pane `controle` (`/controle`, or the counters line « En cours ·
-  N ici · Mac X/Y · N en file » of the panel) shows every task session of every Maestro, all
+- **Control center** (#367): the pane `controle` (`/controle`, or the icon at the end of the
+  « En cours · N ici » line of the panel, #381) shows every task session of every Maestro, all
   projects, prioritaires first then by launch order, then the queue below its « File d'attente »
   step; the person sets priority, reorders the queue (take, then drop), pauses, resumes and opens a
   session there. Nothing is launched from it.

@@ -12382,8 +12382,9 @@ export function placesPill(o: { projectTaken: number; projectMax: number; macTak
 }
 
 /**
- * La ligne des compteurs du panneau Roadmap chez Maestro (#367, choix 1 de la maquette) : « N ici » (les sessions de ce
- * Maestro), « Mac X/Y » (orange quand le Mac retient la file), « N en file » ; le détail vit dans le centre de contrôle.
+ * Les textes des compteurs de Maestro (#367) : « N ici » (les sessions du projet, tous Maestro du même dossier, #381),
+ * seul sur la ligne « En cours » du panneau depuis #381 ; « Mac X/Y » (orange quand le Mac retient la file) et
+ * « N en file », que le pied de la fiche reprend (#380) ; le détail vit dans le centre de contrôle.
  */
 export function countersLine(o: { here: number; macTaken: number; macMax: number; queued: number; hot: boolean }): {
   here: { text: string; tone: 'live' }

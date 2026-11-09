@@ -8503,7 +8503,8 @@ function brandTree(
         </Box>
       </Box>
       {titleEnd ? (
-        <Box key="title-row" flexDirection="row" alignItems="flex-start" gap={SPACE.row}>
+        // Toute la largeur : la durée de la fiche se cale au bord droit (#341, capture de BBR en 0.236.0).
+        <Box key="title-row" flexDirection="row" alignItems="flex-start" gap={SPACE.row} width="100%">
           <Box flexGrow={1} flexShrink={1} minWidth={0}>
             {title}
           </Box>
@@ -12492,24 +12493,18 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     ...[...blockSteps].map(([id, st]) => stepsView(st.steps, { now, at: st.at, closed: blockOf.get(id)?.closed === true })?.count ?? ''),
     ...[...rowSteps.values()].map(st => stepsView(st.steps, { now, at: st.at, closed: false })?.count ?? ''),
   ])
-  // Une session close du bloc (#218) : « Completed » et l'icône d'archivage après la colonne des étapes,
-  // dans une case que toutes les lignes du bloc gardent, pour que les barres restent alignées.
+  // Une session close du bloc (#218) : « Done » après la colonne des étapes, dans une case que toutes les lignes
+  // du bloc gardent, pour que les barres restent alignées. L'archivage vit dans le centre de contrôle (#367, #381).
   const blockDone = [...blockOf.values()].some(bt => bt.state === 'done')
   // Le mot du panneau, « Done » (#254) ; la bande au-dessus de la saisie garde le sien.
   const completedWord = stateBand({ state: 'done' }).word
-  const blockEndCells = blockDone ? [...completedWord].length + 1 + 2 : 0
+  const blockEndCells = blockDone ? [...completedWord].length + 1 : 0
   const blockEnd = (t: Task, block: BrandTask) => {
     if (!blockDone) return null
     const done = block.state === 'done'
     return (
       <Box key={`end:${t.key}`} flexDirection="row" alignItems="center" justifyContent="flex-end" gap={SPACE.row} flexShrink={0} {...(Svg ? { width: blockEndCells } : {})}>
         {done && <Text size="caption" color={block.finished ? palette.finishedOn : palette.text2}>{completedWord}</Text>}
-        {done && block.archivable && block.sessionId && (
-          <Box key={`ba:${t.key}`} flexDirection="row" alignItems="center" flexShrink={0}>
-            {Svg ? <Svg source={archiveIcon(palette.text2, 14)} alt="Archiver la session" width={SIZE.icon.sm} height={SIZE.icon.sm} /> : null}
-            {graphic ? hit(`block-archive:${block.id}`, () => void archiveBandSession($, block, now), 1) : <Button key={`block-archive:${block.id}`} plain dimColor label="Archiver" onPress={() => void archiveBandSession($, block, now)} />}
-          </Box>
-        )}
       </Box>
     )
   }
@@ -13619,25 +13614,24 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   // Les zones fixes : le compte des faites, les axes, le chevron du bloc « En cours », la roue, les
   // pastilles cliquables et « Plus › » (#115), les boutons de session des faites.
   const showLive = blockTasks.length > 0 || (dose?.queued ?? 0) > 0
-  const fixedZones = 1 + axes.length + (showLive ? 1 : 0) + 1 + todo.filter(todoClickable).length + (todoBlock && (secondary.length > 0 || people.length > 0) ? 1 : 0) + 2 * sessionRows.size
+  // Pliée tant que Bertrand ne l'a pas dépliée (#251, #381).
+  const liveOpen = !(view.liveFolded ?? true)
+  const fixedZones = 1 + axes.length + (showLive ? 2 : 0) + 1 + todo.filter(todoClickable).length + (todoBlock && (secondary.length > 0 || people.length > 0) ? 1 : 0) + 2 * sessionRows.size
   if (graphic) {
-    const shownWithSession = [...drawnTasks.filter(t => t.id && (liveOf(t) ?? doneSessionOf(t)))]
+    // Les lignes dépliées de « En cours » d'abord (#160, #381) : leur numéro ouvre leur session.
+    const shownWithSession = [...(liveOpen ? blockTasks : []), ...drawnTasks.filter(t => t.id && (liveOf(t) ?? doneSessionOf(t)))]
     numberZones = new Set(shownWithSession.slice(0, Math.max(0, ZONE_LIMIT - fixedZones)).map(t => t.id as string))
   }
   headZones = graphic && fixedZones + numberZones.size + groups.filter(g => !g.bare).length <= ZONE_LIMIT
 
-  // Le bloc « En cours » de Maestro (#367, choix 1 de la maquette) : une ligne encadrée de compteurs, « N ici »,
-  // « Mac X/Y » (orange quand le Mac retient la file), « N en file », puis l'icône du centre de contrôle. Toute la
-  // ligne l'ouvre ; ses sessions et sa file y vivent, plus ici. La liste dessous ne redit toujours pas ces tâches.
+  // La ligne « En cours » de Maestro (#381, choix 1 de la maquette, après #367) : encadrée, la roue, « En cours » et son
+  // chevron, qui la déplient ; puis « N ici » et l'icône du centre de contrôle, qui l'ouvre. « N ici » compte les sessions
+  // du projet, tous Maestro du même dossier confondus (`liveBlockRows`) : autant que de lignes dépliées. « Mac X/Y » et
+  // « N en file » vivent dans le centre de contrôle ; quand le Mac retient la file, le filet du cadre reste orange.
+  // Pliée tant que Bertrand ne l'a pas dépliée (#251). La liste dessous ne redit pas ces tâches.
   const openControlPane = () => void openControl($)
-  // Sans pas de relève encore (la minuterie y vient dans les 3 s) : ses sessions comptent seules pour le Mac.
-  const counters = countersLine({
-    here: blockTasks.length,
-    macTaken: dose?.macTaken ?? blockTasks.length,
-    macMax: dose?.macMax ?? doseMaxes().macMax,
-    queued: dose?.queued ?? 0,
-    hot: dose !== undefined && dose.why !== 'project',
-  })
+  const toggleLive = () => void setView($, v => ({ liveFolded: !(v.liveFolded ?? true) }))
+  const counters = countersLine({ here: blockTasks.length, macTaken: 0, macMax: 0, queued: 0, hot: false })
   const counterPill = (c: { text: string; tone: 'live' | 'block' | 'neutral' }) => {
     const tone = c.tone === 'block' ? { bg: palette.blockTint, fg: palette.blockOn } : c.tone === 'live' ? { bg: palette.liveTint, fg: palette.liveOn } : { bg: palette.sel, fg: palette.text2 }
     return drawnPill({ text: c.text, bg: tone.bg, fg: tone.fg, weight: TEXT.weight.soft })
@@ -13645,25 +13639,36 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   const liveBlock =
     showLive ? (
       <Box flexDirection="column" borderStyle="round" borderColor={dose && dose.why !== 'project' ? palette.block : palette.border} paddingX={0} paddingY="xs">
-        <Box key="hit:live-open" flexDirection="row" alignItems="center" gap={SPACE.row} paddingX={SPACE.indent} hover={{ backgroundColor: palette.hover }}>
-          <Box flexDirection="row" alignItems="center" flexShrink={0}>
-            {spinner()}
-          </Box>
-          <Box flexGrow={1} flexShrink={1} minWidth={0}>
-            <Text size="footnote" weight="semibold" color={palette.text2}>En cours</Text>
-          </Box>
-          <Box flexShrink={0}>{counterPill(counters.here)}</Box>
-          <Box flexShrink={0}>{counterPill(counters.mac)}</Box>
-          <Box flexShrink={0}>{counterPill(counters.queued)}</Box>
-          {graphic && Svg ? (
+        <Box flexDirection="row" alignItems="center" gap={SPACE.row} paddingX={SPACE.indent}>
+          <Box key="hit:live-fold" flexDirection="row" alignItems="center" gap={SPACE.row} flexShrink={1} minWidth={0} hover={{ backgroundColor: palette.hover }}>
             <Box flexDirection="row" alignItems="center" flexShrink={0}>
-              <Svg source={controlIcon(palette.text3, 16)} alt="Centre de contrôle" width={SIZE.icon.md} height={SIZE.icon.md} />
+              {spinner()}
             </Box>
-          ) : (
-            <Button key="live-open" plain dimColor label="Centre de contrôle" onPress={openControlPane} />
-          )}
-          {graphic && hit('live-open', openControlPane)}
+            <Box flexShrink={1} minWidth={0}>
+              <Text weight="semibold" color={palette.text}>En cours</Text>
+            </Box>
+            {graphic && Svg ? (
+              <Box flexDirection="row" alignItems="center" flexShrink={0}>
+                <Svg source={rowMark(chevronIcon(palette.text3, liveOpen, 14), 14, 24)} alt={liveOpen ? 'replier' : 'déplier'} width={SIZE.icon.sm} height={24} />
+              </Box>
+            ) : (
+              <Button key="live-fold" plain dimColor label={liveOpen ? '⌄' : '›'} onPress={toggleLive} />
+            )}
+            {graphic && hit('live-fold', toggleLive)}
+          </Box>
+          <Box flexGrow={1} />
+          <Box flexShrink={0}>{counterPill(counters.here)}</Box>
+          <Box key="hit:live-open" flexDirection="row" alignItems="center" flexShrink={0} hover={{ backgroundColor: palette.hover }}>
+            {graphic && Svg ? (
+              <Svg source={controlIcon(palette.text3, 16)} alt="Centre de contrôle" width={SIZE.icon.md} height={SIZE.icon.md} />
+            ) : (
+              <Button key="live-open" plain dimColor label="Centre de contrôle" onPress={openControlPane} />
+            )}
+            {graphic && hit('live-open', openControlPane)}
+          </Box>
         </Box>
+        {liveOpen && Svg && <Svg source={ruleIcon(palette.border, wide)} alt="séparateur" height={1} />}
+        {liveOpen && blockTasks.map(t => row(t, undefined, undefined, blockOf.get(t.id as string)))}
       </Box>
     ) : null
 
