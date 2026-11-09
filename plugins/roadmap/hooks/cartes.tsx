@@ -297,6 +297,30 @@ export function keepBefore(stored: unknown, fresh: readonly (readonly [string, W
   return out.slice(-BEFORE_MAX)
 }
 
+/** La clé du store qui garde les cartes fermées par la croix : `<empreinte du texte du message>:<id>`, les plus récentes en dernier. */
+export const CLOSED_KEY = 'written-closed'
+const CLOSED_MAX = 200
+
+/** Les clés de cartes fermées lues du store, sans ce qui n'est pas du texte. */
+export function closedKeys(stored: unknown): Set<string> {
+  return new Set(Array.isArray(stored) ? stored.filter((x): x is string => typeof x === 'string') : [])
+}
+
+/** La liste des fermées avec une de plus : sans doublon, la plus récente en dernier, 200 au plus. */
+export function keepClosed(stored: unknown, key: string): string[] {
+  return [...closedKeys(stored)].filter(k => k !== key).concat(key).slice(-CLOSED_MAX)
+}
+
+/** Les parts du message sans les cartes fermées (`closed` : clés `<fingerprint>:<id>`) ; une pile vidée disparaît. */
+export function withoutClosed(parts: readonly MessagePart[], fingerprint: string, closed: ReadonlySet<string>): MessagePart[] {
+  if (closed.size === 0) return [...parts]
+  return parts.flatMap((part): MessagePart[] => {
+    if (part.kind === 'text') return [part]
+    const lines = part.lines.filter(l => !closed.has(`${fingerprint}:${l.id}`))
+    return lines.length > 0 ? [{ kind: 'cards', lines }] : []
+  })
+}
+
 /** Les sessions « Tester #N · X.Y.Z » ouvertes (archivées exclues), par `#N` : leur version, leur session et leur titre. */
 export function testSessions(rows: readonly unknown[]): Map<string, { version: string; sessionId: string; title: string }> {
   const out = new Map<string, { version: string; sessionId: string; title: string }>()
@@ -345,24 +369,31 @@ export function clampDescription(text: string, max = DESCRIPTION_MAX): string {
 /** L'encre d'un morceau du pied. */
 const footInk = (p: Palette, ink: FootInk): string => ({ text: p.text, text2: p.text2, late: p.lateOn, soon: p.blockOn, wait: p.waitOn, live: p.liveOn })[ink]
 
-/** Ce que le hook donne au dessin en plus des cartes : l'ouverture de la fiche d'une tâche (le bouton « Ouvrir la fiche »). */
-export type WrittenDrawOptions = { open?: (id: string) => void; openSession?: (id: string) => void }
+/** Ce que le hook donne au dessin en plus des cartes : l'ouverture de la fiche d'une tâche (le bouton « Ouvrir la task ») et la croix qui ferme la carte. */
+export type WrittenDrawOptions = { open?: (id: string) => void; openSession?: (id: string) => void; close?: (id: string) => void }
+
+/** L'encre du point et du mot de la sorte (version 5) : nouvelle verte, mise à jour bleue, faite violette, annulée grise. */
+const kindInk = (p: Palette, kind: WrittenKind): string => ({ new: p.ok, upd: p.liveOn, done: p.finishedOn, cancel: p.text3 })[kind]
+
+/** Le point de 8 px de la sorte : un disque plein de son encre. */
+const dotSource = (hex: string): string => `<svg xmlns="http://www.w3.org/2000/svg" width="8" height="8" viewBox="0 0 8 8"><circle cx="4" cy="4" r="4" fill="${hex}"/></svg>`
 
 /**
  * Le message redessiné : le texte en Markdown, les lignes du compte rendu en une carte par tâche, à leur place
  * (maquette n1b, la forme de la carte « New session » de l'app) : le bandeau qui dit la sorte, le titre « #N · Nom », la
  * description, puis le pied en un seul `Text` coupé d'une ellipse (maquette R2 : « Axe sessions · livrée 0.232.2 · en 2 j » ;
- * à droite « Ouvrir la fiche », ou « Ouvrir la session » quand `session`). `cards` enrichit les lignes d'une pile ;
+ * à droite « Ouvrir la task », ou « Ouvrir la session » quand `session`). `cards` enrichit les lignes d'une pile ;
  * `el` est ce que rend `$.ui.resolve(e)` ; `o.open(id)` ouvre la fiche, `o.openSession(id)` la session qui tient la tâche (au clic).
  */
 export function drawWrittenMessage(el: ReturnType<EngineInterface['ui']['resolve']>, parts: readonly MessagePart[], cards: (lines: WrittenLine[]) => WrittenCard[], palette: Palette, o: WrittenDrawOptions = {}): RenderElement {
-  const { Box, Text, Markdown, Button } = el
+  const { Box, Text, Markdown, Button, Svg } = el
   const seen = new Map<string, number>()
   const card = (c: WrittenCard) => {
     const n = seen.get(c.id) ?? 0
     seen.set(c.id, n + 1)
     const suffix = n === 0 ? '' : `:${n}`
     const cancelled = c.kind === 'cancel'
+    const ink = kindInk(palette, c.kind)
     // Le pied : un seul Text coupé d'une ellipse, un Text imbriqué par morceau, « · » en text3 entre eux.
     const foot = c.foot.flatMap((part, i) => {
       const runs = part.map((r, j) => (
@@ -371,13 +402,23 @@ export function drawWrittenMessage(el: ReturnType<EngineInterface['ui']['resolve
       return i === 0 ? runs : [<Text key={`dot${i}`} color={palette.text3}>{' · '}</Text>, ...runs]
     })
     return (
-      <Box key={`written:${c.id}${suffix}`} flexDirection="column" borderStyle="round" borderColor={palette.border} paddingX={0} paddingY={0}>
+      <Box key={`written:${c.id}${suffix}`} flexDirection="column" width="60%" borderStyle="round" borderColor={palette.border} paddingX={0} paddingY={0}>
         {/* Le filet du bandeau est de la couleur de son fond : ses coins s'arrondissent dans ceux de la carte. */}
         <Box key={`written-band:${c.id}${suffix}`} backgroundColor={palette.hover} borderStyle="round" borderColor={palette.hover} paddingX="lg" paddingY="sm">
-          <Text size="footnote" color={palette.text2}>{KIND_WORD[c.kind]}</Text>
+          <Box key="written-kind" flexDirection="row" alignItems="center" gap={SPACE.tight}>
+            {Svg ? <Svg key="written-dot" source={dotSource(ink)} alt={KIND_WORD[c.kind]} width={8} height={8} /> : <Text key="written-dot" size="footnote" color={ink}>●</Text>}
+            <Text size="footnote" weight="bold" color={ink}>{KIND_WORD[c.kind]}</Text>
+          </Box>
         </Box>
         <Box key="written-body" flexDirection="column" gap={SPACE.tight} paddingX="lg" paddingTop="md" paddingBottom="xs">
-          <Text size="body" weight="medium" wrap="truncate-end" {...(cancelled ? { strikethrough: true, color: palette.text3 } : { color: palette.text })}>{`#${c.id} · ${c.title}`}</Text>
+          <Box key="written-title" flexDirection="row" alignItems="center" justifyContent="space-between" gap={SPACE.tight}>
+            <Box key="written-title-text" flexGrow={1} flexShrink={1} minWidth={0}>
+              <Text size="body" weight="medium" wrap="truncate-end" {...(cancelled ? { strikethrough: true, color: palette.text3 } : { color: palette.text })}>{`#${c.id} · ${c.title}`}</Text>
+            </Box>
+            <Button key={`written-close:${c.id}${suffix}`} plain onPress={() => o.close?.(c.id)}>
+              <Text color={palette.text3}>×</Text>
+            </Button>
+          </Box>
           {c.change !== '' && <Text size="body" color={palette.text2} wrap="wrap">{clampDescription(c.change)}</Text>}
         </Box>
         <Box key="written-foot" flexDirection="row" alignItems="center" justifyContent="space-between" gap={SPACE.block} paddingLeft="lg" paddingRight="md" paddingTop="xs" paddingBottom="md">
@@ -391,7 +432,7 @@ export function drawWrittenMessage(el: ReturnType<EngineInterface['ui']['resolve
           <Button
             key={n === 0 ? `written-open:${c.id}` : `written-open:${c.id}${suffix}`}
             variant="primary"
-            label={c.session ? 'Ouvrir la session' : 'Ouvrir la fiche'}
+            label={c.session ? 'Ouvrir la session' : 'Ouvrir la task'}
             onPress={() => (c.session ? o.openSession?.(c.id) : o.open?.(c.id))}
           />
         </Box>

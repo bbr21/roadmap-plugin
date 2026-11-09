@@ -96,7 +96,7 @@ import {
   donutIcon,
 } from './icons'
 import { MIX, PX, RADIUS, SIZE, SPACE, TEXT } from './tokens'
-import { BEFORE_KEY, beforeMap, drawWrittenMessage, keepBefore, splitWritten, testSessions, writtenCards, type WrittenLine, type WrittenWho } from './cartes'
+import { BEFORE_KEY, CLOSED_KEY, beforeMap, closedKeys, drawWrittenMessage, keepBefore, keepClosed, splitWritten, testSessions, withoutClosed, writtenCards, type WrittenLine, type WrittenWho } from './cartes'
 import { CONTROL_PANE, drawControl, openControl, redrawControl, type ControlDeps } from './controle'
 import { SETTINGS_PANE, drawSettings, openSettings, prefsFile, redrawSettings, rememberLoadedOptions, sessionProject, watchSettings, type SettingsProject } from './reglages'
 import {
@@ -7922,8 +7922,8 @@ export const register: Register = (on, options) => {
   // qui ouvre sa fiche. Sans ligne, résumé de bloc ou lecture en panne, le message garde son dessin : le texte reste lisible.
   on('ui.render', { component: 'AssistantMessage' }, async ($, e, next) => {
     if (e.props.isSummary) return next(e)
-    const parts = splitWritten(e.props.text)
-    if (!parts.some(part => part.kind === 'cards')) return next(e)
+    const whole = splitWritten(e.props.text)
+    if (!whole.some(part => part.kind === 'cards')) return next(e)
     try {
       const source = knownSource === undefined ? await sourceNow($) : (knownSource ?? undefined)
       if (!source) return next(e)
@@ -7933,8 +7933,12 @@ export const register: Register = (on, options) => {
       const tasks = [...data.open, ...data.done]
       const now = await $.clock.now()
       // L'avant : une seule lecture du store par message, et seulement si une ligne dit une mise à jour.
+      // Les cartes fermées par la croix se lisent avec lui, dans la même passe : la lecture abonne le dessin, qui reprend à l'écriture.
+      const [storedBefore, storedClosed] = await Promise.all([$.store.get(BEFORE_KEY), $.store.get(CLOSED_KEY)].map(r => r.catch(() => undefined)))
+      const fingerprint = hashLabel(e.props.text)
+      const parts = withoutClosed(whole, fingerprint, closedKeys(storedClosed))
       const updated = parts.some(part => part.kind === 'cards' && part.lines.some(l => l.kind === 'upd'))
-      const before = updated ? beforeMap(await $.store.get(BEFORE_KEY).catch(() => undefined)) : undefined
+      const before = updated ? beforeMap(storedBefore) : undefined
       // Qui tient la tâche : ce que le module sait déjà des sessions (jamais un nouvel appel d'outil).
       const tests = testSessions(sessionRows)
       // La session qui tient chaque tâche : le bouton de sa carte l'ouvre, par le chemin de « Ouvrir la session » de la fiche.
@@ -7956,7 +7960,7 @@ export const register: Register = (on, options) => {
         const entry = sessions.get(id)
         void (entry ? openSession($, entry) : openTaskFiche($, source, id))
       }
-      return drawWrittenMessage($.ui.resolve(e), parts, cards, data.palette, { open: id => void openTaskFiche($, source, id), openSession: openSessionOf })
+      return drawWrittenMessage($.ui.resolve(e), parts, cards, data.palette, { open: id => void openTaskFiche($, source, id), openSession: openSessionOf, close: id => void $.store.get(CLOSED_KEY).catch(() => undefined).then(stored => storeSet($, CLOSED_KEY, keepClosed(stored, `${fingerprint}:${id}`) as StoreValue)).then(() => update($, retryAtom, v => v + 1)) })
     } catch (err) {
       $.ui.log(`roadmap : cartes des tâches écrites non dessinées (${err instanceof Error ? err.message : String(err)})`, { to: 'debug' })
       return next(e)
