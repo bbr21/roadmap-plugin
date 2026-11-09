@@ -70,6 +70,8 @@ export type ControlDeps = {
   closed: () => Promise<Set<string>>
   /** Archive la session (l'outil de l'app) ; lève avec le motif d'un refus. */
   archive: (sessionId: string) => Promise<void>
+  /** Ouvre la fiche de la tâche #N de la roadmap de cette session dans le volet de la roadmap (#386). */
+  openFiche: (id: string) => Promise<void>
   /** Pose la zone de clic d'un texte : enregistre son geste et rend la clé de sa région Client. */
   pressZone: (id: string, onPress: () => void) => Promise<string>
 }
@@ -229,14 +231,37 @@ async function moveByOne($: EngineInterface, deps: ControlDeps, key: string, by:
   if (rank > 0) controlInfo = `#${entry.id} est maintenant ${queueRank(rank)}`
 }
 
+/** La racine du projet d'une carte : celle de son entrée de la file, sinon celle du dossier de sa session. */
+function cardRoot(d: ControlData, card: ControlCard): string {
+  const entry = card.sessionId && card.state !== 'paused' ? undefined : entryOf(d.queue, card.key)
+  if (entry) return entry.project
+  const rowOf = card.sessionId ? d.rows.find(r => (r as { sessionId?: unknown }).sessionId === card.sessionId) : undefined
+  const cwd = typeof (rowOf as { cwd?: unknown } | undefined)?.cwd === 'string' ? ((rowOf as { cwd: string }).cwd) : ''
+  return d.projectOf(cwd)
+}
+
+/** « d'AAFES », « de Roadmap » : l'élision devant une voyelle ou un h. */
+const ofName = (name: string) => (/^[aeiouyhàâéèêîôû]/i.test(name) ? `d'${name}` : `de ${name}`)
+
+/**
+ * Le clic sur le numéro et le titre d'une carte (#386) : la fiche de la tâche dans le volet de la roadmap quand
+ * elle est du projet de cette session ; d'un autre projet, ce panneau ne lit pas sa roadmap : le volet le dit et
+ * ouvre sa session, dont le panneau montre sa fiche (rien à ouvrir pour une entrée de la file pas encore lancée).
+ */
+async function showFiche(deps: ControlDeps, d: ControlData, card: ControlCard): Promise<void> {
+  if (d.own && cardRoot(d, card) === d.own.project) return deps.openFiche(card.id)
+  const own = d.own ? d.own.project.split('/').filter(Boolean).pop() ?? d.own.project : undefined
+  const here = own ? `ce panneau ne lit que la roadmap ${ofName(own)}` : 'ce panneau ne lit aucune roadmap'
+  const next = card.sessionId ? 'sa session s\'ouvre, sa fiche est dans son panneau' : `sa fiche est dans le panneau ${ofName(card.project)}`
+  controlInfo = `#${card.id} est une tâche ${ofName(card.project)} : ${here} ; ${next}.`
+  if (card.sessionId) await deps.open(card.sessionId, card.title, card.link)
+}
+
 /** Prioritaire : la marque du projet, la priorité de l'entrée de la file, et `prio:oui` dans la roadmap de cette session si la tâche en est. */
 async function togglePrio(deps: ControlDeps, card: ControlCard): Promise<void> {
   const d = await controlData(deps)
-  const entry = card.sessionId && card.state !== 'paused' ? undefined : entryOf(d.queue, card.key)
-  const rowOf = card.sessionId ? d.rows.find(r => (r as { sessionId?: unknown }).sessionId === card.sessionId) : undefined
-  const cwd = typeof (rowOf as { cwd?: unknown } | undefined)?.cwd === 'string' ? ((rowOf as { cwd: string }).cwd) : ''
   // la marque d'une entrée de la file porte le projet de l'entrée ; celle d'une session, le projet de son dossier
-  const root = entry ? entry.project : d.projectOf(cwd)
+  const root = cardRoot(d, card)
   const mark = `${root}#${card.id}`
   const on = d.marks.has(mark)
   const stored = await deps.marks()
@@ -326,12 +351,13 @@ export async function drawControl($: EngineInterface, e: RenderInput<'Pane'>, pa
   watchControl($)
   const { running, queued } = d.view
   const full = d.taken >= d.max
-  // la zone de clic du numéro de chaque carte qui a une session : une seule par carte et par dessin
-  const numberZones = new Map<string, string>()
+  // #386 : la zone de clic du numéro et du titre de chaque carte, qui ouvre sa fiche : une seule par carte et par dessin
+  const ficheZones = new Map<string, string>()
+  const fiche = (c: ControlCard) => () => void act($, () => showFiche(deps, d, c), '')
   if (Client) {
     for (const c of [...running, ...queued]) {
-      if (!c.sessionId || numberZones.has(c.key)) continue
-      numberZones.set(c.key, await deps.pressZone(`ctl:num:${keyPart(c.key)}`, () => void act($, () => deps.open(c.sessionId as string, c.title, c.link), '')))
+      if (ficheZones.has(c.key)) continue
+      ficheZones.set(c.key, await deps.pressZone(`ctl:fiche:${keyPart(c.key)}`, fiche(c)))
     }
   }
 
@@ -375,17 +401,35 @@ export async function drawControl($: EngineInterface, e: RenderInput<'Pane'>, pa
     return [spinnerIcon(palette.live, 14), 'tourne']
   }
 
-  /** Le numéro « #N » : s'il y a une session, il l'ouvre (un texte et sa zone de clic ; au terminal, un bouton). */
-  const number = (c: ControlCard) => {
+  /**
+   * Le numéro « #N » et le titre (#386) : ils ouvrent la fiche de la tâche, deux textes sous une seule zone de clic
+   * (un `Button` du bureau décale son texte) ; au terminal, le numéro est un bouton.
+   */
+  const heading = (c: ControlCard) => {
     const text = `#${c.id}`
-    const zone = numberZones.get(c.key)
-    if (!c.sessionId) return <Text color={palette.text3} tabular>{text}</Text>
-    if (!Client || !zone) return <Button key={`ctl:num:${keyPart(c.key)}`} plain label={text} onPress={() => void act($, () => deps.open(c.sessionId as string, c.title, c.link), '')} />
+    const zone = ficheZones.get(c.key)
+    const title = (
+      <Box flexGrow={1} flexShrink={1} minWidth={0}>
+        <Text weight="semibold" wrap="truncate-end">{c.title}</Text>
+      </Box>
+    )
+    if (!Client || !zone)
+      return (
+        <Box key={`head:${c.key}`} flexDirection="row" alignItems="center" gap={SPACE.row} flexGrow={1} flexShrink={1} minWidth={0}>
+          <Button key={`ctl:fiche:${keyPart(c.key)}`} plain label={text} onPress={fiche(c)} />
+          {title}
+        </Box>
+      )
     return (
-      <Box key={`num:${c.key}`} flexShrink={0}>
-        <Text color={palette.text3} tabular>{text}</Text>
+      <Box key={`head:${c.key}`} flexGrow={1} flexShrink={1} minWidth={0}>
+        <Box flexDirection="row" alignItems="center" gap={SPACE.row}>
+          <Box flexShrink={0}>
+            <Text color={palette.text3} tabular>{text}</Text>
+          </Box>
+          {title}
+        </Box>
         <Box position="absolute" top={0} left={0} right={0}>
-          <Client key={zone} module="./press-hit.tsx" props={{ id: `ctl:num:${keyPart(c.key)}` }} width="100%" height={1} />
+          <Client key={zone} module="./press-hit.tsx" props={{ id: `ctl:fiche:${keyPart(c.key)}` }} width="100%" height={1} />
         </Box>
       </Box>
     )
@@ -459,10 +503,7 @@ export async function drawControl($: EngineInterface, e: RenderInput<'Pane'>, pa
         <Box flexGrow={1} flexShrink={1} minWidth={0} flexDirection="column" gap={SPACE.tight} borderStyle="round" borderColor={border} paddingX="sm" paddingY="xs">
           <Box flexDirection="row" alignItems="center" gap={SPACE.row}>
             <Box flexShrink={0}>{icon(mark, markAlt, 14)}</Box>
-            {number(c)}
-            <Box flexGrow={1} flexShrink={1} minWidth={0}>
-              <Text weight="semibold" wrap="truncate-end">{c.title}</Text>
-            </Box>
+            {heading(c)}
             {tag(c)}
           </Box>
           <Box flexDirection="row" alignItems="center" gap={SPACE.row}>

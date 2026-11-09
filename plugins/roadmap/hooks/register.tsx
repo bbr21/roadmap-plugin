@@ -4451,6 +4451,12 @@ function controlDeps($: EngineInterface): ControlDeps {
       archivedSessionIds.add(sessionId)
       sweepAfterArchive($, await sourceNow($).catch(() => undefined))
     },
+    // #386 : le clic sur le titre d'une carte, le geste d'un clic sur sa ligne
+    openFiche: async id => {
+      const source = await ownSource()
+      if (!source) throw new Error('cette session n\'a pas de roadmap à ouvrir.')
+      await openTaskFiche($, source, id)
+    },
     pressZone: async (id, onPress) => {
       pressHandlers.set(id, onPress)
       zoneDrawn(zones, 'press-hit', await $.clock.now())

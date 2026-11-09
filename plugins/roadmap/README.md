@@ -748,6 +748,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.244.0 (2026-11-09)** : panneau : au centre de contrôle, le numéro et le titre d'une carte ouvrent la fiche de sa tâche ; une tâche d'un autre projet ouvre sa session (#386)
 - **0.243.1 (2026-11-09)** : maestro : la Pause du centre de contrôle arrête la session dès le clic, et un état unique de la session sert le centre de contrôle, la ligne En cours, la bande et la fiche (en test, en pause) (#383)
 - **0.243.0 (2026-11-09)** : panneau : une tâche n'est « à fusionner » que quand sa session s'est dite prête ou a coché ses étapes ; pendant ses tests elle reste en session (#384)
 - **0.242.0 (2026-11-09)** : maestro : une Pause cliquée arrête vraiment la session et libère sa place, une tâche n'a qu'une place, la file dit la vraie raison d'attente, et une tâche qu'on refuse de lancer ne revient plus qu'au ▶ (#383)
