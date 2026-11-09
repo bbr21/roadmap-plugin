@@ -748,6 +748,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.237.0 (2026-11-08)** : fiche : son pied reprend celui de la liste, la roue des Réglages et la version à gauche, « N en file » et le centre de contrôle à droite (#380)
 - **0.236.0 (2026-11-08)** : fiche : édition en place, un champ à la fois (Entrée, V « enregistré »), sans bouton Enregistrer ; crayon plus petit ; l'état ne s'édite plus à la main (#342)
 - **0.235.1 (2026-11-08)** : fiche : durée sur la ligne du titre, durée d'une étape cochée d'un coup, « tourne depuis » compté depuis la création de la session, libellés longs coupés à trois lignes (#341)
 - **0.235.0 (2026-11-08)** : maestro : la file de lancement avance seule (un Maestro qui tourne reprend l'entrée d'un Maestro au repos, une carte en file part seule, un départ refusé reste en file avec sa trace), délai de repos réglable (10 min), « Ouvrir » du centre de contrôle réparé (#374)

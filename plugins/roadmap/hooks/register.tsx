@@ -482,6 +482,7 @@ import {
   releasePrompt,
   queuedRefusal,
   countersLine,
+  ficheQueuePill,
   type QueuedLaunch,
   type GlobalQueued,
   type MacLoad,
@@ -9668,6 +9669,29 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
         ? drawnPill({ text, bg: palette.waitTint, fg: palette.waitOn, mark: 'person', height: SIZE.pill.detail })
         : drawnPill({ text, bg: palette.sel, fg: palette.text2, height: SIZE.pill.detail, weight: TEXT.weight.soft })
 
+  // La moitié gauche du pied (#138, #162), reprise par la fiche (#380, maquette A) : la roue (#115), au terminal le
+  // bouton « Réglages », qui ouvre le volet Réglages ; puis la version de cette session.
+  const footLeft = () => (
+    <Box flexDirection="row" alignItems="center" flexShrink={1} minWidth={0}>
+      {graphic && Svg ? (
+        <Box key="hit:open-settings" flexDirection="row" alignItems="center" flexShrink={0} hover={{ backgroundColor: palette.hover }}>
+          {strut(SIZE.strut.row)}
+          <Svg source={gearIcon(palette.text2)} alt="Réglages" width={SIZE.icon.md} height={SIZE.icon.md} />
+          {hit('open-settings', () => void openSettings($), 1)}
+        </Box>
+      ) : (
+        <Box flexShrink={0}>
+          <Button key="open-settings" plain label="Réglages" onPress={() => void openSettings($)} />
+        </Box>
+      )}
+      <Box flexShrink={1} minWidth={0} marginLeft={1}>
+        <Text size="caption" tabular color={versionCheck.state === 'late' ? palette.blockOn : palette.text3} wrap="truncate-end">
+          {versionCheck.state === 'none' ? `roadmap ${ownVersion}` : versionCheck.foot}
+        </Text>
+      </Box>
+    </Box>
+  )
+
   // --- La fiche d'une tâche (#142) : celle de la session, ou celle du clic ---------
   // Sa tâche introuvable, la session a vu l'alerte plus haut (#213).
   const ownTask = focusBrand ? allTasks.find(t => t.id === focusBrand.id) : undefined
@@ -11329,6 +11353,32 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
         </Box>
       )
     }
+    // Le pied de la fiche (#380, maquette A) : celui de la liste, la roue et la version à gauche ; à droite,
+    // « N en file » quand Maestro a une file (#345), puis l'icône du centre de contrôle, qui l'ouvre (#367).
+    const ficheFoot = () => {
+      const queuedText = ficheQueuePill(ownBrand?.brand.kind === 'maestro' ? (doseView?.queued ?? 0) : 0)
+      const openControlPane = () => void openControl($)
+      return (
+        <Box key="fiche-foot-block" flexDirection="column" gap="xs">
+          {Svg && <Svg source={ruleIcon(palette.border, fullWidth((e.props as { bodyColumns?: number }).bodyColumns ?? 48))} alt="séparateur" height={1} />}
+          <Box key="fiche-foot" flexDirection="row" justifyContent="space-between" alignItems="center" paddingX={SPACE.indent}>
+            {footLeft()}
+            <Box flexDirection="row" alignItems="center" gap={SPACE.row} flexShrink={0} marginLeft={1}>
+              {queuedText !== undefined && drawnPill({ text: queuedText, bg: palette.sel, fg: palette.text2, weight: TEXT.weight.soft })}
+              {graphic && Svg ? (
+                <Box key="hit:fiche-control" flexDirection="row" alignItems="center" flexShrink={0} hover={{ backgroundColor: palette.hover }}>
+                  {strut(SIZE.strut.row)}
+                  <Svg source={controlIcon(palette.text2, 16)} alt="Centre de contrôle" width={SIZE.icon.md} height={SIZE.icon.md} />
+                  {hit('fiche-control', openControlPane, 1)}
+                </Box>
+              ) : (
+                <Button key="fiche-control" plain label="Centre de contrôle" onPress={openControlPane} />
+              )}
+            </Box>
+          </Box>
+        </Box>
+      )
+    }
     const cards: Record<FicheCard, () => RenderElement> = {
       avancement: () =>
         card(
@@ -12044,6 +12094,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
           {/* Après l'enregistrement : les avertissements du modèle (#125), ou ce qui n'est pas allé au bout. */}
           {editNote !== '' && !saveBusy && editField === '' && <Text size="caption" color={palette.lateOn} wrap="wrap">{editNote}</Text>}
         </Box>
+        {ficheFoot()}
       </Box>
     )
   }
@@ -13799,25 +13850,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
       <Box flexDirection="column" gap="xs">
         {Svg && <Svg source={ruleIcon(palette.border, wide)} alt="séparateur" height={1} />}
         <Box key="pane-foot" flexDirection="row" justifyContent="space-between" alignItems="center" paddingX={SPACE.indent}>
-          <Box flexDirection="row" alignItems="center" flexShrink={1} minWidth={0}>
-            {/* La roue (#115), au terminal le bouton « Réglages » : elle ouvre le volet Réglages. */}
-            {graphic && Svg ? (
-              <Box key="hit:open-settings" flexDirection="row" alignItems="center" flexShrink={0} hover={{ backgroundColor: palette.hover }}>
-                {strut(SIZE.strut.row)}
-                <Svg source={gearIcon(palette.text2)} alt="Réglages" width={SIZE.icon.md} height={SIZE.icon.md} />
-                {hit('open-settings', () => void openSettings($), 1)}
-              </Box>
-            ) : (
-              <Box flexShrink={0}>
-                <Button key="open-settings" plain label="Réglages" onPress={() => void openSettings($)} />
-              </Box>
-            )}
-            <Box flexShrink={1} minWidth={0} marginLeft={1}>
-              <Text size="caption" tabular color={versionCheck.state === 'late' ? palette.blockOn : palette.text3} wrap="truncate-end">
-                {versionCheck.state === 'none' ? `roadmap ${ownVersion}` : versionCheck.foot}
-              </Text>
-            </Box>
-          </Box>
+          {footLeft()}
           {versionCheck.action === 'reload' ? (
             <Box flexShrink={0} marginLeft={1}>
               <Button key="version-reload" variant="primary" label="Recharger" onPress={() => void reloadPlugin($)} />

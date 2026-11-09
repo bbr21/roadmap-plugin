@@ -12397,6 +12397,11 @@ export function countersLine(o: { here: number; macTaken: number; macMax: number
   }
 }
 
+/** La pastille du pied de la fiche (#380, maquette A) : « N en file », le texte du bloc « En cours », seulement quand une tâche attend. */
+export function ficheQueuePill(queued: number): string | undefined {
+  return queued > 0 ? countersLine({ here: 0, macTaken: 0, macMax: 0, queued, hot: false }).queued.text : undefined
+}
+
 /** La pastille d'une tâche en file (#324) : « Mac chargé » pour la tête quand la charge la retient, sinon son rang. */
 export function queuedMark(rank: number, why: DoseWhy): QueueMark {
   return rank === 1 && why === 'load' ? { text: 'Mac chargé', tone: 'block', command: '' } : { text: `en file, ${queueRank(rank)}`, tone: 'neutral', command: '' }
