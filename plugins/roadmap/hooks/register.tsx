@@ -167,6 +167,9 @@ import {
   fidelityImage,
   fidelityNoteText,
   fidelityRequired,
+  captureConsigneGaps,
+  captureConsigneNoteText,
+  captureTemplatePath,
   mockupApproval,
   formApproval,
   mockupYesReminder,
@@ -1887,6 +1890,10 @@ async function endOfTurnBlock($: EngineInterface, last: string | undefined, acti
     notes.push(await fidelityNote($, last))
   } catch {
     // git illisible : pas de rappel de fidélité
+  }
+  // La consigne de capture (#406) : relue au gabarit, hors mode Projet (pas de preuve de fidélité).
+  if (settings.capture && c && projectSettings(c.source).travail !== 'projet') {
+    notes.push(captureConsigneNoteText(captureConsigneGaps(last), captureTemplatePath(`${$.plugin.root}/skills/maestro/scripts/fidelite.py`)))
   }
   // La clôture partielle (#245) : finie, sa ligne attend encore un tiers.
   if (settings.capture && c) {

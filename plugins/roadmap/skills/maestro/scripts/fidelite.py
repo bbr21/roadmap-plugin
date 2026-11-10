@@ -11,10 +11,11 @@ et `fidelite.html` : la capture à gauche, la maquette (son chemin relatif au ch
 écart, que la session tient à la main. Relancé après les corrections, `poser` reprend la capture et
 garde la liste.
 
-La capture, c'est l'utilisateur qui la prend (#377), jamais la session : elle lui écrit, en un seul
-message, une liste numérotée, et pour chaque capture quelle fenêtre ou session ouvrir, quel onglet,
-quel état mettre à l'écran (quelle carte, quel clic), quelle zone prendre (⌘⌃⇧4, puis glisser autour
-de …), et de la coller dans le chat. Une image collée arrive avec son chemin sur le disque
+La capture, c'est l'utilisateur qui la prend (#377), jamais la session : après la publication, elle
+lui écrit la consigne au gabarit `references/consigne-capture.md` de cette skill (#406), une seule
+liste numérotée : la version que doit dire le pied du panneau, les gestes qui mettent l'état à
+l'écran, une étape par capture (sa zone, « Tu dois y voir : … »), « Colle-les ici. », et quoi faire
+si ce qu'on voit diffère ; jamais le mode d'emploi d'une capture. Une image collée arrive avec son chemin sur le disque
 (`[Image: source: /private/tmp/…/images/1.png]`) : `--capture` prend ce chemin et copie l'image dans
 le chantier. `--zone x,y,l,h`, en pixels de l'image, recadre une capture trop large (`sips`).
 `--fenetre` (l'ancienne capture de la fenêtre de Claude par la session) est refusé, code 2.
@@ -39,9 +40,10 @@ import tempfile
 PAGE = "fidelite.html"
 IMAGE = "capture-panneau.png"
 ETATS = ("ouvert", "corrige", "aucun")
-CONSIGNE = ("la capture se prend par l'utilisateur, plus par la session (#377) : écris-lui, en un seul message, "
-            "chaque capture à faire (quelle fenêtre ou session, quel onglet, quel état à l'écran, quelle zone "
-            "par ⌘⌃⇧4), qu'il colle dans le chat, puis relance poser avec --capture <chemin de l'image collée>.")
+CONSIGNE = ("la capture se prend par l'utilisateur, plus par la session (#377) : après la publication, écris-lui "
+            "la consigne au gabarit references/consigne-capture.md de cette skill (#406 : la version du pied du "
+            "panneau, les gestes, une étape par capture et ce qu'il doit y voir), qu'il colle dans le chat, puis "
+            "relance poser avec --capture <chemin de l'image collée>.")
 
 # Les mêmes règles que le panneau (`isRenderFile`, `isMockupPage`, hooks/parse.ts) : un fichier
 # d'interface, ni test ni page du dossier d'un chantier.

@@ -208,12 +208,16 @@ to it.
     published yet, nor to ask Maestro for a merge or a publication. Code done, tests green, branch
     pushed: say « prête à fusionner (tests : … ; capture après publication) » and ask Maestro
     yourself, by message to its id, « fusionne et publie #N », then end your turn. Maestro merges,
-    publishes right away and sends you the version back (« #N publiée X.Y.Z »). Only then the capture,
-    taken by the user, never by the session: write them, in one message whose first sentence says
-    « attend une réponse : captures de fidélité (X.Y.Z) », a numbered list, first opening a new
-    session whose panel footer shows that version X.Y.Z, then one item per capture (which window or session to open, which tab,
-    what to put on screen: which card, which click, which area to take with ⌘⌃⇧4 then drag around
-    …, and to paste it in the chat). A pasted image arrives with its path on disk (`[Image: source:
+    publishes right away and sends you the version back (« #N publiée X.Y.Z »). Only then, and never
+    for a task without a render, the capture, taken by the user, never by the session: write them
+    the instruction from the template `references/consigne-capture.md` of this skill (#406), in one
+    message whose first sentence says « attend une réponse : captures de fidélité (X.Y.Z) »: one
+    numbered list, first the version (or build) to check and where (the panel footer of a new
+    session for this plugin, the installed build for an app), then the gestures that put the state
+    on screen, named as written on screen, one per step or chained in the step of their capture,
+    one step per capture with its zone between two visible landmarks and what it must show
+    (« Tu dois y voir : … »), then « Colle-les ici. » and the closing line « Pas pareil … ». Never explain how to take or paste a
+    capture: the user knows; the end of the turn reminds you of what the instruction lacks. A pasted image arrives with its path on disk (`[Image: source:
     /private/tmp/…/images/1.png]`): run `fidelite.py poser <chantier> --maquette
     maquettes.html#<anchor> --capture <path of the pasted image>` (this skill's `scripts/`; `--zone
     x,y,l,h`, in pixels of the image, crops a too-wide one), list each gap in its `fidelite.html`
@@ -437,8 +441,8 @@ The merge order, from the first criterion to the last:
    every gap fixed. The capture can only be taken on the published version, the only one the panel
    shows, so **Maestro merges and publishes it right away, without waiting for the person**, and
    sends the version back to its session by message (« #N publiée X.Y.Z : demande la capture »); the
-   session then writes the capture instruction to the person, citing the version the panel footer
-   must show. Maestro never asks the person to capture, test or have a render published, never
+   session then writes the capture instruction to the person from the template
+   `references/consigne-capture.md` (#406), citing the version the panel footer must show. Maestro never asks the person to capture, test or have a render published, never
    exchanges a « capture » with the session and takes none itself: the capture is the user's, on the
    session's exact instruction (#377). The line is ticked only once `fidelite.py verifier
    <chantier>` is green (§ 6); a gap fixed on the branch comes back as a new « fusionne et publie
