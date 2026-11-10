@@ -1,6 +1,6 @@
 # Est-il sûr de l'installer ?
 
-Version décrite : roadmap 0.246.0
+Version décrite : roadmap 0.247.0
 Un plugin de Claude Code fait tourner du code sur ta machine, donc la question se pose. Certains plugins
 malveillants ont l'air inoffensifs quand on les installe, puis téléchargent et lancent autre chose plus
 tard. Cette page dit tout ce que fait roadmap. Un test vérifie à chaque version qu'elle dit vrai, et tu
@@ -55,7 +55,7 @@ réserve (`session.*`, `turn.*`, `skill.prompt`) ; le plugin a alors un secours 
 | `git` | `hooks/register.tsx`, `hooks/reglages.tsx`, `scripts/one-at-a-time.sh`, `skills/doctor/scripts/doctor.py`, `skills/impact/scripts/impact.py`, `skills/maestro/scripts/etat_maestro.py`, `skills/onboarding/scripts/onboarding.py`, `skills/tasks/scripts/tasks.py` | lire l'état du dépôt du projet (branche, commits, fichiers changés, copies de travail ; la carte d'impact lit le diff et la liste des fichiers suivis ; la skill tasks lit les fichiers que change la branche d'une tâche en cours, #366) ; et, quand tu coches, rouvres ou édites une tâche dans le panneau, ou au report du jour des étapes de journée (#277), committer et pousser les seuls fichiers de la roadmap vers le dépôt distant du projet ; et, l'option « Branches nettoyées » allumée (#313), supprimer les branches déjà fusionnées sur main que rien ne tient (`git branch -d`, `git fetch --prune`, `git push origin :refs/heads/…`) |
 | `curl` | `hooks/register.tsx`, `skills/doctor/scripts/doctor.py` | quand tu cliques sur Rafraîchir dans le panneau : lire la dernière version publiée du plugin, pour te dire qu'une mise à jour existe ; dans le doctor, lire les empreintes publiées de ta version pour vérifier ta copie (voir plus bas) |
 | `gh` | `hooks/register.tsx`, `skills/doctor/scripts/doctor.py`, `skills/onboarding/scripts/onboarding.py` | la même lecture de version quand `curl` manque ; dans le doctor, vérifier que GitHub CLI est connecté (voir plus bas) ; à l'onboarding, lire les pull requests du projet pour en tirer la roadmap |
-| `python3` | `hooks/register.tsx` | cocher une tâche dans un dossier Cowork qui déclare son propre outil d'écriture (voir plus bas), isolé par `-I` |
+| `python3` | `hooks/register.tsx`, `skills/mockups/scripts/serve.py` | cocher une tâche dans un dossier Cowork qui déclare son propre outil d'écriture (voir plus bas), isolé par `-I` ; et `serve.py` se relance lui-même, isolé par `-I`, en petit serveur local pour montrer une maquette dans le volet navigateur (#369) : il n'écoute que sur 127.0.0.1, ne répond que sous un jeton aléatoire placé dans l'adresse, ne sert que les fichiers web du dossier du projet (liste d'extensions : pages, styles, scripts, images, polices, texte), refuse tout chemin qui commence par un point (`.env`, `.git`) et tout en-tête Host étranger, ne signale un processus que si son serveur a prouvé qu'il détient le jeton, et s'arrête seul après 2 h sans requête |
 | `open` | `hooks/register.tsx` | ouvrir un lien ou un fichier que tu as cliqué dans le panneau, avec l'app par défaut du Mac ; un fichier seulement s'il est rangé dans ton projet (chemin réel, liens résolus), ordinaire (jamais un dossier ni une app) et d'une extension de document : jamais un programme (#349) |
 | `sips`, `mktemp`, `rm` | `hooks/register.tsx` | faire la vignette d'une pièce jointe dans un dossier privé de `$TMPDIR`, puis la retirer |
 | `sips` | `skills/maestro/scripts/fidelite.py` | seulement quand `fidelite.py poser --zone` recadre l'image que tu as collée dans le chat pour prouver qu'un rendu est fidèle à sa maquette (#357, #377) ; le script ne capture jamais l'écran ; rien ne sort de la machine |
@@ -95,6 +95,7 @@ lire l'état des sessions :
 | le dépôt distant de ton projet | quand tu coches, rouvres ou édites une tâche dans le panneau | un commit des seuls fichiers de la roadmap, poussé par `git push` vers le `origin` que ton projet a déjà |
 | le dépôt distant de ton projet | après l'archivage d'une session, et au démarrage d'une session au plus toutes les 10 minutes, l'option « Branches nettoyées » allumée (#313) | la suppression des branches déjà fusionnées sur main que plus rien ne tient (`git push origin :refs/heads/…`), après un `git fetch --prune` |
 | `$.model.complete` | une fois par tâche nouvelle | le libellé de la tâche part à Claude, sur ton compte et par l'app, pour en tirer un titre court ; modèle réglable (« Modèle des titres courts ») |
+| `127.0.0.1` | quand une maquette est montrée dans le volet navigateur (#369) | rien ne sort : le petit serveur de `serve.py` n'écoute que sur cette adresse locale, sert le dossier de ton projet et ne répond qu'à un en-tête Host local |
 | `claude.ai` | jamais par le plugin | une adresse affichée dans un message (la page des plugins), que tu ouvres si tu veux |
 | `github.com` | jamais par le plugin | le doctor lit l'adresse du dépôt de ton projet pour l'afficher sans `https://github.com/` |
 
@@ -113,6 +114,7 @@ le moteur saute les hooks).
 | les vignettes des pièces jointes, dans un dossier privé de `$TMPDIR` | `hooks/register.tsx` | quand une fiche montre une image |
 | `~/.claude/reglages-session.json` | `hooks/reglages.tsx` | quand tu changes un réglage de session dans le volet Réglages |
 | `.claude/roadmap.json` du projet, sa clé `mission` seule | `hooks/reglages.tsx` | quand tu changes « Mission de la fiche » dans la section « Ce projet » du volet Réglages |
+| l'état du serveur de maquettes, dans `$TMPDIR/roadmap-maquettes/` (dossier privé en 0700, qui t'appartient ; dossier, port, PID, jeton, écrit en 0600) | `skills/mockups/scripts/serve.py` | quand une maquette est montrée en http, effacé à l'arrêt du serveur |
 | `~/.claude/locks/heavy-tests/` | `scripts/one-at-a-time.sh` | autour d'une suite de tests lourde |
 | la roadmap du projet, après une copie de sauvegarde à côté d'elle | `skills/audit/scripts/audit.py` | quand tu valides un audit, ou une écriture de la skill tasks, qui passe par lui |
 | les fichiers que pose l'onboarding dans le projet (`CLAUDE.md`, `docs/`, `roadmap/`, `scripts/`, `.claude/roadmap.json`…) | `skills/onboarding/scripts/onboarding.py` | quand tu lances l'onboarding et valides son plan |

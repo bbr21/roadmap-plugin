@@ -54,10 +54,13 @@ Two or three options, each a clear stance with its trade-off, the recommendation
 - **Within the renderer's limits.** When the screen is drawn by a constrained kit (a Claude Code
   mod panel, a native widget set), an option it cannot render is not an option: name the limit.
 
-The page itself follows the plugin rule: a static HTML page in the task's folder
-(`docs/plans/<type>-<slug>/maquettes.html`), with no script and no linked file (the browser pane
-shows a snapshot), the system's tokens copied in, then opened with `preview_start` and checked on a
-screenshot.
+The page itself follows the plugin rule (#369): an interactive HTML page in the task's folder
+(`docs/plans/<type>-<slug>/maquettes.html`). It clicks (hover, tabs, folds, empty and full states)
+and may carry its script inline or next to it, with the system's tokens copied in. Serve it with
+`python3 scripts/serve.py <page>` (the script of this skill, which prints an
+`http://127.0.0.1:<port>/…` url), open that url with `preview_start`, never `file://` (the pane
+shows a frozen copy there: no linked file, no reload), and check it by clicking through it, then on
+a screenshot.
 
 ## 4. Critique, then review
 
@@ -82,3 +85,8 @@ Only the exact version the user approved with a yes is coded (#322). A correctio
 « plus petit », « oui mais… ») is not a yes: redraw the mockup with it, show the new version, ask
 « Je code cette version ? », and code only after the yes. The plugin reminds, in the result of the
 edit itself, any edit of a render file made without a yes since the last mockup drawn.
+
+When the choice was split into several mockups (one element chosen after the other), end with a
+final mockup (#369): one clickable page that gathers the validated pieces into the whole screen.
+The user tries it in the pane, and only their yes to « Je code cette version ? » on it opens the
+code; a correction redraws the final mockup.

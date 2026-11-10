@@ -25,7 +25,7 @@ Chaque tâche ouverte porte {{REQUIS}}. `parent:-` et `après:-` disent qu'elle 
 1. **Rien ne part chez un tiers sans accord** : un email, un message, une invitation ou un document partagé se montrent à {{QUI}} avant l'envoi.
 2. **La roadmap fait foi** : une tâche, une ligne ; rien d'important ne vit seulement dans une conversation.
 3. **Secrets** : aucun jeton, mot de passe ni clé dans ce dossier.
-4. **Maquettes avant un choix visuel** : la mise en page d'un document, d'un tableau ou d'une présentation passe par 2 ou 3 maquettes simples, la recommandation en premier, que {{QUI}} choisit avant qu'on la fasse ; seule la version exacte qu'il a validée d'un oui se fait, une correction (« plutôt X ») donnant une nouvelle maquette et la question « Je fais cette version ? ». Elles s'appuient sur les modèles que déclare `design` de `.claude/roadmap.json` ; sans eux, on propose d'en poser (sauf maquette de démo).
+4. **Maquettes avant un choix visuel** : la mise en page d'un document, d'un tableau ou d'une présentation passe par 2 ou 3 maquettes simples, la recommandation en premier, que {{QUI}} choisit avant qu'on la fasse ; seule la version exacte qu'il a validée d'un oui se fait, une correction (« plutôt X ») donnant une nouvelle maquette et la question « Je fais cette version ? ». Un choix en plusieurs maquettes finit par une maquette finale qui réunit les éléments validés, et seul son oui lance la version. Elles s'appuient sur les modèles que déclare `design` de `.claude/roadmap.json` ; sans eux, on propose d'en poser (sauf maquette de démo).
 
 ## Carte
 

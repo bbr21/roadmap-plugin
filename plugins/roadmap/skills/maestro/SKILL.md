@@ -196,9 +196,11 @@ to it.
     « en cours : étape 3/7 … », « prête à fusionner (tests : …) », « attend le simulateur »,
     « attend une réponse : … » or « bloquée : … »; keep your step list (`update_plan`);
   - update your branch when Maestro asks: merge `main` into it, never rebase a pushed branch;
-  - a visual choice: write your 2 or 3 mockups in a static HTML page (in a code project:
-    `docs/plans/<type>-<slug>/maquettes.html`; without code: next to the document), open it in
-    your browser pane, ask the choice yourself (form, one option per mockup), say
+  - a visual choice: write your 2 or 3 mockups in an interactive HTML page (in a code project:
+    `docs/plans/<type>-<slug>/maquettes.html`; without code: next to the document), serve it with
+    `serve.py` of the `roadmap:mockups` skill and open the `http://` url it prints in your browser
+    pane (never `file://`); a choice split into several mockups ends with a final clickable mockup
+    gathering the validated pieces, and only the yes to it opens the code (#369); ask the choice yourself (form, one option per mockup), say
     « attend une réponse : choix de maquette, <chemin> » at the top of your report and end your
     turn: the person answers in the session itself, Maestro does not relay it (#151);
   - a render coded from a mockup (#357, #377, #396): its fidelity is proven on the published version,
