@@ -504,7 +504,7 @@ export function textWidth(text: string, size: number, bold = false): number {
   return Math.ceil(em * size * (bold ? 1.05 : 1))
 }
 
-export type PillMark = 'clock' | 'person' | 'spinner' | 'check' | 'merge' | 'cancel' | 'repeat'
+export type PillMark = 'clock' | 'person' | 'spinner' | 'check' | 'merge' | 'cancel' | 'repeat' | 'warn'
 
 /**
  * Une pastille : 18 px de haut (20 au détail), rayon de la moitié, texte de 12 px gras, chiffres
@@ -597,6 +597,8 @@ const MARK_PATHS: Record<PillMark, string> = {
   repeat: '<path d="m17 2 4 4-4 4"/><path d="M3 11v-1a4 4 0 0 1 4-4h14"/><path d="m7 22-4-4 4-4"/><path d="M21 13v1a4 4 0 0 1-4 4H3"/>',
   // Un cercle barré (#207) : l'étiquette « annulée ».
   cancel: '<circle cx="12" cy="12" r="8"/><path d="M6.5 17.5l11-11"/>',
+  // Un triangle d'alerte (#390, maquette C2) : « Remote Control » en tête du panneau de Maestro.
+  warn: '<path d="M12 3.5 21.5 20h-19z"/><path d="M12 10v4.5"/><path d="M12 17.25v.01"/>',
 }
 
 /** Le grand pourcentage d'avancement : 28 px, gras 600, sur une ligne de 32 (la taille « title » de l'app est plus petite). */

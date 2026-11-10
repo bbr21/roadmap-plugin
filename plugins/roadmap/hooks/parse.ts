@@ -4010,6 +4010,16 @@ export function sessionModeIn(text: string): string | undefined {
   }
 }
 
+/** #390 : Remote Control allumé sur la fiche de session (`remoteControlState` « on », ou `remoteControlActive`) ; fiche illisible : non. */
+export function sessionRemoteIn(text: string): boolean {
+  try {
+    const fiche = JSON.parse(text) as { remoteControlState?: unknown; remoteControlActive?: unknown } | null
+    return fiche?.remoteControlState === 'on' || fiche?.remoteControlActive === true
+  } catch {
+    return false
+  }
+}
+
 /** Le parent d'une session sur sa fiche (`parentSessionId`) : `null` sans parent, `undefined` si la fiche est illisible. */
 export function sessionParentIn(text: string): string | null | undefined {
   try {
@@ -12478,22 +12488,43 @@ export function pausingPill(mode: 'stop' | 'soft'): string {
   return mode === 'stop' ? 'arrêt demandé' : 'pause en fin de tour'
 }
 
-/** #382 : le refus de l'app quand la personne travaille en Remote Control (start_session ou carte), reconnu à son texte. */
+/**
+ * #382 : le refus de l'app sous Remote Control (start_session ou carte), reconnu à son texte. #390 : l'app ne le rend
+ * que si deux conditions tiennent ensemble, Remote Control allumé sur la session et un tour que la personne n'a pas tapé
+ * dans l'app (message du panneau, d'une autre session) ; le mode de permission n'y entre pas (docs/decisions.md).
+ */
 export function isRemoteControlRefusal(text: string): boolean {
   return /working over Remote Control/i.test(text)
 }
 
-/** #382 : ce que Maestro reçoit à la place du refus de l'app sous Remote Control. */
-export function remoteHeldText(id: string): string {
-  return `Remote Control est allumé sur cette session : l'app a pris le message du panneau pour un tour à distance et refuse de lancer #${id}, carte comprise. Ne pose pas de carte et ne réessaie pas. Dis en une ligne à la personne : « tape un mot ici (par exemple « go ») pour lancer #${id} » ; #${id} reste en file et partira sur son prochain message.`
+/** #390 : la cause du refus, ses deux conditions, dite à Claude comme à la personne. */
+const REMOTE_CAUSE = "Remote Control est allumé sur ce Maestro et le départ vient d'un message que la personne n'a pas tapé (le panneau ou une autre session)"
+
+/**
+ * #382, #390 : ce que Maestro reçoit à la place du refus de l'app sous Remote Control. Le mot tapé par la personne
+ * lance la tâche, quel que soit le mode ; hors Bypass permissions, le ▶ passe aussi par un message (mode Auto, #248) :
+ * le passer en Bypass lui fait poser sa carte lui-même.
+ */
+export function remoteHeldText(id: string, mode: string | undefined): string {
+  const bypass = mode === 'bypassPermissions' ? '' : ' ; passe aussi ce Maestro en Bypass permissions : ton ▶ posera alors sa carte lui-même'
+  return `L'app refuse de lancer #${id}, carte comprise : ${REMOTE_CAUSE}. Ne pose pas de carte et ne réessaie pas. Dis en une ligne à la personne : « #${id} attend en file : tape un mot ici (par exemple « go ») pour la lancer${bypass} » ; #${id} reste en file et partira sur son prochain message.`
 }
 
-/** #382 : l'en-tête du départ joint au message tapé par la personne, qui débloque la file. */
+/** #382, #390 : l'en-tête du départ joint au message tapé par la personne, qui débloque la file. */
 export function typedReleaseText(release: string | readonly string[]): string {
   const all = typeof release === 'string' ? [release] : release
   // #389 : un seul mot lance toutes les tâches de ce Maestro qui ont leur place, chacune par son propre départ.
-  const what = all.length > 1 ? `les ${all.length} tâches ci-dessous, chacune par son propre start_session` : 'la tâche'
-  return `Ce message de la personne débloque aussi la file (Remote Control retenait ${what}) :\n\n${all.join('\n\n---\n\n')}`
+  const what = all.length > 1 ? `les ${all.length} tâches ci-dessous, chacune par son propre start_session` : 'la tâche ci-dessous'
+  return `Ce message de la personne débloque aussi la file : Remote Control allumé, l'app refuse un départ écrit par le panneau, pas celui d'un message tapé. Lance ${what} :\n\n${all.join('\n\n---\n\n')}`
+}
+
+/**
+ * #390 (maquette C2) : la pastille en tête du panneau de Maestro quand Remote Control est allumé ; rien sinon. En mode
+ * Auto, le ▶ passe par un message que l'app refuse aussi : la pastille le dit et porte « Passer en bypass ».
+ */
+export function remotePill(o: { remote: boolean; mode: string | undefined }): { text: string; bypass: boolean } | undefined {
+  if (!o.remote) return undefined
+  return o.mode === 'auto' ? { text: 'Remote Control · Auto : lancements refusés', bypass: true } : { text: 'Remote Control · la file attend ton mot', bypass: false }
 }
 
 /** La ligne d'une entrée en file au centre de contrôle (#374) : en file, en vol, ou ratée avec son heure et son motif. */
@@ -12503,7 +12534,7 @@ export function queuedLine(c: { launching?: boolean; held?: { at: number; reason
   if (c.failed) {
     const d = new Date(c.failed.at)
     const hm = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
-    if (c.failed.remote) return `retenue par Remote Control depuis ${hm} · tape un mot dans Maestro pour la lancer`
+    if (c.failed.remote) return `retenue depuis ${hm} · Remote Control refuse un départ du panneau · tape un mot dans Maestro`
     return `départ raté à ${hm} · ${c.failed.reason} · réessaie à son tour`
   }
   return 'pas encore lancée · démarrera seule à son tour'
@@ -12606,7 +12637,7 @@ export function releasePrompt(o: { id: string; title: string; prompt: string; ba
         ]
       : []),
     `${o.card ? 'Sinon, lance' : 'Lance'} cette session maintenant : outil start_session, initiation user_asked, contexte fresh, titre « ${o.title} »${fields.length > 0 ? `, avec ${fields.join(', ')} (chaque champ si l'outil l'accepte, sinon sans)` : ''}, avec le brief ci-dessous.`,
-    `Si l'app refuse parce que la personne travaille en Remote Control (« working over Remote Control »), ne pose pas de carte : dis-lui en une ligne de taper un mot ici pour lancer #${o.id}. Pour un autre refus, pose sa carte à la place (initiation own_initiative) et dis en une ligne qu'un clic sur Start la lance. Puis réponds en une phrase au plus.`,
+    `Si l'app refuse sous Remote Control (« working over Remote Control » : elle refuse un départ venu d'un message que la personne n'a pas tapé, comme celui-ci), ne pose pas de carte : dis-lui en une ligne de taper un mot ici pour lancer #${o.id}. Pour un autre refus, pose sa carte à la place (initiation own_initiative) et dis en une ligne qu'un clic sur Start la lance. Puis réponds en une phrase au plus.`,
     '',
     o.prompt,
     '',

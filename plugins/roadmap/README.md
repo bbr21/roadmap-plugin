@@ -748,6 +748,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.244.4 (2026-11-09)** : maestro : un lancement refusé sous Remote Control dit ses deux conditions (Remote Control allumé, départ non tapé), et le panneau de Maestro le montre par une pastille, avec « Passer en bypass » en mode Auto (#390)
 - **0.244.3 (2026-11-09)** : panneau : la valeur de Détails et son appoint sur une rangée ; un test refuse tout groupe sans boîte posé dans une rangée, que le bureau dessinait en colonne (#391)
 - **0.244.2 (2026-11-09)** : panneau : la famille au pied de la fiche reprend l'arbre de la liste, une rangée par ligne, coude et case d'une fille en un seul dessin, jauge de la mère à côté de son compte (#368)
 - **0.244.1 (2026-11-09)** : maestro : seul un Maestro tient la file de lancement commune, une entrée prise à tort lui revient et une entrée retenue ne bloque plus celles qui suivent (#389)

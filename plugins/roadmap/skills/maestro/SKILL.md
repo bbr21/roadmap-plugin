@@ -579,10 +579,13 @@ The merge itself:
   from the roadmap. Launch that session at once with `start_session`, `user_asked`, as the message
   says (for your own card: your card's brief, with the message's fields, never the card's own); if
   the app refuses because the person is « working over Remote Control » (#382), post no card:
-  the app takes any message the panel writes as a remote turn and refuses the card too, until the
-  person types in this conversation; the panel answers the refusal with the gesture, say it in one
-  line (« tape un mot ici, par exemple go, et #N démarre »), once, and do not retry. The entry stays
-  held (« retenue par Remote Control »), the panel writes no more « La file est débloquée » for it,
+  with Remote Control on, the app refuses `start_session` and the card on any turn the person did
+  not type in the app (a message from the panel or from another session), whatever the permission
+  mode (#390); the panel answers the refusal with the gesture, say it in one line (« tape un mot
+  ici, par exemple go, et #N démarre », plus, outside Bypass permissions, « passe ce Maestro en
+  Bypass : ton ▶ posera sa carte lui-même »), once, and do not retry. Never blame Remote Control
+  alone, nor tell the person that Bypass fixes the queue: it fixes only the ▶. The entry stays
+  held (« retenue … Remote Control refuse un départ du panneau »), the panel writes no more « La file est débloquée » for it,
   and the next message the person types here carries its launch instruction: launch it then, with
   `user_asked`, while answering their message. For any other refusal, post its card
   (`own_initiative`) instead and say in one line that a click on Start launches it. The entry stays
@@ -608,7 +611,9 @@ The merge itself:
   holds just leaves the queue. A retained entry (held after its release turn, or held by Remote
   Control) keeps its rank but never holds the head: the next one starts, and a ▶ that finds a free
   place does not wait behind it. Under Remote Control the panel writes no release in this Maestro
-  (the app would refuse it, #382): the next word the person types here launches, in queue order,
+  (the app would refuse it, #382, #390), and a pill above « En cours » says so (« Remote Control · la
+  file attend ton mot », or in auto mode « Remote Control · Auto : lancements refusés » with
+  « Passer en bypass »): the next word the person types here launches, in queue order,
   every task of this Maestro that has its place, each by its own `start_session`.
   With the option « File de lancement » (`launchQueue`) off, there is no queue at all: no cap, no
   load wait, every card and every ▶ goes out at once, and the tasks already queued start; the two

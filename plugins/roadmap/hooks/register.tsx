@@ -489,6 +489,8 @@ import {
   queueEntryText,
   releasePrompt,
   isRemoteControlRefusal,
+  remotePill,
+  sessionRemoteIn,
   remoteHeldText,
   typedReleaseText,
   queuedRefusal,
@@ -2556,6 +2558,38 @@ async function ownMode($: EngineInterface): Promise<string | undefined> {
   } catch {
     return undefined
   }
+}
+
+/**
+ * #390 : Remote Control et le mode de cette session, pour la pastille en tête du panneau de Maestro. Relus au plus
+ * toutes les 15 s : la minuterie de 3 s ne refait pas l'appel à chaque dessin (#337) ; un geste du panneau les oublie.
+ */
+let remoteFacts: { at: number; remote: boolean; mode: string | undefined } | undefined
+const REMOTE_FACTS_MS = 15_000
+
+async function readRemoteFacts($: EngineInterface, now: number): Promise<{ remote: boolean; mode: string | undefined }> {
+  if (remoteFacts && now - remoteFacts.at < REMOTE_FACTS_MS) return remoteFacts
+  try {
+    const ran = await $.tool.call({ tool: GET_SESSION_TOOL, session_id: 'self' })
+    const text = ran.deny === undefined && !ran.isError ? (ran.text ?? '') : ''
+    // Fiche refusée ou illisible : la dernière lecture tient (#185), sinon rien ne s'affiche.
+    if (text === '') return remoteFacts ?? { remote: false, mode: undefined }
+    remoteFacts = { at: now, remote: sessionRemoteIn(text), mode: sessionModeIn(text) }
+  } catch {
+    return remoteFacts ?? { remote: false, mode: undefined }
+  }
+  return remoteFacts
+}
+
+/** #390 : « Passer en bypass » de la pastille Remote Control ; l'app montre sa carte d'approbation, la pastille se relit. */
+async function switchMaestroToBypass($: EngineInterface): Promise<void> {
+  try {
+    await $.tool.call({ tool: SET_MODE_TOOL, session_id: 'self', mode: BYPASS_MODE })
+  } catch {
+    // outil absent : le sélecteur de mode sous la saisie reste le geste
+  }
+  remoteFacts = undefined
+  await update($, liveVersionAtom, v => v + 1)
 }
 
 /**
@@ -7693,7 +7727,7 @@ export const register: Register = (on, options) => {
         const held = await settleQueued($, dose.ownId, cardTitle, posted).catch(() => false)
         // #382 : sous Remote Control, Maestro reçoit la consigne de dire le geste, à la place du refus de l'app.
         const heldId = sessionTitleId(cardTitle)
-        if (held && heldId !== undefined) return { deny: remoteHeldText(heldId) }
+        if (held && heldId !== undefined) return { deny: remoteHeldText(heldId, await ownMode($)) }
       }
       return posted
     })
@@ -13942,6 +13976,15 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     const tone = c.tone === 'block' ? { bg: palette.blockTint, fg: palette.blockOn } : c.tone === 'live' ? { bg: palette.liveTint, fg: palette.liveOn } : { bg: palette.sel, fg: palette.text2 }
     return drawnPill({ text: c.text, bg: tone.bg, fg: tone.fg, weight: TEXT.weight.soft })
   }
+  // #390 (maquette C2) : sous Remote Control, la pastille et, en mode Auto, « Passer en bypass », sur une rangée au-dessus
+  // du cadre « En cours » ; sans Remote Control, rien.
+  const remoteShown = maestroBrand ? remotePill(await readRemoteFacts($, now)) : undefined
+  const remoteRow = remoteShown ? (
+    <Box key="remote-row" flexDirection="row" alignItems="center" gap={SPACE.row} flexWrap="wrap" paddingX={SPACE.indent}>
+      {drawnPill({ text: remoteShown.text, bg: palette.blockTint, fg: palette.blockOn, mark: 'warn', weight: TEXT.weight.soft })}
+      {remoteShown.bypass && <Button key="remote-bypass" label="Passer en bypass" onPress={() => void switchMaestroToBypass($)} />}
+    </Box>
+  ) : null
   const liveBlock =
     showLive ? (
       <Box flexDirection="column" borderStyle="round" borderColor={dose && dose.why !== 'project' ? palette.block : palette.border} paddingX={0} paddingY="xs">
@@ -14065,6 +14108,8 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
           })
         })}
       </Box>
+
+      {remoteRow}
 
       {liveBlock}
 
