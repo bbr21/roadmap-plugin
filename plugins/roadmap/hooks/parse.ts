@@ -10226,6 +10226,8 @@ export function paneFocus(
 ): 'task' | 'missing' | 'roadmap' {
   if (o.isMaestro || brand?.kind === 'maestro') return 'roadmap'
   if (!o.child && (view.selected !== '' || view.whole === true)) return 'roadmap'
+  // #387 : chez un enfant, « Ouvrir la task » d'une carte écrite choisit `id:<N>` : la fiche de cette autre tâche.
+  if (o.child && brand?.kind === 'task' && view.selected.startsWith('id:') && view.selected !== `id:${brand.id}`) return 'roadmap'
   if (brand?.kind === 'task') return 'task'
   return o.titleId !== undefined ? 'missing' : 'roadmap'
 }

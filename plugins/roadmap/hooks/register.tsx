@@ -1341,7 +1341,7 @@ async function keepWrittenBefore($: EngineInterface): Promise<void> {
 
 /** Le clic sur une carte de tâche écrite (#371) : le panneau s'ouvre, sur la fiche de la tâche (le geste d'un clic sur sa ligne). */
 async function openTaskFiche($: EngineInterface, source: Source, id: string): Promise<void> {
-  await openPane($, source)
+  await paneToFront($, source)
   launchExtra = ''
   await setView($, () => ({ selected: `id:${id}`, launchNote: '', openNote: '', openAt: '', cancelAsk: '', cancelNote: '', editing: '', editOpen: '', editSaved: '', editNote: '', editField: '' }))
 }
@@ -7692,6 +7692,25 @@ async function openPane($: EngineInterface, source: Source) {
 }
 
 /**
+ * Le panneau ouvert et devant (#387) : l'app ne met pas devant un volet déjà ouvert qu'on rouvre (son onglet
+ * reste derrière Contrôle), seulement un volet neuf ; `focus` le demande, et s'il reste derrière, il se ferme
+ * et se rouvre. Liste des volets illisible : l'ouverture seule.
+ */
+async function paneToFront($: EngineInterface, source: Source): Promise<void> {
+  const ask = () => $.ui.open({ id: PANE, title: `Roadmap ${source.name}`, columns: COLUMNS, focus: true })
+  await openPane($, source)
+  try {
+    if ((await $.ui.panes()).some(p => p.id === PANE && p.isShown)) return
+    await ask()
+    if ((await $.ui.panes()).some(p => p.id === PANE && p.isShown)) return
+    await $.ui.close({ id: PANE })
+    await ask()
+  } catch {
+    // liste des volets illisible, ou fermeture refusée : le panneau reste ouvert là où il est
+  }
+}
+
+/**
  * Le panneau toujours ouvert (#117) : absent ou pas dessiné, il se rouvre. Appelé depuis le message de la
  * personne, l'ouverture est « demandée » et le moteur la dessine à toute largeur. La roadmap vient de celle
  * que le démarrage a lue : pas de lecture de fichier par message.
@@ -9767,14 +9786,12 @@ async function readFicheDocs($: EngineInterface, source: Source, task: Task, now
   const docs: { label: string; path: string }[] = []
   if (task.spec) {
     const at = `${base}/${task.spec.replace(/\/$/, '')}`
-    for (const [label, path] of [['Spec', `${at}/spec.md`], ['Spec', at], ['Plan', `${at}/plan.md`], ['Maquettes', `${at}/maquettes.html`]] as const) {
-      if (docs.some(d => d.label === label)) continue
-      try {
-        if ((await $.fs.stat(path)).kind === 'file') docs.push({ label, path })
-      } catch {
-        // absent
-      }
-    }
+    const candidates = [['Spec', `${at}/spec.md`], ['Spec', at], ['Plan', `${at}/plan.md`], ['Maquettes', `${at}/maquettes.html`]] as const
+    // Lues ensemble (#387), gardées dans l'ordre : la première trouvée de chaque sorte.
+    const isFile = await Promise.all(candidates.map(([, path]) => $.fs.stat(path).then(st => st.kind === 'file', () => false)))
+    candidates.forEach(([label, path], i) => {
+      if (isFile[i] && !docs.some(d => d.label === label)) docs.push({ label, path })
+    })
   }
   ficheDocs = { key, at: now, docs }
   return docs
@@ -9934,18 +9951,21 @@ async function readLinks($: EngineInterface, source: Source, texts: readonly (st
   const key = `${source.dir}|${written.join(',')}`
   if (linksRead && linksRead.key === key && now - linksRead.at < FOCUS_FACTS_MS) return linksRead.found
   const found = new Map<string, string>()
-  for (const w of written) {
-    for (const path of pathCandidates(source, w)) {
-      try {
-        if ((await $.fs.stat(path)).kind === 'file') {
-          found.set(w, path)
-          break
+  // Chaque lien se cherche en même temps que les autres (#387) ; ses candidats, dans l'ordre.
+  await Promise.all(
+    written.map(async w => {
+      for (const path of pathCandidates(source, w)) {
+        try {
+          if ((await $.fs.stat(path)).kind === 'file') {
+            found.set(w, path)
+            return
+          }
+        } catch {
+          // absent ici : le candidat suivant
         }
-      } catch {
-        // absent ici : le candidat suivant
       }
-    }
-  }
+    }),
+  )
   linksRead = { key, at: now, found }
   return found
 }
@@ -10551,26 +10571,35 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     const closeAll = () => void setView($, () => ({ cancelAsk: '', cancelNote: '' })).then(() => closeFamily($, source, current))
     // Dans sa session : le dossier, la branche et son écart, lus hors de la roadmap.
     paneStage = 'la fiche de la tâche'
-    const facts = inSession && ownBrand ? await readFocusFacts($, ownBrand.data.source, current, ownBrand.data.own.id, now) : undefined
     // Son dossier (Spec, Plan, Maquettes) et le récap de fin de sa session (#144), dans les deux contextes.
     const ficheSource = inSession && ownBrand ? ownBrand.data.source : source
-    const docs = await readFicheDocs($, ficheSource, current, now)
-    const mockupPage = await readMockupPage($, ficheSource, current, now)
-    const mockupOpened = await read($, mockupOpenAtom)
-    const attachments = await readAttachments($, ficheSource, current, now)
-    const deliverables = await readAttachments($, ficheSource, current, now, 'livrable')
-    const draft = await readDraft($, deliverables)
-    const unsentNow = current.done ? undefined : await unsentClose($, ficheSource, current)
     const noteForLinks = current.done ? livreOfNote(current.note).rest : current.note
-    const fileHits = await readLinks($, ficheSource, [current.attend, noteForLinks, current.src], now)
-    const storedRecap = current.id ? recapOf(await $.store.get(recapKey(ficheSource.name, current.id)).catch(() => undefined)) : undefined
+    const stored = (key: string) => $.store.get(key).catch(() => undefined)
+    // #387 : toutes les lectures de la fiche partent ensemble. L'une après l'autre, chacune un aller-retour, le
+    // dessin d'une close dépassait son temps sur un Mac chargé (« Le dessin attendait encore : la fiche de la tâche »).
+    const [facts, docs, mockupPage, mockupOpened, attachments, deliverables, unsentNow, fileHits, recapRaw, changesRaw, timingRaw, pitchRaw] = await Promise.all([
+      inSession && ownBrand ? readFocusFacts($, ownBrand.data.source, current, ownBrand.data.own.id, now) : undefined,
+      readFicheDocs($, ficheSource, current, now),
+      readMockupPage($, ficheSource, current, now),
+      read($, mockupOpenAtom),
+      readAttachments($, ficheSource, current, now),
+      readAttachments($, ficheSource, current, now, 'livrable'),
+      current.done ? undefined : unsentClose($, ficheSource, current),
+      readLinks($, ficheSource, [current.attend, noteForLinks, current.src], now),
+      current.id ? stored(recapKey(ficheSource.name, current.id)) : undefined,
+      current.id ? stored(changesKey(ficheSource.name, current.id)) : undefined,
+      // Le relevé des temps de sa session (#314) : la durée d'une close et où elle est passée.
+      current.done && current.id ? stored(timingKey(ficheSource.name, current.id)) : undefined,
+      // Ce qu'on va lancer (#341, C1) : les phrases simples qu'a écrites Claude en ouvrant la ligne.
+      !current.done && current.id ? stored(pitchKey(ficheSource.name, current.id)) : undefined,
+    ])
+    const draft = await readDraft($, deliverables)
+    const storedRecap = current.id ? recapOf(recapRaw) : undefined
     // #307 (maquette A) : la Mission garde la demande ; le récap de fin ouvre la carte Fin.
     const frame = missionFrame(current.label)
-    const storedChanges = current.id ? changesOf(await $.store.get(changesKey(ficheSource.name, current.id)).catch(() => undefined)) : undefined
-    // Le relevé des temps de sa session (#314) : la durée d'une close et où elle est passée.
-    const storedTiming = current.done && current.id ? timingOf(await $.store.get(timingKey(ficheSource.name, current.id)).catch(() => undefined)) : undefined
-    // Ce qu'on va lancer (#341, C1) : les phrases simples qu'a écrites Claude en ouvrant la ligne.
-    const storedPitch = !current.done && current.id ? pitchOf(await $.store.get(pitchKey(ficheSource.name, current.id)).catch(() => undefined)) : undefined
+    const storedChanges = current.id ? changesOf(changesRaw) : undefined
+    const storedTiming = current.done && current.id ? timingOf(timingRaw) : undefined
+    const storedPitch = !current.done && current.id ? pitchOf(pitchRaw) : undefined
     // Le morceau « livré : … » de la note d'une close va dans la carte Fin (#150) ; le reste de la note reste.
     const noteShown = current.done ? livreOfNote(current.note).rest : current.note
     // #278 : un projet en `mission: puces` montre le libellé un fait par puce (maquette A de Caroline) ;
