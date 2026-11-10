@@ -12911,6 +12911,8 @@ export type ControlCard = {
   carded?: { at: number }
   /** La version en test (#383, #366) : une session « Tester #N · X.Y.Z » est ouverte pour la tâche. */
   test?: string
+  /** #415 : une session en pause sans entrée de reprise dans la file ; « Reprendre » la lui recrée. */
+  orphan?: { root: string }
   id: string
   title: string
   project: string
@@ -12982,6 +12984,7 @@ export function controlView(o: {
   const projectOf = o.projectOf ?? rootOfCwd
   const name = (root: string) => root.split('/').filter(Boolean).pop() ?? root
   const running: ControlCard[] = []
+  const orphans: { sessionId: string; id: string; title: string; root: string; by: SessionPause['by'] }[] = []
   const rowCwd = new Map<string, string>()
   // #383 : la version en test de chaque tâche, d'après les sessions « Tester #N · X.Y.Z » ouvertes.
   const tests = new Map<string, string>()
@@ -12996,7 +12999,11 @@ export function controlView(o: {
     const id = sessionTitleId(r.title)
     if (id === undefined || isMaestroSession(r.title) || o.maestros.has(r.sessionId)) continue
     const pause = o.pauses[r.sessionId]
-    if (pause?.state === 'paused') continue
+    if (pause?.state === 'paused') {
+      // #415 : sans son entrée de reprise (la file éteinte avant le correctif), elle se range quand même dans la file
+      if (!o.queue.some(e => e.kind === 'resume' && e.sessionId === r.sessionId)) orphans.push({ sessionId: r.sessionId, id, title: r.title, root: projectOf(typeof r.cwd === 'string' ? r.cwd : ''), by: pause.by })
+      continue
+    }
     const root = projectOf(typeof r.cwd === 'string' ? r.cwd : '')
     rowCwd.set(r.sessionId, typeof r.cwd === 'string' ? r.cwd : '')
     const project = name(root)
@@ -13065,6 +13072,24 @@ export function controlView(o: {
       heavy: false,
     }
   })
+  for (const o2 of orphans) {
+    const project = name(o2.root)
+    const steps = cardSteps(o.statusOf(o2.sessionId))
+    queued.push({
+      key: `q:${o2.sessionId}`,
+      id: o2.id,
+      title: bareTitle(o2.title),
+      project,
+      tone: toneOf(project),
+      state: 'paused',
+      prio: o.marks.has(`${o2.root}#${o2.id}`),
+      ...(steps ? { steps } : {}),
+      sessionId: o2.sessionId,
+      held: { at: 0, reason: 'mise en pause à la main', cause: 'refused' },
+      orphan: { root: o2.root },
+      heavy: false,
+    })
+  }
   return { running: sorted, queued }
 }
 

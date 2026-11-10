@@ -758,6 +758,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.258.1 (2026-11-10)** : panneau : centre de contrôle, une session mise en pause à la main se montre et reprend même la file de lancement éteinte (#415)
 - **0.258.0 (2026-11-10)** : panneau : « Start » sur la carte d'une tâche nouvelle, qui la met dans la file du Maestro racine ou fait le ▶ sans Maestro (#388)
 - **0.257.3 (2026-11-10)** : panneau : la case cause et geste d'une entrée bloquée tient la cause entière, écart étroit autour du « · » (#400) ; « Tester les maquettes » laisse la barre latérale de l'app ouverte (#401)
 - **0.257.2 (2026-11-10)** : maestro, mockups : maquettes en Artifact et preuve de fidélité depuis une session cloud (#409)

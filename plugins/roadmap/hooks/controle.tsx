@@ -191,9 +191,13 @@ async function pauseAll($: EngineInterface, deps: ControlDeps): Promise<void> {
 }
 
 /** « Tout reprendre » (#415) : les sessions en pause à la main repartent dans leur ordre d'avant, selon les places et la charge. */
-async function resumeAll(deps: ControlDeps): Promise<void> {
+async function resumeAll($: EngineInterface, deps: ControlDeps): Promise<void> {
+  // une session en pause sans entrée (la file éteinte avant le correctif) reçoit d'abord la sienne
+  const d = await controlData(deps)
+  const orphans = d.view.queued.filter(c => c.orphan && c.sessionId)
+  for (const c of orphans) await reviveOrphan($, deps, await controlData(deps), c, await $.clock.now())
   const queue = await deps.queue()
-  const n = queue.filter(e => e.kind === 'resume' && e.held).length
+  const n = queue.filter(e => e.kind === 'resume' && e.held).length + orphans.length
   if (n === 0) return
   await deps.writeQueue(releaseHandPauses(queue))
   controlInfo = `${n} session${n > 1 ? 's' : ''} reprenne${n > 1 ? 'nt' : ''} dans l'ordre d'avant, selon les places`
@@ -238,9 +242,11 @@ async function moveEntry(deps: ControlDeps, entry: GlobalQueued, at: number, rel
  */
 async function passIn($: EngineInterface, deps: ControlDeps, key: string): Promise<void> {
   const d = await controlData(deps)
+  const now = await $.clock.now()
+  const orphan = d.view.queued.find(c => c.key === key && c.orphan && c.sessionId)
+  if (orphan) return reviveOrphan($, deps, d, orphan, now)
   const entry = entryOf(d.queue, key)
   if (!entry) return
-  const now = await $.clock.now()
   if (d.taken >= d.max) {
     const victims = d.view.running.filter(c => !c.prio && (c.state === 'run' || c.state === 'wait') && c.sessionId)
     // la dernière lancée : la plus récente par sa création ; à défaut de date, la dernière de la liste
@@ -252,6 +258,20 @@ async function passIn($: EngineInterface, deps: ControlDeps, key: string): Promi
     }
   }
   await moveEntry(deps, entry, headAt(globalQueueOrder(d.queue), entry, now), true)
+}
+
+/**
+ * « Reprendre » une session en pause sans entrée de reprise (#415, la file éteinte avant le correctif) : son entrée
+ * se recrée en tête, sans retenue ; la relève de son Maestro lui écrit de reprendre et efface la pause.
+ */
+async function reviveOrphan($: EngineInterface, deps: ControlDeps, d: ControlData, card: ControlCard, now: number): Promise<void> {
+  const sessionId = card.sessionId as string
+  const here = await deps.ownIsMaestro().catch(() => false)
+  const maestro = here ? await deps.ownId() : d.pauses[sessionId]?.maestro || (await deps.ownId())
+  const root = card.orphan?.root ?? ''
+  const entry: GlobalQueued = { id: card.id, title: `#${card.id} · ${card.title}`, at: headAt(globalQueueOrder(d.queue), { at: now } as GlobalQueued, now), kind: 'resume', sessionId, maestro, project: root, match: root ? [root] : [], after: [] } as GlobalQueued
+  await deps.writeQueue([...(await deps.queue()), entry])
+  controlInfo = `#${card.id} reprend à son tour`
 }
 
 /**
@@ -583,12 +603,12 @@ export async function drawControl($: EngineInterface, e: RenderInput<'Pane'>, pa
   // #415 (maquette C) : un seul bouton dans le titre, « Tout en pause » tant qu'une session tourne, « Tout reprendre »
   // quand rien ne tourne et qu'une session attend sa reprise à la main.
   const toPause = pauseAllTargets(running).length
-  const toResume = d.queue.filter(e => e.kind === 'resume' && e.held && queued.some(c => c.key === queueCardKey(e))).length
+  const toResume = d.queue.filter(e => e.kind === 'resume' && e.held && queued.some(c => c.key === queueCardKey(e))).length + queued.filter(c => c.orphan).length
   const general =
     toPause > 0
       ? gesture('ctl:pause-all', pauseIcon(palette.block, 14), 'Tout mettre en pause', 'Tout en pause', () => void act($, () => pauseAll($, deps)))
       : toResume > 0
-        ? gesture('ctl:resume-all', playIcon(palette.live, 14), 'Tout reprendre', 'Tout reprendre', () => void act($, () => resumeAll(deps)))
+        ? gesture('ctl:resume-all', playIcon(palette.live, 14), 'Tout reprendre', 'Tout reprendre', () => void act($, () => resumeAll($, deps)))
         : null
 
   return (

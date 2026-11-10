@@ -4558,7 +4558,9 @@ async function parkStopped($: EngineInterface, ownId: string, sessionId: string,
   const row = openRowOf(rows, sessionId)
   const taskId = row ? sessionTitleId(row.title) : undefined
   let queue: GlobalQueued[] | undefined
-  if (row && fileOn && taskId !== undefined) {
+  // #415 : une pause à la main a son entrée de reprise même la file éteinte (retenue, elle ne part qu'à « Reprendre ») ;
+  // sans elle, la session sortait d'En cours et ne se montrait plus nulle part au centre de contrôle.
+  if (row && (fileOn || p.by === 'hand') && taskId !== undefined) {
     const stored = await readGlobalQueue($)
     if (!stored.some(q => q.kind === 'resume' && q.sessionId === sessionId)) {
       const mine = doseProject()
