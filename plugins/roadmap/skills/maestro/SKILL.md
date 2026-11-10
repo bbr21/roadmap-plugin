@@ -717,13 +717,19 @@ The merge itself:
   stop the app refuses shows its reason and is retried once a minute; a session paused by hand
   resumes only at « Reprendre », never by itself when a place frees. A task has a single place:
   a resume entry whose pause is gone leaves the queue, and a task already in « En cours » never
-  shows in the queue too. Do not stop, pause or resume a session yourself, and
-  do not relaunch a paused task: it is already launched.
+  shows in the queue too. « Tout en pause » in the control center (#415) puts that same pause by
+  hand on every task session that runs or waits, all projects, Maestro sessions untouched; « Tout
+  reprendre » releases them in their former order, dosed by places and load. Do not stop, pause or
+  resume a session yourself, and do not relaunch a paused task: it is already launched.
 - **Control center** (#367): the pane `controle` (`/controle`, or the icon at the end of the
   « En cours · N ici » line of the panel, #381) shows every task session of every Maestro, all
   projects, prioritaires first then by launch order, then the queue below its « File d'attente »
-  step; the person sets priority, reorders the queue (take, then drop), pauses, resumes and opens a
-  session there. Nothing is launched from it.
+  step; the person sets priority, reorders the queue (↑ ↓), pauses, resumes and opens a session
+  there, pauses or resumes the whole Mac with the single button of its title (« Tout en pause »,
+  « Tout reprendre », #415), and removes a waiting entry with « Retirer » (no confirmation; its
+  roadmap line stays open, its ▶ relaunches it). A paused session sits in the queue under a pause
+  node, without rank. Nothing is launched from it. When the person says they removed an entry, do
+  not put it back.
 
 ## What the Roadmap panel does for Maestro
 

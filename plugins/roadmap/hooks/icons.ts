@@ -495,12 +495,17 @@ export function controlIcon(hex: string, size = 16, width: number = STROKE.base)
   return line(hex, size, width, '<path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="17" r="2"/><path d="M4 12h5M13 12h7"/><circle cx="11" cy="12" r="2"/>')
 }
 
-/** Le nœud de la frise d'une carte : rond numéroté (bleu en cours, orange en attente de pause, bleu-vert t'attend, gris en file), carré rouge à drapeau pour une prioritaire. */
-export function controlNodeIcon(palette: Palette, o: { kind: 'run' | 'wait' | 'pausing' | 'queued' | 'prio' | 'done'; n: number }): { source: string; width: number; height: number } {
+/**
+ * Le nœud de la frise d'une carte : rond numéroté (bleu en cours, orange en attente de pause, bleu-vert t'attend, gris en file),
+ * carré rouge à drapeau pour une prioritaire ; une session en pause (#415) : rond orange pâle à deux barres, sans rang.
+ */
+export function controlNodeIcon(palette: Palette, o: { kind: 'run' | 'wait' | 'pausing' | 'paused' | 'queued' | 'prio' | 'done'; n: number }): { source: string; width: number; height: number } {
   const size = 24
-  const [bg, fg] = { run: [palette.liveTint, palette.liveOn], wait: [palette.waitTint, palette.waitOn], pausing: [palette.blockTint, palette.blockOn], queued: [palette.btn, palette.text2], prio: [palette.late, palette.onAxis], done: [palette.finishedTint, palette.finishedOn] }[o.kind]
+  const [bg, fg] = { run: [palette.liveTint, palette.liveOn], wait: [palette.waitTint, palette.waitOn], pausing: [palette.blockTint, palette.blockOn], paused: [palette.blockTint, palette.blockOn], queued: [palette.btn, palette.text2], prio: [palette.late, palette.onAxis], done: [palette.finishedTint, palette.finishedOn] }[o.kind]
   const shape =
-    o.kind === 'done'
+    o.kind === 'paused'
+      ? `<circle cx="12" cy="12" r="10" fill="${bg}"/><path d="M10 8v8M14 8v8" fill="none" stroke="${fg}" stroke-width="2.2" stroke-linecap="round"/>`
+      : o.kind === 'done'
       ? `<circle cx="12" cy="12" r="10" fill="${bg}"/><path d="M7.5 12.4l3 3 6-6.4" fill="none" stroke="${fg}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>`
       : o.kind === 'prio'
       ? `<rect x="2" y="2" width="20" height="20" rx="${RADIUS.chip}" fill="${bg}"/><g transform="translate(6.5 6.5) scale(0.4583)" stroke="${fg}" stroke-width="${STROKE.pill / 0.4583}" stroke-linecap="round" stroke-linejoin="round"><path d="M6 21V4" fill="none"/><path d="M6 4.5h12l-2.5 4 2.5 4H6z" fill="${fg}"/></g>`

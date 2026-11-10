@@ -13074,6 +13074,32 @@ export function selfPaused(recap: string | undefined): boolean {
   return /^\W*(?:la session est |je suis |je me mets |je me suis mise? )?en pause\b/iu.test(firstSentence(recap ?? '').trim())
 }
 
+/**
+ * « Tout en pause » (#415) : les cartes En cours qui s'arrêtent, celles qui tournent ou attendent, prioritaires
+ * comprises (c'est un arrêt du Mac) ; ni une finie, ni une dont la pause est déjà demandée.
+ */
+export function pauseAllTargets(running: readonly ControlCard[]): ControlCard[] {
+  return running.filter(c => c.sessionId !== undefined && (c.state === 'run' || c.state === 'wait') && c.pause === undefined)
+}
+
+/** « Retirer » (#415) : la file sans l'entrée de cette carte ; les autres gardent leur rang. */
+export function withoutQueueEntry<T extends GlobalQueued>(queue: readonly T[], key: string): T[] {
+  return queue.filter(e => queueCardKey(e) !== key)
+}
+
+/**
+ * « Tout reprendre » (#415) : les reprises perdent leur retenue (une pause à la main, #383) et gardent leur `at`,
+ * donc leur ordre d'avant ; la relève les fait partir selon les places et la charge. Une entrée de tâche retenue
+ * (Remote Control, un refus) reste retenue : elle attend son ▶.
+ */
+export function releaseHandPauses<T extends GlobalQueued>(queue: readonly T[]): T[] {
+  return queue.map(e => {
+    if (e.kind !== 'resume' || !e.held) return e
+    const { held: _held, ...rest } = e
+    return rest as T
+  })
+}
+
 /** La pastille d'une session dont l'arrêt est demandé (#383). */
 export function pausingPill(mode: 'stop' | 'soft'): string {
   return mode === 'stop' ? 'arrêt demandé' : 'pause en fin de tour'

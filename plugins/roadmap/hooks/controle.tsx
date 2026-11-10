@@ -1,14 +1,17 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, RenderElement, RenderInput } from 'claude-code'
 
-import { archiveIcon, checkIcon, controlIcon, controlNodeIcon, pauseIcon, pausedIcon, pausingIcon, pillIcon, playIcon, priorityIcon, spinnerIcon, squareIcon, stepsBarIcon, axisColor, externalIcon, handIcon, clockIcon, type Palette } from './icons'
+import { archiveIcon, checkIcon, closeIcon, controlIcon, controlNodeIcon, pauseIcon, pausedIcon, pausingIcon, pillIcon, playIcon, priorityIcon, spinnerIcon, squareIcon, stepsBarIcon, axisColor, externalIcon, handIcon, clockIcon, type Palette } from './icons'
 import { SPACE } from './tokens'
 import {
   controlView,
   globalQueueOrder,
   pausingPill,
   keyPart,
+  pauseAllTargets,
   queueAtBetween,
+  releaseHandPauses,
+  withoutQueueEntry,
   queueCardKey,
   queuedLine,
   queueRank,
@@ -153,14 +156,53 @@ async function pauseNow($: EngineInterface, deps: ControlDeps, card: ControlCard
   if (!id) return
   const d = await controlData(deps)
   if (d.pauses[id] !== undefined) return
+  const here = await deps.ownIsMaestro().catch(() => false)
+  const stopped = await pauseOne($, deps, d, id, here)
+  controlInfo = stopped ? `#${card.id} est arrêtée et passe en pause` : `#${card.id} : arrêt demandé, Maestro l'exécute à son pas`
+}
+
+/** Une pause à la main sur une session (#383) : la demande, puis l'arrêt tout de suite quand l'app le permet. Arrêtée : `true`. */
+async function pauseOne($: EngineInterface, deps: ControlDeps, d: ControlData, id: string, here: boolean): Promise<boolean> {
   const startedBy = (d.rows.find(r => (r as { sessionId?: unknown }).sessionId === id) as { startedBy?: unknown } | undefined)?.startedBy
   // #383 : le Maestro qui reçoit le clic l'exécute ; ailleurs, le Maestro de la session (tout Maestro ouvert la reprend).
-  const here = await deps.ownIsMaestro().catch(() => false)
   const maestro = !here && typeof startedBy === 'string' && startedBy !== '' ? startedBy : await deps.ownId()
   const asked: SessionPause = { mode: 'stop', state: 'asked', by: 'hand', maestro, at: await $.clock.now() }
   await deps.writePause(id, asked)
-  const stopped = await deps.stopNow(id, asked).catch(() => false)
-  controlInfo = stopped ? `#${card.id} est arrêtée et passe en pause` : `#${card.id} : arrêt demandé, Maestro l'exécute à son pas`
+  return deps.stopNow(id, asked).catch(() => false)
+}
+
+/**
+ * « Tout en pause » (#415, maquette C) : une pause à la main sur chaque session de tâche qui tourne ou attend, tous
+ * projets ; les Maestro ne sont pas des cartes. Elles ne reprennent qu'à « Reprendre » ou « Tout reprendre ».
+ */
+async function pauseAll($: EngineInterface, deps: ControlDeps): Promise<void> {
+  const d = await controlData(deps)
+  const targets = pauseAllTargets(d.view.running)
+  if (targets.length === 0) return
+  const here = await deps.ownIsMaestro().catch(() => false)
+  let stopped = 0
+  for (const c of targets) if (await pauseOne($, deps, d, c.sessionId as string, here)) stopped++
+  const asked = targets.length - stopped
+  const sessions = (n: number) => `${n} session${n > 1 ? 's' : ''}`
+  controlInfo =
+    stopped > 0
+      ? `${sessions(stopped)} arrêtée${stopped > 1 ? 's' : ''} et mise${stopped > 1 ? 's' : ''} en pause · les Maestro restent ouverts${asked > 0 ? ` · ${asked} arrêt${asked > 1 ? 's' : ''} demandé${asked > 1 ? 's' : ''}, Maestro l'exécute à son pas` : ''}`
+      : `${sessions(asked)} : arrêt demandé, Maestro l'exécute à son pas`
+}
+
+/** « Tout reprendre » (#415) : les sessions en pause à la main repartent dans leur ordre d'avant, selon les places et la charge. */
+async function resumeAll(deps: ControlDeps): Promise<void> {
+  const queue = await deps.queue()
+  const n = queue.filter(e => e.kind === 'resume' && e.held).length
+  if (n === 0) return
+  await deps.writeQueue(releaseHandPauses(queue))
+  controlInfo = `${n} session${n > 1 ? 's' : ''} reprenne${n > 1 ? 'nt' : ''} dans l'ordre d'avant, selon les places`
+}
+
+/** « Retirer » (#415) : l'entrée sort de la file, sans confirmation ; sa ligne de roadmap reste ouverte. */
+async function retire(deps: ControlDeps, card: ControlCard): Promise<void> {
+  await deps.writeQueue(withoutQueueEntry(await deps.queue(), card.key))
+  controlInfo = `#${card.id} est sortie de la file ; sa ligne reste ouverte, son ▶ la relance`
 }
 
 /** Annuler la pause : une demande pas encore exécutée s'efface. */
@@ -438,9 +480,10 @@ export async function drawControl($: EngineInterface, e: RenderInput<'Pane'>, pa
   const card = (c: ControlCard, rank: number, zone: 'run' | 'queue', moves: { up: boolean; down: boolean } = { up: false, down: false }) => {
     const [mark, markAlt] = stateMark(c)
     const done = c.state === 'done'
-    const nodeKind = done ? 'done' : c.prio ? 'prio' : c.state === 'wait' ? 'wait' : c.state === 'pausing' ? 'pausing' : zone === 'queue' ? 'queued' : 'run'
+    // #415 : une session en pause se reconnaît dans la file à son nœud pause, sans rang
+    const nodeKind = done ? 'done' : c.state === 'paused' ? 'paused' : c.prio ? 'prio' : c.state === 'wait' ? 'wait' : c.state === 'pausing' ? 'pausing' : zone === 'queue' ? 'queued' : 'run'
     const node = controlNodeIcon(palette, { kind: nodeKind, n: rank })
-    const border = done ? palette.finished : c.prio ? palette.late : c.state === 'pausing' ? palette.block : palette.border
+    const border = done ? palette.finished : c.state === 'paused' || c.state === 'pausing' ? palette.block : c.prio ? palette.late : palette.border
     const pills: RenderElement[] = []
     if (done) pills.push(pill(c.test ? `en test ${c.test}` : 'Done', palette.finishedTint, palette.finishedOn))
     else if (c.state === 'pausing') pills.push(pill(pausingPill(c.pause?.mode ?? 'soft'), palette.blockTint, palette.blockOn))
@@ -470,6 +513,8 @@ export async function drawControl($: EngineInterface, e: RenderInput<'Pane'>, pa
         : null
 
     const buttons: RenderElement[] = []
+    // #415 (maquette C) : « Retirer » en premier sur une entrée en attente ; une session en pause garde « Reprendre ».
+    if (zone === 'queue' && c.state !== 'paused') buttons.push(gesture(`ctl:retire:${keyPart(c.key)}`, closeIcon(palette.lateOn, 14), 'Retirer', 'Retirer', () => void act($, () => retire(deps, c))))
     // #383 : une tâche en test garde sa session ouverte (les retours de test y arrivent) : pas d'archivage d'ici.
     if (done && c.test) {
       // la session attend les retours de test
@@ -499,7 +544,7 @@ export async function drawControl($: EngineInterface, e: RenderInput<'Pane'>, pa
 
     return (
       <Box key={`card:${c.key}`} flexDirection="row" alignItems="flex-start" gap={SPACE.row}>
-        <Box flexShrink={0}>{icon(node.source, c.prio ? 'prioritaire' : `rang ${rank}`, node.width, node.height)}</Box>
+        <Box flexShrink={0}>{icon(node.source, nodeKind === 'paused' ? 'session en pause' : c.prio ? 'prioritaire' : `rang ${rank}`, node.width, node.height)}</Box>
         <Box flexGrow={1} flexShrink={1} minWidth={0} flexDirection="column" gap={SPACE.tight} borderStyle="round" borderColor={border} paddingX="sm" paddingY="xs">
           <Box flexDirection="row" alignItems="center" gap={SPACE.row}>
             <Box flexShrink={0}>{icon(mark, markAlt, 14)}</Box>
@@ -527,11 +572,24 @@ export async function drawControl($: EngineInterface, e: RenderInput<'Pane'>, pa
 
   const unreadable = d.note !== ''
   const queueBody: RenderElement[] = []
+  // #415 : une session en pause n'a pas de rang ; les entrées en attente se numérotent entre elles
+  let waiting = 0
   queued.forEach((c, i) => {
     // une voisine du même groupe : les prioritaires montent et descendent entre elles, les autres aussi
     const same = (o: ControlCard | undefined) => o !== undefined && Boolean(o.prio) === Boolean(c.prio)
-    queueBody.push(card(c, i + 1, 'queue', { up: same(queued[i - 1]), down: same(queued[i + 1]) }))
+    if (c.state !== 'paused') waiting++
+    queueBody.push(card(c, waiting, 'queue', { up: same(queued[i - 1]), down: same(queued[i + 1]) }))
   })
+  // #415 (maquette C) : un seul bouton dans le titre, « Tout en pause » tant qu'une session tourne, « Tout reprendre »
+  // quand rien ne tourne et qu'une session attend sa reprise à la main.
+  const toPause = pauseAllTargets(running).length
+  const toResume = d.queue.filter(e => e.kind === 'resume' && e.held && queued.some(c => c.key === queueCardKey(e))).length
+  const general =
+    toPause > 0
+      ? gesture('ctl:pause-all', pauseIcon(palette.block, 14), 'Tout mettre en pause', 'Tout en pause', () => void act($, () => pauseAll($, deps)))
+      : toResume > 0
+        ? gesture('ctl:resume-all', playIcon(palette.live, 14), 'Tout reprendre', 'Tout reprendre', () => void act($, () => resumeAll(deps)))
+        : null
 
   return (
     <Box flexDirection="column" gap={SPACE.block} paddingX={SPACE.indent} paddingTop="sm" paddingBottom="md">
@@ -542,7 +600,10 @@ export async function drawControl($: EngineInterface, e: RenderInput<'Pane'>, pa
             Centre de contrôle
           </Text>
         </Box>
-        {pill(`Mac ${d.taken}/${d.max} · ${queued.length} en file`, full ? palette.blockTint : palette.liveTint, full ? palette.blockOn : palette.liveOn)}
+        <Box flexDirection="row" alignItems="center" gap={SPACE.row} flexShrink={0}>
+          {general}
+          {pill(`Mac ${d.taken}/${d.max} · ${queued.length} en file`, full ? palette.blockTint : palette.liveTint, full ? palette.blockOn : palette.liveOn)}
+        </Box>
       </Box>
       {unreadable && <Box key="note">{caption(d.note, palette.lateOn)}</Box>}
       {controlNote !== '' && <Box key="act-note">{caption(controlNote, palette.lateOn)}</Box>}
