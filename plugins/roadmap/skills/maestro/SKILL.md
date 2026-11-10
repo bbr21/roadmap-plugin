@@ -189,7 +189,9 @@ to it.
     `enabled: false`), so the app's memory governor can pause the session when it rests (it never
     pauses one whose Remote Control is connected, #397); refused or unavailable: go on and say so in
     one line. The person turns it back on with the session's Remote Control switch in the app, or by
-    asking the session (`enabled: true`). Maestro keeps its own Remote Control (#402);
+    asking the session (`enabled: true`). Maestro keeps its own Remote Control. Your panel also turns
+    it off itself on each session you launched, once, from Bypass or Auto mode (#402): never turn it
+    back off on a session where the person turned it on again;
   - work on your branch, rerun the tests its impact map names (never the whole suite: the project's
     CI runs it on each PR and on `main`, or Maestro on `main` after the merge without CI, #323, #407), push it, open your PR if the project has them;
   - do not merge into `main`: Maestro merges, one branch at a time;

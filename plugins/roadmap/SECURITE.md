@@ -1,6 +1,6 @@
 # Est-il sûr de l'installer ?
 
-Version décrite : roadmap 0.251.2
+Version décrite : roadmap 0.251.3
 Un plugin de Claude Code fait tourner du code sur ta machine, donc la question se pose. Certains plugins
 malveillants ont l'air inoffensifs quand on les installe, puis téléchargent et lancent autre chose plus
 tard. Cette page dit tout ce que fait roadmap. Un test vérifie à chaque version qu'elle dit vrai, et tu
@@ -69,8 +69,8 @@ réserve (`session.*`, `turn.*`, `skill.prompt`) ; le plugin a alors un secours 
 
 ## Les outils de l'app
 
-Le module appelle ces outils de l'app de bureau, seulement quand tu cliques dans le panneau ou pour
-lire l'état des sessions :
+Le module appelle ces outils de l'app de bureau quand tu cliques dans le panneau, pour lire l'état des
+sessions, et, chez Maestro, pour éteindre une fois Remote Control sur les sessions qu'il a lancées :
 
 | Outil | Pourquoi |
 |---|---|
@@ -79,6 +79,7 @@ lire l'état des sessions :
 | `mcp__ccd_session_mgmt__send_message` | envoyer un message à une session que tu choisis dans le panneau |
 | `mcp__ccd_session_mgmt__stop_session` | arrêter le tour d'une session de tâche pour la mettre en pause : pour laisser passer une tâche prioritaire, ou à ton clic sur Pause dans le centre de contrôle ; elle reprend seule à son tour |
 | `mcp__ccd_session_mgmt__set_session_permission_mode` | passer une session lancée en bypass, si tu as allumé le réglage « Lancer en bypass » |
+| `mcp__ccd_session_mgmt__set_remote_control` | dans le panneau de Maestro en Bypass ou en Auto : éteindre Remote Control une fois sur chaque session qu'il a lancée, pour que l'app puisse la mettre en pause au repos ; jamais de nouveau si tu l'as rallumé (#402) |
 | `mcp__ccd_session_mgmt__archive_session`, `mcp__ccd_session_mgmt__unarchive_session` | archiver ou désarchiver une session, à ton clic |
 | `mcp__ccd_window__open_session_in` | ouvrir une session à côté, à ton clic |
 | `mcp__ccd_view__show_pane` | ouvrir un fichier dans le volet Fichiers de l'app, ou montrer le volet navigateur |

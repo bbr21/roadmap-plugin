@@ -496,6 +496,11 @@ import {
   queueEntryText,
   releasePrompt,
   releaseVia,
+  remoteControlOffOutcome,
+  remoteControlOffTargets,
+  remoteOffAllowed,
+  REMOTE_OFF_MAX_TRIES,
+  type RemoteOffMemo,
   isRemoteControlRefusal,
   remotePill,
   sessionRemoteIn,
@@ -873,6 +878,7 @@ const SIDEBAR_TOOL = 'mcp__ccd_window__set_sidebar_collapsed'
 // Ceux qui lisent la fiche d'une session et la montrent.
 const GET_SESSION_TOOL = 'mcp__ccd_session_mgmt__get_session'
 const SET_MODE_TOOL = 'mcp__ccd_session_mgmt__set_session_permission_mode'
+const SET_REMOTE_TOOL = 'mcp__ccd_session_mgmt__set_remote_control'
 const OPEN_SESSION_TOOL = 'mcp__ccd_window__open_session_in'
 const ARCHIVE_SESSION_TOOL = 'mcp__ccd_session_mgmt__archive_session'
 const UNARCHIVE_SESSION_TOOL = 'mcp__ccd_session_mgmt__unarchive_session'
@@ -4938,6 +4944,55 @@ async function showDose($: EngineInterface, next: DoseView): Promise<void> {
   }
 }
 
+/** #402 : ce que ce Maestro a fait de Remote Control sur ses filles (store `remote-off:<id>`), lu une fois par chargement. */
+let remoteOffMemo: RemoteOffMemo | undefined
+let remoteOffRunning = false
+
+/**
+ * #402 : le panneau de Maestro éteint Remote Control sur chaque session qu'il a lancée, une fois, pour que le
+ * gouverneur mémoire de l'app puisse la mettre en pause au repos (il ne pause jamais une session dont Remote
+ * Control est connecté, étude #397). La consigne du brief (`remoteControlClause`) dépendait du modèle : le
+ * 2026-11-10, #360 gardait Remote Control, son tour interrompu avant tout appel. Lit la dernière liste
+ * (`lastListRows`), sans appel tant qu'aucune fille n'est à traiter ; une fille traitée ne se rééteint jamais,
+ * BBR a pu le rallumer. Un appel refusé (`deny`, sans lever) se reprend une minute plus tard, cinq fois au plus.
+ */
+async function turnOffChildRemote($: EngineInterface): Promise<void> {
+  const ownId = ownSession?.id
+  if (!ownId || remoteOffRunning || lastListRows.length === 0) return
+  const key = `remote-off:${ownId}`
+  remoteOffRunning = true
+  try {
+    // Sans fille à Remote Control allumé, ni horloge, ni store, ni outil : le pas de 3 s reste léger (budgets du panneau).
+    if (remoteControlOffTargets(lastListRows, ownId, remoteOffMemo ?? {}, Number.MAX_SAFE_INTEGER).length === 0) return
+    const now = await $.clock.now()
+    if (!remoteOffAllowed((await readRemoteFacts($, now)).mode)) return
+    if (remoteOffMemo === undefined) {
+      const stored: unknown = await $.store.get(key).catch(() => undefined)
+      remoteOffMemo = stored && typeof stored === 'object' ? (stored as RemoteOffMemo) : {}
+    }
+    const targets = remoteControlOffTargets(lastListRows, ownId, remoteOffMemo, now)
+    if (targets.length === 0) return
+    const marks = new Set(Object.keys(await loadMaestros($)))
+    if (!sessionIsMaestro(ownSession ?? { id: ownId, title: '' }, lastListRows, marks)) return
+    for (const id of targets) {
+      let outcome: 'done' | 'retry' = 'retry'
+      try {
+        toolCalls++
+        outcome = remoteControlOffOutcome(await $.tool.call({ tool: SET_REMOTE_TOOL, session_id: id, enabled: false }))
+      } catch {
+        // outil absent ou module rechargé : à reprendre
+      }
+      const tries = (remoteOffMemo[id]?.tries ?? 0) + 1
+      remoteOffMemo = { ...remoteOffMemo, [id]: { tries, at: now, ...(outcome === 'done' || tries >= REMOTE_OFF_MAX_TRIES ? { done: true } : {}) } }
+    }
+    await storeSet($, key, remoteOffMemo as unknown as StoreValue)
+  } catch {
+    // un pas raté : le suivant reprend
+  } finally {
+    remoteOffRunning = false
+  }
+}
+
 /** Le numéro du pas, pour la recherche du dossier ; une relecture en vol fait sauter le pas suivant. */
 let pollTick = 0
 let polling = false
@@ -4956,6 +5011,7 @@ async function poll($: EngineInterface): Promise<void> {
       // Au repos (#348) : la file de lancement de Maestro avance quand même ; le reste attend sa minute.
       await checkZones($)
       await relieveLaunches($)
+      await turnOffChildRemote($)
       const now = await $.clock.now()
       if (now - restReadAt < REST_MS) return
       restReadAt = now
@@ -4973,6 +5029,7 @@ async function poll($: EngineInterface): Promise<void> {
       await restampQueue($)
     }
     await relieveLaunches($)
+    await turnOffChildRemote($)
     await retryCreated($)
   } catch {
     // un pas raté (module rechargé, état indisponible) : le suivant réessaie, sans rejet laissé en l'air

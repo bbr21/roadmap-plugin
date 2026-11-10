@@ -5054,6 +5054,54 @@ export function remoteControlClause(): string {
   ].join(' ')
 }
 
+/** Ce que le panneau de Maestro retient d'une fille dont il éteint Remote Control (#402) : `done` ne se rejoue jamais. */
+export type RemoteOffMemo = Record<string, { tries: number; at: number; done?: boolean }>
+
+/** Un essai à reprendre attend une minute ; au cinquième, le panneau cède (la consigne du brief reste). */
+export const REMOTE_OFF_RETRY_MS = 60_000
+export const REMOTE_OFF_MAX_TRIES = 5
+
+/**
+ * #402 : les sessions dont le panneau de ce Maestro éteint Remote Control : ses filles (`startedBy`), non
+ * archivées, Remote Control allumé, jamais traitées (une fille traitée garde ce que BBR en a fait depuis), un
+ * essai à reprendre une minute après le précédent, cinq au plus.
+ */
+export function remoteControlOffTargets(rows: readonly unknown[], ownId: string, memo: RemoteOffMemo, now: number): string[] {
+  return rows.flatMap(r => {
+    const row = r as { sessionId?: unknown; startedBy?: unknown; remoteControlActive?: unknown; isArchived?: unknown }
+    if (typeof row.sessionId !== 'string' || row.startedBy !== ownId || row.remoteControlActive !== true || row.isArchived === true) return []
+    const seen = memo[row.sessionId]
+    if (seen && (seen.done || seen.tries >= REMOTE_OFF_MAX_TRIES || now - seen.at < REMOTE_OFF_RETRY_MS)) return []
+    return [row.sessionId]
+  })
+}
+
+/**
+ * #402 : le panneau n'éteint Remote Control d'une fille que depuis un Maestro en Bypass (l'app ne demande rien)
+ * ou en Auto (son contrôle décide, sans carte) : dans un autre mode, chaque appel montrerait à BBR une carte
+ * d'approbation, et la consigne du brief suffit. Mode inconnu : rien.
+ */
+export function remoteOffAllowed(mode: string | undefined): boolean {
+  return mode === 'bypassPermissions' || mode === 'auto'
+}
+
+/**
+ * #402 : la réponse de l'app à `set_remote_control` (`enabled: false`). « off » : fini. À reprendre : une
+ * session qui n'a pas encore fait de tour (« has run a turn »), un refus du contrôle du mode auto (`deny`), un
+ * état encore en route. Tout autre refus (session d'un autre appareil, sans surveillance) : fini, sans réessayer.
+ */
+export function remoteControlOffOutcome(ran: { deny?: unknown; isError?: boolean; text?: string }): 'done' | 'retry' {
+  if (ran.deny !== undefined) return 'retry'
+  const text = ran.text ?? ''
+  if (ran.isError) return /run a turn/i.test(text) ? 'retry' : 'done'
+  try {
+    const state = (JSON.parse(text) as { remoteControlState?: unknown } | null)?.remoteControlState
+    return state === 'off' || state === 'unavailable' ? 'done' : 'retry'
+  } catch {
+    return 'retry'
+  }
+}
+
 export function maestroClause(maestro: string, travail: Travail = 'code'): string[] {
   // Sans code (#76, #176) : ni branche, ni PR, ni fusion ; la session se dit « prête à clore ».
   if (travail === 'projet') {
