@@ -19,6 +19,7 @@ import {
   filterPillIcon,
   type PillMark,
   checkIcon,
+  clockIcon,
   fadeIcon,
   foldArrowIcon,
   chainRowIcon,
@@ -114,6 +115,8 @@ import {
   brandText,
   briefTaskOf,
   bandColumns,
+  bandInfo,
+  sinceLabel,
   bandState,
   maestroBand,
   maestroBarText,
@@ -8326,7 +8329,9 @@ export const register: Register = (on, options) => {
     if (e.props.hasSurvey) return next(e)
     try {
       const found = await sessionBrandOf($)
-      const band = maestroBand({ brand: found?.brand, hasSurvey: e.props.hasSurvey, shown: BRAND_TASKS_SHOWN })
+      // #385 : la bande paraît dès que le projet a des sessions en cours, tous Maestro confondus.
+      const others = found?.brand.kind === 'maestro' ? await projectBandOthers($, found.data) : []
+      const band = maestroBand({ brand: found?.brand, hasSurvey: e.props.hasSurvey, shown: BRAND_TASKS_SHOWN, others })
       if (!found || !band) return next(e)
       const now = await $.clock.now()
       const statuses = await Promise.all(band.tasks.map(t => readSteps($, t.sessionId)))
@@ -8338,7 +8343,9 @@ export const register: Register = (on, options) => {
       // celui de chaque session, noté à la fin de ses tours, sous sa jauge d'étapes (#157, revenu par #217).
       const mine = (await read($, bandContextAtom)) ?? contextUseOf((await $.session.usage().catch(() => undefined))?.context)
       const contexts = { mine: contextView(mine ?? undefined), rows: statuses.map(status => contextView(status?.context)) }
-      return maestroBandTree($, e, band, found.data.palette, views, {
+      // La durée live de chaque ligne, puis son compte et son étape (#385, version corrigée 2).
+      const infos = band.tasks.map((t, i) => ({ since: sinceLabel(t.since, now), text: bandInfo({ since: sinceLabel(t.since, now), view: views[i], finished: t.finished === true }) }))
+      return maestroBandTree($, e, band, found.data.palette, views, infos, {
         open: t => void (t.sessionId ? openSession($, { sessionId: t.sessionId, startedAt: now, title: t.label }) : undefined),
         archive: t => void archiveBandSession($, t, now),
         compact: () => void compactFromBand($),
@@ -8484,8 +8491,54 @@ async function maestroTasksOf(
       ...(aheadBySession.get(sid)?.ahead !== undefined ? { ahead: aheadBySession.get(sid)?.ahead as number } : {}),
       asking: asking.get(sid) === true,
       ...(notes.get(sid) ? { status: notes.get(sid) as ChildStatus } : {}),
+      ...(sinceOf(sid, live[liveKeyOf(source, t)]) !== undefined ? { since: sinceOf(sid, live[liveKeyOf(source, t)]) as number } : {}),
     })),
   )
+}
+
+/**
+ * Depuis quand une session tourne (#385) : sa création lue par `get_session` ; à défaut, son lancement
+ * par le panneau (`startedAt` de son suivi) ; sinon rien, plutôt qu'une durée fausse. Une session
+ * déduite (trouvée par son titre, ligne écrite) n'a pour `startedAt` que sa dernière activité (#341) :
+ * elle ne compte pas.
+ */
+function sinceOf(sessionId: string | undefined, entry?: LiveEntry, inferred = false): number | undefined {
+  const created = sessionId !== undefined ? createdBySession.get(sessionId) : undefined
+  if (created !== undefined && Number.isFinite(created)) return created
+  return !inferred && entry && entry.sessionId === sessionId && entry.via !== 'write' && Number.isFinite(entry.startedAt) ? entry.startedAt : undefined
+}
+
+/**
+ * Les tâches de la bande de Maestro que d'autres sessions du projet travaillent (#385), comme les lignes
+ * « En cours » de #381 (`liveBlockRows`) : une tâche ouverte suivie par une session vivante, lancée par un
+ * autre Maestro du même dossier ou à la main, avec son état (la roue, la main, « à fusionner ») et la date
+ * de sa session. `maestroBand` écarte celles que ce Maestro a lancées lui-même.
+ */
+async function projectBandOthers($: EngineInterface, data: NonNullable<Awaited<ReturnType<typeof brandData>>>): Promise<BrandTask[]> {
+  const now = await $.clock.now()
+  const ignored = await loadIgnored($)
+  const mine = new Set(data.maestroTasks.map(t => t.id))
+  const found = data.tasks.flatMap(t => {
+    if (t.done || t.id === undefined || mine.has(t.id)) return []
+    const tracked = trackedSession(data.source, t, data.live, ignored, now)
+    return tracked?.entry.sessionId ? [{ task: t, entry: tracked.entry, inferred: tracked.inferred, sessionId: tracked.entry.sessionId }] : []
+  })
+  if (found.length === 0) return []
+  await learnCreated($, found.map(f => f.sessionId), now)
+  await refreshAhead($, data.source, found.map(f => f.sessionId), now)
+  const notes = await Promise.all(found.map(f => readSteps($, f.sessionId)))
+  return found.map(({ task: t, entry, inferred, sessionId: sid }, i) => {
+    const status = notes[i]
+    const since = sinceOf(sid, entry, inferred)
+    return {
+      id: t.id as string,
+      label: sessionName(rowTitle(sid) ?? '') ?? data.short(t),
+      state: runningBySession.get(sid) === false ? stoppedState({ asking: status?.question !== undefined, ahead: aheadBySession.get(sid)?.ahead, status }) : 'live',
+      sessionId: sid,
+      launchedAt: launchOf(t, sid, now),
+      ...(since !== undefined ? { since } : {}),
+    }
+  })
 }
 
 /**
@@ -8507,7 +8560,7 @@ async function brandData($: EngineInterface) {
     const task = tasks.find(t => t.id === brand.id)
     return task ? { ...brand, label: short(task) } : brand
   }
-  return { source, tasks, palette: data.palette, own, shorten, short, maestroTasks: await maestroTasksOf($, source, tasks, data.live, own.id, short) }
+  return { source, tasks, palette: data.palette, own, shorten, short, live: data.live, maestroTasks: await maestroTasksOf($, source, tasks, data.live, own.id, short) }
 }
 
 /** La largeur de la barre de l'accueil, en px. */
@@ -8935,8 +8988,10 @@ async function forceBar($: EngineInterface): Promise<{ text: string }> {
   await update($, liveVersionAtom, v => v + 1)
   $.ui.invalidate('ui.render')
   if (found?.brand.kind !== 'maestro') return { text: maestroBarText({ kind: 'unread' }) }
+  // #385 : ce que la bande montre, les sessions du projet, tous Maestro confondus.
+  const band = maestroBand({ brand: found.brand, hasSurvey: false, shown: Infinity, others: await projectBandOthers($, found.data) })
   return {
-    text: maestroBarText({ kind: 'maestro', tasks: found.brand.tasks.length, marked, survey: bandAsked?.survey === true, drawn: bandAsked !== undefined }),
+    text: maestroBarText({ kind: 'maestro', tasks: band?.brand.kind === 'maestro' ? band.brand.tasks.length : 0, marked, survey: bandAsked?.survey === true, drawn: bandAsked !== undefined }),
   }
 }
 
@@ -8976,6 +9031,7 @@ function maestroBandTree(
   band: MaestroBand,
   palette: Palette,
   views: readonly (StepsView | undefined)[],
+  infos: readonly { since: string; text: string }[],
   act: { open: (t: BrandTask) => void; archive: (t: BrandTask) => void; compact: () => void },
   now: number,
   contexts: { mine?: ContextView; rows: readonly (ContextView | undefined)[] } = { rows: [] },
@@ -9033,15 +9089,15 @@ function maestroBandTree(
       </Box>
     )
   }
-  // L'étape en cours d'une tâche pas finie, et l'état de chaque ligne en icône et en mot (#211).
-  const stepOf = (t: BrandTask, i: number) => (t.finished ? '' : (views[i]?.current ?? ''))
+  // L'état de chaque ligne en icône et en mot (#211) ; la durée, le compte et l'étape en une case (#385).
   const marks = band.tasks.map(bandState)
   const cols = bandColumns({
-    counts: views.map(v => v?.count ?? ''),
+    infos: infos.map(x => x.text),
     states: marks.map(m => m.word),
     archive: band.tasks.some(t => t.archivable && t.sessionId),
-    steps: band.tasks.map(stepOf),
   })
+  // L'horloge devant la durée, centrée sur le texte (#385) : sa case de 2 cellules sur chaque ligne dès qu'une en a.
+  const clocked = infos.some(x => x.since !== '')
   // L'icône de l'état, celles du bloc « En cours » (#211) ; au terminal, son signe.
   const stateIcon = (icon: ReturnType<typeof bandState>['icon'], word: string, hex: string) => {
     if (!Svg) return <Text size="caption" color={hex}>{{ spinner: '◌', hand: '✋', merge: '⑂', check: '✓' }[icon]}</Text>
@@ -9112,7 +9168,7 @@ function maestroBandTree(
           const ctx = contexts.rows[i]
           const ctxBar = ctx && Svg ? contextBarIcon(palette, ctx, { width: bar?.width ?? BAND_GAUGE.row, height: 2, top: BAND_GAUGE.gap }) : undefined
           const mark = marks[i] ?? bandState(t)
-          const step = stepOf(t, i)
+          const info = infos[i]
           return (
             <Box key={`band-row:${keyPart(t.id)}`} flexDirection="row" alignItems="center" gap={SPACE.row} hover={{ backgroundColor: palette.hover }}>
               {strut}
@@ -9136,17 +9192,17 @@ function maestroBandTree(
                   {ctxBar && ctx && <Svg source={ctxBar.source} alt={`contexte ${ctx.text}`} width={ctxBar.width} height={ctxBar.height} />}
                 </Box>
               )}
-              {/* Compte, état et archivage serrés à la largeur de leur plus long texte (#174). */}
-              {cols.count > 0 && (
-                <Box key={`band-count:${keyPart(t.id)}`} width={cols.count} flexShrink={0} alignItems="flex-end">
-                  {view && <Text size="caption" tabular color={palette.text3}>{view.count}</Text>}
-                </Box>
-              )}
-              {/* L'étape en cours, après la jauge et son compte, dans sa colonne (#211, maquette D). Elle ne
-                  rétrécit pas : seul le titre cède sa place, sinon un titre long poussait la jauge (#326). */}
-              {cols.step > 0 && (
-                <Box key={`band-step:${keyPart(t.id)}`} width={cols.step} flexShrink={0} minWidth={0}>
-                  {step !== '' && <Text size="caption" color={palette.text3} wrap="truncate-end">{step}</Text>}
+              {/* La durée depuis le lancement, le compte et l'étape sur une ligne, l'horloge devant (#385, version
+                  corrigée 2 de la maquette), à la largeur du plus long texte (#174). Elle ne rétrécit pas : seul le
+                  titre cède sa place, sinon un titre long poussait la jauge (#326). */}
+              {(cols.info > 0 || clocked) && (
+                <Box key={`band-info:${keyPart(t.id)}`} width={(clocked ? 2 : 0) + cols.info} flexShrink={0} minWidth={0} flexDirection="row" alignItems="center" gap={0}>
+                  {clocked && (
+                    <Box width={2} flexShrink={0} flexDirection="row" alignItems="center">
+                      {info?.since && (Svg ? <Svg source={clockIcon(palette.text3, 12)} alt="lancée depuis" width={12} height={12} /> : <Text size="caption" color={palette.text3}>◷</Text>)}
+                    </Box>
+                  )}
+                  {info && info.text !== '' && <Text size="caption" tabular color={palette.text3} wrap="truncate-end">{info.text}</Text>}
                 </Box>
               )}
               {/* L'état en icône et en mot, pour tous les états (#211). */}
@@ -11227,8 +11283,11 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     const drawsDonut = Boolean(Svg && graphic && Client)
     // Le haut d'une tâche en cours (#341, B1) : depuis quand elle tourne, son étape et depuis quand, sa question.
     // Calculé au dessin du carton : les étapes de la session se lisent plus bas.
-    const liveTopOf = () => live && !current.done
-      ? liveHead({ startedAt: liveSince(live.entry.startedAt, live.entry.sessionId ? createdBySession.get(live.entry.sessionId) : undefined), now, steps: stepsStatus?.steps ?? [], ...(stepsStatus?.question ? { question: stepsStatus.question } : {}) })
+    // #385 : une seule origine, le lancement de la session, celle de la ligne En cours et de la bande (`sinceOf`),
+    // pour le haut de la fiche, l'en-tête des Étapes et la durée de chaque étape.
+    const liveOrigin = live && !current.done ? (sinceOf(live.entry.sessionId, live.entry, live.inferred) ?? liveSince(live.entry.startedAt, live.entry.sessionId ? createdBySession.get(live.entry.sessionId) : undefined)) : undefined
+    const liveTopOf = () => live && !current.done && liveOrigin !== undefined
+      ? liveHead({ startedAt: liveOrigin, now, steps: stepsStatus?.steps ?? [], ...(stepsStatus?.question ? { question: stepsStatus.question } : {}) })
       : undefined
     const timeSide = (big: string, small: string, pick?: () => void) => (
       <Box key="carton-time-side" flexDirection="column" alignItems="flex-end">
@@ -12504,7 +12563,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
         {mockupBand()}
         {draftBlock()}
         {cartonBox()}
-        {gaugeBlock('steps', stepsGauge, stepsColors, stepsStatus ? { steps: stepsStatus.steps, times: stepTimes(stepsStatus.steps, { now, closed: current.done, at: stepsStatus.at }), spent: stepsSpent(stepsStatus.steps, { now, closed: current.done, at: stepsStatus.at }) } : undefined)}
+        {gaugeBlock('steps', stepsGauge, stepsColors, stepsStatus ? { steps: stepsStatus.steps, times: stepTimes(stepsStatus.steps, { now, closed: current.done, at: stepsStatus.at, ...(liveOrigin !== undefined ? { origin: liveOrigin } : {}) }), spent: stepsSpent(stepsStatus.steps, { now, closed: current.done, at: stepsStatus.at, ...(liveOrigin !== undefined ? { origin: liveOrigin } : {}) }) } : undefined)}
         {/* La question en attente monte dans le carton d'une tâche en cours (#341, B1). */}
         {stepsQuestion && !(live && !current.done) && (
           <Box key="steps-question" paddingX={SPACE.indent}>
@@ -12556,7 +12615,8 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   // Le bloc « En cours » de Maestro (#160) : ses sessions qui tournent ou t'attendent, puis les tâches
   // qu'une autre session travaille (#187), en lignes ; la liste de la roadmap dessous ne les redit pas.
   // Toutes rangées par premier lancement (#195) : celles des autres sessions aussi, par la date de la leur.
-  if (maestroBrand) await learnCreated($, openTasks.filter(isLive).map(t => liveOf(t)?.entry.sessionId).filter((id): id is string => id !== undefined), now)
+  // #385 : partout, la date de chaque session en cours dit depuis quand elle tourne (une lecture par session).
+  await learnCreated($, openTasks.filter(isLive).map(t => liveOf(t)?.entry.sessionId).filter((id): id is string => id !== undefined), now)
   // Une session close et pas archivée y garde sa ligne, « Completed », comme dans la bande (#218).
   const blockRows = maestroBrand ? liveBlockRows(maestroBrand.tasks, openTasks, isLive, t => launchOf(t, liveOf(t)?.entry.sessionId, now), doneTasks) : []
   const blockOf = new Map(blockRows.flatMap(r => (r.brand ? [[r.brand.id, r.brand] as const] : [])))
@@ -12915,10 +12975,13 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   // découpe de la barre change. Pas de carte au survol (#145) : la ligne la coupait ; la fiche montre les étapes.
   // Une ligne du bloc « En cours » de Maestro (#160) lit les étapes et l'attente de sa session à lui.
   // La colonne tient tout son contenu, à la largeur du plus long compte montré (#177) : jamais coupé.
-  const stepsCells = rowStepsCells([
-    ...[...blockSteps].map(([id, st]) => stepsView(st.steps, { now, at: st.at, closed: blockOf.get(id)?.closed === true })?.count ?? ''),
-    ...[...rowSteps.values()].map(st => stepsView(st.steps, { now, at: st.at, closed: false })?.count ?? ''),
-  ])
+  // #385 : la colonne tient la plus longue durée montrée (« 2 h 10 »), l'horloge comptée à part.
+  const sinceText = (t: Task, block?: BrandTask) => {
+    const live = liveOf(t)
+    const sid = block?.sessionId ?? live?.entry.sessionId
+    return sinceLabel(block?.since ?? sinceOf(sid, live?.entry, live?.inferred ?? true), now)
+  }
+  const stepsCells = rowStepsCells([...blockTasks.map(t => sinceText(t, blockOf.get(t.id as string))), ...openTasks.filter(t => !inBlock(t) && isLive(t)).map(t => sinceText(t))])
   // Une session close du bloc (#218) : « Done » après la colonne des étapes, dans une case que toutes les lignes
   // du bloc gardent, pour que les barres restent alignées. L'archivage vit dans le centre de contrôle (#367, #381).
   const blockDone = [...blockOf.values()].some(bt => bt.state === 'done')
@@ -12956,6 +13019,8 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     // Close (#218) : la coche, violette quand la session ne tourne plus, et sa jauge pleine, comme la bande.
     const completed = block?.state === 'done'
     const view = status ? stepsView(status.steps, { now, at: status.at, closed: t.done }) : undefined
+    // #385 (maquette 2) : depuis quand sa session tourne, l'horloge devant, à la place du compte « 6/8 ».
+    const since = sinceText(t, block)
     const bar = status && view ? stepsBarIcon(palette, view.segments, { width: ROW_STEPS.bar, height: 4, waiting: waiting || status.question !== undefined, merging, finished: block?.finished === true }) : undefined
     const checkHex = block?.finished ? palette.finished : palette.done
     // Sa suite dans la file des tests lourds (#321, maquette C) : la pastille à la place de la barre et du compte.
@@ -12976,8 +13041,13 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
             <Svg source={`<svg xmlns="http://www.w3.org/2000/svg" width="${ROW_STEPS.bar}" height="4"/>`} alt="espace" width={ROW_STEPS.bar} height={4} />
           ))}
         {!queued && (
-          <Box width={stepsCells.count} flexShrink={0} flexDirection="row" justifyContent="flex-end">
-            {view && <Text size="caption" tabular color={palette.text3}>{view.count}</Text>}
+          <Box width={ROW_STEPS.clock + stepsCells.count} flexShrink={0} flexDirection="row" alignItems="center" justifyContent="flex-end" gap={0}>
+            {since !== '' && (
+              <Box width={ROW_STEPS.clock} flexShrink={0} flexDirection="row" alignItems="center">
+                {Svg ? <Svg source={clockIcon(palette.text3, 12)} alt="lancée depuis" width={12} height={12} /> : <Text size="caption" color={palette.text3}>◷</Text>}
+              </Box>
+            )}
+            {since !== '' && <Text size="caption" tabular color={palette.text3}>{since}</Text>}
           </Box>
         )}
       </Box>

@@ -2996,17 +2996,19 @@ export function squareHitWidth(centerPx: number, markPx: number): string {
  */
 export const TREE_LEAD_CELLS = 4
 
-/** La colonne d'une ligne en session (#145), en cellules sauf la barre (px) : l'icône, la barre, le compte au moins. */
-export const ROW_STEPS = { icon: 2, bar: 56, count: 5 } as const
+/** La colonne d'une ligne en session (#145), en cellules sauf la barre (px) : l'icône, la barre, l'horloge et la durée au moins (#385). */
+export const ROW_STEPS = { icon: 2, bar: 56, clock: 2, count: 6 } as const
 
 /**
- * La largeur de la colonne d'une ligne en session (#177) : l'icône, un écart, la barre, un écart et le
- * compte, à la largeur du plus long des comptes montrés (« 7/7 Done »). La colonne tient tout son
- * contenu : le compte n'est jamais coupé ni replié, et reste aligné d'une ligne à l'autre.
+ * La largeur de la colonne d'une ligne en session (#177) : l'icône, un écart, la barre, un écart,
+ * l'horloge et la durée depuis le lancement (#385, à la place du compte « 6/8 »), à la largeur de la plus
+ * longue montrée (« 2 h 10 »). La colonne tient tout son contenu : la durée n'est jamais coupée ni
+ * repliée, et reste alignée d'une ligne à l'autre.
  */
 export function rowStepsCells(counts: readonly string[]): { count: number; columns: number } {
   const count = Math.max(ROW_STEPS.count, ...counts.map(c => c.length))
-  return { count, columns: ROW_STEPS.icon + 1 + pxCells(ROW_STEPS.bar) + 1 + count }
+  // L'horloge devant la durée (#385, maquette 2) : son icône, collée à la durée.
+  return { count, columns: ROW_STEPS.icon + 1 + pxCells(ROW_STEPS.bar) + 1 + ROW_STEPS.clock + count }
 }
 
 /** La colonne du numéro d'une ligne (#198) : « #198 » calé à droite, un numéro cliquable (bouton) compris. */
@@ -3204,7 +3206,8 @@ export function stepGauge(given: readonly ChildStep[], o: { closed: boolean; age
       : done === n || o.closed
         ? { title: `${n} étapes faites`, sub: `la dernière : ${steps[n - 1]!.content}${at}`, tone: 'text' }
         : { title: `${done} faite${done > 1 ? 's' : ''} sur ${n}`, sub: `prochaine : ${steps.find(s => s.status === 'pending')?.content ?? ''}${at}`, tone: 'text' }
-  return { head: 'Étapes', count: `${done}/${n}`, segs, line }
+  // L'étape en cours, comme « Étape 5/7 » du haut de la fiche, la ligne En cours et la bande (#385) ; toutes faites, « 7/7 ».
+  return { head: 'Étapes', count: now >= 0 && !o.closed ? `${now + 1}/${n}` : `${done}/${n}`, segs, line }
 }
 
 /**
@@ -4057,6 +4060,14 @@ export function durationLabel(ms: number): string {
   const hours = Math.floor(minutes / 60)
   if (hours < 24) return `${hours} h ${String(minutes % 60).padStart(2, '0')}`
   return `${Math.floor(hours / 24)} j`
+}
+
+/**
+ * Depuis combien de temps une session tourne (#385) : la durée depuis son lancement, au format de
+ * `durationLabel` ; rien sans date lisible, plutôt qu'une durée fausse.
+ */
+export function sinceLabel(at: number | undefined, now: number): string {
+  return typeof at === 'number' && Number.isFinite(at) ? durationLabel(now - at) : ''
 }
 
 /** Un texte comparable : sans casse, sans accents, sans accents graves, espaces réduits. */
@@ -5370,33 +5381,97 @@ function stamped(steps: ChildStep[], now: number | undefined, was: readonly (Chi
 }
 
 /**
- * La durée de chaque étape, pour la fiche (#341, maquette B1) : faite, de son début à sa fin ; en cours,
- * jusqu'à maintenant, suivie de « … » (close : jusqu'à la dernière note `at`) ; sans début, rien.
+ * La part de chaque étape dans le temps de sa session (#341, #385), en ms : les étapes se partagent le temps
+ * sans se chevaucher, de l'origine (le lancement de la session, `origin` ; sinon le début de la première
+ * étape datée) à maintenant (close : sa fin, ou la dernière note `at`). Chacune va de son début au début de
+ * la suivante : le temps avant la première étape lui revient, une attente entre deux étapes reste à celle
+ * qui l'a précédée, et deux étapes commencées ensemble ne comptent qu'une fois la même plage ; l'étape en
+ * cours va de son début à maintenant, comme « depuis 5 min » du haut de la fiche. Une étape à faire, ou
+ * sans heure, n'a pas de part (`undefined`).
  */
-export function stepTimes(steps: readonly ChildStep[], o: { now: number; closed?: boolean; at?: number }): string[] {
-  return steps.map(s => {
-    const { start, end } = stepStamps(s)
-    if (start === undefined) return ''
-    if (end !== undefined) return durationLabel(end - start)
-    if (s.status === 'pending') return ''
-    if (o.closed) return o.at !== undefined && o.at > start ? durationLabel(o.at - start) : ''
-    return s.status === 'in_progress' ? `${durationLabel(o.now - start)}…` : ''
+function stepSpans(steps: readonly ChildStep[], o: { now: number; closed?: boolean; at?: number; origin?: number }): (number | undefined)[] {
+  const dated = steps.flatMap((s, i) => (stepStamps(s).start !== undefined && s.status !== 'pending' ? [i] : []))
+  const begins = new Map<number, number>()
+  dated.forEach((i, k) => {
+    const start = stepStamps(steps[i]).start as number
+    const prev = k > 0 ? begins.get(dated[k - 1] as number) : undefined
+    begins.set(i, prev !== undefined ? Math.max(start, prev) : o.origin !== undefined && Number.isFinite(o.origin) ? Math.min(o.origin, start) : start)
+  })
+  return steps.map((s, i) => {
+    const begin = begins.get(i)
+    if (begin === undefined) return undefined
+    const k = dated.indexOf(i)
+    const next = k + 1 < dated.length ? begins.get(dated[k + 1] as number) : undefined
+    const { end } = stepStamps(s)
+    // La dernière : close, jusqu'à sa fin ou la dernière note ; en cours, jusqu'à maintenant ; cochée dans une
+    // session qui tourne encore (`origin`), jusqu'à maintenant aussi, pour que le total reste celui du haut.
+    const stop = next ?? (o.closed ? (end ?? o.at) : s.status === 'in_progress' || o.origin !== undefined ? o.now : end)
+    return stop === undefined ? undefined : Math.max(0, stop - begin)
   })
 }
 
-/** Le temps mesuré de toutes les étapes (#341), pour la tête de la jauge : vide sans aucune heure. */
-export function stepsSpent(steps: readonly ChildStep[], o: { now: number; closed?: boolean; at?: number }): string {
-  let ms = 0
-  let seen = false
-  for (const s of steps) {
-    const { start, end } = stepStamps(s)
-    if (start === undefined || s.status === 'pending') continue
-    const stop = end ?? (o.closed ? o.at : s.status === 'in_progress' ? o.now : undefined)
-    if (stop === undefined || stop < start) continue
-    ms += stop - start
-    seen = true
+/** Des minutes comme `durationLabel`, sans plancher d'une minute : « 0 min », « 42 min », « 1 h 20 », « 3 j ». */
+function minutesLabel(minutes: number): string {
+  if (minutes < 60) return `${minutes} min`
+  const hours = Math.floor(minutes / 60)
+  return hours < 24 ? `${hours} h ${String(minutes % 60).padStart(2, '0')}` : `${Math.floor(hours / 24)} j`
+}
+
+/**
+ * Les parts en minutes entières dont la somme est le total arrondi (#385) : l'étape en cours (`fixed`) garde
+ * sa durée arrondie, celle du haut de la fiche ; les autres prennent leur partie entière, puis les plus
+ * grands restes une minute de plus, jusqu'au total. Arrondies une à une, au moins « 1 min » chacune, des
+ * étapes de 9, 1, 1, 1 et 2 min faisaient 14 min sous un total de 11.
+ */
+function spanMinutes(spans: readonly (number | undefined)[], fixed = -1): (number | undefined)[] {
+  const exact = spans.map(ms => (ms === undefined ? undefined : ms / 60_000))
+  const total = Math.round(exact.reduce<number>((a, m) => a + (m ?? 0), 0))
+  const out = exact.map(m => (m === undefined ? undefined : Math.floor(m)))
+  const kept = exact[fixed]
+  if (kept !== undefined) out[fixed] = Math.min(total, Math.max(total > 0 ? 1 : 0, Math.round(kept)))
+  let left = total - out.reduce<number>((a, m) => a + (m ?? 0), 0)
+  const order = exact
+    .map((m, i) => ({ i, rest: m === undefined || i === fixed ? -1 : m - Math.floor(m) }))
+    .filter(x => x.rest >= 0)
+    .sort((a, b) => b.rest - a.rest || a.i - b.i)
+  for (const { i } of order) {
+    if (left <= 0) break
+    out[i] = (out[i] as number) + 1
+    left--
   }
-  return seen ? durationLabel(ms) : ''
+  // Une étape en cours arrondie au-dessus de sa part : les autres rendent la minute de trop, la plus petite d'abord.
+  for (const { i } of [...order].reverse()) {
+    if (left >= 0) break
+    if ((out[i] as number) > 0) {
+      out[i] = (out[i] as number) - 1
+      left++
+    }
+  }
+  return out
+}
+
+/**
+ * La durée de chaque étape, pour la fiche (#341, maquette B1) : sa part du temps de la session (`stepSpans`,
+ * #385), en minutes qui font le total ; celle en cours suivie de « … » (close : jusqu'à la dernière note
+ * `at`) ; à faire ou sans heure, rien.
+ */
+export function stepTimes(steps: readonly ChildStep[], o: { now: number; closed?: boolean; at?: number; origin?: number }): string[] {
+  const running = o.closed ? -1 : steps.findIndex(s => s.status === 'in_progress' && stepStamps(s).end === undefined)
+  const minutes = spanMinutes(stepSpans(steps, o), running)
+  return steps.map((s, i) => {
+    const m = minutes[i]
+    if (m === undefined) return ''
+    return `${minutesLabel(m)}${!o.closed && s.status === 'in_progress' && stepStamps(s).end === undefined ? '…' : ''}`
+  })
+}
+
+/**
+ * Le temps de toutes les étapes (#341), pour la tête de la jauge : la somme de leurs parts, soit, avec
+ * `origin`, le temps depuis le lancement de la session, celui du haut de la fiche (#385) ; vide sans heure.
+ */
+export function stepsSpent(steps: readonly ChildStep[], o: { now: number; closed?: boolean; at?: number; origin?: number }): string {
+  const spans = stepSpans(steps, o).filter((x): x is number => x !== undefined)
+  return spans.length > 0 ? durationLabel(spans.reduce((a, b) => a + b, 0)) : ''
 }
 
 /**
@@ -9491,7 +9566,8 @@ export function maestroRelaunchContext(o: { source: Source; tasks: readonly Task
  * fini et sa branche attend sa fusion (#191), `done` close. `closed` : sa ligne est close ; `finished` : close et sa session ne tourne
  * plus (finie ou archivée), la tâche est toute finie (#145).
  */
-export type BrandTask = { id: string; label: string; state: 'wait' | 'live' | 'merge' | 'done'; sessionId?: string; closed?: true; finished?: true; archivable?: true; launchedAt?: number }
+/** Une tâche de la bande et du bloc « En cours » de Maestro ; `since` : la création de sa session, pour la durée live (#385). */
+export type BrandTask = { id: string; label: string; state: 'wait' | 'live' | 'merge' | 'done'; sessionId?: string; closed?: true; finished?: true; archivable?: true; launchedAt?: number; since?: number }
 
 /**
  * La place figée d'une tâche lancée (#195) : la date de sa session quand elle se lit, la plus ancienne
@@ -9606,19 +9682,29 @@ export type MaestroBand = { brand: Extract<Brand, { kind: 'maestro' }>; tasks: B
 
 /**
  * Si la bande au-dessus de la saisie porte l'arbre de Maestro (#147) : chez Maestro seulement, avec au
- * moins une tâche lancée, et jamais quand un sondage de l'app la tient. Sinon rien : la bande reste à l'app.
+ * moins une session, et jamais quand un sondage de l'app la tient. Sinon rien : la bande reste à l'app.
+ * Depuis #385, comme la ligne « En cours » de #381 : ses tâches lancées et celles qu'une autre session du
+ * projet travaille (`others`, un autre Maestro du même dossier), chacune une fois (la sienne l'emporte),
+ * rangées par premier lancement, les sans-date à la fin. Son en-tête compte ce qu'elle montre.
  */
-export function maestroBand(o: { brand: Brand | undefined; hasSurvey: boolean; shown: number }): MaestroBand | undefined {
-  if (o.hasSurvey || o.brand?.kind !== 'maestro' || o.brand.tasks.length === 0) return undefined
-  const tasks = o.brand.tasks.slice(0, o.shown)
-  return { brand: o.brand, tasks, more: o.brand.tasks.length - tasks.length }
+export function maestroBand(o: { brand: Brand | undefined; hasSurvey: boolean; shown: number; others?: readonly BrandTask[] }): MaestroBand | undefined {
+  if (o.hasSurvey || o.brand?.kind !== 'maestro') return undefined
+  const own = new Set(o.brand.tasks.map(t => t.id))
+  const at = (t: BrandTask) => (typeof t.launchedAt === 'number' && Number.isFinite(t.launchedAt) ? t.launchedAt : Number.POSITIVE_INFINITY)
+  const others = (o.others ?? []).filter((t, i, all) => !own.has(t.id) && all.findIndex(x => x.id === t.id) === i)
+  // Le tri est stable : à date égale, ou sans date, les siennes d'abord, dans leur ordre.
+  const all = others.length === 0 ? o.brand.tasks : [...o.brand.tasks, ...others].sort((a, b) => (at(a) === at(b) ? 0 : at(a) < at(b) ? -1 : 1))
+  if (all.length === 0) return undefined
+  const tasks = all.slice(0, o.shown)
+  return { brand: { ...o.brand, tasks: all }, tasks, more: all.length - tasks.length }
 }
 
 /**
  * Ce que `/maestro-bar` a trouvé (#225) : une session de tâche (`task`) ou lancée par un Maestro
  * (`child`), dont le Maestro porte la bande ; pas de roadmap ; une lecture en panne ; ou Maestro, avec
  * ses sessions, la marque posée par la commande, une question de la boîte de fin à l'écran, et si l'app
- * a déjà demandé la bande à ce plugin depuis son chargement.
+ * a déjà demandé la bande à ce plugin depuis son chargement. `tasks` : les sessions que la bande montre,
+ * celles du projet depuis #385.
  */
 export type MaestroBarCase =
   | { kind: 'task'; id: string }
@@ -9635,31 +9721,48 @@ export function maestroBarText(c: MaestroBarCase): string {
   if (c.kind === 'no-roadmap') return `${lead}aucune roadmap pour ce projet, elle n'a rien à montrer.`
   if (c.kind === 'unread') return `${lead}la roadmap ou la liste des sessions n'a pas pu se lire, réessaie dans un instant.`
   const marked = c.marked ? 'Session marquée Maestro. ' : ''
-  if (c.tasks === 0) return `${marked}${lead}aucune session lancée, elle paraîtra au premier lancement.`
-  const said = [`Bande de Maestro redessinée : ${c.tasks} session${c.tasks > 1 ? 's' : ''}.`]
+  // #385 : la bande montre les sessions du projet, tous Maestro du même dossier confondus.
+  if (c.tasks === 0) return `${marked}${lead}aucune session en cours dans le projet, elle paraîtra à la première.`
+  const said = [`Bande de Maestro redessinée : ${c.tasks} session${c.tasks > 1 ? 's' : ''} du projet.`]
   if (c.survey) said.push('La question de la boîte de fin tient sa place : elle revient à la réponse.')
   if (!c.drawn) said.push("L'app n'a encore jamais demandé la bande à ce plugin : sa version n'a peut-être pas de bande au-dessus de la saisie (AbovePrompt).")
   return marked + said.join(' ')
 }
 
-/** La case de l'étape de la bande de Maestro, au plus, en cellules (#211) : au-delà, l'étape se tronque et le titre garde sa place. */
-export const BAND_STEP_MAX = 24
+/**
+ * La case d'info de la bande de Maestro, au plus, en cellules (#211, #385) : la durée, le compte et une
+ * étape de 24 signes ; au-delà, l'étape se tronque et le titre garde sa place.
+ */
+export const BAND_INFO_MAX = 40
 
 /**
- * Les cases du compte, de l'étape, de l'état et de l'archivage de la bande de Maestro, en cellules (#174) :
- * chacune à la largeur du plus long texte réel de la bande (un signe par cellule, le corps `caption` est
- * plus étroit) ; l'état, une icône de 2 et son mot à 1 d'écart (#211) ; l'étape plafonnée à `BAND_STEP_MAX`
- * (#211) ; l'icône d'archivage en 2, et pas de case d'archivage quand aucune ligne n'en a. Serrées, le
- * groupe se colle au bord droit ; la même largeur sur chaque ligne garde les colonnes (#172).
+ * L'info d'une ligne de la bande de Maestro (#385, version corrigée 2 de la maquette) : « 42 min · 6/7 ·
+ * Écrire les tests rouges », sur une ligne, l'horloge devant (dessinée à part). La durée depuis le
+ * lancement de la session, le compte de ses étapes (« 4/4 » quand toutes sont faites, sans « Done » :
+ * l'état le dit), puis l'étape en cours, sauf pour une tâche finie. Ce qui manque ne laisse pas de point.
  */
-export function bandColumns(o: { counts: readonly string[]; states: readonly string[]; archive: boolean; steps?: readonly string[] }): { count: number; state: number; archive: number; step: number } {
+export function bandInfo(o: { since: string; view?: StepsView; finished?: boolean }): string {
+  const v = o.view
+  const count = v ? (v.current === undefined ? `${v.done}/${v.total}` : v.count) : ''
+  const step = o.finished ? '' : (v?.current ?? '')
+  return [o.since, count, step].filter(x => x !== '').join(' · ')
+}
+
+/**
+ * Les cases de l'info, de l'état et de l'archivage de la bande de Maestro, en cellules (#174) : chacune à
+ * la largeur du plus long texte réel de la bande (un signe par cellule, le corps `caption` est plus
+ * étroit) ; l'info (durée, compte et étape, #385) plafonnée à `BAND_INFO_MAX`, sans l'horloge qui la
+ * précède ; l'état, une icône de 2 et son mot à 1 d'écart (#211) ; l'icône d'archivage en 2, et pas de
+ * case d'archivage quand aucune ligne n'en a. Serrées, le groupe se colle au bord droit ; la même largeur
+ * sur chaque ligne garde les colonnes (#172).
+ */
+export function bandColumns(o: { infos: readonly string[]; states: readonly string[]; archive: boolean }): { info: number; state: number; archive: number } {
   const widest = (xs: readonly number[]) => xs.reduce((a, b) => Math.max(a, b), 0)
   const state = widest(o.states.map(s => [...s].length))
   return {
-    count: widest(o.counts.map(c => [...c].length)),
+    info: Math.min(BAND_INFO_MAX, widest(o.infos.map(c => [...c].length))),
     state: state > 0 ? 3 + state : 0,
     archive: o.archive ? 2 : 0,
-    step: Math.min(BAND_STEP_MAX, widest((o.steps ?? []).map(s => [...s].length))),
   }
 }
 
@@ -9692,6 +9795,8 @@ export function maestroBrandTasks(
     asking?: boolean
     /** Sa note d'étapes : sans verdict ni étapes cochées, elle n'est pas « à fusionner » (#384). */
     status?: ChildStatus
+    /** La création de sa session, ou son lancement par le panneau : la durée live (#385). */
+    since?: number
   }[],
 ): BrandTask[] {
   // Par premier lancement, la plus ancienne en haut, closes à leur place (#143, #195, demande de
@@ -9712,6 +9817,7 @@ export function maestroBrandTasks(
       // Close, sa session encore ouverte et à l'arrêt : l'icône d'archivage de la bande (#174).
       ...(e.done && e.open && !e.running ? { archivable: true as const } : {}),
       ...(Number.isFinite(at(e)) ? { launchedAt: at(e) } : {}),
+      ...(typeof e.since === 'number' && Number.isFinite(e.since) ? { since: e.since } : {}),
     }))
 }
 

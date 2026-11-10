@@ -1,17 +1,17 @@
-# roadmap 0.245.0 : SHA-256 de chaque fichier installé du plugin, chemins relatifs à son dossier.
-# Vérifier une copie installée (~/.claude/plugins/cache/roadmap/roadmap/0.245.0) : plugins/roadmap/SECURITE.md, « Vérifier que ta copie est une vraie version ».
-cc07749cef1edbf71a7ccac8c0fd96d70dd82b54300dc982dbb191c267112ac6  .claude-plugin/plugin.json
-32a7a6812393f7af50942f64a5b8b099ca1bb1f9b52f1054e7acb92fef2f2ccf  README.md
-f10e58929015f008c9d18bac536b500ddc8cf7749de904721442d8eddfd05300  SECURITE.md
+# roadmap 0.246.0 : SHA-256 de chaque fichier installé du plugin, chemins relatifs à son dossier.
+# Vérifier une copie installée (~/.claude/plugins/cache/roadmap/roadmap/0.246.0) : plugins/roadmap/SECURITE.md, « Vérifier que ta copie est une vraie version ».
+ed12781674309ca23f3b4f610eb3fb3a27376dbddfd88944f3b720398fce39cb  .claude-plugin/plugin.json
+fbbab8fc6e6bd7d15b0ae91522c8f3c91e70b15c7936785a165ed9a7505c07b3  README.md
+d0a3f42e1ccd7b822d7eb21f04f9fb0a2c0e58c05186ca05fc464824b0ef2a40  SECURITE.md
 bce019cb7147413a8e5f0687df59a41394fa92545568b5d37b1df8bd6d885e30  hooks/bar-hit.tsx
 5058cf225b60518571323c473ac505c54dbc93e93a6aef9991e50609446219f8  hooks/cartes.tsx
 bb4a7f424b0d21642e0ce0b715efad3eb0c05e34eba4c2901ce96c0a8ce87f79  hooks/controle.tsx
 24387c7ebf678c8c7ed5c9cee4be7aa908712c43d03f08c0106f5342c16f823f  hooks/donut-hit.tsx
 d842d789476d67282d0f04b7e5fdc68a3d981ccec65dd79cfa2d11eed13fb828  hooks/hooks.json
 9990f6f550751723b6ad5d9c4a06d33ba4991768c735f6b3c92a12878e938e42  hooks/icons.ts
-cd03d8628ec2a91e57a881b290175fb5b0373ec01920bc504a2e6c6721b21412  hooks/parse.ts
+f748fb9b88dc4d4e7272bbe5735025a0503dfbd14883988ac32b0b0d98456308  hooks/parse.ts
 a29e07be4f95c637c8f3ab377dc9a97cd16de11e8e7de7062311dd2888a0833f  hooks/press-hit.tsx
-b15d11cc5f98f7fe4c6d7deaa78448a9bc2df47d3d7503960a2090ba24f3d2d7  hooks/register.tsx
+4977334353202f02a072c65ffc69a5fdb8274321acf2eaf4fc9953ed98e423b5  hooks/register.tsx
 9289599510b9c12c522e148c2f0e7610bf0fd50ef38065b9f70cd14a7a163a21  hooks/reglages.tsx
 ee3e0d04f7d05c2d22300d69accad8bfedf06ecc1f86452e4537fc20ffe68905  hooks/tokens.ts
 9d6d0dc2270f4b583c5e3d100f35b78fb91a3264ebc016a0075d5c81a1b60122  scripts/one-at-a-time.sh

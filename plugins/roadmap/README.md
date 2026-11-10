@@ -208,21 +208,24 @@ par session lancée, son état en mots (#104). Il n'y a plus de carte HTML de Ma
 native est le seul affichage des étapes : la bande que le plugin dessinait au-dessus de la saisie
 (#104, #107) la doublait et est retirée (#109). La consigne la veut lisible : trois à sept étapes,
 un verbe et son objet chacune, jamais recopiée dans le message, à jour à chaque changement.
-Chez Maestro, la bande au-dessus de la saisie porte l'arbre de ses sessions (#147) : une ligne par
-tâche lancée : le numéro, le nom qui ouvre la session, puis au bord droit sa jauge, son compte, son
-étape en cours et son état en icône et en mot (« en cours », « t'attend », « à fusionner »,
-« Completed », #211). Elle
+Chez Maestro, la bande au-dessus de la saisie porte l'arbre des sessions du projet (#147 ; depuis
+#385, tous Maestro du même dossier confondus, comme la ligne « En cours » de #381 : elle paraît dès
+qu'une session tourne, même chez un Maestro qui n'a rien lancé) : une ligne par tâche : le numéro, le
+nom qui ouvre la session, puis au bord droit sa jauge, sur une ligne « ◷ 42 min · 6/7 · étape en
+cours » (depuis quand sa session tourne, son compte, son étape, #385) et son état en icône et en mot
+(« en cours », « t'attend », « à fusionner », « Completed », #211). Elle
 reste visible quand le fil défile, cède à un sondage, et s'efface tant que la boîte de fin pose une
 question ; la liste native reste dans le fil. Une session close et à l'arrêt, encore ouverte, porte au
 bout de sa ligne l'icône d'archivage : un clic l'archive (#174). L'en-tête dit « Contexte 40 % » pour
 Maestro seul, sans tokens ni jauge (#174) ; sous la jauge d'étapes de chaque ligne, une jauge fine dit le
-contexte de sa session, noté à la fin de chacun de ses tours, orange à 70 %, rouge à 85 % (#157, revenue par #217). La jauge, le compte, l'étape et
-l'état se serrent au bord droit, chacun à la largeur de son plus long texte, alignés d'une ligne à
-l'autre (#174, #211).
+contexte de sa session, noté à la fin de chacun de ses tours, orange à 70 %, rouge à 85 % (#157, revenue par #217). La jauge, l'info (durée, compte,
+étape) et l'état se serrent au bord droit, chacun à la largeur de son plus long texte, alignés d'une
+ligne à l'autre (#174, #211, #385). Dans la ligne « En cours » dépliée du panneau, chaque session dit
+de même depuis quand elle tourne, l'horloge devant, à la place du compte « 6/8 » (#385).
 `/maestro-bar` force la bande (#225, demande de Bertrand du 02/11/2026) : la commande relit la fiche
 de la session, pose la marque Maestro (comme dire « Maestro »), relit les sessions, redessine la bande
 et dit en une ligne ce qu'elle montre, ou pourquoi rien : session de tâche ou lancée par un Maestro
-(son Maestro porte la bande), aucune session lancée, roadmap absente ou illisible, question de la
+(son Maestro porte la bande), aucune session en cours dans le projet (#385), roadmap absente ou illisible, question de la
 boîte de fin à l'écran, app qui n'a jamais demandé la bande. Une session renommée « Maestro … » ou
 qui vient de dire « Maestro » voit aussi sa bande paraître seule, sans attendre qu'une session bouge.
 
@@ -750,6 +753,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.246.0 (2026-11-09)** : panneau : la ligne En cours et la bande de Maestro disent depuis quand chaque session tourne, à la place du compte d'étapes ; la bande paraît pour toutes les sessions du projet (#385)
 - **0.245.0 (2026-11-09)** : maestro : une seule file des tests lourds pour tout le Mac, avec des places réglables (« Suites de tests sur le Mac »), la fusion et la publication de Maestro en tête, chaque suite en priorité basse, et tools/un_test.sh pour un fichier seul (#323)
 - **0.244.7 (2026-11-09)** : maestro : sous Remote Control, hors mode Auto, la relève de la file pose elle-même la carte de la tâche (plus de message refusé par l'app) ; le centre de contrôle dit « carte posée · clique Start » (#393)
 - **0.244.6 (2026-11-09)** : maestro : une session ne demande plus jamais à BBR de tester un rendu non publié ; elle demande elle-même à Maestro « fusionne et publie #N », Maestro publie aussitôt et lui renvoie la version, puis vient la capture (#396)
