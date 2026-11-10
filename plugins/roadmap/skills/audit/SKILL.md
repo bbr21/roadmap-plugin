@@ -21,6 +21,8 @@ subject, every delay settled by a question, every task done on proof marked done
   in one go. The backup (`sauvegarde-audit-…/`) goes in the folder's `_to_delete/` when it has one;
   for a Cowork folder (a `cowork.json` at its root) without one, outside it, in `~/.claude/roadmap-sauvegardes/<folder>/`,
   where its doctor does not take it for a fiche; else next to the roadmap (#262).
+  After each backup, older ones of the same kind in the same place are deleted when they are both
+  more than 7 days old (date read from the name) and not among the 20 most recent (#413).
 - **The project's rules win.** `ROADMAP-REGLES.md` (#167, next to `ROADMAP.md`, or the file the
   `regles` key declares) and what `.claude/roadmap.json` declares (`ecriture`, `preuves`,
   `requis`, `cles`) are read on every pass, never copied here. Read the rules file **in full**

@@ -313,7 +313,8 @@ Then:
 - **without `ecriture`**: run again with `--apply`. It backs the files up in
   `sauvegarde-tasks-…/` (in the folder's `_to_delete/` when it has one; for a Cowork folder without it, outside it,
   in `~/.claude/roadmap-sauvegardes/<folder>/`, where its doctor does not take it for a fiche;
-  else next to the roadmap, #262), then writes everything in one go;
+  else next to the roadmap, #262; older `sauvegarde-tasks-…/` there are deleted when both more than
+  7 days old and not among the 20 most recent, #413), then writes everything in one go;
 - **with `ecriture`**: `--apply` is refused. Hand the dry run's lines to the project's tool
   (`ecriture.outil`), as `ecriture.consigne` says (at Blur: `patch.py <spec>`, dry run then
   `--apply`, the note, the fiches and the roadmap in one go).

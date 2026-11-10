@@ -1233,7 +1233,40 @@ def _sauvegarder(rdir, maintenant, chemins, prefixe="sauvegarde-audit-"):
     for p in sorted(chemins):
         if os.path.isfile(p):
             shutil.copy2(p, os.path.join(sauvegarde, os.path.basename(p)))
+    purger_sauvegardes(rdir, prefixe, maintenant)
     return sauvegarde
+
+
+# Les sauvegardes gardées (#413) : toute sauvegarde de moins de `GARDE_JOURS` jours, et les
+# `GARDE_NOMBRE` plus récentes quel que soit leur âge.
+GARDE_JOURS = 7
+GARDE_NOMBRE = 20
+
+
+def purger_sauvegardes(rdir, prefixe, maintenant):
+    """Supprime dans `rdir` les dossiers `<prefixe>AAAA-MM-JJ-HHMMSS[-N]` à la fois plus vieux que
+    `GARDE_JOURS` jours et hors des `GARDE_NOMBRE` plus récents (#413). La date se lit dans le nom ;
+    un nom illisible, un fichier ou un autre préfixe ne se touche pas. Rend les dossiers supprimés."""
+    motif = re.compile(re.escape(prefixe) + r"(\d{4}-\d{2}-\d{2}-\d{6})(?:-(\d+))?$")
+    datees = []
+    for nom in os.listdir(rdir):
+        m = motif.match(nom)
+        chemin = os.path.join(rdir, nom)
+        if not m or os.path.islink(chemin) or not os.path.isdir(chemin):
+            continue
+        try:
+            quand = datetime.datetime.strptime(m.group(1), "%Y-%m-%d-%H%M%S")
+        except ValueError:
+            continue
+        datees.append((quand, int(m.group(2) or 1), chemin))
+    datees.sort(reverse=True)
+    limite = maintenant - datetime.timedelta(days=GARDE_JOURS)
+    parties = []
+    for quand, _, chemin in datees[GARDE_NOMBRE:]:
+        if quand < limite:
+            shutil.rmtree(chemin)
+            parties.append(chemin)
+    return parties
 
 
 def lignes_changees(avant, apres):
