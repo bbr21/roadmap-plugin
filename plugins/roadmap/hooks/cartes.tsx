@@ -5,7 +5,7 @@
 
 import type { EngineInterface, RenderElement } from 'claude-code'
 
-import { daysBetween, dueLabel, isPriority, isThirdParty, roadmapAxes, shortAttend, testTitle, type Bilan, type Task } from './parse'
+import { daysBetween, dueLabel, isPriority, isThirdParty, queueRank, roadmapAxes, shortAttend, testTitle, type Bilan, type Task } from './parse'
 import { SPACE, type Palette } from './tokens'
 
 /** La sorte d'une ligne : une tâche neuve, mise à jour, faite ou annulée. */
@@ -100,6 +100,8 @@ export type WrittenCard = {
   change: string
   foot: FootRun[][]
   session?: true
+  /** #388 : une nouvelle tâche ouverte que personne ne tient : le pied porte « Start » à côté de « Ouvrir la task ». */
+  start?: true
 }
 
 /** Ce que la mémoire de l'avant garde d'une tâche (#371) : les trois champs que la carte montre en « avant → après ». */
@@ -257,7 +259,8 @@ export function writtenCards(lines: readonly WrittenLine[], tasks: readonly Task
       const took = tookDays(task)
       if (took) foot.push([{ text: took, ink: 'text2' }])
     }
-    return { id: line.id, kind: line.kind, title, change, foot, ...(who?.session ? { session: true as const } : {}) }
+    const startable = line.kind === 'new' && live && !who?.session
+    return { id: line.id, kind: line.kind, title, change, foot, ...(who?.session ? { session: true as const } : {}), ...(startable ? { start: true as const } : {}) }
   })
 }
 
@@ -370,7 +373,18 @@ export function clampDescription(text: string, max = DESCRIPTION_MAX): string {
 const footInk = (p: Palette, ink: FootInk): string => ({ text: p.text, text2: p.text2, late: p.lateOn, soon: p.blockOn, wait: p.waitOn, live: p.liveOn })[ink]
 
 /** Ce que le hook donne au dessin en plus des cartes : l'ouverture de la fiche d'une tâche (le bouton « Ouvrir la task ») et la croix qui ferme la carte. */
-export type WrittenDrawOptions = { open?: (id: string) => void; openSession?: (id: string) => void; close?: (id: string) => void }
+export type WrittenDrawOptions = {
+  open?: (id: string) => void
+  openSession?: (id: string) => void
+  close?: (id: string) => void
+  /** #388 : le clic sur « Start » d'une carte Nouvelle. */
+  start?: (id: string) => void
+  /** #388 : ce que le clic a fait de la carte (en file chez Maestro, ou carte « New session » proposée) ; sans état, « Start » reste cliquable. */
+  started?: (id: string) => WrittenStart | undefined
+}
+
+/** #388 : l'état d'une carte après « Start » : en file chez un Maestro (rang, 1 pour la prochaine), ou la carte « New session » posée. */
+export type WrittenStart = { state: 'queued'; rank: number; maestro: string } | { state: 'proposed' }
 
 /** L'encre du point et du mot de la sorte (version 5) : nouvelle verte, mise à jour bleue, faite violette, annulée grise. */
 const kindInk = (p: Palette, kind: WrittenKind): string => ({ new: p.ok, upd: p.liveOn, done: p.finishedOn, cancel: p.text3 })[kind]
@@ -401,6 +415,19 @@ export function drawWrittenMessage(el: ReturnType<EngineInterface['ui']['resolve
       ))
       return i === 0 ? runs : [<Text key={`dot${i}`} color={palette.text3}>{' · '}</Text>, ...runs]
     })
+    const started = c.start ? o.started?.(c.id) : undefined
+    const note = started && (
+      <Box key={`written-note:${c.id}${suffix}`} paddingLeft="lg" paddingBottom="md">
+        {started.state === 'queued' ? (
+          <Text size="body" color={palette.text2}>
+            <Text color={palette.waitOn}>{`En file chez ${started.maestro}`}</Text>
+            <Text color={palette.text2}>{` · ${queueRank(started.rank)}, part seule à son tour`}</Text>
+          </Text>
+        ) : (
+          <Text size="body" color={palette.text2}>La carte « New session » est posée plus bas : Start pour lancer</Text>
+        )}
+      </Box>
+    )
     return (
       <Box key={`written:${c.id}${suffix}`} flexDirection="column" width="60%" borderStyle="round" borderColor={palette.border} paddingX={0} paddingY={0}>
         {/* Le filet du bandeau est de la couleur de son fond : ses coins s'arrondissent dans ceux de la carte. */}
@@ -421,7 +448,7 @@ export function drawWrittenMessage(el: ReturnType<EngineInterface['ui']['resolve
           </Box>
           {c.change !== '' && <Text size="body" color={palette.text2} wrap="wrap">{clampDescription(c.change)}</Text>}
         </Box>
-        <Box key="written-foot" flexDirection="row" alignItems="center" justifyContent="space-between" gap={SPACE.block} paddingLeft="lg" paddingRight="md" paddingTop="xs" paddingBottom="md">
+        <Box key="written-foot" flexDirection="row" alignItems="center" justifyContent="space-between" gap={SPACE.block} paddingLeft="lg" paddingRight="md" paddingTop="xs" paddingBottom={note ? 'xs' : 'md'}>
           <Box key="written-foot-left" flexDirection="row" alignItems="center" flexGrow={1} flexShrink={1} minWidth={0}>
             {foot.length > 0 && (
               <Text key={`written-meta:${c.id}${suffix}`} size="body" color={palette.text2} wrap="truncate-end">
@@ -429,13 +456,24 @@ export function drawWrittenMessage(el: ReturnType<EngineInterface['ui']['resolve
               </Text>
             )}
           </Box>
-          <Button
-            key={n === 0 ? `written-open:${c.id}` : `written-open:${c.id}${suffix}`}
-            variant="primary"
-            label={c.session ? 'Ouvrir la session' : 'Ouvrir la task'}
-            onPress={() => (c.session ? o.openSession?.(c.id) : o.open?.(c.id))}
-          />
+          <Box key="written-foot-actions" flexDirection="row" alignItems="center" gap={SPACE.tight} flexShrink={0}>
+            <Button
+              key={n === 0 ? `written-open:${c.id}` : `written-open:${c.id}${suffix}`}
+              {...(c.start ? { plain: true } : { variant: 'primary' as const })}
+              label={c.session ? 'Ouvrir la session' : 'Ouvrir la task'}
+              onPress={() => (c.session ? o.openSession?.(c.id) : o.open?.(c.id))}
+            />
+            {c.start && (
+              <Button
+                key={n === 0 ? `written-start:${c.id}` : `written-start:${c.id}${suffix}`}
+                {...(started ? {} : { variant: 'primary' as const })}
+                label={started ? (started.state === 'queued' ? `En file · ${queueRank(started.rank)}` : 'Proposée') : 'Start'}
+                onPress={() => (started ? undefined : o.start?.(c.id))}
+              />
+            )}
+          </Box>
         </Box>
+        {note}
       </Box>
     )
   }

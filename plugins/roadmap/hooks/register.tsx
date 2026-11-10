@@ -101,7 +101,7 @@ import {
   donutIcon,
 } from './icons'
 import { MIX, PX, RADIUS, SIZE, SPACE, TEXT } from './tokens'
-import { BEFORE_KEY, CLOSED_KEY, beforeMap, closedKeys, drawWrittenMessage, keepBefore, keepClosed, splitWritten, testSessions, withoutClosed, writtenCards, type WrittenLine, type WrittenWho } from './cartes'
+import { BEFORE_KEY, CLOSED_KEY, beforeMap, closedKeys, drawWrittenMessage, keepBefore, keepClosed, splitWritten, testSessions, withoutClosed, writtenCards, type WrittenLine, type WrittenStart, type WrittenWho } from './cartes'
 import { CONTROL_PANE, drawControl, openControl, redrawControl, type ControlDeps } from './controle'
 import { SETTINGS_PANE, drawSettings, openSettings, prefsFile, redrawSettings, rememberLoadedOptions, sessionProject, watchSettings, type SettingsProject } from './reglages'
 import {
@@ -475,6 +475,7 @@ import {
   launchGate,
   projectTaken,
   globalQueueOrder,
+  sessionTitleFor,
   liveQueue,
   launchInFlight,
   pauseRunnable,
@@ -2807,6 +2808,87 @@ async function loadProposals($: EngineInterface): Promise<MaestroProposal[]> {
 }
 
 /**
+ * Le Maestro racine de cette session et sa propre fiche (`get_session self`, puis `list_sessions` `linked`, archivées
+ * comprises : la remontée passe un parent archivé, #71). Sans parent, sans Maestro, ou au moindre refus ou panne : rien.
+ */
+async function rootMaestroAndSelf($: EngineInterface): Promise<{ maestro: { id: string; title: string }; self: { sessionId?: unknown; title?: unknown } } | undefined> {
+  try {
+    const selfRan = await $.tool.call({ tool: GET_SESSION_TOOL, session_id: 'self' })
+    if (selfRan.deny !== undefined || selfRan.isError) return undefined
+    const self = JSON.parse(selfRan.text ?? '') as { sessionId?: unknown; title?: unknown; parentSessionId?: unknown } | undefined
+    if (typeof self?.parentSessionId !== 'string') return undefined
+    const listRan = await $.tool.call({ tool: LIST_SESSIONS_TOOL, linked: true, include_archived: true, limit: LIST_LIMIT })
+    if (listRan.deny !== undefined || listRan.isError) return undefined
+    const rows: unknown = JSON.parse(listRan.text ?? '[]')
+    const maestro = maestroParentOf(self, Array.isArray(rows) ? rows : [], new Set(Object.keys(await loadMaestros($))))
+    return maestro ? { maestro, self } : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/** Le Maestro racine de cette session (#388, la même remontée que `forwardProposal`) : son numéro et son titre, ou rien. */
+async function rootMaestro($: EngineInterface): Promise<{ id: string; title: string } | undefined> {
+  return (await rootMaestroAndSelf($))?.maestro
+}
+
+/** Ce que « Start » d'une carte écrite a fait (#388), par `<projet>|<id>` : la carte le redit tant que le module vit. */
+const cardStarts = new Map<string, WrittenStart>()
+/** Les « Start » en cours (#388) : un second clic pendant la lecture des sessions ne double rien. */
+const cardStarting = new Set<string>()
+
+/**
+ * « Start » sur la carte d'une tâche nouvelle (#388). Sous un Maestro : la tâche entre dans la file commune à son nom
+ * (sa relève la lancera à son tour, comme un ▶, sans message ni carte posée d'ici). Sans Maestro : le ▶ du panneau,
+ * qui pose la carte « New session ». Un second clic ne fait rien ; la carte redessinée dit où en est la tâche.
+ */
+async function startFromCard($: EngineInterface, source: Source, id: string, shortTitle: string): Promise<void> {
+  const key = `${source.root ?? source.dir}|${id}`
+  if (cardStarts.has(key) || cardStarting.has(key)) return
+  cardStarting.add(key)
+  try {
+    const opened = await load($, files(source).open, 'ROADMAP.md')
+    const tasks = typeof opened === 'string' ? [] : opened
+    const task = tasks.find(t => t.id === id && !t.done)
+    if (!task) return
+    const maestro = await rootMaestro($)
+    if (maestro) {
+      const now = await $.clock.now()
+      const dose = doseProject()
+      const project = dose.project !== '' ? dose.project : (source.root ?? source.dir)
+      const match = dose.project !== '' ? dose.match : (source.match ?? [])
+      const queued = await writeOwnQueue($, maestro.id, own => {
+        const kept = own.filter(q => q.id !== id || q.kind === 'resume')
+        const before = own.find(q => q.id === id && q.kind !== 'resume')
+        const entry: GlobalQueued = {
+          id,
+          title: sessionTitleFor(task, shortTitle),
+          launch: { shortTitle },
+          at: before?.at ?? now,
+          maestro: maestro.id,
+          project,
+          match,
+          after: [...prereqsIn(tasks)(id)],
+          ...(isPriority(task) ? { prio: true as const } : {}),
+        }
+        return [...kept, entry]
+      })
+      const order = globalQueueOrder(queued).filter(q => q.kind !== 'resume')
+      const rank = Math.max(1, order.findIndex(q => q.id === id && q.project === project) + 1)
+      cardStarts.set(key, { state: 'queued', rank, maestro: maestro.title || 'Maestro' })
+    } else {
+      await launchSession($, source, task, shortTitle)
+      cardStarts.set(key, { state: 'proposed' })
+    }
+  } catch {
+    // une panne : la carte garde son « Start », un nouveau clic réessaie
+  } finally {
+    cardStarting.delete(key)
+  }
+  await update($, retryAtom, v => v + 1)
+}
+
+/**
  * Bertrand ne pilote ses sessions que par Maestro (demande du 2026-10-27) et ne veut qu'un niveau sous
  * lui (#132, 2026-10-30) : toute création de session que le modèle demande dans un descendant de
  * Maestro, carte `own_initiative`, `offer` ou lancement `user_asked`, part à son Maestro racine
@@ -2833,21 +2915,9 @@ async function forwardProposal(
   if (typeof card.title !== 'string') return pass()
   // Un lancement ailleurs ne tient que dans un user_asked : une carte de Maestro ne le porterait pas.
   if (ELSEWHERE_OPTIONS.some(k => card[k] !== undefined)) return pass()
-  let maestro: { id: string; title: string } | undefined
-  let self: { sessionId?: unknown; title?: unknown } | undefined
-  try {
-    const selfRan = await $.tool.call({ tool: GET_SESSION_TOOL, session_id: 'self' })
-    if (selfRan.deny !== undefined || selfRan.isError) return pass()
-    self = JSON.parse(selfRan.text ?? '') as typeof self
-    if (typeof (self as { parentSessionId?: unknown } | undefined)?.parentSessionId !== 'string') return pass()
-    // Les archivées comprises : la remontée passe un parent archivé (#71).
-    const listRan = await $.tool.call({ tool: LIST_SESSIONS_TOOL, linked: true, include_archived: true, limit: LIST_LIMIT })
-    if (listRan.deny !== undefined || listRan.isError) return pass()
-    const rows: unknown = JSON.parse(listRan.text ?? '[]')
-    maestro = maestroParentOf(self, Array.isArray(rows) ? rows : [], new Set(Object.keys(await loadMaestros($))))
-  } catch {
-    return pass()
-  }
+  const found = await rootMaestroAndSelf($)
+  const maestro = found?.maestro
+  const self = found?.self
   if (!maestro || typeof self?.sessionId !== 'string') return pass()
   const name = maestro.title || 'Maestro'
   if (card.context === 'fork') return { deny: proposalRetryNote(name, 'fork', initiation) }
@@ -8772,7 +8842,7 @@ export const register: Register = (on, options) => {
         const entry = sessions.get(id)
         void (entry ? openSession($, entry) : openTaskFiche($, source, id))
       }
-      return drawWrittenMessage($.ui.resolve(e), parts, cards, data.palette, { open: id => void openTaskFiche($, source, id), openSession: openSessionOf, close: id => void $.store.get(CLOSED_KEY).catch(() => undefined).then(stored => storeSet($, CLOSED_KEY, keepClosed(stored, `${fingerprint}:${id}`) as StoreValue)).then(() => update($, retryAtom, v => v + 1)) })
+      return drawWrittenMessage($.ui.resolve(e), parts, cards, data.palette, { open: id => void openTaskFiche($, source, id), openSession: openSessionOf, start: id => { const t = tasks.find(x => x.id === id); if (t) void startFromCard($, source, id, shownTitle(t, data.titles)) }, started: id => cardStarts.get(`${source.root ?? source.dir}|${id}`), close: id => void $.store.get(CLOSED_KEY).catch(() => undefined).then(stored => storeSet($, CLOSED_KEY, keepClosed(stored, `${fingerprint}:${id}`) as StoreValue)).then(() => update($, retryAtom, v => v + 1)) })
     } catch (err) {
       $.ui.log(`roadmap : cartes des tâches écrites non dessinées (${err instanceof Error ? err.message : String(err)})`, { to: 'debug' })
       return next(e)
