@@ -756,6 +756,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.251.2 (2026-11-10)** : maestro : la suite entière tourne sur GitHub Actions à chaque PR et sur main, Maestro y lit le résultat ; deux tests passent sous root et sur un clone superficiel (#407)
 - **0.251.1 (2026-11-10)** : panneau : un dessin trop gros pour l'app se replie et s'allège au lieu de laisser le volet vide (bandes repliées d'office passé 40 lignes, pesée de l'arbre, carte « trop gros ») (#414)
 - **0.251.0 (2026-11-10)** : maestro : une session de tâche lancée par Maestro éteint Remote Control à sa naissance, pour que l'app puisse la mettre en pause au repos ; Maestro garde le sien (#402)
 - **0.250.0 (2026-11-10)** : audit, tasks : les vieilles sauvegardes se purgent seules, au-delà de 7 jours et hors des 20 dernières (#413)

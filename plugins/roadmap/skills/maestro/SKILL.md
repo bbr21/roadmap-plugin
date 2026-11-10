@@ -190,8 +190,8 @@ to it.
     pauses one whose Remote Control is connected, #397); refused or unavailable: go on and say so in
     one line. The person turns it back on with the session's Remote Control switch in the app, or by
     asking the session (`enabled: true`). Maestro keeps its own Remote Control (#402);
-  - work on your branch, rerun the tests its impact map names (never the whole suite: Maestro runs it
-    on `main` after the merge, #323), push it, open your PR if the project has them;
+  - work on your branch, rerun the tests its impact map names (never the whole suite: the project's
+    CI runs it on each PR and on `main`, or Maestro on `main` after the merge without CI, #323, #407), push it, open your PR if the project has them;
   - do not merge into `main`: Maestro merges, one branch at a time;
   - a unique resource (iOS simulator, device, database, deployment, test account, publishing a
     plugin) is taken only with Maestro's go-ahead: say so at the top of your report and end your
@@ -481,10 +481,15 @@ The merge itself:
   « Finir un chantier » of the projects set up by onboarding): each task has its version, which its recap line
   and the final sheet state, and a mistake is undone task by task. A branch that is red on an
   up-to-date `main` leaves the series: it goes back to its session, the others continue.
-- **After each merge**: run the whole suite once, on `main`, from the main checkout: on the Mac's
-  single test queue (#323) a suite started on `main` or by Maestro goes ahead of every session's
-  tests, two merges in arrival order, without cutting the suite already running; `release.py` does
-  not rerun it for the tree that has just passed `release.py check`. Then notify right away, by message, the
+- **After each merge**: the whole suite runs once on `main`, where the project's CI runs it. In a project
+  with a CI workflow on its pushes (Roadmap: `.github/workflows/tests.yml`, GitHub Actions, #407), Maestro
+  does not run it on the Mac: it reads the run of the pushed commit, in the background
+  (`gh run list --branch main --workflow Tests --commit <sha>`, then `gh run watch <id> --exit-status`),
+  and a PR's own checks by `gh pr checks <n°>` (or `get_status` once the PR is bound); a red run goes back
+  to the merged task's session, the failing job and test named. Without CI, run it once from the main
+  checkout: on the Mac's single test queue (#323) a suite started on `main` or by Maestro goes ahead of
+  every session's tests, two merges in arrival order, without cutting the suite already running;
+  `release.py` does not rerun it for the tree that has just passed `release.py check`. Then notify right away, by message, the
   sub-sessions whose line carries `après:` on the merged task (it can start or resume) and those
   whose branch touches neighbouring files (update it).
 - **A conflict** is resolved keeping both intentions; an intention that is not clear is asked of

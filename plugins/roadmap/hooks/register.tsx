@@ -13194,7 +13194,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
 
   // Une tâche, toujours sur une ligne : carré d'axe, pastilles, titre tronqué, âge, ▶ (#149).
   // Une tâche faite : la coche, le titre et son axe à droite.
-  const row = (t: Task, chain?: ChainStep, tree?: TreeMark, block?: BrandTask) => {
+  const row = (t: Task, chain?: ChainStep, tree?: TreeMark, block?: BrandTask, inLiveBlock = block !== undefined) => {
     const s = short(t)
     const days = age(t)
     const head = tree?.kind === 'head' ? tree : undefined
@@ -13526,8 +13526,8 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
         {/* Le ▶ au bout de la ligne, à la place du chevron (#149) : le titre ouvre la fiche. Sa colonne
             reste, vide, sur une faite (#198) : les âges restent alignés. */}
         {/* Dans le bloc « En cours », pas de colonne du ▶ : la main, la barre et la durée finissent au bord droit de
-            la carte (retour de test de #385). */}
-        {!block && (
+            la carte (retour de test de #385), pour toutes ses lignes, celles d'un autre Maestro comprises (0.251.0). */}
+        {!inLiveBlock && (
           <Box key={`p:${t.key}`} width={3} flexShrink={0} flexDirection="row" justifyContent="center">
             {playable && (
               <Button key={`play:${t.key}`} plain dimColor onPress={() => void (isRoutine(t, head !== undefined) ? launchRoutine($, source, t, s.titre) : launchSession($, source, t, s.titre))}>
@@ -14346,7 +14346,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
           </Box>
         </Box>
         {liveOpen && Svg && <Svg source={ruleIcon(palette.border, wide)} alt="séparateur" height={1} />}
-        {liveOpen && blockTasks.map(t => row(t, undefined, undefined, blockOf.get(t.id as string)))}
+        {liveOpen && blockTasks.map(t => row(t, undefined, undefined, blockOf.get(t.id as string), true))}
       </Box>
     ) : null
 
