@@ -185,7 +185,8 @@ to it.
   then the detail (the line to reread, the files, what « fini » means, test included) and the
   Maestro clause, copied in, written in French like the rest of the brief:
   - you work for Maestro (the session « <nom> »), which coordinates and merges;
-  - work on your branch, rerun the project's tests, push it, open your PR if the project has them;
+  - work on your branch, rerun the tests its impact map names (never the whole suite: Maestro runs it
+    on `main` after the merge, #323), push it, open your PR if the project has them;
   - do not merge into `main`: Maestro merges, one branch at a time;
   - a unique resource (iOS simulator, device, database, deployment, test account, publishing a
     plugin) is taken only with Maestro's go-ahead: say so at the top of your report and end your
@@ -463,13 +464,16 @@ The merge itself:
   finish.
 - **Fast but right, several ready at the same time** (#136): merge them one after the other, in the
   order above, without waiting to have finished everything, but one at a time and each one in
-  full: update it from `main` (after the previous one's merge), review its diff, rerun its tests on
-  that updated branch, merge, publish, send the list again and say the recap line, and only then
+  full: update it from `main` (after the previous one's merge), review its diff, rerun the tests its
+  impact map names on that updated branch, merge, publish, send the list again and say the recap line, and only then
   the next one. **One publication per merge** (the person's choice, 2026-10-30, rule
   « Finir un chantier » of the projects set up by onboarding): each task has its version, which its recap line
   and the final sheet state, and a mistake is undone task by task. A branch that is red on an
   up-to-date `main` leaves the series: it goes back to its session, the others continue.
-- **After each merge**: rerun the tests on `main`, then notify right away, by message, the
+- **After each merge**: run the whole suite once, on `main`, from the main checkout: on the Mac's
+  single test queue (#323) a suite started on `main` or by Maestro goes ahead of every session's
+  tests, two merges in arrival order, without cutting the suite already running; `release.py` does
+  not rerun it for the tree that has just passed `release.py check`. Then notify right away, by message, the
   sub-sessions whose line carries `après:` on the merged task (it can start or resume) and those
   whose branch touches neighbouring files (update it).
 - **A conflict** is resolved keeping both intentions; an intention that is not clear is asked of

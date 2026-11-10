@@ -1,6 +1,6 @@
 {
   "name": "roadmap",
-  "version": "0.244.7",
+  "version": "0.245.0",
   "description": "Panneau Claude Code à côté du chat : la roadmap du projet de la session, filtrable, avec le détail d'une tâche et son lancement dans une nouvelle session",
   "author": {
     "name": "Bertrand Fargheon"
@@ -134,6 +134,13 @@
       "description": "Le nombre de sessions de tâche qui travaillent en même temps sur le Mac, tous projets confondus. C'est le plafond de la file commune : au-delà, les tâches de tous les Maestros attendent leur tour, et chacune démarre seule quand elle passe en tête et qu'une place se libère. Un lancement attend aussi quand la charge du Mac dépasse 2 × ses cœurs (mesuré le 2026-11-05 : 4 sessions tiennent sur un Mac de 16 Go ; monte ce plafond selon ta mémoire). Ne vaut que la « File de lancement » allumée.",
       "default": "12",
       "options": ["4", "6", "8", "10", "12", "16"]
+    },
+    "testSlots": {
+      "type": "string",
+      "title": "Suites de tests sur le Mac",
+      "description": "Le nombre de suites de tests lourdes (claude plugin test, release.py, npm test, xcodebuild…) qui tournent en même temps sur le Mac, tous projets et toutes sessions confondus. Les autres attendent leur tour dans la file commune, la voie de Maestro d'abord ; chacune démarre seule quand une place se libère et que la charge du Mac retombe. Une seule place, c'est la file d'avant #323. Monte ce nombre selon la mémoire et les cœurs du Mac.",
+      "default": "1",
+      "options": ["1", "2", "3", "4"]
     },
     "idleMinutes": {
       "type": "string",

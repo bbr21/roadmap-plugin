@@ -1,6 +1,6 @@
 #!/bin/bash
-# La file des tests lourds (#222) : une seule suite lourde à la fois par projet, les autres attendent
-# leur tour en le disant. Le hook Bash du plugin (queuedCommand, hooks/parse.ts) place ce script autour
+# La file des tests lourds (#222, #323) : une seule file pour tout le Mac, avec N places (une par défaut),
+# des voies de priorité et un renice ; les suites qui attendent le disent. Le hook Bash du plugin (queuedCommand, hooks/parse.ts) place ce script autour
 # d'une commande lourde, dans le shell même de l'outil :
 #
 #   one-at-a-time.sh take <pid> [libellé]   attend son tour, puis prend la place pour <pid>
@@ -12,12 +12,20 @@
 # Sa place prise, la suite attend encore que la charge du Mac retombe sous le seuil, 5 min au plus (#249) :
 # la file ne sérialise que les suites d'un projet, et le délai de 5000 ms par test du kit tombe sous charge.
 # Détail : docs/plans/fix-tests-sous-charge/.
+#
+# Une file pour le Mac (#323) : dossier heavy-tests/<ROADMAP_QUEUE_KEY>, `mac` par défaut. Places `lock`,
+# `lock-2`… `lock-N` (ROADMAP_QUEUE_SLOTS, 1 par défaut). Voies : 0 prioritaire (branche `main` du dossier du
+# shell), 1, 2 ordinaire ; ROADMAP_QUEUE_LANE force la voie. Un ticket s'appelle <voie>-<horodatage>-<pid> : la
+# tête de la liste triée prend la première place libre, sans jamais en chasser un qui tourne. La suite prend
+# un nice (ROADMAP_QUEUE_NICE, 10 par défaut, 0 le saute) dès que sa place est prise.
+# Branche testée : ROADMAP_QUEUE_FOR, sinon la branche de ROADMAP_QUEUE_DIR, sinon celle du dossier du shell ;
+# ROADMAP_QUEUE_BY=maestro marque la suite lancée par Maestro.
 # Réglages (tests) : ROADMAP_QUEUE=off, ROADMAP_QUEUE_KEY, ROADMAP_LOCKS_DIR, ROADMAP_QUEUE_POLL (s),
 # ROADMAP_QUEUE_SAY (s), ROADMAP_QUEUE_MAX_AGE (s), ROADMAP_QUEUE_MAX_LOAD (défaut 2 × cœurs),
 # ROADMAP_QUEUE_LOAD_WAIT (s, défaut 300, 0 coupe l'attente), ROADMAP_QUEUE_LOAD_FILE (la charge lue
 # dans un fichier, pour les tests).
-# Ce que le panneau lit (#321) : lock/owner (pid, since, branch, label, run une fois la suite partie),
-# lock/load pendant l'attente de charge, queue/<horodatage>-<pid>. Détail : docs/plans/feat-file-tests-visible/.
+# Ce que le panneau lit (#321, #323) : <place>/owner (pid, since, branch, label, project, lane, by, run une fois
+# la suite partie), <place>/load pendant l'attente de charge, queue/<voie>-<horodatage>-<pid>. Détail : docs/plans/feat-file-tests-visible/.
 set -u
 
 usage() {
@@ -36,14 +44,16 @@ poll="${ROADMAP_QUEUE_POLL:-2}"
 say_every="${ROADMAP_QUEUE_SAY:-30}"
 max_age="${ROADMAP_QUEUE_MAX_AGE:-1800}"
 
-# Le projet : le dossier commun du dépôt, partagé par toutes ses copies de travail.
-key="${ROADMAP_QUEUE_KEY:-}"
-[[ -n "$key" ]] || key="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)"
-[[ -n "$key" ]] || key="$PWD"
-dir="${ROADMAP_LOCKS_DIR:-$HOME/.claude/locks}/heavy-tests/$(printf '%s' "$key" | tr -c 'A-Za-z0-9._-' '_')"
-lock="$dir/lock"
+# La file du Mac : une clé unique, sauf réglage (tests).
+key="$(printf '%s' "${ROADMAP_QUEUE_KEY:-mac}" | tr -c 'A-Za-z0-9._-' '_')"
+dir="${ROADMAP_LOCKS_DIR:-$HOME/.claude/locks}/heavy-tests/$key"
 queue="$dir/queue"
+slots="${ROADMAP_QUEUE_SLOTS:-1}"
+[[ "$slots" =~ ^[0-9]+$ ]] && (( slots >= 1 )) || slots=1
 mkdir -p "$queue" || exit 0
+
+# Les places : lock, lock-2, … lock-N.
+place_path() { if (( $1 == 1 )); then echo "$dir/lock"; else echo "$dir/lock-$1"; fi; }
 
 alive() { ps -p "$1" >/dev/null 2>&1; }
 field() { [[ -f "$1" ]] && sed -n "s/^$2=//p" "$1" | head -1; }
@@ -58,26 +68,58 @@ span() {
   fi
 }
 
+# Toutes les places présentes, quel que soit le nombre réglé : un réglage changé entre take et give ne perd pas la sienne.
+all_places() { for p in "$dir"/lock "$dir"/lock-*; do [[ -d "$p" ]] && echo "$p"; done; }
+
 if [[ "$action" == give ]]; then
-  [[ "$(field "$lock/owner" pid)" == "$pid" ]] && rm -rf "$lock"
+  for p in $(all_places); do
+    [[ "$(field "$p/owner" pid)" == "$pid" ]] && rm -rf "$p"
+  done
   rm -f "$queue"/*-"$pid"
   exit 0
 fi
 
-# Déjà à ce shell : rien à attendre.
-[[ "$(field "$lock/owner" pid)" == "$pid" ]] && exit 0
+# Déjà à ce shell : rien à attendre, sur aucune place.
+for p in $(all_places); do
+  [[ "$(field "$p/owner" pid)" == "$pid" ]] && exit 0
+done
 
-branch="$(git branch --show-current 2>/dev/null)"
+# La branche testée : celle qu'on dit, sinon celle du dossier à tester, sinon celle du dossier du shell.
+shell_branch="$(git branch --show-current 2>/dev/null)"
+branch="${ROADMAP_QUEUE_FOR:-}"
+if [[ -z "$branch" && -n "${ROADMAP_QUEUE_DIR:-}" ]]; then
+  # Le crochet passe le dossier tel que la commande l'écrit, quoté : un ~ en tête se développe ici.
+  tested="${ROADMAP_QUEUE_DIR/#\~/$HOME}"
+  branch="$(cd "$tested" 2>/dev/null && git branch --show-current 2>/dev/null)"
+fi
+[[ -n "$branch" ]] || branch="$shell_branch"
 [[ -n "$branch" ]] || branch="$(basename "$PWD")"
-ticket_name="$(perl -MTime::HiRes=time -e 'printf "%017.6f", time')-$pid"
+
+# Le projet : le dossier principal du dépôt, partagé par toutes ses copies de travail.
+project=""
+common="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)"
+[[ -n "$common" ]] && project="$(basename "$(dirname "$common")")"
+[[ -n "$project" ]] || project="$(basename "$PWD")"
+
+# La voie : 0 prioritaire pour main, 2 ordinaire ; ROADMAP_QUEUE_LANE la force.
+lane="${ROADMAP_QUEUE_LANE:-}"
+if [[ ! "$lane" =~ ^[012]$ ]]; then
+  [[ "$shell_branch" == main ]] && lane=0 || lane=2
+fi
+
+ticket_name="$lane-$(perl -MTime::HiRes=time -e 'printf "%017.6f", time')-$pid"
 ticket="$queue/$ticket_name"
-printf 'pid=%s\nsince=%s\nbranch=%s\nlabel=%s\n' "$pid" "$(now)" "$branch" "$label" > "$ticket"
+{
+  printf 'pid=%s\nsince=%s\nbranch=%s\nlabel=%s\nproject=%s\nlane=%s\n' "$pid" "$(now)" "$branch" "$label" "$project" "$lane"
+  [[ "${ROADMAP_QUEUE_BY:-}" == maestro ]] && printf 'by=maestro\n'
+} > "$ticket"
 trap 'rm -f "$ticket"' EXIT
 trap 'exit 143' TERM INT HUP
 
 # Un verrou mort se lève : son PID n'existe plus, ou il est tenu depuis trop longtemps. Un verrou sans
 # owner est en train d'être pris ; vieux de plus de 10 s, il est abandonné.
 lift_stale() {
+  local lock="$1"
   [[ -d "$lock" ]] || return 0
   local opid since reason=""
   opid="$(field "$lock/owner" pid)"
@@ -158,6 +200,7 @@ wait_for_calm() {
   return 0
 }
 
+lock=""  # la place prise, posée dans la boucle
 start="$(now)"
 say_polls="$(awk -v s="$say_every" -v p="$poll" 'BEGIN { n = int(s / p + 0.999); print (n < 1 ? 1 : n) }')"
 polls=0
@@ -170,24 +213,39 @@ while :; do
   done
   head_name="$(ls "$queue" 2>/dev/null | sort | head -1)"
   if [[ "$head_name" == "$ticket_name" ]]; then
-    lift_stale
-    if mkdir "$lock" 2>/dev/null; then
-      cp "$ticket" "$lock/owner.tmp" && sed -i '' "s/^since=.*/since=$(now)/" "$lock/owner.tmp" 2>/dev/null
-      mv "$lock/owner.tmp" "$lock/owner"
-      rm -f "$ticket"
-      trap - EXIT
-      (( said )) && echo "roadmap : tests lourds, à ton tour après $(span $(( $(now) - start )))."
-      wait_for_calm
-      mark_run
-      exit 0
-    fi
+    for i in $(seq 1 "$slots"); do
+      lock="$(place_path "$i")"
+      lift_stale "$lock"
+      if mkdir "$lock" 2>/dev/null; then
+        cp "$ticket" "$lock/owner.tmp" && sed -i '' "s/^since=.*/since=$(now)/" "$lock/owner.tmp" 2>/dev/null
+        mv "$lock/owner.tmp" "$lock/owner"
+        rm -f "$ticket"
+        trap - EXIT
+        (( said )) && echo "roadmap : tests lourds, à ton tour après $(span $(( $(now) - start )))."
+        # Le nice de la suite (#323) : elle cède le processeur aux sessions qui travaillent.
+        nice="${ROADMAP_QUEUE_NICE:-10}"
+        [[ "$nice" =~ ^[0-9]+$ ]] || nice=10
+        (( nice > 0 )) && renice -n "$nice" -p "$pid" >/dev/null 2>&1
+        wait_for_calm
+        mark_run
+        exit 0
+      fi
+    done
+    lock=""
   fi
   if (( polls % say_polls == 0 )); then
     ahead="$(ls "$queue" 2>/dev/null | sort | awk -v me="$ticket_name" '$0 < me' | wc -l | tr -d ' ')"
-    obranch="$(field "$lock/owner" branch)"
-    olabel="$(field "$lock/owner" label)"
-    osince="$(field "$lock/owner" since)"
+    # Le titulaire à nommer : la première place occupée.
+    obranch="" olabel="" osince="" oproject=""
+    for i in $(seq 1 "$slots"); do
+      op="$(place_path "$i")/owner"
+      [[ -f "$op" ]] || continue
+      obranch="$(field "$op" branch)"; olabel="$(field "$op" label)"
+      osince="$(field "$op" since)"; oproject="$(field "$op" project)"
+      break
+    done
     if [[ -n "$obranch" ]]; then
+      [[ -n "$oproject" && "$oproject" != "$project" ]] && obranch="$oproject · $obranch"
       behind="derrière $obranch${olabel:+ ($olabel)} depuis $(span $(( $(now) - ${osince:-$(now)} )))"
     else
       behind="derrière une autre session"

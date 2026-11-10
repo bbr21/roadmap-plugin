@@ -691,6 +691,8 @@ Depuis une session en mode auto, l'option ne vaut pas (#248) : le contrôle du m
 qui doit se relever en bypass, la carte part donc sans le mode ni la consigne.
 `pruneBranches` (« Branches nettoyées », défaut oui, #313) : dans un projet de code, les branches fusionnées sur main que rien ne tient (ni un worktree, ni une ligne ouverte, ni la pointe de main) partent, sur le Mac par `git branch -d` et sur GitHub par un seul `git push origin :refs/heads/…`, après l'archivage d'une session et au démarrage d'une session (au plus toutes les 10 minutes) ; « Rouvrir la session » recrée la branche depuis main.
 `launchQueue` (« File de lancement », défaut oui, #372) : chez Maestro, les lancements passent par la file commune au Mac de #345 (plafonds `projectSessions` et `macSessions`, attente de charge) ; éteint, plus de plafond ni d'attente, chaque carte et chaque ▶ partent tout de suite et les tâches déjà en file démarrent. Allumée, une entrée d'un autre Maestro qui peut partir et ne part pas en deux minutes ne retient plus la file, et le premier Maestro qui tourne la reprend et la lance (#374) ; une tâche en file part seule à son tour, qu'elle vienne d'un ▶ ou d'une carte de Maestro, et un départ refusé reste en file, avec son motif et son heure au centre de contrôle.
+
+`testSlots` (« Suites de tests sur le Mac », défaut 1, #323) : combien de suites de tests lourdes tournent en même temps sur le Mac, tous projets confondus. La file des tests est une seule pour le Mac (`~/.claude/locks/heavy-tests/mac`) : une suite de `main`, de Maestro ou de `release.py release` passe devant, puis `tools/un_test.sh` (un fichier de test seul), puis le reste, sans couper celle qui tourne ; chaque suite tourne en priorité basse (`renice` 10).
 `idleMinutes` (« Repos avant de rendre sa place », défaut 10, #374) : les minutes après lesquelles une session de tâche au repos rend sa place dans la file, et une carte posée pas encore démarrée cesse de réserver la sienne ; avant, 15 min fixes.
 `axisPill` (« Axe en pastille », défaut non depuis #177 ; #156) : allumé, chaque tâche ouverte de la
 liste porte son axe en pastille grise, à droite du titre, avant l'âge ; jamais dans « En cours » (le bloc
@@ -748,6 +750,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.245.0 (2026-11-09)** : maestro : une seule file des tests lourds pour tout le Mac, avec des places réglables (« Suites de tests sur le Mac »), la fusion et la publication de Maestro en tête, chaque suite en priorité basse, et tools/un_test.sh pour un fichier seul (#323)
 - **0.244.7 (2026-11-09)** : maestro : sous Remote Control, hors mode Auto, la relève de la file pose elle-même la carte de la tâche (plus de message refusé par l'app) ; le centre de contrôle dit « carte posée · clique Start » (#393)
 - **0.244.6 (2026-11-09)** : maestro : une session ne demande plus jamais à BBR de tester un rendu non publié ; elle demande elle-même à Maestro « fusionne et publie #N », Maestro publie aussitôt et lui renvoie la version, puis vient la capture (#396)
 - **0.244.5 (2026-11-09)** : panneau : les valeurs de Détails et de la carte Bilan sur le guide des titres de la famille, une colonne d'étiquettes de la largeur de la marque d'une fille (#368)

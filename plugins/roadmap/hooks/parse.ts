@@ -4965,7 +4965,7 @@ export function maestroClause(maestro: string, travail: Travail = 'code'): strin
   }
   return [
     `Tu travailles pour Maestro : la session qui t'a lancée, « ${maestro} », coordonne ses tâches et fusionne pour elles (skill \`roadmap:maestro\`).`,
-    '- Travaille sur ta branche, dans ton worktree ; rejoue les tests du projet sur ta branche, pousse-la, et ouvre ta PR si le projet en a.',
+    '- Travaille sur ta branche, dans ton worktree ; rejoue sur ta branche les tests que nomme ta carte d\'impact, jamais la suite entière (Maestro la lance sur main après la fusion, #323), pousse-la, et ouvre ta PR si le projet en a.',
     '- Ne fusionne pas sur main : Maestro fusionne, une branche à la fois, dans l\'ordre qu\'il choisit.',
     '- Une ressource unique (simulateur iOS, appareil, base, déploiement, compte de test) ne se prend qu\'avec la main de Maestro : dis-le en tête de ton compte rendu et termine ton tour ; il te la donne par message, et tu la rends dès que tu as fini.',
     `- ${maestroAutonome()}`,
@@ -11588,20 +11588,78 @@ const HEAVY_TESTS: readonly RegExp[] = [
   /^(?:\S*python3?\s+(?:-\S+\s+)*)?(?:\S*\/)?release\.py\s+(?:check|release)(?=\s|$)/,
   /^npm\s+(?:test|t|run\s+test(?::\S+)?)(?=\s|$)(?!.*\s--(?:\s|$))/,
   /^(?:\S*\/)?test\.sh(?=\s|$)/,
+  /^(?:(?:bash|sh)\s+)?(?:\S*\/)?un_test\.sh(?=\s|$)/,
   /^xcodebuild\s(?:.*\s)?test(?=\s|$)/,
   /^swift\s+test(?=\s|$)/,
 ]
 
-/** Vrai quand une des commandes simples de `command` lance une suite lourde ; les textes entre guillemets ne comptent pas. */
-export function heavyTest(command: string): boolean {
-  const bare = command.replace(/'[^']*'|"(?:[^"\\]|\\.)*"/g, '""')
-  return bare.split(/&&|\|\||[;|&\n]/).some(step => {
-    const start = step.replace(/^[\s({]+/, '').replace(/^(?:(?:[A-Za-z_][A-Za-z0-9_]*=\S*|time|exec|command)\s+)+/, '')
-    return HEAVY_TESTS.some(re => re.test(start))
-  })
+/**
+ * Les étapes de `command` (#323) : le corps des heredocs ôté (`<<EOF` jusqu'à la ligne `EOF`, `<<-` et
+ * guillemets compris, la fin de la ligne d'ouverture gardée), les textes entre guillemets remplacés par
+ * `"§i§"` (`quotes[i]` les redonne), puis le découpage aux séparateurs. Le corps d'un heredoc est un texte,
+ * jamais une commande.
+ */
+function commandSteps(command: string): { steps: string[]; quotes: string[] } {
+  const noDoc = command.replace(/(?<!<)<<(?!<)-?[ \t]*(['"]?)(\w+)\1([^\n]*)\n(?:[\s\S]*?\n)?[ \t]*\2[ \t]*(?=\n|$)/g, '$3')
+  const quotes: string[] = []
+  const bare = noDoc.replace(/'[^']*'|"(?:[^"\\]|\\.)*"/g, q => `"§${quotes.push(q) - 1}§"`)
+  return { steps: bare.split(/&&|\|\||[;|&\n]/).map(step => step.replace(/^[\s({]+/, '')), quotes }
 }
 
-const QUEUE_LABEL_MAX = 60
+const ENV_PREFIX = /^(?:(?:[A-Za-z_][A-Za-z0-9_]*=\S*|time|exec|command)\s+)+/
+const HELP_FLAG = /(?:^|\s)(?:-h|--help)(?=\s|$)/
+
+/** Les étapes lourdes de `command` : leur début de commande, l'aide (`-h`, `--help`) n'en est pas une. */
+function heavySteps(steps: readonly string[]): { index: number; start: string }[] {
+  const out: { index: number; start: string }[] = []
+  steps.forEach((step, index) => {
+    const start = step.replace(ENV_PREFIX, '')
+    if (!HELP_FLAG.test(start) && HEAVY_TESTS.some(re => re.test(start))) out.push({ index, start })
+  })
+  return out
+}
+
+/** Vrai quand une des commandes simples de `command` lance une suite lourde ; les textes entre guillemets, les heredocs et l'aide ne comptent pas. */
+export function heavyTest(command: string): boolean {
+  return heavySteps(commandSteps(command).steps).length > 0
+}
+
+/**
+ * La voie de la file (#323) : 0 quand une étape lourde est `release.py release` (la publication passe devant),
+ * 1 quand toutes les étapes lourdes sont `un_test.sh` (un seul fichier de test), sinon `undefined`.
+ */
+export function queueLane(command: string): 0 | 1 | undefined {
+  const heavy = heavySteps(commandSteps(command).steps)
+  if (heavy.some(h => /release\.py\s+release(?=\s|$)/.test(h.start))) return 0
+  if (heavy.length > 0 && heavy.every(h => /un_test\.sh(?=\s|$)/.test(h.start))) return 1
+  return undefined
+}
+
+/**
+ * Le contexte d'une suite (#323) : `dir`, la cible du dernier `cd` avant la première étape lourde (le dossier
+ * testé), et `for`, la branche d'un `git … merge [--ff-only|--no-ff] <branche>` de la commande (la fusion
+ * que la suite garde).
+ */
+export function queueContext(command: string): { dir?: string; for?: string } {
+  const { steps, quotes } = commandSteps(command)
+  const first = heavySteps(steps)[0]?.index ?? steps.length
+  const out: { dir?: string; for?: string } = {}
+  const unquote = (t: string) => t.replace(/"§(\d+)§"/g, (_, i) => quotes[Number(i)]!).replace(/^(['"])([\s\S]*)\1$/, '$2')
+  for (const step of steps.slice(0, first)) {
+    const cd = /^cd\s+(\S+)/.exec(step)
+    if (cd && cd[1] !== '-') out.dir = unquote(cd[1]!)
+  }
+  for (const step of steps) {
+    const merge = /^git\s.*?\bmerge\s+(?:--(?:ff-only|no-ff)\s+)?([A-Za-z0-9][\w./-]*)/.exec(step)
+    if (merge) out.for = merge[1]
+  }
+  return out
+}
+
+/** Vrai quand `ROADMAP_QUEUE=off` est posé hors guillemets, en tête d'une étape ou par `export` (#323). */
+function queueOff(command: string): boolean {
+  return commandSteps(command).steps.some(step => /^(?:export\s+)?(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*ROADMAP_QUEUE=off(?=\s|$)/.test(step))
+}
 
 function shellQuote(text: string): string {
   return `'${text.replace(/'/g, `'\\''`)}'`
@@ -11610,33 +11668,44 @@ function shellQuote(text: string): string {
 /**
  * La commande lourde passée par la file du projet (#222) : `one-at-a-time.sh take` attend son tour pour
  * le shell de l'outil (`$$`), la commande tourne intacte dans ce même shell, `give` rend la place et le
- * code de sortie de la commande reste le sien. `undefined` : rien à mettre en file (commande légère, ou
- * déjà passée par la file). La prise ne conditionne pas la commande : un script introuvable ne l'empêche pas.
+ * code de sortie de la commande reste le sien. `undefined` : rien à mettre en file (commande légère, déjà
+ * passée par la file, ou `ROADMAP_QUEUE=off`). La prise ne conditionne pas la commande : un script introuvable
+ * ne l'empêche pas. Depuis #323 `take` reçoit, en affectations de son seul appel, les places réglées
+ * (`slots`), la voie, `maestro` (la session qui fusionne), le dossier testé et la branche fusionnée ;
+ * le libellé est la commande courte de la file. Sous Maestro une suite sans voie propre prend la voie 0.
  */
-export function queuedCommand(command: string, root: string): string | undefined {
-  if (command.includes('one-at-a-time.sh') || !heavyTest(command)) return undefined
-  const flat = command.trim().replace(/\s+/g, ' ')
-  const label = flat.length > QUEUE_LABEL_MAX ? `${flat.slice(0, QUEUE_LABEL_MAX - 1)}…` : flat
+export function queuedCommand(command: string, root: string, opts: { maestro?: boolean; slots?: number } = {}): string | undefined {
+  if (command.includes('one-at-a-time.sh') || !heavyTest(command) || queueOff(command)) return undefined
+  const label = queueCommand(command.trim().replace(/\s+/g, ' ').replace(ENV_PREFIX, ''))
+  const lane = queueLane(command) ?? (opts.maestro ? 0 : undefined)
+  const ctx = queueContext(command)
+  const env = [
+    opts.slots !== undefined ? `ROADMAP_QUEUE_SLOTS=${opts.slots}` : '',
+    lane !== undefined ? `ROADMAP_QUEUE_LANE=${lane}` : '',
+    opts.maestro ? 'ROADMAP_QUEUE_BY=maestro' : '',
+    ctx.dir !== undefined ? `ROADMAP_QUEUE_DIR=${shellQuote(ctx.dir)}` : '',
+    ctx.for !== undefined ? `ROADMAP_QUEUE_FOR=${shellQuote(ctx.for)}` : '',
+  ].filter(Boolean)
   const script = shellQuote(`${root}/scripts/one-at-a-time.sh`)
-  return `${script} take $$ ${shellQuote(label)}; {\n${command}\n}; __roadmap_rc=$?; ${script} give $$; (exit $__roadmap_rc)`
+  return `${env.length ? `${env.join(' ')} ` : ''}${script} take $$ ${shellQuote(label)}; {\n${command}\n}; __roadmap_rc=$?; ${script} give $$; (exit $__roadmap_rc)`
 }
 
 // ---------------------------------------------------------------- la file des tests lourds vue du panneau (#321)
 
 /** Une suite de la file : le shell de l'outil Bash qui la lance, depuis quand (epoch, s), sa branche, sa commande. */
-export type HeavyEntry = { pid: number; since: number; branch: string; label: string }
+export type HeavyEntry = { pid: number; since: number; branch: string; label: string; project: string; lane: number; by?: 'maestro' }
 /** La charge du Mac qui retient le départ de la suite qui tient la place (#249), lue de `lock/load`. */
 export type HeavyLoad = { load: number; cores: number; max: number; since: number }
-/** La file d'un projet : la suite qui tient la place (`run` : son départ, l'attente de charge finie), et celles qui attendent, dans l'ordre. */
-export type HeavyQueue = { owner?: HeavyEntry & { run: number; load?: HeavyLoad }; waiting: HeavyEntry[] }
+/** La file du Mac (#323) : les suites qui tiennent une place (`run` : son départ, l'attente de charge finie), et celles qui attendent, dans l'ordre. */
+export type HeavyQueue = { owners: (HeavyEntry & { run: number; load?: HeavyLoad })[]; waiting: HeavyEntry[] }
 /** La pastille d'une branche dans le bloc « En cours » de Maestro (maquette C) : son texte, son ton, sa commande courte. */
 export type QueueMark = { text: string; tone: 'live' | 'block' | 'neutral'; command: string }
 
 /** Le `max_age` de one-at-a-time.sh : un verrou plus vieux est mort, le script le lèverait. */
 const HEAVY_MAX_AGE_S = 1800
 
-/** Le dossier de la file d'un projet, comme one-at-a-time.sh le nomme : la clé, chaque caractère hors `A-Za-z0-9._-` changé en `_`. */
-export function heavyQueueDir(locksDir: string, key: string): string {
+/** Le dossier de la file, comme one-at-a-time.sh le nomme : la clé (`mac`, la file commune de #323), chaque caractère hors `A-Za-z0-9._-` changé en `_`. */
+export function heavyQueueDir(locksDir: string, key = 'mac'): string {
   return `${locksDir.replace(/\/+$/, '')}/heavy-tests/${key.replace(/[^A-Za-z0-9._-]/g, '_')}`
 }
 
@@ -11656,36 +11725,39 @@ function heavyEntry(text: string | undefined): HeavyEntry | undefined {
   const pid = heavyInt(f.pid)
   const since = heavyInt(f.since)
   if (pid === undefined || since === undefined) return undefined
-  return { pid, since, branch: f.branch ?? '', label: f.label ?? '' }
+  const lane = heavyInt(f.lane)
+  return { pid, since, branch: f.branch ?? '', label: f.label ?? '', project: f.project ?? '', lane: lane ?? 2, ...(f.by === 'maestro' ? { by: 'maestro' as const } : {}) }
 }
 
 /**
- * La file lue des fichiers de one-at-a-time.sh (#321) : `lock/owner`, `lock/load`, et les tickets de
- * `queue/` (nom et texte), rangés par nom comme le script les range. Un verrou dont le PID est mort ou
- * tenu depuis plus de 30 min ne compte pas, un ticket mort non plus ; `alive` absent, tout PID vit.
- * `undefined` quand rien ne tourne ni n'attend.
+ * La file lue des fichiers de one-at-a-time.sh (#321, #323) : pour chaque place (`lock`, `lock-2`…) son
+ * `owner` et son `load`, et les tickets de `queue/` (nom et texte), rangés par nom comme le script les range.
+ * Un verrou dont le PID est mort ou tenu depuis plus de 30 min ne compte pas, un ticket mort non plus ;
+ * `alive` absent, tout PID vit. `undefined` quand rien ne tourne ni n'attend.
  */
 export function readHeavyQueue(
-  files: { owner?: string; load?: string; tickets: readonly { name: string; text: string }[] },
+  files: { slots: readonly { owner?: string; load?: string }[]; tickets: readonly { name: string; text: string }[] },
   now: number,
   alive: (pid: number) => boolean = () => true,
 ): HeavyQueue | undefined {
-  const held = heavyEntry(files.owner)
-  let owner: HeavyQueue['owner']
-  if (held && alive(held.pid) && now - held.since <= HEAVY_MAX_AGE_S) {
-    const run = heavyInt(heavyFields(files.owner).run) ?? held.since
-    const l = heavyFields(files.load)
+  const owners: HeavyQueue['owners'] = []
+  for (const slot of files.slots) {
+    const held = heavyEntry(slot.owner)
+    if (!held || !alive(held.pid) || now - held.since > HEAVY_MAX_AGE_S) continue
+    const run = heavyInt(heavyFields(slot.owner).run) ?? held.since
+    const l = heavyFields(slot.load)
     const [load, cores, max, since] = [heavyInt(l.load), heavyInt(l.cores), heavyInt(l.max), heavyInt(l.since)]
-    owner = { ...held, run, ...(load !== undefined && cores !== undefined && max !== undefined && since !== undefined ? { load: { load, cores, max, since } } : {}) }
+    owners.push({ ...held, run, ...(load !== undefined && cores !== undefined && max !== undefined && since !== undefined ? { load: { load, cores, max, since } } : {}) })
   }
   const waiting = [...files.tickets]
     .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
     .map(t => heavyEntry(t.text))
     .filter((e): e is HeavyEntry => e !== undefined && alive(e.pid))
-  return owner || waiting.length > 0 ? { ...(owner ? { owner } : {}), waiting } : undefined
+  return owners.length > 0 || waiting.length > 0 ? { owners, waiting } : undefined
 }
 
 const QUEUE_COMMANDS: readonly [RegExp, string][] = [
+  [/un_test\.sh/, 'un test'],
   [/claude\s+plugin\s+test/, 'plugin test'],
   [/release\.py\s+check/, 'release.py check'],
   [/release\.py\s+release/, 'release.py release'],
@@ -11705,19 +11777,22 @@ export function queueCommand(label: string): string {
 }
 
 /**
- * La pastille de chaque branche de la file (#321, maquette C) : la suite qui tient la place, « tests 4 min »
- * (depuis son départ), ou « Mac chargé » quand la charge retient son départ ; une suite qui attend, son rang
- * dans la file, le titulaire compté. Une branche qui a plusieurs suites garde la première place.
+ * La pastille de chaque branche de la file (#321, maquette C ; #323) : une suite qui tient une place, « tests 4 min »
+ * (depuis son départ), ou « Mac chargé » quand la charge retient son départ ; une suite qui attend, « tests en file »,
+ * sans rang (la file est celle du Mac, ses voies la réordonnent). Seules les suites de `project` (le nom du dossier
+ * principal) ont une pastille ; une entrée sans projet compte comme du projet. Une branche qui a plusieurs suites garde la première.
  */
-export function queueMarks(q: HeavyQueue, now: number): Map<string, QueueMark> {
+export function queueMarks(q: HeavyQueue, now: number, project?: string): Map<string, QueueMark> {
   const marks = new Map<string, QueueMark>()
-  const o = q.owner
-  if (o) marks.set(o.branch, { text: o.load ? 'Mac chargé' : `tests ${durationLabel((now - o.run) * 1000)}`, tone: o.load ? 'block' : 'live', command: queueCommand(o.label) })
-  q.waiting.forEach((w, i) => {
-    if (marks.has(w.branch)) return
-    const rank = i + (o ? 2 : 1)
-    marks.set(w.branch, { text: `en file, ${rank === 1 ? '1er' : `${rank}e`}`, tone: 'neutral', command: queueCommand(w.label) })
-  })
+  const mine = (e: HeavyEntry) => project === undefined || e.project === '' || e.project === project
+  for (const o of q.owners) {
+    if (!mine(o) || marks.has(o.branch)) continue
+    marks.set(o.branch, { text: o.load ? 'Mac chargé' : `tests ${durationLabel((now - o.run) * 1000)}`, tone: o.load ? 'block' : 'live', command: queueCommand(o.label) })
+  }
+  for (const w of q.waiting) {
+    if (!mine(w) || marks.has(w.branch)) continue
+    marks.set(w.branch, { text: 'tests en file', tone: 'neutral', command: queueCommand(w.label) })
+  }
   return marks
 }
 

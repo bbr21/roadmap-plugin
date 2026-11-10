@@ -1,6 +1,6 @@
 # Est-il sûr de l'installer ?
 
-Version décrite : roadmap 0.244.7
+Version décrite : roadmap 0.245.0
 Un plugin de Claude Code fait tourner du code sur ta machine, donc la question se pose. Certains plugins
 malveillants ont l'air inoffensifs quand on les installe, puis téléchargent et lancent autre chose plus
 tard. Cette page dit tout ce que fait roadmap. Un test vérifie à chaque version qu'elle dit vrai, et tu
@@ -64,7 +64,8 @@ réserve (`session.*`, `turn.*`, `skill.prompt`) ; le plugin a alors un secours 
 | `rm` | `scripts/one-at-a-time.sh` | rendre la place dans la file des tests lourds |
 | `ps` | `hooks/register.tsx` | dans le panneau de Maestro, quand la file des tests lourds n'est pas vide, au plus toutes les 30 s : savoir si les suites qui la tiennent vivent encore, pour ne pas montrer un verrou mort (#321) |
 | `sysctl` | `hooks/register.tsx` | dans le panneau de Maestro, quand une tâche attend sa place ou va partir, au plus toutes les 30 s : lire la charge du Mac et ses cœurs (`vm.loadavg`, `hw.ncpu`), pour différer un lancement quand elle dépasse 2 × cœurs (#324) |
-| `awk`, `basename`, `cp`, `date`, `getconf`, `head`, `ls`, `mkdir`, `mv`, `perl`, `ps`, `sed`, `sleep`, `sort`, `stat`, `sysctl`, `tr`, `wc` | `scripts/one-at-a-time.sh` | tenir la file des tests lourds : un verrou par projet, l'âge et le PID de qui le tient, la charge du Mac (`perl` ne sert qu'à lire l'heure à la microseconde) |
+| `awk`, `basename`, `cp`, `date`, `dirname`, `getconf`, `head`, `ls`, `mkdir`, `mv`, `perl`, `ps`, `sed`, `seq`, `sleep`, `sort`, `stat`, `sysctl`, `tr`, `wc` | `scripts/one-at-a-time.sh` | tenir la file des tests lourds, une seule pour le Mac (#323) : ses places, l'âge et le PID de qui les tient, le projet de chaque suite, la charge du Mac (`perl` ne sert qu'à lire l'heure à la microseconde) |
+| `renice` | `scripts/one-at-a-time.sh` | baisser la priorité de la suite de tests qui prend sa place (nice 10, ses propres processus seulement), pour qu'elle cède le processeur aux sessions qui travaillent (#323) |
 
 ## Les outils de l'app
 

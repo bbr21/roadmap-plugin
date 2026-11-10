@@ -954,7 +954,7 @@ function axisCount(tasks: Task[], axis: string): number {
 }
 
 /** Les réglages du plugin (userConfig), relus à chaque chargement du module. */
-let settings = { me: [] as string[], autoOpen: true, titleModel: 'sonnet', capture: true, theme: 'auto', launchEffort: 'high', launchModel: 'opus', codeModel: 'sonnet', launchBypass: false, pruneBranches: true, launchQueue: true, projectSessions: '3', macSessions: '12', idleMinutes: '10', axisPill: false, priorities: false, dateFormat: 'us', account: 'auto' as Account }
+let settings = { me: [] as string[], autoOpen: true, titleModel: 'sonnet', capture: true, theme: 'auto', launchEffort: 'high', launchModel: 'opus', codeModel: 'sonnet', launchBypass: false, pruneBranches: true, launchQueue: true, projectSessions: '3', macSessions: '12', testSlots: '1', idleMinutes: '10', axisPill: false, priorities: false, dateFormat: 'us', account: 'auto' as Account }
 
 /** L'identifiant du modèle qui cadre (#327), ou undefined s'il hérite de la session qui lance. */
 function launchModelId(): string | undefined {
@@ -2039,9 +2039,11 @@ const QUEUE_TIMEOUT_MS = 600_000
  * plugin, une à la fois par projet ; au premier plan, son délai monte à 10 min. Une réécriture en
  * échec laisse la commande telle quelle.
  */
-function inQueue<E extends BashCall>($: EngineInterface, e: E): E {
+async function inQueue<E extends BashCall>($: EngineInterface, e: E): Promise<E> {
   try {
-    const command = queuedCommand(e.command, $.plugin.root)
+    if (!heavyTest(e.command)) return e
+    const slots = Number(settings.testSlots)
+    const command = queuedCommand(e.command, $.plugin.root, { maestro: await maestroHere($), slots: Number.isInteger(slots) && slots > 0 ? slots : 1 })
     if (command === undefined) return e
     return e.run_in_background === true ? { ...e, command } : { ...e, command, timeout: Math.max(e.timeout ?? 0, QUEUE_TIMEOUT_MS) }
   } catch {
@@ -3931,29 +3933,31 @@ let queueSeen = ''
 let queueWanted = false
 
 /**
- * La file des tests lourds du projet (#222, #249), lue des fichiers de one-at-a-time.sh (#321) : le dossier
- * qu'il nomme d'après le dossier git commun du dossier principal (ou ce dossier, sans git). Trois lectures de
+ * La file des tests lourds du Mac (#222, #249, #323), lue des fichiers de one-at-a-time.sh (#321) : le dossier
+ * commun `heavy-tests/mac`, ses places `lock*` et ses tickets. Quelques lectures de
  * fichiers ; un `ps` borné, seulement quand la file n'est pas vide, dit les PID morts. Rien ne lève.
  */
 async function readQueue($: EngineInterface): Promise<HeavyQueue | undefined> {
   try {
     // Le dossier par défaut du script ; ROADMAP_LOCKS_DIR ne sert qu'à ses tests.
     const locks = `${((await $.env.get('HOME').catch(() => undefined)) ?? '').replace(/\/+$/, '')}/.claude/locks`
-    const home = mainCheckout(await $.session.root())
-    const git = await $.fs.stat(`${home}/.git`).catch(() => undefined)
-    const dir = heavyQueueDir(locks, git?.kind === 'dir' ? `${home}/.git` : home)
+    const dir = heavyQueueDir(locks)
     const text = (path: string) => $.fs.read(path).catch(() => undefined)
+    const entries = await $.fs.list(dir).catch(() => [])
+    const places = entries.filter(e => e.kind === 'dir' && /^lock(?:-\d+)?$/.test(e.name)).map(e => e.name).sort()
     const names = (await $.fs.list(`${dir}/queue`).catch(() => [])).filter(e => e.kind === 'file' && !e.name.startsWith('.')).map(e => e.name)
-    const [owner, load, tickets] = await Promise.all([
-      text(`${dir}/lock/owner`),
-      text(`${dir}/lock/load`),
+    const [slots, tickets] = await Promise.all([
+      Promise.all(places.map(async place => {
+        const [owner, load] = await Promise.all([text(`${dir}/${place}/owner`), text(`${dir}/${place}/load`)])
+        return { ...(owner !== undefined ? { owner } : {}), ...(load !== undefined ? { load } : {}) }
+      })),
       Promise.all(names.map(async name => ({ name, text: (await text(`${dir}/queue/${name}`)) ?? '' }))),
     ])
     const now = await $.clock.now()
-    const files = { ...(owner !== undefined ? { owner } : {}), ...(load !== undefined ? { load } : {}), tickets }
+    const files = { slots, tickets }
     const all = readHeavyQueue(files, Math.floor(now / 1000))
     if (!all) return undefined
-    const pids = [...(all.owner ? [all.owner.pid] : []), ...all.waiting.map(w => w.pid)].sort((a, b) => a - b)
+    const pids = [...all.owners.map(o => o.pid), ...all.waiting.map(w => w.pid)].sort((a, b) => a - b)
     const key = pids.join(',')
     if (key !== queuePids.key || now - queuePids.at >= QUEUE_PS_MS) {
       queuePids = { key, at: now }
@@ -4414,7 +4418,7 @@ async function pickVictim(
   const mine = doseProject()
   const marks = prioMarksOf(await $.store.get(PRIO_MARKS_KEY).catch(() => undefined))
   const heavyQueue = await readQueue($)
-  const heavy = new Set([...(heavyQueue?.owner ? [heavyQueue.owner.branch] : []), ...(heavyQueue?.waiting.map(w => w.branch) ?? [])])
+  const heavy = new Set([...(heavyQueue?.owners.map(o => o.branch) ?? []), ...(heavyQueue?.waiting.map(w => w.branch) ?? [])])
   const known = [{ project: mine.project, match: mine.match }, ...queue.map(e => ({ project: e.project, match: e.match }))]
   const open = typeof tasks === 'string' ? [] : tasks
   const found: { row: Record<string, unknown>; sessionId: string; id: string }[] = []
@@ -4477,7 +4481,7 @@ function controlDeps($: EngineInterface): ControlDeps {
     createdOf: sessionId => createdBySession.get(sessionId),
     heavyBranches: async () => {
       const queue = await readQueue($)
-      return new Set([...(queue?.owner ? [queue.owner.branch] : []), ...(queue?.waiting.map(w => w.branch) ?? [])])
+      return new Set([...(queue?.owners.map(o => o.branch) ?? []), ...(queue?.waiting.map(w => w.branch) ?? [])])
     },
     maestros: async rows => maestroSessionIds(rows, new Set(Object.keys(await loadMaestros($)))),
     places: async (rows, statusOf, pauses) => {
@@ -7443,6 +7447,7 @@ export const register: Register = (on, options) => {
     launchQueue: typeof options.launchQueue === 'boolean' ? options.launchQueue : true,
     projectSessions: typeof options.projectSessions === 'string' && options.projectSessions !== '' ? options.projectSessions : '3',
     macSessions: typeof options.macSessions === 'string' && options.macSessions !== '' ? options.macSessions : '12',
+    testSlots: typeof options.testSlots === 'string' && options.testSlots !== '' ? options.testSlots : '1',
     idleMinutes: typeof options.idleMinutes === 'string' && options.idleMinutes !== '' ? options.idleMinutes : '10',
     axisPill: typeof options.axisPill === 'boolean' ? options.axisPill : false,
     priorities: options.priorities === true,
@@ -7941,7 +7946,7 @@ export const register: Register = (on, options) => {
     }
     const heavy = !fromAgent(e) && e.run_in_background !== true && heavyTest(e.command)
     const began = heavy ? await timingNow($) : undefined
-    const ran = await handWriteNote($, e, 'Bash', await written($, () => next(inQueue($, e)), undefined, writesRoadmap(e.command, capture?.source.ecriture?.outil), tasksOut))
+    const ran = await handWriteNote($, e, 'Bash', await written($, async () => next(await inQueue($, e)), undefined, writesRoadmap(e.command, capture?.source.ecriture?.outil), tasksOut))
     // Une suite lourde : l'attente de la file et une suite tombée en délai dépassé vont au relevé des temps (#314).
     if (began !== undefined && ran.deny === undefined) {
       const result = ran.result as { stdout?: unknown; stderr?: unknown } | undefined
@@ -12565,7 +12570,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   queueWanted = maestroBrand !== undefined
   const heavy = maestroBrand ? await readQueue($) : undefined
   const nowSec = Math.floor(now / 1000)
-  const heavyMarks: Map<string, QueueMark> = heavy ? queueMarks(heavy, nowSec) : new Map()
+  const heavyMarks: Map<string, QueueMark> = heavy ? queueMarks(heavy, nowSec, (mainCheckout(await $.session.root()).split('/').filter(Boolean).pop() ?? '')) : new Map()
   // Les tâches qui attendent leur place (#324, maquette A), lues par la relève au dernier pas.
   const dose = maestroBrand ? doseView : undefined
   // Une tâche qu'on vient de cocher reste à sa place le temps de son mouvement (#182, maquette A), puis
