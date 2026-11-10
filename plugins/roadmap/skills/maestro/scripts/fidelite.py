@@ -17,7 +17,10 @@ liste numérotée : la version que doit dire le pied du panneau, les gestes qui 
 l'écran, une étape par capture (sa zone, « Tu dois y voir : … »), « Colle-les ici. », et quoi faire
 si ce qu'on voit diffère ; jamais le mode d'emploi d'une capture. Une image collée arrive avec son chemin sur le disque
 (`[Image: source: /private/tmp/…/images/1.png]`) : `--capture` prend ce chemin et copie l'image dans
-le chantier. `--zone x,y,l,h`, en pixels de l'image, recadre une capture trop large (`sips`).
+le chantier. `--zone x,y,l,h`, en pixels de l'image, recadre une capture trop large (`sips`, ou ImageMagick
+hors du Mac). Depuis une session cloud (#409) : la capture collée arrive aussi avec son chemin dans la VM, et
+`--maquette` prend l'url de l'Artifact claude.ai, montrée en lien ; une capture déjà posée dans le chantier
+(poussée sur la branche par Maestro, en secours) se donne par son chemin.
 `--fenetre` (l'ancienne capture de la fenêtre de Claude par la session) est refusé, code 2.
 
 `verifier` rend 0 quand la preuve est complète : la page, l'image qu'elle cite, au moins un écart
@@ -113,6 +116,11 @@ def manques(html, image_existe):
 def page(maquette, image, liste_html, quand):
     """La page côte à côte : la capture, la maquette, puis la liste des écarts."""
     m, i = html_lib.escape(maquette, quote=True), html_lib.escape(image, quote=True)
+    if re.match(r"https?://", maquette):
+        # Une maquette publiée en Artifact claude.ai (#409) ne se laisse pas encadrer : un lien.
+        vue = '<p><a class="maquette" href="%s" target="_blank" rel="noopener">Ouvrir la maquette validée</a></p>' % m
+    else:
+        vue = '<iframe src="%s" title="Maquette validée"></iframe>' % m
     return """<!doctype html>
 <html lang="fr">
 <head>
@@ -136,13 +144,13 @@ def page(maquette, image, liste_html, quand):
 <p>Capture du <time>%s</time>. Chaque écart : <code>data-ecart="ouvert"</code>, puis <code>"corrige"</code> une fois corrigé et la capture reprise ; <code>"aucun"</code> si la capture est fidèle.</p>
 <div class="paire">
 <figure><figcaption>Le rendu codé</figcaption><img class="capture" src="%s" alt="Capture du rendu codé"></figure>
-<figure><figcaption>La maquette validée</figcaption><iframe src="%s" title="Maquette validée"></iframe></figure>
+<figure><figcaption>La maquette validée</figcaption>%s</figure>
 </div>
 <h2>Écarts</h2>
 %s
 </body>
 </html>
-""" % (html_lib.escape(quand), i, m, liste_html)
+""" % (html_lib.escape(quand), i, vue, liste_html)
 
 
 # ---------------------------------------------------------------- effets
@@ -161,9 +169,19 @@ def lire_zone(texte):
 
 
 def recadrer(chemin, zone):
-    """Recadre l'image sur `zone` (x, y, largeur, hauteur), en pixels de l'image."""
+    """Recadre l'image sur `zone` (x, y, largeur, hauteur), en pixels de l'image : `sips` sur le Mac,
+    ImageMagick ailleurs (une VM cloud, #409), sinon une erreur qui dit de poser la capture entière."""
     x, y, l, h = (int(round(v)) for v in zone)
-    r = subprocess.run(["sips", "-c", str(h), str(l), "--cropOffset", str(y), str(x), chemin], capture_output=True, text=True)
+    geo = "%dx%d+%d+%d" % (l, h, x, y)
+    # Un appel par programme, chacun sa liste écrite en toutes lettres : tools/securite.py les inventorie.
+    if shutil.which("sips"):
+        r = subprocess.run(["sips", "-c", str(h), str(l), "--cropOffset", str(y), str(x), chemin], capture_output=True, text=True)
+    elif shutil.which("magick"):
+        r = subprocess.run(["magick", chemin, "-crop", geo, "+repage", chemin], capture_output=True, text=True)
+    elif shutil.which("convert"):
+        r = subprocess.run(["convert", chemin, "-crop", geo, "+repage", chemin], capture_output=True, text=True)
+    else:
+        raise Erreur("recadrage impossible ici (ni sips ni ImageMagick) : pose la capture sans --zone")
     if r.returncode != 0:
         raise Erreur("recadrage impossible : %s" % r.stderr.strip())
 

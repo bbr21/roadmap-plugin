@@ -1,6 +1,6 @@
 # Est-il sûr de l'installer ?
 
-Version décrite : roadmap 0.257.1
+Version décrite : roadmap 0.257.2
 Un plugin de Claude Code fait tourner du code sur ta machine, donc la question se pose. Certains plugins
 malveillants ont l'air inoffensifs quand on les installe, puis téléchargent et lancent autre chose plus
 tard. Cette page dit tout ce que fait roadmap. Un test vérifie à chaque version qu'elle dit vrai, et tu
@@ -58,7 +58,7 @@ réserve (`session.*`, `turn.*`, `skill.prompt`) ; le plugin a alors un secours 
 | `python3` | `hooks/register.tsx`, `skills/mockups/scripts/serve.py` | cocher une tâche dans un dossier Cowork qui déclare son propre outil d'écriture (voir plus bas), isolé par `-I` ; et `serve.py` se relance lui-même, isolé par `-I`, en petit serveur local pour montrer une maquette dans le volet navigateur (#369) : il n'écoute que sur 127.0.0.1, ne répond que sous un jeton aléatoire placé dans l'adresse, ne sert que les fichiers web du dossier du projet (liste d'extensions : pages, styles, scripts, images, polices, texte), refuse tout chemin qui commence par un point (`.env`, `.git`) et tout en-tête Host étranger, ne signale un processus que si son serveur a prouvé qu'il détient le jeton, et s'arrête seul après 2 h sans requête ; et, à ton clic sur « Tester les maquettes » dans une fiche, le panneau lance `serve.py <page> --root <dossier de la page>`, isolé par `-I`, les chemins en arguments et sans shell : il réutilise le serveur de ce dossier, ou en démarre un, le même petit serveur local, qui ne sert alors que le dossier de la page, jamais le reste du projet ; une page hors du projet s'ouvre en fichier, sans serveur (#401) |
 | `open` | `hooks/register.tsx` | ouvrir un lien ou un fichier que tu as cliqué dans le panneau, avec l'app par défaut du Mac ; un fichier seulement s'il est rangé dans ton projet (chemin réel, liens résolus), ordinaire (jamais un dossier ni une app) et d'une extension de document : jamais un programme (#349) |
 | `sips`, `mktemp`, `rm` | `hooks/register.tsx` | faire la vignette d'une pièce jointe dans un dossier privé de `$TMPDIR`, puis la retirer |
-| `sips` | `skills/maestro/scripts/fidelite.py` | seulement quand `fidelite.py poser --zone` recadre l'image que tu as collée dans le chat pour prouver qu'un rendu est fidèle à sa maquette (#357, #377) ; le script ne capture jamais l'écran ; rien ne sort de la machine |
+| `sips`, `magick`, `convert` | `skills/maestro/scripts/fidelite.py` | seulement quand `fidelite.py poser --zone` recadre l'image que tu as collée dans le chat pour prouver qu'un rendu est fidèle à sa maquette (#357, #377) : `sips` sur le Mac, sinon ImageMagick (`magick`, puis `convert`) s'il est installé, dans une session cloud (#409) ; le script ne capture jamais l'écran ; rien ne sort de la machine |
 | `claude` | `skills/doctor/scripts/doctor.py` | `claude plugin list --json`, pour voir quelles copies du plugin sont installées |
 | `node` | `skills/doctor/scripts/doctor.py` | lancer le contrôle du projet lui-même, `scripts/check.mjs` |
 | `rm` | `scripts/one-at-a-time.sh` | rendre la place dans la file des tests lourds |

@@ -758,6 +758,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.257.2 (2026-11-10)** : maestro, mockups : maquettes en Artifact et preuve de fidélité depuis une session cloud (#409)
 - **0.257.1 (2026-11-10)** : impact : la carte cite les tests que le projet déclare pour un fichier, même sans nom qui les relie (#418)
 - **0.257.0 (2026-11-10)** : panneau : la bande de chaque Maestro ouvert dit en tête, tous projets compris, une entrée de la file de lancement bloquée au-delà du seuil (option « File bloquée après », 30 min par défaut), avec sa cause réelle et le geste qui la débloque ; un clic ouvre le Maestro où se fait le geste (#400)
 - **0.256.0 (2026-11-10)** : panneau : « Tester les maquettes » ouvre la page à chaque clic, en http par le serveur de maquettes que le panneau lance lui-même et qui ne sert que le dossier de la page ; le bouton ne se change plus en « Fermer » (#401)

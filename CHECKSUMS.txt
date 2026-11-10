@@ -1,8 +1,8 @@
-# roadmap 0.257.1 : SHA-256 de chaque fichier installé du plugin, chemins relatifs à son dossier.
-# Vérifier une copie installée (~/.claude/plugins/cache/roadmap/roadmap/0.257.1) : plugins/roadmap/SECURITE.md, « Vérifier que ta copie est une vraie version ».
-941a61adcbb1c8b339086e6501c1c1feca84a5484343c25f2aed36254523c927  .claude-plugin/plugin.json
-945bc84c497ac8317de5a918a2191defe608b36f50aea7ba9e9f3995b983bb9f  README.md
-f6c107dda7556db3c4e9255ea85c4f8de5545fe2e1882996668c7560315ea05c  SECURITE.md
+# roadmap 0.257.2 : SHA-256 de chaque fichier installé du plugin, chemins relatifs à son dossier.
+# Vérifier une copie installée (~/.claude/plugins/cache/roadmap/roadmap/0.257.2) : plugins/roadmap/SECURITE.md, « Vérifier que ta copie est une vraie version ».
+e23ad04242651afea3789ccbe5aa13bc56f6a140fae5a158b1bacb98a5b905fa  .claude-plugin/plugin.json
+e553dcfb8b5cfa5e844dfeb733b5cd9841eee1c983aa596fbef928ab282dab6e  README.md
+3ee1df1d0c2cb8d514e38bb93795ec794f2b38a60547a2175410016b043fafda  SECURITE.md
 bce019cb7147413a8e5f0687df59a41394fa92545568b5d37b1df8bd6d885e30  hooks/bar-hit.tsx
 5058cf225b60518571323c473ac505c54dbc93e93a6aef9991e50609446219f8  hooks/cartes.tsx
 684a1a7530e3c85517ab3a290d0e116171f180a13100bf3d6b7e10c5a0ad0bf4  hooks/controle.tsx
@@ -22,13 +22,13 @@ e232dc596c0e6fc9516a1db6a4286e8f58a2f611958751f7d14ab9a12f337a72  skills/audit/S
 763a5aa2de44f41fe101b720a2f8e381443775e88c805e7188390e2f6ddaa7ac  skills/doctor/scripts/doctor.py
 3ca4189286244e359f14b6669bf4edd6ba36a261d0496c54005807eee91d24fb  skills/impact/SKILL.md
 665b8d2906f97ec1518770bf862108a2f830ef378db23e638806bf813cf15036  skills/impact/scripts/impact.py
-fe061da916320fdbae5d22f764d73c2a000e27bf8508d978f62633afad651f08  skills/maestro/SKILL.md
+e77c8ca7e93933b724cedd1d8e8e6f565e0b6bd7f642fb991e754613eaf3418e  skills/maestro/SKILL.md
 525466e64c2194b8845c348757ff2097385e5297260c7eb2a559653f9c47fa90  skills/maestro/references/consigne-capture.md
 a13fc80b794495c77a5fd5bb77762b37c1838f5d606c78de797be032a90fa12c  skills/maestro/scripts/brief_cloud.py
 6fa080b16473b61a0eb1980774146578757e4d50d9cdc1af6c3787da18588b0d  skills/maestro/scripts/etat_maestro.py
-55a88bbf7a5004dca8aad3cd51ed11bbde8909af0b04f550b0be2023210c86f1  skills/maestro/scripts/fidelite.py
+4d0b463bb93361a8fae9c7cf8fd5c89686f1e898018a88e78433c7a550117f88  skills/maestro/scripts/fidelite.py
 9e2fa1cbbf706c118670023d0b942c3e9d1a1425e1174a164e35b98fd101c446  skills/maestro/scripts/suivi_cloud.py
-3f6c0712106a6a32d11fba2ca1ddd6d9ab6a88c14e6624174ce6c423f819050d  skills/mockups/SKILL.md
+4d3056d0e7cb07990e72c067e5105d0eb190af57a23712958679a1e5cdc38126  skills/mockups/SKILL.md
 338d1ce778bbcbb4977be4892f7ece0641568179f30be2ddd4d4a3bb355bb289  skills/mockups/scripts/serve.py
 4e14f4179fd08aad77fcfbbef47464211ae175b5a517a86a9cb635d25647001b  skills/onboarding/SKILL.md
 e7aea4e791808439ae56498398f8a113aaf5bb10da3ec4066e091d74b28b9128  skills/onboarding/references/modeles-projet/CLAUDE.md

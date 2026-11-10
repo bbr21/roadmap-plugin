@@ -65,6 +65,13 @@ a screenshot. The panel's « Tester les maquettes » button does the same at eac
 opens the url it prints: the button's server serves the page's folder only, so keep a page's linked
 files next to it (`file://` when the script fails or the page lies outside the project).
 
+**Without a browser pane** (a claude.ai cloud session, #409: no `preview_start`, and a server in the VM is out
+of the person's reach), publish the same page as a claude.ai Artifact with the `Artifact` tool (load the
+`artifact-design` skill first, as that tool asks) and give the person its link: it opens and clicks on the
+Mac and on the phone (trial #404). Republish from the same `file_path` for each new version, so the link stays
+the same; the page file stays committed in the task's folder. The Artifact url, with the option's anchor, is
+what `fidelite.py poser --maquette` takes later.
+
 ## 4. Critique, then review
 
 For each option, before showing it:

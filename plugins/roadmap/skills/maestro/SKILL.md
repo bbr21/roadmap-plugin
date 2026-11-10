@@ -293,7 +293,13 @@ repository's `SessionStart` hook points to) and from a brief that stands on its 
   `git -C <main folder> merge --ff-only origin/<branche>` and push: GitHub closes the PR as merged by itself. A
   branch behind `main` is not rebased by Maestro: ask the session by comment to merge `main` into its branch.
 - **Close** as usual (§ 6), the PR link in the bilan; the cloud session needs no archiving gesture from Maestro.
-- A task with a render stays on the Mac until #409 (mockups and fidelity from the cloud) is delivered.
+- **A task with a render** goes to the cloud too (#409): the session publishes its mockups as an Artifact and
+  asks the person by the question form; coded and green, its comment says « prête à fusionner (tests : … ;
+  capture après publication) » and asks « fusionne et publie #N ». Maestro merges, publishes, then answers by
+  PR comment « #N publiée X.Y.Z »; the session writes the capture instruction, the person pastes the capture in
+  the cloud session, which poses it (`fidelite.py poser --capture`). Fallback, when a paste does not reach the
+  VM as a file: Maestro poses the image the person pasted on the Mac into the task's folder on the branch
+  (`capture-panneau.png`), pushes, and tells the session by comment to pose it from there.
 
 ## 3. Follow: Maestro is the only one that sees everything
 
