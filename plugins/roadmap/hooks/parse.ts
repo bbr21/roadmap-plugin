@@ -12865,13 +12865,13 @@ export function isRemoteControlRefusal(text: string): boolean {
 const REMOTE_CAUSE = "Remote Control est allumé sur ce Maestro et le départ vient d'un message que la personne n'a pas tapé (le panneau ou une autre session)"
 
 /**
- * #382, #390 : ce que Maestro reçoit à la place du refus de l'app sous Remote Control. Le mot tapé par la personne
- * lance la tâche, quel que soit le mode ; hors Bypass permissions, le ▶ passe aussi par un message (mode Auto, #248) :
+ * #382, #390 : ce que Maestro reçoit à la place du refus de l'app sous Remote Control. Le mot tapé par la personne,
+ * dans l'app ou au téléphone (#392, essai du 2026-11-10), lance la tâche, quel que soit le mode ; hors Bypass permissions, le ▶ passe aussi par un message (mode Auto, #248) :
  * le passer en Bypass lui fait poser sa carte lui-même.
  */
 export function remoteHeldText(id: string, mode: string | undefined): string {
   const bypass = mode === 'bypassPermissions' ? '' : ' ; passe aussi ce Maestro en Bypass permissions : ton ▶ posera alors sa carte lui-même'
-  return `L'app refuse de lancer #${id}, carte comprise : ${REMOTE_CAUSE}. Ne pose pas de carte et ne réessaie pas. Dis en une ligne à la personne : « #${id} attend en file : tape un mot ici (par exemple « go ») pour la lancer${bypass} » ; #${id} reste en file et partira sur son prochain message.`
+  return `L'app refuse de lancer #${id}, carte comprise : ${REMOTE_CAUSE}. Ne pose pas de carte et ne réessaie pas. Dis en une ligne à la personne : « #${id} attend en file : tape un mot ici ou depuis ton téléphone (par exemple « go ») pour la lancer${bypass} » ; #${id} reste en file et partira sur son prochain message.`
 }
 
 /** #382, #390 : l'en-tête du départ joint au message tapé par la personne, qui débloque la file. */

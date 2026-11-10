@@ -181,7 +181,10 @@ to it.
   report, the prerequisites not delivered and a line « Lu : … » with what it read. Do not copy them
   by hand either.
 - **By hand** (`start_session`, `user_asked` when the person asked for it, otherwise an
-  `own_initiative` card): same title, own worktree, full brief opened by its three mission lines,
+  `own_initiative` card): a launch the person typed from the phone over Remote Control (« lance
+  #N ») is `user_asked` too, never a card: the app accepts it on that turn, the card it holds back
+  (#392, real test on 2026-11-10: « Lance #370 » typed on the phone to a Maestro in Bypass
+  permissions started the session at once, with no approval on screen). Same title, own worktree, full brief opened by its three mission lines,
   then the detail (the line to reread, the files, what « fini » means, test included) and the
   Maestro clause, copied in, written in French like the rest of the brief:
   - you work for Maestro (the session « <nom> »), which coordinates and merges;
@@ -614,13 +617,15 @@ The merge itself:
   says (for your own card: your card's brief, with the message's fields, never the card's own); if
   the app refuses because the person is « working over Remote Control » (#382), post no card:
   with Remote Control on, the app refuses `start_session` and the card on any turn the person did
-  not type in the app (a message from the panel or from another session), whatever the permission
-  mode (#390); the panel answers the refusal with the gesture, say it in one line (« tape un mot
-  ici, par exemple go, et #N démarre », plus, outside Bypass permissions, « passe ce Maestro en
-  Bypass : ton ▶ posera sa carte lui-même »), once, and do not retry. Never blame Remote Control
+  not type themself, in the app or on the phone (a message from the panel or from another
+  session), whatever the permission mode (#390); the panel answers the refusal with the gesture,
+  say it in one line
+  (« tape un mot ici ou depuis ton téléphone, par exemple go, et #N démarre », plus, outside
+  Bypass permissions, « passe ce Maestro en Bypass : ton ▶ posera sa carte lui-même »), once, and
+  do not retry. Never blame Remote Control
   alone, nor tell the person that Bypass fixes the queue: it fixes only the ▶. The entry stays
   held (« retenue … Remote Control refuse un départ du panneau »), the panel writes no more « La file est débloquée » for it,
-  and the next message the person types here carries its launch instruction: launch it then, with
+  and the next message the person types here, in the app or on the phone (#392), carries its launch instruction: launch it then, with
   `user_asked`, while answering their message. For any other refusal, post its card
   (`own_initiative`) instead and say in one line that a click on Start launches it. The entry stays
   in the queue until the app answers: accepted, it leaves; refused, it stays with the reason and
