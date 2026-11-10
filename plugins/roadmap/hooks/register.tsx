@@ -636,6 +636,8 @@ import {
   stepsStamp,
   stateBand,
   filRows,
+  resumedAfterClose,
+  stepsClosed,
   stepsView,
   childAlertText,
   childrenOf,
@@ -3038,7 +3040,7 @@ function fromAgent(e: unknown): boolean {
 }
 
 /** Ce que le parent lit de sa roadmap pour juger ses enfants : les numéros ouverts et clos, le `mode` qui force, ses dossiers. */
-type ParentLines = { open: Set<string>; done: Set<string>; mode?: Mode; match: string[]; attend: Map<string, string | undefined>; me: string[] }
+type ParentLines = { open: Set<string>; done: Set<string>; fait?: Map<string, string | undefined>; mode?: Mode; match: string[]; attend: Map<string, string | undefined>; me: string[] }
 
 /** git lit le dossier d'un enfant en 5 s au plus : le message de Bertrand attend la réponse (#90). */
 const GIT_TIMEOUT_MS = 5_000
@@ -3101,6 +3103,7 @@ async function finishedFacts(
   const known = await lines()
   const inProject = known !== undefined && known.match.some(prefix => cwd.startsWith(prefix))
   const line = id && inProject && (known.done.has(id) || known.open.has(id)) ? (known.done.has(id) ? 'closed' : 'open') : undefined
+  if (line === 'closed' && id && resumedAfterClose(status?.steps ?? [], known?.fait?.get(id))) return { ...facts, resumed: true }
   // Sans code (#76, #176) : les sessions partagent le dossier du projet, sans branche ; seule la ligne
   // compte. Le dossier de l'enfant le dit, sauf `mode` de la roadmap qui force.
   if (inProject && !cwd.includes('/.claude/worktrees/') && (known?.mode ?? (await detectWork($, cwd))) === 'projet') {
@@ -3184,7 +3187,10 @@ async function childAlertContext($: EngineInterface): Promise<string | undefined
       const open = await load($, files(source).open, 'ROADMAP.md')
       // #245 : l'`attend:` de chaque ligne ouverte, pour la clôture partielle.
       const attend = new Map(typeof open === 'string' ? [] : open.flatMap(t => (t.id && !t.done ? [[t.id, t.attend] as const] : [])))
-      return { open: ids(open), done: ids(await load($, files(source).done, 'ROADMAP-fait.md')), ...(source.mode ? { mode: source.mode } : {}), match: source.match, attend, me: [...source.me] }
+      const done = await load($, files(source).done, 'ROADMAP-fait.md')
+      // #395 : le `fait:` de chaque ligne close, pour voir une session qui reprend après la clôture.
+      const fait = new Map(typeof done === 'string' ? [] : done.flatMap(t => (t.id ? [[t.id, t.fait] as const] : [])))
+      return { open: ids(open), done: ids(done), fait, ...(source.mode ? { mode: source.mode } : {}), match: source.match, attend, me: [...source.me] }
     })()
     return known
   }
@@ -8873,6 +8879,7 @@ async function maestroTasksOf(
       // Avant la première relecture des sessions, une session suivie compte pour ouverte.
       open: !archivedSessionIds.has(sid) && (openSessionIds.size === 0 || openSessionIds.has(sid)),
       done: t.done,
+      ...(t.fait ? { fait: t.fait } : {}),
       sessionId: sid,
       launchedAt: launchOf(t, sid, now),
       ...(aheadBySession.get(sid)?.ahead !== undefined ? { ahead: aheadBySession.get(sid)?.ahead as number } : {}),
@@ -11353,7 +11360,13 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     })
     // L'état en pastille : celui que Maestro voit dans sa session, celui de la session qui y travaille ailleurs.
     const ownRunning = focusBrand && ownBrand?.data.own.id !== undefined ? runningBySession.get(ownBrand.data.own.id) : undefined
-    const waitState: BrandTask['state'] | undefined = current.done
+    // #191 : à l'arrêt, sans question, sa branche en avance sur sa base : « à fusionner », pas « t'attend ».
+    const stepsSession = inSession ? ownBrand?.data.own.id : liveOf(current)?.entry.sessionId
+    const stepsNote = await readSteps($, stepsSession)
+    // #395 : close, mais sa session a repris du travail depuis (une étape commencée après fait:) : la fiche
+    // la suit comme une tâche en session, ses vraies étapes, sans Done ni « Archiver cette session ».
+    const stepsDone = stepsClosed(current.done, stepsNote?.steps, current.fait)
+    const waitState: BrandTask['state'] | undefined = stepsDone
       ? 'done'
       : focusBrand
         ? focusBrand.maestro && ownRunning !== undefined
@@ -11366,9 +11379,6 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
             ? 'wait'
             : 'live'
           : undefined
-    // #191 : à l'arrêt, sans question, sa branche en avance sur sa base : « à fusionner », pas « t'attend ».
-    const stepsSession = inSession ? ownBrand?.data.own.id : liveOf(current)?.entry.sessionId
-    const stepsNote = await readSteps($, stepsSession)
     if (!inSession) await refreshAhead($, source, [stepsSession], now)
     const aheadNow = stepsSession ? aheadBySession.get(stepsSession)?.ahead : undefined
     const headState: BrandTask['state'] | undefined =
@@ -11394,7 +11404,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
       pj: cardSummary('pj', { attachments: attachments.length }),
       livrables: cardSummary('livrables', { deliverables: deliverables.length }),
     }
-    const stepsPart = ficheSteps($, e, palette, stepsNote, now, current.done, stepsSession, headState)
+    const stepsPart = ficheSteps($, e, palette, stepsNote, now, stepsDone, stepsSession, headState)
     // L'état sous l'en-tête (#199, choix de Bertrand) : une bande teintée, son icône, son mot et pourquoi ;
     // il a quitté la ligne « Tâche lancée par Maestro », où il flottait à droite.
     const band = headState
@@ -11595,7 +11605,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
       )
     }
     const topAction = (): RenderElement | null => {
-      if (current.done) return inSession ? archiveSelfBand() : null
+      if (current.done) return inSession && stepsDone ? archiveSelfBand() : null
       // Dans sa propre session, « Ouvrir la session » n'a pas de sens (#336) : la bande d'état suffit.
       if (live && inSession) return null
       if (live) {
@@ -11923,10 +11933,10 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
         </Box>
       )
     }
-    const stepsStatus = stepsNote ? shownStatus(stepsNote, stepsSession, current.done) : undefined
-    const stepsAge = stepsStatus ? stepsView(stepsStatus.steps, { now, at: stepsStatus.at, fold: Infinity, closed: current.done })?.age ?? '' : ''
-    const stepsGauge = stepsStatus ? stepGauge(stepsStatus.steps, { closed: current.done, age: stepsAge }) : undefined
-    const stepsColors = { done: current.done ? palette.finished : palette.live, here: palette.text, pre: palette.block, next: palette.live, open: palette.sel, none: palette.text3, cancelled: palette.sel, ring: palette.text }
+    const stepsStatus = stepsNote ? shownStatus(stepsNote, stepsSession, stepsDone) : undefined
+    const stepsAge = stepsStatus ? stepsView(stepsStatus.steps, { now, at: stepsStatus.at, fold: Infinity, closed: stepsDone })?.age ?? '' : ''
+    const stepsGauge = stepsStatus ? stepGauge(stepsStatus.steps, { closed: stepsDone, age: stepsAge }) : undefined
+    const stepsColors = { done: stepsDone ? palette.finished : palette.live, here: palette.text, pre: palette.block, next: palette.live, open: palette.sel, none: palette.text3, cancelled: palette.sel, ring: palette.text }
     const axisInk = axisHex(current.axis)
     const chainColors = { done: axisInk, here: palette.text, pre: palette.block, next: axisInk, open: palette.sel, none: palette.text3, cancelled: palette.sel, ring: palette.text }
     // La question de la session qui attend, sous la jauge des étapes, comme dans la carte Étapes (#214).
@@ -13006,7 +13016,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
         {mockupBand()}
         {draftBlock()}
         {cartonBox()}
-        {gaugeBlock('steps', stepsGauge, stepsColors, stepsStatus ? { steps: stepsStatus.steps, times: stepTimes(stepsStatus.steps, { now, closed: current.done, at: stepsStatus.at, ...(liveOrigin !== undefined ? { origin: liveOrigin } : {}) }), spent: stepsSpent(stepsStatus.steps, { now, closed: current.done, at: stepsStatus.at, ...(liveOrigin !== undefined ? { origin: liveOrigin } : {}) }) } : undefined)}
+        {gaugeBlock('steps', stepsGauge, stepsColors, stepsStatus ? { steps: stepsStatus.steps, times: stepTimes(stepsStatus.steps, { now, closed: stepsDone, at: stepsStatus.at, ...(liveOrigin !== undefined ? { origin: liveOrigin } : {}) }), spent: stepsSpent(stepsStatus.steps, { now, closed: stepsDone, at: stepsStatus.at, ...(liveOrigin !== undefined ? { origin: liveOrigin } : {}) }) } : undefined)}
         {/* La question en attente monte dans le carton d'une tâche en cours (#341, B1). */}
         {stepsQuestion && !(live && !current.done) && (
           <Box key="steps-question" paddingX={SPACE.indent}>
@@ -13478,7 +13488,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     const waiting = block ? block.state === 'wait' : stopped === 'wait'
     // Close (#218) : la coche, violette quand la session ne tourne plus, et sa jauge pleine, comme la bande.
     const completed = block?.state === 'done'
-    const view = status ? stepsView(status.steps, { now, at: status.at, closed: t.done }) : undefined
+    const view = status ? stepsView(status.steps, { now, at: status.at, closed: block ? block.closed === true : t.done }) : undefined
     // #385 (maquette 2) : depuis quand sa session tourne, l'horloge devant, à la place du compte « 6/8 ».
     const since = sinceText(t, block)
     const bar = status && view ? stepsBarIcon(palette, view.segments, { width: ROW_STEPS.bar, height: 4, waiting: waiting || status.question !== undefined, merging, finished: block?.finished === true }) : undefined

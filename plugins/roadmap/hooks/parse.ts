@@ -5727,6 +5727,31 @@ export function mergeSteps(steps: readonly ChildStep[], o: { git: boolean; ahead
   return out
 }
 
+/**
+ * Une session qui a repris du travail après la clôture de sa tâche (#395) : une de ses étapes a commencé après
+ * le `fait:` de la ligne, et il lui reste à faire. Sans heure, le `fait:` vaut jusqu'à la fin de son jour : un
+ * travail du même jour ne se distingue pas de la fin du chantier. La boîte de fin qui coche la dernière étape
+ * après la clôture n'en change que la fin, pas le début : la règle de #145 tient (tout compte fait).
+ */
+export function resumedAfterClose(steps: readonly ChildStep[], fait: string | undefined): boolean {
+  const closedAt = closedAtOf(fait)
+  if (closedAt === undefined || steps.every(s => s.status === 'completed')) return false
+  return steps.some(s => stepStamps(s).start !== undefined && (s.start as number) > closedAt)
+}
+
+/** L'heure d'un `fait:` (#395) : « AAAA-MM-JJ HH:MM » à la minute, un jour seul à sa fin, à l'heure locale. */
+function closedAtOf(fait: string | undefined): number | undefined {
+  const m = /^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{2}):(\d{2}))?/.exec(fait ?? '')
+  if (!m) return undefined
+  const [y, mo, d] = [Number(m[1]), Number(m[2]) - 1, Number(m[3])]
+  return m[4] !== undefined ? new Date(y, mo, d, Number(m[4]), Number(m[5])).getTime() : new Date(y, mo, d + 1).getTime() - 1
+}
+
+/** Les étapes d'une tâche close comptent toutes faites (#145), sauf quand sa session a repris après (#395). */
+export function stepsClosed(done: boolean, steps: readonly ChildStep[] | undefined, fait: string | undefined): boolean {
+  return done && !resumedAfterClose(steps ?? [], fait)
+}
+
 /** L'étape d'une liste, pour le parent : « étape 5/7 Coder », « 7/7 faites », rien sans liste. */
 export function stepLabel(steps: readonly ChildStep[]): string | undefined {
   if (steps.length === 0) return undefined
@@ -5912,7 +5937,7 @@ export function liveQuestion(status: ChildStatus | undefined, child: ChildRow): 
  * fusionnés ni poussés quand sa ligne est close ; `remote`, une session distante, dont le dossier ne
  * se lit pas d'ici (#90).
  */
-export type FinishedFacts = { running: boolean; question: boolean; openChildren: number; dirty: number | undefined; landed: boolean | undefined; line?: string; ahead?: number; remote?: boolean }
+export type FinishedFacts = { running: boolean; question: boolean; openChildren: number; dirty: number | undefined; landed: boolean | undefined; line?: string; ahead?: number; remote?: boolean; resumed?: boolean }
 
 /**
  * Fini, rien en attente (#84) : le parent le vérifie avant de proposer l'archivage, qui nettoie le
@@ -5923,6 +5948,8 @@ export function finishedCheck(f: FinishedFacts): { ok: boolean; why?: string } {
   if (f.running) return { ok: false, why: 'tourne encore' }
   if (f.question) return { ok: false, why: 'une question attend' }
   if (f.openChildren > 0) return { ok: false, why: plural(f.openChildren, 'session à elle encore ouverte', 'sessions à elle encore ouvertes') }
+  // #395 : sa ligne est close, mais elle a repris du travail depuis (`resumedAfterClose`) : pas encore à archiver.
+  if (f.resumed) return { ok: false, why: `reprise après la clôture${f.line ? ` de ${f.line}` : ''}` }
   if (f.remote) return { ok: false, why: "session distante : dossier non vérifiable d'ici" }
   if (f.dirty === undefined) return { ok: false, why: 'dossier illisible' }
   if (f.dirty > 0) return { ok: false, why: plural(f.dirty, 'fichier non commité', 'fichiers non commités') }
@@ -10115,6 +10142,8 @@ export function maestroBrandTasks(
     status?: ChildStatus
     /** La création de sa session, ou son lancement par le panneau : la durée live (#385). */
     since?: number
+    /** Le `fait:` de sa ligne close (#395). */
+    fait?: string
   }[],
 ): BrandTask[] {
   // Par premier lancement, la plus ancienne en haut, closes à leur place (#143, #195, demande de
@@ -10123,6 +10152,8 @@ export function maestroBrandTasks(
   const at = (e: { launchedAt?: number }) => (typeof e.launchedAt === 'number' && Number.isFinite(e.launchedAt) ? e.launchedAt : Number.POSITIVE_INFINITY)
   return [...entries]
     .sort((a, b) => (at(a) === at(b) ? byNumber(a, b) : at(a) < at(b) ? -1 : 1))
+    // #395 : close, mais sa session a repris du travail depuis : elle se suit comme une tâche ouverte.
+    .map(e => ({ ...e, done: stepsClosed(e.done, e.status?.steps, e.fait) }))
     .map(e => ({
       id: e.id,
       label: e.label,
