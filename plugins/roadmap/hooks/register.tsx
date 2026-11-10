@@ -151,6 +151,7 @@ import {
   previewOpenIn,
   fileUrl,
   mockupAskText,
+  mockupHttpUrl,
   designReminder,
   designSkills,
   PANEL_SKILL,
@@ -6076,11 +6077,11 @@ function lastLine(text: string): string {
 }
 
 /** python3 du PATH de l'app, sinon celui du Mac ; isolé (-I) : rien n'est importé du dossier du script ni du dossier courant. */
-async function runPython($: EngineInterface, args: string[], cwd: string): Promise<{ exitCode: number; stdout: string; stderr: string }> {
+async function runPython($: EngineInterface, args: string[], cwd: string, timeoutMs = 60_000): Promise<{ exitCode: number; stdout: string; stderr: string }> {
   try {
-    return await $.process.run(['python3', '-I', ...args], { cwd, timeoutMs: 60_000 })
+    return await $.process.run(['python3', '-I', ...args], { cwd, timeoutMs })
   } catch {
-    return await $.process.run(['/usr/bin/python3', '-I', ...args], { cwd, timeoutMs: 60_000 })
+    return await $.process.run(['/usr/bin/python3', '-I', ...args], { cwd, timeoutMs })
   }
 }
 
@@ -7114,18 +7115,41 @@ async function toolText($: EngineInterface, call: { tool: string } & Record<stri
   }
 }
 
+/** Le serveur de maquettes de la skill mockups (#369), dans la copie installée du plugin. */
+function mockupServeScript($: EngineInterface): string {
+  return `${$.plugin.root}/skills/mockups/scripts/serve.py`
+}
+
+/** Le délai de `serve.py --url` : sa sonde du serveur attend 2 s au plus. */
+const MOCKUP_URL_MS = 8_000
+
+/**
+ * L'adresse où ouvrir une page de maquettes (#401) : son url sur le serveur de `serve.py` quand il tourne
+ * pour le projet, vérifiée par sa sonde (`serve.py --url`, lecture seule) ; sinon son `file://`. Le
+ * panneau ne lance aucun serveur, et n'ouvre que l'url que `mockupHttpUrl` accepte.
+ */
+async function mockupUrl($: EngineInterface, path: string): Promise<string> {
+  try {
+    const ran = await runPython($, [mockupServeScript($), '--url', path], parentDir(path), MOCKUP_URL_MS)
+    return (ran.exitCode === 0 ? mockupHttpUrl(ran.stdout) : undefined) ?? fileUrl(path)
+  } catch {
+    return fileUrl(path)
+  }
+}
+
 /** La barre latérale repliée par le bouton des maquettes (#306) : il la rouvre en fermant, et seulement elle. */
 let mockupFoldedSidebar = false
 
 /**
- * Le bouton des maquettes (#306) : ouvre la page dans le volet navigateur et replie la barre latérale,
- * le plus grand que l'app laisse prendre à un plugin (le ↗ du volet n'a pas d'appel) ; ou referme le
- * volet et rouvre la barre. En mode auto, ou l'ouverture refusée, la demande passe par Claude (#248).
+ * Le bouton des maquettes (#306) : ouvre la page dans le volet navigateur, en http quand son serveur tourne
+ * (#401), et replie la barre latérale, le plus grand que l'app laisse prendre à un plugin (le ↗ du volet
+ * n'a pas d'appel) ; ou referme le volet et rouvre la barre. En mode auto, ou l'ouverture refusée, la
+ * demande passe par Claude (#248), qui sert la page par `serve.py`.
  */
 async function toggleMockup($: EngineInterface, path: string): Promise<void> {
   await setView($, () => ({ openAt: '', openNote: '' }))
   const viaClaude = async () => {
-    queueSubmit($, mockupAskText(path))
+    queueSubmit($, mockupAskText(path, mockupServeScript($)))
     // La note redessine le panneau, et ce dessin envoie le message.
     await setView($, () => ({ openAt: '', openNote: 'Demandé à Claude : ouvrir les maquettes dans son volet navigateur.' }))
   }
@@ -7139,7 +7163,7 @@ async function toggleMockup($: EngineInterface, path: string): Promise<void> {
     await update($, mockupOpenAtom, () => '')
     return
   }
-  if ((await toolText($, { tool: PREVIEW_START_TOOL, url: fileUrl(path) })) === undefined) return viaClaude()
+  if ((await toolText($, { tool: PREVIEW_START_TOOL, url: await mockupUrl($, path) })) === undefined) return viaClaude()
   await toolText($, { tool: SHOW_PANE_TOOL, pane: 'preview' })
   const win = await toolText($, { tool: WINDOW_LAYOUT_TOOL })
   if (!mockupFoldedSidebar && win !== undefined && !/"sidebar_collapsed"\s*:\s*true/.test(win)) {

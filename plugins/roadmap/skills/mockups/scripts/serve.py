@@ -3,11 +3,16 @@
 
 Usage:
   python3 serve.py <page.html> [--root DIR] [--idle SECONDS]
+  python3 serve.py --url <page.html> [--root DIR]
   python3 serve.py --stop [--root DIR | <page.html>]
 
 Prints one line, http://127.0.0.1:<port>/<token>/<percent-encoded path of the
 page relative to the root>, and exits 0. Exit 2 (message on stderr) when the page
 is missing, is not .html/.htm, or lies outside the root.
+
+--url (#401, for the panel's mockups button) only looks: it prints the page's
+url when the root's server runs and proves it (exit 0), else exits 1 with no
+output. It never starts a server and never touches the state file.
 
 One server per project root, reused while it runs. It listens on 127.0.0.1
 only, serves the root read-only, and only under a random per-server token
@@ -159,6 +164,15 @@ def ensure_server(root, idle):
     raise RuntimeError("le serveur de maquettes n'a pas démarré")
 
 
+def running_url(root, page):
+    """The page's url on the root's running, verified server; None when there is none. Read-only."""
+    root = os.path.realpath(root)
+    st = _read_state(root)
+    if not st or not _verified(st):
+        return None
+    return page_url(root, page, st[0], st[2])
+
+
 def stop_server(root):
     """Stop the root's server. True when one was running (and proved to be ours)."""
     root = os.path.realpath(root)
@@ -295,7 +309,7 @@ def _fail(msg):
 def main(argv):
     args = list(argv)
     root = idle = serve_root = None
-    stop = False
+    stop = look = False
     pages = []
     i = 0
     try:
@@ -309,12 +323,15 @@ def main(argv):
                 serve_root = args[i + 1]; i += 2
             elif a == "--stop":
                 stop = True; i += 1
+            elif a == "--url":
+                look = True; i += 1
             elif a.startswith("--"):
                 return _fail("option inconnue : %s" % a)
             else:
                 pages.append(a); i += 1
     except (IndexError, ValueError):
-        return _fail("usage : serve.py <page.html> [--root DIR] [--idle SECONDS] | --stop [--root DIR | <page.html>]")
+        return _fail("usage : serve.py <page.html> [--root DIR] [--idle SECONDS] | --url <page.html> [--root DIR]"
+                     " | --stop [--root DIR | <page.html>]")
     if serve_root is not None:
         return serve_forever(serve_root, idle or DEFAULT_IDLE)
     if stop:
@@ -337,6 +354,15 @@ def main(argv):
     root = os.path.realpath(root) if root else project_root(page)
     if not page.startswith(root + os.sep):
         return _fail("la page est hors du dossier servi (%s) : %s" % (root, pages[0]))
+    if look:
+        try:
+            url = running_url(root, page)
+        except RuntimeError as e:
+            return _fail(str(e))
+        if url is None:
+            return 1
+        print(url)
+        return 0
     try:
         port = ensure_server(root, idle or DEFAULT_IDLE)
     except RuntimeError as e:

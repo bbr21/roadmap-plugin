@@ -60,7 +60,8 @@ and may carry its script inline or next to it, with the system's tokens copied i
 `python3 scripts/serve.py <page>` (the script of this skill, which prints an
 `http://127.0.0.1:<port>/…` url), open that url with `preview_start`, never `file://` (the pane
 shows a frozen copy there: no linked file, no reload), and check it by clicking through it, then on
-a screenshot.
+a screenshot. While that server runs, the panel's « Voir les maquettes » button opens the same url
+(`serve.py --url <page>`, read-only: it never starts a server), and falls back to `file://` without it.
 
 ## 4. Critique, then review
 
