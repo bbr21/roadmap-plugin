@@ -213,6 +213,7 @@ import {
   stepTimes,
   stepsSpent,
   bilanRows,
+  columnLabel,
   askedOf,
   changeZones,
   changesCard,
@@ -759,6 +760,20 @@ const ZONE_LIMIT = 26
  * chaque section dit « Voir les N autres ». Une ligne pèse ~14 éléments et 1 à 3 Svg.
  */
 const ROW_BUDGET = 40
+/**
+ * Le poids du dessin (#414) : l'app de bureau laisse tomber sans rien dire un arbre trop gros, et le volet
+ * reste sur « has not drawn in this pane » (AAFES, 2026-11-10 : 221 Ko s'affichent, 266 Ko non). Le dessin
+ * vise `PANE_TARGET_KB` ; au-dessus, il se refait avec moins de lignes (`paneLineCap`), deux fois au plus ;
+ * encore au-dessus de `PANE_MAX_KB`, la carte d'erreur le dit. Les Ko sont ceux de `weighTree`.
+ */
+const PANE_TARGET_KB = 200
+const PANE_MAX_KB = 240
+/** Lignes dessinées au plus, têtes de mères et étapes du jour comprises, avant qu'une bande se replie seule. */
+const LINE_CAP = 40
+const LINE_CAP_MIN = 6
+/** Le plafond de lignes du dessin en cours, resserré quand un dessin pèse trop ; il repart de `LINE_CAP` quand les filtres changent. */
+let paneLineCap = LINE_CAP
+let paneCapView = ''
 /** La section à part des récurrentes qui tombent, au bas de Ma journée (#268). */
 const TODAY_RECURRING = 'jour:Récurrentes qui tombent'
 /** Le même budget quand chaque ligne porte sa pastille de département (#156) : un Svg de plus par ligne ; 20, choix de Bertrand (2026-10-31). */
@@ -5427,7 +5442,7 @@ function noteWelcomeCard($: EngineInterface, kind: 'reachedAt' | 'drawnAt' | 'fa
  * vide sur une autre machine se lit là, dans `~/.claude/plugins/store/roadmap_*.json`, clé `pane-draw`.
  */
 const PANE_DRAW_KEY = 'pane-draw'
-type PaneFailure = { kind: 'throw' | 'timeout'; message: string; stack?: string; stage?: string }
+type PaneFailure = { kind: 'throw' | 'timeout' | 'heavy'; message: string; stack?: string; stage?: string }
 /**
  * L'étape où en est le dessin du panneau (#414) : la carte d'un dessin sans réponse la nomme, et le store la
  * garde par session (`pane-draw`, champ `sessions`), pour savoir où une session restée vide attendait.
@@ -5507,9 +5522,13 @@ async function paneFailure($: EngineInterface, e: RenderInput<'Pane'>, failure: 
   const retry = () => {
     knownSource = undefined
     paneCache = undefined
+    paneLineCap = LINE_CAP
+    // Un dessin trop gros (#414) : ce qui était déplié se replie, sinon le même dessin reviendrait.
+    if (failure.kind === 'heavy') void setView($, () => ({ openGroups: [], moreGroups: [] }))
     void update($, retryAtom, v => v + 1)
   }
-  const what = failure.kind === 'timeout' ? 'Le dessin a dépassé le temps que lui laisse l\'app.' : 'Une erreur a interrompu le dessin.'
+  const what =
+    failure.kind === 'timeout' ? 'Le dessin a dépassé le temps que lui laisse l\'app.' : failure.kind === 'heavy' ? 'Le dessin est trop gros pour l\'app, qui ne l\'afficherait pas.' : 'Une erreur a interrompu le dessin.'
   const waiting = failure.stage ? `Le dessin attendait encore : ${failure.stage}.` : ''
   return (
     <Box flexDirection="column" gap={SPACE.block} paddingX={SPACE.screen} paddingTop="sm">
@@ -8429,6 +8448,19 @@ export const register: Register = (on, options) => {
         return paneFailure($, e, { kind: 'timeout', message: '', stage: paneStage || 'le début du dessin' })
       }
       tree = retireFocusKeys(drawn, focusHeld.epochs)
+      // Trop gros pour l'app (#414) : le même dessin, avec moins de lignes.
+      let weight = weighTree(tree).kb
+      for (let again = 0; again < 2 && weight > PANE_TARGET_KB && paneLineCap > LINE_CAP_MIN; again++) {
+        paneLineCap = Math.max(LINE_CAP_MIN, Math.floor(((paneLineCap * PANE_TARGET_KB) / weight) * 0.9))
+        paneStage = 'un dessin plus léger'
+        const lighter = await withinMs($, drawPane($, e), PANE_DEADLINE_MS)
+        if (lighter === 'late') return paneFailure($, e, { kind: 'timeout', message: '', stage: paneStage })
+        tree = retireFocusKeys(lighter, focusHeld.epochs)
+        weight = weighTree(tree).kb
+      }
+      if (weight > PANE_MAX_KB) {
+        return paneFailure($, e, { kind: 'heavy', message: `${Math.round(weight)} Ko dessinés, ${PANE_MAX_KB} au plus. Filtre par axe (un clic sur sa ligne, ou « Maestro <axe> »), puis « Réessayer ».` })
+      }
     } catch (err) {
       return paneFailure($, e, { kind: 'throw', message: err instanceof Error ? err.message : String(err), ...(err instanceof Error && err.stack ? { stack: err.stack } : {}) })
     }
@@ -9871,6 +9903,13 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     launchNote, launched, openNote, openAt = '', conclusionOpen, missionOpen = '', draftOpen = '', draftFolded = '', reopenAsk = '', cancelAsk = '', closeKind = 'abandon', cancelNote = '',
     editing: editingKey = '', editOpen = '', editSaved = '', editNote = '', editField = '', foldedCards = [], openedCards = [], gaugePick = '', briefOpen = '',
   } = view
+  // Le plafond de lignes (#414) repart quand les filtres changent : une vue plus légère reprend ses lignes.
+  const capView = [view.axis, view.attend, view.who ?? 'all', view.showDone, view.groupBy, search.trim() !== '', view.selected ?? ''].join('|')
+  if (capView !== paneCapView) {
+    paneCapView = capView
+    paneLineCap = LINE_CAP
+  }
+  const lineCap = paneLineCap
   paneStage = 'les fichiers de la roadmap'
   const data = await paneData($, source, [stamp, titlesVersion, themeStamp, retry, liveVersion].join('|'))
   const { palette, bilan: bilanData, titles, live: liveEntries, ignored } = data
@@ -10572,11 +10611,11 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
               <Box key={`fin-row:${r.name}`} flexDirection="row">
                 {/* Choix de BBR (#368) : la colonne des étiquettes de Détails, celle de la marque d'une fille. */}
                 {Svg ? (
-                  <Box flexShrink={0} flexDirection="row" alignItems="flex-start">
+                  <Box flexShrink={0} flexDirection="row" alignItems="flex-start" alignSelf="flex-start">
                     <Svg source={`<svg xmlns="http://www.w3.org/2000/svg" width="${TREE_CHILD_PX}" height="${SIZE.strut.row}"/>`} alt="colonne des étiquettes" width={TREE_CHILD_PX} height={SIZE.strut.row} />
                     {/* Centrée sur la hauteur de la première ligne, comme dans Détails : calée en haut, elle passait au-dessus de sa valeur (#368). */}
                     <Box position="absolute" top={0} left={0} bottom={0} flexDirection="row" alignItems="center">
-                      <Text size="caption" color={palette.text2}>{r.name}</Text>
+                      <Text size="caption" color={palette.text2}>{columnLabel(r.name)}</Text>
                     </Box>
                   </Box>
                 ) : (
@@ -11705,10 +11744,10 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     const detailRow = (name: string, value: RenderElement, key: string) => (
       <Box key={`detail:${key}`} flexDirection="row" alignItems="center" paddingX="sm" minWidth={0}>
         {Svg ? (
-          <Box flexShrink={0} flexDirection="row" alignItems="center">
+          <Box flexShrink={0} flexDirection="row" alignItems="center" alignSelf="flex-start">
             <Svg source={detailColumn} alt="colonne des étiquettes" width={TREE_CHILD_PX} height={SIZE.strut.row} />
             <Box position="absolute" top={0} left={0} bottom={0} flexDirection="row" alignItems="center">
-              <Text size="caption" color={palette.text3}>{name}</Text>
+              <Text size="caption" color={palette.text3}>{columnLabel(name)}</Text>
             </Box>
           </Box>
         ) : (
@@ -12817,8 +12856,9 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   const axisEditKey = (where: 'legend' | 'head', a: string) => `${where}:${a}`
   // Le crayon : caché dans sa Box sans clé, que montre le survol de la ligne à clé qui la porte ; un bouton
   // sans encre le couvre, peint après la zone de clic de la ligne, qui ne reçoit donc pas ce clic. Au terminal, rien.
+  // Un dessin resserré pour son poids (#414) se passe du crayon : une Box, un dessin et un bouton par axe, deux fois.
   const axisPen = (where: 'legend' | 'head', a: string) =>
-    Svg ? (
+    Svg && lineCap >= LINE_CAP ? (
       <Box width={2} flexShrink={0} flexDirection="row" justifyContent="center" alignItems="center">
         <Box display="none" hover={{ display: 'flex' }}>
           <Svg source={rowMark(pencilIcon(palette.text2, SIZE.icon.sm), SIZE.icon.sm, 24)} alt="Modifier l'axe" width={SIZE.icon.sm} height={24} />
@@ -13882,8 +13922,16 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
           ...band.items.map(u => ({ key: u.block.key, name: u.block.label, tasks: u.block.head ? treeSteps(u.block, isLive, stepLingers) : u.block.tasks, block: u.block, under: id })),
         ]
       })
-  const bandOpen = (id: string) => !closedGroups.includes(id)
-  const toggleBand = (id: string) => () => void setView($, v => ({ closedGroups: toggleIn(v.closedGroups, id) }))
+  // Les bandes repliées d'office (#414) : passé le plafond de lignes, une bande attend qu'on l'ouvre ; ouverte
+  // à la main (`openGroups`), elle passe devant les autres dans le budget.
+  const autoFolded = new Set<string>()
+  const bandOpen = (id: string) => !closedGroups.includes(id) && !autoFolded.has(id)
+  const toggleBand = (id: string) => () =>
+    void setView($, v =>
+      bandOpen(id)
+        ? { closedGroups: [...v.closedGroups.filter(c => c !== id), id], openGroups: v.openGroups.filter(o => o !== id) }
+        : { closedGroups: v.closedGroups.filter(c => c !== id), openGroups: v.openGroups.includes(id) ? v.openGroups : [...v.openGroups, id] },
+    )
   // La tête d'une section (#265, maquette B3 choisie par Bertrand) : sa marque dans la colonne des carrés
   // (le carré de l'axe par sujet, l'icône du ton ailleurs), son nom en demi-gras, son compte au bout, et
   // dessous le trait stylé à sa couleur ; ni fond ni flèche, toute la tête replie la section.
@@ -14000,21 +14048,43 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   // lui, une vue filtrée ou « Tout déplier » posait ~2 000 éléments et ~330 Svg par clic (260 Ko),
   // au seuil où le panneau gèle (2026-10-23).
   // Les groupes d'une bande repliée ne se dessinent pas, et ne prennent rien au budget.
+  const idOf = (g: { key?: string; name: string }) => g.key ?? g.name
+  // Par sujet, la bande d'axe tait la pastille d'axe : le budget plein (#168).
+  let budget = Math.min(settings.axisPill && attend !== 'live' && !showDone && !clesVisibles?.length && axis === 'all' && (by !== 'subject' || rangerPar) ? ROW_BUDGET_AXIS_PILL : ROW_BUDGET, lineCap)
+  const rowsOf = new Map<string, number>()
+  // Le plafond de lignes (#414) : une tête de mère et son étape du jour sont des lignes dessinées, que le budget
+  // ne comptait pas (56 lignes pour un budget de 20 sur AAFES, 270 Ko). Les bandes ouvertes à la main d'abord,
+  // puis les autres dans l'ordre : celle dont le tour vient une fois le plafond atteint se replie d'office.
+  const bandOf = (g: ListGroup) => (g.band ? idOf(g) : g.under)
+  const chosen = (g: ListGroup) => {
+    const band = bandOf(g)
+    return band === undefined || openGroups.includes(band)
+  }
+  const ranked = searching ? allGroups : [...allGroups.filter(chosen), ...allGroups.filter(g => !chosen(g))]
+  let lines = 0
+  for (const g of ranked) {
+    if (g.band) {
+      if (!searching && lines >= lineCap && !openGroups.includes(idOf(g)) && !closedGroups.includes(idOf(g))) autoFolded.add(idOf(g))
+      continue
+    }
+    if (g.under !== undefined && !bandOpen(g.under)) continue
+    if (g.block?.head) lines += 1
+    // Une mère repliée qui montre son étape du jour (#189) : une ligne.
+    if (!g.bare && !isOpenGroup(idOf(g)) && g.focus) {
+      budget -= 1
+      lines += 1
+    }
+    if (!g.bare && !isOpenGroup(idOf(g))) continue
+    // Une section dépliée en entier (« Voir les N autres ») prend les siennes, dans la limite du plafond.
+    const n = moreGroups.includes(idOf(g)) ? Math.min(g.tasks.length, lineCap) : Math.min(g.tasks.length, Math.max(budget, 0))
+    rowsOf.set(idOf(g), n)
+    budget -= n
+    lines += n
+  }
+  // Les groupes d'une bande repliée ne se dessinent pas, et ne prennent rien au budget.
   const groups = allGroups.filter(g => g.under === undefined || bandOpen(g.under))
   for (const g of groups)
     if (g.under !== undefined) for (const t of [...(g.block?.head ? [g.block.head as Task] : []), ...g.tasks, ...(g.focus ? [g.focus] : [])]) sectionOf.set(t, g.under)
-  // Par sujet, la bande d'axe tait la pastille d'axe : le budget plein (#168).
-  let budget = settings.axisPill && attend !== 'live' && !showDone && !clesVisibles?.length && axis === 'all' && (by !== 'subject' || rangerPar) ? ROW_BUDGET_AXIS_PILL : ROW_BUDGET
-  const rowsOf = new Map<string, number>()
-  const idOf = (g: { key?: string; name: string }) => g.key ?? g.name
-  for (const g of groups) {
-    // Une mère repliée qui montre son étape du jour (#189) : une ligne.
-    if (!g.bare && !isOpenGroup(idOf(g)) && g.focus) budget -= 1
-    if (!g.bare && !isOpenGroup(idOf(g))) continue
-    const n = moreGroups.includes(idOf(g)) ? g.tasks.length : Math.min(g.tasks.length, Math.max(budget, 0))
-    rowsOf.set(idOf(g), n)
-    budget -= n
-  }
   // La tête d'un bloc de l'arbre est une ligne de tâche dessinée, comme ses enfants (#125).
   const drawnTasks = groups.flatMap(g => [
     ...(g.block?.head ? [g.block.head] : []),

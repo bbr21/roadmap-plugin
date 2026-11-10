@@ -2021,6 +2021,19 @@ export function bilanRows(rows: readonly FinRow[], o: { done: boolean }): FinRow
   return named.map((r, i) => ({ r, i })).sort((a, b) => rank(a.r) - rank(b.r) || a.i - b.i).map(x => x.r)
 }
 
+/**
+ * L'étiquette d'une rangée de Détails ou du Bilan, à la largeur de leur colonne (#368, maquette A de
+ * `maquettes-details.html`, choix de BBR) : la colonne est celle de la marque d'une fille (45 px), où tient
+ * « Session » ; « Échéance » devient « Délai », une étiquette plus longue est coupée par « … ». Sans quoi elle
+ * touchait sa valeur (« ÉchéanceNov 6 »).
+ */
+export const COLUMN_LABEL_MAX = 7
+export function columnLabel(name: string): string {
+  if (name === 'Échéance') return 'Délai'
+  const chars = [...name]
+  return chars.length <= COLUMN_LABEL_MAX ? name : `${chars.slice(0, COLUMN_LABEL_MAX - 2).join('')}…`
+}
+
 /** La clé des phrases « Ce qu'on va lancer » d'une tâche dans le store (#341), comme le récap. */
 export function pitchKey(project: string, id: string): string {
   return `pitch:${project}#${id}`
@@ -10285,7 +10298,7 @@ export function detailsStory(
   }
   if (task.done && task.due && task.fait) {
     const ahead = daysBetween(task.fait.slice(0, 10), task.due)
-    when.push({ name: 'Échéance', value: shortDate(task.due), sub: ahead > 0 ? `tenue, ${ahead} j d’avance` : ahead === 0 ? 'tenue, le jour même' : `${-ahead} j de retard` })
+    when.push({ name: 'Délai', value: shortDate(task.due), sub: ahead > 0 ? `tenue, ${ahead} j d’avance` : ahead === 0 ? 'tenue, le jour même' : `${-ahead} j de retard` })
   }
   if (!task.done && o.workMs) when.push({ name: 'Travail', value: `${durationLabel(o.workMs)} de session` })
   const who: StoryRow[] = []
