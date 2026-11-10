@@ -1,6 +1,6 @@
 {
   "name": "roadmap",
-  "version": "0.254.4",
+  "version": "0.254.5",
   "description": "Panneau Claude Code à côté du chat : la roadmap du projet de la session, filtrable, avec le détail d'une tâche et son lancement dans une nouvelle session",
   "author": {
     "name": "Bertrand Fargheon"
@@ -50,7 +50,7 @@
     "theme": {
       "type": "string",
       "title": "Thème du panneau",
-      "description": "« auto » suit le thème de Claude Code (sombre quand il ne dit ni clair ni sombre) ; « sombre » ou « clair » l'imposent, si le panneau ne suit pas l'apparence de l'app.",
+      "description": "« auto » suit l'apparence de l'app de bureau (son réglage, ou le Mac quand elle le suit), sinon le thème de Claude Code (sombre quand il ne dit ni clair ni sombre) ; « sombre » ou « clair » l'imposent.",
       "default": "auto",
       "options": [
         "auto",

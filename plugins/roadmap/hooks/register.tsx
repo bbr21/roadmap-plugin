@@ -78,6 +78,7 @@ import {
   activityGridIcon,
   personIcon,
   resolveTheme,
+  appAppearance,
   ringIcon,
   ruleIcon,
   fullWidth,
@@ -95,6 +96,7 @@ import {
   familyLeadIcon,
   familyRowIcon,
   type Palette,
+  type ThemeName,
   donutDotIcon,
   donutIcon,
 } from './icons'
@@ -1001,20 +1003,79 @@ function launchModelId(): string | undefined {
   return m === 'hérite' ? undefined : MODEL_IDS[m]
 }
 
+/** L'apparence de l'app de bureau lue en dernier (#417) : son fichier, gardé par sa date et sa taille, et le Mac, relu après MAC_APPEARANCE_MS. */
+let appSeen: { stamp: string; mode: string | undefined } | undefined
+let macSeen: { at: number; value: ThemeName | undefined } | undefined
+const MAC_APPEARANCE_MS = 30_000
+
+/** L'apparence du Mac : `defaults` ne trouve AppleInterfaceStyle qu'en sombre ; undefined s'il ne répond pas. */
+async function macAppearance($: EngineInterface): Promise<ThemeName | undefined> {
+  const now = await $.clock.now()
+  if (macSeen && now - macSeen.at < MAC_APPEARANCE_MS) return macSeen.value
+  let value: ThemeName | undefined
+  try {
+    const run = await $.process.run(['defaults', 'read', '-g', 'AppleInterfaceStyle'])
+    // Sans la clé (le Mac en clair), `defaults` sort en erreur.
+    value = run.exitCode === 0 && /dark/i.test(run.stdout) ? 'dark' : 'light'
+  } catch {
+    value = undefined
+  }
+  macSeen = { at: now, value }
+  return value
+}
+
 /**
- * La palette du panneau. Le mod ne reçoit pas l'apparence de l'app : il lit le thème de Claude
- * Code dans la configuration, et le réglage « Thème du panneau » l'impose quand ce thème ment.
+ * L'apparence de l'app de bureau (#417) : le mod ne la reçoit pas, il la tire du `config.json` de
+ * l'app (`userThemeMode`), et de celle du Mac quand l'app le suit. Undefined hors de l'app.
+ * Ce fichier porte aussi le cache de jetons de l'app : il n'est jamais lu en entier, `plutil` n'en
+ * rend que la clé `userThemeMode`.
+ */
+async function desktopAppearance($: EngineInterface): Promise<ThemeName | undefined> {
+  const home = ((await $.env.get('HOME').catch(() => undefined)) ?? '').replace(/\/+$/, '')
+  if (!home) return undefined
+  const path = `${home}/Library/Application Support/Claude/config.json`
+  let stamp: string
+  try {
+    const st = await statOnce($, path)
+    stamp = `${st.mtimeMs}:${st.size}`
+  } catch {
+    return undefined
+  }
+  if (appSeen?.stamp !== stamp) {
+    let mode: string | undefined
+    try {
+      const run = await $.process.run(['plutil', '-extract', 'userThemeMode', 'raw', '-o', '-', path])
+      mode = run.exitCode === 0 ? run.stdout.trim() : undefined
+    } catch {
+      mode = undefined
+    }
+    appSeen = { stamp, mode }
+  }
+  if (!appSeen.mode) return undefined
+  return appAppearance(appSeen.mode, undefined) ?? appAppearance(appSeen.mode, await macAppearance($))
+}
+
+/**
+ * La palette du panneau. Le mod ne reçoit pas l'apparence de l'app : il la lit dans le réglage de
+ * l'app de bureau (#417), puis dans le thème de Claude Code, et le réglage « Thème du panneau »
+ * l'impose quand les deux mentent.
  */
 async function paletteOf($: EngineInterface): Promise<Palette> {
   let configured: unknown
+  let app: ThemeName | undefined
   if (settings.theme === 'auto') {
+    try {
+      app = await desktopAppearance($)
+    } catch {
+      app = undefined
+    }
     try {
       configured = (await $.config.list()).find(row => row.key === 'theme')?.value
     } catch {
       // configuration illisible : le sombre par défaut
     }
   }
-  return PALETTES[resolveTheme(settings.theme, configured)]
+  return PALETTES[resolveTheme(settings.theme, configured, app)]
 }
 
 /** La place d'une ligne dans l'arbre (#125) : la tête d'un bloc, ou un enfant avec son rang. */

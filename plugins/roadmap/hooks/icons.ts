@@ -18,11 +18,26 @@ export const AXIS_THEME = ['suggestion', 'claude', 'success', 'warning', 'permis
  * de Claude Code (`dark`, `light`, `dark-daltonized`, `light-ansi`…). Un thème qui ne dit ni clair
  * ni sombre (« auto », absent, illisible) donne le sombre.
  */
-export function resolveTheme(choice: string, configured: unknown): ThemeName {
+export function resolveTheme(choice: string, configured: unknown, app?: ThemeName): ThemeName {
   if (choice === 'sombre') return 'dark'
   if (choice === 'clair') return 'light'
+  // L'apparence de l'app de bureau d'abord (#417) : le thème de Claude Code reste souvent « auto »,
+  // qui ne dit rien de l'app.
+  if (app) return app
   if (typeof configured === 'string' && configured.toLowerCase().includes('light')) return 'light'
   return 'dark'
+}
+
+/**
+ * L'apparence de l'app de bureau (#417), d'après son réglage `userThemeMode` (`light`, `dark`, ou
+ * l'app qui suit le Mac) et l'apparence du Mac ; undefined quand rien ne la dit.
+ */
+export function appAppearance(mode: string | undefined, mac: ThemeName | undefined): ThemeName | undefined {
+  const m = (mode ?? '').trim().toLowerCase()
+  if (!m) return undefined
+  if (m.includes('light')) return 'light'
+  if (m.includes('dark')) return 'dark'
+  return mac
 }
 
 /** La couleur d'un axe, par son rang dans l'ordre de déclaration. */

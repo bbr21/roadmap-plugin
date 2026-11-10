@@ -682,7 +682,7 @@ sans nom, Claude dit « l'utilisateur »), `autoOpen` (« Panneau toujours ouver
 s'ouvre au démarrage, se rouvre au message suivant s'il n'est pas dessiné ou a disparu, et sa croix ne le
 ferme pas, un toast renvoie à ce réglage ; éteint, seul `/roadmap` l'ouvre, et il se ferme, #117),
 `titleModel` (modèle des titres courts, défaut sonnet), `capture` (contrôle de grammaire et rappel de fin de tour,
-défaut oui), `theme` (thème du panneau : auto suit le thème de Claude Code, sombre ou clair l'imposent),
+défaut oui), `theme` (thème du panneau : auto suit l'apparence de l'app de bureau, ou le Mac quand elle le suit, sinon le thème de Claude Code, #417 ; sombre ou clair l'imposent),
 `launchEffort` (effort d'une session lancée du panneau, défaut high, borné par l'app à celui de la session
 qui lance ; une carte refusée avec son effort est reposée sans lui ; « hérite » n'en passe aucun),
 `launchModel` (« Modèle qui cadre », défaut opus : le modèle d'une session lancée du panneau ou par Maestro,
@@ -756,6 +756,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.254.5 (2026-11-10)** : panneau : en thème auto, le panneau suit l'apparence de l'app de bureau (clair, sombre, ou le Mac quand elle le suit) au lieu de rester sombre ; seul le réglage du thème est lu dans le fichier de l'app, jamais le reste (#417)
 - **0.254.4 (2026-11-10)** : panneau : une session qui reprend du travail après la clôture de sa tâche garde ses vraies étapes, sans Done ni « Archiver cette session », et Maestro la suit comme ouverte (#395)
 - **0.254.3 (2026-11-10)** : panneau : un clic sur une carte de tâche met l'onglet Roadmap devant, ouvre la bonne fiche chez un enfant de Maestro, et la fiche fait ses lectures ensemble (#387)
 - **0.254.2 (2026-11-10)** : release : la publication du plugin part d'une action GitHub, lancée et suivie depuis le Mac par release.py remote ; chaque version porte son étiquette (#410)
