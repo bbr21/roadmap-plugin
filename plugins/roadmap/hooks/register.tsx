@@ -483,6 +483,9 @@ import {
   sessionIsMaestro,
   queueMaestroIds,
   heldByNonMaestro,
+  stuckEntries,
+  queueAlertMs,
+  type StuckEntry,
   projectMaestroOpen,
   releaseTurnId,
   openSteps,
@@ -964,6 +967,8 @@ const pendingAsksAtom = atom({ plugin: 'roadmap', key: 'pendingAsks' } as const,
 const contextSeenAtom = atom({ plugin: 'roadmap', key: 'contextSeen' } as const, 0)
 /** Le contexte de cette session à la fin de son dernier tour (#157), pour l'en-tête de la bande de Maestro. */
 const bandContextAtom = atom({ plugin: 'roadmap', key: 'bandContext' } as const, null as ContextUse | null)
+/** Les entrées de la file commune bloquées au-delà du seuil (#400), que la relève de Maestro calcule et que sa bande dit. */
+const queueAlertAtom = atom({ plugin: 'roadmap', key: 'queueAlert' } as const, [] as readonly StuckEntry[])
 /**
  * L'axe que « Maestro <axe> » a posé pour cette session (#239), vide pour tous : le filtre du panneau à
  * chaque ouverture et la portée des briefs de Maestro, jusqu'au prochain « Maestro <axe> » ou « Maestro »
@@ -991,7 +996,7 @@ function axisCount(tasks: Task[], axis: string): number {
 }
 
 /** Les réglages du plugin (userConfig), relus à chaque chargement du module. */
-let settings = { me: [] as string[], autoOpen: true, titleModel: 'sonnet', capture: true, theme: 'auto', launchEffort: 'high', launchModel: 'opus', codeModel: 'sonnet', launchBypass: false, pruneBranches: true, launchQueue: true, projectSessions: '3', macSessions: '12', testSlots: '1', idleMinutes: '10', axisPill: false, priorities: false, dateFormat: 'us', account: 'auto' as Account }
+let settings = { me: [] as string[], autoOpen: true, titleModel: 'sonnet', capture: true, theme: 'auto', launchEffort: 'high', launchModel: 'opus', codeModel: 'sonnet', launchBypass: false, pruneBranches: true, launchQueue: true, projectSessions: '3', macSessions: '12', testSlots: '1', idleMinutes: '10', queueAlertMinutes: '30', axisPill: false, priorities: false, dateFormat: 'us', account: 'auto' as Account }
 
 /** L'identifiant du modèle qui cadre (#327), ou undefined s'il hérite de la session qui lance. */
 function launchModelId(): string | undefined {
@@ -4681,6 +4686,8 @@ async function relieveLaunches($: EngineInterface): Promise<void> {
     let queue = await readGlobalQueue($)
     const pauses = await readPauses($)
     if (queue.length === 0 && Object.keys(pauses).length === 0) {
+      // #400 : file vide, plus rien de bloqué (sans écriture si l'alerte était déjà vide).
+      await showQueueAlert($, [])
       // #367 : même file vide, la ligne des compteurs du panneau a besoin des places du Mac.
       // Sans relecture de la liste ni du store tant que la liste n'a pas changé (le repos de #348 tient).
       if (doseView && doseView.queue.length === 0 && doseView.queued === 0 && lastListRows === idleRowsSeen) return
@@ -4869,6 +4876,8 @@ async function relieveLaunches($: EngineInterface): Promise<void> {
         if (head.kind !== 'resume') queue = await writeOwnQueue($, ownId, own => own.map(q => (q.id === head.id && q.kind !== 'resume' ? failedEntry(q, now, reason) : q)), state.rows).catch(() => queue)
       }
     }
+    // #400 : ce qui reste bloqué au-delà du seuil, tous projets compris, paraît dans la bande de ce Maestro.
+    await showQueueAlert($, await queueAlertOf($, queue, state, ownId, now))
     await showCounts(true)
   } catch {
     // un pas raté : le suivant relit
@@ -5024,6 +5033,56 @@ async function typedRelease($: EngineInterface): Promise<string | undefined> {
 }
 
 /** Ce que le dernier pas a vu (#345, #367) : le panneau se redessine seulement si un compteur a changé. */
+/** #400 : la dernière alerte posée dans l'atome, pour ne le réécrire que quand elle change. */
+let queueAlertSeen = '[]'
+/** #400 : le nom déclaré de chaque projet de la file (`name` de son `.claude/roadmap.json`), lu une fois par chargement. */
+const projectNames = new Map<string, string>()
+
+async function projectNameOf($: EngineInterface, project: string): Promise<string> {
+  const known = projectNames.get(project)
+  if (known !== undefined) return known
+  let name = baseName(project)
+  try {
+    const parsed = JSON.parse((await readOr($, `${project}/.claude/roadmap.json`)) ?? '{}') as { name?: unknown }
+    if (typeof parsed.name === 'string' && parsed.name.trim() !== '') name = parsed.name.trim()
+  } catch {
+    // configuration illisible : le nom du dossier
+  }
+  projectNames.set(project, name)
+  return name
+}
+
+/**
+ * #400 : les entrées de la file commune bloquées au-delà du seuil (option « File bloquée après »), tous projets
+ * compris, jugées sur ce que ce pas de la relève vient de lire : la file, les sessions, la décision de dose. Ni
+ * lecture du store ni appel d'outil de plus ; le nom d'un autre projet, une fois par chargement.
+ */
+async function queueAlertOf($: EngineInterface, queue: readonly GlobalQueued[], state: DoseState, ownId: string, now: number): Promise<StuckEntry[]> {
+  const alertMs = queueAlertMs(settings.queueAlertMinutes)
+  const old = queue.filter(e => now - e.at >= alertMs)
+  if (old.length === 0) return []
+  for (const project of new Set(old.map(e => e.project))) await projectNameOf($, project)
+  const maestros = queueMaestroIds(state.rows, state.marks)
+  maestros.add(ownId)
+  return stuckEntries(old, {
+    now,
+    alertMs,
+    rows: state.rows,
+    maestros,
+    gate: e => gateFor(state, e.project, e.match),
+    places: e => ({ projectTaken: placesOf(state, e.project, e.match), projectMax: state.projectMax, macTaken: state.macTaken, macMax: state.macMax, ...(state.load?.live !== undefined ? { live: state.load.live } : {}) }),
+    name: project => projectNames.get(project) ?? baseName(project),
+  })
+}
+
+/** #400 : pose l'alerte dans l'atome que lit la bande, seulement quand elle change (la bande se redessine alors). */
+async function showQueueAlert($: EngineInterface, list: readonly StuckEntry[]): Promise<void> {
+  const key = JSON.stringify(list)
+  if (key === queueAlertSeen) return
+  queueAlertSeen = key
+  await update($, queueAlertAtom, () => list)
+}
+
 async function showDose($: EngineInterface, next: DoseView): Promise<void> {
   const key = JSON.stringify([next.queue.map(q => [q.id, q.rank]), next.queued, next.projectTaken, next.projectMax, next.macTaken, next.macMax, next.why, next.why === 'load' ? Math.round(next.load?.load ?? 0) : 0, next.why === 'memory' ? [next.load?.free, next.load?.swap] : 0, next.why === 'live' ? next.load?.live : 0])
   doseView = next
@@ -7855,6 +7914,7 @@ export const register: Register = (on, options) => {
     macSessions: typeof options.macSessions === 'string' && options.macSessions !== '' ? options.macSessions : '12',
     testSlots: typeof options.testSlots === 'string' && options.testSlots !== '' ? options.testSlots : '1',
     idleMinutes: typeof options.idleMinutes === 'string' && options.idleMinutes !== '' ? options.idleMinutes : '10',
+    queueAlertMinutes: typeof options.queueAlertMinutes === 'string' && options.queueAlertMinutes !== '' ? options.queueAlertMinutes : '30',
     axisPill: typeof options.axisPill === 'boolean' ? options.axisPill : false,
     priorities: options.priorities === true,
     dateFormat: options.dateFormat === 'fr' ? 'fr' : 'us',
@@ -8734,7 +8794,9 @@ export const register: Register = (on, options) => {
       const found = await sessionBrandOf($)
       // #385 : la bande paraît dès que le projet a des sessions en cours, tous Maestro confondus.
       const others = found?.brand.kind === 'maestro' ? await projectBandOthers($, found.data) : []
-      const band = maestroBand({ brand: found?.brand, hasSurvey: e.props.hasSurvey, shown: BRAND_TASKS_SHOWN, others })
+      // #400 : les entrées de la file bloquées, que la relève a posées dans l'atome (aucune lecture du store ici).
+      const stuck = found?.brand.kind === 'maestro' ? ((await read($, queueAlertAtom)) ?? []) : []
+      const band = maestroBand({ brand: found?.brand, hasSurvey: e.props.hasSurvey, shown: BRAND_TASKS_SHOWN, others, alerts: stuck.length })
       if (!found || !band) return next(e)
       const now = await $.clock.now()
       const statuses = await Promise.all(band.tasks.map(t => readSteps($, t.sessionId)))
@@ -8763,7 +8825,8 @@ export const register: Register = (on, options) => {
         open: t => void (t.cloud ? openCloudPr($, t.cloud) : t.sessionId ? openSession($, { sessionId: t.sessionId, startedAt: now, title: t.label }) : undefined),
         archive: t => void (t.cloud ? hideCloudRow($, t) : archiveBandSession($, t, now)),
         compact: () => void compactFromBand($),
-      }, now, contexts, await read($, zoneGenAtom))
+        openStuck: s => void (s.open ? openSession($, { sessionId: s.open, startedAt: now, title: `Maestro ${s.project}` }) : undefined),
+      }, now, contexts, await read($, zoneGenAtom), stuck)
     } catch {
       return next(e)
     }
@@ -9429,8 +9492,9 @@ async function forceBar($: EngineInterface): Promise<{ text: string }> {
   if (found?.brand.kind !== 'maestro') return { text: maestroBarText({ kind: 'unread' }) }
   // #385 : ce que la bande montre, les sessions du projet, tous Maestro confondus.
   const band = maestroBand({ brand: found.brand, hasSurvey: false, shown: Infinity, others: await projectBandOthers($, found.data) })
+  const stuck = ((await read($, queueAlertAtom)) ?? []).length
   return {
-    text: maestroBarText({ kind: 'maestro', tasks: band?.brand.kind === 'maestro' ? band.brand.tasks.length : 0, marked, survey: bandAsked?.survey === true, drawn: bandAsked !== undefined }),
+    text: maestroBarText({ kind: 'maestro', tasks: band?.brand.kind === 'maestro' ? band.brand.tasks.length : 0, marked, survey: bandAsked?.survey === true, drawn: bandAsked !== undefined, stuck }),
   }
 }
 
@@ -9471,10 +9535,11 @@ function maestroBandTree(
   palette: Palette,
   views: readonly (StepsView | undefined)[],
   infos: readonly { since: string; text: string; square?: { hex: string; axis: string; done: boolean } }[],
-  act: { open: (t: BrandTask) => void; archive: (t: BrandTask) => void; compact: () => void },
+  act: { open: (t: BrandTask) => void; archive: (t: BrandTask) => void; compact: () => void; openStuck?: (s: StuckEntry) => void },
   now: number,
   contexts: { mine?: ContextView; rows: readonly (ContextView | undefined)[] } = { rows: [] },
   zoneGen = 0,
+  stuck: readonly StuckEntry[] = [],
 ): RenderElement {
   const resolved = $.ui.resolve(e)
   const { Box, Text, Button } = resolved
@@ -9533,11 +9598,12 @@ function maestroBandTree(
   const marks = band.tasks.map(bandState)
   const cols = bandColumns({
     infos: infos.map(x => x.text),
-    sinces: infos.map(x => x.since),
+    // #400 : la durée en file d'une entrée bloquée partage la colonne de la durée des sessions.
+    sinces: [...infos.map(x => x.since), ...stuck.map(s => s.since)],
     archive: band.tasks.some(t => t.archivable && (t.sessionId || t.cloud)),
   })
   // L'horloge devant la durée, centrée sur le texte (#385) : sa case de 2 cellules sur chaque ligne dès qu'une en a.
-  const clocked = infos.some(x => x.since !== '')
+  const clocked = infos.some(x => x.since !== '') || stuck.length > 0
   // L'icône de l'état, celles du bloc « En cours » (#211) ; au terminal, son signe.
   const stateIcon = (icon: ReturnType<typeof bandState>['icon'], word: string, hex: string, cloud?: CloudPr) => {
     // Une session cloud : le nuage teinté par l'état de sa PR, à la place de la roue, de la main ou de la coche (#408, maquette A).
@@ -9587,6 +9653,70 @@ function maestroBandTree(
       </Box>
     )
   }
+  // #400 (maquette A) : une ligne par entrée de la file bloquée, en tête : la main orange, le numéro et le projet, le
+  // titre (qui cède sa place le premier), la cause en gris et le geste en orange, puis la durée en file au bord droit.
+  // Un clic ouvre le Maestro où se fait le geste ; sans Maestro ouvert du projet, la ligne ne s'ouvre pas.
+  const stuckRow = (s: StuckEntry) => {
+    const id = `band-stuck:${keyPart(s.project)}:${keyPart(s.id)}`
+    const zone = Boolean(s.open && act.openStuck && Svg && Client)
+    if (zone) {
+      pressHandlers.set(id, () => act.openStuck?.(s))
+      zoneDrawn(zones, 'press-hit', now)
+    }
+    const row = (
+      <Box key={id} flexDirection="row" alignItems="center" gap={SPACE.row} hover={{ backgroundColor: palette.hover }}>
+        {strut}
+        {Svg ? (
+          <Svg source={handIcon(palette.block, 14, STROKE.pill, 'en file bloquée')} alt="en file bloquée" width={SIZE.icon.sm} height={SIZE.icon.sm} />
+        ) : (
+          <Text size="caption" color={palette.block}>✋</Text>
+        )}
+        <Box flexShrink={0}>
+          <Text size="caption" tabular color={palette.text2}>{`#${s.id}`}</Text>
+        </Box>
+        <Box flexShrink={0}>
+          <Text size="caption" color={palette.text2}>{s.project}</Text>
+        </Box>
+        <Box flexShrink={1} minWidth={0}>
+          <Text size="footnote" wrap="truncate-end">{s.title}</Text>
+        </Box>
+        <Box flexGrow={1} />
+        {/* La cause et le geste, calés à droite dans leur case : la cause se tronque, jamais le geste. */}
+        <Box key={`${id}-why`} width={Svg ? BAND_STUCK_WHY : undefined} flexShrink={0} minWidth={0} flexDirection="row" alignItems="center" justifyContent="flex-end" gap={SPACE.row}>
+          <Box flexShrink={1} minWidth={0}>
+            <Text size="caption" color={palette.text2} wrap="truncate-end">{s.cause}</Text>
+          </Box>
+          <Box flexShrink={0}>
+            <Text size="caption" color={palette.text2}>·</Text>
+          </Box>
+          <Box flexShrink={0}>
+            <Text size="caption" weight="medium" color={palette.blockOn}>{s.act}</Text>
+          </Box>
+        </Box>
+        <Box key={`${id}-since`} width={2 + cols.since} flexShrink={0} flexDirection="row" alignItems="center" justifyContent="flex-end" gap={0}>
+          <Box width={2} flexShrink={0} flexDirection="row" alignItems="center">
+            {Svg ? <Svg source={clockIcon(palette.blockOn, 12)} alt="en file depuis" width={12} height={12} /> : <Text size="caption" color={palette.blockOn}>◷</Text>}
+          </Box>
+          <Text size="caption" tabular color={palette.blockOn}>{s.since}</Text>
+        </Box>
+        {zone && Client && (
+          <Box position="absolute" top={0} left={0} right={0}>
+            <Client key={`${pressKey(id)}-g${zoneGen}`} module="./press-hit.tsx" props={{ id }} width="100%" height={1} />
+          </Box>
+        )}
+      </Box>
+    )
+    // Au terminal, la ligne entière est le bouton.
+    if (!zone && s.open && act.openStuck && (!Svg || !Client)) {
+      return (
+        <Button key={id} plain onPress={() => act.openStuck?.(s)}>
+          {row}
+        </Button>
+      )
+    }
+    return row
+  }
+  const bodyColumns = (e.props as { bodyColumns?: number }).bodyColumns ?? 48
   return (
     <Box flexDirection="column" gap={SPACE.tight} backgroundColor={palette.bg} padding="sm">
       {/* L'en-tête commence comme une ligne, par le même trait d'espace : « Maestro » au droit des pastilles (#326). */}
@@ -9606,6 +9736,9 @@ function maestroBandTree(
         {mine?.compact && compactButton()}
       </Box>
       <Box flexDirection="column">
+        {stuck.map(stuckRow)}
+        {/* #400 : un filet sépare la file bloquée des sessions. */}
+        {stuck.length > 0 && band.tasks.length > 0 && Svg && <Svg key="band-stuck-rule" source={ruleIcon(palette.border, fullWidth(bodyColumns))} alt="séparateur" height={1} />}
         {band.tasks.map((t, i) => {
           const view = views[i]
           const [dot, word] = hue(t)
@@ -9700,6 +9833,9 @@ function maestroBandTree(
  * dessiné dans la jauge de contexte (#241).
  */
 const BAND_GAUGE = { row: 80, gap: 2 }
+
+/** #400 (maquette A) : la case de la cause et du geste d'une entrée bloquée, en cellules : « retenue par Tri HomeExchange · ▶ dans Maestro AAFES ». */
+const BAND_STUCK_WHY = 38
 
 /**
  * L'en-tête du panneau, au-dessus de la roadmap : Maestro et ses voies ; chez une tâche dont on a demandé

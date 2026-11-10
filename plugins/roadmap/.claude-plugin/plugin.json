@@ -1,6 +1,6 @@
 {
   "name": "roadmap",
-  "version": "0.256.0",
+  "version": "0.257.0",
   "description": "Panneau Claude Code à côté du chat : la roadmap du projet de la session, filtrable, avec le détail d'une tâche et son lancement dans une nouvelle session",
   "author": {
     "name": "Bertrand Fargheon"
@@ -148,6 +148,13 @@
       "description": "Le nombre de minutes après lequel une session de tâche au repos (qui attend ta réponse, sans s'être dite prête ou finie) rend sa place dans la file de lancement, et après lequel une carte posée par Maestro et pas encore démarrée cesse de réserver la sienne. Une session qui tourne garde toujours sa place. Ne vaut que la « File de lancement » allumée.",
       "default": "10",
       "options": ["5", "10", "15", "20", "30"]
+    },
+    "queueAlertMinutes": {
+      "type": "string",
+      "title": "File bloquée après",
+      "description": "Le nombre de minutes après lequel une entrée de la file de lancement qui n'est pas partie paraît dans la bande de chaque Maestro ouvert, tous projets compris, avec ce qui la retient (retenue, Remote Control, carte posée, départ raté, place qui manque) et le geste qui la débloque ; un clic sur sa ligne ouvre le Maestro où se fait le geste.",
+      "default": "30",
+      "options": ["15", "30", "60", "120"]
     },
     "account": {
       "type": "string",

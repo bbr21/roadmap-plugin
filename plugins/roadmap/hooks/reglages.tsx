@@ -318,6 +318,7 @@ export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
       { field: 'macSessions', name: 'Sessions sur le Mac', def: '12' },
       { field: 'testSlots', name: 'Suites de tests sur le Mac', def: '1' },
       { field: 'idleMinutes', name: 'Repos avant de rendre sa place', def: '10' },
+      { field: 'queueAlertMinutes', name: 'File bloquée après', def: '30' },
     ],
   },
   {

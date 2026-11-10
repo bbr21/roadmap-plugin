@@ -700,6 +700,7 @@ qui doit se relever en bypass, la carte part donc sans le mode ni la consigne.
 
 `testSlots` (« Suites de tests sur le Mac », défaut 1, #323) : combien de suites de tests lourdes tournent en même temps sur le Mac, tous projets confondus. La file des tests est une seule pour le Mac (`~/.claude/locks/heavy-tests/mac`) : une suite de `main`, de Maestro ou de `release.py release` passe devant, puis `tools/un_test.sh` (un fichier de test seul), puis le reste, sans couper celle qui tourne ; chaque suite tourne en priorité basse (`renice` 10). Sa place prise, une suite attend aussi, 5 min au plus, que la charge retombe et que la mémoire se détende (moins de 5 % libres, ou swap à 90 % et plus avec moins de 10 % libres, #403), en disant laquelle la retient ; une attente dont la session est morte quitte la file.
 `idleMinutes` (« Repos avant de rendre sa place », défaut 10, #374) : les minutes après lesquelles une session de tâche au repos rend sa place dans la file, et une carte posée pas encore démarrée cesse de réserver la sienne ; avant, 15 min fixes.
+`queueAlertMinutes` (« File bloquée après », défaut 30, #400) : les minutes après lesquelles une entrée de la file de lancement qui n'est pas partie paraît en tête de la bande de chaque Maestro ouvert, tous projets compris : une ligne par entrée, sa cause réelle (retenue par une session qui n'est pas un Maestro, pas lancée à sa relève, Remote Control, carte posée, départ raté, place qui manque) et le geste qui la débloque ; un clic ouvre le Maestro où se fait le geste. La relève la calcule sur ce qu'elle lit déjà, sans lecture du store de plus.
 `axisPill` (« Axe en pastille », défaut non depuis #177 ; #156) : allumé, chaque tâche ouverte de la
 liste porte son axe en pastille grise, à droite du titre, avant l'âge ; jamais dans « En cours » (le bloc
 de Maestro ou le filtre, où le carré d'axe suffit et le titre garde sa place), ni sous un axe choisi, ni
@@ -756,6 +757,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.257.0 (2026-11-10)** : panneau : la bande de chaque Maestro ouvert dit en tête, tous projets compris, une entrée de la file de lancement bloquée au-delà du seuil (option « File bloquée après », 30 min par défaut), avec sa cause réelle et le geste qui la débloque ; un clic ouvre le Maestro où se fait le geste (#400)
 - **0.256.0 (2026-11-10)** : panneau : « Tester les maquettes » ouvre la page à chaque clic, en http par le serveur de maquettes que le panneau lance lui-même et qui ne sert que le dossier de la page ; le bouton ne se change plus en « Fermer » (#401)
 - **0.255.0 (2026-11-10)** : panneau : centre de contrôle, « Tout en pause » et « Tout reprendre » dans le titre, « Retirer » sur une entrée en attente, session en pause sous un nœud pause (#415)
 - **0.254.5 (2026-11-10)** : panneau : en thème auto, le panneau suit l'apparence de l'app de bureau (clair, sombre, ou le Mac quand elle le suit) au lieu de rester sombre ; seul le réglage du thème est lu dans le fichier de l'app, jamais le reste (#417)

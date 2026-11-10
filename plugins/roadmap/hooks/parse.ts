@@ -10021,8 +10021,10 @@ export type MaestroBand = { brand: Extract<Brand, { kind: 'maestro' }>; tasks: B
  * projet travaille (`others`, un autre Maestro du même dossier), chacune une fois (la sienne l'emporte),
  * rangées par premier lancement, les sans-date à la fin. Son en-tête compte ce qu'elle montre.
  */
-export function maestroBand(o: { brand: Brand | undefined; hasSurvey: boolean; shown: number; others?: readonly BrandTask[] }): MaestroBand | undefined {
+export function maestroBand(o: { brand: Brand | undefined; hasSurvey: boolean; shown: number; others?: readonly BrandTask[]; alerts?: number }): MaestroBand | undefined {
   if (o.hasSurvey || o.brand?.kind !== 'maestro') return undefined
+  // #400 : sans session mais avec une entrée de la file bloquée, la bande paraît pour la dire.
+  if (o.brand.tasks.length === 0 && (o.others ?? []).length === 0 && (o.alerts ?? 0) > 0) return { brand: o.brand, tasks: [], more: 0 }
   const own = new Set(o.brand.tasks.map(t => t.id))
   const at = (t: BrandTask) => (typeof t.launchedAt === 'number' && Number.isFinite(t.launchedAt) ? t.launchedAt : Number.POSITIVE_INFINITY)
   const others = (o.others ?? []).filter((t, i, all) => !own.has(t.id) && all.findIndex(x => x.id === t.id) === i)
@@ -10045,7 +10047,7 @@ export type MaestroBarCase =
   | { kind: 'child' }
   | { kind: 'no-roadmap' }
   | { kind: 'unread' }
-  | { kind: 'maestro'; tasks: number; marked: boolean; survey: boolean; drawn: boolean }
+  | { kind: 'maestro'; tasks: number; marked: boolean; survey: boolean; drawn: boolean; /** #400 : les entrées de la file bloquées que la bande montre. */ stuck?: number }
 
 /** La ligne que `/maestro-bar` rend (#225) : ce que la bande montre, ou pourquoi elle ne montre rien. */
 export function maestroBarText(c: MaestroBarCase): string {
@@ -10056,8 +10058,14 @@ export function maestroBarText(c: MaestroBarCase): string {
   if (c.kind === 'unread') return `${lead}la roadmap ou la liste des sessions n'a pas pu se lire, réessaie dans un instant.`
   const marked = c.marked ? 'Session marquée Maestro. ' : ''
   // #385 : la bande montre les sessions du projet, tous Maestro du même dossier confondus.
-  if (c.tasks === 0) return `${marked}${lead}aucune session en cours dans le projet, elle paraîtra à la première.`
-  const said = [`Bande de Maestro redessinée : ${c.tasks} session${c.tasks > 1 ? 's' : ''} du projet.`]
+  const stuck = c.stuck ?? 0
+  if (c.tasks === 0 && stuck === 0) return `${marked}${lead}aucune session en cours dans le projet, elle paraîtra à la première.`
+  // #400 : et les entrées de la file bloquées, tous projets compris.
+  const shown = [
+    ...(c.tasks > 0 ? [`${c.tasks} session${c.tasks > 1 ? 's' : ''} du projet`] : []),
+    ...(stuck > 0 ? [`${stuck} entrée${stuck > 1 ? 's' : ''} de la file bloquée${stuck > 1 ? 's' : ''}`] : []),
+  ]
+  const said = [`Bande de Maestro redessinée : ${shown.join(', ')}.`]
   if (c.survey) said.push('La question de la boîte de fin tient sa place : elle revient à la réponse.')
   if (!c.drawn) said.push("L'app n'a encore jamais demandé la bande à ce plugin : sa version n'a peut-être pas de bande au-dessus de la saisie (AbovePrompt).")
   return marked + said.join(' ')
@@ -13147,6 +13155,94 @@ export function queuedLine(c: { launching?: boolean; held?: { at: number; reason
     return `départ raté à ${hm} · ${c.failed.reason} · réessaie à son tour`
   }
   return 'pas encore lancée · démarrera seule à son tour'
+}
+
+/** #400 : une entrée de la file pas partie depuis ce délai paraît dans la bande de chaque Maestro ; l'option « File bloquée après » le règle. */
+export const QUEUE_ALERT_MS = 30 * 60_000
+
+/** Le seuil réglé (#400) : des minutes entières positives, sinon `QUEUE_ALERT_MS`. */
+export function queueAlertMs(option: unknown): number {
+  const n = Number(option)
+  return typeof option === 'string' && option.trim() !== '' && Number.isInteger(n) && n > 0 ? n * 60_000 : QUEUE_ALERT_MS
+}
+
+/**
+ * Une entrée de la file bloquée (#400, maquette A) : son numéro, son titre, le nom de son projet, son arrivée et sa
+ * durée en file, ce qui la retient (`cause`) et le geste qui la débloque (`act`) ; `open`, le Maestro où se fait le
+ * geste, qu'un clic sur la ligne ouvre (sans Maestro ouvert du projet, rien).
+ */
+export type StuckEntry = { id: string; title: string; project: string; at: number; since: string; cause: string; act: string; open?: string }
+
+/**
+ * Les entrées de la file commune qui ne sont pas parties depuis `alertMs` (#400), tous projets compris, la plus
+ * ancienne d'abord. La cause se lit sur l'entrée elle-même (retenue, Remote Control, carte posée, départ raté) ou
+ * sur la décision de dose (`gate`, `places`), jamais supposée (#382, #390). Une reprise de pause (`resume`, son
+ * `at` est un rang) et un départ en vol ne sont jamais bloqués. `name` : le nom d'un projet, d'après son dossier.
+ */
+export function stuckEntries(
+  queue: readonly GlobalQueued[],
+  o: {
+    now: number
+    alertMs: number
+    rows: readonly unknown[]
+    maestros: ReadonlySet<string>
+    gate: (e: GlobalQueued) => { go: boolean; why?: DoseWhy }
+    places: (e: GlobalQueued) => { projectTaken: number; projectMax: number; macTaken: number; macMax: number; live?: number }
+    name: (project: string) => string
+  },
+): StuckEntry[] {
+  const open = (id: string) => {
+    const row = rowOf(o.rows, id)
+    return row !== undefined && row.isArchived !== true
+  }
+  // Le Maestro qui tient l'entrée, s'il est ouvert ; sinon un Maestro ouvert de son projet.
+  const projectMaestro = (e: GlobalQueued) =>
+    [...o.maestros].find(id => {
+      const row = rowOf(o.rows, id) as { cwd?: unknown; isArchived?: unknown } | undefined
+      return row !== undefined && row.isArchived !== true && typeof row.cwd === 'string' && e.match.some(prefix => (row.cwd as string).startsWith(prefix))
+    })
+  const holder = (e: GlobalQueued) => (o.maestros.has(e.maestro) && open(e.maestro) ? e.maestro : projectMaestro(e))
+  const judged = queue.flatMap((e): StuckEntry[] => {
+    if (e.kind === 'resume' || launchInFlight(e, o.now) || o.now - e.at < o.alertMs) return []
+    const p = o.name(e.project)
+    const maestro = `Maestro ${p}`
+    const base = { id: e.id, title: e.title.replace(/^#\S+\s*·\s*/, ''), project: p, at: e.at, since: sinceLabel(e.at, o.now) }
+    // Le geste se fait dans un Maestro : sans Maestro ouvert du projet, il faut d'abord en ouvrir un.
+    const said = (cause: string, act: string, where: string | undefined): StuckEntry[] => [{ ...base, cause, ...(where !== undefined ? { act, open: where } : { act: `ouvre un ${maestro}` }) }]
+    if (e.failed?.remote) return said('Remote Control refuse le départ', `tape un mot dans ${maestro}`, holder(e))
+    if (e.carded) return said('carte posée, pas démarrée', `Start dans ${maestro}`, holder(e))
+    if (e.held) {
+      const by = heldByNonMaestro(e, o.rows, o.maestros) ? rowOf(o.rows, e.maestro)?.title : undefined
+      return said(typeof by === 'string' ? `retenue par ${clip(by, 30)}` : 'pas lancée à sa relève', `▶ dans ${maestro}`, projectMaestro(e))
+    }
+    if (e.failed) {
+      const d = new Date(e.failed.at)
+      return said(`départ raté à ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`, `ouvre ${maestro}`, holder(e))
+    }
+    const gate = o.gate(e)
+    if (!gate.go) {
+      // Une attente de place n'a pas de Maestro à ouvrir : le geste est de libérer une place.
+      const n = o.places(e)
+      const wait = (cause: string, act: string): StuckEntry[] => [{ ...base, cause, act }]
+      if (gate.why === 'project') return wait(`attend une place · ${p} ${n.projectTaken}/${n.projectMax}`, `libère une place ${p}`)
+      if (gate.why === 'live') return wait(`attend une place · ${n.live ?? n.macTaken} vivantes / ${n.macMax}`, 'libère une place sur le Mac')
+      if (gate.why === 'memory') return wait('mémoire du Mac tendue', 'ferme une session')
+      if (gate.why === 'load') return wait('Mac chargé', 'ferme une session')
+      return wait(`attend une place · Mac ${n.macTaken}/${n.macMax}`, 'libère une place sur le Mac')
+    }
+    return said('son Maestro ne la lance pas', `ouvre ${maestro}`, holder(e))
+  })
+  // Une même tâche deux fois en file (le doublon de #187) ne fait qu'une ligne, la plus ancienne : une même zone
+  // de clic posée deux fois ferait refuser toute la bande.
+  const seen = new Set<string>()
+  return judged
+    .sort((a, b) => a.at - b.at)
+    .filter(s => {
+      const key = `${s.project}\n${s.id}`
+      if (seen.has(key)) return false
+      seen.add(key)
+      return true
+    })
 }
 
 /**

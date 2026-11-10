@@ -48,6 +48,8 @@ declare module 'claude-code' {
       controlStamp: number
       /** Ce que montre la grille d'un an de l'accueil de Maestro (#335) : les faites ou les ajoutées, au choix de son bouton. */
       welcomeGrid: 'done' | 'added'
+      /** Les entrées de la file commune bloquées au-delà du seuil (#400, `StuckEntry` de parse.ts), que la relève calcule et que la bande de Maestro dit. */
+      queueAlert: readonly { id: string; title: string; project: string; at: number; since: string; cause: string; act: string; open?: string }[]
     }
   }
 }
