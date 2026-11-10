@@ -9127,7 +9127,7 @@ function brandTree(
           {words.meta.map(m => pill(m, palette.sel, palette.text2))}
         </Box>
       )}
-      {stations && Svg && <Svg source={stations.source} alt={words.stations?.here ?? ''} width={stations.width} height={stations.height} />}
+      {stations && Svg && <Svg source={stations.source} alt={words.stations?.here ?? 'Étapes de la tâche'} width={stations.width} height={stations.height} />}
     </Box>
   )
 }
@@ -9356,7 +9356,7 @@ function maestroBandTree(
                 (square ? (
                   <Svg source={done ? squareCheckRowIcon(square.hex, palette.onAxis) : squareRowIcon(square.hex)} alt={done ? 'faite' : square.axis} width={MARK_SQUARE_PX} height={SIZE.strut.row} />
                 ) : (
-                  <Svg source={discIcon(dot, 12)} alt={t.state === 'done' ? bandState(t).word : (words.states[i] ?? '')} width={12} height={12} />
+                  <Svg source={discIcon(dot, 12)} alt={t.state === 'done' ? bandState(t).word : (words.states[i] ?? bandState(t).word)} width={12} height={12} />
                 ))}
               {/* L'archive entre la case et le numéro (« Apparaît uniquement quand une task est done et pas encore
                   archivée »), dans une case que toutes les lignes gardent dès qu'une en a besoin : les numéros
@@ -11255,12 +11255,12 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
           >
             {corners(RADIUS.control, palette.bg)}
             {strut(SIZE.strut.control)}
-            <Svg source={shown ? closeIcon(fg, SIZE.icon.md) : browserIcon(fg, SIZE.icon.md)} alt="" width={SIZE.icon.md} height={SIZE.icon.md} />
+            <Svg source={shown ? closeIcon(fg, SIZE.icon.md) : browserIcon(fg, SIZE.icon.md)} alt={shown ? 'Fermer' : 'Navigateur'} width={SIZE.icon.md} height={SIZE.icon.md} />
             <Text size="footnote" weight="semibold" color={palette.text}>{word}</Text>
             <Box flexGrow={1} flexShrink={1} minWidth={0} alignItems="flex-end">
               <Text size="caption" color={palette.text2} wrap="truncate-end">{shown ? 'ouvertes dans le volet' : mockupPage.name}</Text>
             </Box>
-            {!shown && <Svg source={externalIcon(fg, SIZE.icon.xs)} alt="" width={SIZE.icon.xs} height={SIZE.icon.xs} />}
+            {!shown && <Svg source={externalIcon(fg, SIZE.icon.xs)} alt="Ouvrir dans le volet" width={SIZE.icon.xs} height={SIZE.icon.xs} />}
             {hit('mockup', press)}
           </Box>
         </Box>
@@ -14028,7 +14028,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   const headRow = (id: string, name: string, count: number, mark: string, nameInk: string, accent: string, axisOf?: string) => (
     <Box key={`band:${id}`} flexDirection="column" paddingX={SPACE.indent} paddingTop="md" paddingBottom="xs">
       <Box key={`hit:bande:${keyPart(name)}`} flexDirection="row" alignItems="flex-start" gap={SPACE.row}>
-        {Svg && <Svg source={mark} alt="" width={16} height={24} />}
+        {Svg && <Svg source={mark} alt={`Section ${name}`} width={16} height={24} />}
         <Box flexDirection="column" flexGrow={1} flexShrink={1} minWidth={0}>
           <Box flexDirection="row" justifyContent="space-between" alignItems="center">
             <Box flexDirection="row" alignItems="center" flexShrink={1} minWidth={0}>

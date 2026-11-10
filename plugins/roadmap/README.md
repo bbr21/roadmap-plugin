@@ -756,6 +756,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.252.1 (2026-11-10)** : panneau : chaque dessin porte un texte de remplacement, les marques des têtes de section et les icônes du bouton des maquettes s'affichent enfin sur le bureau ; un test refuse tout dessin à alt vide (#370)
 - **0.252.0 (2026-11-10)** : panneau : le bouton des maquettes d'une fiche ouvre la page en http par le serveur de serve.py quand il tourne pour le projet, en file:// sinon ; en mode auto, Claude sert la page lui-même (#401)
 - **0.251.3 (2026-11-10)** : maestro : le panneau de Maestro éteint lui-même Remote Control sur chaque session qu'il lance, une fois, depuis Bypass ou Auto ; la consigne du brief reste en secours (#402)
 - **0.251.2 (2026-11-10)** : maestro : la suite entière tourne sur GitHub Actions à chaque PR et sur main, Maestro y lit le résultat ; deux tests passent sous root et sur un clone superficiel (#407)
