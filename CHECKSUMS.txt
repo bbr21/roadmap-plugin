@@ -1,8 +1,8 @@
-# roadmap 0.244.2 : SHA-256 de chaque fichier installé du plugin, chemins relatifs à son dossier.
-# Vérifier une copie installée (~/.claude/plugins/cache/roadmap/roadmap/0.244.2) : plugins/roadmap/SECURITE.md, « Vérifier que ta copie est une vraie version ».
-5065aa41db39651a2751d91f2b2ef446fa41f6141c2fa86876e75ce42a6b475b  .claude-plugin/plugin.json
-92cfd748728ee6fdfc37e78d36ab07eb35e816b776f98f91a41226114198ce00  README.md
-cf314da4be503026d568aa0e6f3c893d662ec67d755d331cab4eaebca7c31c82  SECURITE.md
+# roadmap 0.244.3 : SHA-256 de chaque fichier installé du plugin, chemins relatifs à son dossier.
+# Vérifier une copie installée (~/.claude/plugins/cache/roadmap/roadmap/0.244.3) : plugins/roadmap/SECURITE.md, « Vérifier que ta copie est une vraie version ».
+acf58568325d1001e58a5453e35cb02836037d4e4fcb73bf724982032e19b9a5  .claude-plugin/plugin.json
+4d1f937138a022a78cbf261643575c340a00d20dfef0963c02b669bb7165fc50  README.md
+aa32e9661b18419e4b9fd8272d8fb90d1c53619924578babeaddd09f14abd79a  SECURITE.md
 bce019cb7147413a8e5f0687df59a41394fa92545568b5d37b1df8bd6d885e30  hooks/bar-hit.tsx
 5058cf225b60518571323c473ac505c54dbc93e93a6aef9991e50609446219f8  hooks/cartes.tsx
 bb4a7f424b0d21642e0ce0b715efad3eb0c05e34eba4c2901ce96c0a8ce87f79  hooks/controle.tsx
@@ -11,7 +11,7 @@ d842d789476d67282d0f04b7e5fdc68a3d981ccec65dd79cfa2d11eed13fb828  hooks/hooks.js
 ed476a5705b1fca0bb8c75ebd2ac45ea84b813695a084f8bbdebd627a3e89312  hooks/icons.ts
 690281a47a3328835889616927518853737ab4d1db9aab473948bfc2f5d3afc1  hooks/parse.ts
 a29e07be4f95c637c8f3ab377dc9a97cd16de11e8e7de7062311dd2888a0833f  hooks/press-hit.tsx
-f1b108be7f06bdc2e11dc5f0dfa39a0c364dfab79d55b645d528179e44af3304  hooks/register.tsx
+685f470e922b9bc0b1de0da2fb140475c3529c6272d71a6b9aa3489a536e1531  hooks/register.tsx
 6744107d0134b5d5108a01fb6dcf18777fe5fa6da029b2c2d031027a68118a54  hooks/reglages.tsx
 ee3e0d04f7d05c2d22300d69accad8bfedf06ecc1f86452e4537fc20ffe68905  hooks/tokens.ts
 40a25201db9424dbda555e5497587c448e2ba8f5c27efa5510ca748b4e59f1ee  scripts/one-at-a-time.sh

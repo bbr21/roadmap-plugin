@@ -11485,8 +11485,9 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
       const groups = [
         ...story.groups.map((g, gi) =>
           g.map((r, ri) => {
+            // La valeur et son appoint dans une rangée à eux : un `<>…</>` deviendrait une colonne au bureau (#391).
             const text = (
-              <>
+              <Box key={`detail-text:${gi}:${ri}`} flexDirection="row" alignItems="center" gap={SPACE.row} flexShrink={1} minWidth={0}>
                 <Box key={`detail-main:${gi}:${ri}`} flexShrink={r.sub ? 0 : 1} minWidth={0}>
                   {r.mono ? mono(r.value) : <Text size="footnote" wrap={r.file ? 'truncate-end' : 'wrap'}>{r.value}</Text>}
                 </Box>
@@ -11495,7 +11496,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
                     <Text size="caption" color={palette.text2} wrap="truncate-end">{r.sub}</Text>
                   </Box>
                 )}
-              </>
+              </Box>
             )
             const file = r.file && (r.icon === 'document' ? r.file : `${source.dir}/${r.file}`)
             const rowAt = `open:${r.icon}:${r.file}`
