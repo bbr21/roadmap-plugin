@@ -9800,39 +9800,39 @@ export function maestroBarText(c: MaestroBarCase): string {
 }
 
 /**
- * La case d'info de la bande de Maestro, au plus, en cellules (#211, #385) : la durée, le compte et une
- * étape de 24 signes ; au-delà, l'étape se tronque et le titre garde sa place.
+ * La case d'info de la bande de Maestro, au plus, en cellules (#211, #385) : le compte et une étape de
+ * 34 signes ; au-delà, l'étape se tronque et le titre garde sa place.
  */
 export const BAND_INFO_MAX = 40
 
 /**
- * L'info d'une ligne de la bande de Maestro (#385, version corrigée 2 de la maquette) : « 42 min · 6/7 ·
- * Écrire les tests rouges », sur une ligne, l'horloge devant (dessinée à part). La durée depuis le
- * lancement de la session, le compte de ses étapes (« 4/4 » quand toutes sont faites, sans « Done » :
- * l'état le dit), puis l'étape en cours, sauf pour une tâche finie. Ce qui manque ne laisse pas de point.
+ * L'info d'une ligne de la bande de Maestro (#385, retour de test du 2026-11-10, maquette « version
+ * corrigée ») : « 6/7 · Écrire les tests rouges ». Le compte de ses étapes (« 4/4 » quand toutes sont
+ * faites, sans « Done » : la case cochée le dit), puis l'étape en cours, sauf pour une tâche finie. La
+ * durée depuis le lancement n'y est plus : elle a sa case au bord droit, sous « Contexte 48 % ».
  */
-export function bandInfo(o: { since: string; view?: StepsView; finished?: boolean }): string {
+export function bandInfo(o: { view?: StepsView; finished?: boolean }): string {
   const v = o.view
   const count = v ? (v.current === undefined ? `${v.done}/${v.total}` : v.count) : ''
   const step = o.finished ? '' : (v?.current ?? '')
-  return [o.since, count, step].filter(x => x !== '').join(' · ')
+  return [count, step].filter(x => x !== '').join(' · ')
 }
 
 /**
- * Les cases de l'info, de l'état et de l'archivage de la bande de Maestro, en cellules (#174) : chacune à
- * la largeur du plus long texte réel de la bande (un signe par cellule, le corps `caption` est plus
- * étroit) ; l'info (durée, compte et étape, #385) plafonnée à `BAND_INFO_MAX`, sans l'horloge qui la
- * précède ; l'état, une icône de 2 et son mot à 1 d'écart (#211) ; l'icône d'archivage en 2, et pas de
- * case d'archivage quand aucune ligne n'en a. Serrées, le groupe se colle au bord droit ; la même largeur
- * sur chaque ligne garde les colonnes (#172).
+ * Les cases de l'info, de la durée et de l'archivage de la bande de Maestro, en cellules (#174, #385) :
+ * l'info (compte et étape) et la durée chacune à la largeur du plus long texte réel de la bande (un signe
+ * par cellule, le corps `caption` est plus étroit), l'info plafonnée à `BAND_INFO_MAX`, la durée sans
+ * l'horloge qui la précède ; l'archivage, entre la case et le numéro (retour de test de #385), en 3, et
+ * pas de case quand aucune ligne n'en a. Plus de case d'état : ni mot, ni colonne (« Les tags done,
+ * t'attend, en cours ne sont pas obligatoires là-bas »). La même largeur sur chaque ligne garde les
+ * colonnes (#172).
  */
-export function bandColumns(o: { infos: readonly string[]; states: readonly string[]; archive: boolean }): { info: number; state: number; archive: number } {
+export function bandColumns(o: { infos: readonly string[]; sinces: readonly string[]; archive: boolean }): { info: number; since: number; archive: number } {
   const widest = (xs: readonly number[]) => xs.reduce((a, b) => Math.max(a, b), 0)
-  const state = widest(o.states.map(s => [...s].length))
   return {
     info: Math.min(BAND_INFO_MAX, widest(o.infos.map(c => [...c].length))),
-    state: state > 0 ? 3 + state : 0,
-    archive: o.archive ? 2 : 0,
+    since: widest(o.sinces.map(c => [...c].length)),
+    archive: o.archive ? 3 : 0,
   }
 }
 

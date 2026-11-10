@@ -5427,7 +5427,26 @@ function noteWelcomeCard($: EngineInterface, kind: 'reachedAt' | 'drawnAt' | 'fa
  * vide sur une autre machine se lit là, dans `~/.claude/plugins/store/roadmap_*.json`, clé `pane-draw`.
  */
 const PANE_DRAW_KEY = 'pane-draw'
-type PaneFailure = { kind: 'throw' | 'timeout'; message: string; stack?: string }
+type PaneFailure = { kind: 'throw' | 'timeout'; message: string; stack?: string; stage?: string }
+/**
+ * L'étape où en est le dessin du panneau (#414) : la carte d'un dessin sans réponse la nomme, et le store la
+ * garde par session (`pane-draw`, champ `sessions`), pour savoir où une session restée vide attendait.
+ */
+let paneStage = ''
+/**
+ * Le temps que le panneau se laisse pour dessiner (#414) : au-delà, il montre sa carte d'erreur au lieu
+ * d'attendre une réponse du moteur qui peut ne jamais venir (l'app dit alors « has not drawn in this pane »
+ * sans rappeler `.catch`, dossier AAFES le 2026-11-10). Sous les 10 s que l'app laisse à un dessin.
+ */
+const PANE_DEADLINE_MS = 8_000
+/** Une attente bornée du sort du dessin : la carte d'erreur ne doit rien attendre plus que ça. */
+const PANE_FAILURE_WAIT_MS = 500
+/** Les sessions gardées dans `pane-draw.sessions`, les plus récentes. */
+const PANE_DRAW_SESSIONS = 20
+/** La promesse, ou `late` si elle n'a pas répondu dans `ms` (horloge du moteur). Elle continue en fond. */
+function withinMs<T>($: EngineInterface, promise: Promise<T>, ms: number): Promise<T | 'late'> {
+  return Promise.race([promise, engineWait($, ms).then(() => 'late' as const)])
+}
 let paneDrawReached = false
 let paneDrawDrawn = false
 let paneDrawWrites: Promise<void> = Promise.resolve()
@@ -5444,13 +5463,24 @@ function notePaneDraw($: EngineInterface, kind: 'reachedAt' | 'drawnAt' | 'faile
   }
   // Après une panne, le dessin réussi suivant se note de nouveau.
   if (kind === 'failedAt') paneDrawDrawn = false
-  paneDrawWrites = paneDrawWrites.then(async () => {
+  // Une écriture sans réponse ne bloque pas les suivantes (#414) : la suivante part au plus tard 2 s après.
+  paneDrawWrites = withinMs($, paneDrawWrites, PANE_FAILURE_WAIT_MS * 4).then(async () => {
     try {
       const at = await $.clock.now()
       const stored = await $.store.get(PANE_DRAW_KEY)
       const seen = typeof stored === 'object' && stored !== null && !Array.isArray(stored) ? stored : {}
       const why = failure ? { error: failure.message, kind: failure.kind, stack: (failure.stack ?? '').split('\n').slice(0, 8).join('\n') } : {}
-      await storeSet($, PANE_DRAW_KEY, { ...seen, [kind]: at, version: sessionVersion ?? '?', ...why })
+      // Par session (#414) : le sort global vient de la dernière session venue, quelle qu'elle soit.
+      const id = ownSession?.id
+      const before = (seen as { sessions?: unknown }).sessions
+      const sessions = typeof before === 'object' && before !== null && !Array.isArray(before) ? { ...(before as Record<string, Record<string, unknown>>) } : {}
+      if (id) {
+        const mine = { ...(sessions[id] ?? {}), [kind]: at, ...(failure ? { error: failure.message, kind: failure.kind, stage: failure.stage ?? '' } : {}) }
+        delete sessions[id]
+        sessions[id] = mine
+      }
+      const kept = Object.fromEntries(Object.entries(sessions).slice(-PANE_DRAW_SESSIONS))
+      await storeSet($, PANE_DRAW_KEY, { ...seen, [kind]: at, version: sessionVersion ?? '?', ...why, sessions: kept })
     } catch {
       // store illisible : le sort se notera au dessin suivant
     }
@@ -5466,20 +5496,26 @@ function notePaneDraw($: EngineInterface, kind: 'reachedAt' | 'drawnAt' | 'faile
 async function paneFailure($: EngineInterface, e: RenderInput<'Pane'>, failure: PaneFailure): Promise<RenderElement> {
   void notePaneDraw($, 'failedAt', failure)
   const { Box, Text, Button } = $.ui.resolve(e)
-  const version = await loadSessionVersion($).catch(() => sessionVersion ?? '?')
-  const palette = await paletteOf($).catch(() => undefined)
+  // Rien n'attend plus d'un instant (#414) : la carte doit paraître même quand le moteur ne répond plus.
+  const bounded = <T,>(p: Promise<T>) => withinMs($, p, PANE_FAILURE_WAIT_MS).catch(() => 'late' as const)
+  const versionRead = await bounded(loadSessionVersion($))
+  const version = versionRead === 'late' ? sessionVersion ?? '?' : versionRead
+  const paletteRead = await bounded(paletteOf($))
+  const palette = paletteRead === 'late' ? undefined : paletteRead
   // Lu pour que « Réessayer » redessine le panneau.
-  await read($, retryAtom).catch(() => 0)
+  await bounded(read($, retryAtom))
   const retry = () => {
     knownSource = undefined
     paneCache = undefined
     void update($, retryAtom, v => v + 1)
   }
   const what = failure.kind === 'timeout' ? 'Le dessin a dépassé le temps que lui laisse l\'app.' : 'Une erreur a interrompu le dessin.'
+  const waiting = failure.stage ? `Le dessin attendait encore : ${failure.stage}.` : ''
   return (
     <Box flexDirection="column" gap={SPACE.block} paddingX={SPACE.screen} paddingTop="sm">
       <Text weight="semibold" {...(palette ? { color: palette.late } : { color: 'error' })}>Le panneau n'a pas pu se dessiner</Text>
       <Text wrap="wrap" {...(palette ? { color: palette.text2 } : {})}>{what}</Text>
+      {waiting !== '' && <Text wrap="wrap" {...(palette ? { color: palette.text2 } : {})}>{waiting}</Text>}
       {failure.message !== '' && <Text mono size="caption" wrap="wrap">{failure.message}</Text>}
       <Text size="caption" {...(palette ? { color: palette.text2 } : {})}>{`Version du plugin : roadmap ${version}`}</Text>
       <Box flexDirection="row">
@@ -8351,7 +8387,18 @@ export const register: Register = (on, options) => {
       const mine = (await read($, bandContextAtom)) ?? contextUseOf((await $.session.usage().catch(() => undefined))?.context)
       const contexts = { mine: contextView(mine ?? undefined), rows: statuses.map(status => contextView(status?.context)) }
       // La durée live de chaque ligne, puis son compte et son étape (#385, version corrigée 2).
-      const infos = band.tasks.map((t, i) => ({ since: sinceLabel(t.since, now), text: bandInfo({ since: sinceLabel(t.since, now), view: views[i], finished: t.finished === true }) }))
+      // Retour de test de #385 (maquette « version corrigée ») : « 6/7 · étape », la durée à part au bord droit ;
+      // la case de l'axe du panneau, cochée quand la tâche est close.
+      const { tasks: all, source: src, palette: pal } = found.data
+      const ranks = axisPalette(axisOrder(all.filter(x => !x.done), all.filter(x => x.done)), src.axes)
+      const infos = band.tasks.map((t, i) => {
+        const task = all.find(x => x.id === t.id)
+        return {
+          since: sinceLabel(t.since, now),
+          text: bandInfo({ view: views[i], finished: t.finished === true }),
+          ...(task ? { square: { hex: axisColor(pal, ranks.get(task.axis) ?? 0), axis: task.axis, done: task.done === true || t.closed === true } } : {}),
+        }
+      })
       return maestroBandTree($, e, band, found.data.palette, views, infos, {
         open: t => void (t.sessionId ? openSession($, { sessionId: t.sessionId, startedAt: now, title: t.label }) : undefined),
         archive: t => void archiveBandSession($, t, now),
@@ -8373,7 +8420,15 @@ export const register: Register = (on, options) => {
     perfCached = false
     let tree: RenderElement
     try {
-      tree = retireFocusKeys(await drawPane($, e), focusHeld.epochs)
+      paneStage = ''
+      const drawing = drawPane($, e)
+      const drawn = await withinMs($, drawing, PANE_DEADLINE_MS)
+      if (drawn === 'late') {
+        // Le dessin continue en fond ; « Réessayer » le relance, ses lectures déjà faites gardées (#414).
+        drawing.catch(() => undefined)
+        return paneFailure($, e, { kind: 'timeout', message: '', stage: paneStage || 'le début du dessin' })
+      }
+      tree = retireFocusKeys(drawn, focusHeld.epochs)
     } catch (err) {
       return paneFailure($, e, { kind: 'throw', message: err instanceof Error ? err.message : String(err), ...(err instanceof Error && err.stack ? { stack: err.stack } : {}) })
     }
@@ -9038,7 +9093,7 @@ function maestroBandTree(
   band: MaestroBand,
   palette: Palette,
   views: readonly (StepsView | undefined)[],
-  infos: readonly { since: string; text: string }[],
+  infos: readonly { since: string; text: string; square?: { hex: string; axis: string; done: boolean } }[],
   act: { open: (t: BrandTask) => void; archive: (t: BrandTask) => void; compact: () => void },
   now: number,
   contexts: { mine?: ContextView; rows: readonly (ContextView | undefined)[] } = { rows: [] },
@@ -9096,11 +9151,12 @@ function maestroBandTree(
       </Box>
     )
   }
-  // L'état de chaque ligne en icône et en mot (#211) ; la durée, le compte et l'étape en une case (#385).
+  // L'état de chaque ligne en icône, sans mot (retour de test de #385, bande A) ; le compte et l'étape en une
+  // case, la durée dans la sienne, au bord droit.
   const marks = band.tasks.map(bandState)
   const cols = bandColumns({
     infos: infos.map(x => x.text),
-    states: marks.map(m => m.word),
+    sinces: infos.map(x => x.since),
     archive: band.tasks.some(t => t.archivable && t.sessionId),
   })
   // L'horloge devant la durée, centrée sur le texte (#385) : sa case de 2 cellules sur chaque ligne dès qu'une en a.
@@ -9120,10 +9176,10 @@ function maestroBandTree(
   }
   // Le titre ouvre la session : sur le bureau, un texte et sa zone de clic, sans la marge du bouton natif
   // qui creusait l'écart après le numéro (#211) ; au terminal, le bouton.
-  const titleOf = (t: BrandTask) => {
+  const titleOf = (t: BrandTask, done = false) => {
     const graphic = Boolean(t.sessionId && Svg && Client)
     const name = (
-      <Text size="footnote" wrap="truncate-end" {...(graphic ? { hover: { underline: true } } : {})}>
+      <Text size="footnote" wrap="truncate-end" {...(done ? { strikethrough: true, color: palette.text3 } : {})} {...(graphic ? { hover: { underline: true } } : {})}>
         {t.label}
       </Text>
     )
@@ -9176,21 +9232,41 @@ function maestroBandTree(
           const ctxBar = ctx && Svg ? contextBarIcon(palette, ctx, { width: bar?.width ?? BAND_GAUGE.row, height: 2, top: BAND_GAUGE.gap }) : undefined
           const mark = marks[i] ?? bandState(t)
           const info = infos[i]
+          const square = info?.square
+          const done = square?.done === true
           return (
             <Box key={`band-row:${keyPart(t.id)}`} flexDirection="row" alignItems="center" gap={SPACE.row} hover={{ backgroundColor: palette.hover }}>
               {strut}
-              {Svg && <Svg source={discIcon(dot, 12)} alt={t.state === 'done' ? bandState(t).word : (words.states[i] ?? '')} width={12} height={12} />}
-              {/* Le numéro à sa largeur, à un écart du titre : plus de case de 5 cellules (#211). */}
+              {/* La case de la liste du panneau (retour de test de #385) : la couleur de l'axe, cochée quand la
+                  tâche est close ; sans tâche dans la roadmap, le point de son état, comme avant. */}
+              {Svg &&
+                (square ? (
+                  <Svg source={done ? squareCheckRowIcon(square.hex, palette.onAxis) : squareRowIcon(square.hex)} alt={done ? 'faite' : square.axis} width={MARK_SQUARE_PX} height={SIZE.strut.row} />
+                ) : (
+                  <Svg source={discIcon(dot, 12)} alt={t.state === 'done' ? bandState(t).word : (words.states[i] ?? '')} width={12} height={12} />
+                ))}
+              {/* L'archive entre la case et le numéro (« Apparaît uniquement quand une task est done et pas encore
+                  archivée »), dans une case que toutes les lignes gardent dès qu'une en a besoin : les numéros
+                  restent alignés. Au terminal, le bouton prend sa largeur. */}
+              {cols.archive > 0 && (
+                <Box key={`band-archive-slot:${keyPart(t.id)}`} width={Svg ? cols.archive : undefined} flexShrink={0} flexDirection="row" justifyContent="center">
+                  {t.archivable && t.sessionId && archiveButton(t)}
+                </Box>
+              )}
+              {/* Le numéro à sa largeur, à un écart du titre (#211) ; barré avec le titre quand la tâche est close. */}
               <Box flexShrink={0}>
-                <Text size="caption" tabular color={palette.text3}>{`#${t.id}`}</Text>
+                <Text size="caption" tabular color={palette.text3} {...(done ? { strikethrough: true } : {})}>{`#${t.id}`}</Text>
               </Box>
               <Box flexShrink={1} minWidth={0}>
-                {titleOf(t)}
+                {titleOf(t, done)}
               </Box>
               <Box flexGrow={1} />
-              {/* Jauge, compte et état à largeur fixe, sur chaque ligne (#172) : les barres partent de la même
-                  colonne, quels que soient le titre, l'étape ou le compte (« 5/7 », « 7/7 Done »). La case de la
-                  jauge suit son dessin, qui va jusqu'au compte (#326). */}
+              {/* L'état en icône seule (bande A) : la roue, la main, la branche ou la coche, devant la jauge. */}
+              <Box key={`band-mark:${keyPart(t.id)}`} flexShrink={0} flexDirection="row" alignItems="center">
+                {stateIcon(mark.icon, mark.word, word)}
+              </Box>
+              {/* Jauge, info et durée à largeur fixe, sur chaque ligne (#172) : les barres partent de la même
+                  colonne, quels que soient le titre, l'étape ou le compte. La case de la jauge suit son dessin (#326). */}
               {Svg && (
                 <Box key={`band-gauge:${keyPart(t.id)}`} flexShrink={0} flexDirection="column" gap={0}>
                   {bar && <Svg source={bar.source} alt={`étapes ${view?.count ?? ''}`} width={bar.width} height={bar.height} />}
@@ -9199,29 +9275,23 @@ function maestroBandTree(
                   {ctxBar && ctx && <Svg source={ctxBar.source} alt={`contexte ${ctx.text}`} width={ctxBar.width} height={ctxBar.height} />}
                 </Box>
               )}
-              {/* La durée depuis le lancement, le compte et l'étape sur une ligne, l'horloge devant (#385, version
-                  corrigée 2 de la maquette), à la largeur du plus long texte (#174). Elle ne rétrécit pas : seul le
-                  titre cède sa place, sinon un titre long poussait la jauge (#326). */}
-              {(cols.info > 0 || clocked) && (
-                <Box key={`band-info:${keyPart(t.id)}`} width={(clocked ? 2 : 0) + cols.info} flexShrink={0} minWidth={0} flexDirection="row" alignItems="center" gap={0}>
-                  {clocked && (
-                    <Box width={2} flexShrink={0} flexDirection="row" alignItems="center">
-                      {info?.since && (Svg ? <Svg source={clockIcon(palette.text3, 12)} alt="lancée depuis" width={12} height={12} /> : <Text size="caption" color={palette.text3}>◷</Text>)}
-                    </Box>
-                  )}
+              {/* Le compte et l'étape, « 6/7 · Écrire les tests rouges », à la largeur du plus long texte (#174). Ils
+                  ne rétrécissent pas : seul le titre cède sa place, sinon un titre long poussait la jauge (#326). */}
+              {cols.info > 0 && (
+                <Box key={`band-info:${keyPart(t.id)}`} width={cols.info} flexShrink={0} minWidth={0} flexDirection="row" alignItems="center">
                   {info && info.text !== '' && <Text size="caption" tabular color={palette.text3} wrap="truncate-end">{info.text}</Text>}
                 </Box>
               )}
-              {/* L'état en icône et en mot, pour tous les états (#211). */}
-              <Box key={`band-state:${keyPart(t.id)}`} width={cols.state} flexShrink={0} flexDirection="row" alignItems="center" justifyContent="flex-end" gap={SPACE.row}>
-                {stateIcon(mark.icon, mark.word, word)}
-                <Text size="caption" color={word}>{mark.word}</Text>
-              </Box>
-              {/* La case de l'archivage, sur chaque ligne pour garder les colonnes, dès qu'une ligne en a besoin ;
-                  l'icône sur une session close à l'arrêt (#174). Au terminal, le bouton prend sa largeur. */}
-              {cols.archive > 0 && (
-                <Box key={`band-archive-slot:${keyPart(t.id)}`} width={Svg ? cols.archive : undefined} flexShrink={0} alignItems="flex-end">
-                  {t.archivable && t.sessionId && archiveButton(t)}
+              {/* La durée depuis le lancement, l'horloge devant, au bord droit, sous « Contexte 48 % » (retour de test
+                  de #385 : « ◷ 8 h 11 » glisse au bout de la ligne), calée à droite. */}
+              {clocked && (
+                <Box key={`band-since:${keyPart(t.id)}`} width={2 + cols.since} flexShrink={0} flexDirection="row" alignItems="center" justifyContent="flex-end" gap={0}>
+                  {info?.since && (
+                    <Box width={2} flexShrink={0} flexDirection="row" alignItems="center">
+                      {Svg ? <Svg source={clockIcon(palette.text3, 12)} alt="lancée depuis" width={12} height={12} /> : <Text size="caption" color={palette.text3}>◷</Text>}
+                    </Box>
+                  )}
+                  {info?.since && <Text size="caption" tabular color={palette.text3}>{info.since}</Text>}
                 </Box>
               )}
             </Box>
@@ -9764,7 +9834,9 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   )
 
   // La source se relit quand le titre de la session arrive ou change : « #N · … » cherche sa tâche (#213).
+  paneStage = 'la fiche de la session'
   const ownTitle = (await readOwnSession($)).title
+  paneStage = 'la source de la roadmap'
   const fromDisk = knownSource === undefined || sourceTitle !== ownTitle ? await sourceNow($) : (knownSource ?? undefined)
   // Les axes enregistrés et pas encore écrits (#354) : leur nom et leur couleur se montrent aussitôt.
   const pendingAxes = fromDisk ? pendingFor(fromDisk)?.axes ?? [] : []
@@ -9787,6 +9859,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   // Toutes les lectures d'état d'un coup : une à une, chacune attendait la précédente. Les quatre
   // premières ne servent qu'à redessiner (empreinte des fichiers, titres courts, thème, « Réessayer »,
   // sessions suivies) et disent si les données gardées en mémoire valent encore.
+  paneStage = "l'état du panneau"
   const [stamp, titlesVersion, themeStamp, retry, liveVersion, view, search, titleNote, zoneGen, now, scanNote] = await Promise.all([
     read($, stampAtom), read($, titlesVersionAtom), read($, themeStampAtom), read($, retryAtom), read($, liveVersionAtom),
     read($, viewAtom), read($, searchAtom), read($, titleNoteAtom), read($, zoneGenAtom), $.clock.now(), read($, scanNoteAtom),
@@ -9798,6 +9871,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     launchNote, launched, openNote, openAt = '', conclusionOpen, missionOpen = '', draftOpen = '', draftFolded = '', reopenAsk = '', cancelAsk = '', closeKind = 'abandon', cancelNote = '',
     editing: editingKey = '', editOpen = '', editSaved = '', editNote = '', editField = '', foldedCards = [], openedCards = [], gaugePick = '', briefOpen = '',
   } = view
+  paneStage = 'les fichiers de la roadmap'
   const data = await paneData($, source, [stamp, titlesVersion, themeStamp, retry, liveVersion].join('|'))
   const { palette, bilan: bilanData, titles, live: liveEntries, ignored } = data
   const [versionCheck, ownVersion] = await Promise.all([read($, versionNoteAtom), loadSessionVersion($)])
@@ -9837,6 +9911,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
 
   // Dans une session « #N · … » : la fiche de sa tâche plutôt que toute la roadmap (#137, #142) ; Maestro,
   // toujours la liste ; sa tâche introuvable partout, l'alerte, jamais la liste en silence (#213).
+  paneStage = 'les sessions'
   const own = await readOwnSession($)
   const titleId = sessionTitleId(own.title)
   // Lancée par Maestro (#233) : sa fiche seule. Demandé une fois au premier dessin d'une session « #N · … »,
@@ -9912,6 +9987,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   // Les notes d'étapes des tâches en session (#143) : la mini-barre et la carte de leur ligne.
   // Avec « Fusionner » ajoutée dans un dossier à git (#191).
   const rowSteps = new Map<string, ChildStatus>()
+  paneStage = 'les étapes des sessions'
   await refreshAhead($, source, openTasks.map(t => liveOf(t)?.entry.sessionId), now)
   await Promise.all(
     openTasks.map(async t => {
@@ -10145,6 +10221,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     const kidsOpen = current.id && !current.done ? openTasks.filter(t => t.parent === current.id && t.id !== current.id).length : 0
     const closeAll = () => void setView($, () => ({ cancelAsk: '', cancelNote: '' })).then(() => closeFamily($, source, current))
     // Dans sa session : le dossier, la branche et son écart, lus hors de la roadmap.
+    paneStage = 'la fiche de la tâche'
     const facts = inSession && ownBrand ? await readFocusFacts($, ownBrand.data.source, current, ownBrand.data.own.id, now) : undefined
     // Son dossier (Spec, Plan, Maquettes) et le récap de fin de sa session (#144), dans les deux contextes.
     const ficheSource = inSession && ownBrand ? ownBrand.data.source : source
@@ -12990,18 +13067,28 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     return sinceLabel(block?.since ?? sinceOf(sid, live?.entry, live?.inferred ?? true), now)
   }
   const stepsCells = rowStepsCells([...blockTasks.map(t => sinceText(t, blockOf.get(t.id as string))), ...openTasks.filter(t => !inBlock(t) && isLive(t)).map(t => sinceText(t))])
-  // Une session close du bloc (#218) : « Done » après la colonne des étapes, dans une case que toutes les lignes
-  // du bloc gardent, pour que les barres restent alignées. L'archivage vit dans le centre de contrôle (#367, #381).
-  const blockDone = [...blockOf.values()].some(bt => bt.state === 'done')
-  // Le mot du panneau, « Done » (#254) ; la bande au-dessus de la saisie garde le sien.
+  // Retour de test de #385 (maquette « version corrigée ») : plus de « Done » au bout d'une close du bloc, la coche
+  // et la jauge violette le disent ; son archive vit entre sa case et son numéro (« Bouton archive […] apparaît
+  // uniquement quand une task est done et pas encore archivée »), dans une case que toutes les lignes du bloc
+  // gardent dès qu'une en a besoin : les numéros restent alignés.
   const completedWord = stateBand({ state: 'done' }).word
-  const blockEndCells = blockDone ? [...completedWord].length + 1 : 0
-  const blockEnd = (t: Task, block: BrandTask) => {
-    if (!blockDone) return null
-    const done = block.state === 'done'
+  const blockArchivable = (bt: BrandTask | undefined) => bt?.state === 'done' && bt.archivable === true && bt.sessionId !== undefined
+  const blockArchiveCells = [...blockOf.values()].some(blockArchivable) ? 3 : 0
+  const blockArchive = (t: Task, block: BrandTask) => {
+    if (blockArchiveCells === 0) return null
+    const id = `block-archive:${t.id ?? keyPart(t.key)}`
     return (
-      <Box key={`end:${t.key}`} flexDirection="row" alignItems="center" justifyContent="flex-end" gap={SPACE.row} flexShrink={0} {...(Svg ? { width: blockEndCells } : {})}>
-        {done && <Text size="caption" color={block.finished ? palette.finishedOn : palette.text2}>{completedWord}</Text>}
+      <Box key={`ba:${t.key}`} flexDirection="row" alignItems="center" justifyContent="center" flexShrink={0} {...(Svg ? { width: blockArchiveCells } : {})}>
+        {blockArchivable(block) &&
+          (Svg ? (
+            <Box flexDirection="row" alignItems="center" flexShrink={0}>
+              {strut(SIZE.strut.row)}
+              <Svg source={archiveIcon(palette.text2, 16)} alt="Archiver la session" width={SIZE.icon.md} height={SIZE.icon.md} />
+              {hit(id, () => void archiveBandSession($, block, now), 1)}
+            </Box>
+          ) : (
+            <Button key={id} plain dimColor label="Archiver" onPress={() => void archiveBandSession($, block, now)} />
+          ))}
       </Box>
     )
   }
@@ -13230,7 +13317,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
             fitRowPills({
               columns: (e.props as { bodyColumns?: number }).bodyColumns ?? 56,
               inset: 6,
-              steps: stepsCells.columns + (block ? blockEndCells : 0) + priorityCells,
+              steps: stepsCells.columns + (block ? blockArchiveCells : 0) + priorityCells,
               pills: parts.tags.map(spec => pxCells(pillIcon(spec).width)),
               mark: grouped ? 0 : markWidth,
               number: grouped ? treeNumCells + TREE_LEAD_CELLS : treeNumCells,
@@ -13306,6 +13393,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
         )}
         {/* Le titre suit le numéro (#203, maquette C des étiquettes) : plus de colonne réservée devant
             lui ; les tags viennent à droite du titre, l'échéance au bout, en texte, à la place de l'âge. */}
+        {block && blockArchive(t, block)}
         {!grouped && number}
         <Box key={`lead:${t.key}`} flexDirection="row" alignItems="center" flexGrow={1} flexShrink={1} minWidth={0}>
           {prioritized &&
@@ -13359,7 +13447,6 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
             aussi, dans son bloc « En cours », sans arbre (#160). */}
         {(inSession || locked) && due}
         {inSession && sessionColumn(t, block)}
-        {block && blockEnd(t, block)}
         {/* Le cadenas dit ce qu'il attend (#125) : « après » et le numéro de sa prérequise, ou « parent après » celui qu'attend son parent. */}
         {locked && pre && (
           <Box key={`lock:${t.key}`} flexDirection="row" alignItems="center" gap={SPACE.row} flexShrink={0}>
@@ -13395,7 +13482,9 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
         )}
         {/* Le ▶ au bout de la ligne, à la place du chevron (#149) : le titre ouvre la fiche. Sa colonne
             reste, vide, sur une faite (#198) : les âges restent alignés. */}
-        {(
+        {/* Dans le bloc « En cours », pas de colonne du ▶ : la main, la barre et la durée finissent au bord droit de
+            la carte (retour de test de #385). */}
+        {!block && (
           <Box key={`p:${t.key}`} width={3} flexShrink={0} flexDirection="row" justifyContent="center">
             {playable && (
               <Button key={`play:${t.key}`} plain dimColor onPress={() => void (isRoutine(t, head !== undefined) ? launchRoutine($, source, t, s.titre) : launchSession($, source, t, s.titre))}>

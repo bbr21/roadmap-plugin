@@ -210,18 +210,21 @@ native est le seul affichage des étapes : la bande que le plugin dessinait au-d
 un verbe et son objet chacune, jamais recopiée dans le message, à jour à chaque changement.
 Chez Maestro, la bande au-dessus de la saisie porte l'arbre des sessions du projet (#147 ; depuis
 #385, tous Maestro du même dossier confondus, comme la ligne « En cours » de #381 : elle paraît dès
-qu'une session tourne, même chez un Maestro qui n'a rien lancé) : une ligne par tâche : le numéro, le
-nom qui ouvre la session, puis au bord droit sa jauge, sur une ligne « ◷ 42 min · 6/7 · étape en
-cours » (depuis quand sa session tourne, son compte, son étape, #385) et son état en icône et en mot
-(« en cours », « t'attend », « à fusionner », « Completed », #211). Elle
+qu'une session tourne, même chez un Maestro qui n'a rien lancé) : une ligne par tâche, comme celles de la
+ligne « En cours » du panneau (#385, retour de test) : la case de son axe, cochée quand la tâche est close,
+le numéro, le nom qui ouvre la session, puis au bord droit l'icône de son état (roue, main, branche ou
+coche, sans mot), sa jauge, « 6/7 · étape en cours », et tout au bout « ◷ 42 min », depuis quand sa
+session tourne, sous « Contexte 40 % ». Elle
 reste visible quand le fil défile, cède à un sondage, et s'efface tant que la boîte de fin pose une
-question ; la liste native reste dans le fil. Une session close et à l'arrêt, encore ouverte, porte au
-bout de sa ligne l'icône d'archivage : un clic l'archive (#174). L'en-tête dit « Contexte 40 % » pour
+question ; la liste native reste dans le fil. Une session close et à l'arrêt, encore ouverte, porte
+l'icône d'archivage entre sa case et son numéro : un clic l'archive (#174, #385) ; la ligne « En cours »
+dépliée du panneau la porte au même endroit. L'en-tête dit « Contexte 40 % » pour
 Maestro seul, sans tokens ni jauge (#174) ; sous la jauge d'étapes de chaque ligne, une jauge fine dit le
-contexte de sa session, noté à la fin de chacun de ses tours, orange à 70 %, rouge à 85 % (#157, revenue par #217). La jauge, l'info (durée, compte,
-étape) et l'état se serrent au bord droit, chacun à la largeur de son plus long texte, alignés d'une
+contexte de sa session, noté à la fin de chacun de ses tours, orange à 70 %, rouge à 85 % (#157, revenue par #217). La jauge, l'info (compte et
+étape) et la durée se serrent au bord droit, chacun à la largeur de son plus long texte, alignés d'une
 ligne à l'autre (#174, #211, #385). Dans la ligne « En cours » dépliée du panneau, chaque session dit
-de même depuis quand elle tourne, l'horloge devant, à la place du compte « 6/8 » (#385).
+de même depuis quand elle tourne, l'horloge devant, à la place du compte « 6/8 », la main, la barre et
+la durée au bord droit de la carte, sans « Done » ni ▶ (#385).
 `/maestro-bar` force la bande (#225, demande de Bertrand du 02/11/2026) : la commande relit la fiche
 de la session, pose la marque Maestro (comme dire « Maestro »), relit les sessions, redessine la bande
 et dit en une ligne ce qu'elle montre, ou pourquoi rien : session de tâche ou lancée par un Maestro
@@ -753,6 +756,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.249.0 (2026-11-10)** : panneau : la bande de Maestro au style du bloc En cours (case d'axe, archive entre la case et le numéro, plus de mots d'état, durée au bord droit) ; dans le bloc, l'archive aussi (#385, retour de test)
 - **0.248.0 (2026-11-10)** : maestro : la consigne de capture de fidélité suit un gabarit court (version à vérifier, gestes numérotés, ce qu'on doit voir, quoi faire si ça diffère), relue en fin de tour (#406)
 - **0.247.1 (2026-11-09)** : panneau : le Bilan de la fiche en noms courts, Souci et Essai, chaque étiquette sur la ligne de sa valeur (#368)
 - **0.247.0 (2026-11-09)** : mockups : maquettes interactives servies en http local par serve.py (jeton, 127.0.0.1), maquette finale réunie avant le code (#369)
