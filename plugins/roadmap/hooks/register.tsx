@@ -540,6 +540,11 @@ import {
   unlocksOf,
   cloudBrandTasks,
   cloudWords,
+  cloudLaunchText,
+  cloudReco,
+  withTargetNote,
+  type CloudReco,
+  type Sessions,
   githubRepoOf,
   type CloudPr,
   type SessionPrefs,
@@ -5275,8 +5280,90 @@ async function briefOf($: EngineInterface, source: Source, task: Task, shortTitl
       : kind === 'routine'
         ? routineBrief(source, task, shortTitle, { today: todayOf(await $.clock.now()), closed: routineClosed, found: await briefFound($, source, task) })
         : await workBrief($, source, task, shortTitle)
-  return extra.trim() === '' ? base : { ...base, prompt: `${base.prompt}\n\nMessage additionnel :\n${extra.trim()}` }
+  // #416 : la carte d'une session du Mac dit la cible et la reco.
+  const noted = kind === '' && cloudOpen(source) ? { ...base, prompt: withTargetNote(base.prompt, 'mac', recoOf(source, task)) } : base
+  return extra.trim() === '' ? noted : { ...noted, prompt: `${noted.prompt}\n\nMessage additionnel :\n${extra.trim()}` }
 }
+
+// --- La cible de lancement (#416, maquette B) ---------------------------------------------------------
+// Dans un projet ouvert au cloud, la fiche d'une tâche à lancer porte un interrupteur Cloud | Mac posé sur la reco, puis « Lancer ». La reco
+// se lit d'abord sur la ligne, puis sur sa spec et sa fiche, lues une fois par tâche (`recoDocs`).
+
+/** Les documents (spec, fiche) lus pour la reco, par tâche ; la signature garde une ligne réécrite à jour. */
+const recoDocs = new Map<string, { sig: string; docs: string[] }>()
+const recoReading = new Set<string>()
+/** La cible que BBR a posée sur l'interrupteur, par tâche ; absente, la reco. */
+const launchTargets = new Map<string, Sessions>()
+
+/** Le cloud est ouvert au projet (`sessions: "cloud"` de roadmap.json, #408) : sans lui, ni reco ni interrupteur. */
+const cloudOpen = (source: Source): boolean => projectSettings(source).sessions === 'cloud'
+
+const recoSig = (task: Task) => `${task.label}|${task.spec ?? ''}|${task.fiche ?? ''}`
+
+/** La reco d'une tâche, avec ses documents s'ils sont déjà lus. */
+function recoOf(source: Source, task: Task): CloudReco {
+  const kept = recoDocs.get(taskKey(task))
+  const docs = kept && kept.sig === recoSig(task) ? kept.docs : []
+  return cloudReco(task, docs, { projet: projectSettings(source).travail === 'projet' })
+}
+
+/** Lit une fois la spec et la fiche d'une tâche pour sa reco, puis redessine. Une panne garde la reco de la ligne. */
+function loadRecoDocs($: EngineInterface, source: Source, task: Task): void {
+  const key = taskKey(task)
+  const sig = recoSig(task)
+  if (recoDocs.get(key)?.sig === sig || recoReading.has(key) || (!task.spec && !task.fiche)) return
+  recoReading.add(key)
+  void (async () => {
+    try {
+      const found = await briefFound($, source, task)
+      const docs: string[] = []
+      for (const doc of briefDocs(source, task, found)) docs.push((await readOr($, doc)) ?? '')
+      recoDocs.set(key, { sig, docs })
+      await update($, liveVersionAtom, v => v + 1)
+    } catch {
+      recoDocs.set(key, { sig, docs: [] })
+    } finally {
+      recoReading.delete(key)
+    }
+  })()
+}
+
+/** La cible posée sur l'interrupteur d'une tâche, sinon sa reco. */
+function launchTargetOf(source: Source, task: Task): Sessions {
+  if (!cloudOpen(source)) return 'mac'
+  return launchTargets.get(taskKey(task)) ?? recoOf(source, task).lieu
+}
+
+/** Un clic sur l'interrupteur : la cible change, la fiche se redessine. */
+async function setLaunchTarget($: EngineInterface, task: Task, target: Sessions): Promise<void> {
+  launchTargets.set(taskKey(task), target)
+  await update($, liveVersionAtom, v => v + 1)
+}
+
+/**
+ * Le lancement en cloud (#416), choisi par BBR sur l'interrupteur : Claude prend la ligne avec `lieu:cloud` et
+ * pose la carte cible cloud (mode cloud de Maestro, #408), ou replie sur le Mac si le cloud cale. Une session
+ * cloud ne prend pas de place au Mac : pas de file.
+ */
+async function launchCloud($: EngineInterface, source: Source, task: Task, shortTitle: string): Promise<void> {
+  const key = taskKey(task)
+  await setView($, v => ({ launched: v.launched.includes(key) ? v.launched : [...v.launched, key], launchNote: LAUNCHING }))
+  try {
+    const brief = await workBrief($, source, task, shortTitle)
+    const refused = await launchRefusal($, { title: brief.title })
+    if (refused !== undefined) {
+      await setView($, v => ({ launched: v.launched.filter(k => k !== key), launchNote: `Lancement impossible : ${refused}` }))
+      return
+    }
+    queueSubmit($, launchPrompt(brief.title, cloudLaunchText(task, brief.title, recoOf(source, task))))
+    await setView($, () => ({ launchNote: CLOUD_VIA_CLAUDE }))
+  } catch (err) {
+    await setView($, v => ({ launched: v.launched.filter(k => k !== key), launchNote: `Lancement impossible : ${err instanceof Error ? err.message : String(err)}` }))
+  }
+}
+
+/** La note d'un lancement en cloud : Claude prend la ligne et pose la carte. */
+const CLOUD_VIA_CLAUDE = 'En cloud : Claude prend la ligne et pose la carte.'
 
 /** Le « Message additionnel » tapé dans le détail, ajouté au brief ; vidé à chaque changement de tâche. */
 let launchExtra = ''
@@ -11819,7 +11906,56 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     // d'état et la carte de la session ne font plus qu'un) ; à lancer, « Lancer » et « Vérifier », et le message
     // au brief derrière « + Ajouter un message au brief ».
     const launchable = !current.done && !live && !launched.includes(taskKey(current))
-    const launchNow = () => void (isRoutine(current) ? launchRoutine($, source, current, s.titre) : launchSession($, source, current, s.titre, launchExtra))
+    // #416 (maquette B) : une routine n'a pas de cible ; une autre tâche lance vers la cible de l'interrupteur.
+    const targeted = !isRoutine(current) && cloudOpen(source)
+    if (targeted && launchable) loadRecoDocs($, source, current)
+    const reco = recoOf(source, current)
+    const target = launchTargetOf(source, current)
+    const launchNow = () =>
+      void (isRoutine(current)
+        ? launchRoutine($, source, current, s.titre)
+        : targeted && target === 'cloud'
+          ? launchCloud($, source, current, s.titre)
+          : launchSession($, source, current, s.titre, launchExtra))
+    // L'interrupteur Cloud | Mac, posé sur la reco (« conseillé ») ; au terminal, deux boutons.
+    const targetSwitch = (): RenderElement => {
+      const seg = (t: Sessions) => {
+        const on = t === target
+        const word = t === 'cloud' ? 'Cloud' : 'Mac'
+        const ink = on ? palette.text : palette.text2
+        return pressable(
+          `launch-target:${t}`,
+          () => void setLaunchTarget($, current, t),
+          <Box flexDirection="row" alignItems="center" gap={SPACE.tight} paddingX={SPACE.indent} backgroundColor={on ? palette.bg : palette.btn} hover={{ backgroundColor: on ? palette.bg : palette.btnHover }}>
+            {corners(RADIUS.chip, palette.btn)}
+            {strut(SIZE.strut.field)}
+            {Svg && <Svg source={t === 'cloud' ? cloudIcon(ink, SIZE.icon.sm) : playIcon(ink, SIZE.icon.sm)} alt={word} width={SIZE.icon.sm} height={SIZE.icon.sm} />}
+            <Text size="footnote" weight={on ? 'semibold' : 'regular'} color={ink}>{word}</Text>
+            {t === reco.lieu && <Text size="caption" color={palette.text3}>conseillé</Text>}
+          </Box>,
+          <Button key={`launch-target:${t}`} plain dimColor={!on} label={`${on ? '● ' : ''}${word}${t === reco.lieu ? ' (conseillé)' : ''}`} onPress={() => void setLaunchTarget($, current, t)} />,
+        )
+      }
+      return (
+        <Box key="launch-target" flexDirection="row">
+          <Box flexDirection="row" backgroundColor={palette.btn}>
+            {corners(RADIUS.control, palette.bg)}
+            {seg('cloud')}
+            {seg('mac')}
+          </Box>
+        </Box>
+      )
+    }
+    // La raison de la reco, en une ligne sous « Lancer ».
+    const recoLine = (): RenderElement => (
+      <Box key="launch-reco" flexDirection="row" gap={SPACE.tight} alignItems="flex-start" minWidth={0}>
+        {Svg && <Svg source={reco.lieu === 'cloud' ? cloudIcon(palette.live, SIZE.icon.sm) : playIcon(palette.text3, SIZE.icon.sm)} alt={reco.lieu === 'cloud' ? 'cloud' : 'Mac'} width={SIZE.icon.sm} height={SIZE.icon.sm} />}
+        <Text size="caption" weight="semibold" color={palette.text}>{`Recommandé : ${reco.lieu === 'cloud' ? 'cloud' : 'Mac'}`}</Text>
+        <Box flexGrow={1} flexShrink={1} minWidth={0}>
+          <Text size="caption" color={palette.text2} wrap="wrap">{`· ${reco.why}`}</Text>
+        </Box>
+      </Box>
+    )
     const toggleBrief = () => void setView($, v => ({ briefOpen: v.briefOpen === taskKey(current) ? '' : taskKey(current) }))
     // #336 (maquette A) : dans la session de sa tâche close, la bande grise « Archiver cette session » ; relue au clic.
     const archiveSelfBand = (): RenderElement => {
@@ -11881,6 +12017,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
       const briefShown = briefOpen === taskKey(current)
       return (
         <Box key="top-action" flexDirection="column" gap={SPACE.block} paddingX={SPACE.indent}>
+          {targeted && launchable && targetSwitch()}
           <Box flexDirection="row" alignItems="stretch" gap={SPACE.row}>
             {launched.includes(taskKey(current)) && requested()}
             {/* Un clic lance : plus de confirmation (2026-10-25) ; une routine (#280) fait le geste de son ▶. */}
@@ -11892,6 +12029,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
               </Box>
             )}
           </Box>
+          {targeted && launchable && recoLine()}
           {/* Bloquée : une ligne, la jauge de chaîne au pied dit le reste ; « Lancer » reste possible. */}
           {holder && (
             <Text size="caption" color={palette.blockOn} wrap="wrap">

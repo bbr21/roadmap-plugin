@@ -9787,6 +9787,70 @@ export function maestroRelaunchContext(o: { source: Source; tasks: readonly Task
 /** Une tâche de la bande et du bloc « En cours » de Maestro ; `since` : la création de sa session, pour la durée live (#385). */
 export type BrandTask = { id: string; label: string; state: 'wait' | 'live' | 'merge' | 'done'; sessionId?: string; closed?: true; finished?: true; archivable?: true; launchedAt?: number; since?: number; cloud?: CloudPr }
 
+// --- La cible recommandée d'une tâche (#416) ---------------------------------------------------------
+// Pour alléger le Mac, une tâche de logique part en cloud ; ce qui demande une ressource du Mac (maquette,
+// capture, simulateur, volet navigateur, trousseau…) reste sur le Mac. La reco se lit sur la ligne, sa spec
+// et sa fiche ; BBR choisit la cible à chaque lancement. La même liste vit dans `reco_cloud.py` de la skill
+// maestro, que `test_reco_cloud.py` compare à celle-ci.
+
+/** La cible recommandée d'une tâche et sa raison, en une ligne. */
+export type CloudReco = { lieu: Sessions; why: string }
+
+/**
+ * Les marqueurs d'une tâche qui reste sur le Mac, dans l'ordre où la raison se dit : chaque mot est une
+ * expression lue sur le texte en minuscules sans accents, à un début de mot (`\b`).
+ */
+export const CLOUD_MAC_MARKERS: readonly { words: readonly string[]; why: string }[] = [
+  { words: ['maquette', 'mockup'], why: 'maquettes à faire : le volet navigateur et la preuve de fidélité sont sur le Mac' },
+  { words: ['capture', 'fidelite', 'screenshot'], why: 'une capture du rendu, prise sur le Mac' },
+  { words: ['simulateur', 'simulator', 'xcode', 'ios\\b', 'iphone'], why: 'le simulateur iOS et Xcode sont sur le Mac' },
+  { words: ['navigateur', 'browser', 'preview_start'], why: 'le volet navigateur est sur le Mac' },
+  { words: ['trousseau', 'keychain', 'launchd', 'osascript', 'computer-use', 'reglages systeme'], why: 'une ressource du Mac (trousseau, launchd, réglages système)' },
+]
+
+/** La raison d'une reco cloud. */
+export const CLOUD_LOGIC_WHY = 'tâche de logique : ni maquette, ni capture, ni simulateur, ni volet navigateur'
+/** La raison d'un projet sans code : son dossier n'est pas un dépôt que le cloud clone. */
+export const CLOUD_PROJECT_WHY = 'projet sans code : son dossier vit sur le Mac'
+
+const foldText = (text: string): string => text.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
+
+/**
+ * La cible recommandée d'une tâche (#416) : « mac » dès qu'un marqueur se lit dans son libellé, sa note ou
+ * ses documents (spec, fiche), ou pour un projet sans code ; sinon « cloud ». Le Mac chargé ou non n'y entre pas.
+ */
+export function cloudReco(task: Task, docs: readonly string[] = [], o: { projet?: boolean } = {}): CloudReco {
+  if (o.projet) return { lieu: 'mac', why: CLOUD_PROJECT_WHY }
+  const text = foldText([task.label, task.note ?? '', ...docs].join('\n'))
+  for (const m of CLOUD_MAC_MARKERS) {
+    if (m.words.some(w => new RegExp(`\\b${w}`).test(text))) return { lieu: 'mac', why: m.why }
+  }
+  return { lieu: 'cloud', why: CLOUD_LOGIC_WHY }
+}
+
+/** La fin d'un brief de carte sur le Mac : la cible choisie par BBR et la reco, en une ligne (#416). */
+export function withTargetNote(prompt: string, chosen: Sessions, reco: CloudReco): string {
+  const where = chosen === 'cloud' ? 'le cloud' : 'le Mac'
+  const said = reco.lieu === chosen ? `comme recommandé (${reco.why})` : `choisi dans le panneau (recommandé : ${reco.lieu === 'cloud' ? 'cloud' : 'Mac'}, ${reco.why})`
+  return `${prompt}\n\nCible : ${where}, ${said}.`
+}
+
+/**
+ * Le message à Claude d'un lancement en cloud depuis le panneau (#416) : le mode cloud de Maestro (#408),
+ * la ligne prise avec `lieu:cloud`, la carte cible cloud au brief de `brief_cloud.py`, et le repli sur le Mac
+ * par `repli_mac.py` si le cloud cale. La carte garde le clic de BBR sur Start.
+ */
+export function cloudLaunchText(task: Task, title: string, reco: CloudReco): string {
+  const id = task.id ?? '?'
+  const recoSaid = reco.lieu === 'cloud' ? `recommandé : cloud, ${reco.why}` : `recommandé : Mac, ${reco.why} ; le cloud choisi quand même`
+  return [
+    `Lance « ${title} » en cloud, choisi dans le panneau (${recoSaid}).`,
+    `Suis « Cloud mode » (§ 2 bis) de la skill roadmap:maestro : prends la ligne #${id} avec \`qui:feat/<slug> | branche:feat/<slug> | lieu:cloud\`, committe et pousse main, puis pose la carte start_session avec target: "cloud", titre « ${title} », et pour prompt la sortie de \`python3 <skill maestro>/scripts/brief_cloud.py <dossier principal> ${id}\`, telle quelle.`,
+    `Si le cloud cale (carte refusée faute d'environnement cloud, quota, outil absent, ou la session cloud qui se dit bloquée pour cela) : \`python3 <skill maestro>/scripts/repli_mac.py <dossier principal> ${id}\` retire lieu:cloud de la ligne et garde sa branche ; committe et pousse main, puis relance la tâche sur le Mac avec la consigne qu'il écrit.`,
+    'Pose la carte sans essayer de la lancer, puis réponds en une phrase au plus.',
+  ].join('\n\n')
+}
+
 // --- Sessions cloud (#408, tâche 5) --------------------------------------------------------------
 // Une session de tâche qui tourne dans le cloud n'a ni liste d'étapes ni session locale : on ne connaît que la
 // ligne de roadmap (`lieu:cloud`, `branche:`) et sa PR GitHub, lue par `gh`. La ligne entre dans le bloc « En cours »

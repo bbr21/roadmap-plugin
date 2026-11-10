@@ -1,6 +1,6 @@
 # Est-il sûr de l'installer ?
 
-Version décrite : roadmap 0.258.1
+Version décrite : roadmap 0.259.0
 Un plugin de Claude Code fait tourner du code sur ta machine, donc la question se pose. Certains plugins
 malveillants ont l'air inoffensifs quand on les installe, puis téléchargent et lancent autre chose plus
 tard. Cette page dit tout ce que fait roadmap. Un test vérifie à chaque version qu'elle dit vrai, et tu
@@ -122,6 +122,7 @@ le moteur saute les hooks).
 | les fichiers que pose l'onboarding dans le projet (`CLAUDE.md`, `docs/`, `roadmap/`, `scripts/`, `.claude/roadmap.json`…) | `skills/onboarding/scripts/onboarding.py` | quand tu lances l'onboarding et valides son plan |
 | la roadmap importée, après une copie de sauvegarde | `skills/onboarding/scripts/importer.py` | quand l'onboarding reprend une roadmap existante |
 | `fidelite.html` et `capture-panneau.png`, dans le dossier du chantier (`docs/plans/<type>-<slug>/`) | `skills/maestro/scripts/fidelite.py` | quand une session pose la preuve de fidélité d'un rendu à sa maquette (#357) |
+| `ROADMAP.md` du projet, la ligne d'une tâche partie en cloud, dont seul `lieu:cloud` est retiré | `skills/maestro/scripts/repli_mac.py` | quand Maestro replie sur le Mac une tâche dont la session cloud a calé (#416) |
 
 Le module ne modifie jamais ton code : il n'écrit que la roadmap, ses propres réglages et son état ; la preuve de fidélité ne s'écrit que dans le dossier du chantier.
 

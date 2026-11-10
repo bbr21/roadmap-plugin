@@ -137,6 +137,18 @@ def etat_pr(prs):
     return {"etat": etat, "url": pr.get("url"), "numero": pr.get("number"), "depuis": pr.get("createdAt"), "dit": dit}
 
 
+# Le cloud a calé (#416) : la session se dit bloquée par sa VM (environnement, quota, outil absent, réseau), pas
+# par une question. Maestro replie alors la tâche sur le Mac (`repli_mac.py`), sa branche gardée.
+CALEE = re.compile(r"environnement|quota|limite d'usage|usage|outil absent|introuvable|absent|vm\b|réseau|reseau|"
+                   r"installation|non installé|command not found")
+
+
+def calee(dit):
+    """Vrai quand le compte rendu de la session cloud dit qu'elle est bloquée par le cloud lui-même."""
+    t = (dit or "").strip().lower()
+    return t.startswith("bloquée") and bool(CALEE.search(t))
+
+
 # ---------------------------------------------------------------- entrées-sorties
 
 
@@ -181,6 +193,8 @@ def ligne_texte(t):
         parts.append(t["etat"])
         if t["dit"]:
             parts.append("« %s »" % t["dit"])
+        if calee(t["dit"]):
+            parts.append("calée : repli_mac.py")
         if t["url"]:
             parts.append(t["url"])
     return " · ".join(parts)

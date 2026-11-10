@@ -268,10 +268,22 @@ to it.
 
 ## 2 bis. Cloud mode (#408)
 
-When the project's `.claude/roadmap.json` says `"sessions": "cloud"`, task sessions run in a claude.ai cloud VM
-instead of the Mac (step 3 of `docs/plans/spike-decharger-mac/plan-cloud.md` in the Roadmap repository). The
-plugin does not load there: the session gets its rules from the repository (`docs/session-cloud.md`, which the
-repository's `SessionStart` hook points to) and from a brief that stands on its own. What changes for Maestro:
+When the project's `.claude/roadmap.json` says `"sessions": "cloud"`, the cloud is open to the project: a task
+session may run in a claude.ai cloud VM instead of the Mac (step 3 of `docs/plans/spike-decharger-mac/plan-cloud.md`
+in the Roadmap repository). The plugin does not load there: the session gets its rules from the repository
+(`docs/session-cloud.md`, which the repository's `SessionStart` hook points to) and from a brief that stands on its
+own.
+
+**Each task gets a recommended target, and the person chooses it at every launch (#416).** The aim is to relieve
+the Mac, so the recommendation says « cloud » for every task of logic, loaded Mac or not, and « Mac » only when the
+task needs a mockup, a capture, the iOS simulator, the browser pane or another resource of the Mac:
+`python3 "<skill folder>/scripts/reco_cloud.py" <main folder> <id>` prints `#<id> · cloud · <reason>` or
+`#<id> · Mac · <reason>`, from the line, its spec and its fiche (the same markers as the panel). Before posting a
+card, give that line and ask the target by the choice form, the recommendation first; nothing goes to the cloud
+without the person's choice. In the panel, the task's fiche carries a Cloud | Mac switch set on the recommendation,
+then « Lancer »: a cloud choice reaches you as a launch message saying the task goes to the cloud, chosen in the
+panel, which is that choice already made: take the line and post the cloud card below, without asking again. A Mac card launched from
+the panel ends with « Cible : le Mac, … » and the recommendation. What changes for Maestro on a cloud launch:
 
 - **Take the line** as usual, plus `lieu:cloud`: `qui:<branche> | branche:<branche> | lieu:cloud`, with a
   `feat/<slug>` branch Maestro chooses (the VM gets a `claude/…` branch from the app; the brief makes it switch).
@@ -292,8 +304,16 @@ repository's `SessionStart` hook points to) and from a brief that stands on its 
   (`git diff main...origin/<branche>`), run the tests its impact map names on a local checkout of the branch, then
   `git -C <main folder> merge --ff-only origin/<branche>` and push: GitHub closes the PR as merged by itself. A
   branch behind `main` is not rebased by Maestro: ask the session by comment to merge `main` into its branch.
+- **Fall back on the Mac when the cloud stalls** (#416): a cloud card refused for want of a cloud environment, a
+  quota or a missing tool, or a cloud session whose last report says « bloquée » for its VM (environment, quota, tool,
+  network: `suivi_cloud.py` marks the row « calée : repli_mac.py »). Run
+  `python3 "<skill folder>/scripts/repli_mac.py" <main folder> <id>`: it removes `lieu:cloud` from the line and
+  keeps `qui:` and `branche:`, so the pushed work is not lost, and prints the instruction for the Mac session (fetch
+  and switch to that branch). Commit and push `main`, then post the Mac card with that instruction as an extra
+  message. A question from a cloud session is not a stall: answer it by PR comment.
 - **Close** as usual (§ 6), the PR link in the bilan; the cloud session needs no archiving gesture from Maestro.
-- **A task with a render** goes to the cloud too (#409): the session publishes its mockups as an Artifact and
+- **A task with a render** can go to the cloud too (#409), when the person chooses it: its recommendation (#416)
+  still says « Mac », which keeps the browser pane and the capture at hand. In the cloud, the session publishes its mockups as an Artifact and
   asks the person by the question form; coded and green, its comment says « prête à fusionner (tests : … ;
   capture après publication) » and asks « fusionne et publie #N ». Maestro merges, publishes, then answers by
   PR comment « #N publiée X.Y.Z »; the session writes the capture instruction, the person pastes the capture in
