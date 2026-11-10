@@ -10450,7 +10450,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
       if (!fin) return null
       const opened = conclusionOpen === current.key
       // Le Fait, le Souci et la version livrée sont dans le carton (#291) : la carte Fin ne les redit pas.
-      // #341 (A2) : la carte Bilan s'ouvre sur ce qui a accroché, « À essayer » suit ; close, ni État ni Fait.
+      // #341 (A2) : la carte Bilan s'ouvre sur le Souci, l'Essai suit (noms courts, #368) ; close, ni État ni Fait.
       const own = bilanRows(fin.rows, { done: current.done }).filter(r => !cartonFin.has(r.name))
       // « Ce qu'on a fait » d'une close est dans le carton.
       const recapHere = fin.recap && !current.done ? fin.recap : undefined
@@ -10490,7 +10490,8 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
                 {Svg ? (
                   <Box flexShrink={0} flexDirection="row" alignItems="flex-start">
                     <Svg source={`<svg xmlns="http://www.w3.org/2000/svg" width="${TREE_CHILD_PX}" height="${SIZE.strut.row}"/>`} alt="colonne des étiquettes" width={TREE_CHILD_PX} height={SIZE.strut.row} />
-                    <Box position="absolute" top={0} left={0} flexDirection="row">
+                    {/* Centrée sur la hauteur de la première ligne, comme dans Détails : calée en haut, elle passait au-dessus de sa valeur (#368). */}
+                    <Box position="absolute" top={0} left={0} bottom={0} flexDirection="row" alignItems="center">
                       <Text size="caption" color={palette.text2}>{r.name}</Text>
                     </Box>
                   </Box>

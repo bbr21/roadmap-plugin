@@ -1937,17 +1937,21 @@ export type FinRow = { name: string; md: string; tone?: 'ok' | 'dim' }
  * Les lignes de la carte Bilan (#341, maquette A2) : elle s'ouvre sur ce qui a accroché (le Souci), « À toi »
  * devient « À essayer » ; close, ni l'État (le carton le dit) ni le Fait (au carton, ou « Ce qu'on a fait »).
  */
-/** Le Souci devenu « Accroché » (#341, A2) : en texte normal, sauf « tout a roulé », qui reste vert. */
-function accroche(r: FinRow): FinRow {
+/**
+ * Le Souci (#341, A2, nommé « Accroché » jusqu'à la #368) : en texte normal, sauf « tout a roulé », qui reste vert.
+ * #368 (maquette C, choix de BBR) : des noms courts, qui tiennent dans la colonne des étiquettes (la marque d'une
+ * fille, 45 px) ; « Accroché » et « À essayer » la débordaient et collaient à leur valeur.
+ */
+function souci(r: FinRow): FinRow {
   const { tone, ...rest } = r
-  return { ...rest, name: 'Accroché', ...(tone === 'ok' ? { tone } : {}) }
+  return { ...rest, ...(tone === 'ok' ? { tone } : {}) }
 }
 
 export function bilanRows(rows: readonly FinRow[], o: { done: boolean }): FinRow[] {
   const named = rows
     .filter(r => !(o.done && (r.name === 'État' || r.name === 'Fait')))
-    .map(r => (r.name === 'Souci' ? accroche(r) : r.name === 'À toi' ? { ...r, name: 'À essayer' } : r))
-  const rank = (r: FinRow) => (r.name === 'Fait' ? 0 : r.name === 'Accroché' ? 1 : 2)
+    .map(r => (r.name === 'Souci' ? souci(r) : r.name === 'À toi' ? { ...r, name: 'Essai' } : r))
+  const rank = (r: FinRow) => (r.name === 'Fait' ? 0 : r.name === 'Souci' ? 1 : 2)
   return named.map((r, i) => ({ r, i })).sort((a, b) => rank(a.r) - rank(b.r) || a.i - b.i).map(x => x.r)
 }
 

@@ -753,6 +753,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.247.1 (2026-11-09)** : panneau : le Bilan de la fiche en noms courts, Souci et Essai, chaque étiquette sur la ligne de sa valeur (#368)
 - **0.247.0 (2026-11-09)** : mockups : maquettes interactives servies en http local par serve.py (jeton, 127.0.0.1), maquette finale réunie avant le code (#369)
 - **0.246.0 (2026-11-09)** : panneau : la ligne En cours et la bande de Maestro disent depuis quand chaque session tourne, à la place du compte d'étapes ; la bande paraît pour toutes les sessions du projet (#385)
 - **0.245.0 (2026-11-09)** : maestro : une seule file des tests lourds pour tout le Mac, avec des places réglables (« Suites de tests sur le Mac »), la fusion et la publication de Maestro en tête, chaque suite en priorité basse, et tools/un_test.sh pour un fichier seul (#323)
