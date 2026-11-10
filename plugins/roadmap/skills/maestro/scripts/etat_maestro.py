@@ -10,7 +10,9 @@ MAESTRO.json (« - » : l'entrée standard), écrit par Maestro :
    "tests": "verts" | "rouges" (absent : à lancer), "relue": true, "apres": [94]}]}
 
 Une branche qui code un rendu d'après une maquette (une page `maquettes*.html` et un fichier de rendu)
-reste « fidélité à prouver » tant que son `fidelite.html` n'est pas complet (#357, `fidelite.py`).
+reste « prête, capture après publication » tant que son `fidelite.html` n'est pas complet (#357,
+`fidelite.py`) : elle se fusionne et se publie, puisque le panneau ne montre qu'une version publiée,
+et sa ligne ne se coche qu'une fois la preuve verte (#396).
 
 Lecture seule sur le dépôt : git log, rev-list, diff et merge-tree (conflits réels, git 2.38 et
 plus ; plus ancien, ils sont dits inconnus). Rien n'est fusionné, aucun test n'est lancé. Code de
@@ -29,7 +31,7 @@ import fidelite
 
 INTROUVABLE, RIEN, CONFLIT, INCONNU = "introuvable", "rien à fusionner", "conflit avec main", "conflits inconnus"
 ROUGES, A_LANCER, A_RELIRE, RETARD, PRETE = "tests rouges", "tests à lancer", "à relire", "à mettre à jour", "prête"
-FIDELITE = "fidélité à prouver"
+FIDELITE = "prête, capture après publication"
 HORS_ORDRE = (INTROUVABLE, RIEN)
 SEP = "\x1f"
 FORMAT_COMMIT = "%h" + SEP + "%an" + SEP + "%ct" + SEP + "%s"
@@ -136,14 +138,15 @@ def analyser(entree, faits, conflits):
         elif not t.get("relue"):
             etat = A_RELIRE
         elif fa.get("fidelite"):
-            # #357 : un rendu codé d'après une maquette prouve sa fidélité avant la fusion.
+            # #357 : un rendu codé d'après une maquette prouve sa fidélité ; #396 : après la
+            # publication, seule version que le panneau montre. Il se fusionne et se publie.
             etat = FIDELITE
         elif fa["retard"] > 0:
             etat = RETARD
         else:
             etat = PRETE
         t["etat"] = etat
-        t["pret"] = etat == PRETE
+        t["pret"] = etat in (PRETE, FIDELITE)
         t["attend"] = attend
         t["partages"] = len([f for f in fa["fichiers"] if f in partages]) if t["id"] in ids_vivants else 0
 
@@ -342,7 +345,7 @@ def texte(analyse):
     out.append("")
     sans_preuve = [t for t in analyse["taches"] if t["etat"] == FIDELITE]
     if sans_preuve:
-        out.append("Fidélité à la maquette (#357), pas de fusion sans elle :")
+        out.append("Fidélité à la maquette (#357, #396) : fusionne et publie aussitôt, renvoie la version à la session pour la capture, ne coche qu'une fois `fidelite.py verifier` vert :")
         for t in sans_preuve:
             out.append("- #%s : %s (%s)" % (t["id"], FIDELITE, " ; ".join(t["faits"]["fidelite"])))
         out.append("")

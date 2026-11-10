@@ -200,16 +200,22 @@ to it.
     your browser pane, ask the choice yourself (form, one option per mockup), say
     « attend une réponse : choix de maquette, <chemin> » at the top of your report and end your
     turn: the person answers in the session itself, Maestro does not relay it (#151);
-  - a render coded from a mockup (#357, #377): before saying « prête à fusionner », put the capture of
-    the real render next to the validated mockup. The capture is taken by the user, never by the
-    session: write them, in one message whose first sentence says « attend une réponse : captures de
-    fidélité », a numbered list, one item per capture (which window or session to open, which tab,
+  - a render coded from a mockup (#357, #377, #396): its fidelity is proven on the published version,
+    the only one the panel shows. Never ask the user to test or capture a render that is not
+    published yet, nor to ask Maestro for a merge or a publication. Code done, tests green, branch
+    pushed: say « prête à fusionner (tests : … ; capture après publication) » and ask Maestro
+    yourself, by message to its id, « fusionne et publie #N », then end your turn. Maestro merges,
+    publishes right away and sends you the version back (« #N publiée X.Y.Z »). Only then the capture,
+    taken by the user, never by the session: write them, in one message whose first sentence says
+    « attend une réponse : captures de fidélité (X.Y.Z) », a numbered list, first opening a new
+    session whose panel footer shows that version X.Y.Z, then one item per capture (which window or session to open, which tab,
     what to put on screen: which card, which click, which area to take with ⌘⌃⇧4 then drag around
     …, and to paste it in the chat). A pasted image arrives with its path on disk (`[Image: source:
     /private/tmp/…/images/1.png]`): run `fidelite.py poser <chantier> --maquette
     maquettes.html#<anchor> --capture <path of the pasted image>` (this skill's `scripts/`; `--zone
     x,y,l,h`, in pixels of the image, crops a too-wide one), list each gap in its `fidelite.html`
-    (`data-ecart="ouvert"`), fix them, ask for the capture again, mark them `corrige` (a single
+    (`data-ecart="ouvert"`), fix them on your branch (merge of `main` first), ask Maestro again
+    « fusionne et publie #N », ask for the capture again on the new version, mark them `corrige` (a single
     `aucun` when faithful) until `fidelite.py verifier` is green, and commit the page and its
     capture. `--fenetre` is refused (exit 2): the session never captures the screen;
   - do not tick your line: your last report says what was done and the problem met;
@@ -421,14 +427,19 @@ takes a resource without Maestro's go-ahead, even if it is free.
 
 The merge order, from the first criterion to the last:
 
-1. **Ready**: tests green on its branch, diff reviewed by Maestro, up to date with `main`, and, for a
-   branch that codes a render from a mockup (a `maquettes*.html` page and a render file), its
-   fidelity proof complete (#357): `etat_maestro.py` says « fidélité à prouver » until the chantier's
-   `fidelite.html` puts the capture of the real render next to the validated mockup, every gap
-   fixed. Maestro opens that page while reviewing the diff and **never merges a render without
-   it**: it sends the branch back to its session, by message, with what is missing
-   (`fidelite.py verifier <chantier>`). Maestro never exchanges a « capture » with the session and
-   takes none itself: the capture is the user's, on the session's exact instruction (#377).
+1. **Ready**: tests green on its branch, diff reviewed by Maestro, up to date with `main`. A branch
+   that codes a render from a mockup (a `maquettes*.html` page and a render file) is ready without
+   its fidelity proof (#357, #396): `etat_maestro.py` says « prête, capture après publication » until
+   the chantier's `fidelite.html` puts the capture of the real render next to the validated mockup,
+   every gap fixed. The capture can only be taken on the published version, the only one the panel
+   shows, so **Maestro merges and publishes it right away, without waiting for the person**, and
+   sends the version back to its session by message (« #N publiée X.Y.Z : demande la capture »); the
+   session then writes the capture instruction to the person, citing the version the panel footer
+   must show. Maestro never asks the person to capture, test or have a render published, never
+   exchanges a « capture » with the session and takes none itself: the capture is the user's, on the
+   session's exact instruction (#377). The line is ticked only once `fidelite.py verifier
+   <chantier>` is green (§ 6); a gap fixed on the branch comes back as a new « fusionne et publie
+   #N »: § 5 again, a new publication, a new version sent back.
 2. **Prerequisites first**: what unblocks other tasks (`après:`) goes ahead.
 3. **What frees** a unique resource or a file another task is waiting for.
 4. **When tied**, the smallest, the least exposed to conflicts.
@@ -466,7 +477,8 @@ The merge itself:
 
 ## 6. Close a task, then Maestro
 
-- **After the merge** (after the « c'est bon » for a published task in test, below), Maestro ticks the line (`fait:`, what was delivered, the PR), moves it to the
+- **After the merge** (after the « c'est bon » for a published task in test, below; for a render,
+  once its fidelity proof is green, #396), Maestro ticks the line (`fait:`, what was delivered, the PR), moves it to the
   top of `ROADMAP-fait.md` and writes its bilan from the sub-session's last report.
 - **A published task goes to test** (#366, the person's request of 2026-11-06): a version is only
   loaded by the sessions opened after the plugin's sync, so the person tries it in a new session, and
