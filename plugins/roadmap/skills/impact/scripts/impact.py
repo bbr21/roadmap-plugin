@@ -14,11 +14,18 @@ For each changed file: the tracked files that contain its name (`tokens.ts`) or 
 files before new ones, 40 at most, the rest counted in `cut`): the files that contain
 it as a whole word. Each list is sorted tests first, then code; docs (`docs/`, `.md`) are only counted; the code list is cut at 15, never the tests.
 
+A project can declare tests that no name links to its files (#418: the render fingerprints of the
+roadmap panel, hit by any change of a render file, even one that only adds an `alt`), in
+`.claude/roadmap.json`: `"impact": [{"fichiers": ["glob", …], "tests": ["path", …], "pourquoi": "…"}]`.
+A changed file that matches one of the globs (fnmatch, `*` crosses `/`) gets those tests in `declared`
+and in its `tests`.
+
 Exit 0 (map written, or nothing changed), 2 (not a git repository, or git failed).
-JSON: {"base", "cut", "ranked": [{"path", "hits"}], "files": [{"path", "tests", "code", "docs"}], "symbols": [{"name", "tests", "code", "docs"}]}.
+JSON: {"base", "cut", "ranked": [{"path", "hits"}], "files": [{"path", "tests", "code", "docs", "declared"}], "symbols": [{"name", "tests", "code", "docs"}]}.
 The report is in French, like the sessions that read it.
 """
 import argparse
+import fnmatch
 import json
 import os
 import re
@@ -249,6 +256,45 @@ def users(names, texts):
     return out
 
 
+def project_rules(repo):
+    """The `impact` rules of `.claude/roadmap.json`: [(globs, tests, why)]; a missing file or a
+    malformed rule is skipped, never an error (the map must still come out)."""
+    try:
+        with open(os.path.join(repo, ".claude", "roadmap.json"), encoding="utf-8") as f:
+            cfg = json.load(f)
+    except (OSError, ValueError):
+        return []
+    rules = cfg.get("impact") if isinstance(cfg, dict) else None
+    out = []
+    for r in rules if isinstance(rules, list) else []:
+        if not isinstance(r, dict):
+            continue
+        globs, tests = r.get("fichiers"), r.get("tests")
+        if not (isinstance(globs, list) and isinstance(tests, list)):
+            continue
+        globs = [g for g in globs if isinstance(g, str) and g]
+        tests = [t for t in tests if isinstance(t, str) and t]
+        if globs and tests:
+            out.append((globs, tests, r.get("pourquoi") if isinstance(r.get("pourquoi"), str) else ""))
+    return out
+
+
+def declared_tests(path, rules):
+    """The tests a project rule attaches to `path`, in rule order, without repeats."""
+    found = []
+    for globs, tests, _ in rules:
+        if any(fnmatch.fnmatchcase(path, g) for g in globs):
+            found += [t for t in tests if t not in found]
+    return found
+
+
+def file_entry(path, texts, rules):
+    e = sort_hits(citers(path, texts))
+    declared = declared_tests(path, rules)
+    e["tests"] = sorted(set(e["tests"]) | set(declared))
+    return dict(path=path, declared=declared, **e)
+
+
 def impact(repo, base="HEAD", files=None, symbols=None):
     planned = files is not None or symbols is not None
     files = list(files or []) if planned else changed_files(repo, base)
@@ -256,10 +302,11 @@ def impact(repo, base="HEAD", files=None, symbols=None):
     names = found if planned else found[:MAX_SYMBOLS]
     texts = corpus(repo)
     by_name = users(names, texts)
+    rules = project_rules(repo)
     result = {
         "base": None if planned else base,
         "cut": len(found) - len(names),
-        "files": [dict(path=f, **sort_hits(citers(f, texts))) for f in files],
+        "files": [file_entry(f, texts, rules) for f in files],
         "symbols": [dict(name=n, **sort_hits(by_name.get(n, []))) for n in names],
     }
     result["ranked"] = ranked(result)
@@ -289,6 +336,8 @@ def listing(label, paths, cap=None):
 def block(title, entry):
     lines = [title]
     lines += listing("Tests", entry["tests"])
+    if entry.get("declared"):
+        lines += listing("dont par règle du projet (.claude/roadmap.json, impact)", entry["declared"])
     lines += listing("Code", entry["code"], SHOWN)
     if entry["docs"]:
         lines.append("  - Docs : %d" % entry["docs"])

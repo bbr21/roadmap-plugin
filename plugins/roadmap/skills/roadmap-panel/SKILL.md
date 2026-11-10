@@ -97,6 +97,10 @@ How sessions work and the roadmap's settings (#76, #176), optional too:
   bold, then one bullet per following segment, the date of its final parenthesis on the right;
   beyond 6 bullets, the last 5. Declare `puces` when labels chain dated facts with `;`. The
   « Ce projet » section of the Réglages pane switches it.
+- `impact` (#418): tests the `impact` skill must name for a changed file even though no name links
+  them, `[{"fichiers": ["plugins/x/hooks/*.tsx"], "tests": ["plugins/x/tests/rendu.test.tsx"],
+  "pourquoi": "…"}]` (fnmatch globs from the project root, `*` crosses `/`). Declare it for a test
+  that reaches files by rendering or loading them (render fingerprints), not by importing them.
 - `a_preuve` (#277): a list of `ref:` of shells whose steps wait for proof
   (`["s-prod-du-lundi"]`). Otherwise, once a day at session start, a step (`parent:` set)
   `tous:semaine` or `tous:2semaines` whose `due:` has passed moves to the same weekday of the next

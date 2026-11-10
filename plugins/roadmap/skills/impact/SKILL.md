@@ -50,6 +50,20 @@ found none of them; a systematic text scan found all three. Comparison:
   name the ones that matter with `--symbols`. A generic file name (`index.ts`, `utils.py`) is looked
   for with its folder (`a/index`), so other files of the same name do not count as citing it.
 
+**Tests the project declares** (#418): a test can reach a file without any name linking them, as
+the panel's render fingerprints (`rendu.test.tsx`) reach every render file of `hooks/` by drawing
+the panel: on 2026-11-10 a change that only added `alt` texts left them out of the map, and `main`
+went red. The project lists such tests in `.claude/roadmap.json`:
+
+```json
+"impact": [{"fichiers": ["plugins/roadmap/hooks/*.tsx"], "tests": ["plugins/roadmap/tests/rendu.test.tsx"], "pourquoi": "…"}]
+```
+
+A changed file that matches a glob (fnmatch from the project root, `*` crosses `/`) gets those
+tests, listed under « dont par règle du projet » (JSON: `declared`, also in `tests`). A missing
+file or a malformed rule is skipped. When a test of this kind is missed, add its rule there rather
+than a path in this script.
+
 Then run the project's whole test suite (its CLAUDE.md, « Commandes »), whatever the map says: the
 map tells what to read and which test to write, not which tests may be skipped.
 

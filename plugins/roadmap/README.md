@@ -662,7 +662,8 @@ Dans cet ordre, pour le projet de la session (un worktree remonte à son dossier
 1. `.claude/roadmap.json` dans le projet, tout facultatif :
    `{ "name": "Clipping", "dir": "docs", "me": ["Alex"], "subjects": ["Montage", "Diffusion"] }`
    (`dir` relatif au projet ou absolu ; sans `subjects`, le modèle choisit ses sujets), et les
-   réglages : `mode` (`auto` par défaut, voir « Un seul mode »), `requis`, `requis_sur`, `cles`, et `rangement`
+   réglages : `mode` (`auto` par défaut, voir « Un seul mode »), `requis`, `requis_sur`, `cles`, `impact`
+   (#418, les tests que la carte d'impact cite pour un fichier qui ne les nomme pas, voir la skill `impact`), et `rangement`
    (#101) : `{ "skill": "aafes-memory", "ligne": "Rangé dans" }`, la tâche de la session cochée,
    la fin de tour ne propose l'archivage qu'une fois la ligne de rangement (ou « Rien à ranger »)
    écrite dans une réponse de la session, et rappelle sinon la règle de rangement de la skill ;
@@ -757,6 +758,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.257.1 (2026-11-10)** : impact : la carte cite les tests que le projet déclare pour un fichier, même sans nom qui les relie (#418)
 - **0.257.0 (2026-11-10)** : panneau : la bande de chaque Maestro ouvert dit en tête, tous projets compris, une entrée de la file de lancement bloquée au-delà du seuil (option « File bloquée après », 30 min par défaut), avec sa cause réelle et le geste qui la débloque ; un clic ouvre le Maestro où se fait le geste (#400)
 - **0.256.0 (2026-11-10)** : panneau : « Tester les maquettes » ouvre la page à chaque clic, en http par le serveur de maquettes que le panneau lance lui-même et qui ne sert que le dossier de la page ; le bouton ne se change plus en « Fermer » (#401)
 - **0.255.0 (2026-11-10)** : panneau : centre de contrôle, « Tout en pause » et « Tout reprendre » dans le titre, « Retirer » sur une entrée en attente, session en pause sous un nœud pause (#415)
