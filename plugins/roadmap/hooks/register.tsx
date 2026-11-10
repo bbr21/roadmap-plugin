@@ -63,6 +63,8 @@ import {
   documentIcon,
   imageIcon,
   archiveIcon,
+  cloudIcon,
+  cloudTints,
   unarchiveIcon,
   pencilIcon,
   priorityIcon,
@@ -297,6 +299,7 @@ import {
   axisPillText,
   fitRowPills,
   pxCells,
+  CLOUD_WORDS_CELLS,
   ROW_STEPS,
   rowStepsCells,
   filterSummary,
@@ -529,6 +532,10 @@ import {
   todayOf,
   toggleFold,
   unlocksOf,
+  cloudBrandTasks,
+  cloudWords,
+  githubRepoOf,
+  type CloudPr,
   type SessionPrefs,
   type Source,
   type Task,
@@ -6075,10 +6082,142 @@ async function compactFromBand($: EngineInterface): Promise<void> {
 
 /** L'icône d'archivage d'une ligne de la bande de Maestro (#174) : la session de sa tâche, par son suivi s'il y en a un. */
 async function archiveBandSession($: EngineInterface, t: BrandTask, now: number): Promise<void> {
+  // Une ligne cloud fusionnée n'a pas de session locale : l'archive la cache (#408).
+  if (t.cloud) return hideCloudRow($, t)
   if (!t.sessionId) return
   const live = await loadLive($).catch(() => ({}) as Record<string, LiveEntry>)
   const key = Object.keys(live).find(k => live[k]?.sessionId === t.sessionId)
   await archiveSession($, key ?? `session:${t.sessionId}`, (key ? live[key] : undefined) ?? { sessionId: t.sessionId, startedAt: now, title: t.label })
+}
+
+// --- Sessions cloud (#408, tâche 5) ----------------------------------------------------------------
+// Une ligne `lieu:cloud` prise (`branche:`) n'a pas de session locale : le panneau lit sa PR par `gh`, une fois par
+// minute au plus et pas du tout tant qu'aucune ligne ouverte n'est cloud ; `gh` absent ou en panne, tout est « inconnu ».
+
+const CLOUD_PRS_KEY = 'cloud-prs'
+const CLOUD_HIDDEN_KEY = 'cloud-hidden'
+const CLOUD_PRS_MS = 60_000
+const CLOUD_PR_FIELDS = 'headRefName,number,url,state,isDraft,mergeable,statusCheckRollup,createdAt,isCrossRepository'
+let cloudPrsMem: { root: string; at: number; value: unknown } | undefined
+let cloudPrsFlight: { root: string; run: Promise<unknown> } | undefined
+let cloudHiddenMem: { at: number; keys: Set<string> } | undefined
+
+/** `gh pr list` du dépôt d'origine de `root` ; `undefined` si `git` ou `gh` manquent, ne sont pas connectés ou lèvent. */
+async function runCloudGh($: EngineInterface, root: string): Promise<unknown> {
+  try {
+    const remote = await $.process.run(['git', '-C', root, 'remote', 'get-url', 'origin'], { timeoutMs: 5_000 })
+    const repo = remote.exitCode === 0 ? githubRepoOf(remote.stdout) : undefined
+    if (!repo) return undefined
+    // Chaque chemin de `gh` en clair, pour que `tools/securite.py` lise le programme lancé (pas de variable en tête).
+    const args = ['pr', 'list', '-R', repo, '--state', 'all', '--limit', '100', '--json', CLOUD_PR_FIELDS]
+    const opts = { timeoutMs: 10_000 }
+    const tries = [
+      () => $.process.run(['gh', ...args], opts),
+      () => $.process.run(['/opt/homebrew/bin/gh', ...args], opts),
+      () => $.process.run(['/usr/local/bin/gh', ...args], opts),
+    ]
+    for (const attempt of tries) {
+      let ran: Awaited<ReturnType<EngineInterface['process']['run']>>
+      try {
+        ran = await attempt()
+      } catch {
+        continue // cette commande ne démarre pas : la suivante
+      }
+      // Un `gh` qui a démarré et refusé (pas connecté, hors ligne) ne se relance pas par un autre chemin.
+      return ran.exitCode === 0 ? (JSON.parse(ran.stdout) as unknown) : undefined
+    }
+  } catch {
+    // illisible ou en panne : « état inconnu »
+  }
+  return undefined
+}
+
+/**
+ * Les PR du dépôt de `root`, gardées en mémoire et au store (`cloud-prs`, par dossier) 60 s : la minuterie de 3 s ne
+ * relance jamais `gh`, et les sessions ouvertes se partagent la lecture. Jamais d'exception : `undefined` dit « inconnu ».
+ */
+async function readCloudPrs($: EngineInterface, root: string): Promise<unknown> {
+  try {
+    const now = await $.clock.now()
+    if (cloudPrsMem && cloudPrsMem.root === root && now - cloudPrsMem.at < CLOUD_PRS_MS) return cloudPrsMem.value
+    if (cloudPrsFlight && cloudPrsFlight.root === root) return await cloudPrsFlight.run
+    const run = (async () => {
+      const stored = await $.store.get(CLOUD_PRS_KEY).catch(() => undefined)
+      const kept = typeof stored === 'object' && stored !== null ? ((stored as Record<string, unknown>)[root] as { at?: unknown; value?: unknown } | undefined) : undefined
+      if (kept && typeof kept.at === 'number' && now - kept.at >= 0 && now - kept.at < CLOUD_PRS_MS) {
+        cloudPrsMem = { root, at: kept.at, value: kept.value }
+        return kept.value
+      }
+      const value = await runCloudGh($, root)
+      cloudPrsMem = { root, at: now, value }
+      if (value !== undefined) {
+        const all = typeof stored === 'object' && stored !== null ? { ...(stored as Record<string, unknown>) } : {}
+        all[root] = { at: now, value }
+        await storeSet($, CLOUD_PRS_KEY, all as StoreValue).catch(() => undefined)
+      }
+      return value
+    })()
+    cloudPrsFlight = { root, run }
+    try {
+      return await run
+    } finally {
+      cloudPrsFlight = undefined
+    }
+  } catch {
+    return undefined
+  }
+}
+
+/** Les lignes cloud fusionnées dont Bertrand a « archivé » la ligne (`<dossier>|#<id>`) ; relues au plus toutes les 60 s. */
+async function cloudHidden($: EngineInterface, now: number): Promise<Set<string>> {
+  if (cloudHiddenMem && now - cloudHiddenMem.at < CLOUD_PRS_MS) return cloudHiddenMem.keys
+  const stored = await $.store.get(CLOUD_HIDDEN_KEY).catch(() => undefined)
+  cloudHiddenMem = { at: now, keys: new Set(Array.isArray(stored) ? stored.filter((x): x is string => typeof x === 'string') : []) }
+  return cloudHiddenMem.keys
+}
+
+/**
+ * Les lignes cloud du projet pour le bloc « En cours » et la bande (`cloudBrandTasks`) : rien, sans lire quoi que ce
+ * soit, tant qu'aucune ligne ouverte n'est `lieu:cloud` et prise. Le titre court de la tâche remplace son libellé ;
+ * une fusionnée déjà archivée n'y est plus.
+ */
+async function cloudTasksOf($: EngineInterface, source: Source, tasks: readonly Task[], short: (t: Task) => string, now: number): Promise<BrandTask[]> {
+  const wanted = tasks.filter(t => !t.done && t.lieu === 'cloud' && t.branche !== undefined && t.id !== undefined)
+  if (wanted.length === 0) return []
+  const root = source.root ?? source.dir
+  const [prs, hidden] = await Promise.all([readCloudPrs($, root), cloudHidden($, now).catch(() => new Set<string>())])
+  const byId = new Map(wanted.map(t => [t.id as string, t] as const))
+  return cloudBrandTasks(wanted, prs, todayOf(now))
+    .filter(bt => !(bt.cloud?.state === 'merged' && hidden.has(`${root}|#${bt.id}`)))
+    .map(bt => {
+      const task = byId.get(bt.id)
+      return task ? { ...bt, label: short(task) } : bt
+    })
+}
+
+/** « Archiver » une ligne cloud fusionnée : aucune session locale, la ligne se cache du bloc et de la bande (`cloud-hidden`). */
+async function hideCloudRow($: EngineInterface, t: BrandTask): Promise<void> {
+  const source = await sourceNow($).catch(() => undefined)
+  if (!source) return
+  const key = `${source.root ?? source.dir}|#${t.id}`
+  const stored = await $.store.get(CLOUD_HIDDEN_KEY).catch(() => undefined)
+  const keys = new Set(Array.isArray(stored) ? stored.filter((x): x is string => typeof x === 'string') : [])
+  keys.add(key)
+  cloudHiddenMem = { at: await $.clock.now(), keys }
+  await storeSet($, CLOUD_HIDDEN_KEY, [...keys] as StoreValue)
+  await update($, liveVersionAtom, v => v + 1)
+  $.ui.invalidate('ui.render')
+}
+
+/** Ouvre la PR d'une ligne cloud dans le navigateur par défaut ; seule une adresse en https part (`cloudPrOf` ne garde que celle-là). */
+async function openCloudPr($: EngineInterface, cloud: CloudPr | undefined): Promise<void> {
+  const url = cloud?.url
+  if (url === undefined || !/^https:\/\/\S+$/.test(url)) return
+  try {
+    await $.process.run(['open', url], { timeoutMs: 10_000 })
+  } catch {
+    // `open` refusé : rien à dire de plus, la PR s'ouvre depuis GitHub
+  }
 }
 
 /** La clôture en cours, au bouton de confirmation : un second clic n'écrit pas deux fois. */
@@ -8512,13 +8651,13 @@ export const register: Register = (on, options) => {
         const task = all.find(x => x.id === t.id)
         return {
           since: sinceLabel(t.since, now),
-          text: bandInfo({ view: views[i], finished: t.finished === true }),
+          text: t.cloud ? cloudWords(t.cloud.state).long : bandInfo({ view: views[i], finished: t.finished === true }),
           ...(task ? { square: { hex: axisColor(pal, ranks.get(task.axis) ?? 0), axis: task.axis, done: task.done === true || t.closed === true } } : {}),
         }
       })
       return maestroBandTree($, e, band, found.data.palette, views, infos, {
-        open: t => void (t.sessionId ? openSession($, { sessionId: t.sessionId, startedAt: now, title: t.label }) : undefined),
-        archive: t => void archiveBandSession($, t, now),
+        open: t => void (t.cloud ? openCloudPr($, t.cloud) : t.sessionId ? openSession($, { sessionId: t.sessionId, startedAt: now, title: t.label }) : undefined),
+        archive: t => void (t.cloud ? hideCloudRow($, t) : archiveBandSession($, t, now)),
         compact: () => void compactFromBand($),
       }, now, contexts, await read($, zoneGenAtom))
     } catch {
@@ -8715,11 +8854,13 @@ async function projectBandOthers($: EngineInterface, data: NonNullable<Awaited<R
     const tracked = trackedSession(data.source, t, data.live, ignored, now)
     return tracked?.entry.sessionId ? [{ task: t, entry: tracked.entry, inferred: tracked.inferred, sessionId: tracked.entry.sessionId }] : []
   })
-  if (found.length === 0) return []
+  // #408 : les sessions cloud du projet, lues par leur PR, entrent dans la bande comme les autres.
+  const cloud = (await cloudTasksOf($, data.source, data.tasks, data.short, now)).filter(c => !mine.has(c.id))
+  if (found.length === 0) return cloud
   await learnCreated($, found.map(f => f.sessionId), now)
   await refreshAhead($, data.source, found.map(f => f.sessionId), now)
   const notes = await Promise.all(found.map(f => readSteps($, f.sessionId)))
-  return found.map(({ task: t, entry, inferred, sessionId: sid }, i) => {
+  const local: BrandTask[] = found.map(({ task: t, entry, inferred, sessionId: sid }, i) => {
     const status = notes[i]
     const since = sinceOf(sid, entry, inferred)
     return {
@@ -8731,6 +8872,7 @@ async function projectBandOthers($: EngineInterface, data: NonNullable<Awaited<R
       ...(since !== undefined ? { since } : {}),
     }
   })
+  return [...local, ...cloud]
 }
 
 /**
@@ -9287,12 +9429,17 @@ function maestroBandTree(
   const cols = bandColumns({
     infos: infos.map(x => x.text),
     sinces: infos.map(x => x.since),
-    archive: band.tasks.some(t => t.archivable && t.sessionId),
+    archive: band.tasks.some(t => t.archivable && (t.sessionId || t.cloud)),
   })
   // L'horloge devant la durée, centrée sur le texte (#385) : sa case de 2 cellules sur chaque ligne dès qu'une en a.
   const clocked = infos.some(x => x.since !== '')
   // L'icône de l'état, celles du bloc « En cours » (#211) ; au terminal, son signe.
-  const stateIcon = (icon: ReturnType<typeof bandState>['icon'], word: string, hex: string) => {
+  const stateIcon = (icon: ReturnType<typeof bandState>['icon'], word: string, hex: string, cloud?: CloudPr) => {
+    // Une session cloud : le nuage teinté par l'état de sa PR, à la place de la roue, de la main ou de la coche (#408, maquette A).
+    if (cloud) {
+      const tint = cloudTints(palette, cloud.state).cloud
+      return Svg ? <Svg source={cloudIcon(tint, 14, 'Dans le cloud')} alt="Dans le cloud" width={SIZE.icon.sm} height={SIZE.icon.sm} /> : <Text size="caption" color={tint}>☁</Text>
+    }
     if (!Svg) return <Text size="caption" color={hex}>{{ spinner: '◌', hand: '✋', merge: '⑂', check: '✓' }[icon]}</Text>
     const source =
       icon === 'spinner'
@@ -9307,13 +9454,15 @@ function maestroBandTree(
   // Le titre ouvre la session : sur le bureau, un texte et sa zone de clic, sans la marge du bouton natif
   // qui creusait l'écart après le numéro (#211) ; au terminal, le bouton.
   const titleOf = (t: BrandTask, done = false) => {
-    const graphic = Boolean(t.sessionId && Svg && Client)
+    // Une ligne cloud : le titre ouvre sa PR ; sans PR, pas de lien (#408).
+    const opens = Boolean(t.sessionId || t.cloud?.url)
+    const graphic = Boolean(opens && Svg && Client)
     const name = (
       <Text size="footnote" wrap="truncate-end" {...(done ? { strikethrough: true, color: palette.text3 } : {})} {...(graphic ? { hover: { underline: true } } : {})}>
         {t.label}
       </Text>
     )
-    if (!t.sessionId) return name
+    if (!opens) return name
     const id = `band-open:${keyPart(t.id)}`
     if (!Svg || !Client) {
       return (
@@ -9380,7 +9529,7 @@ function maestroBandTree(
                   restent alignés. Au terminal, le bouton prend sa largeur. */}
               {cols.archive > 0 && (
                 <Box key={`band-archive-slot:${keyPart(t.id)}`} width={Svg ? cols.archive : undefined} flexShrink={0} flexDirection="row" justifyContent="center">
-                  {t.archivable && t.sessionId && archiveButton(t)}
+                  {t.archivable && (t.sessionId || t.cloud) && archiveButton(t)}
                 </Box>
               )}
               {/* Le numéro à sa largeur, à un écart du titre (#211) ; barré avec le titre quand la tâche est close. */}
@@ -9393,11 +9542,17 @@ function maestroBandTree(
               <Box flexGrow={1} />
               {/* L'état en icône seule (bande A) : la roue, la main, la branche ou la coche, devant la jauge. */}
               <Box key={`band-mark:${keyPart(t.id)}`} flexShrink={0} flexDirection="row" alignItems="center">
-                {stateIcon(mark.icon, mark.word, word)}
+                {stateIcon(mark.icon, mark.word, word, t.cloud)}
               </Box>
               {/* Jauge, info et durée à largeur fixe, sur chaque ligne (#172) : les barres partent de la même
                   colonne, quels que soient le titre, l'étape ou le compte. La case de la jauge suit son dessin (#326). */}
-              {Svg && (
+              {/* Une session cloud : l'état de sa PR en mots, à la place de la jauge et du compte, sur leur largeur (#408). */}
+              {t.cloud && (
+                <Box key={`band-cloud:${keyPart(t.id)}`} flexShrink={0} minWidth={0} {...(Svg ? { width: pxCells(BAND_GAUGE.row) + 1 + cols.info } : {})} flexDirection="row" alignItems="center">
+                  <Text size="caption" color={cloudTints(palette, t.cloud.state).word} wrap="truncate-end">{cloudWords(t.cloud.state).long}</Text>
+                </Box>
+              )}
+              {Svg && !t.cloud && (
                 <Box key={`band-gauge:${keyPart(t.id)}`} flexShrink={0} flexDirection="column" gap={0}>
                   {bar && <Svg source={bar.source} alt={`étapes ${view?.count ?? ''}`} width={bar.width} height={bar.height} />}
                   {/* Sans note, la case garde la largeur d'une jauge : le compte et l'étape restent en colonne (#326). */}
@@ -9407,7 +9562,7 @@ function maestroBandTree(
               )}
               {/* Le compte et l'étape, « 6/7 · Écrire les tests rouges », à la largeur du plus long texte (#174). Ils
                   ne rétrécissent pas : seul le titre cède sa place, sinon un titre long poussait la jauge (#326). */}
-              {cols.info > 0 && (
+              {cols.info > 0 && !t.cloud && (
                 <Box key={`band-info:${keyPart(t.id)}`} width={cols.info} flexShrink={0} minWidth={0} flexDirection="row" alignItems="center">
                   {info && info.text !== '' && <Text size="caption" tabular color={palette.text3} wrap="truncate-end">{info.text}</Text>}
                 </Box>
@@ -12840,7 +12995,9 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   // #385 : partout, la date de chaque session en cours dit depuis quand elle tourne (une lecture par session).
   await learnCreated($, openTasks.filter(isLive).map(t => liveOf(t)?.entry.sessionId).filter((id): id is string => id !== undefined), now)
   // Une session close et pas archivée y garde sa ligne, « Completed », comme dans la bande (#218).
-  const blockRows = maestroBrand ? liveBlockRows(maestroBrand.tasks, openTasks, isLive, t => launchOf(t, liveOf(t)?.entry.sessionId, now), doneTasks) : []
+  // #408 : les lignes `lieu:cloud` prises entrent dans le bloc avec l'état de leur PR (aucune session locale à suivre).
+  const cloudRows = maestroBrand ? (await cloudTasksOf($, source, openTasks, t => short(t).titre, now)).filter(c => !maestroBrand.tasks.some(b => b.id === c.id)) : []
+  const blockRows = maestroBrand ? liveBlockRows([...maestroBrand.tasks, ...cloudRows], openTasks, isLive, t => launchOf(t, liveOf(t)?.entry.sessionId, now), doneTasks) : []
   const blockOf = new Map(blockRows.flatMap(r => (r.brand ? [[r.brand.id, r.brand] as const] : [])))
   const blockKeys = new Set(blockRows.map(r => taskKey(r.task)))
   // Une tâche en file (#345) quitte la liste tant qu'elle attend : le centre de contrôle la montre (#367).
@@ -13205,12 +13362,16 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     return sinceLabel(block?.since ?? sinceOf(sid, live?.entry, live?.inferred ?? true), now)
   }
   const stepsCells = rowStepsCells([...blockTasks.map(t => sinceText(t, blockOf.get(t.id as string))), ...openTasks.filter(t => !inBlock(t) && isLive(t)).map(t => sinceText(t))])
+  // #408 : une ligne cloud écrit l'état de sa PR là où les autres ont leur barre : la colonne s'élargit à ces mots, et
+  // la durée de chaque ligne reste au bord droit.
+  const cloudColumn = [...blockOf.values()].some(bt => bt.cloud !== undefined)
+  const stepsColumns = cloudColumn ? Math.max(stepsCells.columns, ROW_STEPS.icon + 1 + CLOUD_WORDS_CELLS + 1 + ROW_STEPS.clock + stepsCells.count) : stepsCells.columns
   // Retour de test de #385 (maquette « version corrigée ») : plus de « Done » au bout d'une close du bloc, la coche
   // et la jauge violette le disent ; son archive vit entre sa case et son numéro (« Bouton archive […] apparaît
   // uniquement quand une task est done et pas encore archivée »), dans une case que toutes les lignes du bloc
   // gardent dès qu'une en a besoin : les numéros restent alignés.
   const completedWord = stateBand({ state: 'done' }).word
-  const blockArchivable = (bt: BrandTask | undefined) => bt?.state === 'done' && bt.archivable === true && bt.sessionId !== undefined
+  const blockArchivable = (bt: BrandTask | undefined) => bt?.state === 'done' && bt.archivable === true && (bt.sessionId !== undefined || bt.cloud !== undefined)
   const blockArchiveCells = [...blockOf.values()].some(blockArchivable) ? 3 : 0
   const blockArchive = (t: Task, block: BrandTask) => {
     if (blockArchiveCells === 0) return null
@@ -13258,15 +13419,22 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     const checkHex = block?.finished ? palette.finished : palette.done
     // Sa suite dans la file des tests lourds (#321, maquette C) : la pastille à la place de la barre et du compte.
     const queued = block && t.branche !== undefined ? heavyMarks.get(t.branche) : undefined
+    const cloud = block?.cloud
+    const tint = cloud ? cloudTints(palette, cloud.state) : undefined
     return (
       // Calée à droite (capture de 0.249.0, BBR : « Le temps doit être aligné à droite avec le bouton file d'attente ») :
       // la case est comptée en cellules, plus larges dans l'app que dans le compte ; le vide part à gauche, la durée
       // finit au bord, sous l'icône du centre de contrôle.
-      <Box key={`steps:${t.key}`} flexDirection="row" alignItems="center" justifyContent="flex-end" gap={SPACE.row} flexShrink={0} {...(Svg ? { width: stepsCells.columns } : {})}>
+      <Box key={`steps:${t.key}`} flexDirection="row" alignItems="center" justifyContent="flex-end" gap={SPACE.row} flexShrink={0} {...(Svg ? { width: stepsColumns } : {})}>
         <Box width={ROW_STEPS.icon} flexShrink={0} flexDirection="row" justifyContent="center">
-          {completed ? (Svg ? <Svg source={checkIcon(checkHex, 14, STROKE.pill)} alt={completedWord} width={SIZE.icon.sm} height={SIZE.icon.sm} /> : <Text size="caption" color={checkHex}>✓</Text>) : merging ? mergeMark() : waiting ? hand() : spinner()}
+          {cloud && tint ? (Svg ? <Svg source={cloudIcon(tint.cloud, 14, 'Dans le cloud')} alt="Dans le cloud" width={SIZE.icon.sm} height={SIZE.icon.sm} /> : <Text size="caption" color={tint.cloud}>☁</Text>) : completed ? (Svg ? <Svg source={checkIcon(checkHex, 14, STROKE.pill)} alt={completedWord} width={SIZE.icon.sm} height={SIZE.icon.sm} /> : <Text size="caption" color={checkHex}>✓</Text>) : merging ? mergeMark() : waiting ? hand() : spinner()}
         </Box>
-        {queued ? (
+        {cloud && tint ? (
+          // L'état de sa PR en mots, à la place de la barre d'étapes (#408, maquette A) ; la durée garde sa place.
+          <Box key={`cloud-words:${t.key}`} {...(Svg ? { width: CLOUD_WORDS_CELLS } : {})} flexShrink={0} minWidth={0} flexDirection="row" alignItems="center">
+            <Text size="caption" color={tint.word} wrap="truncate-end">{cloudWords(cloud.state).short}</Text>
+          </Box>
+        ) : queued ? (
           <Box flexGrow={1} flexShrink={1} minWidth={0} flexDirection="row" justifyContent="flex-end">
             {queuePill(queued)}
           </Box>
@@ -13276,6 +13444,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
           ) : (
             <Svg source={`<svg xmlns="http://www.w3.org/2000/svg" width="${ROW_STEPS.bar}" height="4"/>`} alt="espace" width={ROW_STEPS.bar} height={4} />
           ))}
+        {cloudColumn && !queued && <Box key={`cloud-gap:${t.key}`} flexGrow={1} />}
         {!queued && (
           <Box width={ROW_STEPS.clock + stepsCells.count} flexShrink={0} flexDirection="row" alignItems="center" justifyContent="flex-end" gap={0}>
             {since !== '' && (
@@ -13318,7 +13487,9 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     // Une tâche d'une chaîne : le trait et son étape font partie de la marque, un seul dessin.
     // Une faite (#180, maquette C) : le carré de son axe, à pleine couleur, coché de blanc ; on le
     // reclique pour la rouvrir. Une mère faite garde sa flèche.
-    const checkedMark = t.done && !head && Svg !== undefined
+    // Une ligne cloud dont la PR est fusionnée se coche et se barre comme une close, sa ligne de roadmap encore ouverte (#408).
+    const cloudMerged = block?.cloud?.state === 'merged'
+    const checkedMark = (t.done || cloudMerged) && !head && Svg !== undefined
     // La case qui vient d'être cochée ou rouverte joue son mouvement (#182, maquette A), une fois, dans
     // le cadre interactif qui seul joue le SMIL ; ensuite, le dessin fixe.
     const moving = Svg !== undefined && !head && !ghost ? checkMoveOf($, taskKey(t), t.done, now) : undefined
@@ -13458,7 +13629,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
             fitRowPills({
               columns: (e.props as { bodyColumns?: number }).bodyColumns ?? 56,
               inset: 6,
-              steps: stepsCells.columns + (block ? blockArchiveCells : 0) + priorityCells,
+              steps: stepsColumns + (block ? blockArchiveCells : 0) + priorityCells,
               pills: parts.tags.map(spec => pxCells(pillIcon(spec).width)),
               mark: grouped ? 0 : markWidth,
               number: grouped ? treeNumCells + TREE_LEAD_CELLS : treeNumCells,
@@ -13474,7 +13645,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
         </Text>
       </Box>
     ) : null
-    const number = t.id ? taskNumber(t.id, rowSession ? () => void openSession($, rowSession.entry) : undefined, t.done, grouped ? (head ? 'content' : 'grow') : undefined, checkable ? { press: pickByNumber, chosen } : undefined) : undefined
+    const number = t.id ? taskNumber(t.id, rowSession ? () => void openSession($, rowSession.entry) : undefined, t.done || cloudMerged, grouped ? (head ? 'content' : 'grow') : undefined, checkable ? { press: pickByNumber, chosen } : undefined) : undefined
     return (
       <Box
         key={`hit:${t.key}`}
@@ -13549,11 +13720,24 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
               et barrée (#198), un titre provisoire estompé ; un bouton natif imposerait son encre, sa
               graisse et sa marge. Un bouton sans encre le couvre et ouvre la fiche. Au terminal, le bouton. */}
           {Svg ? (
-            <Text wrap="truncate-end" {...(head ? { weight: 'semibold' as const } : {})} {...(t.done ? { strikethrough: true, color: lingering ? palette.text2 : palette.text3 } : greyed || !titled(t) ? { color: palette.text2 } : {})}>
+            <Text wrap="truncate-end" {...(head ? { weight: 'semibold' as const } : {})} {...(t.done || cloudMerged ? { strikethrough: true, color: lingering ? palette.text2 : palette.text3 } : greyed || !titled(t) ? { color: palette.text2 } : {})}>
               {s.titre}
             </Text>
           ) : null}
-          {Svg ? (
+          {block?.cloud ? (
+            // Une ligne cloud : le titre ouvre sa PR par sa zone de clic ; sans PR (ou sans url), pas de lien (#408).
+            block.cloud.url !== undefined ? (
+              Svg ? (
+                hit(`cloud-pr:${taskKey(t)}`, () => void openCloudPr($, block.cloud), 1)
+              ) : (
+                <Button key={t.key} plain onPress={() => void openCloudPr($, block.cloud)}>
+                  <Text wrap="truncate-end">{s.titre}</Text>
+                </Button>
+              )
+            ) : Svg ? null : (
+              <Text wrap="truncate-end">{s.titre}</Text>
+            )
+          ) : Svg ? (
             <Box position="absolute" top={0} left={0}>
               <Button key={t.key} plain onPress={select(selectionOf(t))}>
                 {titleOverlay(s.titre)}

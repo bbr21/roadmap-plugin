@@ -47,6 +47,8 @@ export type Task = {
   tous?: Recurrence
   /** `relance:` : la date de la dernière relance du tiers attendu (#99). */
   relance?: string
+  /** `lieu:cloud` (#408) : la session de la tâche tourne en cloud ; absent, sur le Mac. */
+  lieu?: 'cloud'
   /** Les clés hors grammaire (les clés déclarées dans `cles`), valeurs coupées aux virgules. */
   extra?: Record<string, string[]>
   /** Calculé par `withParentDates` (#125) : la tâche a des enfants ouverts ; `due` est alors la date du plus proche. */
@@ -120,6 +122,8 @@ export type Source = {
   publier?: string
   /** `mission` (#278) : `puces` montre le cadre Mission de la fiche un fait par puce ; sans, la phrase. */
   mission?: MissionStyle
+  /** `sessions` (#408) : où Maestro lance les sessions de tâche par défaut ; `mac` sans réglage. */
+  sessions?: Sessions
   /** `a_preuve` (#277) : les `ref:` des coquilles dont les étapes de semaine attendent la preuve, sans report. */
   aPreuve?: string[]
   /** `axes` (#286) : la couleur et le libellé choisis pour un axe, par son slug ; sans, le rang et `axisLabel`. */
@@ -163,6 +167,9 @@ const RIEN_A_RANGER = 'Rien à ranger'
  * d'affichage : l'interface ne lit jamais le travail pour dessiner.
  */
 export type Travail = 'code' | 'projet'
+/** Où tourne une session de tâche (#408) : sur le Mac, ou en cloud. */
+export type Sessions = 'mac' | 'cloud'
+const SESSIONS: readonly Sessions[] = ['mac', 'cloud']
 /** Les valeurs de `mode` qui forcent le travail (#76, #176). */
 export type Mode = Travail
 const MODES: readonly Mode[] = ['code', 'projet']
@@ -186,6 +193,8 @@ export type ProjectSettings = {
   publier?: string
   /** `mission` (#278) : le rendu du cadre Mission de la fiche ; `phrase` par défaut. */
   mission: MissionStyle
+  /** `sessions` (#408) : où Maestro lance par défaut ; `mac` par défaut. */
+  sessions: Sessions
   /** `a_preuve` (#277) : les coquilles dont les étapes ne passent pas seules à la semaine suivante ; aucune par défaut. */
   aPreuve: string[]
 }
@@ -223,6 +232,7 @@ export function projectSettings(source: Source): ProjectSettings {
     ...(source.preuves ? { preuves: source.preuves } : {}),
     ...(source.publier ? { publier: source.publier } : {}),
     mission: source.mission ?? 'phrase',
+    sessions: source.sessions ?? 'mac', // #408
     aPreuve: source.aPreuve ?? [],
   }
 }
@@ -601,6 +611,7 @@ export function parseRoadmap(text: string, file: string): Task[] {
       else if (k === 'prio' && PRIO_RE.test(v)) task.prio = v as Prio
       else if (k === 'tous' && (RECURRENCES as readonly string[]).includes(v)) task.tous = v as Recurrence
       else if (k === 'skill' && SKILL_RE.test(v)) task.skill = v
+      else if (k === 'lieu' && v === 'cloud') task.lieu = v // #408
       else if (k === 'relance' && DATE_RE.test(v)) task.relance = v
       else if (k === 'feedback' && FEEDBACK_RE.test(v)) task.feedback = v.split(',')
       else if (k === 'pj' || k === 'livrable') {
@@ -619,7 +630,7 @@ export function parseRoadmap(text: string, file: string): Task[] {
 // Le contrôle de la grammaire, plus strict que la lecture : la lecture ignore une ligne qu'elle ne
 // comprend pas, le contrôle la signale. Clés admises : celles que la lecture garde, plus `verrou`
 // (Splitmybill).
-const KEYS: readonly string[] = [...FIELDS, 'après', 'parent', 'id', 'nom', 'prio', 'feedback', 'pj', 'livrable', 'verrou', 'tous', 'relance', 'skill']
+const KEYS: readonly string[] = [...FIELDS, 'après', 'parent', 'id', 'nom', 'prio', 'feedback', 'pj', 'livrable', 'verrou', 'tous', 'relance', 'skill', 'lieu' /* #408 */]
 /** Les clés de la grammaire : une clé déclarée dans `cles` ne peut en reprendre aucune. */
 export const GRAMMAR_KEYS: readonly string[] = KEYS
 const DECLARED_KEY_RE = /^[a-zà-ÿ][a-zà-ÿ0-9-]*$/
@@ -733,6 +744,7 @@ export function lintRoadmap(text: string, done: boolean, rules: Partial<LintRule
       else if (k === 'prio' && !PRIO_RE.test(v)) say(`prio: vaut oui (« ${v} »)`)
       else if (k === 'tous' && !(RECURRENCES as readonly string[]).includes(v)) say(`tous: vaut ${RECURRENCES.slice(0, -1).join(', ')} ou ${RECURRENCES[RECURRENCES.length - 1]} (« ${v} »)`)
       else if (k === 'skill' && !SKILL_RE.test(v)) say(`skill: vaut un nom de skill, nom ou plugin:nom (« ${v} »)`)
+      else if (k === 'lieu' && v !== 'cloud') say(`lieu:${v} : cloud attendu`) // #408
       else if (k === 'feedback' && !FEEDBACK_RE.test(v)) say(`feedback: des numéros de retours séparés par des virgules (« ${v} »)`)
       else if ((k === 'pj' || k === 'livrable') && (v === '' || v.split(',').some(x => x.trim() === ''))) say(`${k}: des chemins de fichiers séparés par des virgules (« ${v} »)`)
       else if (k === 'nom' && (v === '' || v.length > NAME_MAX)) say(`nom: 40 caractères au plus, et pas vide (« ${clip(v, 50)} »)`)
@@ -7128,7 +7140,7 @@ export function routineBrief(
 export function parseProjectConfig(text: string, base: string, defaults: { name: string; me: string[] }): Source | undefined {
   const data: unknown = JSON.parse(text)
   if (typeof data !== 'object' || data === null) return undefined
-  const c = data as { name?: unknown; dir?: unknown; me?: unknown; subjects?: unknown; mode?: unknown; requis?: unknown; requis_sur?: unknown; cles?: unknown; rangement?: unknown; relance?: unknown; design?: unknown; cles_visibles?: unknown; ranger_par?: unknown; regles?: unknown; ecriture?: unknown; preuves?: unknown; publier?: unknown; mission?: unknown; a_preuve?: unknown }
+  const c = data as { name?: unknown; dir?: unknown; me?: unknown; subjects?: unknown; mode?: unknown; requis?: unknown; requis_sur?: unknown; cles?: unknown; rangement?: unknown; relance?: unknown; design?: unknown; cles_visibles?: unknown; ranger_par?: unknown; regles?: unknown; ecriture?: unknown; preuves?: unknown; publier?: unknown; mission?: unknown; a_preuve?: unknown; sessions?: unknown }
   const dir = typeof c.dir === 'string' && c.dir !== '' ? (c.dir.startsWith('/') ? c.dir : `${base}/${c.dir}`) : base
   const strings = (v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : undefined)
   // Une valeur inconnue ou d'un mauvais type prend le défaut : le panneau s'ouvre quand même. `auto`
@@ -7191,6 +7203,8 @@ export function parseProjectConfig(text: string, base: string, defaults: { name:
     ...(axes ? { axes } : {}),
     // #278 : une valeur inconnue vaut le défaut, la phrase ; le doctor la signale.
     ...(MISSION_STYLES.includes(c.mission as MissionStyle) && c.mission !== 'phrase' ? { mission: c.mission as MissionStyle } : {}),
+    // #408 : `sessions` ne se garde que pour `cloud` ; `mac`, valeur par défaut, et toute autre valeur restent absents.
+    ...(c.sessions === 'cloud' && SESSIONS.includes(c.sessions) ? { sessions: c.sessions as Sessions } : {}),
   }
 }
 
@@ -9730,7 +9744,124 @@ export function maestroRelaunchContext(o: { source: Source; tasks: readonly Task
  * plus (finie ou archivée), la tâche est toute finie (#145).
  */
 /** Une tâche de la bande et du bloc « En cours » de Maestro ; `since` : la création de sa session, pour la durée live (#385). */
-export type BrandTask = { id: string; label: string; state: 'wait' | 'live' | 'merge' | 'done'; sessionId?: string; closed?: true; finished?: true; archivable?: true; launchedAt?: number; since?: number }
+export type BrandTask = { id: string; label: string; state: 'wait' | 'live' | 'merge' | 'done'; sessionId?: string; closed?: true; finished?: true; archivable?: true; launchedAt?: number; since?: number; cloud?: CloudPr }
+
+// --- Sessions cloud (#408, tâche 5) --------------------------------------------------------------
+// Une session de tâche qui tourne dans le cloud n'a ni liste d'étapes ni session locale : on ne connaît que la
+// ligne de roadmap (`lieu:cloud`, `branche:`) et sa PR GitHub, lue par `gh`. La ligne entre dans le bloc « En cours »
+// et dans la bande comme les autres, le nuage à la place de l'icône d'état, l'état de la PR en mots.
+
+/** La largeur, en cellules, des mots d'état d'une ligne cloud du panneau (« contrôles en cours », « prête à fusionner »), maquette A. */
+export const CLOUD_WORDS_CELLS = 14
+
+/** L'état de la PR d'une session cloud ; `unknown` : `gh` absent, non connecté ou en panne. */
+export type CloudPr = { state: 'none' | 'open' | 'red' | 'ready' | 'merged' | 'closed' | 'unknown'; url?: string; number?: number; createdAt?: number }
+
+const CLOUD_FAILED = new Set(['FAILURE', 'ERROR', 'CANCELLED', 'TIMED_OUT', 'ACTION_REQUIRED', 'STARTUP_FAILURE'])
+
+/** Un contrôle de `statusCheckRollup` : `failed` rouge, `pending` pas encore de conclusion (CheckRun ou StatusContext). */
+function cloudCheck(c: unknown): 'failed' | 'pending' | 'ok' {
+  if (typeof c !== 'object' || c === null) return 'ok'
+  const { conclusion, status, state } = c as { conclusion?: unknown; status?: unknown; state?: unknown }
+  if (typeof state === 'string') return CLOUD_FAILED.has(state) ? 'failed' : state === 'PENDING' || state === 'EXPECTED' ? 'pending' : 'ok'
+  if (typeof conclusion === 'string' && CLOUD_FAILED.has(conclusion)) return 'failed'
+  return typeof conclusion === 'string' && conclusion !== '' ? 'ok' : status === 'COMPLETED' ? 'ok' : 'pending'
+}
+
+/**
+ * L'état de la PR d'une branche, d'après la sortie JSON de `gh pr list --state all --json headRefName,number,url,
+ * state,isDraft,mergeable,statusCheckRollup,createdAt,isCrossRepository` (#408). Une PR d'un fork ne compte pas ;
+ * l'ouverte l'emporte, sinon la plus récente ; ouverte : un contrôle rouge, `red` ; un contrôle sans conclusion
+ * (ou un brouillon, ou un conflit), `open` ; sinon `mergeable`, `ready`. Illisible (pas une liste) : `unknown`,
+ * jamais d'exception. Seule une url en https se garde : rien d'autre ne s'ouvre.
+ */
+export function cloudPrOf(prs: unknown, branche: string): CloudPr {
+  let list: unknown = prs
+  if (typeof list === 'string') {
+    try {
+      list = JSON.parse(list)
+    } catch {
+      return { state: 'unknown' }
+    }
+  }
+  if (!Array.isArray(list)) return { state: 'unknown' }
+  const mine = list.filter((p): p is Record<string, unknown> => typeof p === 'object' && p !== null && (p as { headRefName?: unknown }).headRefName === branche && (p as { isCrossRepository?: unknown }).isCrossRepository !== true)
+  if (mine.length === 0) return { state: 'none' }
+  const at = (p: Record<string, unknown>) => (typeof p.createdAt === 'string' ? Date.parse(p.createdAt) : Number.NaN)
+  const recent = (xs: Record<string, unknown>[]) => xs.reduce((a, b) => ((Number.isFinite(at(b)) ? at(b) : -Infinity) > (Number.isFinite(at(a)) ? at(a) : -Infinity) ? b : a))
+  const opened = mine.filter(p => p.state === 'OPEN')
+  const pr = recent(opened.length > 0 ? opened : mine)
+  const base = {
+    ...(typeof pr.url === 'string' && /^https:\/\/\S+$/.test(pr.url) ? { url: pr.url } : {}),
+    ...(typeof pr.number === 'number' ? { number: pr.number } : {}),
+    ...(Number.isFinite(at(pr)) ? { createdAt: at(pr) } : {}),
+  }
+  if (pr.state === 'MERGED') return { state: 'merged', ...base }
+  if (pr.state === 'CLOSED') return { state: 'closed', ...base }
+  if (pr.state !== 'OPEN') return { state: 'unknown', ...base }
+  const checks = Array.isArray(pr.statusCheckRollup) ? pr.statusCheckRollup.map(cloudCheck) : []
+  if (checks.includes('failed')) return { state: 'red', ...base }
+  if (checks.includes('pending') || pr.isDraft === true) return { state: 'open', ...base }
+  return { state: pr.mergeable === 'MERGEABLE' ? 'ready' : 'open', ...base }
+}
+
+/** Les mots de l'état d'une PR : le court du panneau (à la place de la barre d'étapes), le long de la bande. */
+export function cloudWords(state: CloudPr['state']): { short: string; long: string } {
+  switch (state) {
+    case 'none':
+      return { short: 'pas encore de PR', long: 'pas encore de PR' }
+    case 'open':
+      return { short: 'contrôles en cours', long: 'PR ouverte · contrôles en cours' }
+    case 'red':
+      return { short: 'contrôles rouges', long: 'contrôles rouges' }
+    case 'ready':
+      return { short: 'prête à fusionner', long: 'prête à fusionner' }
+    case 'merged':
+      return { short: 'fusionnée', long: 'fusionnée' }
+    case 'closed':
+      return { short: 'PR fermée', long: 'PR fermée sans fusion' }
+    default:
+      return { short: 'état inconnu', long: 'état de la PR inconnu' }
+  }
+}
+
+/** `owner/repo` d'une adresse d'origine GitHub (ssh ou https) ; rien pour un autre hébergeur ou un nom douteux. */
+export function githubRepoOf(remote: string): string | undefined {
+  const m = remote.trim().match(/^(?:git@github\.com:|(?:ssh:\/\/git@|https?:\/\/|git:\/\/)github\.com[:/])([A-Za-z0-9][A-Za-z0-9_.-]*)\/([A-Za-z0-9][A-Za-z0-9_.-]*?)(?:\.git)?\/?$/)
+  return m ? `${m[1]}/${m[2]}` : undefined
+}
+
+/**
+ * Les lignes cloud du bloc « En cours » et de la bande : les tâches ouvertes `lieu:cloud` déjà prises (`branche:`) et
+ * numérotées, chacune avec l'état de sa PR. `red` et `ready` : elle t'attend (`wait`) ; fusionnée : finie et archivable
+ * (aucune session locale à archiver : l'archive la cache) ; sinon elle tourne (`live`). Le lancement et la durée :
+ * l'ouverture de sa PR, sinon minuit local de `ouvert:` (jamais une date après `today`) ; rien plutôt qu'une durée fausse.
+ * Rangées par lancement, les sans-date à la fin.
+ */
+export function cloudBrandTasks(open: readonly Task[], prs: unknown, today: string): BrandTask[] {
+  const midnight = (iso: string | undefined): number | undefined => {
+    const m = iso?.match(/^(\d{4})-(\d{2})-(\d{2})$/)
+    if (!m || iso! > today) return undefined
+    const at = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])).getTime()
+    return Number.isFinite(at) ? at : undefined
+  }
+  const rows = open.flatMap(t => {
+    if (t.done || t.lieu !== 'cloud' || !t.branche || !t.id) return []
+    const cloud = cloudPrOf(prs, t.branche)
+    const launched = cloud.createdAt ?? midnight(t.ouvert)
+    const row: BrandTask = {
+      id: t.id,
+      label: t.label,
+      state: cloud.state === 'red' || cloud.state === 'ready' ? 'wait' : cloud.state === 'merged' ? 'done' : 'live',
+      ...(cloud.state === 'merged' ? { closed: true as const, finished: true as const, archivable: true as const } : {}),
+      ...(launched !== undefined ? { launchedAt: launched, since: launched } : {}),
+      cloud,
+    }
+    return [row]
+  })
+  const at = (t: BrandTask) => t.launchedAt ?? Number.POSITIVE_INFINITY
+  return rows.sort((a, b) => (at(a) === at(b) ? 0 : at(a) < at(b) ? -1 : 1))
+}
 
 /**
  * La place figée d'une tâche lancée (#195) : la date de sa session quand elle se lit, la plus ancienne

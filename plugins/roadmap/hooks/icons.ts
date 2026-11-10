@@ -361,6 +361,31 @@ export function unarchiveIcon(hex: string, size = 16, width: number = STROKE.bas
   return line(hex, size, width, '<rect x="3.5" y="4.5" width="17" height="4" rx="1"/><path d="M5.5 8.5v10a1 1 0 0 0 1 1h11a1 1 0 0 0 1-1v-10"/><path d="M12 17v-5.5M9.5 14l2.5-2.5 2.5 2.5"/>')
 }
 
+/** Nuage : une session de tâche qui tourne dans le cloud (#408) ; sa teinte dit l'état de la PR. Trait 2, bouts ronds. */
+export function cloudIcon(hex: string, size = 14, title?: string): string {
+  return line(hex, size, 2, '<path d="M17.5 19H7a5 5 0 1 1 1.3-9.84A6 6 0 0 1 19.8 11.4 3.8 3.8 0 0 1 17.5 19z"/>', title)
+}
+
+/**
+ * La teinte du nuage et celle des mots d'après l'état de la PR (maquette A) : gris sans PR, fermée ou inconnue ;
+ * bleu en cours ; orange rouge ; vert prête (le nuage seulement : le mot reste à l'encre, le vert fait 4,17:1 sur
+ * le fond de survol clair) ; violet fusionnée.
+ */
+export function cloudTints(palette: Palette, state: 'none' | 'open' | 'red' | 'ready' | 'merged' | 'closed' | 'unknown'): { cloud: string; word: string } {
+  switch (state) {
+    case 'open':
+      return { cloud: palette.live, word: palette.liveOn }
+    case 'red':
+      return { cloud: palette.block, word: palette.blockOn }
+    case 'ready':
+      return { cloud: palette.ok, word: palette.text }
+    case 'merged':
+      return { cloud: palette.finished, word: palette.finishedOn }
+    default:
+      return { cloud: palette.text3, word: palette.text3 }
+  }
+}
+
 export function checkIcon(hex: string, size = 16, width: number = STROKE.check): string {
   return line(hex, size, width, '<path d="M5 12.5l4.5 4.5L19 7.5"/>')
 }

@@ -147,7 +147,7 @@ check('Grammaire de ROADMAP.md et ROADMAP-fait.md', (err) => {
   const axes = knownAxes();
   if (!axes.size) err(OPEN, 'liste des axes introuvable (puce « - **axe** »)');
   // Les clés que lit et contrôle le panneau Roadmap (plugin roadmap).
-  const keys = new Set(['id', 'nom', 'qui', 'attend', 'resp', 'branche', 'verrou', 'ouvert', 'due', 'parent', 'après', 'prio', 'feedback', 'pj', 'livrable', 'fait', 'spec', 'fiche', 'src', 'tous', 'relance', 'skill']);
+  const keys = new Set(['id', 'nom', 'qui', 'attend', 'resp', 'branche', 'verrou', 'ouvert', 'due', 'parent', 'après', 'prio', 'feedback', 'pj', 'livrable', 'fait', 'spec', 'fiche', 'src', 'tous', 'relance', 'skill', 'lieu']);
   const declared = declaredKeys();
   // id: unique sur les deux fichiers, gardé quand la ligne descend dans ROADMAP-fait.
   const ids = new Map();
@@ -212,6 +212,8 @@ check('Grammaire de ROADMAP.md et ROADMAP-fait.md', (err) => {
         if (key === 'prio' && !/^(oui|[123])$/.test(value.trim())) err(at, `prio:${value} : oui attendu`);
         else if (key === 'prio' && !inDone && migrated && value.trim() !== 'oui') err(at, `prio:${value.trim()} : l'ancienne échelle, écrire prio:oui ou rien (#300)`);
         if (key === 'tous' && !['jour', 'ouvré', 'semaine', '2semaines', 'mois', 'trimestre', 'an'].includes(value.trim())) err(at, `tous:${value} : jour, ouvré, semaine, 2semaines, mois, trimestre ou an attendu`);
+        // #408 : lieu: ne prend que cloud (la tâche tourne dans une session cloud).
+        if (key === 'lieu' && value.trim() !== 'cloud') err(at, `lieu:${value.trim()} : cloud attendu`);
         if (key === 'skill' && !/^[a-z0-9][a-z0-9-]*(:[a-z0-9][a-z0-9-]*)?$/.test(value.trim())) err(at, `skill:${value} : nom de skill attendu (nom ou plugin:nom)`);
         // parent: le numéro de la tâche mère (#12 compris), ou - ; après: un libellé, ou des numéros séparés par des virgules, ou -.
         if (key === 'parent' && !/^(#?[1-9]\d*|-)$/.test(value.trim())) err(at, `parent:${value} : numéro de tâche, ou -, attendu`);

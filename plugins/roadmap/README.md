@@ -756,6 +756,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.254.0 (2026-11-10)** : maestro, panneau : mode cloud de Maestro (réglage sessions, clé lieu:cloud, brief et suivi par la PR) et sessions cloud visibles dans le bloc En cours et la bande, nuage et état de la PR (#408)
 - **0.253.0 (2026-11-10)** : maestro, file des tests : un lancement et une suite de tests attendent aussi la mémoire du Mac et le nombre de sessions vivantes, et disent la vraie raison de l'attente (#403)
 - **0.252.2 (2026-11-10)** : maestro : un « lance #N » tapé au téléphone par Remote Control part en lancement direct, jamais en carte ; la retenue de la file dit « tape un mot ici ou depuis ton téléphone » (#392)
 - **0.252.1 (2026-11-10)** : panneau : chaque dessin porte un texte de remplacement, les marques des têtes de section et les icônes du bouton des maquettes s'affichent enfin sur le bureau ; un test refuse tout dessin à alt vide (#370)

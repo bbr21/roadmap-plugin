@@ -131,7 +131,8 @@ lift_stale() {
   since="$(field "$lock/owner" since)"
   if [[ -z "$opid" ]]; then
     local made
-    made="$(stat -f %m "$lock" 2>/dev/null || stat -c %Y "$lock" 2>/dev/null || now)"
+    # GNU d'abord : sous Linux, `stat -f` lit le système de fichiers et rend « File: … » (CI #407).
+    made="$(stat -c %Y "$lock" 2>/dev/null || stat -f %m "$lock" 2>/dev/null || now)"
     (( $(now) - made > 10 )) && reason="pris sans propriétaire"
   elif ! alive "$opid"; then
     reason="PID $opid absent"
