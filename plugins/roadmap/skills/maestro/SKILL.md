@@ -605,7 +605,12 @@ The merge itself:
   de rendre sa place » (`idleMinutes`, 10 min by default; waiting for the person, a resource), it gives
   its place back. A posted card not yet started reserves a place for the same delay, and the counters
   (« N ici », « Mac N/M ») show only sessions. A
-  launch also waits while the Mac's load over one minute is above 2 × its cores. Beyond that, the
+  launch also waits while the Mac carries `macSessions` live sessions or more (every `claude` process,
+  all projects, Maestros included), while its memory is tense (under 5 % free, or swap at 90 % or more
+  with under 10 % free, #403), and while its load over one minute is above 2 × its cores. The reason
+  is said as it is, for example « La mémoire du Mac est tendue (3 % libres, swap 95 %) » or
+  « Le Mac porte 17 sessions vivantes (plafond 16) »: repeat it as written, never call a memory wait
+  « charge ». Beyond that, the
   card does not go out: the panel puts the task in the shared queue, by order of arrival (its
   `après:` prerequisites first), refuses the card with its rank on the Mac
   (« #N attend son tour, 3e sur le Mac »), and the control center shows it with that rank (#367). Do not post a queued card again, do not do the
@@ -634,7 +639,7 @@ The merge itself:
   (« Ne la lance pas »), do not launch it and do not ask again: a release turn that ends without
   `start_session` for `#N` marks the entry « retenue », and it starts again only at the person's ▶
   (or « Reprendre » in the control center). The panel also writes « #N entre en file, 3e sur le Mac … » when a ▶ queues a task,
-  with the real reason of the wait (the Mac's load and its threshold, the places taken, or the task
+  with the real reason of the wait (the Mac's load and its threshold, its memory, its live sessions, the places taken, or the task
   that starts before it): answer it in one line that repeats that reason as written, add nothing,
   launch nothing.
   An entry of another Maestro that could start and has not started for two minutes (its Maestro

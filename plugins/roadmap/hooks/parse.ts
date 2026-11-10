@@ -7325,11 +7325,11 @@ function spanMs(text: string): number {
   return m[2] === 's' ? Number(m[1]) * 1000 : (Number(m[1]) * 60 + Number(m[3] ?? 0)) * 1000
 }
 
-/** Ce que la file des tests lourds a fait attendre (#222, #249) : son tour, puis la charge du Mac. */
+/** Ce que la file des tests lourds a fait attendre (#222, #249, #403) : son tour, puis la charge ou la mémoire du Mac. */
 export function queueWaitMs(stdout: string): number {
   let ms = 0
   for (const line of stdout.split('\n')) {
-    const turn = /à ton tour après (.+)$/.exec(line) ?? /tests lourds lancés après (.+)$/.exec(line) ?? /le Mac reste chargé \([^)]*\) après ([^:]+):/.exec(line)
+    const turn = /à ton tour après (.+)$/.exec(line) ?? /tests lourds lancés après (.+)$/.exec(line) ?? /le Mac reste chargé \([^)]*\) après ([^:]+):/.exec(line) ?? /la mémoire du Mac reste tendue \([^)]*\) après ([^:]+):/.exec(line)
     if (turn) ms += spanMs(turn[1]!)
   }
   return ms
@@ -11965,7 +11965,7 @@ export function queuedCommand(command: string, root: string, opts: { maestro?: b
 /** Une suite de la file : le shell de l'outil Bash qui la lance, depuis quand (epoch, s), sa branche, sa commande. */
 export type HeavyEntry = { pid: number; since: number; branch: string; label: string; project: string; lane: number; by?: 'maestro' }
 /** La charge du Mac qui retient le départ de la suite qui tient la place (#249), lue de `lock/load`. */
-export type HeavyLoad = { load: number; cores: number; max: number; since: number }
+export type HeavyLoad = { load: number; cores: number; max: number; since: number; /** La mémoire tendue retient le départ (#403), pas la charge. */ why?: 'memory'; free?: number; swap?: number }
 /** La file du Mac (#323) : les suites qui tiennent une place (`run` : son départ, l'attente de charge finie), et celles qui attendent, dans l'ordre. */
 export type HeavyQueue = { owners: (HeavyEntry & { run: number; load?: HeavyLoad })[]; waiting: HeavyEntry[] }
 /** La pastille d'une branche dans le bloc « En cours » de Maestro (maquette C) : son texte, son ton, sa commande courte. */
@@ -12017,7 +12017,8 @@ export function readHeavyQueue(
     const run = heavyInt(heavyFields(slot.owner).run) ?? held.since
     const l = heavyFields(slot.load)
     const [load, cores, max, since] = [heavyInt(l.load), heavyInt(l.cores), heavyInt(l.max), heavyInt(l.since)]
-    owners.push({ ...held, run, ...(load !== undefined && cores !== undefined && max !== undefined && since !== undefined ? { load: { load, cores, max, since } } : {}) })
+    const memory = l.why === 'memory' ? { why: 'memory' as const, ...(heavyInt(l.free) !== undefined ? { free: heavyInt(l.free) } : {}), ...(heavyInt(l.swap) !== undefined ? { swap: heavyInt(l.swap) } : {}) } : {}
+    owners.push({ ...held, run, ...(load !== undefined && cores !== undefined && max !== undefined && since !== undefined ? { load: { load, cores, max, since, ...memory } } : {}) })
   }
   const waiting = [...files.tickets]
     .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
@@ -12057,7 +12058,7 @@ export function queueMarks(q: HeavyQueue, now: number, project?: string): Map<st
   const mine = (e: HeavyEntry) => project === undefined || e.project === '' || e.project === project
   for (const o of q.owners) {
     if (!mine(o) || marks.has(o.branch)) continue
-    marks.set(o.branch, { text: o.load ? 'Mac chargé' : `tests ${durationLabel((now - o.run) * 1000)}`, tone: o.load ? 'block' : 'live', command: queueCommand(o.label) })
+    marks.set(o.branch, { text: o.load ? (o.load.why === 'memory' ? 'Mémoire tendue' : 'Mac chargé') : `tests ${durationLabel((now - o.run) * 1000)}`, tone: o.load ? 'block' : 'live', command: queueCommand(o.label) })
   }
   for (const w of q.waiting) {
     if (!mine(w) || marks.has(w.branch)) continue
@@ -12083,6 +12084,7 @@ export function branchOfHead(head: string): string | undefined {
 
 /** La phrase de la charge qui retient le départ (#321), sous les lignes du bloc ; `who` : la tâche, ou la branche. */
 export function queueLoadText(load: HeavyLoad, now: number, who: string): string {
+  if (load.why === 'memory') return `La mémoire du Mac est tendue (${memWords(load)}) : ${who} attend qu'elle se détende depuis ${durationLabel((now - load.since) * 1000)}.`
   return `Le Mac est chargé (charge ${load.load} pour ${load.cores} cœurs, seuil ${load.max}) : ${who} attend qu'elle retombe depuis ${durationLabel((now - load.since) * 1000)}.`
 }
 
@@ -12394,8 +12396,11 @@ export function placeIdleMs(option: unknown): number {
 
 /** Une tâche qui attend sa place : son numéro, le titre de sa carte, la carte à poser (ou le ▶ à rejouer), son arrivée. */
 export type QueuedLaunch = { id: string; title: string; card?: Record<string, unknown>; launch?: { shortTitle: string; extra?: string; kind?: string }; at: number }
-/** La charge du Mac sur une minute, et ses cœurs. */
-export type MacLoad = { load: number; cores: number }
+/**
+ * La santé du Mac (#249, #403) : sa charge sur une minute et ses cœurs ; quand le relevé les donne, la mémoire libre
+ * (%, `memory_pressure -Q`), le swap occupé (%, `vm.swapusage`) et les sessions vivantes (processus `claude`).
+ */
+export type MacLoad = { load: number; cores: number; free?: number; swap?: number; live?: number }
 /** Une tâche en file commune (#345) : son Maestro, son projet, les préfixes de ses dossiers, ses prérequis. */
 export type GlobalQueued = QueuedLaunch & {
   maestro: string
@@ -12462,8 +12467,8 @@ export const LAUNCH_PENDING_MS = 5 * 60_000
 export function launchInFlight(e: { launching?: { at: number } }, now: number): boolean {
   return e.launching !== undefined && now - e.launching.at < LAUNCH_PENDING_MS
 }
-/** Ce qui retient un lancement : le plafond du projet, celui du Mac, ou le Mac chargé. */
-export type DoseWhy = 'project' | 'mac' | 'load'
+/** Ce qui retient un lancement : le plafond du projet, celui du Mac, les sessions vivantes, la mémoire tendue (#403), ou le Mac chargé. */
+export type DoseWhy = 'project' | 'mac' | 'live' | 'memory' | 'load'
 
 /** Le projet d'une session : le dossier de son `cwd`, avant `/.claude/worktrees`. */
 function projectOfCwd(cwd: string): string {
@@ -12526,19 +12531,53 @@ export function projectTaken(cwds: readonly string[], match: readonly string[]):
   return cwds.filter(c => c !== '' && match.some(prefix => c.startsWith(prefix))).length
 }
 
-/** La charge d'une minute et les cœurs, lus de `sysctl -n vm.loadavg hw.ncpu` ; illisible : rien. */
+/**
+ * Le compte des sessions vivantes (#403) : la sortie de `pgrep -x claude`, un PID par ligne, en ligne `live <N>` que
+ * `macLoad` lit à la suite de `sysctl -n vm.loadavg hw.ncpu vm.swapusage` et de `memory_pressure -Q`.
+ */
+export function liveLine(pgrepStdout: string): string {
+  return `live ${pgrepStdout.split('\n').filter(l => /^\d+$/.test(l.trim())).length}`
+}
+
+/** La santé du Mac lue du relevé (#249, #403 : `sysctl -n vm.loadavg hw.ncpu vm.swapusage`, `memory_pressure -Q`, `liveLine`) : la charge et les cœurs, et ce que le relevé donne de la mémoire et des sessions ; sans charge : rien. */
 export function macLoad(stdout: string): MacLoad | undefined {
   const m = /\{\s*([\d.]+)\s+[\d.]+\s+[\d.]+\s*\}\s*(\d+)/.exec(stdout)
   if (!m) return undefined
   const load = Number(m[1])
   const cores = Number(m[2])
-  return Number.isFinite(load) && cores > 0 ? { load, cores } : undefined
+  if (!Number.isFinite(load) || !(cores > 0)) return undefined
+  const out: MacLoad = { load, cores }
+  const sw = /total = ([\d.]+)\w*\s+used = ([\d.]+)/.exec(stdout)
+  if (sw) out.swap = Number(sw[1]) > 0 ? Math.round((Number(sw[2]) * 100) / Number(sw[1])) : 0
+  const free = /free percentage:\s*(\d+)%/.exec(stdout)
+  if (free) out.free = Number(free[1])
+  const live = /^live\s+(\d+)\s*$/m.exec(stdout)
+  if (live) out.live = Number(live[1])
+  return out
 }
 
-/** Le lancement part-il (#345) ? Le plafond du projet, puis celui du Mac, puis la charge au-dessus de 2 × cœurs (#249). */
+/** Le seuil de la mémoire libre (#403) : en dessous, l'app tient la mémoire pour tendue (`warning` du gouverneur). */
+export const MEM_FREE_MIN = 5
+
+/**
+ * La mémoire tendue (#403) : moins de 5 % libres, ou swap à 90 % et plus avec moins de 10 % libres. Le swap seul ne
+ * compte pas : macOS le vide lentement et il reste haut des heures après la pression. Même règle que `mem_tense` de
+ * `scripts/one-at-a-time.sh`. Mémoire libre inconnue : rien de tendu.
+ */
+export function memTense(m: { free?: number; swap?: number }): boolean {
+  if (m.free === undefined) return false
+  return m.free < MEM_FREE_MIN || ((m.swap ?? 0) >= 90 && m.free < 10)
+}
+
+/**
+ * Le lancement part-il (#345) ? Le plafond du projet, puis celui du Mac, puis les sessions vivantes au plafond du Mac
+ * (#403, le réglage « Sessions sur le Mac »), puis la mémoire tendue (#403), puis la charge au-dessus de 2 × cœurs (#249).
+ */
 export function launchGate(o: { projectTaken: number; projectMax: number; macTaken: number; macMax: number; load?: MacLoad }): { go: true } | { go: false; why: DoseWhy } {
   if (o.projectTaken >= o.projectMax) return { go: false, why: 'project' }
   if (o.macTaken >= o.macMax) return { go: false, why: 'mac' }
+  if (o.load?.live !== undefined && o.load.live >= o.macMax) return { go: false, why: 'live' }
+  if (o.load && memTense(o.load)) return { go: false, why: 'memory' }
   if (o.load && o.load.load > 2 * o.load.cores) return { go: false, why: 'load' }
   return { go: true }
 }
@@ -12958,6 +12997,8 @@ export function liveQueue<T extends { id: string; maestro: string; project: stri
 }
 
 const loadWords = (l: MacLoad) => `charge ${Math.round(l.load)} pour ${l.cores} cœurs, seuil ${2 * l.cores}`
+/** La mémoire dite (#403) : « 3 % libres, swap 95 % ». */
+const memWords = (l: { free?: number; swap?: number }) => `${l.free ?? '?'} % libres, swap ${l.swap ?? '?'} %`
 
 type QueueTextArgs = { id: string; rank: number; why: DoseWhy; projectName: string; projectTaken: number; projectMax: number; macTaken: number; macMax: number; load?: MacLoad; /** Le numéro qui part avant elle (#383). */ ahead?: string }
 
@@ -12965,6 +13006,8 @@ type QueueTextArgs = { id: string; rank: number; why: DoseWhy; projectName: stri
 function heldBy(o: QueueTextArgs): string {
   if (o.ahead) return `#${o.ahead} part avant elle`
   if (o.why === 'load' && o.load) return `Le Mac est chargé (${loadWords(o.load)})`
+  if (o.why === 'memory' && o.load) return `La mémoire du Mac est tendue (${memWords(o.load)})`
+  if (o.why === 'live' && o.load?.live !== undefined) return `Le Mac porte ${o.load.live} sessions vivantes (plafond ${o.macMax})`
   if (o.why === 'mac') return `Le Mac est plein (${o.macTaken} sessions, plafond ${o.macMax})`
   return `${o.projectTaken} sessions de ${o.projectName} travaillent (plafond ${o.projectMax})`
 }
@@ -13017,14 +13060,19 @@ export function queuedRefusal(o: QueueTextArgs): string {
 }
 
 /** La phrase de charge sous le bloc « En cours » (#345) ; le plafond du projet ou du Mac n'en a plus, la pastille le dit. */
-export function placesSentence(o: { why: DoseWhy; load?: MacLoad; head?: string }): string | undefined {
-  if (o.why === 'load' && o.load) return `Le Mac est chargé (${loadWords(o.load)}) : ${o.head ?? 'la file'} part seule quand elle retombe.`
+export function placesSentence(o: { why: DoseWhy; load?: MacLoad; head?: string; macMax?: number }): string | undefined {
+  const who = o.head ?? 'la file'
+  if (o.why === 'load' && o.load) return `Le Mac est chargé (${loadWords(o.load)}) : ${who} part seule quand elle retombe.`
+  if (o.why === 'memory' && o.load) return `La mémoire du Mac est tendue (${memWords(o.load)}) : ${who} part seule quand elle se détend.`
+  if (o.why === 'live' && o.load?.live !== undefined) return `Le Mac porte ${o.load.live} sessions vivantes (plafond ${o.macMax ?? 16}) : ${who} part seule quand l'une se ferme ou que l'app la met en pause.`
   return undefined
 }
 
 /** La pastille de l'en-tête du bloc « En cours » quand des tâches attendent (#345) : bleue si le projet retient, orange si le Mac. */
-export function placesPill(o: { projectTaken: number; projectMax: number; macTaken: number; macMax: number; queued: number; why: DoseWhy }): { text: string; tone: 'live' | 'block' } {
+export function placesPill(o: { projectTaken: number; projectMax: number; macTaken: number; macMax: number; queued: number; why: DoseWhy; live?: number }): { text: string; tone: 'live' | 'block' } {
   if (o.why === 'load') return { text: `Mac chargé · ${o.macTaken}/${o.macMax} · ${o.queued} en file`, tone: 'block' }
+  if (o.why === 'memory') return { text: `Mémoire tendue · ${o.macTaken}/${o.macMax} · ${o.queued} en file`, tone: 'block' }
+  if (o.why === 'live') return { text: `${o.live ?? o.macMax} vivantes / ${o.macMax} · ${o.queued} en file`, tone: 'block' }
   return { text: `${o.projectTaken}/${o.projectMax} · Mac ${o.macTaken}/${o.macMax} · ${o.queued} en file`, tone: o.why === 'project' ? 'live' : 'block' }
 }
 
@@ -13051,8 +13099,11 @@ export function ficheQueuePill(queued: number): string | undefined {
 }
 
 /** La pastille d'une tâche en file (#324) : « Mac chargé » pour la tête quand la charge la retient, sinon son rang. */
+const HELD_MARK: Partial<Record<DoseWhy, string>> = { load: 'Mac chargé', memory: 'Mémoire tendue', live: 'Mac plein' }
+
 export function queuedMark(rank: number, why: DoseWhy): QueueMark {
-  return rank === 1 && why === 'load' ? { text: 'Mac chargé', tone: 'block', command: '' } : { text: `en file, ${queueRank(rank)}`, tone: 'neutral', command: '' }
+  const held = HELD_MARK[why]
+  return rank === 1 && held ? { text: held, tone: 'block', command: '' } : { text: `en file, ${queueRank(rank)}`, tone: 'neutral', command: '' }
 }
 
 /**

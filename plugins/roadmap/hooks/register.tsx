@@ -466,6 +466,7 @@ import {
   PLACE_IDLE_MS,
   placeIdleMs,
   macLoad,
+  liveLine,
   launchGate,
   projectTaken,
   globalQueueOrder,
@@ -4023,7 +4024,7 @@ async function restampQueue($: EngineInterface): Promise<void> {
 const LAUNCH_QUEUE_KEY = 'launch-queue'
 const LAUNCH_QUEUE_PREFIX = 'launch-queue:'
 const LAUNCH_CARDS_KEY = 'launch-cards'
-/** La charge du Mac, relue au plus toutes les 30 s, et seulement quand un lancement se décide. */
+/** La santé du Mac (charge, mémoire, sessions vivantes, #403), relue au plus toutes les 30 s, et seulement quand un lancement se décide. */
 let doseLoad: { at: number; load?: MacLoad } = { at: -Infinity }
 const DOSE_LOAD_MS = 30_000
 /** Un départ raté (le message n'a pas pu se préparer) : la tête de file se réessaie une minute plus tard. */
@@ -4056,8 +4057,24 @@ async function readMacLoad($: EngineInterface, now: number): Promise<MacLoad | u
   if (now - doseLoad.at < DOSE_LOAD_MS) return doseLoad.load
   doseLoad = { at: now }
   try {
-    const ran = await $.process.run(['sysctl', '-n', 'vm.loadavg', 'hw.ncpu'], { timeoutMs: 5_000 })
-    if (ran.exitCode === 0) doseLoad.load = macLoad(ran.stdout)
+    const ran = await $.process.run(['sysctl', '-n', 'vm.loadavg', 'hw.ncpu', 'vm.swapusage'], { timeoutMs: 5_000 })
+    if (ran.exitCode !== 0) return doseLoad.load
+    // #403 : la mémoire libre et les sessions vivantes ; chacun illisible, la décision s'en passe.
+    let pressure = ''
+    try {
+      const r = await $.process.run(['memory_pressure', '-Q'], { timeoutMs: 5_000 })
+      if (r.exitCode === 0) pressure = r.stdout
+    } catch {
+      // memory_pressure absent : la mémoire ne décide pas
+    }
+    let live = ''
+    try {
+      const r = await $.process.run(['pgrep', '-x', 'claude'], { timeoutMs: 5_000 })
+      if (r.exitCode === 0 || r.exitCode === 1) live = liveLine(r.stdout)
+    } catch {
+      // pgrep absent : les sessions vivantes ne décident pas
+    }
+    doseLoad.load = macLoad([ran.stdout, pressure, live].join('\n'))
   } catch {
     // sysctl absent (hors macOS) : seul le plafond décide
   }
@@ -4937,7 +4954,7 @@ async function typedRelease($: EngineInterface): Promise<string | undefined> {
 
 /** Ce que le dernier pas a vu (#345, #367) : le panneau se redessine seulement si un compteur a changé. */
 async function showDose($: EngineInterface, next: DoseView): Promise<void> {
-  const key = JSON.stringify([next.queue.map(q => [q.id, q.rank]), next.queued, next.projectTaken, next.projectMax, next.macTaken, next.macMax, next.why, next.why === 'load' ? Math.round(next.load?.load ?? 0) : 0])
+  const key = JSON.stringify([next.queue.map(q => [q.id, q.rank]), next.queued, next.projectTaken, next.projectMax, next.macTaken, next.macMax, next.why, next.why === 'load' ? Math.round(next.load?.load ?? 0) : 0, next.why === 'memory' ? [next.load?.free, next.load?.swap] : 0, next.why === 'live' ? next.load?.live : 0])
   doseView = next
   if (key !== doseSeenKey) {
     doseSeenKey = key

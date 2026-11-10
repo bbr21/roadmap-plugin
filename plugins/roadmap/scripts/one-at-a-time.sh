@@ -12,6 +12,10 @@
 # Sa place prise, la suite attend encore que la charge du Mac retombe sous le seuil, 5 min au plus (#249) :
 # la file ne sérialise que les suites d'un projet, et le délai de 5000 ms par test du kit tombe sous charge.
 # Détail : docs/plans/fix-tests-sous-charge/.
+# Elle attend de même que la mémoire se détende (#403) : moins de 5 % libres (memory_pressure -Q), ou swap
+# à 90 % et plus avec moins de 10 % libres (le swap seul, qui reste haut des heures, ne retient rien) ; la
+# raison dite et écrite (`why=` de <place>/load) est la vraie, jamais « charge » pour la mémoire.
+# Une attente dont le shell n'a plus de session (ppid 1, #403) quitte la file et arrête ce shell.
 #
 # Une file pour le Mac (#323) : dossier heavy-tests/<ROADMAP_QUEUE_KEY>, `mac` par défaut. Places `lock`,
 # `lock-2`… `lock-N` (ROADMAP_QUEUE_SLOTS, 1 par défaut). Voies : 0 prioritaire (branche `main` du dossier du
@@ -22,8 +26,9 @@
 # ROADMAP_QUEUE_BY=maestro marque la suite lancée par Maestro.
 # Réglages (tests) : ROADMAP_QUEUE=off, ROADMAP_QUEUE_KEY, ROADMAP_LOCKS_DIR, ROADMAP_QUEUE_POLL (s),
 # ROADMAP_QUEUE_SAY (s), ROADMAP_QUEUE_MAX_AGE (s), ROADMAP_QUEUE_MAX_LOAD (défaut 2 × cœurs),
-# ROADMAP_QUEUE_LOAD_WAIT (s, défaut 300, 0 coupe l'attente), ROADMAP_QUEUE_LOAD_FILE (la charge lue
-# dans un fichier, pour les tests).
+# ROADMAP_QUEUE_LOAD_WAIT (s, défaut 300, 0 coupe l'attente, mémoire comprise), ROADMAP_QUEUE_LOAD_FILE (la charge lue
+# dans un fichier, pour les tests), ROADMAP_QUEUE_MIN_FREE (%, défaut 5), ROADMAP_QUEUE_MEM_FILE (`free=` et `swap=`,
+# en %, lus dans un fichier, pour les tests).
 # Ce que le panneau lit (#321, #323) : <place>/owner (pid, since, branch, label, project, lane, by, run une fois
 # la suite partie), <place>/load pendant l'attente de charge, queue/<voie>-<horodatage>-<pid>. Détail : docs/plans/feat-file-tests-visible/.
 set -u
@@ -157,12 +162,40 @@ cores() {
   [[ "$n" =~ ^[0-9]+$ && "$n" -gt 0 ]] && echo "$n" || echo 4
 }
 
-# Ce que le panneau lit pendant l'attente de charge (#321) : lock/load, réécrit à chaque relevé, ôté au départ.
-# Écriture atomique (.tmp puis mv) : le panneau ne lit jamais un fichier à moitié écrit.
-put_load() {
-  printf 'load=%s\ncores=%s\nmax=%s\nsince=%s\n' "$1" "$2" "$3" "$4" > "$lock/load.tmp" 2>/dev/null \
-    && mv -f "$lock/load.tmp" "$lock/load" 2>/dev/null
+# La mémoire du Mac (#403) : « <libre %> <swap %> », arrondis ; vide si illisible (rien n'attend alors la mémoire).
+mem_now() {
+  local free="" swap=""
+  if [[ -n "${ROADMAP_QUEUE_MEM_FILE:-}" ]]; then
+    free="$(field "$ROADMAP_QUEUE_MEM_FILE" free)"
+    swap="$(field "$ROADMAP_QUEUE_MEM_FILE" swap)"
+  else
+    free="$(memory_pressure -Q 2>/dev/null | sed -n 's/.*free percentage: *\([0-9][0-9]*\)%.*/\1/p' | head -1)"
+    # « total = 8192.00M  used = 7105.44M  free = 1086.56M  (encrypted) »
+    swap="$(sysctl -n vm.swapusage 2>/dev/null | awk '{ t = $3; u = $6; sub(/[A-Za-z]+$/, "", t); sub(/[A-Za-z]+$/, "", u); if (t + 0 > 0) printf "%d", u * 100 / t + 0.5; else print 0 }')"
+  fi
+  [[ "$free" =~ ^[0-9]+$ ]] || return 0
+  [[ "$swap" =~ ^[0-9]+$ ]] || swap=0
+  echo "$free $swap"
 }
+
+# Tendue (#403) : moins de min_free % libres, ou swap à 90 % et plus avec moins de 10 % libres.
+mem_tense() {
+  local min_free="${ROADMAP_QUEUE_MIN_FREE:-5}"
+  [[ "$min_free" =~ ^[0-9]+$ ]] || min_free=5
+  (( $1 < min_free || ($2 >= 90 && $1 < 10) ))
+}
+
+# Ce que le panneau lit pendant l'attente (#321, #403) : lock/load, réécrit à chaque relevé, ôté au départ ;
+# `why=load` ou `why=memory` (avec `free=` et `swap=`). Écriture atomique (.tmp puis mv) : le panneau ne lit
+# jamais un fichier à moitié écrit.
+put_load() {
+  { printf 'load=%s\ncores=%s\nmax=%s\nsince=%s\nwhy=%s\n' "$1" "$2" "$3" "$4" "$5"
+    if [[ "$5" == memory ]]; then printf 'free=%s\nswap=%s\n' "$6" "$7"; fi
+  } > "$lock/load.tmp" 2>/dev/null && mv -f "$lock/load.tmp" "$lock/load" 2>/dev/null
+}
+
+# Le shell de l'outil n'a plus de session (#403) : son parent est mort, launchd (1) l'a recueilli.
+orphaned() { [[ "$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ')" == 1 ]]; }
 
 # La suite part (#321) : `run=` s'ajoute au propriétaire, que le panneau lit pour dire depuis quand elle tourne.
 mark_run() {
@@ -173,9 +206,10 @@ mark_run() {
   return 0
 }
 
-# Place prise : attendre que la charge passe sous le seuil, au plus load_wait secondes, en le disant.
+# Place prise : attendre que la mémoire se détende (#403) et que la charge passe sous le seuil (#249), au plus
+# load_wait secondes en tout, en disant la vraie raison ; la mémoire passe devant la charge.
 wait_for_calm() {
-  local ncpu max wait_max load began polls=0 said=0
+  local ncpu max wait_max load mem free swap why began polls=0 said=""
   ncpu="$(cores)"
   max="${ROADMAP_QUEUE_MAX_LOAD:-}"
   [[ "$max" =~ ^[0-9]+$ ]] || max=$(( 2 * ncpu ))
@@ -183,20 +217,40 @@ wait_for_calm() {
   [[ "$wait_max" =~ ^[0-9]+$ ]] || wait_max=300
   (( wait_max > 0 )) || return 0
   began="$(now)"
-  while load="$(load_now)" && [[ -n "$load" ]] && (( load > max )); do
-    put_load "$load" "$ncpu" "$max" "$began"
+  while :; do
+    load="$(load_now)"
+    mem="$(mem_now)"
+    free="${mem%% *}" swap="${mem##* }"
+    why=""
+    if [[ -n "$mem" ]] && mem_tense "$free" "$swap"; then why=memory
+    elif [[ -n "$load" ]] && (( load > max )); then why=load
+    fi
+    [[ -n "$why" ]] || break
+    put_load "${load:-0}" "$ncpu" "$max" "$began" "$why" "$free" "$swap"
     if (( $(now) - began >= wait_max )); then
-      echo "roadmap : le Mac reste chargé (charge $load) après $(span $(( $(now) - began ))) : tests lourds lancés quand même ; un « timed out after 5000 ms » vient sans doute de la charge, le test se rejoue seul."
+      if [[ "$why" == memory ]]; then
+        echo "roadmap : la mémoire du Mac reste tendue ($free % libres, swap $swap %) après $(span $(( $(now) - began ))) : tests lourds lancés quand même."
+      else
+        echo "roadmap : le Mac reste chargé (charge $load) après $(span $(( $(now) - began ))) : tests lourds lancés quand même ; un « timed out after 5000 ms » vient sans doute de la charge, le test se rejoue seul."
+      fi
       return 0
     fi
-    if (( polls % say_polls == 0 )); then
-      echo "roadmap : le Mac est chargé (charge $load pour $ncpu cœurs, seuil $max), tests lourds en attente depuis $(span $(( $(now) - began )))."
-      said=1
+    if (( polls % say_polls == 0 )) || [[ "$why" != "$said" ]]; then
+      if [[ "$why" == memory ]]; then
+        echo "roadmap : la mémoire du Mac est tendue ($free % libres, swap $swap %), tests lourds en attente depuis $(span $(( $(now) - began )))."
+      else
+        echo "roadmap : le Mac est chargé (charge $load pour $ncpu cœurs, seuil $max), tests lourds en attente depuis $(span $(( $(now) - began )))."
+      fi
+      said="$why"
     fi
     polls=$(( polls + 1 ))
     sleep "$poll"
   done
-  (( said )) && echo "roadmap : la charge est retombée (${load:-?}), tests lourds lancés après $(span $(( $(now) - began )))."
+  if [[ "$said" == memory ]]; then
+    echo "roadmap : la mémoire s'est détendue (${free:-?} % libres), tests lourds lancés après $(span $(( $(now) - began )))."
+  elif [[ "$said" == load ]]; then
+    echo "roadmap : la charge est retombée (${load:-?}), tests lourds lancés après $(span $(( $(now) - began )))."
+  fi
   return 0
 }
 
@@ -206,6 +260,13 @@ say_polls="$(awk -v s="$say_every" -v p="$poll" 'BEGIN { n = int(s / p + 0.999);
 polls=0
 said=0
 while :; do
+  # Plus de session derrière ce shell (#403) : son attente quitte la file, et le shell s'arrête avant de lancer la suite.
+  if orphaned; then
+    echo "roadmap : le shell $pid n'a plus de session (ppid 1) : son attente quitte la file des tests lourds, et il s'arrête."
+    rm -f "$ticket"
+    kill -TERM "$pid" 2>/dev/null
+    exit 0
+  fi
   # Les tickets des sessions mortes s'effacent ; la tête de file seule lève un verrou mort et prend la place.
   for t in "$queue"/*; do
     [[ -f "$t" && "$t" != "$ticket" ]] || continue
