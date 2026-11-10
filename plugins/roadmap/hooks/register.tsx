@@ -13121,7 +13121,10 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     // Sa suite dans la file des tests lourds (#321, maquette C) : la pastille à la place de la barre et du compte.
     const queued = block && t.branche !== undefined ? heavyMarks.get(t.branche) : undefined
     return (
-      <Box key={`steps:${t.key}`} flexDirection="row" alignItems="center" gap={SPACE.row} flexShrink={0} {...(Svg ? { width: stepsCells.columns } : {})}>
+      // Calée à droite (capture de 0.249.0, BBR : « Le temps doit être aligné à droite avec le bouton file d'attente ») :
+      // la case est comptée en cellules, plus larges dans l'app que dans le compte ; le vide part à gauche, la durée
+      // finit au bord, sous l'icône du centre de contrôle.
+      <Box key={`steps:${t.key}`} flexDirection="row" alignItems="center" justifyContent="flex-end" gap={SPACE.row} flexShrink={0} {...(Svg ? { width: stepsCells.columns } : {})}>
         <Box width={ROW_STEPS.icon} flexShrink={0} flexDirection="row" justifyContent="center">
           {completed ? (Svg ? <Svg source={checkIcon(checkHex, 14, STROKE.pill)} alt={completedWord} width={SIZE.icon.sm} height={SIZE.icon.sm} /> : <Text size="caption" color={checkHex}>✓</Text>) : merging ? mergeMark() : waiting ? hand() : spinner()}
         </Box>

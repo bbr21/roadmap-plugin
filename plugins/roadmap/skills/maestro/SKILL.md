@@ -185,6 +185,11 @@ to it.
   then the detail (the line to reread, the files, what « fini » means, test included) and the
   Maestro clause, copied in, written in French like the rest of the brief:
   - you work for Maestro (the session « <nom> »), which coordinates and merges;
+  - first of all, turn Remote Control off (`set_remote_control`, `session_id: "self"`,
+    `enabled: false`), so the app's memory governor can pause the session when it rests (it never
+    pauses one whose Remote Control is connected, #397); refused or unavailable: go on and say so in
+    one line. The person turns it back on with the session's Remote Control switch in the app, or by
+    asking the session (`enabled: true`). Maestro keeps its own Remote Control (#402);
   - work on your branch, rerun the tests its impact map names (never the whole suite: Maestro runs it
     on `main` after the merge, #323), push it, open your PR if the project has them;
   - do not merge into `main`: Maestro merges, one branch at a time;

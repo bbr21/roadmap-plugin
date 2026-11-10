@@ -756,6 +756,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.251.0 (2026-11-10)** : maestro : une session de tâche lancée par Maestro éteint Remote Control à sa naissance, pour que l'app puisse la mettre en pause au repos ; Maestro garde le sien (#402)
 - **0.250.0 (2026-11-10)** : audit, tasks : les vieilles sauvegardes se purgent seules, au-delà de 7 jours et hors des 20 dernières (#413)
 - **0.249.0 (2026-11-10)** : panneau : la bande de Maestro au style du bloc En cours (case d'axe, archive entre la case et le numéro, plus de mots d'état, durée au bord droit) ; dans le bloc, l'archive aussi (#385, retour de test)
 - **0.248.0 (2026-11-10)** : maestro : la consigne de capture de fidélité suit un gabarit court (version à vérifier, gestes numérotés, ce qu'on doit voir, quoi faire si ça diffère), relue en fin de tour (#406)

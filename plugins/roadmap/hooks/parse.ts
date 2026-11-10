@@ -5026,11 +5026,27 @@ export function testLaterReminder(ids: readonly string[]): string | undefined {
   return `Roadmap — publication lancée en arrière-plan pour ${list} (#366) : à sa fin, quand sa sortie dit « Publié : <plugin> X.Y.Z … », ne coche pas ${list} : dis « Nouvelle version X.Y.Z : ${list} » en une ligne, mets l'étape à « · en test X.Y.Z », et pose une carte par tâche titrée « ${ids.map(id => testCardTitle(id, 'X.Y.Z')).join(' », « ')} » (start_session, own_initiative, fresh, use_worktree: false), brief de test avec l'identifiant de la session d'origine et le tien (skill roadmap:maestro, § 6, « A published task goes to test »).`
 }
 
+/**
+ * #402 (étude #397) : une session lancée par Maestro éteint elle-même Remote Control à sa naissance, pour que
+ * le gouverneur mémoire de l'app puisse la mettre en pause au repos (il ne pause jamais une session dont Remote
+ * Control est connecté). `start_session` n'a pas de champ pour cela, et Maestro ne peut pas l'éteindre au retour
+ * du lancement (« Needs a session that has run a turn ») : la consigne voyage dans le brief. Maestro, sans
+ * clause, garde Remote Control.
+ */
+export function remoteControlClause(): string {
+  return [
+    'Remote Control (#402) : avant tout, éteins-le pour cette session, par `set_remote_control` avec `session_id: "self"` et `enabled: false` (charge l\'outil par ToolSearch s\'il est différé), pour que l\'app puisse la mettre en pause au repos ; Maestro garde le sien.',
+    'Refusé ou indisponible : continue, dis-le en une ligne, sans réessayer.',
+    `Pour le rallumer, ${person()} a l'interrupteur Remote Control de la session dans l'app ; s'il te le demande, appelle \`set_remote_control\` sur \`self\` avec \`enabled: true\`.`,
+  ].join(' ')
+}
+
 export function maestroClause(maestro: string, travail: Travail = 'code'): string[] {
   // Sans code (#76, #176) : ni branche, ni PR, ni fusion ; la session se dit « prête à clore ».
   if (travail === 'projet') {
     return [
       `Tu travailles pour Maestro : la session qui t'a lancée, « ${maestro} », coordonne ses tâches (skill \`roadmap:maestro\`).`,
+      `- ${remoteControlClause()}`,
       '- Travaille dans le dossier du projet.',
       '- Une ressource unique (compte, document partagé, envoi à un tiers, publication d\'un plugin) ne se prend qu\'avec la main de Maestro : dis-le en tête de ton compte rendu et termine ton tour ; il te la donne par message, et tu la rends dès que tu as fini.',
       `- ${maestroAutonome()}`,
@@ -5046,6 +5062,7 @@ export function maestroClause(maestro: string, travail: Travail = 'code'): strin
   }
   return [
     `Tu travailles pour Maestro : la session qui t'a lancée, « ${maestro} », coordonne ses tâches et fusionne pour elles (skill \`roadmap:maestro\`).`,
+    `- ${remoteControlClause()}`,
     '- Travaille sur ta branche, dans ton worktree ; rejoue sur ta branche les tests que nomme ta carte d\'impact, jamais la suite entière (Maestro la lance sur main après la fusion, #323), pousse-la, et ouvre ta PR si le projet en a.',
     '- Ne fusionne pas sur main : Maestro fusionne, une branche à la fois, dans l\'ordre qu\'il choisit.',
     '- Une ressource unique (simulateur iOS, appareil, base, déploiement, compte de test) ne se prend qu\'avec la main de Maestro : dis-le en tête de ton compte rendu et termine ton tour ; il te la donne par message, et tu la rends dès que tu as fini.',
@@ -9800,10 +9817,11 @@ export function maestroBarText(c: MaestroBarCase): string {
 }
 
 /**
- * La case d'info de la bande de Maestro, au plus, en cellules (#211, #385) : le compte et une étape de
- * 34 signes ; au-delà, l'étape se tronque et le titre garde sa place.
+ * La case d'info de la bande de Maestro, au plus, en cellules (#211, #385) : le compte et une étape d'une
+ * vingtaine de signes, comme la maquette validée (`maquettes-retour.html#version-corrigee`) ; au-delà, l'étape
+ * se tronque et le titre garde sa place (capture de 0.249.0, BBR : « Plus d'espace pour le titre »).
  */
-export const BAND_INFO_MAX = 40
+export const BAND_INFO_MAX = 24
 
 /**
  * L'info d'une ligne de la bande de Maestro (#385, retour de test du 2026-11-10, maquette « version
