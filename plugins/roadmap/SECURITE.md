@@ -1,6 +1,6 @@
 # Est-il sûr de l'installer ?
 
-Version décrite : roadmap 0.255.0
+Version décrite : roadmap 0.256.0
 Un plugin de Claude Code fait tourner du code sur ta machine, donc la question se pose. Certains plugins
 malveillants ont l'air inoffensifs quand on les installe, puis téléchargent et lancent autre chose plus
 tard. Cette page dit tout ce que fait roadmap. Un test vérifie à chaque version qu'elle dit vrai, et tu
@@ -55,7 +55,7 @@ réserve (`session.*`, `turn.*`, `skill.prompt`) ; le plugin a alors un secours 
 | `git` | `hooks/register.tsx`, `hooks/reglages.tsx`, `scripts/one-at-a-time.sh`, `skills/doctor/scripts/doctor.py`, `skills/impact/scripts/impact.py`, `skills/maestro/scripts/etat_maestro.py`, `skills/onboarding/scripts/onboarding.py`, `skills/tasks/scripts/tasks.py` | lire l'état du dépôt du projet (branche, commits, fichiers changés, copies de travail ; la carte d'impact lit le diff et la liste des fichiers suivis ; la skill tasks lit les fichiers que change la branche d'une tâche en cours, #366) ; et, quand tu coches, rouvres ou édites une tâche dans le panneau, ou au report du jour des étapes de journée (#277), committer et pousser les seuls fichiers de la roadmap vers le dépôt distant du projet ; et, l'option « Branches nettoyées » allumée (#313), supprimer les branches déjà fusionnées sur main que rien ne tient (`git branch -d`, `git fetch --prune`, `git push origin :refs/heads/…`) |
 | `curl` | `hooks/register.tsx`, `skills/doctor/scripts/doctor.py` | quand tu cliques sur Rafraîchir dans le panneau : lire la dernière version publiée du plugin, pour te dire qu'une mise à jour existe ; dans le doctor, lire les empreintes publiées de ta version pour vérifier ta copie (voir plus bas) |
 | `gh` | `hooks/register.tsx`, `skills/doctor/scripts/doctor.py`, `skills/onboarding/scripts/onboarding.py` | la même lecture de version quand `curl` manque ; dans le doctor, vérifier que GitHub CLI est connecté (voir plus bas) ; à l'onboarding, lire les pull requests du projet pour en tirer la roadmap |
-| `python3` | `hooks/register.tsx`, `skills/mockups/scripts/serve.py` | cocher une tâche dans un dossier Cowork qui déclare son propre outil d'écriture (voir plus bas), isolé par `-I` ; et `serve.py` se relance lui-même, isolé par `-I`, en petit serveur local pour montrer une maquette dans le volet navigateur (#369) : il n'écoute que sur 127.0.0.1, ne répond que sous un jeton aléatoire placé dans l'adresse, ne sert que les fichiers web du dossier du projet (liste d'extensions : pages, styles, scripts, images, polices, texte), refuse tout chemin qui commence par un point (`.env`, `.git`) et tout en-tête Host étranger, ne signale un processus que si son serveur a prouvé qu'il détient le jeton, et s'arrête seul après 2 h sans requête ; et, à ton clic sur le bouton des maquettes d'une fiche, le panneau lance `serve.py --url`, isolé par `-I`, qui ne fait que demander l'adresse de la page au serveur déjà lancé pour le projet, sans jamais en démarrer un ni rien effacer (#401) |
+| `python3` | `hooks/register.tsx`, `skills/mockups/scripts/serve.py` | cocher une tâche dans un dossier Cowork qui déclare son propre outil d'écriture (voir plus bas), isolé par `-I` ; et `serve.py` se relance lui-même, isolé par `-I`, en petit serveur local pour montrer une maquette dans le volet navigateur (#369) : il n'écoute que sur 127.0.0.1, ne répond que sous un jeton aléatoire placé dans l'adresse, ne sert que les fichiers web du dossier du projet (liste d'extensions : pages, styles, scripts, images, polices, texte), refuse tout chemin qui commence par un point (`.env`, `.git`) et tout en-tête Host étranger, ne signale un processus que si son serveur a prouvé qu'il détient le jeton, et s'arrête seul après 2 h sans requête ; et, à ton clic sur « Tester les maquettes » dans une fiche, le panneau lance `serve.py <page> --root <dossier de la page>`, isolé par `-I`, les chemins en arguments et sans shell : il réutilise le serveur de ce dossier, ou en démarre un, le même petit serveur local, qui ne sert alors que le dossier de la page, jamais le reste du projet ; une page hors du projet s'ouvre en fichier, sans serveur (#401) |
 | `open` | `hooks/register.tsx` | ouvrir un lien ou un fichier que tu as cliqué dans le panneau, avec l'app par défaut du Mac ; un fichier seulement s'il est rangé dans ton projet (chemin réel, liens résolus), ordinaire (jamais un dossier ni une app) et d'une extension de document : jamais un programme (#349) |
 | `sips`, `mktemp`, `rm` | `hooks/register.tsx` | faire la vignette d'une pièce jointe dans un dossier privé de `$TMPDIR`, puis la retirer |
 | `sips` | `skills/maestro/scripts/fidelite.py` | seulement quand `fidelite.py poser --zone` recadre l'image que tu as collée dans le chat pour prouver qu'un rendu est fidèle à sa maquette (#357, #377) ; le script ne capture jamais l'écran ; rien ne sort de la machine |
@@ -86,8 +86,8 @@ sessions, et, chez Maestro, pour éteindre une fois Remote Control sur les sessi
 | `mcp__ccd_window__open_session_in` | ouvrir une session à côté, à ton clic |
 | `mcp__ccd_view__show_pane` | ouvrir un fichier dans le volet Fichiers de l'app, ou montrer le volet navigateur |
 | `mcp__Claude_Browser__preview_start` | ouvrir la page de maquettes d'une tâche dans le volet navigateur, à ton clic (#306) : en http par le serveur de `serve.py` quand il tourne pour le projet, sinon le fichier (#401) |
-| `mcp__ccd_view__get_layout`, `mcp__ccd_view__close_pane` | savoir si le volet navigateur est ouvert, et le refermer, à ton clic sur le bouton des maquettes |
-| `mcp__ccd_window__get_window_layout`, `mcp__ccd_window__set_sidebar_collapsed` | replier la barre latérale pour agrandir les maquettes, et la rouvrir en les fermant, à ton clic |
+| `mcp__ccd_view__get_layout` | savoir si ta session est à l'écran avant d'y montrer le volet navigateur, à ton clic sur le bouton des maquettes |
+| `mcp__ccd_window__get_window_layout`, `mcp__ccd_window__set_sidebar_collapsed` | replier la barre latérale pour agrandir les maquettes, à ton clic |
 
 ## Ce qui sort de la machine
 
@@ -146,14 +146,15 @@ Les mêmes interdits valent pour eux : le test les vérifie aussi.
 - **Un dossier Cowork peut déclarer son propre outil d'écriture** (`_cowork/cowork.py`). Le panneau le
   lance alors pour cocher une tâche, avec `python3 -I`. C'est un script de ton dossier, pas du plugin : le
   plugin n'en lance aucun autre.
-- **Le bouton des maquettes lit l'adresse du serveur de maquettes, jeton compris** (#401). À ton clic,
-  `serve.py --url` relit l'état privé du serveur que Claude a lancé pour ton projet (`$TMPDIR/roadmap-maquettes/`,
-  en 0700) et ne rend l'adresse que si ce serveur prouve qu'il détient le jeton. Le panneau ne l'accepte
+- **Le bouton des maquettes démarre le serveur de maquettes et lit son adresse, jeton compris** (#401). À ton
+  clic, `serve.py <page> --root <son dossier>` réutilise le serveur de ce dossier s'il prouve qu'il détient son jeton (état privé dans
+  `$TMPDIR/roadmap-maquettes/`, en 0700), ou en démarre un, qui s'arrête seul après 2 h sans requête, puis rend
+  l'adresse. Le panneau ne l'accepte
   que de la forme `http://127.0.0.1:<port>/<jeton>/<page>` et ne la donne qu'au volet navigateur de l'app, ou
   à Claude dans ta session quand il doit ouvrir le volet à sa place (mode auto, volet que le panneau ne peut
   pas montrer) ; sans serveur, il y ouvre le fichier. Le message à Claude ne porte que l'url à ouvrir, jamais
   une commande bâtie sur un nom de fichier. Le panneau ne garde pas le jeton (la trace d'un clic, au store,
-  le masque) et ne démarre jamais de serveur.
+  le masque).
 - **La file des tests lourds modifie certaines commandes Bash.** Quand Claude lance une suite de tests
   lourde (`claude plugin test`, `npm test`, `xcodebuild test`…), le hook place `scripts/one-at-a-time.sh`
   devant et derrière, dans la même commande, pour qu'une seule suite tourne à la fois par projet.

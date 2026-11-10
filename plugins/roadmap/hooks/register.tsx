@@ -151,11 +151,10 @@ import {
   isDesignSkill,
   isMockupPage,
   mockupPagesOf,
-  mockupToggle,
-  previewOpenIn,
   fileUrl,
   mockupAskText,
   mockupHttpUrl,
+  mockupServeArgs,
   viewUnseen,
   designReminder,
   designSkills,
@@ -886,7 +885,6 @@ const SHOW_PANE_TOOL = 'mcp__ccd_view__show_pane'
 // Ceux du bouton des maquettes (#306) : le volet navigateur, la disposition, la barre latérale.
 const PREVIEW_START_TOOL = 'mcp__Claude_Browser__preview_start'
 const GET_LAYOUT_TOOL = 'mcp__ccd_view__get_layout'
-const CLOSE_PANE_TOOL = 'mcp__ccd_view__close_pane'
 const WINDOW_LAYOUT_TOOL = 'mcp__ccd_window__get_window_layout'
 const SIDEBAR_TOOL = 'mcp__ccd_window__set_sidebar_collapsed'
 // Ceux qui lisent la fiche d'une session et la montrent.
@@ -949,8 +947,6 @@ const zoneGenAtom = atom({ plugin: 'roadmap', key: 'zoneGen' } as const, 0)
 const checkMoveAtom = atom({ plugin: 'roadmap', key: 'checkMove' } as const, 0)
 /** Pourquoi les autres sessions manquent (liste refusée ou illisible) ; vide quand elle se lit. */
 const scanNoteAtom = atom({ plugin: 'roadmap', key: 'scanNote' } as const, '')
-/** La page de maquettes que le bouton de la fiche a ouverte (#306), vide sinon. */
-const mockupOpenAtom = atom({ plugin: 'roadmap', key: 'mockupOpen' } as const, '')
 /** Ce que montre la grille de l'accueil (#335) : les faites ou les ajoutées, au choix du bouton ; vaut pour toute la session. */
 const welcomeGridAtom = atom({ plugin: 'roadmap', key: 'welcomeGrid' } as const, 'done' as ActivityMode)
 const versionNoteAtom = atom({ plugin: 'roadmap', key: 'versionNote' } as const, { state: 'none', text: '', foot: '' } as VersionCheck)
@@ -7334,25 +7330,25 @@ function mockupServeScript($: EngineInterface): string {
   return `${$.plugin.root}/skills/mockups/scripts/serve.py`
 }
 
-/** Le délai de `serve.py --url` : sa sonde du serveur attend 2 s au plus. */
-const MOCKUP_URL_MS = 8_000
+/** Le délai de `serve.py <page>` : il attend 5 s au plus le démarrage du serveur, et sa sonde 2 s. */
+const MOCKUP_URL_MS = 10_000
 
 /**
- * L'adresse où ouvrir une page de maquettes (#401) : son url sur le serveur de `serve.py` quand il tourne
- * pour le projet, vérifiée par sa sonde (`serve.py --url`, lecture seule) ; sinon son `file://`. Le
- * panneau ne lance aucun serveur, et n'ouvre que l'url que `mockupHttpUrl` accepte.
+ * L'adresse où ouvrir une page de maquettes (#401) : son url sur le serveur de `serve.py`, qui réutilise
+ * celui du dossier de la page ou en démarre un (choix de BBR, 2026-11-10), et ne sert que ce dossier
+ * (`mockupServeArgs`, revue de sécurité) ; sinon, page hors du projet `root` ou script en échec, son
+ * `file://`. Le panneau n'ouvre que l'url que `mockupHttpUrl` accepte.
  */
-async function mockupUrl($: EngineInterface, path: string): Promise<string> {
+async function mockupUrl($: EngineInterface, path: string, root: string): Promise<string> {
+  const args = mockupServeArgs(mockupServeScript($), path, root)
+  if (args === undefined) return fileUrl(path)
   try {
-    const ran = await runPython($, [mockupServeScript($), '--url', path], parentDir(path), MOCKUP_URL_MS)
+    const ran = await runPython($, args, parentDir(path), MOCKUP_URL_MS)
     return (ran.exitCode === 0 ? mockupHttpUrl(ran.stdout) : undefined) ?? fileUrl(path)
   } catch {
     return fileUrl(path)
   }
 }
-
-/** La barre latérale repliée par le bouton des maquettes (#306) : il la rouvre en fermant, et seulement elle. */
-let mockupFoldedSidebar = false
 
 /** La trace du dernier clic du bouton des maquettes (#401), au store : chaque outil appelé, son sort, le début de sa réponse. */
 const MOCKUP_CLICK_KEY = 'mockup-click'
@@ -7377,17 +7373,18 @@ async function mockupCall($: EngineInterface, call: { tool: string } & Record<st
 }
 
 /**
- * Le bouton des maquettes (#306) : ouvre la page dans le volet navigateur, en http quand son serveur tourne
- * (#401), et replie la barre latérale, le plus grand que l'app laisse prendre à un plugin (le ↗ du volet
- * n'a pas d'appel) ; ou referme le volet et rouvre la barre. En mode auto, l'ouverture refusée, ou la
- * session hors de toute fenêtre vue du panneau (#401), la demande passe par Claude (#248), avec l'url seule.
- * La trace de chaque clic se lit au store, clé `mockup-click`.
+ * Le bouton des maquettes (#306) : à chaque clic, ouvre la page dans le volet navigateur, en http par le
+ * serveur de `serve.py` (#401), et replie la barre latérale, le plus grand que l'app laisse prendre à un
+ * plugin (le ↗ du volet n'a pas d'appel). Il ne ferme rien : le volet se ferme par sa croix (BBR,
+ * 2026-11-10). En mode auto, l'ouverture refusée, ou la session hors de toute fenêtre vue du panneau
+ * (#401), la demande passe par Claude (#248), avec l'url seule. La trace de chaque clic se lit au store,
+ * clé `mockup-click`.
  */
-async function toggleMockup($: EngineInterface, path: string): Promise<void> {
+async function openMockup($: EngineInterface, path: string, root: string): Promise<void> {
   await setView($, () => ({ openAt: '', openNote: '' }))
   const steps: MockupStep[] = []
   try {
-    await mockupGesture($, path, call => mockupCall($, call, steps))
+    await mockupGesture($, path, root, call => mockupCall($, call, steps))
   } finally {
     try {
       await storeSet($, MOCKUP_CLICK_KEY, { at: await $.clock.now(), version: sessionVersion ?? '?', session: ownSession?.id ?? '', page: baseName(path), steps })
@@ -7397,39 +7394,23 @@ async function toggleMockup($: EngineInterface, path: string): Promise<void> {
   }
 }
 
-async function mockupGesture($: EngineInterface, path: string, call: (c: { tool: string } & Record<string, unknown>) => Promise<string | undefined>): Promise<void> {
-  let url: string | undefined
+async function mockupGesture($: EngineInterface, path: string, root: string, call: (c: { tool: string } & Record<string, unknown>) => Promise<string | undefined>): Promise<void> {
+  const url = await mockupUrl($, path, root)
   const viaClaude = async () => {
-    url ??= await mockupUrl($, path)
     queueSubmit($, mockupAskText(path, url))
     // La note redessine le panneau, et ce dessin envoie le message.
     await setView($, () => ({ openAt: '', openNote: 'Demandé à Claude : ouvrir les maquettes dans son volet navigateur.' }))
   }
   if ((await ownMode($)) === 'auto') return viaClaude()
-  const opened = await read($, mockupOpenAtom)
+  // #401 (essai de BBR en 0.252.1) : vue du panneau, la session peut n'être dans aucune fenêtre ; ses outils de
+  // vue répondent alors sans erreur et ne font rien. Claude montre le volet.
   const layout = await call({ tool: GET_LAYOUT_TOOL })
-  // #401 (essai de BBR en 0.252.1) : vue du panneau, la session n'est dans aucune fenêtre ; ses outils de vue
-  // répondent sans erreur et ne font rien. Claude montre le volet ; le bouton ne se croit pas ouvert.
-  if (layout !== undefined && viewUnseen(layout)) {
-    if (opened !== '') await update($, mockupOpenAtom, () => '')
-    return viaClaude()
-  }
-  if (mockupToggle(layout === undefined ? undefined : previewOpenIn(layout), opened, path) === 'close') {
-    await call({ tool: CLOSE_PANE_TOOL, pane: 'preview' })
-    if (mockupFoldedSidebar) await call({ tool: SIDEBAR_TOOL, collapsed: false })
-    mockupFoldedSidebar = false
-    await update($, mockupOpenAtom, () => '')
-    return
-  }
-  url = await mockupUrl($, path)
+  if (layout !== undefined && viewUnseen(layout)) return viaClaude()
   if ((await call({ tool: PREVIEW_START_TOOL, url })) === undefined) return viaClaude()
   const shown = await call({ tool: SHOW_PANE_TOOL, pane: 'preview' })
   if (shown === undefined || viewUnseen(shown)) return viaClaude()
   const win = await call({ tool: WINDOW_LAYOUT_TOOL })
-  if (!mockupFoldedSidebar && win !== undefined && !/"sidebar_collapsed"\s*:\s*true/.test(win)) {
-    mockupFoldedSidebar = (await call({ tool: SIDEBAR_TOOL, collapsed: true })) !== undefined
-  }
-  await update($, mockupOpenAtom, () => path)
+  if (win !== undefined && !/"sidebar_collapsed"\s*:\s*true/.test(win)) await call({ tool: SIDEBAR_TOOL, collapsed: true })
 }
 
 // Les filtres d'axe, partagés par la légende et la barre. Un filtre change : les sections se rouvrent.
@@ -10645,11 +10626,10 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     const stored = (key: string) => $.store.get(key).catch(() => undefined)
     // #387 : toutes les lectures de la fiche partent ensemble. L'une après l'autre, chacune un aller-retour, le
     // dessin d'une close dépassait son temps sur un Mac chargé (« Le dessin attendait encore : la fiche de la tâche »).
-    const [facts, docs, mockupPage, mockupOpened, attachments, deliverables, unsentNow, fileHits, recapRaw, changesRaw, timingRaw, pitchRaw] = await Promise.all([
+    const [facts, docs, mockupPage, attachments, deliverables, unsentNow, fileHits, recapRaw, changesRaw, timingRaw, pitchRaw] = await Promise.all([
       inSession && ownBrand ? readFocusFacts($, ownBrand.data.source, current, ownBrand.data.own.id, now) : undefined,
       readFicheDocs($, ficheSource, current, now),
       readMockupPage($, ficheSource, current, now),
-      read($, mockupOpenAtom),
       readAttachments($, ficheSource, current, now),
       readAttachments($, ficheSource, current, now, 'livrable'),
       current.done ? undefined : unsentClose($, ficheSource, current),
@@ -11533,13 +11513,12 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
         </Box>
       )
     }
-    // Le bouton des maquettes (#306, maquette A plus visible) : une bande bleue sous l'état, « Voir les
-    // maquettes » en grand et le nom de la page ; ouverte, grise, « Fermer les maquettes ».
+    // Le bouton des maquettes (#306, maquette A plus visible) : une bande sous l'état, « Tester les maquettes »
+    // en grand et le nom de la page ; il ouvre à chaque clic, jamais « Fermer » (#401, BBR au formulaire).
     const mockupBand = () => {
       if (!mockupPage) return null
-      const shown = mockupOpened === mockupPage.path
-      const word = shown ? 'Fermer les maquettes' : 'Voir les maquettes'
-      const press = () => void toggleMockup($, mockupPage.path)
+      const word = 'Tester les maquettes'
+      const press = () => void openMockup($, mockupPage.path, ficheSource.root ?? ficheSource.dir)
       if (!Svg) {
         return (
           <Box key="mockup-row" paddingX={SPACE.indent}>
@@ -11548,7 +11527,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
         )
       }
       // #291 (fiche finale) : en gris, pour que seul « Ouvrir la session » soit bleu ; l'icône garde le bleu.
-      const fg = shown ? palette.text : palette.liveOn
+      const fg = palette.liveOn
       return (
         <Box key="mockup-row" paddingX={SPACE.indent}>
           <Box
@@ -11564,12 +11543,12 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
           >
             {corners(RADIUS.control, palette.bg)}
             {strut(SIZE.strut.control)}
-            <Svg source={shown ? closeIcon(fg, SIZE.icon.md) : browserIcon(fg, SIZE.icon.md)} alt={shown ? 'Fermer' : 'Navigateur'} width={SIZE.icon.md} height={SIZE.icon.md} />
+            <Svg source={browserIcon(fg, SIZE.icon.md)} alt="Navigateur" width={SIZE.icon.md} height={SIZE.icon.md} />
             <Text size="footnote" weight="semibold" color={palette.text}>{word}</Text>
             <Box flexGrow={1} flexShrink={1} minWidth={0} alignItems="flex-end">
-              <Text size="caption" color={palette.text2} wrap="truncate-end">{shown ? 'ouvertes dans le volet' : mockupPage.name}</Text>
+              <Text size="caption" color={palette.text2} wrap="truncate-end">{mockupPage.name}</Text>
             </Box>
-            {!shown && <Svg source={externalIcon(fg, SIZE.icon.xs)} alt="Ouvrir dans le volet" width={SIZE.icon.xs} height={SIZE.icon.xs} />}
+            <Svg source={externalIcon(fg, SIZE.icon.xs)} alt="Ouvrir dans le volet" width={SIZE.icon.xs} height={SIZE.icon.xs} />
             {hit('mockup', press)}
           </Box>
         </Box>

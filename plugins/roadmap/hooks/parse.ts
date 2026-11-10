@@ -976,27 +976,17 @@ export function mockupPagesOf(task: Task, specNames: readonly string[]): string[
 }
 
 /**
- * Le geste du bouton des maquettes (#306) : fermer seulement la page qu'il a lui-même ouverte, quand le
- * volet n'est pas dit fermé (`previewOpen` : lu de `get_layout`, `undefined` s'il ne se lit pas).
+ * Les arguments de `serve.py` pour le bouton des maquettes (#401) : la page et `--root` son dossier, que le
+ * serveur sert seul. Une page hors du projet `root` (livrable absolu, chemin avec `.` ou `..`) : `undefined`,
+ * et le bouton l'ouvre en fichier, sans serveur. Revue de sécurité : servie avec tout le projet, une page de
+ * maquettes trouvée dans un dossier de plan ou un livrable lirait par son script les autres fichiers web du
+ * projet, ce qu'un `file://` ne permet pas.
  */
-export function mockupToggle(previewOpen: boolean | undefined, openedPath: string, path: string): 'open' | 'close' {
-  return openedPath === path && previewOpen !== false ? 'close' : 'open'
-}
-
-/** Le volet navigateur est-il ouvert, d'après le texte de `get_layout` (#306) ; illisible : `undefined`. */
-export function previewOpenIn(text: string): boolean | undefined {
-  const start = text.indexOf('{')
-  if (start < 0) return undefined
-  try {
-    const data = JSON.parse(text.slice(start)) as { open_panes?: unknown; views?: unknown }
-    const panes = data.open_panes
-    if (!Array.isArray(panes)) return undefined
-    if (panes.some(p => p === 'preview' || (typeof p === 'object' && p !== null && ((p as { pane?: unknown }).pane === 'preview' || (p as { name?: unknown }).name === 'preview')))) return true
-    // #401 : hors de toute fenêtre, l'app ne sait rien du volet : ni ouvert ni fermé.
-    return Array.isArray(data.views) && data.views.length === 0 ? undefined : false
-  } catch {
-    return undefined
-  }
+export function mockupServeArgs(serve: string, page: string, root: string): string[] | undefined {
+  const base = root.replace(/\/+$/, '')
+  if (base === '' || !page.startsWith(`${base}/`)) return undefined
+  if (page.split('/').some(part => part === '.' || part === '..')) return undefined
+  return [serve, page, '--root', page.slice(0, page.lastIndexOf('/'))]
 }
 
 /**

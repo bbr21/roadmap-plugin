@@ -756,6 +756,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.256.0 (2026-11-10)** : panneau : « Tester les maquettes » ouvre la page à chaque clic, en http par le serveur de maquettes que le panneau lance lui-même et qui ne sert que le dossier de la page ; le bouton ne se change plus en « Fermer » (#401)
 - **0.255.0 (2026-11-10)** : panneau : centre de contrôle, « Tout en pause » et « Tout reprendre » dans le titre, « Retirer » sur une entrée en attente, session en pause sous un nœud pause (#415)
 - **0.254.5 (2026-11-10)** : panneau : en thème auto, le panneau suit l'apparence de l'app de bureau (clair, sombre, ou le Mac quand elle le suit) au lieu de rester sombre ; seul le réglage du thème est lu dans le fichier de l'app, jamais le reste (#417)
 - **0.254.4 (2026-11-10)** : panneau : une session qui reprend du travail après la clôture de sa tâche garde ses vraies étapes, sans Done ni « Archiver cette session », et Maestro la suit comme ouverte (#395)

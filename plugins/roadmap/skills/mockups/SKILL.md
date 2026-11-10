@@ -60,8 +60,10 @@ and may carry its script inline or next to it, with the system's tokens copied i
 `python3 scripts/serve.py <page>` (the script of this skill, which prints an
 `http://127.0.0.1:<port>/…` url), open that url with `preview_start`, never `file://` (the pane
 shows a frozen copy there: no linked file, no reload), and check it by clicking through it, then on
-a screenshot. While that server runs, the panel's « Voir les maquettes » button opens the same url
-(`serve.py --url <page>`, read-only: it never starts a server), and falls back to `file://` without it.
+a screenshot. The panel's « Tester les maquettes » button does the same at each click: it runs
+`serve.py <page> --root <the page's folder>`, which reuses that folder's server or starts it, and
+opens the url it prints: the button's server serves the page's folder only, so keep a page's linked
+files next to it (`file://` when the script fails or the page lies outside the project).
 
 ## 4. Critique, then review
 

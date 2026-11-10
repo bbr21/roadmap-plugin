@@ -10,7 +10,7 @@ Prints one line, http://127.0.0.1:<port>/<token>/<percent-encoded path of the
 page relative to the root>, and exits 0. Exit 2 (message on stderr) when the page
 is missing, is not .html/.htm, or lies outside the root.
 
---url (#401, for the panel's mockups button) only looks: it prints the page's
+--url (#401) only looks: it prints the page's
 url when the root's server runs and proves it (exit 0), else exits 1 with no
 output. It never starts a server and never touches the state file.
 
