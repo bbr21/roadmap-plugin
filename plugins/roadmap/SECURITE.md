@@ -1,6 +1,6 @@
 # Est-il sûr de l'installer ?
 
-Version décrite : roadmap 0.257.2
+Version décrite : roadmap 0.257.3
 Un plugin de Claude Code fait tourner du code sur ta machine, donc la question se pose. Certains plugins
 malveillants ont l'air inoffensifs quand on les installe, puis téléchargent et lancent autre chose plus
 tard. Cette page dit tout ce que fait roadmap. Un test vérifie à chaque version qu'elle dit vrai, et tu
@@ -87,7 +87,6 @@ sessions, et, chez Maestro, pour éteindre une fois Remote Control sur les sessi
 | `mcp__ccd_view__show_pane` | ouvrir un fichier dans le volet Fichiers de l'app, ou montrer le volet navigateur |
 | `mcp__Claude_Browser__preview_start` | ouvrir la page de maquettes d'une tâche dans le volet navigateur, à ton clic (#306) : en http par le serveur de `serve.py` quand il tourne pour le projet, sinon le fichier (#401) |
 | `mcp__ccd_view__get_layout` | savoir si ta session est à l'écran avant d'y montrer le volet navigateur, à ton clic sur le bouton des maquettes |
-| `mcp__ccd_window__get_window_layout`, `mcp__ccd_window__set_sidebar_collapsed` | replier la barre latérale pour agrandir les maquettes, à ton clic |
 
 ## Ce qui sort de la machine
 

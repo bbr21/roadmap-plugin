@@ -885,11 +885,9 @@ let autoModeRefusal: { at: number; text: string } | undefined
 const AUTO_MODE_SKIP_MS = 30 * 60_000
 // Celui qui montre un fichier dans le panneau Fichiers.
 const SHOW_PANE_TOOL = 'mcp__ccd_view__show_pane'
-// Ceux du bouton des maquettes (#306) : le volet navigateur, la disposition, la barre latérale.
+// Ceux du bouton des maquettes (#306) : le volet navigateur et la disposition.
 const PREVIEW_START_TOOL = 'mcp__Claude_Browser__preview_start'
 const GET_LAYOUT_TOOL = 'mcp__ccd_view__get_layout'
-const WINDOW_LAYOUT_TOOL = 'mcp__ccd_window__get_window_layout'
-const SIDEBAR_TOOL = 'mcp__ccd_window__set_sidebar_collapsed'
 // Ceux qui lisent la fiche d'une session et la montrent.
 const GET_SESSION_TOOL = 'mcp__ccd_session_mgmt__get_session'
 const SET_MODE_TOOL = 'mcp__ccd_session_mgmt__set_session_permission_mode'
@@ -7433,9 +7431,8 @@ async function mockupCall($: EngineInterface, call: { tool: string } & Record<st
 
 /**
  * Le bouton des maquettes (#306) : à chaque clic, ouvre la page dans le volet navigateur, en http par le
- * serveur de `serve.py` (#401), et replie la barre latérale, le plus grand que l'app laisse prendre à un
- * plugin (le ↗ du volet n'a pas d'appel). Il ne ferme rien : le volet se ferme par sa croix (BBR,
- * 2026-11-10). En mode auto, l'ouverture refusée, ou la session hors de toute fenêtre vue du panneau
+ * serveur de `serve.py` (#401). Il ne replie plus la barre latérale de l'app, et ne ferme rien : le volet
+ * se ferme par sa croix (BBR, 2026-11-10). En mode auto, l'ouverture refusée, ou la session hors de toute fenêtre vue du panneau
  * (#401), la demande passe par Claude (#248), avec l'url seule. La trace de chaque clic se lit au store,
  * clé `mockup-click`.
  */
@@ -7468,8 +7465,6 @@ async function mockupGesture($: EngineInterface, path: string, root: string, cal
   if ((await call({ tool: PREVIEW_START_TOOL, url })) === undefined) return viaClaude()
   const shown = await call({ tool: SHOW_PANE_TOOL, pane: 'preview' })
   if (shown === undefined || viewUnseen(shown)) return viaClaude()
-  const win = await call({ tool: WINDOW_LAYOUT_TOOL })
-  if (win !== undefined && !/"sidebar_collapsed"\s*:\s*true/.test(win)) await call({ tool: SIDEBAR_TOOL, collapsed: true })
 }
 
 // Les filtres d'axe, partagés par la légende et la barre. Un filtre change : les sections se rouvrent.
@@ -9682,7 +9677,8 @@ function maestroBandTree(
         </Box>
         <Box flexGrow={1} />
         {/* La cause et le geste, calés à droite dans leur case : la cause se tronque, jamais le geste. */}
-        <Box key={`${id}-why`} width={Svg ? BAND_STUCK_WHY : undefined} flexShrink={0} minWidth={0} flexDirection="row" alignItems="center" justifyContent="flex-end" gap={SPACE.row}>
+        {/* L'écart autour du « · » est étroit, comme la maquette (preuve de fidélité de 0.257.0). */}
+        <Box key={`${id}-why`} width={Svg ? BAND_STUCK_WHY : undefined} flexShrink={0} minWidth={0} flexDirection="row" alignItems="center" justifyContent="flex-end" gap={SPACE.tight}>
           <Box flexShrink={1} minWidth={0}>
             <Text size="caption" color={palette.text2} wrap="truncate-end">{s.cause}</Text>
           </Box>
@@ -9834,8 +9830,11 @@ function maestroBandTree(
  */
 const BAND_GAUGE = { row: 80, gap: 2 }
 
-/** #400 (maquette A) : la case de la cause et du geste d'une entrée bloquée, en cellules : « retenue par Tri HomeExchange · ▶ dans Maestro AAFES ». */
-const BAND_STUCK_WHY = 38
+/**
+ * #400 (maquette A) : la case de la cause et du geste d'une entrée bloquée, en cellules : « retenue par Tri HomeExchange ·
+ * ▶ dans Maestro AAFES » entier. 38 la coupait d'une lettre dans l'app (preuve de fidélité de 0.257.0).
+ */
+const BAND_STUCK_WHY = 40
 
 /**
  * L'en-tête du panneau, au-dessus de la roadmap : Maestro et ses voies ; chez une tâche dont on a demandé
