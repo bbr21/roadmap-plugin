@@ -488,6 +488,7 @@ import {
   queueHead,
   queueEntryText,
   releasePrompt,
+  releaseVia,
   isRemoteControlRefusal,
   remotePill,
   sessionRemoteIn,
@@ -2581,6 +2582,31 @@ async function readRemoteFacts($: EngineInterface, now: number): Promise<{ remot
   return remoteFacts
 }
 
+/** Le motif d'une réponse de l'app à une carte, sur une ligne. */
+function cardReason(r: ToolCallResult): string {
+  return (r.deny ?? r.text ?? 'sans motif').replace(/\s+/g, ' ').trim()
+}
+
+/**
+ * Pose une carte « New session » depuis le panneau (#87) : ses champs facultatifs tombent un par refus, dans leur ordre
+ * (#327 : le modèle d'abord quand le refus le nomme) ; un champ tombé hérite de la session qui lance. Un refus du mode
+ * auto (#248) ou de Remote Control (#390) ne tient à aucun champ : la carte ne se repose pas. Sert au ▶ et à la relève (#393).
+ */
+async function proposeCard($: EngineInterface, card: Record<string, unknown>, optional: [field: string, value: unknown, note: string][]): Promise<{ ran: ToolCallResult; refusals: string[] }> {
+  const refusals: string[] = []
+  const fields = [...optional]
+  const withFields = () => ({ ...card, ...Object.fromEntries(fields.map(([field, value]) => [field, value])) }) as Parameters<EngineInterface['tool']['call']>[0]
+  const refused = (r: ToolCallResult) => (r.deny !== undefined || r.isError === true) && !isAutoModeRefusal(cardReason(r)) && !isRemoteControlRefusal(cardReason(r))
+  let ran = await $.tool.call(withFields())
+  while (fields.length > 0 && refused(ran)) {
+    const modelAt = fields.findIndex(([field]) => field === 'model')
+    const dropped = fields.splice(modelAt >= 0 && /\bmodel\b/i.test(cardReason(ran)) ? modelAt : 0, 1)[0]!
+    refusals.push(`${dropped[2]} : ${cardReason(ran)}`)
+    ran = await $.tool.call(withFields())
+  }
+  return { ran, refusals }
+}
+
 /** #390 : « Passer en bypass » de la pastille Remote Control ; l'app montre sa carte d'approbation, la pastille se relit. */
 async function switchMaestroToBypass($: EngineInterface): Promise<void> {
   try {
@@ -4277,7 +4303,9 @@ async function doseLaunch($: EngineInterface, id: string | undefined, entry: Omi
     const rank = liveQueue(globalQueueOrder(written), gateOf, ownId, queueSince, now).findIndex(q => q.maestro === ownId && q.id === id) + 1
     const text = { id, rank, projectName: name, projectTaken: placesOf(state, project, match), projectMax: state.projectMax, macTaken: state.macTaken, macMax: state.macMax, why: gate.go ? ('project' as const) : gate.why, ...(state.load ? { load: state.load } : {}), ...(gate.go && head ? { ahead: head.id } : {}) }
     // Au ▶, le panneau dit l'entrée en file dans la conversation de Maestro ; à la carte du modèle, le refus est ce message.
-    if (entry.launch) queueSubmit($, queueEntryText(text))
+    // #393 : sous Remote Control, hors mode Auto, ce message marquerait Maestro « piloté à distance » et ferait refuser la
+    // carte de la relève (#390) : la note du ▶ (« En file : … ») et le centre de contrôle le disent seuls.
+    if (entry.launch && releaseVia(await readRemoteFacts($, now)) === 'claude') queueSubmit($, queueEntryText(text))
     return { refusal: queuedRefusal(text) }
   } catch {
     return {}
@@ -4684,7 +4712,7 @@ async function relieveLaunches($: EngineInterface): Promise<void> {
         queue = next
       }
       const wrongful = (e: GlobalQueued) => listed && heldByNonMaestro(e, state.rows, maestros) && (e.project === ownProject || !projectMaestroOpen(e, state.rows, maestros))
-      const lost = globalQueueOrder(queue).find(e => e.maestro !== ownId && e.kind !== 'resume' && !launchInFlight(e, now) && (wrongful(e) || (!queueHeld(e) && (gone.has(e.maestro) || (!e.failed?.remote && !live.has(e) && gateOf(e).go)))))
+      const lost = globalQueueOrder(queue).find(e => e.maestro !== ownId && e.kind !== 'resume' && !launchInFlight(e, now) && e.carded === undefined && (wrongful(e) || (!queueHeld(e) && (gone.has(e.maestro) || (!e.failed?.remote && !live.has(e) && gateOf(e).go)))))
       if (lost) queue = await takeEntry($, ownId, lost, now, wrongful(lost))
     }
     // (d) et (e) : la tête, une entrée `resume` à reprendre ou une tâche à lancer ; un pas qui vient de poser ou lever une pause attend le suivant.
@@ -4704,8 +4732,10 @@ async function relieveLaunches($: EngineInterface): Promise<void> {
           }
           queue = await writeOwnQueue($, ownId, own => own.filter(q => q.id !== head.id || q.kind !== 'resume'), state.rows)
         } else {
-          // #374 : un ▶ comme une carte du modèle partent seuls (voir `startEntry`).
-          queueSubmit($, await startEntry($, ownId, head, { source, open }, now, state.rows))
+          // #374 : un ▶ comme une carte du modèle partent seuls (voir `startEntry`). #393 : sous Remote Control, hors
+          // mode Auto, l'app refuserait le message du panneau : le panneau pose la carte lui-même (`cardEntry`).
+          if (releaseVia(await readRemoteFacts($, now)) === 'card') queue = await cardEntry($, ownId, head, { source, open }, now, state.rows)
+          else queueSubmit($, await startEntry($, ownId, head, { source, open }, now, state.rows))
         }
       } catch (err) {
         doseAllowed.delete(head.id)
@@ -4789,6 +4819,44 @@ async function startEntry($: EngineInterface, ownId: string, head: GlobalQueued,
 }
 
 /**
+ * Le départ d'une entrée par la carte du panneau (#393) : sous Remote Control, hors mode Auto, l'app refuse tout départ
+ * écrit par le panneau à Claude (#390), pas une carte que le panneau pose lui-même par son outil, comme son ▶ (#87).
+ * Le brief refait de la roadmap (`releaseBrief`), la carte part sans aucun message ; posée, sa place se réserve et
+ * l'entrée attend le Start de la personne (`carded`) ; refusée, `settleQueued` en garde la trace (Remote Control : retenue
+ * jusqu'au mot tapé, #382). Rend la file écrite. Lève si la tâche n'est plus lançable, comme `startEntry`.
+ */
+async function cardEntry($: EngineInterface, ownId: string, head: GlobalQueued, ctx: { source: Source | null | undefined; open: readonly Task[] | undefined }, now: number, rows: unknown[]): Promise<GlobalQueued[]> {
+  const at = await entrySource($, head, ctx)
+  if (!at) throw new Error(`projet introuvable : ${head.project}`)
+  const brief = await releaseBrief($, head, at.source, at.open)
+  if (!brief) throw new Error('tâche introuvable dans la roadmap')
+  const optional: [field: string, value: unknown, note: string][] = []
+  if (brief.bypass) optional.push(['permission_mode', BYPASS_MODE, `en ${BYPASS_MODE}`])
+  if (brief.effort) optional.push(['effort', brief.effort, `avec effort ${brief.effort}`])
+  if (brief.model) optional.push(['model', brief.model, `avec le modèle ${brief.model}`])
+  if (brief.travail === 'projet') optional.push(['use_worktree', false, 'sans worktree'])
+  // Une entrée reprise d'un autre Maestro (#374) part dans le dossier de son projet.
+  if (at.away) optional.push(['cwd', head.project, `dans ${head.project}`])
+  const { ran } = await proposeCard($, { tool: START_SESSION_TOOL, initiation: 'own_initiative', context: 'fresh', title: brief.title, prompt: brief.prompt, background: brief.background }, optional)
+  if (ran.deny !== undefined || ran.isError) {
+    await settleQueued($, ownId, brief.title, ran)
+    return readGlobalQueue($)
+  }
+  await reserveCard($, brief.title)
+  doseSeenKey = ''
+  return writeOwnQueue(
+    $,
+    ownId,
+    own => own.map(q => {
+      if (q.id !== head.id || q.kind === 'resume') return q
+      const { launching: _, failed: __, ...rest } = q
+      return { ...rest, carded: { at: now } }
+    }),
+    rows,
+  )
+}
+
+/**
  * Le départ que joint le message tapé par la personne (#382) : la première entrée de ce Maestro retenue par Remote Control
  * (ordre de la file) dont le projet a une place part, son texte est rendu. Rien à lancer ou tout échec : `undefined`, l'entrée reste retenue.
  */
@@ -4811,7 +4879,8 @@ async function typedRelease($: EngineInterface): Promise<string | undefined> {
     let macAdded = 0
     const texts: string[] = []
     for (const e of globalQueueOrder(queue)) {
-      if (e.maestro !== ownId || e.kind === 'resume' || queueHeld(e) || launchInFlight(e, now)) continue
+      // #393 : une carte déjà posée par le panneau attend le Start : le mot tapé ne la relance pas.
+      if (e.maestro !== ownId || e.kind === 'resume' || queueHeld(e) || e.carded !== undefined || launchInFlight(e, now)) continue
       const gate = launchGate({ projectTaken: placesOf(state, e.project, e.match) + (added.get(e.project) ?? 0), projectMax: state.projectMax, macTaken: state.macTaken + macAdded, macMax: state.macMax, ...(state.load ? { load: state.load } : {}) })
       if (!gate.go) continue
       try {
@@ -4994,16 +5063,9 @@ async function launchSession($: EngineInterface, source: Source, task: Task, sho
     const launchModel = launchModelOf(settings.launchModel)
     if (launchModel !== 'hérite') optional.push(['model', MODEL_IDS[launchModel], `avec le modèle ${launchModel}`])
     if (projet) optional.push(['use_worktree', false, 'sans worktree'])
-    const withFields = () => ({ ...card, ...Object.fromEntries(optional.map(([field, value]) => [field, value])) })
-    // Un refus du mode auto ne tient à aucun de ces champs : reposer la carte ne change rien.
-    const refused = (r: ToolCallResult) => (r.deny !== undefined || r.isError === true) && !isAutoModeRefusal(reasonOf(r))
-    let proposed = await $.tool.call(withFields())
-    while (optional.length > 0 && refused(proposed)) {
-      const modelAt = optional.findIndex(([field]) => field === 'model')
-      const dropped = optional.splice(modelAt >= 0 && /\bmodel\b/i.test(reasonOf(proposed)) ? modelAt : 0, 1)[0]!
-      refusals.push(`${dropped[2]} : ${reasonOf(proposed)}`)
-      proposed = await $.tool.call(withFields())
-    }
+    const posted = await proposeCard($, card, optional)
+    const proposed = posted.ran
+    refusals.push(...posted.refusals)
     if (proposed.deny === undefined && !proposed.isError) {
       if (dose.ownId) await reserveCard($, brief.title)
       noteLaunch('panel')

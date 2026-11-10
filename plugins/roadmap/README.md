@@ -748,6 +748,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.244.7 (2026-11-09)** : maestro : sous Remote Control, hors mode Auto, la relève de la file pose elle-même la carte de la tâche (plus de message refusé par l'app) ; le centre de contrôle dit « carte posée · clique Start » (#393)
 - **0.244.6 (2026-11-09)** : maestro : une session ne demande plus jamais à BBR de tester un rendu non publié ; elle demande elle-même à Maestro « fusionne et publie #N », Maestro publie aussitôt et lui renvoie la version, puis vient la capture (#396)
 - **0.244.5 (2026-11-09)** : panneau : les valeurs de Détails et de la carte Bilan sur le guide des titres de la famille, une colonne d'étiquettes de la largeur de la marque d'une fille (#368)
 - **0.244.4 (2026-11-09)** : maestro : un lancement refusé sous Remote Control dit ses deux conditions (Remote Control allumé, départ non tapé), et le panneau de Maestro le montre par une pastille, avec « Passer en bypass » en mode Auto (#390)

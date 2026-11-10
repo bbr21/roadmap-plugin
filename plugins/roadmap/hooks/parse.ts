@@ -12074,6 +12074,11 @@ export type GlobalQueued = QueuedLaunch & {
    * pause à la main : elle attend un ▶ (ou « Reprendre »). Remote Control a sa propre retenue (`failed.remote`, #382).
    */
   held?: { at: number; reason: string; cause: 'refused' }
+  /**
+   * Carte posée (#393) : sous Remote Control, hors mode Auto, le panneau a posé lui-même sa carte, sans message à Claude ;
+   * elle attend le Start de la personne, sa place réservée, et sort de la file quand sa session s'ouvre.
+   */
+  carded?: { at: number }
 }
 
 /** Une entrée retenue (#383) n'est jamais tête de file. */
@@ -12085,8 +12090,18 @@ export function queueHeld(e: { held?: unknown }): boolean {
  * Une entrée retenue, par un refus (#383) ou par Remote Control (#382), garde son rang mais ne tient jamais la tête (#389) :
  * le 2026-11-09, #548 retenue sous Remote Control faisait attendre #187 chez le Maestro AAFES, places libres partout.
  */
-export function queueRetained(e: { held?: unknown; failed?: { remote?: true } }): boolean {
-  return e.held !== undefined || e.failed?.remote === true
+export function queueRetained(e: { held?: unknown; failed?: { remote?: true }; carded?: unknown }): boolean {
+  // #393 : une entrée dont la carte est posée attend le Start de la personne : elle ne repart pas seule.
+  return e.held !== undefined || e.failed?.remote === true || e.carded !== undefined
+}
+
+/**
+ * #393 : par où part la tête de file. Sous Remote Control, l'app refuse tout départ écrit par le panneau à Claude (#390) :
+ * hors mode Auto, le panneau pose donc la carte lui-même, comme son ▶ (#87). En mode Auto, son contrôle refuse un appel
+ * du panneau (#248) ; sans Remote Control, ou la fiche illisible, rien ne change : le départ passe par Claude.
+ */
+export function releaseVia(o: { mode: string | undefined; remote: boolean }): 'card' | 'claude' {
+  return o.remote && o.mode !== undefined && o.mode !== 'auto' ? 'card' : 'claude'
 }
 
 /** Le numéro d'un tour de relève (#383) : sa première ligne non vide est exactement `La file est débloquée : #N démarre.` */
@@ -12321,6 +12336,8 @@ export type ControlCard = {
   pause?: { mode: 'stop' | 'soft'; failed?: { at: number; reason: string } }
   /** L'entrée retenue (#383). */
   held?: { at: number; reason: string; cause: 'refused' }
+  /** La carte posée par le panneau (#393), qui attend le Start. */
+  carded?: { at: number }
   /** La version en test (#383, #366) : une session « Tester #N · X.Y.Z » est ouverte pour la tâche. */
   test?: string
   id: string
@@ -12473,6 +12490,7 @@ export function controlView(o: {
       ...(e.launching ? { launching: true as const } : {}),
       ...(e.failed ? { failed: e.failed } : {}),
       ...(e.held ? { held: e.held } : {}),
+      ...(e.carded ? { carded: e.carded } : {}),
       heavy: false,
     }
   })
@@ -12528,10 +12546,12 @@ export function remotePill(o: { remote: boolean; mode: string | undefined }): { 
   return o.mode === 'auto' ? { text: 'Remote Control · Auto : lancements refusés', bypass: true } : { text: 'Remote Control · la file attend ton mot', bypass: false }
 }
 
-/** La ligne d'une entrée en file au centre de contrôle (#374) : en file, en vol, ou ratée avec son heure et son motif. */
-export function queuedLine(c: { launching?: boolean; held?: { at: number; reason: string; cause: 'refused' }; failed?: { at: number; reason: string; remote?: true } }): string {
+/** La ligne d'une entrée en file au centre de contrôle (#374) : en file, en vol, carte posée (#393), ou ratée avec son heure et son motif. */
+export function queuedLine(c: { launching?: boolean; held?: { at: number; reason: string; cause: 'refused' }; failed?: { at: number; reason: string; remote?: true }; carded?: { at: number } }): string {
   if (c.launching) return "démarre… · la session va s'ouvrir"
   if (c.held) return "retenue · ne repart qu'à ton ▶"
+  // #393 : la carte posée par le panneau sous Remote Control attend le clic de la personne.
+  if (c.carded) return 'carte posée · clique Start'
   if (c.failed) {
     const d = new Date(c.failed.at)
     const hm = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`

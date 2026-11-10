@@ -625,8 +625,12 @@ The merge itself:
   place does not wait behind it. Under Remote Control the panel writes no release in this Maestro
   (the app would refuse it, #382, #390), and a pill above « En cours » says so (« Remote Control · la
   file attend ton mot », or in auto mode « Remote Control · Auto : lancements refusés » with
-  « Passer en bypass »): the next word the person types here launches, in queue order,
-  every task of this Maestro that has its place, each by its own `start_session`.
+  « Passer en bypass »). Outside auto mode the panel posts the head's card itself, with no message
+  to you (#393), as its ▶ does: the control center says « carte posée · clique Start », the person
+  starts it with a click; do not post it again, and a ▶ that queues a task writes nothing here
+  either. In auto mode, or when the app refused that card too (the entry is held), the next word
+  the person types here launches, in queue order, every task of this Maestro that has its place,
+  each by its own `start_session`.
   With the option « File de lancement » (`launchQueue`) off, there is no queue at all: no cap, no
   load wait, every card and every ▶ goes out at once, and the tasks already queued start; the two
   caps apply only with the queue on.
