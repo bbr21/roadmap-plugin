@@ -10363,10 +10363,20 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
             <Box key={`fin:${r.name}`} flexDirection="column" gap={SPACE.tight}>
               {ruleAbove}
               <Box key={`fin-row:${r.name}`} flexDirection="row">
-                <Box width={10} flexShrink={0}>
-                  <Text color={palette.text2}>{r.name}</Text>
-                </Box>
-                <Box flexShrink={1} minWidth={0} flexGrow={1}>
+                {/* Choix de BBR (#368) : la colonne des étiquettes de Détails, celle de la marque d'une fille. */}
+                {Svg ? (
+                  <Box flexShrink={0} flexDirection="row" alignItems="flex-start">
+                    <Svg source={`<svg xmlns="http://www.w3.org/2000/svg" width="${TREE_CHILD_PX}" height="${SIZE.strut.row}"/>`} alt="colonne des étiquettes" width={TREE_CHILD_PX} height={SIZE.strut.row} />
+                    <Box position="absolute" top={0} left={0} flexDirection="row">
+                      <Text size="caption" color={palette.text2}>{r.name}</Text>
+                    </Box>
+                  </Box>
+                ) : (
+                  <Box width={10} flexShrink={0}>
+                    <Text color={palette.text2}>{r.name}</Text>
+                  </Box>
+                )}
+                <Box flexShrink={1} minWidth={0} flexGrow={1} paddingLeft={SPACE.row}>
                   {fades && r.fold.cut
                     ? fadeClip(`fin:${r.name}`, finValue(r, r.md), palette.bg, toggleFin, lastCut && r === shown[shown.length - 1])
                     : finValue(r, r.fold.md)}
@@ -11477,13 +11487,25 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     // Une rangée de Détails : l'étiquette sur 10 unités, la valeur à côté ; sans filet (le filet sépare les groupes).
     // Au retrait du carton (#352) ; la valeur et son appoint sur une seule ligne (« dans 7 j » à côté des dates),
     // la rangée bornée à la largeur du cadre (`minWidth={0}`) : une source en prose passe à la ligne.
+    // #368 (retour de test de BBR, capture annotée) : la valeur tombe sur le guide des titres de la famille. Sa
+    // colonne a la largeur de la marque d'une fille (`TREE_CHILD_PX`), tenue par un dessin (une cellule n'a pas de
+    // largeur sûre en px, #282) ; l'étiquette s'y pose par-dessus, et la valeur suit à une cellule, comme un titre.
+    const detailColumn = `<svg xmlns="http://www.w3.org/2000/svg" width="${TREE_CHILD_PX}" height="${SIZE.strut.row}"/>`
     const detailRow = (name: string, value: RenderElement, key: string) => (
       <Box key={`detail:${key}`} flexDirection="row" alignItems="center" paddingX="sm" minWidth={0}>
-        <Box width={10} flexShrink={0} flexDirection="row" alignItems="center">
-          {strut(SIZE.strut.row)}
-          <Text size="caption" color={palette.text3}>{name}</Text>
-        </Box>
-        <Box key={`detail-value:${key}`} flexDirection="row" flexWrap="nowrap" alignItems="center" gap={SPACE.row} flexShrink={1} minWidth={0}>
+        {Svg ? (
+          <Box flexShrink={0} flexDirection="row" alignItems="center">
+            <Svg source={detailColumn} alt="colonne des étiquettes" width={TREE_CHILD_PX} height={SIZE.strut.row} />
+            <Box position="absolute" top={0} left={0} bottom={0} flexDirection="row" alignItems="center">
+              <Text size="caption" color={palette.text3}>{name}</Text>
+            </Box>
+          </Box>
+        ) : (
+          <Box width={10} flexShrink={0} flexDirection="row" alignItems="center">
+            <Text size="caption" color={palette.text3}>{name}</Text>
+          </Box>
+        )}
+        <Box key={`detail-value:${key}`} flexDirection="row" flexWrap="nowrap" alignItems="center" gap={SPACE.row} paddingLeft={SPACE.row} flexShrink={1} minWidth={0}>
           {value}
         </Box>
       </Box>
