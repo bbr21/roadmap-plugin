@@ -1745,7 +1745,7 @@ let publishedTests: string[] = []
 
 /**
  * Le rappel « en test » d'une publication de Maestro (#366) : la version et les #N ouverts lus dans la
- * sortie de `release.py release`, la session d'origine de chacun, la carte de test entière. Publication
+ * sortie de `release.py release` ou `remote` (#410), la session d'origine de chacun, la carte de test entière. Publication
  * lancée en arrière-plan (pas de sortie) : le rappel de la poser à sa fin. Rien sans #N ouvert.
  */
 async function testAfterRelease($: EngineInterface, command: string, stdout: string): Promise<string | undefined> {

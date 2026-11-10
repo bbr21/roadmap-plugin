@@ -5073,9 +5073,9 @@ export function originSession(rows: readonly unknown[], id: string): string | un
   return undefined
 }
 
-/** Les `#N` du message d'un `release.py release` (#366), lus dans la commande : la publication lancée en arrière-plan n'a pas encore de sortie. */
+/** Les `#N` du message d'un `release.py release` ou `remote` (#366, #410), lus dans la commande : la publication lancée en arrière-plan n'a pas encore de sortie. */
 export function releaseCommandIds(command: string): string[] {
-  const at = command.search(/(?:^|[\s/])release\.py\s+release(?=\s|$)/)
+  const at = command.search(/(?:^|[\s/])release\.py\s+(?:release|remote)(?=\s|$)/)
   if (at < 0) return []
   const ids: string[] = []
   for (const n of command.slice(at).matchAll(/#([1-9]\d*)/g)) if (n[1] !== undefined && !ids.includes(n[1])) ids.push(n[1])
@@ -11534,7 +11534,8 @@ export function deliveries(command: string, cwd: string, home: string): Delivery
     const call = gitCall(step)
     if (call?.sub === 'merge') found.push({ kind: 'fusion', dir: call.dir })
     const tool = step.words.findIndex(w => /(^|\/)release\.py$/.test(w))
-    if (tool >= 0 && step.words[tool + 1] === 'release') found.push({ kind: 'publication' })
+    // `remote` (#410) : la publication par l'action GitHub, suivie depuis le Mac jusqu'à sa fin.
+    if (tool >= 0 && (step.words[tool + 1] === 'release' || step.words[tool + 1] === 'remote')) found.push({ kind: 'publication' })
   }
   return found
 }

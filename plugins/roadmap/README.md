@@ -756,6 +756,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.254.2 (2026-11-10)** : release : la publication du plugin part d'une action GitHub, lancée et suivie depuis le Mac par release.py remote ; chaque version porte son étiquette (#410)
 - **0.254.1 (2026-11-10)** : panneau : le bouton des maquettes montre le volet, ou passe la main à Claude avec l'url seule quand l'app ne voit pas la session dans une fenêtre ; plus aucune commande bâtie sur un nom de fichier ; trace de chaque clic au store (#401)
 - **0.254.0 (2026-11-10)** : maestro, panneau : mode cloud de Maestro (réglage sessions, clé lieu:cloud, brief et suivi par la PR) et sessions cloud visibles dans le bloc En cours et la bande, nuage et état de la PR (#408)
 - **0.253.0 (2026-11-10)** : maestro, file des tests : un lancement et une suite de tests attendent aussi la mémoire du Mac et le nombre de sessions vivantes, et disent la vraie raison de l'attente (#403)

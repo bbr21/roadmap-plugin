@@ -382,7 +382,7 @@ repository's `SessionStart` hook points to) and from a brief that stands on its 
     turn woken by a session, nothing more (#133): the list shows it.
     Four merges in a turn means four lists: the box above the input must never call « en cours » a
     task already on `main`. **The panel reminds of it**: it adds the instruction to the result of a
-    successful `git merge` in the main folder or of a `release.py release`, and repeats it at the
+    successful `git merge` in the main folder or of a `release.py release` or `remote`, and repeats it at the
     end of the turn if the list has not moved since.
   - **No end box without a question while a step remains open** (#133): the app's end box ticks the
     whole list, and the person loses their marker
@@ -515,6 +515,13 @@ The merge itself:
   « Finir un chantier » of the projects set up by onboarding): each task has its version, which its recap line
   and the final sheet state, and a mistake is undone task by task. A branch that is red on an
   up-to-date `main` leaves the series: it goes back to its session, the others continue.
+- **How to publish** (#410): the way the project's `CLAUDE.md` gives (« Finir un chantier »). In Roadmap,
+  `python3 tools/release.py remote patch|minor "<skill> : <ce qui change> (#N)"` from the main folder,
+  in the background (`run_in_background`): it starts the GitHub Actions workflow `release.yml`, which
+  runs `release.py release` there (checks, version, history, tag `<plugin>-v<version>`, public mirror),
+  watches the run, then pulls `main` and updates the Mac's local catalogue; its output ends with
+  « Publié : <plugin> X.Y.Z … », like `release`. A red run names its URL and what to rerun; nothing
+  changed on the Mac. `release.py release` on the Mac is the fallback only (Actions down, no `gh`).
 - **After each merge**: the whole suite runs once on `main`, where the project's CI runs it. In a project
   with a CI workflow on its pushes (Roadmap: `.github/workflows/tests.yml`, GitHub Actions, #407), Maestro
   does not run it on the Mac: it reads the run of the pushed commit, in the background
@@ -537,7 +544,7 @@ The merge itself:
 - **A published task goes to test** (#366, the person's request of 2026-11-06): a version is only
   loaded by the sessions opened after the plugin's sync, so the person tries it in a new session, and
   their feedback goes to the session that coded the task, kept open. The panel adds the instruction
-  to the result of a `release.py release` whose message cites `#N`:
+  to the result of a `release.py release` or `remote` whose message cites `#N`:
   1. Say it in one line, even on a turn woken by a session (it is a need of the person: testing):
      « Nouvelle version X.Y.Z : #N <ce qui change> ».
   2. Do not tick #N. Its step reads `#N <libellé court> · en test X.Y.Z`; its session stays open.

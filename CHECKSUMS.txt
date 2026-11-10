@@ -1,17 +1,17 @@
-# roadmap 0.254.1 : SHA-256 de chaque fichier installé du plugin, chemins relatifs à son dossier.
-# Vérifier une copie installée (~/.claude/plugins/cache/roadmap/roadmap/0.254.1) : plugins/roadmap/SECURITE.md, « Vérifier que ta copie est une vraie version ».
-c2fdfcc11fa4fa4828442fae22d89ee205dcf9fc9481c8f76ff56d2a9cc74926  .claude-plugin/plugin.json
-93a955fb2a111a404a01075d6bb4176872026fc310371c0edf63cdb661f8f841  README.md
-03dcb3bb952bc5eafb49e812bcdeb7190fe2087b11fa50bb29214f9d28c7a261  SECURITE.md
+# roadmap 0.254.2 : SHA-256 de chaque fichier installé du plugin, chemins relatifs à son dossier.
+# Vérifier une copie installée (~/.claude/plugins/cache/roadmap/roadmap/0.254.2) : plugins/roadmap/SECURITE.md, « Vérifier que ta copie est une vraie version ».
+dab307d75283f72ad3a6bcd9ba2cf259e5ef87f07ab138b7945f927a5349aa46  .claude-plugin/plugin.json
+0939e795753ebfafc1366f250d7bf2ca39102e95609fba46dec333070e6a12f5  README.md
+74ca2de90a3dec7d43a553c845ad3ffb0c390abab1976f9e7c2fbd17be78a2dd  SECURITE.md
 bce019cb7147413a8e5f0687df59a41394fa92545568b5d37b1df8bd6d885e30  hooks/bar-hit.tsx
 5058cf225b60518571323c473ac505c54dbc93e93a6aef9991e50609446219f8  hooks/cartes.tsx
 bb4a7f424b0d21642e0ce0b715efad3eb0c05e34eba4c2901ce96c0a8ce87f79  hooks/controle.tsx
 24387c7ebf678c8c7ed5c9cee4be7aa908712c43d03f08c0106f5342c16f823f  hooks/donut-hit.tsx
 d842d789476d67282d0f04b7e5fdc68a3d981ccec65dd79cfa2d11eed13fb828  hooks/hooks.json
 ad22f91ac98ae80141cc163b3544a4f0d2f014ac02dd8622cdc1a84c8430ea0f  hooks/icons.ts
-6c070a7932430e6fb53f2f4bd14c4281d6748569eb777701e44b1ad9788f26fa  hooks/parse.ts
+37d5252951a0b7a4aa6cc0d6cbcc9d934e88d700ed20807747e78e8e3f085b44  hooks/parse.ts
 a29e07be4f95c637c8f3ab377dc9a97cd16de11e8e7de7062311dd2888a0833f  hooks/press-hit.tsx
-2f90a7a6135dcfe485dc2ad3e3f9a1c0607541aed079904baff30dcc1ae8851f  hooks/register.tsx
+63016f181fc0d3564344b598715232e3ddbbcd9fbccc78bd219e85c53f94d934  hooks/register.tsx
 9289599510b9c12c522e148c2f0e7610bf0fd50ef38065b9f70cd14a7a163a21  hooks/reglages.tsx
 ee3e0d04f7d05c2d22300d69accad8bfedf06ecc1f86452e4537fc20ffe68905  hooks/tokens.ts
 22353b30badaa044b9dd39e19aab856a497047284501d82e71ff185467aa94c6  scripts/one-at-a-time.sh
@@ -22,7 +22,7 @@ e232dc596c0e6fc9516a1db6a4286e8f58a2f611958751f7d14ab9a12f337a72  skills/audit/S
 763a5aa2de44f41fe101b720a2f8e381443775e88c805e7188390e2f6ddaa7ac  skills/doctor/scripts/doctor.py
 89ed5b8041162f8f88b09dfaad66e3883a269875d8d05699b1af60ac50a9f978  skills/impact/SKILL.md
 fb013dbd0a4ee2fec41e962e3d57eaa37dfee0ab6323d4617b056e3a430c173a  skills/impact/scripts/impact.py
-3b34c3c437c62c9e74bc5a413c789cd624b07c8840cf5a7662a947468cbf5ee6  skills/maestro/SKILL.md
+0891bb65ac8feac7bdaa38ed6ef392521c4accd6e72f66ea2b59ac141b6d7f48  skills/maestro/SKILL.md
 525466e64c2194b8845c348757ff2097385e5297260c7eb2a559653f9c47fa90  skills/maestro/references/consigne-capture.md
 a13fc80b794495c77a5fd5bb77762b37c1838f5d606c78de797be032a90fa12c  skills/maestro/scripts/brief_cloud.py
 6fa080b16473b61a0eb1980774146578757e4d50d9cdc1af6c3787da18588b0d  skills/maestro/scripts/etat_maestro.py
