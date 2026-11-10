@@ -1,6 +1,6 @@
 # Est-il sûr de l'installer ?
 
-Version décrite : roadmap 0.254.0
+Version décrite : roadmap 0.254.1
 Un plugin de Claude Code fait tourner du code sur ta machine, donc la question se pose. Certains plugins
 malveillants ont l'air inoffensifs quand on les installe, puis téléchargent et lancent autre chose plus
 tard. Cette page dit tout ce que fait roadmap. Un test vérifie à chaque version qu'elle dit vrai, et tu
@@ -147,8 +147,11 @@ Les mêmes interdits valent pour eux : le test les vérifie aussi.
 - **Le bouton des maquettes lit l'adresse du serveur de maquettes, jeton compris** (#401). À ton clic,
   `serve.py --url` relit l'état privé du serveur que Claude a lancé pour ton projet (`$TMPDIR/roadmap-maquettes/`,
   en 0700) et ne rend l'adresse que si ce serveur prouve qu'il détient le jeton. Le panneau ne l'accepte
-  que de la forme `http://127.0.0.1:<port>/<jeton>/<page>` et ne la donne qu'au volet navigateur de l'app ;
-  sans serveur, il y ouvre le fichier. Il ne garde pas le jeton et ne démarre jamais de serveur.
+  que de la forme `http://127.0.0.1:<port>/<jeton>/<page>` et ne la donne qu'au volet navigateur de l'app, ou
+  à Claude dans ta session quand il doit ouvrir le volet à sa place (mode auto, volet que le panneau ne peut
+  pas montrer) ; sans serveur, il y ouvre le fichier. Le message à Claude ne porte que l'url à ouvrir, jamais
+  une commande bâtie sur un nom de fichier. Le panneau ne garde pas le jeton (la trace d'un clic, au store,
+  le masque) et ne démarre jamais de serveur.
 - **La file des tests lourds modifie certaines commandes Bash.** Quand Claude lance une suite de tests
   lourde (`claude plugin test`, `npm test`, `xcodebuild test`…), le hook place `scripts/one-at-a-time.sh`
   devant et derrière, dans la même commande, pour qu'une seule suite tourne à la fois par projet.

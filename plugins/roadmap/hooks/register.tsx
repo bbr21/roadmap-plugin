@@ -154,6 +154,7 @@ import {
   fileUrl,
   mockupAskText,
   mockupHttpUrl,
+  viewUnseen,
   designReminder,
   designSkills,
   PANEL_SKILL,
@@ -7261,16 +7262,6 @@ async function readMockupPage($: EngineInterface, source: Source, task: Task, no
   return page
 }
 
-/** Le texte d'un appel d'outil réussi ; refusé (mode auto, #248), en erreur ou absent : `undefined`. */
-async function toolText($: EngineInterface, call: { tool: string } & Record<string, unknown>): Promise<string | undefined> {
-  try {
-    const ran = await $.tool.call(call)
-    return ran.deny === undefined && !ran.isError ? (ran.text ?? '') : undefined
-  } catch {
-    return undefined
-  }
-}
-
 /** Le serveur de maquettes de la skill mockups (#369), dans la copie installée du plugin. */
 function mockupServeScript($: EngineInterface): string {
   return `${$.plugin.root}/skills/mockups/scripts/serve.py`
@@ -7296,34 +7287,80 @@ async function mockupUrl($: EngineInterface, path: string): Promise<string> {
 /** La barre latérale repliée par le bouton des maquettes (#306) : il la rouvre en fermant, et seulement elle. */
 let mockupFoldedSidebar = false
 
+/** La trace du dernier clic du bouton des maquettes (#401), au store : chaque outil appelé, son sort, le début de sa réponse. */
+const MOCKUP_CLICK_KEY = 'mockup-click'
+type MockupStep = { tool: string; ok: boolean; text: string }
+
+/**
+ * Un appel d'outil du bouton des maquettes, noté dans sa trace ; refusé, en erreur ou levé : `undefined`.
+ * Le jeton d'une url de `serve.py` ne s'écrit pas au store.
+ */
+async function mockupCall($: EngineInterface, call: { tool: string } & Record<string, unknown>, steps: MockupStep[]): Promise<string | undefined> {
+  let ok = false
+  let text = ''
+  try {
+    const ran = await $.tool.call(call)
+    ok = ran.deny === undefined && !ran.isError
+    text = ok ? (ran.text ?? '') : String(ran.deny ?? ran.text ?? 'erreur')
+  } catch (err) {
+    text = err instanceof Error ? err.message : String(err)
+  }
+  steps.push({ tool: call.tool, ok, text: clip(text.replace(/(127\.0\.0\.1:\d+\/)[A-Za-z0-9_-]+\//g, '$1…/'), 200) })
+  return ok ? text : undefined
+}
+
 /**
  * Le bouton des maquettes (#306) : ouvre la page dans le volet navigateur, en http quand son serveur tourne
  * (#401), et replie la barre latérale, le plus grand que l'app laisse prendre à un plugin (le ↗ du volet
- * n'a pas d'appel) ; ou referme le volet et rouvre la barre. En mode auto, ou l'ouverture refusée, la
- * demande passe par Claude (#248), qui sert la page par `serve.py`.
+ * n'a pas d'appel) ; ou referme le volet et rouvre la barre. En mode auto, l'ouverture refusée, ou la
+ * session hors de toute fenêtre vue du panneau (#401), la demande passe par Claude (#248), avec l'url seule.
+ * La trace de chaque clic se lit au store, clé `mockup-click`.
  */
 async function toggleMockup($: EngineInterface, path: string): Promise<void> {
   await setView($, () => ({ openAt: '', openNote: '' }))
+  const steps: MockupStep[] = []
+  try {
+    await mockupGesture($, path, call => mockupCall($, call, steps))
+  } finally {
+    try {
+      await storeSet($, MOCKUP_CLICK_KEY, { at: await $.clock.now(), version: sessionVersion ?? '?', session: ownSession?.id ?? '', page: baseName(path), steps })
+    } catch {
+      // store occupé : la trace de ce clic se perd, le geste est fait
+    }
+  }
+}
+
+async function mockupGesture($: EngineInterface, path: string, call: (c: { tool: string } & Record<string, unknown>) => Promise<string | undefined>): Promise<void> {
+  let url: string | undefined
   const viaClaude = async () => {
-    queueSubmit($, mockupAskText(path, mockupServeScript($)))
+    url ??= await mockupUrl($, path)
+    queueSubmit($, mockupAskText(path, url))
     // La note redessine le panneau, et ce dessin envoie le message.
     await setView($, () => ({ openAt: '', openNote: 'Demandé à Claude : ouvrir les maquettes dans son volet navigateur.' }))
   }
   if ((await ownMode($)) === 'auto') return viaClaude()
   const opened = await read($, mockupOpenAtom)
-  const layout = await toolText($, { tool: GET_LAYOUT_TOOL })
+  const layout = await call({ tool: GET_LAYOUT_TOOL })
+  // #401 (essai de BBR en 0.252.1) : vue du panneau, la session n'est dans aucune fenêtre ; ses outils de vue
+  // répondent sans erreur et ne font rien. Claude montre le volet ; le bouton ne se croit pas ouvert.
+  if (layout !== undefined && viewUnseen(layout)) {
+    if (opened !== '') await update($, mockupOpenAtom, () => '')
+    return viaClaude()
+  }
   if (mockupToggle(layout === undefined ? undefined : previewOpenIn(layout), opened, path) === 'close') {
-    await toolText($, { tool: CLOSE_PANE_TOOL, pane: 'preview' })
-    if (mockupFoldedSidebar) await toolText($, { tool: SIDEBAR_TOOL, collapsed: false })
+    await call({ tool: CLOSE_PANE_TOOL, pane: 'preview' })
+    if (mockupFoldedSidebar) await call({ tool: SIDEBAR_TOOL, collapsed: false })
     mockupFoldedSidebar = false
     await update($, mockupOpenAtom, () => '')
     return
   }
-  if ((await toolText($, { tool: PREVIEW_START_TOOL, url: await mockupUrl($, path) })) === undefined) return viaClaude()
-  await toolText($, { tool: SHOW_PANE_TOOL, pane: 'preview' })
-  const win = await toolText($, { tool: WINDOW_LAYOUT_TOOL })
+  url = await mockupUrl($, path)
+  if ((await call({ tool: PREVIEW_START_TOOL, url })) === undefined) return viaClaude()
+  const shown = await call({ tool: SHOW_PANE_TOOL, pane: 'preview' })
+  if (shown === undefined || viewUnseen(shown)) return viaClaude()
+  const win = await call({ tool: WINDOW_LAYOUT_TOOL })
   if (!mockupFoldedSidebar && win !== undefined && !/"sidebar_collapsed"\s*:\s*true/.test(win)) {
-    mockupFoldedSidebar = (await toolText($, { tool: SIDEBAR_TOOL, collapsed: true })) !== undefined
+    mockupFoldedSidebar = (await call({ tool: SIDEBAR_TOOL, collapsed: true })) !== undefined
   }
   await update($, mockupOpenAtom, () => path)
 }
