@@ -760,6 +760,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.267.0 (2026-11-11)** : panneau : cartes de tâche sans doublon, cible cloud ou Mac dans le titre de la carte native, icône sur les cartes custom, carte faite en violet (#436)
 - **0.266.0 (2026-11-11)** : tasks : regroupement à l'écriture (#438) ; impact : tests lourds laissés à la CI de la PR (#434) ; doctor : règles de l'outil à jour (#290)
 - **0.265.0 (2026-11-11)** : maestro : une branche dont la PR est verte se fusionne sans rejouer la CI de PR ; plusieurs branches prêtes passent d'affilée, une seule CI de main (#431)
 - **0.264.2 (2026-11-11)** : maestro : une entrée de la file retenue chez une session archivée, absente ou qui n'est pas un Maestro est reprise par un Maestro ouvert, son projet d'abord (#424)

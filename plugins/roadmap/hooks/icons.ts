@@ -381,6 +381,11 @@ export function cloudIcon(hex: string, size = 14, title?: string): string {
   return line(hex, size, 2, '<path d="M17.5 19H7a5 5 0 1 1 1.3-9.84A6 6 0 0 1 19.8 11.4 3.8 3.8 0 0 1 17.5 19z"/>', title)
 }
 
+/** Portable : une tâche qui tourne sur le Mac (#436), le pendant du nuage ; même trait 2, bouts ronds. */
+export function laptopIcon(hex: string, size = 14, title?: string): string {
+  return line(hex, size, 2, '<rect x="4" y="5" width="16" height="11" rx="1.5"/><path d="M2.5 19h19"/>', title)
+}
+
 /**
  * La teinte du nuage et celle des mots d'après l'état de la PR (maquette A) : gris sans PR, fermée ou inconnue ;
  * bleu en cours ; orange rouge ; vert prête (le nuage seulement : le mot reste à l'encre, le vert fait 4,17:1 sur

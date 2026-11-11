@@ -101,7 +101,7 @@ import {
   donutIcon,
 } from './icons'
 import { MIX, PX, RADIUS, SIZE, SPACE, TEXT } from './tokens'
-import { BEFORE_KEY, CLOSED_KEY, beforeMap, closedKeys, drawWrittenMessage, keepBefore, keepClosed, splitWritten, testSessions, withoutClosed, writtenCards, type WrittenLine, type WrittenStart, type WrittenWho } from './cartes'
+import { BEFORE_KEY, CLOSED_KEY, NATIVE_KEY, beforeMap, closedKeys, drawWrittenMessage, keepBefore, keepClosed, keepNative, nativeKeys, splitWritten, testSessions, withoutClosed, withoutNative, writtenCards, type WrittenLine, type WrittenStart, type WrittenWho } from './cartes'
 import { CONTROL_PANE, drawControl, openControl, redrawControl, type ControlDeps } from './controle'
 import { SETTINGS_PANE, drawSettings, openSettings, prefsFile, redrawSettings, rememberLoadedOptions, sessionProject, watchSettings, type SettingsProject } from './reglages'
 import {
@@ -478,6 +478,7 @@ import {
   projectTaken,
   globalQueueOrder,
   sessionTitleFor,
+  targetTitle,
   liveQueue,
   launchInFlight,
   pauseRunnable,
@@ -2729,9 +2730,11 @@ function cardReason(r: ToolCallResult): string {
  * (#327 : le modèle d'abord quand le refus le nomme) ; un champ tombé hérite de la session qui lance. Un refus du mode
  * auto (#248) ou de Remote Control (#390) ne tient à aucun champ : la carte ne se repose pas. Sert au ▶ et à la relève (#393).
  */
-async function proposeCard($: EngineInterface, card: Record<string, unknown>, optional: [field: string, value: unknown, note: string][]): Promise<{ ran: ToolCallResult; refusals: string[] }> {
+async function proposeCard($: EngineInterface, raw: Record<string, unknown>, optional: [field: string, value: unknown, note: string][]): Promise<{ ran: ToolCallResult; refusals: string[] }> {
   const refusals: string[] = []
   const fields = [...optional]
+  // #436 : la cible (cloud ou Mac) finit le titre de la carte native.
+  const card = withTargetTitle(raw)
   const withFields = () => ({ ...card, ...Object.fromEntries(fields.map(([field, value]) => [field, value])) }) as Parameters<EngineInterface['tool']['call']>[0]
   const refused = (r: ToolCallResult) => (r.deny !== undefined || r.isError === true) && !isAutoModeRefusal(cardReason(r)) && !isRemoteControlRefusal(cardReason(r))
   let ran = await $.tool.call(withFields())
@@ -2741,7 +2744,31 @@ async function proposeCard($: EngineInterface, card: Record<string, unknown>, op
     refusals.push(`${dropped[2]} : ${cardReason(ran)}`)
     ran = await $.tool.call(withFields())
   }
+  if (ran.deny === undefined && !ran.isError) await noteNativeCard($, card.title)
   return { ran, refusals }
+}
+
+/** #436 : la carte native avec sa cible au bout du titre (« · cloud » pour `target: 'cloud'`, « · Mac » sinon). */
+function withTargetTitle(card: Record<string, unknown>): Record<string, unknown> {
+  return typeof card.title === 'string' ? { ...card, title: targetTitle(card.title, card.target === 'cloud' ? 'cloud' : 'mac') } : card
+}
+
+/**
+ * #436 : la carte native d'une tâche est posée : sa carte Nouvelle ne se dessine plus (store `native-cards`,
+ * `<projet>|<id>`), et les messages se redessinent. Sans numéro, sans projet ou store en panne : rien.
+ */
+async function noteNativeCard($: EngineInterface, title: unknown): Promise<void> {
+  const id = typeof title === 'string' ? sessionTitleId(title) : undefined
+  if (id === undefined) return
+  try {
+    const source = knownSource === undefined ? await sourceNow($) : (knownSource ?? undefined)
+    if (!source) return
+    const stored = await $.store.get(NATIVE_KEY).catch(() => undefined)
+    await storeSet($, NATIVE_KEY, keepNative(stored, `${source.root ?? source.dir}|${id}`) as StoreValue)
+    await update($, retryAtom, v => v + 1)
+  } catch {
+    // une note perdue laisse la carte Nouvelle : le doublon d'avant, rien de cassé
+  }
 }
 
 /** #390 : « Passer en bypass » de la pastille Remote Control ; l'app montre sa carte d'approbation, la pastille se relit. */
@@ -8657,7 +8684,8 @@ export const register: Register = (on, options) => {
         titleRefused = true
         return { deny: dose.refusal }
       }
-      const posted = await launchWithMode($, e, card => next(card as typeof e))
+      // #436 : la cible finit le titre de la carte posée ; le titre lu ici (file, réservation) reste celui de la ligne.
+      const posted = await launchWithMode($, e, card => next(withTargetTitle(card) as typeof e))
       if (dose.ownId && typeof cardTitle === 'string' && posted.deny === undefined && !posted.isError) await reserveCard($, cardTitle)
       // #374 : la réponse de l'app règle l'entrée en file : acceptée, elle sort ; refusée, elle reste avec sa trace.
       if (dose.ownId && typeof cardTitle === 'string') {
@@ -8679,6 +8707,7 @@ export const register: Register = (on, options) => {
     const title = (e as { title?: unknown }).title
     const id = !ran.isError && !fromAgent(e) && typeof title === 'string' ? sessionTitleId(title) : undefined
     if (id !== undefined) launchTurn.cards.push(`#${id}`)
+    if (id !== undefined && next.origin.plugin === 'engine' && ran.deny === undefined) await noteNativeCard($, title)
     return ran
   })
   // Un enfant note son état pour son parent (#84) : sa liste d'étapes, sa question, son récap.
@@ -9155,9 +9184,13 @@ export const register: Register = (on, options) => {
       const now = await $.clock.now()
       // L'avant : une seule lecture du store par message, et seulement si une ligne dit une mise à jour.
       // Les cartes fermées par la croix se lisent avec lui, dans la même passe : la lecture abonne le dessin, qui reprend à l'écriture.
-      const [storedBefore, storedClosed] = await Promise.all([$.store.get(BEFORE_KEY), $.store.get(CLOSED_KEY)].map(r => r.catch(() => undefined)))
+      const [storedBefore, storedClosed, storedNative] = await Promise.all([$.store.get(BEFORE_KEY), $.store.get(CLOSED_KEY), $.store.get(NATIVE_KEY)].map(r => r.catch(() => undefined)))
       const fingerprint = hashLabel(e.props.text)
-      const parts = withoutClosed(whole, fingerprint, closedKeys(storedClosed))
+      // #436 : une Nouvelle dont la carte native est posée (par Claude, ou par Start : « proposée ») ne se dessine plus.
+      const project = `${source.root ?? source.dir}|`
+      const natives = new Set([...nativeKeys(storedNative)].filter(k => k.startsWith(project)).map(k => k.slice(project.length)))
+      for (const [k, st] of cardStarts) if (st.state === 'proposed' && k.startsWith(project)) natives.add(k.slice(project.length))
+      const parts = withoutNative(withoutClosed(whole, fingerprint, closedKeys(storedClosed)), natives)
       const updated = parts.some(part => part.kind === 'cards' && part.lines.some(l => l.kind === 'upd'))
       const before = updated ? beforeMap(storedBefore) : undefined
       // Qui tient la tâche : ce que le module sait déjà des sessions (jamais un nouvel appel d'outil).

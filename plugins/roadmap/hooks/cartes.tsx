@@ -5,8 +5,9 @@
 
 import type { EngineInterface, RenderElement } from 'claude-code'
 
-import { daysBetween, dueLabel, isPriority, isThirdParty, queueRank, roadmapAxes, shortAttend, testTitle, type Bilan, type Task } from './parse'
-import { SPACE, type Palette } from './tokens'
+import { checkIcon, cloudIcon, laptopIcon, mixOver } from './icons'
+import { daysBetween, dueLabel, isPriority, isThirdParty, queueRank, roadmapAxes, shortAttend, testTitle, type Bilan, type Sessions, type Task } from './parse'
+import { SIZE, SPACE, type Palette } from './tokens'
 
 /** La sorte d'une ligne : une tâche neuve, mise à jour, faite ou annulée. */
 export type WrittenKind = 'new' | 'upd' | 'done' | 'cancel'
@@ -102,6 +103,8 @@ export type WrittenCard = {
   session?: true
   /** #388 : une nouvelle tâche ouverte que personne ne tient : le pied porte « Start » à côté de « Ouvrir la task ». */
   start?: true
+  /** #436 : où tourne la tâche (`lieu:cloud`, sinon le Mac) ; absent pour une tâche introuvable. */
+  lieu?: Sessions
 }
 
 /** Ce que la mémoire de l'avant garde d'une tâche (#371) : les trois champs que la carte montre en « avant → après ». */
@@ -260,7 +263,16 @@ export function writtenCards(lines: readonly WrittenLine[], tasks: readonly Task
       if (took) foot.push([{ text: took, ink: 'text2' }])
     }
     const startable = line.kind === 'new' && live && !who?.session
-    return { id: line.id, kind: line.kind, title, change, foot, ...(who?.session ? { session: true as const } : {}), ...(startable ? { start: true as const } : {}) }
+    return {
+      id: line.id,
+      kind: line.kind,
+      title,
+      change,
+      foot,
+      ...(who?.session ? { session: true as const } : {}),
+      ...(startable ? { start: true as const } : {}),
+      ...(task ? { lieu: task.lieu === 'cloud' ? ('cloud' as const) : ('mac' as const) } : {}),
+    }
   })
 }
 
@@ -320,6 +332,32 @@ export function withoutClosed(parts: readonly MessagePart[], fingerprint: string
   return parts.flatMap((part): MessagePart[] => {
     if (part.kind === 'text') return [part]
     const lines = part.lines.filter(l => !closed.has(`${fingerprint}:${l.id}`))
+    return lines.length > 0 ? [{ kind: 'cards', lines }] : []
+  })
+}
+
+/**
+ * #436 : la clé du store qui garde les tâches dont la carte native « New session » est posée : `<projet>|<id>`, les plus
+ * récentes en dernier. Leur carte Nouvelle ne se dessine plus : la native la remplace, même quand le message se redessine.
+ */
+export const NATIVE_KEY = 'native-cards'
+
+/** Les clés de cartes natives posées lues du store, sans ce qui n'est pas du texte. */
+export function nativeKeys(stored: unknown): Set<string> {
+  return closedKeys(stored)
+}
+
+/** La liste des cartes natives posées avec une de plus : sans doublon, la plus récente en dernier, 200 au plus. */
+export function keepNative(stored: unknown, key: string): string[] {
+  return keepClosed(stored, key)
+}
+
+/** Les parts du message sans les cartes Nouvelle dont la carte native est posée (`ids` : les `#N` de ce projet) ; une pile vidée disparaît. */
+export function withoutNative(parts: readonly MessagePart[], ids: ReadonlySet<string>): MessagePart[] {
+  if (ids.size === 0) return [...parts]
+  return parts.flatMap((part): MessagePart[] => {
+    if (part.kind === 'text') return [part]
+    const lines = part.lines.filter(l => l.kind !== 'new' || !ids.has(l.id))
     return lines.length > 0 ? [{ kind: 'cards', lines }] : []
   })
 }
@@ -407,7 +445,23 @@ export function drawWrittenMessage(el: ReturnType<EngineInterface['ui']['resolve
     seen.set(c.id, n + 1)
     const suffix = n === 0 ? '' : `:${n}`
     const cancelled = c.kind === 'cancel'
+    // #436 (maquette A) : la faite ressort au violet de fin : fond, filet, bandeau mêlé, coche, titre en heading, croix encadrée.
+    const done = c.kind === 'done'
     const ink = kindInk(palette, c.kind)
+    const bandBg = done ? mixOver(palette.finished, palette.finishedTint, 0.22) : palette.hover
+    // #436 : l'icône et le mot du lieu à droite du bandeau ; pas sur une Nouvelle, dont la carte native dit la cible.
+    const place = c.lieu !== undefined && c.kind !== 'new' && (() => {
+      const cloud = c.lieu === 'cloud'
+      const word = cloud ? 'cloud' : 'Mac'
+      const alt = cloud ? 'Dans le cloud' : 'Sur le Mac'
+      const iconInk = done ? palette.finishedOn : cloud ? palette.live : palette.text2
+      return (
+        <Box key={`written-place:${c.id}${suffix}`} flexDirection="row" alignItems="center" gap={SPACE.tight} flexShrink={0}>
+          {Svg ? <Svg key="written-place-icon" source={cloud ? cloudIcon(iconInk, SIZE.icon.sm, alt) : laptopIcon(iconInk, SIZE.icon.sm, alt)} alt={alt} width={SIZE.icon.sm} height={SIZE.icon.sm} /> : null}
+          <Text size="caption" color={done ? palette.finishedOn : palette.text2}>{word}</Text>
+        </Box>
+      )
+    })()
     // Le pied : un seul Text coupé d'une ellipse, un Text imbriqué par morceau, « · » en text3 entre eux.
     const foot = c.foot.flatMap((part, i) => {
       const runs = part.map((r, j) => (
@@ -429,22 +483,35 @@ export function drawWrittenMessage(el: ReturnType<EngineInterface['ui']['resolve
       </Box>
     )
     return (
-      <Box key={`written:${c.id}${suffix}`} flexDirection="column" width="60%" borderStyle="round" borderColor={palette.border} paddingX={0} paddingY={0}>
+      <Box key={`written:${c.id}${suffix}`} flexDirection="column" width="60%" borderStyle="round" borderColor={done ? palette.finished : palette.border} paddingX={0} paddingY={0} {...(done ? { backgroundColor: palette.finishedTint } : {})}>
         {/* Le filet du bandeau est de la couleur de son fond : ses coins s'arrondissent dans ceux de la carte. */}
-        <Box key={`written-band:${c.id}${suffix}`} backgroundColor={palette.hover} borderStyle="round" borderColor={palette.hover} paddingX="lg" paddingY="sm">
-          <Box key="written-kind" flexDirection="row" alignItems="center" gap={SPACE.tight}>
-            {Svg ? <Svg key="written-dot" source={dotSource(ink)} alt={KIND_WORD[c.kind]} width={8} height={8} /> : <Text key="written-dot" size="footnote" color={ink}>●</Text>}
-            <Text size="footnote" weight="bold" color={ink}>{KIND_WORD[c.kind]}</Text>
+        <Box key={`written-band:${c.id}${suffix}`} backgroundColor={bandBg} borderStyle="round" borderColor={bandBg} paddingX="lg" paddingY="sm">
+          <Box key={`written-band-row:${c.id}${suffix}`} flexDirection="row" alignItems="center" justifyContent="space-between" gap={SPACE.tight}>
+            <Box key="written-kind" flexDirection="row" alignItems="center" gap={SPACE.tight}>
+              {done
+                ? (Svg ? <Svg key="written-dot" source={checkIcon(ink, SIZE.icon.sm)} alt={KIND_WORD[c.kind]} width={SIZE.icon.sm} height={SIZE.icon.sm} /> : <Text key="written-dot" size="footnote" color={ink}>✓</Text>)
+                : (Svg ? <Svg key="written-dot" source={dotSource(ink)} alt={KIND_WORD[c.kind]} width={8} height={8} /> : <Text key="written-dot" size="footnote" color={ink}>●</Text>)}
+              <Text size="footnote" weight="bold" color={ink}>{KIND_WORD[c.kind]}</Text>
+            </Box>
+            {place || null}
           </Box>
         </Box>
         <Box key="written-body" flexDirection="column" gap={SPACE.tight} paddingX="lg" paddingTop="md" paddingBottom="xs">
           <Box key="written-title" flexDirection="row" alignItems="center" justifyContent="space-between" gap={SPACE.tight}>
             <Box key="written-title-text" flexGrow={1} flexShrink={1} minWidth={0}>
-              <Text size="body" weight="medium" wrap="truncate-end" {...(cancelled ? { strikethrough: true, color: palette.text3 } : { color: palette.text })}>{`#${c.id} · ${c.title}`}</Text>
+              <Text {...(done ? { size: 'heading' as const, weight: 'semibold' as const, color: palette.finishedOn } : { size: 'body' as const, weight: 'medium' as const })} wrap="truncate-end" {...(cancelled ? { strikethrough: true, color: palette.text3 } : done ? {} : { color: palette.text })}>{`#${c.id} · ${c.title}`}</Text>
             </Box>
-            <Button key={`written-close:${c.id}${suffix}`} plain onPress={() => o.close?.(c.id)}>
-              <Text color={palette.text3}>×</Text>
-            </Button>
+            {done ? (
+              <Box key={`written-close-frame:${c.id}${suffix}`} borderStyle="round" borderColor={palette.finished} paddingX={0} paddingY={0} flexShrink={0}>
+                <Button key={`written-close:${c.id}${suffix}`} plain onPress={() => o.close?.(c.id)}>
+                  <Text color={palette.finishedOn}>×</Text>
+                </Button>
+              </Box>
+            ) : (
+              <Button key={`written-close:${c.id}${suffix}`} plain onPress={() => o.close?.(c.id)}>
+                <Text color={palette.text3}>×</Text>
+              </Button>
+            )}
           </Box>
           {c.change !== '' && <Text size="body" color={palette.text2} wrap="wrap">{clampDescription(c.change)}</Text>}
         </Box>

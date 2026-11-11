@@ -4466,6 +4466,21 @@ export function sessionTitleFor(task: Task, shortTitle: string): string {
   return clip(task.id ? `#${task.id} · ${shortTitle}` : `Roadmap · ${shortTitle}`, 58)
 }
 
+/** #436 : la marque de cible qui finit le titre d'une carte native (« · cloud », « · Mac »). */
+const TARGET_MARK = /\s*·\s*(?:cloud|mac)\s*$/i
+
+/**
+ * Le titre de la carte native « New session » avec sa cible au bout (#436, maquette A titre 1) :
+ * « #439 · Afficher le compteur · cloud ». Le « #N · » reste en tête (`sessionTitleId` le lit toujours) ;
+ * une marque déjà posée est remplacée, la base coupée pour que le tout tienne dans les 58 signes.
+ * Un titre qui n'est pas celui d'une tâche ne change pas.
+ */
+export function targetTitle(title: string, target: Sessions): string {
+  if (sessionTitleId(title) === undefined) return title
+  const mark = ` · ${target === 'cloud' ? 'cloud' : 'Mac'}`
+  return `${clip(title.replace(TARGET_MARK, ''), 58 - mark.length)}${mark}`
+}
+
 /** Après le préfixe, la marque d'une session de vérification (`checkBrief`) : « #47 · Vérifier · … ». */
 const CHECK_MARK = /^v[ée]rifier\s*·\s*/i
 
@@ -6373,7 +6388,7 @@ export function taskForSessionTitle(title: string, tasks: readonly Task[], title
 export function sessionName(title: string): string | undefined {
   const m = SESSION_PREFIX.exec(title)
   if (!m) return undefined
-  const name = title.slice(m[0].length).replace(CHECK_MARK, '').replace(ROUTINE_MARK, '').trim()
+  const name = title.slice(m[0].length).replace(CHECK_MARK, '').replace(ROUTINE_MARK, '').replace(TARGET_MARK, '').trim()
   return name === '' ? undefined : name
 }
 
