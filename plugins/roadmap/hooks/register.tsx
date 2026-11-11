@@ -297,6 +297,7 @@ import {
   fieldEdit,
   declaredAxes,
   withParentDates,
+  parentRowTask,
   bandsOf,
   keyPills,
   axisPillText,
@@ -13842,11 +13843,14 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   // La section de chaque ligne dessinée (#265) : rempli avec les groupes, lu par `rowParts`.
   const sectionOf = new Map<Task, string>()
   const dayQuiet = (t: Task) => !searching && !showDone && dayFilterQuiet(attend, today, t)
-  const rowParts = (t: Task, o: { tree: boolean; ghost: boolean; inSession: boolean; locked: boolean; parent?: Parameters<typeof keyPills>[3] }) => {
-    if (o.ghost || t.done) return { feedback: false, keys: [] as PillSpec[], tags: [] as PillSpec[], due: undefined as PillSpec | undefined }
+  // Une mère dépliée (`open`, #319) dit sa date finale, ses filles disant déjà leurs échéances : la ligne
+  // se lit sur `parentRowTask`, sa section sur la tâche elle-même.
+  const rowParts = (row: Task, o: { tree: boolean; ghost: boolean; inSession: boolean; locked: boolean; open?: boolean; parent?: Parameters<typeof keyPills>[3] }) => {
+    if (o.ghost || row.done) return { feedback: false, keys: [] as PillSpec[], tags: [] as PillSpec[], due: undefined as PillSpec | undefined }
+    const t = parentRowTask(row, o.open === true)
     const feedback = t.feedback !== undefined
     // Une ligne ne redit pas sa tête (#265) : ni le jour de sa section, ni la personne de sa section.
-    const quiet = bandQuiet(sectionOf.get(t), t)
+    const quiet = bandQuiet(sectionOf.get(row), t)
     // Sous Ma journée ou Demain (#268), le jour que le filtre dit déjà.
     if (dayQuiet(t)) quiet.due = true
     const split: { due?: Pill; tags: Pill[] } = !o.inSession && !o.locked ? splitRowPills(listPills(t, today, me)) : { tags: [] }
@@ -14091,7 +14095,8 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
         </Box>
       )
     // Une date tue sous sa tête (#265) ne laisse pas l'âge prendre sa place : le bout reste vide.
-    const dueQuiet = !t.done && (bandQuiet(sectionOf.get(t), t).due || dayQuiet(t))
+    const shownRow = parentRowTask(t, head?.open === true)
+    const dueQuiet = !t.done && (bandQuiet(sectionOf.get(t), shownRow).due || dayQuiet(shownRow))
     const right = dueQuiet ? '' : doneRights.get(t) ?? (tree ? (t.done ? 'fait' : days === undefined ? '' : ageLabel(days)) : t.done ? axisShown(t.axis) : days === undefined ? '' : ageLabel(days))
     // Une tâche faite dont la session reste ouverte : y retourner, ou l'archiver, d'un clic.
     const kept = block === undefined && sessionRows.has(taskKey(t)) ? doneSessionOf(t) : undefined
@@ -14108,7 +14113,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     // ZONE_LIMIT. Ni sur une tâche en session, bloquée ou déjà demandée ; sa colonne reste, vide,
     // pour garder les carrés alignés.
     const playable = !t.done && !ghost && !inSession && !locked && !launched.includes(taskKey(t))
-    const parts = rowParts(t, { tree: tree !== undefined, ghost, inSession, locked, ...(child?.parent ? { parent: child.parent } : {}) })
+    const parts = rowParts(t, { tree: tree !== undefined, ghost, inSession, locked, open: head?.open === true, ...(child?.parent ? { parent: child.parent } : {}) })
     // En session, la ligne tient dans la largeur (#177, #248 de Splitmybill) : une pastille qui ne laisse
     // pas sa place au titre part, avant que la colonne de session ne soit poussée hors du panneau. Ses
     // pastilles sont la Feedback et les clés (sans `listPills`), dans cet ordre. Le retrait compte les

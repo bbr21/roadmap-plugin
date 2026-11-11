@@ -55,6 +55,11 @@ export type Task = {
   isParent?: boolean
   /** Calculé par `withParentDates` (#125) : le `due:` écrit d'un parent, que remplace sa date calculée. */
   ownDue?: string
+  /**
+   * Calculé par `withParentDates` (#319) : la date finale d'un parent, que dit sa ligne dépliée : son
+   * `due:` écrit, sinon l'échéance de son dernier descendant ouvert.
+   */
+  finalDue?: string
 }
 
 export type Prio = 'oui' | '1' | '2' | '3'
@@ -3035,29 +3040,67 @@ export function byOwner(tasks: readonly Task[], me: readonly string[]): { label:
 /**
  * La date des parents (#125) : chaque tâche ouverte qui a des enfants ouverts devient une copie
  * `isParent`, dont `due` est la plus proche échéance de ses descendants ouverts (sinon son `due:`
- * écrit, gardé dans `ownDue`). Les autres tâches restent les mêmes objets ; l'ordre ne change pas.
+ * écrit, gardé dans `ownDue`), et `finalDue` sa date finale (#319) : son `due:` écrit, sinon la plus
+ * lointaine échéance de ses descendants ouverts. Les autres tâches restent les mêmes objets ; l'ordre
+ * ne change pas.
  */
 export function withParentDates(tasks: readonly Task[]): Task[] {
   const kids = new Map<string, Task[]>()
-  for (const t of tasks) if (!t.done && t.parent !== undefined && t.parent !== t.id) kids.set(t.parent, [...(kids.get(t.parent) ?? []), t])
-  const nearest = (t: Task, seen: Set<Task>): string | undefined => {
-    const dates = (t.id === undefined ? [] : (kids.get(t.id) ?? []))
-      .filter(c => !seen.has(c))
-      .flatMap(c => {
-        seen.add(c)
-        return [c.due, nearest(c, seen)].filter((d): d is string => d !== undefined)
-      })
-    return dates.length === 0 ? undefined : dates.reduce((a, b) => (b < a ? b : a))
+  for (const t of tasks) {
+    if (t.done || t.parent === undefined || t.parent === t.id) continue
+    const list = kids.get(t.parent)
+    if (list) list.push(t)
+    else kids.set(t.parent, [t])
+  }
+  // Un seul parcours de l'arbre (#319) : la plus proche et la plus lointaine échéance des descendants
+  // ouverts de chaque tâche, gardées par tâche ; un cycle s'arrête où il boucle.
+  const span = new Map<Task, { min?: string; max?: string }>()
+  const walking = new Set<Task>()
+  const spanOf = (t: Task): { min?: string; max?: string } => {
+    const kept = span.get(t)
+    if (kept) return kept
+    walking.add(t)
+    let min: string | undefined
+    let max: string | undefined
+    const take = (d: string | undefined) => {
+      if (d === undefined) return
+      if (min === undefined || d < min) min = d
+      if (max === undefined || d > max) max = d
+    }
+    for (const c of t.id === undefined ? [] : (kids.get(t.id) ?? [])) {
+      if (walking.has(c)) continue
+      take(c.due)
+      const below = spanOf(c)
+      take(below.min)
+      take(below.max)
+    }
+    walking.delete(t)
+    const out = { ...(min !== undefined ? { min } : {}), ...(max !== undefined ? { max } : {}) }
+    span.set(t, out)
+    return out
   }
   return tasks.map(t => {
     if (t.done || t.id === undefined || !kids.has(t.id)) return t
-    const due = nearest(t, new Set([t])) ?? t.due
+    const below = spanOf(t)
+    const due = below.min ?? t.due
+    // La date finale (#319) : le `due:` écrit l'emporte, sinon l'échéance du dernier descendant.
+    const last = t.due ?? below.max
     const copy: Task = { ...t, isParent: true }
     if (t.due !== undefined) copy.ownDue = t.due
+    if (last !== undefined) copy.finalDue = last
     if (due !== undefined) copy.due = due
     else delete copy.due
     return copy
   })
+}
+
+/**
+ * La tâche que dit la ligne d'une mère (#319) : repliée, elle-même (la prochaine échéance de ses
+ * enfants) ; dépliée, une copie qui porte sa date finale (`finalDue`), ses enfants disant déjà leurs
+ * propres échéances. Sans date finale, la même tâche.
+ */
+export function parentRowTask(task: Task, open: boolean): Task {
+  return open && task.isParent && task.finalDue !== undefined && task.finalDue !== task.due ? { ...task, due: task.finalDue } : task
 }
 
 /** Une pastille de clé déclarée (#125) : la clé et sa valeur. */
