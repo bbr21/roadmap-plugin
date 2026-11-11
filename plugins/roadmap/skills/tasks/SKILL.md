@@ -107,6 +107,24 @@ child; an `add` with children of its own leaves its place to them, two levels at
 part » (the same operations, with `distinct`), « Ne rien ajouter ». A task the batch closes covers
 nothing. The rest of the batch is written.
 
+**One theme, one parent (#438).** `write` first looks for a **theme**: the open tasks and the other
+`add`s of the batch that share a rare place (a file, function, command or area carried by 8 open
+tasks at most) plus a second sign (another place, a chain link, a `#N` or a `src:` they both cite,
+such as the same study, or a quarter of the shorter label's weighted words), same axis. When the
+theme has several siblings (two `add`s, two open tasks, or a task already under its parent), its
+`add`s are not written as lines of their own: they become one `group` question: « Regrouper sous une
+mère nouvelle « … » (recommandé) » (an `add` of the parent, key `mere-<key>`, with the latest `due:`
+of its children, then the children: the `add`s and the free open tasks without a parent, by
+`update` with `parent`; an `après:` outside the group moves to the parent) or « Ranger sous #P
+(recommandé) » when one of them is already under P; « Verser dans #T » for a single `add`; « Tâche à
+part » (« Tâches à part »); « Ne rien ajouter ». A task taken by a session is never moved: the
+question says it goes under the parent at its closing. **A `distinct` set by the writer does not
+skip it**, only « Tâche à part », the person's choice: on 2026-11-10, Maestro wrote #433 and #434
+with `distinct` while #419 and #423 (tests and CI) were open, and BBR had to create the parent #437
+by hand. Before asking, replace the proposed parent name (the option's label, the `add`'s `label`
+and `nom`) with a subject name of 2 to 5 words (« Tests et CI plus légers »). A pair (one `add`, one
+open task) stays with the rules below.
+
 **Pour into an open task what touches the same place (#320).** Words miss it when two tasks act at
 the same place for the same purpose: on 2026-11-04, #313 (delete a closed task's branch) shared no
 telling word with #287 (`release.py` commits only its files, no more `git add -A` in the main
@@ -161,8 +179,14 @@ the same place, for the same purpose, with a small result. The one poured in is 
 free tasks, or the free one when the other is taken; two taken tasks give nothing. Options:
 « Verser #V dans #R » (`update` with `append` on R, `drop` of V with its bilan), or for a taken R
 the same with `relay` and only the `drop`, then « Les garder à part ». Ask them with the batch's
-other questions; the chosen option's operations go to `write`. It does not group by subject: the
-audit does that (#284).
+other questions; the chosen option's operations go to `write`.
+
+**The same on written lines (#438).** `python3 "<skill folder>/scripts/tasks.py" groupes <project
+folder>` returns `{"questions": [...]}`, kind `group`, one per theme that has a free task without a
+parent to put away: « Ranger #a sous #P » or « Regrouper #a, #b sous une mère nouvelle « … » »
+(recommended, the parent's name to replace as above), then « Les laisser à part ». Ask them with
+`lots`'s; the chosen option's operations go to `write`. The audit groups a whole flat axis by its
+expressions (#284).
 
 ## 3. Mark done on proof
 
@@ -231,7 +255,7 @@ Write `<scratchpad>/operations.json`:
   refused), `parent` (an `id`
   or a `key`), `section` (default « Prochain », else the first open section), `distinct` (#288: why this action
   is a task of its own though an open task looks like the same subject; never written in the
-  line), `zone` (#320: the places the action touches, files, functions, commands or an area in
+  line; it skips #288 and #320, never the theme of #438: only « Tâche à part » does), `zone` (#320: the places the action touches, files, functions, commands or an area in
   words, used to match it with the open tasks; never written), `note` (written in the label,
   between parentheses: « Réserver le studio son (demandé par Linda) », never after the field block,
   which the cowork doctor refuses, #285), `fields`.
@@ -399,6 +423,7 @@ round, the recommendation first, each question readable on its own (the task's l
   `tous:mois`…);
 - **reopening** a closed task;
 - **the same subject** (`subject`, #288, set by `write`): an action an open task covers;
+- **the same theme** (`group`, #438, set by `write` and `groupes`): siblings to put under one parent;
 - **a mother's short title** (`name`, #288, set by `write`): a task without `nom:` that gets its
   first child. `write` proposes its first five words; before asking, replace that proposal (the
   option's label and its `nom`) with a short title of 2 to 5 words in the label's language, which
@@ -428,7 +453,9 @@ a project that has a roadmap, because the skill is not always loaded when the id
   sends it up to Maestro, who opens the line and posts it again. Work done elsewhere (another
   repository, another person): the line alone, said in one line.
 - **A study's steps** (#293): a study, a spike or an audit that ends on a recommendation in steps
-  proposes one task per step that has none (its line, then its card; under Maestro, the card only),
+  proposes one task per step that has none (its line, then its card; under Maestro, the card only;
+  never `distinct` to keep the steps apart: steps of one study are a theme, `write` offers them one
+  parent, #438),
   attaches each other step to its existing task (said in one line) and says why a step is set
   aside. The plugin's end-of-turn reminder catches a numbered list of steps announced as
   recommended (« je recommande », « prochaines étapes », « next steps ») when no card was posted.

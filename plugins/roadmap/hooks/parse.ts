@@ -5235,7 +5235,7 @@ export function maestroClause(maestro: string, travail: Travail = 'code'): strin
   return [
     `Tu travailles pour Maestro : la session qui t'a lancée, « ${maestro} », coordonne ses tâches et fusionne pour elles (skill \`roadmap:maestro\`).`,
     `- ${remoteControlClause()}`,
-    '- Travaille sur ta branche, dans ton worktree ; rejoue sur ta branche les tests que nomme ta carte d\'impact, jamais la suite entière (Maestro la lance sur main après la fusion, #323), pousse-la, et ouvre ta PR si le projet en a.',
+    '- Travaille sur ta branche, dans ton worktree ; rejoue sur ta branche les tests que nomme ta carte d\'impact, jamais la suite entière (Maestro la lance sur main après la fusion, #323), sauf ceux qu\'elle marque « lourd : CI de la PR » (#434), pousse-la, et ouvre ta PR si le projet en a ; la CI de la PR lance ces tests lourds : lis leur résultat par `gh pr checks <n°>`.',
     '- Ne fusionne pas sur main : Maestro fusionne, une branche à la fois, dans l\'ordre qu\'il choisit.',
     '- Une ressource unique (simulateur iOS, appareil, base, déploiement, compte de test) ne se prend qu\'avec la main de Maestro : dis-le en tête de ton compte rendu et termine ton tour ; il te la donne par message, et tu la rends dès que tu as fini.',
     `- ${maestroAutonome()}`,
@@ -6906,7 +6906,7 @@ const FOLDER_MAX = 20
  * Splitmybill #245 n'étaient pas des appels de fonctions, `docs/plans/spike-carte-impact/`).
  */
 const IMPACT_LINE =
-  "- Sa carte d'impact : avant ta première édition, lance la skill `roadmap:impact` sur les fichiers et les symboles que tu comptes changer ; elle dit les tests et le code qui les citent. Chaque test qu'elle nomme se lance ou se met à jour dans ton changement, et un symbole changé qu'aucun test ne nomme en reçoit un, rouge d'abord."
+  "- Sa carte d'impact : avant ta première édition, lance la skill `roadmap:impact` sur les fichiers et les symboles que tu comptes changer ; elle dit les tests et le code qui les citent. Chaque test qu'elle nomme se lance ou se met à jour dans ton changement, et un symbole changé qu'aucun test ne nomme en reçoit un, rouge d'abord. Un test qu'elle marque « lourd : CI de la PR » (plus d'une minute en CI, #434) ne se lance pas sur le Mac : pousse ta branche et lis son résultat par `gh pr checks <n°>`."
 
 const FOLDER_RULES = ['CLAUDE.md', 'AGENTS.md'] as const
 const FOLDER_MAPS = ['INDEX.md', 'docs/README.md', 'README.md'] as const

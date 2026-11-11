@@ -7,6 +7,7 @@ reconstitue au besoin la roadmap depuis l'historique du dépôt, et vérifie le 
           [--manquants]                                    n'écrit que les fichiers absents (projet existant)
   python3 onboarding.py verifier DOSSIER                   dit ce qui manque ou s'écarte du format
   python3 onboarding.py regles DOSSIER                     pose ROADMAP-REGLES.md depuis le modèle, s'il manque
+          [--outil]                                        remplace sa seule section « Règles de l'outil »
   python3 onboarding.py historique DOSSIER [--mois 6]      relève l'historique (PR, sinon fusions, sinon
           [--sans-gh] [--par auto|commit|jour]             commits), en JSON, à compléter
   python3 onboarding.py historique-ecrire DOSSIER --lignes H.json
@@ -1173,18 +1174,8 @@ def _dans(dossier, chemin):
     return os.path.realpath(chemin).startswith(racine + os.sep)
 
 
-def poser_regles(dossier):
-    """Pose le fichier des règles de la roadmap depuis le modèle du mode, s'il manque (#167) ; jamais
-    d'écrasement. Rend son chemin absolu, ou None s'il était déjà là."""
-    dossier = os.path.abspath(os.path.expanduser(dossier))
-    r = chemin_regles(dossier)
-    if r is None:
-        raise Erreur("pas de roadmap dans %s : lancer d'abord l'onboarding" % dossier)
-    if not _dans(dossier, r["absolu"]):
-        raise Erreur("regles « %s » sort du projet : rien n'est posé hors de %s" % (r["chemin"], dossier))
-    if os.path.exists(r["absolu"]):
-        print("Gardé tel quel : %s" % r["chemin"])
-        return None
+def modele_regles(dossier):
+    """Le modèle du fichier des règles du mode du dossier, rendu pour lui (son nom, sa personne), et ce mode."""
     try:
         with open(os.path.join(dossier, ".claude", "roadmap.json"), encoding="utf-8") as f:
             cfg = json.load(f)
@@ -1194,13 +1185,115 @@ def poser_regles(dossier):
     nom = cfg.get("name") if isinstance(cfg.get("name"), str) and cfg["name"].strip() else os.path.basename(dossier)
     me = cfg.get("me")
     qui = me[0] if isinstance(me, list) and me and isinstance(me[0], str) else (me if isinstance(me, str) and me else "l'équipe")
-    racine = MODELES_PROJET if travail_du_dossier(dossier) == "projet" else MODELES
+    mode = travail_du_dossier(dossier)
+    racine = MODELES_PROJET if mode == "projet" else MODELES
     with open(os.path.join(racine, DOSSIER_ROADMAP, REGLES), encoding="utf-8") as f:
-        texte = rendre(f.read(), {"NOM": _aplatir(nom), "QUI": _aplatir(qui)})
+        return rendre(f.read(), {"NOM": _aplatir(nom), "QUI": _aplatir(qui)}), mode
+
+
+# La section des règles que fixe le plugin (#276), la même dans tout projet d'un mode (#290).
+TITRE_OUTIL = "Règles de l'outil"
+
+
+def section_outil(texte):
+    """(début, fin) de la section « ## Règles de l'outil » dans `texte`, jusqu'au titre de niveau 2
+    suivant, hors blocs de code ; None si elle n'y est pas."""
+    debut, pos, bloc = None, 0, False
+    for l in texte.splitlines(True):
+        if l.lstrip().startswith("```"):
+            bloc = not bloc
+        elif not bloc and re.match(r"^## ", l):
+            if debut is not None:
+                return debut, pos
+            if l[3:].strip() == TITRE_OUTIL:
+                debut = pos
+        pos += len(l)
+    return None if debut is None else (debut, pos)
+
+
+def _premier_titre(texte):
+    """La position du premier titre de niveau 2 hors blocs de code, sinon None."""
+    pos, bloc = 0, False
+    for l in texte.splitlines(True):
+        if l.lstrip().startswith("```"):
+            bloc = not bloc
+        elif not bloc and re.match(r"^## ", l):
+            return pos
+        pos += len(l)
+    return None
+
+
+def _normale(section):
+    return "\n".join(l.rstrip() for l in section.strip("\n").split("\n"))
+
+
+def etat_regles_outil(dossier):
+    """La section « Règles de l'outil » du fichier des règles, comparée à celle du modèle du mode (#290) :
+    {etat: a_jour | absente | differente, chemin, mode}. None : pas de roadmap, ou pas de fichier des règles."""
+    dossier = os.path.abspath(os.path.expanduser(dossier))
+    r = chemin_regles(dossier)
+    if r is None or not os.path.isfile(r["absolu"]):
+        return None
+    with open(r["absolu"], encoding="utf-8", errors="replace") as f:
+        texte = f.read()
+    modele, mode = modele_regles(dossier)
+    a, m = section_outil(texte), section_outil(modele)
+    if a is None:
+        etat = "absente"
+    else:
+        etat = "a_jour" if _normale(texte[a[0]:a[1]]) == _normale(modele[m[0]:m[1]]) else "differente"
+    return {"etat": etat, "chemin": r["chemin"], "mode": mode}
+
+
+def poser_regles(dossier, outil=False):
+    """Pose le fichier des règles de la roadmap depuis le modèle du mode, s'il manque (#167) ; jamais
+    d'écrasement. Avec `outil` (#290), un fichier déjà là reçoit la seule section « Règles de l'outil »
+    du modèle, à la place de la sienne ou, sans elle, avant son premier titre : le reste ne bouge pas.
+    Rend son chemin absolu, ou None s'il était déjà là et n'a pas changé."""
+    dossier = os.path.abspath(os.path.expanduser(dossier))
+    r = chemin_regles(dossier)
+    if r is None:
+        raise Erreur("pas de roadmap dans %s : lancer d'abord l'onboarding" % dossier)
+    if not _dans(dossier, r["absolu"]):
+        raise Erreur("regles « %s » sort du projet : rien n'est posé hors de %s" % (r["chemin"], dossier))
+    if os.path.exists(r["absolu"]):
+        if outil:
+            return _poser_section_outil(dossier, r)
+        print("Gardé tel quel : %s" % r["chemin"])
+        return None
+    texte, _ = modele_regles(dossier)
     os.makedirs(os.path.dirname(r["absolu"]), exist_ok=True)
     with open(r["absolu"], "w", encoding="utf-8") as f:
         f.write(texte)
     print("Posé : %s, à remplir avec les règles du projet." % r["chemin"])
+    return r["absolu"]
+
+
+def _poser_section_outil(dossier, r):
+    """Remplace dans le fichier des règles `r` la seule section « Règles de l'outil » par celle du modèle (#290)."""
+    with open(r["absolu"], encoding="utf-8") as f:
+        texte = f.read()
+    modele, mode = modele_regles(dossier)
+    m = section_outil(modele)
+    neuve = modele[m[0]:m[1]].rstrip("\n") + "\n"
+    a = section_outil(texte)
+    if a is not None:
+        if _normale(texte[a[0]:a[1]]) == _normale(neuve):
+            print("Règles de l'outil déjà à jour : %s" % r["chemin"])
+            return None
+        suite = texte[a[1]:]
+        nouveau = texte[:a[0]] + neuve + ("\n" if suite else "") + suite
+        quoi = "remplacée par celle du modèle %s" % mode
+    else:
+        p = _premier_titre(texte)
+        if p is None:
+            nouveau = texte.rstrip("\n") + "\n\n" + neuve if texte.strip() else neuve
+        else:
+            nouveau = texte[:p] + neuve + "\n" + texte[p:]
+        quoi = "posée depuis le modèle %s" % mode
+    with open(r["absolu"], "w", encoding="utf-8") as f:
+        f.write(nouveau)
+    print("Règles de l'outil %s : %s ; le reste du fichier est gardé tel quel." % (quoi, r["chemin"]))
     return r["absolu"]
 
 
@@ -1392,6 +1485,7 @@ def main(argv=None):
     pv.add_argument("dossier")
     pr = sub.add_parser("regles")
     pr.add_argument("dossier")
+    pr.add_argument("--outil", action="store_true", help="remplace la seule section « Règles de l'outil » par celle du modèle")
     ph = sub.add_parser("historique")
     ph.add_argument("dossier")
     ph.add_argument("--mois", type=int, default=6)
@@ -1429,7 +1523,7 @@ def main(argv=None):
         elif a.cmd == "importer":
             importer.importer(a.dossier, a.analyse)
         elif a.cmd == "regles":
-            poser_regles(a.dossier)
+            poser_regles(a.dossier, outil=a.outil)
         elif a.cmd == "design":
             if a.poser is None:
                 print(json.dumps(design(a.dossier), ensure_ascii=False, indent=2))

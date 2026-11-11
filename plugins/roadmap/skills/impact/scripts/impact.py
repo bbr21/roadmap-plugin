@@ -20,8 +20,14 @@ roadmap panel, hit by any change of a render file, even one that only adds an `a
 A changed file that matches one of the globs (fnmatch, `*` crosses `/`) gets those tests in `declared`
 and in its `tests`.
 
+A project can also list its heavy test files (#434: over a minute in CI, roadmap.test.tsx 312 s), in
+`.claude/roadmap.json`: `"lourds": {"seuil_s": 50, "releve": "…", "tests": {"path": seconds, …}}`, kept up
+to date by the project (here `tools/tests_lourds.py`, from the CI log). Each one the map names is marked
+« lourd : CI de la PR » and listed in `heavy`: the session does not run it on the Mac, it pushes its branch
+and reads `gh pr checks <n°>`.
+
 Exit 0 (map written, or nothing changed), 2 (not a git repository, or git failed).
-JSON: {"base", "cut", "ranked": [{"path", "hits"}], "files": [{"path", "tests", "code", "docs", "declared"}], "symbols": [{"name", "tests", "code", "docs"}]}.
+JSON: {"base", "cut", "heavy": {path: seconds}, "ranked": [{"path", "hits"}], "files": [{"path", "tests", "code", "docs", "declared"}], "symbols": [{"name", "tests", "code", "docs"}]}.
 The report is in French, like the sessions that read it.
 """
 import argparse
@@ -279,6 +285,22 @@ def project_rules(repo):
     return out
 
 
+def heavy_tests(repo):
+    """The heavy test files of `.claude/roadmap.json` (`lourds.tests`): {path: seconds}; a missing file
+    or a malformed key gives none, never an error."""
+    try:
+        with open(os.path.join(repo, ".claude", "roadmap.json"), encoding="utf-8") as f:
+            cfg = json.load(f)
+    except (OSError, ValueError):
+        return {}
+    heavy = cfg.get("lourds") if isinstance(cfg, dict) else None
+    tests = heavy.get("tests") if isinstance(heavy, dict) else None
+    if not isinstance(tests, dict):
+        return {}
+    return {p: s for p, s in tests.items()
+            if isinstance(p, str) and p and isinstance(s, (int, float)) and not isinstance(s, bool)}
+
+
 def declared_tests(path, rules):
     """The tests a project rule attaches to `path`, in rule order, without repeats."""
     found = []
@@ -309,6 +331,9 @@ def impact(repo, base="HEAD", files=None, symbols=None):
         "files": [file_entry(f, texts, rules) for f in files],
         "symbols": [dict(name=n, **sort_hits(by_name.get(n, []))) for n in names],
     }
+    heavy = heavy_tests(repo)
+    named = {t for e in result["files"] + result["symbols"] for t in e["tests"]}
+    result["heavy"] = {p: heavy[p] for p in sorted(named) if p in heavy}
     result["ranked"] = ranked(result)
     return result
 
@@ -323,21 +348,28 @@ def ranked(result):
     return [{"path": p, "hits": n} for p, n in order[:RANKED]]
 
 
-def listing(label, paths, cap=None):
+HEAVY_MARK = " (lourd : CI de la PR)"
+
+
+def shown_path(p, heavy=()):
+    return "`%s`%s" % (p, HEAVY_MARK if p in heavy else "")
+
+
+def listing(label, paths, cap=None, heavy=()):
     """A list of paths; the tests are never cut (the one forgotten may be the last), the code is."""
     if not paths:
         return []
     cut = paths if cap is None else paths[:cap]
-    shown = ", ".join("`%s`" % p for p in cut)
+    shown = ", ".join(shown_path(p, heavy) for p in cut)
     more = " … et %d autres" % (len(paths) - len(cut)) if len(cut) < len(paths) else ""
     return ["  - %s (%d) : %s%s" % (label, len(paths), shown, more)]
 
 
-def block(title, entry):
+def block(title, entry, heavy=()):
     lines = [title]
-    lines += listing("Tests", entry["tests"])
+    lines += listing("Tests", entry["tests"], heavy=heavy)
     if entry.get("declared"):
-        lines += listing("dont par règle du projet (.claude/roadmap.json, impact)", entry["declared"])
+        lines += listing("dont par règle du projet (.claude/roadmap.json, impact)", entry["declared"], heavy=heavy)
     lines += listing("Code", entry["code"], SHOWN)
     if entry["docs"]:
         lines.append("  - Docs : %d" % entry["docs"])
@@ -354,18 +386,23 @@ def render(result):
     if result.get("cut"):
         out.append("Plafond de %d atteint : %d symboles non relevés ; nomme ceux qui comptent par `--symbols`."
                    % (MAX_SYMBOLS, result["cut"]))
+    heavy = result.get("heavy") or {}
     many = [r for r in result["ranked"] if r["hits"] > 1]
     if many:
         out += ["", "Tests à lire d'abord (touchés par plusieurs changements) :"]
-        out += ["- `%s` (%d)" % (r["path"], r["hits"]) for r in many]
+        out += ["- %s (%d)" % (shown_path(r["path"], heavy), r["hits"]) for r in many]
     if result["files"]:
         out += ["", "Fichiers changés, et ce qui les cite :"]
         for f in result["files"]:
-            out += block("- `%s`" % f["path"], f)
+            out += block("- `%s`" % f["path"], f, heavy)
     if result["symbols"]:
         out += ["", "Symboles changés, et ce qui les nomme :"]
         for s in result["symbols"]:
-            out += block("- `%s`" % s["name"], s)
+            out += block("- `%s`" % s["name"], s, heavy)
+    if heavy:
+        out += ["", "Tests lourds (lents en CI, .claude/roadmap.json, lourds) : %s. Ne les lance pas sur le Mac : "
+                "pousse ta branche, puis lis leur résultat par `gh pr checks <n°>` (la CI de la PR les lance)."
+                % ", ".join("`%s` (%d s)" % (p, s) for p, s in heavy.items())]
     out += ["", "À faire : chaque test nommé se lance (ou se met à jour), chaque fichier de code nommé se relit ; "
             "un symbole changé sans test en reçoit un ; puis toutes les suites du projet."]
     return "\n".join(out)

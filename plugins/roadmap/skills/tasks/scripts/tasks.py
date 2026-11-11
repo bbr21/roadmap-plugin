@@ -5,6 +5,8 @@ rapprochement d'une action avec les tâches du même sujet, puis l'écriture des
 
 python3 tasks.py context FOLDER [--day YYYY-MM-DD] > context.json
 python3 tasks.py match FOLDER --text "…" [--text "…"]
+python3 tasks.py lots FOLDER       (#320 : les tâches ouvertes à verser l'une dans l'autre)
+python3 tasks.py groupes FOLDER    (#438 : les tâches ouvertes d'un même thème à ranger sous une mère)
 python3 tasks.py write FOLDER --operations operations.json [--apply] [--json]
 
 `write` finit par le compte rendu (#232), en lignes de journal depuis #261 : une puce par tâche, son glyphe devant.
@@ -76,7 +78,8 @@ INTERDITS_SUITE = INTERDITS_AJOUT | {"après", "attend", "src", "fiche"}
 # Les questions qui attendent la personne (#232), au format de l'audit (#159) : leur genre, et sa raison dite.
 RAISONS = {"conflict": "conflit", "undated": "date manquante", "late": "en retard", "partial_proof": "preuve partielle",
            "rhythm": "rythme", "reopen": "réouverture", "prio_on_child": "priorité sur un enfant", "structure": "structure",
-           "subject": "même sujet", "name": "titre court", "merge": "même endroit", "followup": "déjà fait"}
+           "subject": "même sujet", "name": "titre court", "merge": "même endroit", "followup": "déjà fait",
+           "group": "même thème"}
 # Verser une action dans une tâche ouverte (#320). Un lieu (fichier, fonction, commande, zone en mots) porté
 # par plus de 3 tâches ouvertes et plus du quart d'entre elles est commun : il ne rapproche rien
 # (`register.tsx` quand tout le nomme). Une tâche reste petite quand les deux libellés tiennent en
@@ -689,7 +692,7 @@ def _sans_cle_apres(op, cle):
     return dict(op, fields=champs) if op.get("fields") is not None else op
 
 
-def un_sujet(ctx, operations):
+def un_sujet(ctx, operations, deja=frozenset()):
     """#288 : les ajouts sans parent que `rapprocher` trouve couverts par une tâche ouverte (score ≥ 0,5
     et deux mots communs), sauf `distinct`, retenus avec ce qui les vise dans le lot ; chacun devient une
     question (kind `subject`) : « Sous #N (recommandé) », « Tâche à part », « Ne rien ajouter ». Une tâche
@@ -698,7 +701,8 @@ def un_sujet(ctx, operations):
     ctx_ouvert = dict(ctx, taches=[t for t in ctx["taches"] if t["id"] not in fermees])
     retenues, questions = set(), []
     for a in operations:
-        if a.get("op") != "add" or not _sans_ref(a.get("parent")) or audit._propre(a.get("distinct")) or a.get("key") in retenues:
+        if (a.get("op") != "add" or not _sans_ref(a.get("parent")) or audit._propre(a.get("distinct"))
+                or a.get("key") in retenues or a.get("key") in deja):
             continue
         libelle = audit._propre(a.get("label"))
         r = rapprocher(ctx_ouvert, libelle)
@@ -818,6 +822,287 @@ def un_lot(ctx, operations, retenues):
             "options": options})
         cles.add(k)
     return cles, questions
+
+
+# ---------------------------------------------------------------- un thème, une mère (#438)
+
+# Un lieu porté par plus de GROUPE_MAX tâches ouvertes (et plus du quart d'entre elles) ne dit pas un thème : une mère
+# garde 8 filles au plus (le doctor relève au-delà). Le second signe d'un même thème, en mots : la part des mots
+# pondérés du plus court des deux libellés que l'autre porte, avec deux mots communs.
+GROUPE_MAX = 8
+MERE_DE_GROUPE = "mère d'un regroupement par thème (#438)"
+SEUIL_THEME = 0.25
+
+
+def _cites_de(texte, *ignores):
+    return set(CITE_RE.findall(texte or "")) - {i for i in ignores if i}
+
+
+def _noeud_tache(ctx, t, contextes):
+    c = contextes[t["id"]]
+    champs = t.get("champs") or {}
+    apres = set()
+    try:
+        apres = set(_refs(champs.get("après"), "après")) if champs.get("après") not in (None, "", "-") else set()
+    except Erreur:
+        pass
+    prise = champs.get("branche") if champs.get("qui") and champs.get("branche") else None
+    return {"ref": t["id"], "id": t["id"], "libelle": t["libelle"], "axe": t.get("axe"), "parent": t.get("parent"),
+            "lieux": c["lieux"], "norme": c["norme"], "texte": c["texte"], "cites": _cites_de(c["texte"], t["id"]),
+            "apres": apres, "src": audit._propre(champs.get("src")), "due": champs.get("due"), "prise": prise,
+            "champs": champs, "op": None}
+
+
+def _noeud_ajout(a):
+    libelle = audit._propre(a.get("label"))
+    texte = _aparte(libelle, audit._propre(a.get("note")))
+    champs = a.get("fields") or {}
+    lieux, cites = _lieux_et_chaine(texte, a.get("zone"), champs.get("après"))
+    apres = set()
+    try:
+        apres = set(_refs(champs.get("après"), "après")) if champs.get("après") not in (None, "", "-") else set()
+    except Erreur:
+        pass
+    return {"ref": a.get("key"), "id": None, "libelle": libelle, "axe": audit._propre(a.get("axis")) or None,
+            "parent": None, "lieux": lieux, "norme": " %s " % _norme(texte), "texte": texte, "cites": cites,
+            "apres": apres, "src": audit._propre(champs.get("src")), "due": champs.get("due"), "prise": None,
+            "champs": champs, "op": a}
+
+
+def _meme_theme(x, y, rares, poids):
+    """Deux nœuds (tâche ouverte ou ajout) du même thème : même axe, un lieu rare en commun, et un second signe : un
+    autre lieu, une chaîne (l'un cite l'autre, ou `après:`), une même étude citée (un `#N` commun, ou la même `src:`),
+    ou des mots (SEUIL_THEME du plus court, deux mots communs). Rend les lieux communs, ou rien."""
+    if x["axe"] and y["axe"] and x["axe"] != y["axe"]:
+        return None
+    communs = sorted(l for l in rares if (l in x["lieux"] or _porte(x, l)) and (l in y["lieux"] or _porte(y, l)))
+    if not communs:
+        return None
+    chaine = bool({x["ref"], x["id"]} & (y["cites"] | y["apres"]) or {y["ref"], y["id"]} & (x["cites"] | x["apres"]))
+    etude = bool((x["cites"] - {y["id"]}) & (y["cites"] - {x["id"]})) or bool(x["src"] and x["src"] == y["src"])
+    mx, my = audit.mots(x["libelle"]), audit.mots(y["libelle"])
+    total = min(sum(poids.get(w, POIDS_INCONNU) for w in mx), sum(poids.get(w, POIDS_INCONNU) for w in my))
+    com = mx & my
+    mots_ok = bool(total) and len(com) >= 2 and sum(poids.get(w, POIDS_INCONNU) for w in com) / total >= SEUIL_THEME
+    return communs if (len(communs) >= 2 or chaine or etude or mots_ok) else None
+
+
+def _themes(ctx, ajouts=()):
+    """Les grappes du même thème (#438) parmi les feuilles ouvertes et les ajouts : union des paires `_meme_theme`.
+    Rend (nœuds par réf, grappes : listes de réfs, lieux communs par grappe)."""
+    feuilles = [t for t in ctx["taches"] if not t.get("enfants")]
+    contextes = {t["id"]: contexte_tache(ctx["dossier"], t) for t in feuilles}
+    noeuds = [_noeud_tache(ctx, t, contextes) for t in feuilles] + [_noeud_ajout(a) for a in ajouts]
+    par_ref = {n["ref"]: n for n in noeuds}
+    tous = set().union(*(n["lieux"] for n in noeuds)) if noeuds else set()
+    borne = max(GROUPE_MAX, LIEU_COMMUN_PART * len(noeuds))
+    rares = {l for l in tous if sum(1 for n in noeuds if l in n["lieux"] or _porte(n, l)) <= borne}
+    poids = poids_des_mots([t["libelle"] for t in ctx["taches"]] + [t["libelle"] for t in ctx.get("closes") or []])
+    chef = {n["ref"]: n["ref"] for n in noeuds}
+
+    def racine(r):
+        while chef[r] != r:
+            chef[r] = chef[chef[r]]
+            r = chef[r]
+        return r
+
+    lieux = {}
+    for i, x in enumerate(noeuds):
+        for y in noeuds[i + 1:]:
+            communs = _meme_theme(x, y, rares, poids)
+            if communs:
+                chef[racine(x["ref"])] = racine(y["ref"])
+                lieux.setdefault((x["ref"], y["ref"]), communs)
+    grappes = {}
+    for n in noeuds:
+        grappes.setdefault(racine(n["ref"]), []).append(n["ref"])
+    sortie = []
+    for refs in grappes.values():
+        if len(refs) < 2:
+            continue
+        dedans = set(refs)
+        communs = sorted({l for (a, b), ls in lieux.items() if a in dedans and b in dedans for l in ls})
+        sortie.append((refs, communs))
+    return par_ref, sortie
+
+
+def _rang_ref(r):
+    return (0, int(r)) if str(r).isdigit() else (1, 0)
+
+
+def _nom_de_mere(membres):
+    """Le titre proposé à une mère nouvelle : l'expression la plus partagée des libellés, sinon les premiers mots du
+    premier ; Claude le remplace par un nom de sujet avant de poser la question."""
+    porteurs = {}
+    for n in membres:
+        for e, (_, ecrit) in audit._expressions(n["libelle"], frozenset()).items():
+            # Un nom de fichier ou de code n'est pas un nom de sujet (« test.tsx »).
+            if not re.search(r"[./_`]", ecrit):
+                porteurs.setdefault(e, [0, ecrit])[0] += 1
+    meilleure = max(((c, e) for e, (c, _) in porteurs.items() if c >= 2), default=None)
+    if meilleure:
+        ecrit = porteurs[meilleure[1]][1]
+        return (ecrit[:1].upper() + ecrit[1:])[:NOM_MAX]
+    return titre_court(membres[0]["libelle"])
+
+
+def _options_de_groupe(ctx, par_ref, refs, cle_mere, ajouts_du_lot):
+    """Les opérations d'un regroupement : « Ranger sous #P » quand une fille de la grappe a déjà une mère, sinon une
+    mère nouvelle (son axe, son échéance finale, les clés exigées que ses filles partagent). Seules bougent les tâches
+    libres sans parent (une tâche prise ne se touche pas) ; un `après:` hors de la grappe passe à la mère. Rend
+    (cible, libellé de l'option, opérations, réfs rangées) ou None quand rien ne se range."""
+    membres = [par_ref[r] for r in sorted(refs, key=_rang_ref)]
+    meres = {}
+    for n in membres:
+        if n["parent"]:
+            meres[n["parent"]] = meres.get(n["parent"], 0) + 1
+    ajouts = [n for n in membres if n["op"] is not None]
+    libres = [n for n in membres if n["op"] is None and not n["parent"] and not n["prise"]]
+    dedans = {n["ref"] for n in membres} | {n["id"] for n in membres if n["id"]}
+    if meres:
+        cible = max(meres, key=lambda p: (meres[p], -int(p) if p.isdigit() else 0))
+        par_id = {t["id"]: t for t in ctx["taches"]}
+        axe = (par_id.get(cible) or {}).get("axe")
+        libres = [n for n in libres if not axe or n["axe"] == axe]
+        ops = [dict({c: v for c, v in n["op"].items() if c not in ("axis", "section", "distinct", "zone")}, parent=cible)
+               for n in ajouts]
+        ops += [{"op": "update", "id": n["id"], "fields": {"parent": cible}} for n in libres]
+        if not ops:
+            return None
+        ranges = [n["ref"] for n in ajouts + libres]
+        quoi = "sous #%s" % cible if ajouts and not libres else "%s sous #%s" % (", ".join("#%s" % n["id"] for n in libres)
+                                                                                 + (" et l'ajout" if ajouts else ""), cible)
+        return cible, "Ranger %s" % quoi, ops, ranges
+    if len(ajouts) + len(libres) < 2:
+        return None
+    ranges_n = ajouts + libres
+    axe = next((n["axe"] for n in ranges_n if n["axe"]), None)
+    hors = set()
+    for n in ranges_n:
+        hors |= {r for r in n["apres"] if r not in dedans}
+    dues = [n["due"] for n in ranges_n if n["due"] and im.DATE.match(str(n["due"]))]
+    nom = _nom_de_mere(ranges_n)
+    champs = {"nom": nom}
+    if dues:
+        champs["due"] = max(dues)
+    champs["après"] = sorted(hors, key=_rang_ref) or "-"
+    for k in ctx.get("requis") or []:
+        if k in champs or k in ("id", "ouvert", "parent", "après", "qui", "fait", "due"):
+            continue
+        valeurs = {audit._propre(n["champs"].get(k)) for n in ranges_n}
+        if len(valeurs) == 1 and next(iter(valeurs)):
+            champs[k] = next(iter(valeurs))
+    # La mère porte les mots de ses filles : sans `distinct`, #288 la trouverait couverte par elles.
+    mere = {"op": "add", "key": cle_mere, "label": nom, "axis": axe, "fields": champs, "distinct": MERE_DE_GROUPE}
+    section = next((n["op"].get("section") for n in ajouts if n["op"].get("section")), None)
+    if section:
+        mere["section"] = section
+    ops = [mere]
+    for n in ajouts:
+        op = dict({c: v for c, v in n["op"].items() if c not in ("axis", "section", "distinct", "zone")}, parent=cle_mere)
+        if n["apres"] & hors:
+            op["fields"] = dict(op.get("fields") or {}, **{"après": sorted(n["apres"] - hors, key=_rang_ref) or "-"})
+        ops.append(op)
+    for n in libres:
+        f = {"parent": cle_mere}
+        if n["apres"] & hors:
+            f["après"] = sorted(n["apres"] - hors, key=_rang_ref) or "-"
+        ops.append({"op": "update", "id": n["id"], "fields": f})
+    return None, "Regrouper sous une mère nouvelle « %s »" % nom, ops, [n["ref"] for n in ranges_n]
+
+
+def _tenues(membres):
+    prises = [n for n in membres if n["prise"]]
+    return "".join(" ; #%s est tenue par la session de %s : elle se range à sa clôture" % (n["id"], n["prise"])
+                   for n in prises)
+
+
+def un_groupe(ctx, operations, retenues):
+    """#438 : un ajout sans parent, que #288 et #320 n'ont pas retenu et que rien dans le lot ne vise, du même thème
+    que des tâches ouvertes ou que d'autres ajouts du lot (`_themes`), n'empile pas une ligne à part : il devient une
+    question (kind `group`) : « Regrouper sous une mère nouvelle » ou « Ranger sous #P » (recommandé), « Verser dans
+    #T » pour un ajout seul, « Tâche(s) à part », « Ne rien ajouter ». Un `distinct` de l'écrivain ne l'en dispense
+    pas (le 2026-11-10, Maestro l'avait forcé sur #433 et #434) ; seul le choix de la personne (`A_PART`) le fait."""
+    fermees = {str(op.get("id")) for op in operations if op.get("op") in ("drop", "done", "handoff")}
+    ctx_ouvert = dict(ctx, taches=[t for t in ctx["taches"] if t["id"] not in fermees])
+    visees = set().union(*(_refs_op(op) for op in operations)) if operations else set()
+    ajouts = [a for a in operations
+              if a.get("op") == "add" and _sans_ref(a.get("parent")) and audit._propre(a.get("distinct")) != A_PART
+              and a.get("key") not in retenues and a.get("key") not in visees]
+    if not ajouts:
+        return set(), []
+    par_ref, grappes = _themes(ctx_ouvert, ajouts)
+    cles, questions = set(), []
+    for refs, communs in sorted(grappes, key=lambda g: min(_rang_ref(r) for r in g[0])):
+        les_ajouts = [r for r in refs if par_ref[r]["op"] is not None]
+        ouvertes = [r for r in refs if par_ref[r]["op"] is None]
+        meres = [r for r in ouvertes if par_ref[r]["parent"]]
+        # Un thème de plusieurs sœurs : deux ajouts, deux tâches ouvertes, ou une fille déjà sous sa mère.
+        if not les_ajouts or (len(les_ajouts) < 2 and len(ouvertes) < 2 and not meres):
+            continue
+        k = next(a.get("key") for a in ajouts if a.get("key") in les_ajouts)
+        rangement = _options_de_groupe(ctx_ouvert, par_ref, refs, "mere-%s" % k, ajouts)
+        if rangement is None:
+            continue
+        cible, libelle_opt, ops, _ = rangement
+        n_ajouts = [par_ref[r] for r in les_ajouts]
+        taches = [par_ref[r] for r in sorted(refs, key=_rang_ref) if par_ref[r]["op"] is None]
+        options = [{"label": libelle_opt + " (recommandé)", "operations": ops}]
+        if len(n_ajouts) == 1:
+            libres = [n for n in taches if not n["parent"] and not n["prise"]]
+            direct = [n for n in libres if _meme_theme(n, n_ajouts[0], set(communs), {})] or libres
+            if direct:
+                t = direct[0]
+                op = {"op": "update", "id": t["id"], "append": n_ajouts[0]["texte"]}
+                src = n_ajouts[0]["src"]
+                if src:
+                    op["fields"] = {"src": "%s ; %s" % (t["src"], src) if t["src"] else src}
+                options.append({"label": "Verser dans #%s" % t["id"], "operations": [op]})
+        options.append({"label": "Tâche à part" if len(n_ajouts) == 1 else "Tâches à part",
+                        "operations": [dict(n["op"], distinct=A_PART) for n in n_ajouts]})
+        if taches:
+            options.append({"label": "Ne rien ajouter : le thème a déjà ses tâches (%s)"
+                                     % ", ".join("#%s" % n["id"] for n in taches), "operations": []})
+        options = options[:4]
+        quoi = " et ".join("« %s »" % _court(n["libelle"]) for n in n_ajouts)
+        avec = ", ".join("#%s « %s »" % (n["id"], _court(n["libelle"])) for n in taches)
+        but = ("ranger sous #%s" % cible) if cible else "les regrouper sous une mère commune"
+        questions.append({
+            "key": "group-%s" % k, "about": n_ajouts[0]["libelle"], "kind": "group",
+            "question": "%s : même thème que %s (%s)%s ; %s, plutôt qu'en lignes à part ?"
+                        % (quoi, avec or "l'un l'autre", ", ".join(communs), _tenues(taches), but),
+            "options": options})
+        cles |= set(les_ajouts)
+    return cles, questions
+
+
+def groupes(ctx):
+    """#438 : le regroupement sur les lignes déjà écrites. Chaque grappe du même thème parmi les feuilles ouvertes qui
+    a quelque chose à ranger (une tâche libre sans parent) devient une question (kind `group`, sur la première tâche à
+    ranger) : « Ranger #a sous #P » quand une fille de la grappe a déjà sa mère, sinon « Regrouper #a, #b sous une mère
+    nouvelle « X » » (recommandé), puis « Les laisser à part »."""
+    par_ref, grappes = _themes(ctx)
+    questions = []
+    for refs, communs in sorted(grappes, key=lambda g: min(_rang_ref(r) for r in g[0])):
+        premier = min(refs, key=_rang_ref)
+        rangement = _options_de_groupe(ctx, par_ref, refs, "mere-%s" % premier, [])
+        if rangement is None:
+            continue
+        cible, libelle_opt, ops, ranges = rangement
+        ranges = sorted(ranges, key=_rang_ref)
+        liste = ", ".join("#%s" % r for r in ranges)
+        if cible is None:
+            libelle_opt = "Regrouper %s sous une mère nouvelle « %s »" % (liste, ops[0]["label"])
+        membres = [par_ref[r] for r in sorted(refs, key=_rang_ref)]
+        questions.append({
+            "key": "group-%s" % ranges[0], "task": ranges[0], "kind": "group",
+            "question": "%s : même thème (%s)%s ; %s ?"
+                        % (", ".join("#%s « %s »" % (n["id"], _court(n["libelle"])) for n in membres),
+                           ", ".join(communs), _tenues(membres),
+                           "ranger %s sous #%s" % (liste, cible) if cible else "les regrouper sous une mère commune"),
+            "options": [{"label": libelle_opt + " (recommandé)", "operations": ops},
+                        {"label": "Les laisser à part", "operations": []}]})
+    return questions
 
 
 # ---------------------------------------------------------------- écrire
@@ -1386,7 +1671,11 @@ def preparer(ctx, props, maintenant=None):
     prep = _Tenue(ctx, maintenant)
     for op in operations:
         _verifier_operation(op)
-    retenues, du_lot = un_sujet(ctx, operations)
+    # #438 d'abord : un thème de plusieurs sœurs se range sous une mère commune ; une paire reste à #288 et #320.
+    retenues, du_lot = un_groupe(ctx, operations, set())
+    sujet_cles, sujet_questions = un_sujet(ctx, operations, retenues)
+    retenues |= sujet_cles
+    du_lot += sujet_questions
     a_verser_cles, a_verser_questions = un_lot(ctx, operations, retenues)
     retenues |= a_verser_cles
     du_lot += a_verser_questions
@@ -1551,6 +1840,8 @@ def main(argv=None):
                                                    "repeat it, it applies to every --text (#320)")
     lo = sous.add_parser("lots", help="the open tasks that should be poured into one another, as questions (#320)")
     lo.add_argument("dossier")
+    gr = sous.add_parser("groupes", help="the open tasks of one theme that should share a parent, as questions (#438)")
+    gr.add_argument("dossier")
     m = sous.add_parser("prio-oui", help="the write operations that move prio:1, 2, 3 to prio:oui (#300), as JSON")
     m.add_argument("dossier")
     e = sous.add_parser("write", help="dry run of the operations, or write them with --apply")
@@ -1558,7 +1849,7 @@ def main(argv=None):
     e.add_argument("--operations", required=True)
     e.add_argument("--apply", dest="appliquer", action="store_true")
     e.add_argument("--json", dest="en_json", action="store_true", help="the bilan and its report as JSON")
-    for s in (c, r, lo, m, e):
+    for s in (c, r, lo, gr, m, e):
         s.add_argument("--day", dest="jour", help="YYYY-MM-DD (today by default)")
         s.add_argument("--perso", default="~/.claude/roadmap-perso.json", help=argparse.SUPPRESS)
     args = p.parse_args(argv)
@@ -1567,6 +1858,8 @@ def main(argv=None):
             print(json.dumps(contexte(args.dossier, args.jour, args.perso), ensure_ascii=False, indent=2))
         elif args.commande == "lots":
             print(json.dumps({"questions": lots(contexte(args.dossier, args.jour, args.perso))}, ensure_ascii=False, indent=2))
+        elif args.commande == "groupes":
+            print(json.dumps({"questions": groupes(contexte(args.dossier, args.jour, args.perso))}, ensure_ascii=False, indent=2))
         elif args.commande == "prio-oui":
             print(json.dumps(migration_prio(contexte(args.dossier, args.jour, args.perso)), ensure_ascii=False, indent=2))
         elif args.commande == "match":

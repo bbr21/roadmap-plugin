@@ -96,8 +96,9 @@ rule at the end of a turn that executed (below).
   plugin attaches what needs reading; one of these messages arriving without that block (panel
   closed) is handled by reading the roadmap yourself. Before « Quoi lancer » proposes launches, run
   `tasks.py lots` (#320, skill `tasks`): two open tasks at the same place, for the same purpose,
-  with a small result, are one session, not two; put its questions first, in one form, and launch
-  what is left. « Maestro go » posts the cards of the first
+  with a small result, are one session, not two; and `tasks.py groupes` (#438): open tasks of one
+  theme that should share a parent; put their questions first, in one form, and launch what is
+  left. « Maestro go » posts the cards of the first
   three; « Maestro, <une demande> » scans everything and frames the request first (below, #250). News of children that are stuck, however, is
   said right away.
   « Maestro <axe> » (« Maestro Rob », « Maestro Merch Promo », #239; case, accents, spaces and
@@ -485,7 +486,9 @@ with « Cible : le Mac, … » and the recommendation. What changes for Maestro 
 - **Propose a task** (#216, Caroline): a new idea or an action to do that comes out of the
   exchange with the person, outside the tasks in progress, becomes a proposed task in the same
   turn, without waiting to be asked: Maestro opens its line through the `tasks` skill (after
-  matching), then posts the card (`own_initiative`, title `#<id> · <nom>`, brief opened
+  matching; the proposals of one study, or of one session, go in one batch and **never with a
+  forced `distinct`**: `write` asks whether they share a parent with the open tasks of their theme,
+  #438, after #419, #423, #433 and #434 were opened apart on 2026-11-10), then posts the card (`own_initiative`, title `#<id> · <nom>`, brief opened
   by its mission, Maestro clause). Work done elsewhere: the line alone, said in one line. Nothing
   for a reflection, an answered question, a decision without an action (the project's memory), a
   subject that already has its task (enrich it, one line); the project's rules (`regles`) win.

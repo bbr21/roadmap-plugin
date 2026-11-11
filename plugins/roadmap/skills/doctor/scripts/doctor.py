@@ -958,6 +958,22 @@ def regles_du_projet(main):
     return ligne(OK, "Règles du projet", " ; ".join(parties))
 
 
+def regles_de_l_outil(main):
+    """La section « Règles de l'outil » du fichier des règles (#290), comparée à celle du modèle du mode :
+    à jour, OK ; absente ou différente, « À voir », avec la commande qui la pose seule. Sans fichier des
+    règles, pas de ligne : « Règles du projet » est déjà KO, avec la commande qui pose le fichier entier."""
+    e = ob.etat_regles_outil(main)
+    if e is None:
+        return None
+    mode = "Projet" if e["mode"] == "projet" else "Code"
+    if e["etat"] == "a_jour":
+        return ligne(OK, "Règles de l'outil", "%s : à jour avec le modèle du mode %s" % (e["chemin"], mode))
+    pose = "python3 %s regles --outil %s" % (os.path.abspath(ob.__file__), main)
+    quoi = "absente" if e["etat"] == "absente" else "différente du modèle du mode %s" % mode
+    return ligne(VOIR, "Règles de l'outil", "%s : section « Règles de l'outil » %s" % (e["chemin"], quoi),
+                 pose + " (la seule section, les règles du projet gardées)")
+
+
 # Les couleurs d'axe du panneau (#286), dans l'ordre de `AXIS_NAMES` de hooks/parse.ts.
 COULEURS_AXE = ("bleu", "orange", "vert", "jaune", "violet", "turquoise", "rose", "gris")
 SLUG_AXE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
@@ -1065,7 +1081,7 @@ def diagnostiquer(dossier, plugins="lire", home=None, avec_outils=True, gere=Non
             lignes += outils(requis, "projet", est_git)
         lignes.append(travail(principal))
         lignes += roadmap_projet(principal)
-        lignes += [l for l in [regles_du_projet(principal), axes_du_projet(principal, home)] if l]
+        lignes += [l for l in [regles_du_projet(principal), regles_de_l_outil(principal), axes_du_projet(principal, home)] if l]
         lignes.append(design_system(principal))
         lignes += plugins_et_skills(requis, plugins, home, requis["projet"]["skills"], facultatif=True)
         lignes += copies
@@ -1084,7 +1100,7 @@ def diagnostiquer(dossier, plugins="lire", home=None, avec_outils=True, gere=Non
     lignes += faits
     if git(dossier, "rev-parse", "--git-dir").returncode == 0:
         lignes += roadmap(main)
-    lignes += [l for l in [regles_du_projet(main), axes_du_projet(main, home)] if l]
+    lignes += [l for l in [regles_du_projet(main), regles_de_l_outil(main), axes_du_projet(main, home)] if l]
     lignes.append(design_system(main))
     lignes += plugins_et_skills(requis, plugins, home)
     lignes += copies

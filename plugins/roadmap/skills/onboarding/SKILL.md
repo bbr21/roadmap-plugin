@@ -32,7 +32,10 @@ The roadmap lives in the repository, hence on GitHub: a `roadmap/` folder at the
 each closed task) and `ROADMAP-REGLES.md` (#167: what becomes a task, what never does, the
 project's rules, where to find proof; set from the template, with or without code, then filled with the
 person), which `.claude/roadmap.json` points the panel to. A project onboarded before #167 gets
-its rules file with `onboarding.py regles <dossier>`. A project that already keeps
+its rules file with `onboarding.py regles <dossier>`; `onboarding.py regles --outil <dossier>`
+(#290) brings its « Règles de l'outil » section up to the template of its mode, that section only
+(absent: set before the first `##` heading), the project's own rules kept and nothing written outside the
+project folder. The doctor says when it is out of date. A project that already keeps
 its roadmap at its root keeps it there: the script sees it and does not set up a second one.
 
 The templates are in `references/modeles/`, the questions and the answer format in

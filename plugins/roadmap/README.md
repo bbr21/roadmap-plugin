@@ -312,7 +312,9 @@ filtres, « Qui », les rangements) vaut dans tout projet.
 - **Les règles du projet** (#158), dans tout projet. Tout projet a son fichier de règles,
   `ROADMAP-REGLES.md`, à côté de `ROADMAP.md` (#167) : ce qui devient une tâche, ce qui n'en
   devient jamais une, les règles du projet et ses preuves. L'onboarding le pose depuis un modèle
-  (`onboarding.py regles <dossier>` pour un projet déjà onboardé), le doctor est KO s'il manque, et
+  (`onboarding.py regles <dossier>` pour un projet déjà onboardé), le doctor est KO s'il manque, il
+  dit si sa section « Règles de l'outil » est à jour avec le modèle du mode (#290 ; sinon « À voir »,
+  et `onboarding.py regles --outil <dossier>` remplace cette seule section), et
   les skills `tasks`, `audit` et Maestro le lisent à chaque passage ; ses règles l'emportent sur
   leurs défauts. Le panneau le rappelle (#171) : le brief d'une session lancée par ▶ ou « Vérifier »
   dit de le lire avant d'écrire une ligne, et une écriture qui ajoute une ligne à `ROADMAP.md` reçoit
@@ -758,6 +760,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.266.0 (2026-11-11)** : tasks : regroupement à l'écriture (#438) ; impact : tests lourds laissés à la CI de la PR (#434) ; doctor : règles de l'outil à jour (#290)
 - **0.265.0 (2026-11-11)** : maestro : une branche dont la PR est verte se fusionne sans rejouer la CI de PR ; plusieurs branches prêtes passent d'affilée, une seule CI de main (#431)
 - **0.264.2 (2026-11-11)** : maestro : une entrée de la file retenue chez une session archivée, absente ou qui n'est pas un Maestro est reprise par un Maestro ouvert, son projet d'abord (#424)
 - **0.264.1 (2026-11-11)** : panneau : le titre d'une ligne cloud ouvre la fiche de la tâche, qui porte « Ouvrir la PR N » (#435)
