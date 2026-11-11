@@ -540,7 +540,9 @@ import {
   todayOf,
   toggleFold,
   unlocksOf,
+  cloudArchiveNote,
   cloudBrandTasks,
+  cloudSessionIdOf,
   cloudTakePickaxe,
   cloudTakenAt,
   cloudWords,
@@ -6408,8 +6410,8 @@ async function compactFromBand($: EngineInterface): Promise<void> {
 
 /** L'icône d'archivage d'une ligne de la bande de Maestro (#174) : la session de sa tâche, par son suivi s'il y en a un. */
 async function archiveBandSession($: EngineInterface, t: BrandTask, now: number): Promise<void> {
-  // Une ligne cloud fusionnée n'a pas de session locale : l'archive la cache (#408).
-  if (t.cloud) return hideCloudRow($, t)
+  // Une ligne cloud fusionnée : la ligne se cache (#408) et sa session cloud s'archive par l'id de sa PR (#435).
+  if (t.cloud) return archiveCloudRow($, t)
   if (!t.sessionId) return
   const live = await loadLive($).catch(() => ({}) as Record<string, LiveEntry>)
   const key = Object.keys(live).find(k => live[k]?.sessionId === t.sessionId)
@@ -6428,14 +6430,10 @@ let cloudPrsMem: { root: string; at: number; value: unknown } | undefined
 let cloudPrsFlight: { root: string; run: Promise<unknown> } | undefined
 let cloudHiddenMem: { at: number; keys: Set<string> } | undefined
 
-/** `gh pr list` du dépôt d'origine de `root` ; `undefined` si `git` ou `gh` manquent, ne sont pas connectés ou lèvent. */
-async function runCloudGh($: EngineInterface, root: string): Promise<unknown> {
+/** `gh <args>` lancé par l'un de ses chemins connus, sa sortie JSON lue ; `undefined` s'il manque, refuse ou lève. */
+async function runGh($: EngineInterface, args: string[]): Promise<unknown> {
   try {
-    const remote = await $.process.run(['git', '-C', root, 'remote', 'get-url', 'origin'], { timeoutMs: 5_000 })
-    const repo = remote.exitCode === 0 ? githubRepoOf(remote.stdout) : undefined
-    if (!repo) return undefined
     // Chaque chemin de `gh` en clair, pour que `tools/securite.py` lise le programme lancé (pas de variable en tête).
-    const args = ['pr', 'list', '-R', repo, '--state', 'all', '--limit', '100', '--json', CLOUD_PR_FIELDS]
     const opts = { timeoutMs: 10_000 }
     const tries = [
       () => $.process.run(['gh', ...args], opts),
@@ -6456,6 +6454,23 @@ async function runCloudGh($: EngineInterface, root: string): Promise<unknown> {
     // illisible ou en panne : « état inconnu »
   }
   return undefined
+}
+
+/** `owner/repo` du dépôt d'origine de `root` ; `undefined` sans `git` ou hors GitHub. */
+async function cloudRepoOf($: EngineInterface, root: string): Promise<string | undefined> {
+  try {
+    const remote = await $.process.run(['git', '-C', root, 'remote', 'get-url', 'origin'], { timeoutMs: 5_000 })
+    return remote.exitCode === 0 ? githubRepoOf(remote.stdout) : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/** `gh pr list` du dépôt d'origine de `root` ; `undefined` si `git` ou `gh` manquent, ne sont pas connectés ou lèvent. */
+async function runCloudGh($: EngineInterface, root: string): Promise<unknown> {
+  const repo = await cloudRepoOf($, root)
+  if (!repo) return undefined
+  return runGh($, ['pr', 'list', '-R', repo, '--state', 'all', '--limit', '100', '--json', CLOUD_PR_FIELDS])
 }
 
 /**
@@ -6557,10 +6572,35 @@ async function cloudTasksOf($: EngineInterface, source: Source, tasks: readonly 
     })
 }
 
-/** « Archiver » une ligne cloud fusionnée : aucune session locale, la ligne se cache du bloc et de la bande (`cloud-hidden`). */
-async function hideCloudRow($: EngineInterface, t: BrandTask): Promise<void> {
+/**
+ * L'archive d'une ligne cloud fusionnée (#435) : la ligne se cache (`hideCloudRow`), puis sa vraie session cloud
+ * s'archive par l'identifiant que porte sa PR (`gh pr view`, lien `claude.ai/code/session_…`). L'app refuse (son outil
+ * ne connaît que les sessions locales) ou la PR ne le dit pas : la note dit à BBR d'archiver dans la liste de gauche.
+ */
+async function archiveCloudRow($: EngineInterface, t: BrandTask): Promise<void> {
   const source = await sourceNow($).catch(() => undefined)
   if (!source) return
+  await hideCloudRow($, t, source)
+  const root = source.root ?? source.dir
+  const number = t.cloud?.number
+  const repo = number === undefined ? undefined : await cloudRepoOf($, root)
+  const pr = repo === undefined ? undefined : await runGh($, ['pr', 'view', String(number), '-R', repo, '--json', 'body,comments'])
+  const sessionId = cloudSessionIdOf(pr)
+  const title = t.label
+  if (sessionId === undefined) return setView($, () => ({ openAt: '', openNote: cloudArchiveNote(title, 'no-id') }))
+  let outcome: 'archived' | 'refused' = 'refused'
+  try {
+    const ran = await $.tool.call({ tool: ARCHIVE_SESSION_TOOL, session_id: sessionId })
+    if (ran.deny === undefined && !ran.isError) outcome = 'archived'
+  } catch {
+    // outil absent ou en panne : la note dit où archiver
+  }
+  if (outcome === 'archived') archivedSessionIds.add(sessionId)
+  await setView($, () => ({ openAt: '', openNote: cloudArchiveNote(title, outcome) }))
+}
+
+/** Cache une ligne cloud fusionnée du bloc et de la bande (`cloud-hidden`) : aucune session locale à archiver (#408). */
+async function hideCloudRow($: EngineInterface, t: BrandTask, source: Source): Promise<void> {
   const key = `${source.root ?? source.dir}|#${t.id}`
   const stored = await $.store.get(CLOUD_HIDDEN_KEY).catch(() => undefined)
   const keys = new Set(Array.isArray(stored) ? stored.filter((x): x is string => typeof x === 'string') : [])
@@ -9059,7 +9099,7 @@ export const register: Register = (on, options) => {
       })
       return maestroBandTree($, e, band, found.data.palette, views, infos, {
         open: t => void (t.cloud ? openCloudPr($, t.cloud) : t.sessionId ? openSession($, { sessionId: t.sessionId, startedAt: now, title: t.label }) : undefined),
-        archive: t => void (t.cloud ? hideCloudRow($, t) : archiveBandSession($, t, now)),
+        archive: t => void (t.cloud ? archiveCloudRow($, t) : archiveBandSession($, t, now)),
         compact: () => void compactFromBand($),
         openStuck: s => void (s.open ? openSession($, { sessionId: s.open, startedAt: now, title: `Maestro ${s.project}` }) : undefined),
       }, now, contexts, await read($, zoneGenAtom), stuck)

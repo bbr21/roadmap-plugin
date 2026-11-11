@@ -10036,6 +10036,42 @@ export function cloudWords(state: CloudPr['state']): { short: string; long: stri
   }
 }
 
+const CLOUD_SESSION_LINK = /https:\/\/claude\.ai\/code\/(session_[A-Za-z0-9]+)/
+
+/**
+ * L'identifiant de la session cloud d'une PR (#435), d'après la sortie JSON de `gh pr view --json body,comments` : le
+ * lien `https://claude.ai/code/session_…` que la session pose en pied de sa PR, dans le corps d'abord, sinon dans le
+ * premier commentaire qui le porte. Illisible ou sans lien : `undefined`, jamais d'exception.
+ */
+export function cloudSessionIdOf(pr: unknown): string | undefined {
+  let value: unknown = pr
+  if (typeof value === 'string') {
+    try {
+      value = JSON.parse(value)
+    } catch {
+      return undefined
+    }
+  }
+  if (typeof value !== 'object' || value === null) return undefined
+  const { body, comments } = value as { body?: unknown; comments?: unknown }
+  const texts = [body, ...(Array.isArray(comments) ? comments.map(c => (typeof c === 'object' && c !== null ? (c as { body?: unknown }).body : undefined)) : [])]
+  for (const text of texts) {
+    const m = typeof text === 'string' ? text.match(CLOUD_SESSION_LINK) : null
+    if (m) return m[1]
+  }
+  return undefined
+}
+
+/**
+ * La note du panneau après l'archive d'une ligne cloud (#435) : la session archivée, sinon où BBR l'archive (l'outil
+ * d'archivage de l'app ne connaît que ses sessions locales : « not found » pour une session cloud, vu le 2026-11-10).
+ */
+export function cloudArchiveNote(title: string, outcome: 'archived' | 'refused' | 'no-id'): string {
+  if (outcome === 'archived') return `Session cloud « ${title} » archivée.`
+  const why = outcome === 'refused' ? "l'app n'archive pas une session cloud depuis le panneau" : "sa PR ne dit pas quelle session l'a écrite"
+  return `Ligne cachée, mais ${why} : archive « ${title} » dans la liste de gauche de l'app.`
+}
+
 /** `owner/repo` d'une adresse d'origine GitHub (ssh ou https) ; rien pour un autre hébergeur ou un nom douteux. */
 export function githubRepoOf(remote: string): string | undefined {
   const m = remote.trim().match(/^(?:git@github\.com:|(?:ssh:\/\/git@|https?:\/\/|git:\/\/)github\.com[:/])([A-Za-z0-9][A-Za-z0-9_.-]*)\/([A-Za-z0-9][A-Za-z0-9_.-]*?)(?:\.git)?\/?$/)

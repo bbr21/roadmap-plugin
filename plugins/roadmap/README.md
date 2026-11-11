@@ -758,6 +758,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.263.1 (2026-11-11)** : panneau : l'archive d'une ligne cloud lit sa session dans la PR et l'archive, sinon dit de l'archiver dans la liste de gauche (#435)
 - **0.263.0 (2026-11-11)** : panneau et maestro : une PR fusionnée par Maestro finit « Merged » (gh pr merge, #428) ; la durée d'une ligne cloud part de sa prise (#426) ; une tâche à maquettes est recommandée cloud (#427)
 - **0.262.0 (2026-11-11)** : panneau : une tâche parent dépliée montre sa date finale (son due:, sinon l'échéance de son dernier enfant), repliée la prochaine échéance de ses enfants (#319)
 - **0.261.0 (2026-11-11)** : maestro : la carte cloud part du panneau lui-même, qui prend la ligne ; l'interrupteur Cloud | Mac redessine sans recharger ; une carte cloud refuse une branche absente de GitHub (#416)
