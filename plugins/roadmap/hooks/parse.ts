@@ -10161,29 +10161,52 @@ export function bandInfo(o: { view?: StepsView; finished?: boolean }): string {
  * l'info (compte et étape) et la durée chacune à la largeur du plus long texte réel de la bande (un signe
  * par cellule, le corps `caption` est plus étroit), l'info plafonnée à `BAND_INFO_MAX`, la durée sans
  * l'horloge qui la précède ; l'archivage, entre la case et le numéro (retour de test de #385), en 3, et
- * pas de case quand aucune ligne n'en a. Plus de case d'état : ni mot, ni colonne (« Les tags done,
- * t'attend, en cours ne sont pas obligatoires là-bas »). La même largeur sur chaque ligne garde les
- * colonnes (#172).
+ * pas de case quand aucune ligne n'en a. Le mot d'état revient (#425), dans la case de l'info, sa colonne
+ * à la largeur du plus long mot. La même largeur sur chaque ligne garde les colonnes (#172).
  */
-export function bandColumns(o: { infos: readonly string[]; sinces: readonly string[]; archive: boolean }): { info: number; since: number; archive: number } {
+export function bandColumns(o: { infos: readonly string[]; sinces: readonly string[]; archive: boolean; labels?: readonly string[] }): {
+  info: number
+  since: number
+  archive: number
+  label: number
+} {
   const widest = (xs: readonly number[]) => xs.reduce((a, b) => Math.max(a, b), 0)
+  // #425 : le libellé d'état a sa colonne, au début de la case de l'info, à la largeur du plus long mot
+  // affiché ; la case l'englobe (mot, écart d'une cellule, compte et étape) sans passer son plafond : c'est
+  // l'étape qui cède la place du mot, jamais le titre.
+  const label = widest((o.labels ?? []).map(c => [...c].length))
+  const text = widest(o.infos.map(c => [...c].length))
   return {
-    info: Math.min(BAND_INFO_MAX, widest(o.infos.map(c => [...c].length))),
+    info: Math.min(BAND_INFO_MAX, (label > 0 ? label + 1 : 0) + text),
     since: widest(o.sinces.map(c => [...c].length)),
     archive: o.archive ? 3 : 0,
+    label,
   }
 }
 
 /**
+ * Le jeton de couleur de l'état d'une ligne de la bande (#425, maquette A) : violet `finished` pour une tâche
+ * faite, orange `block` pour t'attend, bleu `live` en session, bleu-vert `wait` à fusionner (#191). Le libellé
+ * et la durée prennent sa version « On », l'icône sa couleur pleine ; une ligne faite passe toute en violet.
+ */
+export function bandTone(t: Pick<BrandTask, 'state' | 'finished'>): 'finished' | 'block' | 'live' | 'wait' {
+  if (t.finished || t.state === 'done') return 'finished'
+  if (t.state === 'wait') return 'block'
+  if (t.state === 'merge') return 'wait'
+  return 'live'
+}
+
+/**
  * L'état d'une ligne de la bande de Maestro, une icône et son mot, comme le bloc « En cours » du panneau
- * (#211) : la roue « en cours », la main « t'attend », la branche « à fusionner », la coche « Completed ».
+ * (#211) : la roue « en session », la main « t'attend », la branche « à fusionner », la coche « Done » (#425).
  */
 export function bandState(t: Pick<BrandTask, 'state' | 'finished'>): { icon: 'spinner' | 'hand' | 'merge' | 'check'; word: string } {
-  if (t.state === 'live') return { icon: 'spinner', word: 'en cours' }
+  // #425 : les mots de `BRAND_STATE_WORD`, ceux de l'en-tête de la bande et du centre de contrôle (« le même
+  // langage partout ») ; « en cours » et « Completed » (#254) s'alignent sur « en session » et « Done ».
+  if (t.state === 'live') return { icon: 'spinner', word: BRAND_STATE_WORD.live }
   if (t.state === 'wait') return { icon: 'hand', word: BRAND_STATE_WORD.wait }
   if (t.state === 'merge') return { icon: 'merge', word: BRAND_STATE_WORD.merge }
-  // La bande au-dessus de la saisie garde son mot (#254 : Bertrand n'y veut rien changer).
-  return { icon: 'check', word: 'Completed' }
+  return { icon: 'check', word: BRAND_STATE_WORD.done }
 }
 
 /** Les tâches des sessions lancées par Maestro, par création de leur session, par numéro en secours (#143). */

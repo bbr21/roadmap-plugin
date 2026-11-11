@@ -122,6 +122,7 @@ import {
   bandInfo,
   sinceLabel,
   bandState,
+  bandTone,
   maestroBand,
   maestroBarText,
   type MaestroBand,
@@ -9701,28 +9702,24 @@ function maestroBandTree(
   const Client = 'Client' in resolved && Svg ? resolved.Client : undefined
   const words = brandText(band.brand)
   const mine = contexts.mine
-  // Les couleurs de #145 : t'attend en orange, toute finie en violet ; à fusionner en bleu-vert (#191).
-  const hue = (t: BrandTask): [string, string] =>
-    t.finished
-      ? [palette.finished, palette.finishedOn]
-      : t.state === 'wait'
-        ? [palette.block, palette.blockOn]
-        : t.state === 'live'
-          ? [palette.live, palette.liveOn]
-          : t.state === 'merge'
-            ? [palette.wait, palette.waitOn]
-            : [palette.done, palette.text2]
+  // Les couleurs de #145 : t'attend en orange, toute finie en violet ; à fusionner en bleu-vert (#191) ;
+  // #425 : une tâche faite en violet, même sa session encore au travail. La couleur pleine pour l'icône, sa
+  // version « On » pour le mot et la durée (4,5:1 dans les deux thèmes).
+  const hue = (t: BrandTask): [string, string] => {
+    const tone = bandTone(t)
+    return [palette[tone], palette[`${tone}On`]]
+  }
   const strut = Svg && <Svg source={`<svg xmlns="http://www.w3.org/2000/svg" width="1" height="${SIZE.strut.row}"/>`} alt="espace" width={1} height={SIZE.strut.row} />
   // L'icône d'archivage d'une session close (#174) : un dessin et sa zone de clic ; au terminal ou sans
   // zone, un bouton de texte. Archiver garde le clic de Bertrand : l'icône est ce clic.
-  const archiveButton = (t: BrandTask) => {
+  const archiveButton = (t: BrandTask, hex = palette.text2) => {
     const id = `band-archive:${keyPart(t.id)}`
     if (!Svg || !Client) return <Button key={id} plain dimColor label="Archiver" onPress={() => act.archive(t)} />
     pressHandlers.set(id, () => act.archive(t))
     zoneDrawn(zones, 'press-hit', now)
     return (
       <Box key={id} flexDirection="row" alignItems="center">
-        <Svg source={archiveIcon(palette.text2, 14)} alt="Archiver la session" width={SIZE.icon.sm} height={SIZE.icon.sm} />
+        <Svg source={archiveIcon(hex, 14)} alt="Archiver la session" width={SIZE.icon.sm} height={SIZE.icon.sm} />
         {/* Une ligne de haut : sous une icône, une zone sans hauteur ne reçoit aucun clic (2026-10-23). */}
         <Box position="absolute" top={0} left={0} right={0}>
           <Client key={`${pressKey(id)}-g${zoneGen}`} module="./press-hit.tsx" props={{ id }} width="100%" height={1} />
@@ -9750,7 +9747,10 @@ function maestroBandTree(
   // L'état de chaque ligne en icône, sans mot (retour de test de #385, bande A) ; le compte et l'étape en une
   // case, la durée dans la sienne, au bord droit.
   const marks = band.tasks.map(bandState)
+  // #425 (maquette A) : le mot d'état en tête de la case de l'info ; une ligne cloud garde ses mots à elle.
+  const labels = band.tasks.map((t, i) => (t.cloud ? '' : (marks[i]?.word ?? '')))
   const cols = bandColumns({
+    labels: labels.filter(w => w !== ''),
     infos: infos.map(x => x.text),
     // #400 : la durée en file d'une entrée bloquée partage la colonne de la durée des sessions.
     sinces: [...infos.map(x => x.since), ...stuck.map(s => s.since)],
@@ -9778,12 +9778,12 @@ function maestroBandTree(
   }
   // Le titre ouvre la session : sur le bureau, un texte et sa zone de clic, sans la marge du bouton natif
   // qui creusait l'écart après le numéro (#211) ; au terminal, le bouton.
-  const titleOf = (t: BrandTask, done = false) => {
+  const titleOf = (t: BrandTask, done = false, doneHex = palette.text3) => {
     // Une ligne cloud : le titre ouvre sa PR ; sans PR, pas de lien (#408).
     const opens = Boolean(t.sessionId || t.cloud?.url)
     const graphic = Boolean(opens && Svg && Client)
     const name = (
-      <Text size="footnote" wrap="truncate-end" {...(done ? { strikethrough: true, color: palette.text3 } : {})} {...(graphic ? { hover: { underline: true } } : {})}>
+      <Text size="footnote" wrap="truncate-end" {...(done ? { strikethrough: true, color: doneHex } : {})} {...(graphic ? { hover: { underline: true } } : {})}>
         {t.label}
       </Text>
     )
@@ -9913,7 +9913,7 @@ function maestroBandTree(
                   tâche est close ; sans tâche dans la roadmap, le point de son état, comme avant. */}
               {Svg &&
                 (square ? (
-                  <Svg source={done ? squareCheckRowIcon(square.hex, palette.onAxis) : squareRowIcon(square.hex)} alt={done ? 'faite' : square.axis} width={MARK_SQUARE_PX} height={SIZE.strut.row} />
+                  <Svg source={done ? squareCheckRowIcon(palette.finished, palette.onAxis) : squareRowIcon(square.hex)} alt={done ? 'faite' : square.axis} width={MARK_SQUARE_PX} height={SIZE.strut.row} />
                 ) : (
                   <Svg source={discIcon(dot, 12)} alt={t.state === 'done' ? bandState(t).word : (words.states[i] ?? bandState(t).word)} width={12} height={12} />
                 ))}
@@ -9922,20 +9922,20 @@ function maestroBandTree(
                   restent alignés. Au terminal, le bouton prend sa largeur. */}
               {cols.archive > 0 && (
                 <Box key={`band-archive-slot:${keyPart(t.id)}`} width={Svg ? cols.archive : undefined} flexShrink={0} flexDirection="row" justifyContent="center">
-                  {t.archivable && (t.sessionId || t.cloud) && archiveButton(t)}
+                  {t.archivable && (t.sessionId || t.cloud) && archiveButton(t, done ? palette.finished : palette.text2)}
                 </Box>
               )}
               {/* Le numéro à sa largeur, à un écart du titre (#211) ; barré avec le titre quand la tâche est close. */}
               <Box flexShrink={0}>
-                <Text size="caption" tabular color={palette.text3} {...(done ? { strikethrough: true } : {})}>{`#${t.id}`}</Text>
+                <Text size="caption" tabular color={done ? palette.finishedOn : palette.text3} {...(done ? { strikethrough: true } : {})}>{`#${t.id}`}</Text>
               </Box>
               <Box flexShrink={1} minWidth={0}>
-                {titleOf(t, done)}
+                {titleOf(t, done, palette.finishedOn)}
               </Box>
               <Box flexGrow={1} />
               {/* L'état en icône seule (bande A) : la roue, la main, la branche ou la coche, devant la jauge. */}
               <Box key={`band-mark:${keyPart(t.id)}`} flexShrink={0} flexDirection="row" alignItems="center">
-                {stateIcon(mark.icon, mark.word, word, t.cloud)}
+                {stateIcon(mark.icon, mark.word, dot, t.cloud)}
               </Box>
               {/* Jauge, info et durée à largeur fixe, sur chaque ligne (#172) : les barres partent de la même
                   colonne, quels que soient le titre, l'étape ou le compte. La case de la jauge suit son dessin (#326). */}
@@ -9956,8 +9956,19 @@ function maestroBandTree(
               {/* Le compte et l'étape, « 6/7 · Écrire les tests rouges », à la largeur du plus long texte (#174). Ils
                   ne rétrécissent pas : seul le titre cède sa place, sinon un titre long poussait la jauge (#326). */}
               {cols.info > 0 && !t.cloud && (
-                <Box key={`band-info:${keyPart(t.id)}`} width={cols.info} flexShrink={0} minWidth={0} flexDirection="row" alignItems="center">
-                  {info && info.text !== '' && <Text size="caption" tabular color={palette.text3} wrap="truncate-end">{info.text}</Text>}
+                <Box key={`band-info:${keyPart(t.id)}`} width={cols.info} flexShrink={0} minWidth={0} flexDirection="row" alignItems="center" gap={SPACE.row}>
+                  {/* #425 (maquette A) : le mot d'état, à la couleur de l'état, dans sa colonne ; le compte et l'étape en gris
+                      cèdent sa place, jamais le titre. */}
+                  {cols.label > 0 && labels[i] !== '' && (
+                    <Box key={`band-label:${keyPart(t.id)}`} width={cols.label} flexShrink={0}>
+                      <Text size="caption" weight="medium" color={word}>{labels[i]}</Text>
+                    </Box>
+                  )}
+                  {info && info.text !== '' && (
+                    <Box key={`band-step:${keyPart(t.id)}`} flexShrink={1} minWidth={0}>
+                      <Text size="caption" tabular color={palette.text3} wrap="truncate-end">{info.text}</Text>
+                    </Box>
+                  )}
                 </Box>
               )}
               {/* La durée depuis le lancement, l'horloge devant, au bord droit, sous « Contexte 48 % » (retour de test
@@ -9966,10 +9977,11 @@ function maestroBandTree(
                 <Box key={`band-since:${keyPart(t.id)}`} width={2 + cols.since} flexShrink={0} flexDirection="row" alignItems="center" justifyContent="flex-end" gap={0}>
                   {info?.since && (
                     <Box width={2} flexShrink={0} flexDirection="row" alignItems="center">
-                      {Svg ? <Svg source={clockIcon(palette.text3, 12)} alt="lancée depuis" width={12} height={12} /> : <Text size="caption" color={palette.text3}>◷</Text>}
+                      {Svg ? <Svg source={clockIcon(word, 12)} alt="lancée depuis" width={12} height={12} /> : <Text size="caption" color={word}>◷</Text>}
                     </Box>
                   )}
-                  {info?.since && <Text size="caption" tabular color={palette.text3}>{info.since}</Text>}
+                  {/* #425 : la durée à la couleur de l'état. */}
+                  {info?.since && <Text size="caption" tabular color={word}>{info.since}</Text>}
                 </Box>
               )}
             </Box>
