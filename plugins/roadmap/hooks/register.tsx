@@ -545,6 +545,7 @@ import {
   cloudSessionIdOf,
   cloudTakePickaxe,
   cloudTakenAt,
+  cloudPrOf,
   cloudWords,
   cloudBranchOf,
   cloudBriefText,
@@ -9221,7 +9222,7 @@ export const register: Register = (on, options) => {
         }
       })
       return maestroBandTree($, e, band, found.data.palette, views, infos, {
-        open: t => void (t.cloud ? openCloudPr($, t.cloud) : t.sessionId ? openSession($, { sessionId: t.sessionId, startedAt: now, title: t.label }) : undefined),
+        open: t => void (t.cloud ? openTaskFiche($, src, t.id) : t.sessionId ? openSession($, { sessionId: t.sessionId, startedAt: now, title: t.label }) : undefined),
         archive: t => void (t.cloud ? archiveCloudRow($, t) : archiveBandSession($, t, now)),
         compact: () => void compactFromBand($),
         openStuck: s => void (s.open ? openSession($, { sessionId: s.open, startedAt: now, title: `Maestro ${s.project}` }) : undefined),
@@ -11194,6 +11195,9 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
       !current.done && current.id ? stored(pitchKey(ficheSource.name, current.id)) : undefined,
     ])
     const draft = await readDraft($, deliverables)
+    // #435 : une tâche cloud prise a sa PR ; la fiche porte son lien, au motif de « Ouvrir la session ».
+    const cloudPr = current.lieu === 'cloud' && current.branche ? cloudPrOf(await readCloudPrs($, source.root ?? source.dir), current.branche) : undefined
+    const prLink = cloudPr?.url !== undefined ? cloudPr : undefined
     const storedRecap = current.id ? recapOf(recapRaw) : undefined
     // #307 (maquette A) : la Mission garde la demande ; le récap de fin ouvre la carte Fin.
     const frame = missionFrame(current.label)
@@ -12251,8 +12255,16 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
         </Box>
       )
     }
+    // Le lien de la PR d'une tâche cloud (#435) : le bouton à icône externe de « Ouvrir la session ».
+    const prAction = (pr: CloudPr): RenderElement => (
+      <Box key="top-action" paddingX={SPACE.indent} flexDirection="row">
+        {primary('open-pr', externalIcon(palette.priText, 14), pr.number !== undefined ? `Ouvrir la PR ${pr.number}` : 'Ouvrir la PR', () => void openCloudPr($, pr))}
+      </Box>
+    )
     const topAction = (): RenderElement | null => {
-      if (current.done) return inSession && stepsDone ? archiveSelfBand() : null
+      if (current.done && inSession && stepsDone) return archiveSelfBand()
+      if (prLink && !live) return prAction(prLink)
+      if (current.done) return null
       // Dans sa propre session, « Ouvrir la session » n'a pas de sens (#336) : la bande d'état suffit.
       if (live && inSession) return null
       if (live) {
@@ -14453,20 +14465,8 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
               {s.titre}
             </Text>
           ) : null}
-          {block?.cloud ? (
-            // Une ligne cloud : le titre ouvre sa PR par sa zone de clic ; sans PR (ou sans url), pas de lien (#408).
-            block.cloud.url !== undefined ? (
-              Svg ? (
-                hit(`cloud-pr:${taskKey(t)}`, () => void openCloudPr($, block.cloud), 1)
-              ) : (
-                <Button key={t.key} plain onPress={() => void openCloudPr($, block.cloud)}>
-                  <Text wrap="truncate-end">{s.titre}</Text>
-                </Button>
-              )
-            ) : Svg ? null : (
-              <Text wrap="truncate-end">{s.titre}</Text>
-            )
-          ) : Svg ? (
+          {/* Une ligne cloud aussi (#435, demande de BBR) : le titre ouvre la fiche, qui porte le lien de la PR. */}
+          {Svg ? (
             <Box position="absolute" top={0} left={0}>
               <Button key={t.key} plain onPress={select(selectionOf(t))}>
                 {titleOverlay(s.titre)}
