@@ -92,10 +92,11 @@ def construire(depot, ident):
     # ligne ne se voit pas depuis la VM.
     repo = suivi_cloud.depot_github(depot)
     tests = (
-        "la suite entière que nomme docs/session-cloud.md, lancée dans ta VM, est verte"
+        "les seuls tests que nomme ta carte d'impact, lancés dans ta VM comme le dit docs/session-cloud.md, "
+        "sont verts"
         if repo
-        else "la suite entière lancée dans ta VM (claude plugin test plugins/roadmap, python3 tools/release.py "
-        "check, node scripts/check.mjs) est verte"
+        else "les seuls tests que nomme ta carte d'impact (node scripts/check.mjs seul pour une tâche sans code) "
+        "sont verts dans ta VM"
     )
     entete = (
         "Ta ligne, telle qu'écrite dans la roadmap du projet, qui vit sur le Mac hors du dépôt %s (prise pour toi, "
@@ -105,8 +106,8 @@ def construire(depot, ident):
     )
     sortie += [
         "Fini quand : ce que dit la ligne #%s est livré, %s sur ta branche à jour de origin/main, la branche %s "
-        "est poussée et sa PR vers main ouverte, un commentaire y colle le résultat de la suite (compte de tests, "
-        "rouges) et le dernier porte ton compte rendu." % (ident, tests, branche),
+        "est poussée et sa PR vers main ouverte, un commentaire y colle ces tests et leur résultat, "
+        "le dernier porte ton compte rendu." % (ident, tests, branche),
         "---",
         "",
         entete,

@@ -763,6 +763,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.270.0 (2026-11-11)** : tests ciblés par session, suite entière une fois sur main avant publication (#448)
 - **0.269.0 (2026-11-11)** : tests hors de GitHub Actions (#446) ; cloud pour une roadmap hors du dépôt, clé depot (#444) ; suivi d'une session cloud lancée par la carte (#445) ; tâche mère sans gras ni ▶ (#447)
 - **0.268.0 (2026-11-11)** : maestro : la session Maestro prend le nom du dossier de son projet (#439)
 - **0.267.0 (2026-11-11)** : panneau : cartes de tâche sans doublon, cible cloud ou Mac dans le titre de la carte native, icône sur les cartes custom, carte faite en violet (#436)

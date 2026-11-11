@@ -23,8 +23,8 @@ and in its `tests`.
 A project can also list its heavy test files (#434: over a minute in CI, roadmap.test.tsx 312 s), in
 `.claude/roadmap.json`: `"lourds": {"seuil_s": 50, "releve": "…", "tests": {"path": seconds, …}}`, kept up
 to date by the project (here `tools/tests_lourds.py`, from the CI log). Each one the map names is marked
-« lourd : en dernier » and listed in `heavy`: the session runs it last, once, with the whole suite, through
-the test queue (#446: no PR CI any more).
+« lourd : en dernier » and listed in `heavy`: the session runs it last, with the session's other targeted tests,
+through the test queue (#448: the whole suite runs once, on main, by Maestro).
 
 Exit 0 (map written, or nothing changed), 2 (not a git repository, or git failed).
 JSON: {"base", "cut", "heavy": {path: seconds}, "ranked": [{"path", "hits"}], "files": [{"path", "tests", "code", "docs", "declared"}], "symbols": [{"name", "tests", "code", "docs"}]}.
@@ -401,10 +401,10 @@ def render(result):
             out += block("- `%s`" % s["name"], s, heavy)
     if heavy:
         out += ["", "Tests lourds (plus d'une minute, .claude/roadmap.json, lourds) : %s. Lance-les en dernier, "
-                "avec la suite entière, une fois, par la file des tests (#446)."
+                "avec tes autres tests ciblés, par la file des tests (#448)."
                 % ", ".join("`%s` (%d s)" % (p, s) for p, s in heavy.items())]
     out += ["", "À faire : chaque test nommé se lance (ou se met à jour), chaque fichier de code nommé se relit ; "
-            "un symbole changé sans test en reçoit un ; puis toutes les suites du projet."]
+            "un symbole changé sans test en reçoit un ; la suite entière ne se lance pas ici, Maestro la rejoue sur main (#448)."]
     return "\n".join(out)
 
 

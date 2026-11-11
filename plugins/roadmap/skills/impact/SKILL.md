@@ -74,11 +74,13 @@ The project lists them in `.claude/roadmap.json`, kept up to date from the CI lo
 ```
 
 Each one the map names is marked « lourd : en dernier » (JSON: `heavy`, `{path: seconds}`): run it
-last, once, with the whole suite, through the test queue (#446: Roadmap has no PR CI any more since
-GitHub Actions' quota was spent; the marks keep the order and the time, not a ban).
+last, with the other tests of the map, through the test queue (#448: the marks keep the order and
+the time, not a ban).
 
-Then run the project's whole test suite (its CLAUDE.md, « Commandes »), whatever the map says: the
-map tells what to read and which test to write, not which tests may be skipped.
+Run only the tests the map names (none for a task without code: doc, rule, roadmap line; the
+project's check script alone). The whole suite runs once, on `main`, by Maestro, before each
+publication (#448): the map tells what to read and which test to write; a test reaching the change
+through intermediate calls is caught there, and a red `main` goes back to the task at fault.
 
 ## What it does not do
 

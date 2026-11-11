@@ -200,10 +200,11 @@ to it.
     asking the session (`enabled: true`). Maestro keeps its own Remote Control. Your panel also turns
     it off itself on each session you launched, once, from Bypass or Auto mode (#402): never turn it
     back off on a session where the person turned it on again;
-  - work on your branch, rerun the tests its impact map names, then, before « ready », the whole suite
-    once on its branch up to date with `main`, through the Mac's test queue, the tests the map marks
-    heavy last (a cloud task: in its VM, the result pasted in a PR comment; #446: no PR CI any more in
-    Roadmap, GitHub Actions' quota spent), push it, open your PR if the project has them;
+  - work on your branch, run only the tests its impact map names (none for a task without code: doc,
+    rule, roadmap line; the check script alone), through the Mac's test queue, the ones the map marks
+    heavy last, never the whole suite (#448: Maestro runs it once on `main` before each publication);
+    a cloud task runs them in its VM and pastes them in a PR comment; if `main` moved, merge it into
+    the branch, settle the conflict yourself and rerun those tests; push it, open your PR if the project has them;
   - do not merge into `main`: Maestro merges, one branch at a time;
   - a unique resource (iOS simulator, device, database, deployment, test account, publishing a
     plugin) is taken only with Maestro's go-ahead: say so at the top of your report and end your
@@ -582,12 +583,12 @@ The merge itself:
   refuses a head that moved since the review; a refused `gh pr merge` (conflict, head moved) sends
   the branch back to its update. Without a PR, the project's `merge --ff-only` and push stay.
 - **No PR run replayed after `main` moved** (#431), in a project where `main` is tested after the merges
-  (by its CI, or in Roadmap since #446 by Maestro's one rerun on the Mac): a branch whose last whole-suite
-  run is green (its PR CI, or the session's own run, on the Mac or pasted in its PR from its VM) and that `git merge-tree` (or GitHub,
+  (by its CI, or in Roadmap since #446 by Maestro's one rerun on the Mac): a branch whose targeted tests
+  are green (its PR CI where the project has one, or the session's own run of the tests its map names, on the Mac or pasted in its PR from its VM) and that `git merge-tree` (or GitHub,
   `mergeable`) merges into `main` without conflict is merged as it is, without asking its session to
   merge `main` into it and without waiting for a new PR run. `gh pr merge --merge` makes the merge commit
   of the two, and the run of `main` that follows is the proof of that mixed code. Only a conflict sends
-  the branch back to its update, and then its whole-suite run counts again (the resolution is new code). On
+  the branch back to its update, and then it reruns its targeted tests (the resolution is new code). On
   2026-11-10, #425 then #416 ran the 16-min suite four times for two changes
   (`docs/plans/spike-temps-tests/etude.md`).
 - **As soon as a branch is ready** (#131): its session's message is enough, Maestro reviews it and
@@ -599,7 +600,7 @@ The merge itself:
   sends it back to its session, the others continue), review its diff, merge, publish, send the list
   again and say the recap line, and only then the next one. With a CI on `main`, do not wait for its
   run between two merges of the series: read **one** run of `main` after the last one (the
-  `concurrency` of `main` replaces the run that waits). In Roadmap (#446, no CI), rerun the whole suite
+  `concurrency` of `main` replaces the run that waits). In Roadmap (#446, #448: no CI, sessions run only their targeted tests), run the whole suite
   **once** on `main` from the main folder after the last one, through the Mac's queue
   (`python3 tools/rejouer_delais.py plugins/roadmap`, in the background). Without such a CI, keep the project's rule:
   update the branch from `main` and rerun the tests its impact map names before merging it. **One publication per merge** (the person's choice, 2026-10-30, rule
@@ -612,7 +613,7 @@ The merge itself:
   middle commit, in a detached copy (`git worktree add --detach`, then `tools/un_test.sh`), red: the
   faulty one is there or before, green: after. Send the faulty branch back to its session by message
   or PR comment, the failing job and test named: it merges `main` into its branch, fixes, and is ready
-  again by a green whole-suite run. The merges stopped resume once `main` is green again.
+  again by green targeted tests. The merges stopped resume once `main` is green again.
 - **How to publish** (#410, #446): the way the project's `CLAUDE.md` gives (« Finir un chantier »). In
   Roadmap, `python3 tools/release.py release patch|minor "<skill> : <ce qui change> (#N)"` from the main
   folder, in the background (`run_in_background`), on the Mac: checks, version, history, tag
@@ -625,9 +626,9 @@ The merge itself:
   commit, in the background (`gh run list --branch main --commit <sha>`, then `gh run watch <id>
   --exit-status`); a red run goes back to the merged task's session, the failing job and test named
   (after a series: the bisection above). Roadmap has no such CI since #446 (`tests.yml` runs by hand
-  only): a session's « ready » carries its own whole-suite result (on the Mac, or in a PR comment from
-  its VM), which Maestro reads instead of `gh pr checks`, and Maestro reruns the suite once on `main`
-  after the series. Without CI, run it once from the main
+  only): a session's « ready » carries the result of the tests its impact map names (on the Mac, or in a PR comment from
+  its VM; none for a task without code), which Maestro reads instead of `gh pr checks`, and Maestro runs the whole suite once on `main`
+  after the series and before each publication (#448); nobody else does. Without CI, run it once from the main
   checkout: on the Mac's single test queue (#323) a suite started on `main` or by Maestro goes ahead of
   every session's tests, two merges in arrival order, without cutting the suite already running;
   `release.py` does not rerun it for the tree that has just passed `release.py check`. Then notify right away, by message, the
