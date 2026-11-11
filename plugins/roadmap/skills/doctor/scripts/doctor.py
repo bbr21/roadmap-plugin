@@ -1078,6 +1078,161 @@ def axes_du_projet(main, home=None):
     return ligne(OK, "Axes", "%d axe(s) à couleur ou nom choisi, dans %s" % (len(axes), ou))
 
 
+# ---------------------------------------------------------------- réglage cloud (#408, #444, #453)
+
+PERSO = "~/.claude/roadmap-perso.json"
+# Les clés d'une entrée de roadmap-perso.json qui ne se recopient pas d'un .claude/roadmap.json : elles disent où.
+CLES_DE_PLACE = ("dir", "name", "match")
+
+
+def depot_de(v):
+    """`owner/repo` d'un `depot` ou d'une adresse GitHub, comme `depotOf` du panneau ; None sinon."""
+    if not isinstance(v, str):
+        return None
+    v = v.strip()
+    if DEPOT_GITHUB.match(v):
+        return re.sub(r"\.git$", "", v)
+    if ADRESSE_GITHUB.match(v):
+        return re.sub(r"(\.git)?/?$", "", re.split(r"github\.com[:/]", v, maxsplit=1)[1])
+    return None
+
+
+def _chemin(p):
+    return os.path.normpath(os.path.expanduser(p))
+
+
+def _dans(p, racine):
+    return p == racine or p.startswith(racine.rstrip(os.sep) + os.sep)
+
+
+def sources_perso(home):
+    """Les entrées lisibles de `sources` de ~/.claude/roadmap-perso.json, comme `parseSources` du panneau."""
+    try:
+        with open(os.path.join(home, ".claude", "roadmap-perso.json"), encoding="utf-8") as f:
+            sources = (json.load(f) or {}).get("sources") or []
+    except (OSError, ValueError, AttributeError):
+        return []
+    return [s for s in sources if isinstance(s, dict) and isinstance(s.get("name"), str)
+            and isinstance(s.get("dir"), str) and isinstance(s.get("match"), list)]
+
+
+def _matchs(src):
+    return [_chemin(m) for m in src.get("match") or [] if isinstance(m, str) and m]
+
+
+def entrees_du_projet(main, home):
+    """Les entrées de roadmap-perso.json du même projet : leur roadmap ou l'un de leurs dossiers est dans `main`."""
+    racine = _chemin(main)
+    return [s for s in sources_perso(home)
+            if _dans(_chemin(s["dir"]), racine) or any(_dans(m, racine) for m in _matchs(s))]
+
+
+def reglages_effectifs(main, home):
+    """Les réglages que lit une session ouverte dans `main`, dans l'ordre du panneau (`localSource`) :
+    `.claude/roadmap.json`, sinon l'entrée de roadmap-perso.json au plus long préfixe. Et où les écrire."""
+    chemin = os.path.join(main, ".claude", "roadmap.json")
+    if os.path.isfile(chemin):
+        try:
+            with open(chemin, encoding="utf-8") as f:
+                cfg = json.load(f)
+        except (OSError, ValueError):
+            return None, None, None
+        return (cfg, ".claude/roadmap.json", None) if isinstance(cfg, dict) else (None, None, None)
+    racine, meilleure = _chemin(main), None
+    for src in sources_perso(home):
+        for m in _matchs(src):
+            if _dans(racine, m) and (meilleure is None or len(m) > meilleure[0]):
+                meilleure = (len(m), src)
+    if meilleure:
+        src = meilleure[1]
+        return src, "l'entrée « %s » de %s" % (src["name"], PERSO), src
+    return {}, ".claude/roadmap.json", None
+
+
+def _origine(dossier):
+    return depot_de(git(dossier, "remote", "get-url", "origin").stdout.strip()) if os.path.isdir(dossier) else None
+
+
+def clone_local(depot, candidats):
+    """Le premier dossier des candidats dont l'origine git est `depot` (sans tenir à la casse)."""
+    for c in candidats:
+        o = _origine(c)
+        if o and o.lower() == depot.lower():
+            return c
+    return None
+
+
+def _cle(k, v):
+    texte = json.dumps(v, ensure_ascii=False)
+    return "%s: %s" % (json.dumps(k), texte if len(texte) <= 60 else "…")
+
+
+def cloud_du_projet(main, home):
+    """Le réglage cloud du projet (#453) : `sessions:cloud` sans dépôt GitHub (ni origine git ni `depot`), KO ;
+    un dépôt sans docs/session-cloud.md, KO ; un projet sur GitHub sans `sessions:cloud`, « À voir » (cloud
+    possible). Une ligne, avec le geste, écrit là où la session lit ses réglages."""
+    eff, ou, entree = reglages_effectifs(main, home)
+    if eff is None:
+        return None  # .claude/roadmap.json illisible : la ligne Réglages le dit déjà.
+    sessions = eff.get("sessions")
+    if sessions is not None and sessions not in ("mac", "cloud"):
+        return ligne(VOIR, "Cloud", "sessions « %s » inconnu (mac ou cloud) : le panneau lance sur le Mac" % sessions,
+                     "écrire \"sessions\": \"cloud\" ou \"mac\" dans %s" % ou)
+    depot_declare = depot_de(eff.get("depot"))
+    depot = depot_declare or _origine(main)
+    candidats = [main] + [m for e in ([entree] if entree else entrees_du_projet(main, home)) for m in _matchs(e)]
+    if depot_declare:
+        clone = clone_local(depot, candidats)
+    else:
+        clone = main if depot else None
+    doc = clone and os.path.isfile(os.path.join(clone, "docs", "session-cloud.md"))
+    copier = ("copier docs/session-cloud.md de bbr21/roadmap dans %s/docs/, l'adapter au projet, committer et pousser"
+              % (clone or depot))
+    if sessions != "cloud":
+        if not depot:
+            return ligne(OK, "Cloud", "sessions de tâche sur le Mac (pas de dépôt GitHub : rien à cloner) ; une mission qui "
+                         "n'a besoin que des connecteurs part en cloud sans dépôt, par Maestro (#467)")
+        geste = "ajouter \"sessions\": \"cloud\" à %s" % ou
+        if clone and not doc:
+            geste += ", puis " + copier
+        return ligne(VOIR, "Cloud", "cloud possible : dépôt GitHub %s, sans sessions:cloud ; les tâches partent sur le Mac" % depot,
+                     geste)
+    if not depot:
+        return ligne(KO, "Cloud", "sessions:cloud sans dépôt GitHub joignable (ni origine git sur GitHub, ni depot) : "
+                     "le ▶ Cloud n'a rien à cloner",
+                     "ajouter \"depot\": \"<owner>/<repo>\" (le dépôt GitHub du code) à %s, ou pousser le dossier sur "
+                     "GitHub (gh repo create <compte>/<nom> --private --source %s --push), ou retirer sessions (une mission par "
+                     "connecteurs part sans dépôt, par Maestro, #467)" % (ou, main))
+    if not clone:
+        return ligne(VOIR, "Cloud", "sessions:cloud sur %s : aucun clone local, docs/session-cloud.md non vérifié" % depot,
+                     "vérifier que %s a docs/session-cloud.md à sa racine (copie de celui de bbr21/roadmap)" % depot)
+    if not doc:
+        return ligne(KO, "Cloud", "sessions:cloud sur %s, sans docs/session-cloud.md : une session cloud n'y trouve pas ses "
+                     "règles" % depot, copier)
+    return ligne(OK, "Cloud", "sessions:cloud sur %s, docs/session-cloud.md présent (réglage lu dans %s)" % (depot, ou))
+
+
+def reglages_masques(main, home):
+    """Une clé de .claude/roadmap.json sans effet dans les sessions ouvertes hors de `main` que couvre l'entrée
+    du même projet dans roadmap-perso.json : là, l'entrée fait foi (cas d'adBricks, 2026-11-11). « À voir »."""
+    eff, ou, entree = reglages_effectifs(main, home)
+    if not eff or ou != ".claude/roadmap.json":
+        return None
+    racine = _chemin(main)
+    soucis, gestes = [], []
+    for src in entrees_du_projet(main, home):
+        dehors = [m for m in _matchs(src) if not _dans(m, racine)]
+        cles = [k for k in eff if k not in CLES_DE_PLACE and src.get(k) != eff[k]]
+        if not dehors or not cles:
+            continue
+        soucis.append("%s de .claude/roadmap.json sans effet dans les sessions ouvertes de %s : l'entrée « %s » de %s "
+                      "y fait foi" % (", ".join(cles), ", ".join(dehors), src["name"], PERSO))
+        gestes.append("copier dans l'entrée « %s » de %s : %s" % (src["name"], PERSO, ", ".join(_cle(k, eff[k]) for k in cles)))
+    if not soucis:
+        return None
+    return ligne(VOIR, "Réglages masqués", " ; ".join(soucis), " ; ".join(gestes))
+
+
 def diagnostiquer(dossier, plugins="lire", home=None, avec_outils=True, gere=None, empreintes_de=None):
     """`empreintes_de` : la lecture des empreintes publiées ; par défaut le réseau, seulement quand le
     doctor juge les outils de la machine."""
@@ -1098,7 +1253,8 @@ def diagnostiquer(dossier, plugins="lire", home=None, avec_outils=True, gere=Non
             lignes += outils(requis, "projet", est_git)
         lignes.append(travail(principal))
         lignes += roadmap_projet(principal)
-        lignes += [l for l in [regles_du_projet(principal), regles_de_l_outil(principal), axes_du_projet(principal, home)] if l]
+        lignes += [l for l in [regles_du_projet(principal), regles_de_l_outil(principal), axes_du_projet(principal, home),
+                               cloud_du_projet(principal, home), reglages_masques(principal, home)] if l]
         lignes.append(design_system(principal))
         lignes += plugins_et_skills(requis, plugins, home, requis["projet"]["skills"], facultatif=True)
         lignes += copies
@@ -1117,7 +1273,8 @@ def diagnostiquer(dossier, plugins="lire", home=None, avec_outils=True, gere=Non
     lignes += faits
     if git(dossier, "rev-parse", "--git-dir").returncode == 0:
         lignes += roadmap(main)
-    lignes += [l for l in [regles_du_projet(main), regles_de_l_outil(main), axes_du_projet(main, home)] if l]
+    lignes += [l for l in [regles_du_projet(main), regles_de_l_outil(main), axes_du_projet(main, home),
+                           cloud_du_projet(main, home), reglages_masques(main, home)] if l]
     lignes.append(design_system(main))
     lignes += plugins_et_skills(requis, plugins, home)
     lignes += copies

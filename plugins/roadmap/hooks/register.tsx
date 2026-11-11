@@ -101,9 +101,12 @@ import {
   type ThemeName,
   donutDotIcon,
   donutIcon,
+  fitPillSize,
+  PANE_PILL_MAX,
 } from './icons'
 import { MIX, PX, RADIUS, SIZE, SPACE, TEXT } from './tokens'
 import { BEFORE_KEY, CLOSED_KEY, NATIVE_KEY, beforeMap, closedKeys, drawWrittenMessage, keepBefore, keepClosed, keepNative, nativeKeys, splitWritten, testSessions, withoutClosed, withoutNative, writtenCards, type WrittenLine, type WrittenStart, type WrittenWho } from './cartes'
+import { CARD_DEADLINE_MS, CARD_LATE_WHY, cardTargetOf, dismissCall, proposalIdIn, recoTargetRefusal, type Place } from './depart'
 import { CONTROL_PANE, drawControl, openControl, redrawControl, type ControlDeps } from './controle'
 import { SETTINGS_PANE, drawSettings, openSettings, prefsFile, redrawSettings, rememberLoadedOptions, sessionProject, watchSettings, type SettingsProject } from './reglages'
 import {
@@ -2757,7 +2760,7 @@ async function proposeCard($: EngineInterface, raw: Record<string, unknown>, opt
     refusals.push(`${dropped[2]} : ${cardReason(ran)}`)
     ran = await $.tool.call(withFields())
   }
-  if (ran.deny === undefined && !ran.isError && !cardNotProposed(ran)) await noteNativeCard($, card.title)
+  if (ran.deny === undefined && !ran.isError && !cardNotProposed(ran)) await noteNativeCard($, card.title, { target: cardTargetOf(card), text: ran.text })
   return { ran, refusals }
 }
 
@@ -2767,15 +2770,71 @@ function withTargetTitle(card: Record<string, unknown>): Record<string, unknown>
 }
 
 /**
+ * #465 : les cartes « New session » posées par cette session et qui attendent Start, par tâche (`<projet>|<id>`) : leur
+ * lieu et l'identifiant que l'app a rendu. En mémoire du module : la carte et la fiche qui la remplace vivent ici.
+ */
+const pendingCards = new Map<string, { target: Place; proposal?: string }>()
+const pendingKey = (source: Source, id: string) => `${source.root ?? source.dir}|${id}`
+
+/**
+ * #465 : avant un départ vers `target`, la carte de la même tâche qui attend Start ailleurs est retirée (`dismiss_task`).
+ * Un retrait refusé, un outil absent ou une carte sans identifiant ne retiennent jamais le départ : la nouvelle carte part.
+ */
+async function dismissPendingCard($: EngineInterface, source: Source, id: string | undefined, target: Place): Promise<void> {
+  if (id === undefined) return
+  const key = pendingKey(source, id)
+  const pending = pendingCards.get(key)
+  if (!pending || pending.target === target) return
+  pendingCards.delete(key)
+  if (!pending.proposal) return
+  try {
+    await withinMs($, $.tool.call(dismissCall(pending.proposal, target) as Parameters<EngineInterface['tool']['call']>[0]), CARD_DEADLINE_MS)
+  } catch {
+    // outil absent ou refus : la carte d'avant reste, le départ part quand même
+  }
+}
+
+/**
+ * #465 : la carte que pose le modèle (Maestro) pour la ligne #N part au lieu de sa reco, la même que `reco_cloud.py
+ * --carte` : dans un projet ouvert au cloud, une carte dont le lieu la contredit se refuse, avec l'appel juste. Sans
+ * #N, sans roadmap, ligne absente ou close, projet fermé au cloud, démarrage d'une proposition : rien.
+ */
+async function recoCardRefusal($: EngineInterface, e: unknown): Promise<string | undefined> {
+  const card = e as Record<string, unknown>
+  if (typeof card.title !== 'string' || card.proposal_id !== undefined) return undefined
+  const id = sessionTitleId(card.title)
+  if (id === undefined) return undefined
+  try {
+    const source = await sourceNow($)
+    if (!source || !cloudOpen(source)) return undefined
+    const open = await load($, files(source).open, 'ROADMAP.md')
+    if (typeof open === 'string') return undefined
+    const task = open.find(t => t.id === id && !t.done)
+    if (!task || isRoutine(task)) return undefined
+    await loadRecoCache($, source)
+    const found = await briefFound($, source, task)
+    const docs: string[] = []
+    for (const doc of briefDocs(source, task, found)) docs.push((await readOr($, doc)) ?? '')
+    const reco = judgedReco(task, recoCache.cache, task.spec || task.fiche ? docs : undefined, { projet: projectSettings(source).travail === 'projet' })
+    const title = card.title.replace(/ · (?:cloud|Mac)$/, '')
+    return recoTargetRefusal({ id, cardTarget: cardTargetOf(card), reco: reco.lieu, why: reco.why, title, branch: cloudBranchOf(task) })
+  } catch {
+    return undefined
+  }
+}
+
+/**
  * #436 : la carte native d'une tâche est posée : sa carte Nouvelle ne se dessine plus (store `native-cards`,
  * `<projet>|<id>`), et les messages se redessinent. Sans numéro, sans projet ou store en panne : rien.
  */
-async function noteNativeCard($: EngineInterface, title: unknown): Promise<void> {
+async function noteNativeCard($: EngineInterface, title: unknown, posted?: { target: Place; text: string | undefined }): Promise<void> {
   const id = typeof title === 'string' ? sessionTitleId(title) : undefined
   if (id === undefined) return
   try {
     const source = knownSource === undefined ? await sourceNow($) : (knownSource ?? undefined)
     if (!source) return
+    // #465 : la carte en attente de Start, son lieu et son identifiant, pour qu'un départ ailleurs la retire.
+    if (posted) pendingCards.set(pendingKey(source, id), { target: posted.target, ...(proposalIdIn(posted.text) ? { proposal: proposalIdIn(posted.text)! } : {}) })
     const stored = await $.store.get(NATIVE_KEY).catch(() => undefined)
     await storeSet($, NATIVE_KEY, keepNative(stored, `${source.root ?? source.dir}|${id}`) as StoreValue)
     await update($, retryAtom, v => v + 1)
@@ -5605,7 +5664,11 @@ async function launchCloud($: EngineInterface, source: Source, task: Task, short
       prompt,
       background: `Tâche #${task.id} du projet ${source.name}, lancée en cloud depuis le panneau roadmap (#416) : la session tourne dans une VM claude.ai où le plugin ne sert que par ses skills (#457) ; ses règles sont dans docs/session-cloud.md du dépôt${depot ? ` ${depot}` : ''}, Maestro la suit par sa PR sur le Mac.`,
     }
-    const posted = await proposeCard($, card, [])
+    // #465 : une carte Mac de la même tâche qui attend Start ne retient pas le départ : elle est retirée.
+    await dismissPendingCard($, source, task.id, 'cloud')
+    // #465 : l'app qui ne répond pas ne laisse pas la fiche sur « Lancement… » : rien n'est parti, elle le dit.
+    const posted = await withinMs($, proposeCard($, card, []), CARD_DEADLINE_MS)
+    if (posted === 'late') return void (await fail(CARD_LATE_WHY))
     if (posted.ran.deny !== undefined || posted.ran.isError) return void (await fail(cardReason(posted.ran)))
     // #452 : « Nothing was proposed » sous Remote Control n'est ni deny ni isError : aucune carte, la ligne reste libre.
     if (cardNotProposed(posted.ran)) return void (await fail(remoteCardWhy()))
@@ -5712,7 +5775,14 @@ async function launchSession($: EngineInterface, source: Source, task: Task, sho
     const launchModel = launchModelOf(settings.launchModel)
     if (launchModel !== 'hérite') optional.push(['model', MODEL_IDS[launchModel], `avec le modèle ${launchModel}`])
     if (projet) optional.push(['use_worktree', false, 'sans worktree'])
-    const posted = await proposeCard($, card, optional)
+    // #465 : une carte cloud de la même tâche qui attend Start est retirée ; l'app muette ne fait pas tourner la fiche.
+    await dismissPendingCard($, source, task.id, 'mac')
+    const posted = await withinMs($, proposeCard($, card, optional), CARD_DEADLINE_MS)
+    if (posted === 'late') {
+      noteLaunch('panel')
+      await setView($, v => ({ launched: v.launched.filter(k => k !== key), launchNote: `Lancement impossible : ${CARD_LATE_WHY}` }))
+      return
+    }
     const proposed = posted.ran
     refusals.push(...posted.refusals)
     // #452 : même réponse sous Remote Control pour le ▶ Mac : pas de carte, donc ni réservation ni repli par Claude.
@@ -8774,6 +8844,12 @@ export const register: Register = (on, options) => {
       // #383 : Maestro a essayé de lancer la tâche de sa relève ; un refus de l'app se règle par `settleQueued`.
       const tried = (e as { title?: unknown }).title
       if (releaseTurn && typeof tried === 'string' && sessionTitleId(tried) === releaseTurn.id) releaseTurn.tried = true
+      // #465 : la carte part au lieu de la reco de sa ligne, sinon elle se refuse avec l'appel juste.
+      const misplaced = await recoCardRefusal($, e)
+      if (misplaced !== undefined) {
+        titleRefused = true
+        return { deny: misplaced }
+      }
       const refusal = await launchRefusal($, e)
       if (refusal !== undefined) {
         titleRefused = true
@@ -8812,7 +8888,7 @@ export const register: Register = (on, options) => {
     const title = (e as { title?: unknown }).title
     const id = !ran.isError && !fromAgent(e) && typeof title === 'string' ? sessionTitleId(title) : undefined
     if (id !== undefined) launchTurn.cards.push(`#${id}`)
-    if (id !== undefined && next.origin.plugin === 'engine' && ran.deny === undefined) await noteNativeCard($, title)
+    if (id !== undefined && next.origin.plugin === 'engine' && ran.deny === undefined) await noteNativeCard($, title, { target: cardTargetOf(e as Record<string, unknown>), text: ran.text })
     return ran
   })
   // Un enfant note son état pour son parent (#84) : sa liste d'étapes, sa question, son récap.
@@ -12586,7 +12662,9 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
               }}
             />
           )}
+          {/* #465 : « Carte de session posée » seulement une fois la carte posée, jamais pendant « Lancement… ». */}
           {launched.includes(taskKey(current)) &&
+            launchNote !== LAUNCHING &&
             waitBand(
               'launched-note',
               waitNote('launched'),
@@ -13474,7 +13552,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
                   />
                 </Box>
               )}
-              {!current.done && !live && launched.includes(taskKey(current)) && (
+              {!current.done && !live && launched.includes(taskKey(current)) && launchNote !== LAUNCHING && (
                 waitBand(
                   'launched-note',
                   waitNote('launched'),
@@ -15628,11 +15706,12 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   }
   // #390 (maquette C2) : sous Remote Control, la pastille et, en mode Auto, « Passer en bypass », sur une rangée au-dessus
   // du cadre « En session » ; sans Remote Control, rien. #464 (maquette B) : hors mode Auto, seulement quand une tâche
-  // de ce Maestro attend en file (`doseView.queue` : ni reprise, ni départ en vol).
-  const remoteShown = maestroBrand ? remotePill({ ...(await readRemoteFacts($, now)), waiting: dose?.queue.length ?? 0 }) : undefined
+  // de ce Maestro attend en file (`doseView.queue` : ni reprise, ni départ en vol) ; #472 : « Tape go dans Maestro »,
+  // son numéro (ou leur nombre) et la cause.
+  const remoteShown = maestroBrand ? remotePill({ ...(await readRemoteFacts($, now)), waiting: dose?.queue ?? [] }) : undefined
   const remoteRow = remoteShown ? (
     <Box key="remote-row" flexDirection="row" alignItems="center" gap={SPACE.row} flexWrap="wrap" paddingX={SPACE.indent}>
-      {drawnPill({ text: remoteShown.text, bg: palette.blockTint, fg: palette.blockOn, mark: 'warn', weight: TEXT.weight.soft })}
+      {drawnPill({ text: remoteShown.text, bg: palette.blockTint, fg: palette.blockOn, mark: 'warn', weight: TEXT.weight.soft, size: fitPillSize({ text: remoteShown.text, bg: palette.blockTint, fg: palette.blockOn, mark: 'warn', weight: TEXT.weight.soft }, PANE_PILL_MAX) })}
       {remoteShown.bypass && <Button key="remote-bypass" label="Passer en bypass" onPress={() => void switchMaestroToBypass($)} />}
     </Box>
   ) : null

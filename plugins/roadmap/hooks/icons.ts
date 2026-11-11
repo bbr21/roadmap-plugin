@@ -602,6 +602,15 @@ function pillIconRaw(o: {
 export const pillIcon = memo(pillIconRaw)
 
 /**
+ * #472 : la taille de texte qui fait tenir une pastille dans `max` px, de 12 px (`TEXT.pill`) à 10 px au plus petit ;
+ * la plus petite si rien ne tient. Pour une pastille qui doit rester sur une ligne du panneau (Remote Control).
+ */
+export function fitPillSize(o: Omit<Parameters<typeof pillIconRaw>[0], 'size'>, max: number): number {
+  for (let size = TEXT.pill; size > 10; size--) if (pillIcon({ ...o, size }).width <= max) return size
+  return 10
+}
+
+/**
  * Une pastille de filtre (#149, maquette C′) : l'icône de trait de sa ligne d'avant, son nom, son compte,
  * sur une rangée qui remplace les lignes de « À traiter ». 20 px de haut comme toute pastille (#254), texte de 13 px.
  */
@@ -1082,6 +1091,9 @@ export function ruleIcon(hex: string, width = BAR_WIDTH): string {
 
 /** Largeur de dessin de la barre par défaut : le panneau de 400 px moins ses marges. */
 export const BAR_WIDTH = 384
+
+/** #472 : la largeur d'une pastille sur une ligne du panneau de 400 px, sa rangée en retrait d'une cellule de chaque côté. */
+export const PANE_PILL_MAX = BAR_WIDTH - 16
 
 type BarSegment = { name?: string; hex: string; n: number; dim?: boolean }
 

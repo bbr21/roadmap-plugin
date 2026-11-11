@@ -328,7 +328,13 @@ the cloud, never on the Mac): before posting a task card, run
 `#<id> · <nom> · cloud` or `#<id> · <nom> · Mac` (the target at the end, as the panel writes it, #436); `branche`, the
 cloud session's branch (`feat/<slug>` of the `nom:`, as the panel's), null for the Mac. Post the card on that target
 with that title, without asking the target first: the person still chooses by clicking Start, and can switch the
-target in the card's options. In the panel, the task's fiche carries a Cloud | Mac switch set on the recommendation,
+target in the card's options. **The plugin enforces it** (#465): in a project with `"sessions": "cloud"`, a
+`start_session` card titled `#N · …` whose target contradicts the recommendation of line N (a Mac card, no `target`,
+for a task recommended in the cloud, or the reverse) is refused by the plugin's `start_session` hook, and the refusal
+gives the right call (`target`, title, branch and `brief_cloud.py`). Post it again that way, never on the other
+target. And when the person launches a task from the fiche on one target while a card of the same task still waits
+for Start on the other, the panel withdraws that card (`dismiss_task`) and launches anyway: an old card never holds a
+departure back. In the panel, the task's fiche carries a Cloud | Mac switch set on the recommendation,
 then « Lancer »: on a cloud choice the panel itself posts the cloud card (the same brief as `brief_cloud.py`) and,
 once the app accepts it, takes the line (`qui:`, `branche:` `feat/<slug>`, `lieu:cloud`, moved to « En cours ») and
 pushes `main`; nothing reaches you, and you follow it by its PR as below. A Mac card launched from the panel ends

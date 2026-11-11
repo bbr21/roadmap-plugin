@@ -763,6 +763,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.279.0 (2026-11-11)** : maestro : un départ suit toujours la reco, carte refusée sinon, la reco reconnaît une tâche au Mac (#465) ; panneau : la pastille dit « Tape go dans Maestro : #N … attend » (#472) ; doctor : contrôle le réglage cloud de chaque projet (#453)
 - **0.278.0 (2026-11-11)** : panneau : bloc En session, pastille Remote Control seulement quand une tâche attend en file (#464) ; tests : roadmap.test.tsx découpé en 11 fichiers par thème (#433) ; maestro : missions cloud sans dépôt par RemoteTrigger, mission_cloud.py (#467)
 - **0.277.1 (2026-11-11)** : release.py : status répond en une seconde, sans lancer le contrôle ; status --check le lance (#463)
 - **0.277.0 (2026-11-11)** : panneau : la fiche d'une ligne cloud dit l'état de sa PR au lieu de « À lancer » (#440)

@@ -23,7 +23,8 @@ Avec `--carte` (#458), la carte que Maestro pose, en JSON : `target` « cloud »
 a `"sessions": "cloud"` dans DEPOT/.claude/roadmap.json, « mac » sinon ; `titre` « #ID · <nom:> · cloud » (ou
 « · Mac »), coupé à 58 signes comme `targetTitle` du panneau ; `branche`, celle que nommeront le brief
 (`brief_cloud.py --branche`) et la prise (`prendre_cloud.py`) pour une carte cloud, sinon null ; `reco`, `besoins`,
-`raison` et `par`.
+`raison` et `par`. Le hook `start_session` du panneau refuse une carte de Maestro dont le lieu contredit cette reco
+(#465) : c'est cette carte qui passe.
 
 Python 3.9 et plus, bibliothèque standard seulement.
 """
@@ -53,6 +54,7 @@ MARQUEURS = [
     {"need": "secrets", "words": ["trousseau", "keychain"], "why": "les secrets et le trousseau sont sur le Mac"},
     {"need": "ressource_unique", "words": ["base locale", "appareil branche", "verrou:"], "why": "une ressource unique du Mac (verrou, base locale, appareil)"},
     {"need": "etat_mac", "words": ["launchd", "osascript", "computer-use", "reglages systeme", "installed_plugins", "plugins installes", "version chargee", "catalogue local", "claude plugin update", "main\\.log"], "why": "état du Mac (~/.claude, plugins installés, version chargée par Claude, launchd) : lisible sur le Mac seul"},
+    {"need": "vrai_rendu", "words": ["au mac\\b", "sur le mac\\b", "app de bureau", "depuis le bureau"], "why": "une étape se fait au Mac, sur le bureau (Maestro, le panneau en direct) : le cloud ne la voit pas"},
 ]
 RENDU = {"words": ["maquette", "mockup", "capture", "fidelite", "screenshot"], "why": "maquettes et preuve de fidélité : faites depuis le cloud (Artifact, capture collée, #409)"}
 CACHE = "roadmap-reco.json"

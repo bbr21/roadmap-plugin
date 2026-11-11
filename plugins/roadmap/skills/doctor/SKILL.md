@@ -38,6 +38,8 @@ published fingerprints (`CHECKSUMS.txt` of the public repo `bbr21/roadmap-plugin
 | swiftui-pro skill | only in a Swift project: installed |
 | Plugin hooks | no `cc-plugin-sec-default`, or the plugin set by the admin in `appendPlugins`; on a Team or Enterprise account, or with managed settings, « À voir » (the plugin goes through its fallbacks) |
 | User name | `me` in `~/.claude/roadmap-perso.json` holds a name (otherwise « À voir »: Claude says « l'utilisateur ») |
+| Cloud | the settings a session opened in the project reads, in the panel's order (`.claude/roadmap.json`, otherwise the longest-prefix entry of `roadmap-perso.json`): `sessions: "cloud"` without a reachable GitHub repo (no GitHub `origin`, no `depot`), KO; a repo without `docs/session-cloud.md`, KO (the `depot` repo is looked for as a local clone among the project and its entry's folders, otherwise « À voir », not checked); a project on GitHub without `sessions: "cloud"`, « À voir », cloud possible; neither, OK, task sessions on the Mac, while a connectors-only mission still runs in the cloud without a repo, through Maestro (#467) (#453). Each line gives the gesture, written where the session reads its settings |
+| Masked settings | a key of `.claude/roadmap.json` that the entry of the same project in `roadmap-perso.json` masks: sessions opened in one of that entry's folders outside the project read the entry, not the file (adBricks, 2026-11-11: `sessions` set in the folder, no effect): « À voir », naming the keys and the values to copy into the entry. No line when the entry carries them or covers only the project |
 | Design system | `design` in `.claude/roadmap.json` declares the one every mockup relies on (#129), each local path present, or `"aucun"`; not declared: « À voir », with what is already there (a `design/`, a deck template) or the proposal to set one up, and the `onboarding.py design` command that declares it |
 
 ### Without code
@@ -64,6 +66,7 @@ In a folder without code (#76, #176: no git repository, a repository without cod
 | Plugin hooks | as with code |
 | User name | as with code |
 | Design system | as with code: its document or deck templates, one per task type |
+| Cloud, masked settings | as with code: a folder without git reaches the cloud only through `depot` |
 | Method skills | those the Projet brief suggests without requiring them: `brainstorming`, `writing-plans`; a missing one is « À voir » |
 
 The list of what is required is in `references/requis.json` (`projet` for a folder without code). The method
@@ -118,6 +121,8 @@ command that fixes it, as the script gives it. Then the verdict in one sentence.
   or tampered with). Name the files, and give the reinstall gesture, which the user does
   themselves; never edit or delete the copy. « À voir » for an old version: updating the plugin
   is enough.
+- Cloud KO or « À voir »: the gesture is a line of settings or a copy of `docs/session-cloud.md`, which
+  the user approves; a project without any GitHub repo has no cloud task session, but Maestro's connectors-only missions (#467) need none: say so.
 - Everything green: say so in one sentence, and that « Maestro » works in this project.
 - The doctor does not read the content of tasks. Tasks bundled together, duplicated or without a
   deadline: offer the `audit` skill, which splits, merges and completes after validation.

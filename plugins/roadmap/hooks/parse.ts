@@ -9959,6 +9959,12 @@ export const RECO_STALLED_EXAMPLES: readonly { id: string; task: string; need: R
     need: 'etat_mac',
     what: 'il fallait lire la config des plugins installés du Mac (~/.claude) : envoyée en cloud, a calé le 2026-11-11',
   },
+  {
+    id: '467',
+    task: 'Faire lancer et suivre par Maestro des missions cloud sans dépôt GitHub',
+    need: 'vrai_rendu',
+    what: "sa première étape se fait au Mac, sur l'app de bureau (vérifier que Maestro lance une session cloud sans dépôt) : recommandée cloud par la règle des mots le 2026-11-11 (#465)",
+  },
 ]
 
 /** La cible recommandée d'une tâche et sa raison, en une ligne ; `besoins`, le profil dont elle découle (#461). */
@@ -9976,6 +9982,7 @@ export const CLOUD_MAC_MARKERS: readonly { need: RecoNeed; words: readonly strin
   { need: 'secrets', words: ['trousseau', 'keychain'], why: 'les secrets et le trousseau sont sur le Mac' },
   { need: 'ressource_unique', words: ['base locale', 'appareil branche', 'verrou:'], why: 'une ressource unique du Mac (verrou, base locale, appareil)' },
   { need: 'etat_mac', words: ['launchd', 'osascript', 'computer-use', 'reglages systeme', 'installed_plugins', 'plugins installes', 'version chargee', 'catalogue local', 'claude plugin update', 'main\\.log'], why: 'état du Mac (~/.claude, plugins installés, version chargée par Claude, launchd) : lisible sur le Mac seul' },
+  { need: 'vrai_rendu', words: ['au mac\\b', 'sur le mac\\b', 'app de bureau', 'depuis le bureau'], why: 'une étape se fait au Mac, sur le bureau (Maestro, le panneau en direct) : le cloud ne la voit pas' },
 ]
 
 /** Les marqueurs d'une tâche de rendu, qui part en cloud depuis #409 (#427) : seule sa raison change. */
@@ -10031,8 +10038,8 @@ export function recoKeyOf(task: Task): string {
   return task.id ?? `h:${hashLabel(task.label.trim())}`
 }
 
-/** La version de la consigne : la changer fait rejuger chaque tâche une fois (2 : le profil de besoins, #461). */
-export const RECO_JUDGE_VERSION = 2
+/** La version de la consigne : la changer fait rejuger chaque tâche une fois (2 : le profil de besoins, #461 ; 3 : #467 en exemple et l'étape au Mac, #465). */
+export const RECO_JUDGE_VERSION = 3
 
 /** L'empreinte de ce que le modèle juge : libellé, note et documents, et la version de la consigne. Un changement de l'un refait le jugement. */
 export function recoSigOf(task: Task, docs: readonly string[]): string {
@@ -13916,12 +13923,17 @@ export function typedReleaseText(release: string | readonly string[]): string {
  * Auto, le ▶ passe par un message que l'app refuse aussi : la pastille le dit et porte « Passer en bypass », file vide
  * comprise. #464 (maquette B) : hors mode Auto, « la file attend ton mot » ne paraît que quand une tâche de ce Maestro
  * attend vraiment en file (`waiting`, ni reprise ni départ en vol) ; file vide, rien, au lieu d'un défaut apparent du
- * bloc « En session ».
+ * bloc « En session ». #472 (choix de BBR du 2026-11-11, après la preuve #470 : « la file attend ton mot » ne disait ni
+ * quelle tâche, ni que c'est à lui, ni la cause) : l'action d'abord, la tâche par son numéro, la cause, sur une ligne
+ * du panneau : « Tape go dans Maestro : #480 attend (Remote Control bloque) », ou « N tâches attendent ».
  */
-export function remotePill(o: { remote: boolean; mode: string | undefined; waiting: number }): { text: string; bypass: boolean } | undefined {
+export function remotePill(o: { remote: boolean; mode: string | undefined; waiting: readonly { id: string }[] }): { text: string; bypass: boolean } | undefined {
   if (!o.remote) return undefined
   if (o.mode === 'auto') return { text: 'Remote Control · Auto : lancements refusés', bypass: true }
-  return o.waiting > 0 ? { text: 'Remote Control · la file attend ton mot', bypass: false } : undefined
+  const [first] = o.waiting
+  if (!first) return undefined
+  const who = o.waiting.length === 1 ? `#${first.id} attend` : `${o.waiting.length} tâches attendent`
+  return { text: `Tape go dans Maestro : ${who} (Remote Control bloque)`, bypass: false }
 }
 
 /** La ligne d'une entrée en file au centre de contrôle (#374) : en file, en vol, carte posée (#393), ou ratée avec son heure et son motif. */
@@ -13933,7 +13945,7 @@ export function queuedLine(c: { launching?: boolean; held?: { at: number; reason
   if (c.failed) {
     const d = new Date(c.failed.at)
     const hm = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
-    if (c.failed.remote) return `retenue depuis ${hm} · Remote Control refuse un départ du panneau · tape un mot dans Maestro`
+    if (c.failed.remote) return `retenue depuis ${hm} · Remote Control refuse un départ du panneau · tape go dans Maestro`
     return `départ raté à ${hm} · ${c.failed.reason} · réessaie à son tour`
   }
   return 'pas encore lancée · démarrera seule à son tour'
