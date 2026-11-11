@@ -295,12 +295,18 @@ Write `<scratchpad>/operations.json`:
   --bilan-b64`: `fait` (one line, 140 characters at most: what was done), `souci` (one line: the
   problem met, empty only with `fluide`), `ressenti` (`fluide`, `accroché`, `bloqué`), `cause`
   (`aucune` with `fluide` and only with it, else `spec-floue`, `attente-tiers`, `bug-outil`,
-  `refait`, `périmètre-élargi`, `autre`), `corrections` (the number of rework requests from the
-  person, 0 or more), `note` (one sentence). Written by the journal's own columns. The journal is
+  `refait`, `périmètre-élargi`, `charge-mac` (load of the Mac, timeouts, test queue),
+  `conflit-parallèle` (parallel sessions on the same files, merge conflicts), `environnement`
+  (what the machine lacks: cloud VM, shim, missing plugin); a closed list, no « autre », #460),
+  `corrections` (the number of rework requests from the person, 0 or more), `note` (one sentence),
+  and in a **countable journal** (#460: its header carries `type`, as `ROADMAP-bilans.csv` of
+  Roadmap) `type` (`code`, `doc`, `rendu`, `sans-code`) and optionally `lieu` (`cloud`, `mac`;
+  default: `cloud` when the line carries `lieu:cloud`, else `mac`). Written by the journal's own
+  columns; `lieu` and `type` are ignored by a journal without those columns. The journal is
   `bilan.log` of the folder's `cowork.json` (its allowed values come from that log's columns),
   else `ROADMAP-bilans.csv` next to the roadmap. **Required** in a Cowork folder whose
   `cowork.json` says `"roadmap": "plugin-roadmap"` (Adbricks Cowork, AAFES Cowork): its doctor
-  checks every row. Elsewhere optional: without it, the row says the label and « Faite : <proof> ».
+  checks every row. **Required** too in a countable journal, with its `type`. Elsewhere optional: without it, the row says the label and « Faite : <proof> ».
   A parent closed with its last child gets the child's bilan, its `fait` naming that child.
 - **drop**: `reason`, `bilan`; the reason goes into the label after « ; », then « (abandonné) » at
   its end (« Préparer le budget mocap ; budget repris par Linda (abandonné) », #285), like the panel's « Annuler la tâche ».

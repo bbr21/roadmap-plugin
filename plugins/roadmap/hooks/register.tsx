@@ -757,6 +757,7 @@ import {
   renameAxisRoute,
   withAxisStyle,
   withPersoAxisStyle,
+  isCloudSession,
   type AxisStyle,
 } from './parse'
 import type { HeavyQueue, QueueMark } from './parse'
@@ -5490,7 +5491,7 @@ async function judgeRecos($: EngineInterface, source: Source): Promise<void> {
       for (const item of batch) {
         const v = verdicts[item.key]
         if (!v) continue
-        recoCache.cache[item.key] = { label: item.task.label.trim(), sig: item.sig, lieu: v.lieu, why: v.why, at: today }
+        recoCache.cache[item.key] = { label: item.task.label.trim(), sig: item.sig, lieu: v.lieu, why: v.why, ...(v.besoins ? { besoins: v.besoins } : {}), at: today }
         changed = true
       }
       if (!changed) continue
@@ -5599,7 +5600,7 @@ async function launchCloud($: EngineInterface, source: Source, task: Task, short
       target: 'cloud',
       title: brief.title,
       prompt,
-      background: `Tâche #${task.id} du projet ${source.name}, lancée en cloud depuis le panneau roadmap (#416) : la session tourne dans une VM claude.ai sans le plugin ; ses règles sont dans docs/session-cloud.md du dépôt${depot ? ` ${depot}` : ''}, Maestro la suit par sa PR sur le Mac.`,
+      background: `Tâche #${task.id} du projet ${source.name}, lancée en cloud depuis le panneau roadmap (#416) : la session tourne dans une VM claude.ai où le plugin ne sert que par ses skills (#457) ; ses règles sont dans docs/session-cloud.md du dépôt${depot ? ` ${depot}` : ''}, Maestro la suit par sa PR sur le Mac.`,
     }
     const posted = await proposeCard($, card, [])
     if (posted.ran.deny !== undefined || posted.ran.isError) return void (await fail(cardReason(posted.ran)))
@@ -8368,7 +8369,25 @@ async function openCommand($: EngineInterface): Promise<{ text: string }> {
   return { text: `Panneau de la roadmap ${source.name} ouvert.` }
 }
 
+/**
+ * Le module tourne-t-il dans une VM cloud (#457) ? Lu une fois par chargement, au premier événement. En cloud,
+ * le plugin ne sert que par ses skills : chaque hook de `register` s'ouvre sur `if (await inCloud($)) return
+ * next(e)` et laisse l'événement suivre son cours (ni panneau, ni rappel de fin de tour, qui faisait écrire
+ * ROADMAP.md, interdit en cloud, ni titres courts, ni ménage des branches, ni file des tests du Mac). Le moteur
+ * refuse un `on` enveloppé : la garde s'écrit dans chaque hook, et `tests/cloud-muet.test.tsx` vérifie qu'aucun
+ * n'y échappe.
+ */
+let cloudRead: Promise<boolean> | undefined
+
+function inCloud($: EngineInterface): Promise<boolean> {
+  cloudRead ??= Promise.resolve()
+    .then(() => $.env.get('CLAUDE_CODE_REMOTE'))
+    .then(isCloudSession, () => false)
+  return cloudRead
+}
+
 export const register: Register = (on, options) => {
+  cloudRead = undefined
   // Les valeurs des options de ce chargement : le volet Réglages s'en sert quand /config n'en liste aucune (#356).
   rememberLoadedOptions(options as Readonly<Record<string, unknown>>)
   // Un chargement neuf relit tout : les données gardées en mémoire viennent du chargement d'avant.
@@ -8418,6 +8437,7 @@ export const register: Register = (on, options) => {
 
   // Le thème de Claude Code a changé : le panneau se redessine dans l'autre palette.
   on('config.set', { key: 'theme' }, async ($, e, next) => {
+    if (await inCloud($)) return next(e)
     const result = await next(e)
     await update($, themeStampAtom, v => v + 1)
     return result
@@ -8426,17 +8446,20 @@ export const register: Register = (on, options) => {
   // La sonde de visibilité (#337) : chaque arrivée et chaque départ d'une surface de l'app, au journal.
   // Le repos (#348) : une arrivée réveille la session ; un départ qui ne laisse aucune surface la met au repos.
   on('session.attach', async ($, e, next) => {
+    if (await inCloud($)) return next(e)
     void noteSurface($, { event: 'attach', surface: e.surface })
     wake($)
     return next(e)
   })
   on('session.detach', async ($, e, next) => {
+    if (await inCloud($)) return next(e)
     void noteSurface($, { event: 'detach', surface: e.surface, reason: e.reason })
     if (e.reason !== 'end') void readVisibility($)
     return next(e)
   })
 
   on('session.start', async ($, e, next) => {
+    if (await inCloud($)) return next(e)
     // Les relevés de mesure partent au store une demi-seconde après un dessin, jamais pendant un
     // clic : l'écriture relit d'abord le store, pour garder les relevés des autres sessions.
     let flushing = false
@@ -8515,6 +8538,7 @@ export const register: Register = (on, options) => {
   // En Compte Team / Enterprise (#219, #223), il n'est pas enregistré, et l'app n'a plus de saut à dire.
   if (settings.account !== 'team') {
     on('classic.SessionStart', async ($, e, next) => {
+      if (await inCloud($)) return next(e)
       const result = await next(e)
       const text = await sessionPrefsBlock($)
       try {
@@ -8530,6 +8554,7 @@ export const register: Register = (on, options) => {
   // sinon le message suivant. Sous sec-default, la compaction est sautée aussi (#116).
   // Le contexte mesuré repart de zéro avec elles : la chute qui suit n'est pas une compaction cachée (#119).
   on('session.end', async ($, e, next) => {
+    if (await inCloud($)) return next(e)
     if (e.reason === 'clear') {
       await update($, prefsGivenAtom, () => '')
       await update($, contextSeenAtom, () => 0)
@@ -8538,6 +8563,7 @@ export const register: Register = (on, options) => {
   })
   if (settings.account !== 'team') {
     on('session.compact', async ($, e, next) => {
+      if (await inCloud($)) return next(e)
       // `precompute` n'installe rien, et la compaction d'un agent laisse la conversation principale.
       if (e.trigger !== 'precompute' && e.agentId === undefined) {
         await update($, prefsGivenAtom, () => '')
@@ -8550,6 +8576,7 @@ export const register: Register = (on, options) => {
   // Le contexte à la fin de chaque tour (#157) : l'en-tête de la bande de Maestro le lit, et une
   // session lancée par Maestro l'écrit dans sa note, à côté de ses étapes, sans en changer l'heure.
   on('session.measure', async ($, e, next) => {
+    if (await inCloud($)) return next(e)
     const result = await next(e)
     const use = contextUseOf(e.context)
     try {
@@ -8571,6 +8598,7 @@ export const register: Register = (on, options) => {
   // « Maestro » en tête du message : le panneau s'ouvre et Claude reçoit l'état d'avancement.
   // Par prompt.submit, que sec-default laisse aux plugins installés (#116), le contexte joint à la descente.
   on('prompt.submit', async ($, e, next) => {
+    if (await inCloud($)) return next(e)
     // Le panneau toujours ouvert (#117) : le message de la personne rouvre le panneau qui manque ou attend.
     // Un seul hook prompt.submit par module (le moteur refuse le second) : l'appel vit ici.
     await ensurePane($)
@@ -8708,27 +8736,32 @@ export const register: Register = (on, options) => {
   // #255 : chez Maestro, une ligne écrite à la main reçoit le rappel de la skill tasks.
   // #292 : une page de maquettes écrite se note pour le rappel de design.
   on('tool.call', { tool: 'Edit' }, async ($, e, next) => {
+    if (await inCloud($)) return next(e)
     noteCodeEdit(e, e.file_path)
     noteMockupDrawn(e)
     return yesNote(e, await handWriteNote($, e, 'Edit', await written($, () => next(e), e.file_path)))
   })
   on('tool.call', { tool: 'Write' }, async ($, e, next) => {
+    if (await inCloud($)) return next(e)
     noteCodeEdit(e, e.file_path)
     noteMockupDrawn(e)
     return yesNote(e, await handWriteNote($, e, 'Write', await written($, () => next(e), e.file_path)))
   })
-  on('tool.call', { tool: 'NotebookEdit' }, ($, e, next) => {
+  on('tool.call', { tool: 'NotebookEdit' }, async ($, e, next) => {
+    if (await inCloud($)) return next(e)
     noteCodeEdit(e, e.notebook_path)
     return written($, () => next(e), e.notebook_path)
   })
   // #327 : un appel à un sous-agent dispense du rappel de déléguer.
-  on('tool.call', { tool: 'Agent' }, ($, e, next) => {
+  on('tool.call', { tool: 'Agent' }, async ($, e, next) => {
+    if (await inCloud($)) return next(e)
     if (!fromAgent(e)) delegation.agentCalls += 1
     return next(e)
   })
   // La carte New task d'une sous-session remonte à son Maestro (#67).
   // Option « Lancer en bypass » : la carte qui reste ici demande le bypass (#87).
   on('tool.call', { tool: START_SESSION_TOOL }, async ($, raw, next) => {
+    if (await inCloud($)) return next(raw)
     // Une carte du modèle reçoit la section de l'arbre, comme le ▶ (#237).
     const e = next.origin.plugin === 'engine' && !fromAgent(raw) ? ((await withTree($, raw)) as typeof raw) : raw
     // #263 : la carte qui se pose ici (pas remontée à Maestro) part seulement si son titre vient de la ligne écrite.
@@ -8781,6 +8814,7 @@ export const register: Register = (on, options) => {
   })
   // Un enfant note son état pour son parent (#84) : sa liste d'étapes, sa question, son récap.
   on('tool.call', { tool: UPDATE_PLAN_TOOL }, async ($, e, next) => {
+    if (await inCloud($)) return next(e)
     if (!fromAgent(e)) {
       closingTurn.work = true
       stepList.planned = true
@@ -8793,7 +8827,8 @@ export const register: Register = (on, options) => {
   })
   // Une maquette montrée à Bertrand (#96) : le rappel de fin de tour se tait pour la session.
   for (const tool of MOCKUP_TOOLS) {
-    on('tool.call', { tool }, ($, e, next) => {
+    on('tool.call', { tool }, async ($, e, next) => {
+      if (await inCloud($)) return next(e)
       if (capture && !fromAgent(e) && isMockupCall(tool, e)) capture.mockupShown = true
       // #292 : un widget après un read_me du module mockup est une maquette dessinée.
       if (capture && !fromAgent(e) && tool === VISUALIZE_WIDGET && capture.mockupModule) {
@@ -8806,6 +8841,7 @@ export const register: Register = (on, options) => {
   // #313 : une session qui s'archive (« Oui, archiver »), ou qui archive une autre session : le ménage
   // des branches suit, si la session vit encore ; sinon le démarrage suivant s'en charge.
   on('tool.call', { tool: ARCHIVE_SESSION_TOOL }, async ($, e, next) => {
+    if (await inCloud($)) return next(e)
     const result = await next(e)
     const ran = result as { deny?: string; isError?: boolean }
     if (next.origin.plugin === 'engine' && !fromAgent(e) && ran.deny === undefined && !ran.isError) {
@@ -8814,12 +8850,14 @@ export const register: Register = (on, options) => {
     return result
   })
   // #292 : le module que charge le visualiseur dit si le widget suivant est une maquette.
-  on('tool.call', { tool: VISUALIZE_README }, ($, e, next) => {
+  on('tool.call', { tool: VISUALIZE_README }, async ($, e, next) => {
+    if (await inCloud($)) return next(e)
     const modules = (e as { modules?: unknown }).modules
     if (capture && !fromAgent(e)) capture.mockupModule = Array.isArray(modules) && modules.includes('mockup')
     return next(e)
   })
   on('tool.call', { tool: ASK_TOOL }, async ($, e, next) => {
+    if (await inCloud($)) return next(e)
     if (fromAgent(e)) return next(e)
     // « T'attendent » passe par ce formulaire (#244).
     reportTurn.asked = true
@@ -8845,6 +8883,7 @@ export const register: Register = (on, options) => {
     }
   })
   on('tool.call', { tool: WRAP_UP_TOOL }, async ($, e, next) => {
+    if (await inCloud($)) return next(e)
     const ask = (e as { ask?: unknown }).ask
     const refusal = fromAgent(e) ? undefined : ((othersArchiveAsk(ask) ? othersArchiveRefusal() : undefined) ?? (await unsentAsk($, ask)) ?? (await openLineAsk($, ask)) ?? (await launchAsk($, e as never)) ?? (await pendingAsk($, ask)))
     if (refusal !== undefined) return { deny: refusal }
@@ -8891,7 +8930,8 @@ export const register: Register = (on, options) => {
   })
   // Les outils du tour, ceux du modèle de la session seule (ni sous-agent, ni appel d'un plugin) :
   // un tour de travail sans liste d'étapes (#98).
-  on('tool.call', ($, e, next) => {
+  on('tool.call', async ($, e, next) => {
+    if (await inCloud($)) return next(e)
     const tool = (e as { tool?: unknown }).tool
     if (next.origin.plugin === 'engine' && !fromAgent(e) && tool !== UPDATE_PLAN_TOOL && tool !== WRAP_UP_TOOL) stepList.tools += 1
     // Maestro n'exécute pas (#250) : à un tour de la personne, un geste d'exécution se note pour la fin du tour.
@@ -8903,6 +8943,7 @@ export const register: Register = (on, options) => {
   })
   // Garde-fou du dossier principal (#87) : une commande git interdite n'est pas lancée.
   on('tool.call', { tool: 'Bash' }, async ($, e, next) => {
+    if (await inCloud($)) return next(e)
     const refusal = await guardBash($, (e as { command?: unknown }).command)
     if (refusal !== undefined) return { deny: refusal }
     // #244 : les questions que `tasks.py write` a imprimées attendent la personne ; la dernière sortie l'emporte.
@@ -8945,6 +8986,7 @@ export const register: Register = (on, options) => {
   })
 
   on('turn.start', async ($, e, next) => {
+    if (await inCloud($)) return next(e)
     if (e.agentId === undefined) {
       stopTurn = { id: e.turnId, stopRan: false, fromReminder: reminderCarried }
       reminderCarried = false
@@ -9009,6 +9051,7 @@ export const register: Register = (on, options) => {
   // Fin d'un tour de cette session (pas d'un agent) : sa tâche « attend ta réponse » tout de suite.
   // Sous sec-default, Stop est sauté (#116) : le rappel de fin de tour attend le message suivant, en contexte (#140).
   on('turn.complete', async ($, e, next) => {
+    if (await inCloud($)) return next(e)
     const result = await next(e)
     if (e.agentId !== undefined) return result
     await markOwnRunning($, false)
@@ -9047,6 +9090,7 @@ export const register: Register = (on, options) => {
   // Une skill de méthode superpowers, ou swiftui-pro, lancée (outil Skill, commande, préchargement) : notée pour le rappel.
   if (settings.account !== 'team') {
     on('skill.prompt', async ($, e, next) => {
+      if (await inCloud($)) return next(e)
       skillPrompted = true
       noteSkill(e.skill)
       return next(e)
@@ -9055,6 +9099,7 @@ export const register: Register = (on, options) => {
   // Sous sec-default, skill.prompt est sauté (#116) : l'outil Skill et la commande tapée notent la skill
   // aussi, et l'outil ouvre le volet des skills Réglages et panneau, la note dans le contexte du résultat.
   on('tool.call', { tool: 'Skill' }, async ($, e, next) => {
+    if (await inCloud($)) return next(e)
     noteSkill(e.skill)
     skillPrompted = false
     const result = await next(e)
@@ -9063,12 +9108,14 @@ export const register: Register = (on, options) => {
     return note === undefined ? result : { ...result, context: [...(result.context ?? []), note] }
   })
   on('command.run', async ($, e, next) => {
+    if (await inCloud($)) return next(e)
     noteSkill(e.command)
     return next(e)
   })
 
   if (settings.account !== 'team') {
     on('classic.Stop', async ($, e, next) => {
+      if (await inCloud($)) return next(e)
       stopTurn.stopRan = true
       stopTurn.background = (e as { background_tasks?: unknown }).background_tasks
       // La conclusion se garde ici (#307) : si ce Stop relance Claude, la fin de tour ne lira que la réponse relancée.
@@ -9082,12 +9129,14 @@ export const register: Register = (on, options) => {
 
   // Une zone de clic démolie par l'app, même après son « prêt » (#152) : nouvelles clés, de nouvelles instances.
   on('ui.fault', async ($, e, next) => {
+    if (await inCloud($)) return next(e)
     if (zoneFault(zones, e.module, e.element, await read($, zoneGenAtom))) await update($, zoneGenAtom, v => v + 1)
     return next(e)
   })
 
   // Un clic sur la barre : la zone de clic dit quel segment ; un second clic retire le filtre.
   on('ui.message', async ($, e, next) => {
+    if (await inCloud($)) return next(e)
     const ready = (e.data as { ready?: unknown } | null)?.ready
     if (typeof ready === 'string') {
       zoneReady(zones, ready, await $.clock.now())
@@ -9123,6 +9172,7 @@ export const register: Register = (on, options) => {
 
   // Un bouton de l'app : noté pour la mesure du délai jusqu'au dessin suivant.
   on('ui.press', async ($, e, next) => {
+    if (await inCloud($)) return next(e)
     if (e.plugin === 'roadmap') {
       notePress(e.element)
       await closeReopenAsk($, e.element)
@@ -9140,6 +9190,7 @@ export const register: Register = (on, options) => {
 
   // Un choix dans un menu du panneau (« Ranger », « Qui ») : le menu quitte le focus au dessin suivant (#228).
   on('ui.select', { component: 'Pane', requestId: PANE }, async ($, e, next) => {
+    if (await inCloud($)) return next(e)
     const result = await next(e)
     if (e.surface === 'desktop') retireActedFocus(focusHeld, e.element)
     return result
@@ -9149,6 +9200,7 @@ export const register: Register = (on, options) => {
 
   // Sa fermeture à la main est refusée tant que le réglage est allumé ; un toast dit comment la permettre.
   on('ui.close', { id: PANE }, async ($, e, next) => {
+    if (await inCloud($)) return next(e)
     if (!refusesPaneClose(settings.autoOpen, e.id, e.origin.kind)) return next(e)
     $.ui.toast(pinnedPaneToast())
   })
@@ -9163,6 +9215,7 @@ export const register: Register = (on, options) => {
   // (« coupe le mode ADHD »), la skill la traite. Lancée par le modèle, le volet s'ouvre aussi.
   // Suivie d'une demande, le volet s'ouvre dès la commande : sous sec-default, skill.prompt ne l'ouvre pas (#116).
   on('command.run', { command: SETTINGS_SKILL }, async ($, e, next) => {
+    if (await inCloud($)) return next(e)
     if (e.args.trim() === '') return openSettings($)
     await skillPaneNote($, e.command)
     return next(e)
@@ -9170,6 +9223,7 @@ export const register: Register = (on, options) => {
 
   if (settings.account !== 'team') {
     on('skill.prompt', { skill: SETTINGS_SKILL }, async ($, e, next) => {
+      if (await inCloud($)) return next(e)
       const result = await next(e)
       const note = await skillPaneNote($, e.skill)
       return note === undefined ? result : { ...result, text: `${note}\n\n${result.text}` }
@@ -9180,6 +9234,7 @@ export const register: Register = (on, options) => {
   // le panneau, et le modèle déroulait la skill jusqu'à un diagnostic. Elle répond comme /roadmap, sans
   // passer par le modèle ; suivie d'une demande (« change les sujets »), la skill la traite.
   on('command.run', { command: PANEL_SKILL }, async ($, e, next) => {
+    if (await inCloud($)) return next(e)
     if (e.args.trim() === '') return openCommand($)
     await skillPaneNote($, e.command)
     return next(e)
@@ -9189,6 +9244,7 @@ export const register: Register = (on, options) => {
   // panneau s'ouvre aussi, et le texte de la skill le dit en tête.
   if (settings.account !== 'team') {
     on('skill.prompt', { skill: PANEL_SKILL }, async ($, e, next) => {
+      if (await inCloud($)) return next(e)
       const result = await next(e)
       const note = await skillPaneNote($, e.skill)
       return note === undefined ? result : { ...result, text: `${note}\n\n${result.text}` }
@@ -9199,6 +9255,7 @@ export const register: Register = (on, options) => {
   // deviennent la carte Roadmap ; le modèle lit toujours le message d'origine. Déplié (ctrl+o), le texte
   // entier d'un brief suit la carte. Tout autre message, ou une lecture en panne, garde sa rangée.
   on('ui.render', { component: 'UserMessage' }, async ($, e, next) => {
+    if (await inCloud($)) return next(e)
     // L'app confie ses messages au plugin : la carte d'accueil peut paraître ici (#153).
     void noteWelcomeCard($, 'reachedAt')
     if (!maestroCall(e.props.text) && !briefTaskOf(e.props.text)) return next(e)
@@ -9240,6 +9297,7 @@ export const register: Register = (on, options) => {
   // l'échéance relative, qui tient la tâche, sa place dans la chaîne, l'avant → après (store `written-before`) et un clic
   // qui ouvre sa fiche. Sans ligne, résumé de bloc ou lecture en panne, le message garde son dessin : le texte reste lisible.
   on('ui.render', { component: 'AssistantMessage' }, async ($, e, next) => {
+    if (await inCloud($)) return next(e)
     if (e.props.isSummary) return next(e)
     const whole = splitWritten(e.props.text)
     if (!whole.some(part => part.kind === 'cards')) return next(e)
@@ -9294,6 +9352,7 @@ export const register: Register = (on, options) => {
   // moins une session, jamais pendant un sondage ; sinon la bande reste à l'app. La boîte de fin qui
   // pose une question prend sa place (l'app) : l'arbre revient quand elle est répondue.
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
+    if (await inCloud($)) return next(e)
     bandAsked = { survey: e.props.hasSurvey }
     if (e.props.hasSurvey) return next(e)
     try {
@@ -9382,6 +9441,7 @@ export const register: Register = (on, options) => {
   // Le défilement du panneau, relevé : le moteur pose la fenêtre (#106). Celui de la personne fait
   // quitter l'élément qu'elle tenait (#154) : sa clé change, l'app ne remonte plus jusqu'à lui.
   on('ui.scroll', { component: 'Pane', requestId: PANE }, async ($, e, next) => {
+    if (await inCloud($)) return next(e)
     const t0 = tick()
     const result = await next(e)
     noteScroll(e, result, tick() - t0)
@@ -9391,6 +9451,7 @@ export const register: Register = (on, options) => {
 
   // Le focus du panneau, relevé avec la réponse du moteur (#111), et l'élément tenu retenu (#154).
   on('ui.focus', { component: 'Pane', requestId: PANE }, async ($, e, next) => {
+    if (await inCloud($)) return next(e)
     const result = await next(e)
     noteFocus(e, result)
     if (result.deny === undefined) noteHeldFocus(focusHeld, e.element)

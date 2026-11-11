@@ -763,6 +763,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.276.0 (2026-11-11)** : cloud : plugin muet en VM, skills seules (#457) ; bilans comptables, causes en liste fermée (#460) ; reco à profil de besoins (#461)
 - **0.275.0 (2026-11-11)** : fidélité : une tâche de rendu se clôt à sa publication, sa preuve part en tâche à part (#455)
 - **0.274.0 (2026-11-11)** : maestro : carte de tâche en cloud selon la reco, ligne prise au départ de la session cloud (#458)
 - **0.273.0 (2026-11-11)** : maestro : la suite entière de main tourne dans une session cloud, le Mac ne garde que la publication (#450)

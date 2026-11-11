@@ -60,10 +60,18 @@ OPS = {
 # Le bilan d'une clôture (#262), au contrat de `cowork.py roadmap close --bilan-b64` : ses colonnes, les
 # valeurs admises du journal par défaut, la borne d'une ligne de conclusion.
 BILAN_COLS = ("date", "id", "fait", "souci", "ressenti", "cause", "corrections", "note", "tokens", "sonnet")
-BILAN_CLES = {"fait", "souci", "ressenti", "cause", "corrections", "note"}
+BILAN_CLES = {"fait", "souci", "ressenti", "cause", "corrections", "note", "lieu", "type"}
 JOURNAL_DEFAUT = "ROADMAP-bilans.csv"
 RESSENTIS = ["fluide", "accroché", "bloqué"]
-CAUSES = ["aucune", "spec-floue", "attente-tiers", "bug-outil", "refait", "périmètre-élargi", "autre"]
+# Une liste fermée (#460) : « autre » n'y est plus, ses 59 bilans disaient surtout la charge du Mac, les sessions
+# parallèles sur les mêmes fichiers et ce qui manque à la machine (VM cloud, shim, plugin absent).
+CAUSES = ["aucune", "spec-floue", "attente-tiers", "bug-outil", "refait", "périmètre-élargi", "charge-mac",
+          "conflit-parallèle", "environnement"]
+# Un journal comptable (#460) : son en-tête porte `type`, que pose `tools/ranger_bilans.py`. Le bilan y est
+# exigé, avec son type ; le lieu vient de la ligne (`lieu:cloud`, sinon mac) quand le bilan ne le dit pas.
+BILAN_COMPTE = ("lieu", "type")
+LIEUX = ["cloud", "mac"]
+TYPES = ["code", "doc", "rendu", "sans-code"]
 CONCLUSION_MAX = 140
 # Un dossier Cowork dont `cowork.json` confie la roadmap au plugin (`"roadmap": "plugin-roadmap"`, #262).
 COWORK_PLUGIN = "plugin-roadmap"
@@ -177,7 +185,7 @@ def journal_de_bilan(dossier, rdir):
     Cowork qui confie sa roadmap au plugin demande un bilan à chaque clôture, comme `cowork.py`."""
     cfg = _cowork(dossier) or {}
     out = {"chemin": os.path.join(rdir, JOURNAL_DEFAUT), "ressentis": RESSENTIS, "causes": CAUSES,
-           "exige": cfg.get("roadmap") == COWORK_PLUGIN}
+           "exige": cfg.get("roadmap") == COWORK_PLUGIN, "comptable": False}
     b = cfg.get("bilan")
     if isinstance(b, dict) and isinstance(b.get("log"), str) and b["log"].strip():
         log = b["log"].strip()
@@ -192,6 +200,10 @@ def journal_de_bilan(dossier, rdir):
             enum = next((c.get("enum") for c in colonnes or [] if isinstance(c, dict) and c.get("name") == nom), None)
             if isinstance(enum, list) and enum:
                 out[cle] = [str(x) for x in enum]
+        return out
+    entete = next(csv.reader(io.StringIO(audit._lire_fichier(out["chemin"]) or "")), None) or []
+    if "type" in entete:
+        out.update(comptable=True, exige=True)
     return out
 
 
@@ -1342,8 +1354,10 @@ class _Tenue(audit._Preparation):
         if b is None:
             if self.journal["exige"]:
                 raise Erreur("%s : ce dossier demande un bilan à chaque clôture : bilan {fait, souci, ressenti (%s), "
-                             "cause (%s), corrections, note}" % (quoi, "|".join(self.journal["ressentis"]),
-                                                                 "|".join(self.journal["causes"])))
+                             "cause (%s), corrections, note%s}" % (
+                                 quoi, "|".join(self.journal["ressentis"]), "|".join(self.journal["causes"]),
+                                 ", type (%s), lieu (%s, sinon celui de la ligne)" % ("|".join(TYPES), "|".join(LIEUX))
+                                 if self.journal["comptable"] else ""))
             return None
         if not isinstance(b, dict):
             raise Erreur("%s : le bilan est un objet {fait, souci, ressenti, cause, corrections, note}" % quoi)
@@ -1352,7 +1366,9 @@ class _Tenue(audit._Preparation):
             raise Erreur("%s : bilan, clé inconnue %s (admises : %s)" % (quoi, ", ".join(sorted(inconnues)),
                                                                         ", ".join(sorted(BILAN_CLES))))
         r = {k: str(b.get(k) if b.get(k) is not None else "").strip() for k in BILAN_CLES}
-        for k, admises in (("ressenti", self.journal["ressentis"]), ("cause", self.journal["causes"])):
+        comptes = [("type", TYPES)] + ([("lieu", LIEUX)] if r["lieu"] else [])
+        for k, admises in [("ressenti", self.journal["ressentis"]), ("cause", self.journal["causes"])] + (
+                comptes if self.journal["comptable"] else []):
             if r[k] not in admises:
                 raise Erreur("%s : bilan, %s « %s » hors des valeurs admises (%s)" % (quoi, k, r[k], ", ".join(admises)))
         fluide = r["ressenti"] == "fluide"
@@ -1371,6 +1387,9 @@ class _Tenue(audit._Preparation):
             raise Erreur("%s : bilan, corrections est un nombre entier, 0 ou plus" % quoi)
         if not r["note"]:
             raise Erreur("%s : bilan, note manque (une phrase)" % quoi)
+        if not self.journal["comptable"]:
+            for k in BILAN_COMPTE:
+                r.pop(k)
         return r
 
     def fermer_tache(self, t, date, suffixe, souci, raison="", bilan=None):
@@ -1383,6 +1402,8 @@ class _Tenue(audit._Preparation):
         self.vers_fait.append(im.rendre_ligne(True, libelle + suffixe, t.axe, champs, t.note))
         rang = dict(bilan) if bilan else {"fait": t.libelle, "souci": souci}
         rang.update(date=fait[:10], id=t.id)
+        if self.journal["comptable"] and not rang.get("lieu"):
+            rang["lieu"] = "cloud" if dict(t.champs).get("lieu") == "cloud" else "mac"
         rang.update(self.cout_de(t))
         self.bilans.append(rang)
         self.bilan["fermetures"] += 1

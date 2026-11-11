@@ -16,11 +16,14 @@ Avant la règle des mots, le verdict du modèle (#430) : le panneau fait juger c
 ligne est celui qu'il a jugé, ce verdict répond, suivi de « (jugée sur la tâche entière) ». Sans lui (panneau fermé,
 modèle indisponible, ligne changée), la règle répond, suivie de « (règle des mots : pas encore jugée) ».
 
+La reco rend un profil de besoins (#461), liste fermée de BESOINS (celle de RECO_NEEDS du panneau) : état du Mac,
+vrai rendu, ressource unique, secrets, maquettes, code seul ; le lieu en découle (`lieu_des_besoins`).
+
 Avec `--carte` (#458), la carte que Maestro pose, en JSON : `target` « cloud » quand la reco dit cloud et que le projet
 a `"sessions": "cloud"` dans DEPOT/.claude/roadmap.json, « mac » sinon ; `titre` « #ID · <nom:> · cloud » (ou
 « · Mac »), coupé à 58 signes comme `targetTitle` du panneau ; `branche`, celle que nommeront le brief
-(`brief_cloud.py --branche`) et la prise (`prendre_cloud.py`) pour une carte cloud, sinon null ; `reco`, `raison`
-et `par`.
+(`brief_cloud.py --branche`) et la prise (`prendre_cloud.py`) pour une carte cloud, sinon null ; `reco`, `besoins`,
+`raison` et `par`.
 
 Python 3.9 et plus, bibliothèque standard seulement.
 """
@@ -35,10 +38,21 @@ import unicodedata
 import prendre_cloud
 import suivi_cloud
 
+# Le profil de besoins (#461) : chaque besoin et son lieu, dans l'ordre de RECO_NEEDS du panneau.
+BESOINS = {
+    "etat_mac": "mac",
+    "vrai_rendu": "mac",
+    "ressource_unique": "mac",
+    "secrets": "mac",
+    "maquettes": "cloud",
+    "code_seul": "cloud",
+}
 MARQUEURS = [
-    {"words": ["simulateur", "simulator", "xcode", "ios\\b", "iphone"], "why": "le simulateur iOS et Xcode sont sur le Mac"},
-    {"words": ["volet navigateur", "browser pane", "preview_start", "vrai site", "site reel"], "why": "le volet navigateur, pour un vrai site, est sur le Mac"},
-    {"words": ["trousseau", "keychain", "launchd", "osascript", "computer-use", "reglages systeme"], "why": "une ressource du Mac (trousseau, launchd, réglages système)"},
+    {"need": "vrai_rendu", "words": ["simulateur", "simulator", "xcode", "ios\\b", "iphone"], "why": "le simulateur iOS et Xcode sont sur le Mac"},
+    {"need": "vrai_rendu", "words": ["volet navigateur", "browser pane", "preview_start", "vrai site", "site reel"], "why": "le volet navigateur, pour un vrai site, est sur le Mac"},
+    {"need": "secrets", "words": ["trousseau", "keychain"], "why": "les secrets et le trousseau sont sur le Mac"},
+    {"need": "ressource_unique", "words": ["base locale", "appareil branche", "verrou:"], "why": "une ressource unique du Mac (verrou, base locale, appareil)"},
+    {"need": "etat_mac", "words": ["launchd", "osascript", "computer-use", "reglages systeme", "installed_plugins", "plugins installes", "version chargee", "catalogue local", "claude plugin update", "main\\.log"], "why": "état du Mac (~/.claude, plugins installés, version chargée par Claude, launchd) : lisible sur le Mac seul"},
 ]
 RENDU = {"words": ["maquette", "mockup", "capture", "fidelite", "screenshot"], "why": "maquettes et preuve de fidélité : faites depuis le cloud (Artifact, capture collée, #409)"}
 CACHE = "roadmap-reco.json"
@@ -50,15 +64,26 @@ def plier(texte):
     return "".join(c for c in unicodedata.normalize("NFD", texte) if not unicodedata.combining(c)).lower()
 
 
+def lieu_des_besoins(besoins):
+    """Le lieu qui découle d'un profil (#461) : « mac » dès qu'un besoin du Mac y est, sinon « cloud »."""
+    return "mac" if any(BESOINS.get(b) == "mac" for b in besoins) else "cloud"
+
+
 def reco(*textes):
-    """`{"lieu": "cloud"|"mac", "why": …}` d'après le libellé et les documents de la tâche."""
+    """`{"lieu": "cloud"|"mac", "why": …, "besoins": [...]}` d'après le libellé et les documents de la tâche : tous les
+    besoins lus, le lieu en découle, la raison est celle du premier marqueur du Mac (#461)."""
     t = plier("\n".join(textes))
-    for m in MARQUEURS:
-        if any(re.search(r"\b" + w, t) for w in m["words"]):
-            return {"lieu": "mac", "why": m["why"]}
+    trouves = [m for m in MARQUEURS if any(re.search(r"\b" + w, t) for w in m["words"])]
+    besoins = []
+    for m in trouves:
+        if m["need"] not in besoins:
+            besoins.append(m["need"])
     if any(re.search(r"\b" + w, t) for w in RENDU["words"]):
-        return {"lieu": "cloud", "why": RENDU["why"]}
-    return {"lieu": "cloud", "why": LOGIQUE}
+        besoins.append("maquettes")
+    if not besoins:
+        besoins.append("code_seul")
+    why = trouves[0]["why"] if trouves else (RENDU["why"] if "maquettes" in besoins else LOGIQUE)
+    return {"lieu": lieu_des_besoins(besoins), "why": why, "besoins": besoins}
 
 
 def _lire(chemin):
@@ -90,7 +115,18 @@ def verdict(depot, id_, libelle):
         return None
     if not isinstance(v, dict) or v.get("label") != libelle.strip():
         return None
-    if v.get("lieu") not in ("cloud", "mac") or not isinstance(v.get("why"), str) or not v["why"].strip():
+    if not isinstance(v.get("why"), str) or not v["why"].strip():
+        return None
+    if isinstance(v.get("besoins"), list):
+        # #461 : le profil fait foi, le lieu en découle ; un besoin inconnu tombe, une liste vide vaut « code seul ».
+        besoins = [] if v["besoins"] else ["code_seul"]
+        for b in v["besoins"]:
+            if b in BESOINS and b not in besoins:
+                besoins.append(b)
+        if not besoins:
+            return None
+        return {"lieu": lieu_des_besoins(besoins), "why": v["why"].strip(), "besoins": besoins}
+    if v.get("lieu") not in ("cloud", "mac"):
         return None
     return {"lieu": v["lieu"], "why": v["why"].strip()}
 
@@ -126,6 +162,7 @@ def carte(depot, id_, ligne, r, par):
         "titre": titre_carte(id_, nom, target),
         "branche": prendre_cloud.branche_cloud(nom, id_) if target == "cloud" else None,
         "reco": r["lieu"],
+        "besoins": r.get("besoins", []),
         "raison": raison,
         "par": par,
     }

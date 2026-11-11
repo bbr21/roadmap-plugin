@@ -307,6 +307,15 @@ The recommendation is judged by the model on the whole task (#430): as soon as a
 `<main folder>/.git/roadmap-reco.json`, outside the tracked repository; task size or complexity informs the judgement
 but never sends a task to the Mac. Without a fresh verdict (panel closed, model down, line just rewritten) the word
 markers answer.
+The recommendation is a **profile of needs** (#461), a closed list: `etat_mac` (the state of the Mac: `~/.claude`,
+installed plugins, the version the app loads, its logs, launchd), `vrai_rendu` (a real render the session must see
+or drive itself: iOS simulator, a real site in the browser pane, the live panel), `ressource_unique` (a lock, a local
+database, a device), `secrets` (keychain, keys, tokens), `maquettes` and `code_seul`. The place follows from it in
+code: one need of the Mac is enough, otherwise cloud. `reco_cloud.py --carte` gives the profile as `besoins`.
+**A cloud task that stalled on a need of the Mac becomes an example of the judge**: when you close a `lieu:cloud`
+line whose bilan says it stalled for lack of the Mac (#457: reading the Mac's plugin config), open the task
+that adds it to `RECO_STALLED_EXAMPLES` of `hooks/parse.ts` (its id, a short label, the need,
+what it lacked and when).
 `python3 "<skill folder>/scripts/reco_cloud.py" <main folder> <id>` prints `#<id> · cloud · <reason> (<by>)` or
 `#<id> · Mac · <reason> (<by>)`, where `<by>` says « jugée sur la tâche entière » for the model's verdict and
 « règle des mots : pas encore jugée » for the markers (the same as the panel). On the markers, read the line, its
@@ -696,7 +705,10 @@ The merge itself:
 
 - **After the merge** (after the « c'est bon » for a published task in test, below; for a render,
   at its publication, its proof going to a task apart, #455), Maestro ticks the line (`fait:`, what was delivered, the PR), moves it to the
-  top of `ROADMAP-fait.md` and writes its bilan from the sub-session's last report.
+  top of `ROADMAP-fait.md` and writes its bilan from the sub-session's last report. In a countable
+  journal (#460, `ROADMAP-bilans.csv` of Roadmap once `tools/ranger_bilans.py --apply` ran) the
+  bilan is required with its `type` (`code`, `doc`, `rendu`, `sans-code`), the cause from the closed
+  list of the `tasks` skill (never « autre »); `lieu` comes from the line's `lieu:cloud`.
 - **A render task does not go to test** (#455): its proof apart, « Prouver la fidélité de #N », is its test.
   Maestro ticks it at the publication and posts no « Tester #N · X.Y.Z » card for it, even when the reminder below
   names it: the person's feedback comes as the capture, and each gap as its correction task.
