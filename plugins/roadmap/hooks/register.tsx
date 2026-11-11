@@ -548,6 +548,7 @@ import {
   unlocksOf,
   cloudArchiveNote,
   cloudBrandTasks,
+  cloudFiche,
   cloudSessionIdOf,
   cloudTakePickaxe,
   cloudTakenAt,
@@ -12155,6 +12156,12 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     const aheadNow = stepsSession ? aheadBySession.get(stepsSession)?.ahead : undefined
     const headState: BrandTask['state'] | undefined =
       waitState === 'wait' ? brandStateOf(taskSessionState({ asking: stepsNote?.question !== undefined, ahead: aheadNow ?? 0, ...(stepsNote ? { status: stepsNote } : {}) })) : waitState
+    // #440 : une ligne cloud n'a ni session locale ni étapes à lire ; sa fiche dit l'état de sa PR, celui de la bande.
+    const cloudNow =
+      !current.done && !headState && current.id !== undefined && !ficheTest
+        ? (await cloudTasksOf($, source, allTasks, t => t.label, now).catch(() => [] as BrandTask[])).find(c => c.id === current.id)?.cloud
+        : undefined
+    const cloudState = cloudNow ? cloudFiche(cloudNow.state) : undefined
     const fullBrand = focusBrand ?? taskBrandOf(current, source, allTasks, { label: s.titre, prereqs: prereqsFor })
     // #291 : la voie (stations d'avant et d'après) quitte l'en-tête ; la jauge de chaîne, au pied, la remplace.
     // En édition (#342), l'en-tête reste celui de la fiche : rien ne bouge.
@@ -12180,7 +12187,9 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     // L'état sous l'en-tête (#199, choix de Bertrand) : une bande teintée, son icône, son mot et pourquoi ;
     // il a quitté la ligne « Tâche lancée par Maestro », où il flottait à droite.
     // #375 (maquette A) : en test, la bande dit « en test · version X.Y.Z » en sarcelle, fiole devant.
-    const band = headState || (ficheTest && !current.done)
+    const band = cloudState
+      ? cloudState.band
+      : headState || (ficheTest && !current.done)
       ? stateBand({
           state: headState ?? 'live',
           ...(ficheTest ? { test: ficheTest.version } : {}),
@@ -12579,7 +12588,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     // #341 (A2) : le souci quitte le carton pour la carte Bilan ; le Fait y reste, ou « Ce qu'on a fait » à sa place.
     const cartonFin = new Set(current.done ? ['Fait', ...(versionOnly ? ['Livré'] : [])] : [])
     // Une session qui tourne sans état de bande (une session « #N · … » hors Maestro) reste « en session ».
-    const cartonState = headState ?? (live ? 'live' : undefined)
+    const cartonState = headState ?? cloudState?.state ?? (live ? 'live' : undefined)
     const carton = cartonOf({
       ...(cartonState ? { state: cartonState } : {}),
       done: current.done,
@@ -12588,6 +12597,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
       ...(current.due ? { due: current.due } : {}),
       ...(current.ouvert ? { ouvert: current.ouvert } : {}),
       ...(current.fait ? { fait: current.fait } : {}),
+      ...(cloudNow ? { cloud: cloudNow.state } : {}),
       today,
     })
     const cartonLook = {

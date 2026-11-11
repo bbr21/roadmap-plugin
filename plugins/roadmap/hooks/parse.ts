@@ -10415,6 +10415,33 @@ export function cloudWords(state: CloudPr['state']): { short: string; long: stri
   }
 }
 
+/**
+ * L'état d'une ligne cloud dans sa fiche (#440) : celui de sa PR, le même que la bande, au lieu de « À lancer »
+ * (la fiche n'a ni session locale ni liste d'étapes à lire). `state` est celui de la bande (`cloudBrandTasks`), sauf
+ * prête, qui passe « à fusionner » ; `band`, la bande d'état sous l'en-tête, son mot celui de la bande (`cloudWords`).
+ */
+export function cloudFiche(state: CloudPr['state']): {
+  state: 'wait' | 'live' | 'merge' | 'done'
+  band: { word: string; why: string; mark: 'person' | 'spinner' | 'merge' | 'check'; tone: 'wait' | 'live' | 'merge' | 'done' }
+} {
+  switch (state) {
+    case 'none':
+      return { state: 'live', band: { word: 'en session', why: 'pas encore de PR', mark: 'spinner', tone: 'live' } }
+    case 'open':
+      return { state: 'live', band: { word: 'PR ouverte', why: 'contrôles en cours', mark: 'spinner', tone: 'live' } }
+    case 'red':
+      return { state: 'wait', band: { word: cloudWords('red').short, why: 'PR ouverte', mark: 'person', tone: 'wait' } }
+    case 'ready':
+      return { state: 'merge', band: { word: cloudWords('ready').short, why: 'Maestro fusionne', mark: 'merge', tone: 'merge' } }
+    case 'merged':
+      return { state: 'done', band: { word: cloudWords('merged').short, why: 'en publication', mark: 'check', tone: 'done' } }
+    case 'closed':
+      return { state: 'wait', band: { word: cloudWords('closed').short, why: 'sans fusion', mark: 'person', tone: 'wait' } }
+    default:
+      return { state: 'live', band: { word: 'en session', why: 'état de la PR inconnu', mark: 'spinner', tone: 'live' } }
+  }
+}
+
 const CLOUD_SESSION_LINK = /https:\/\/claude\.ai\/code\/(session_[A-Za-z0-9]+)/
 
 /**
@@ -11130,7 +11157,10 @@ export function cartonOf(o: {
   ouvert?: string
   fait?: string
   today: string
+  /** L'état de la PR d'une ligne cloud (#440) : fusionnée et pas encore close, « Fusionnée, en publication ». */
+  cloud?: CloudPr['state']
 }): { tone: 'plan' | 'live' | 'wait' | 'merge' | 'done' | 'cancel'; title: string; meta: string } {
+  if (!o.done && o.cloud === 'merged') return { tone: 'done', title: 'Fusionnée, en publication', meta: o.ouvert ? `demandée ${shortDate(o.ouvert)}` : '' }
   if (o.done) {
     const meta = o.fait ? doneLabel(o.fait) : ''
     if (o.abandoned) return { tone: 'cancel', title: 'Annulée', meta }
