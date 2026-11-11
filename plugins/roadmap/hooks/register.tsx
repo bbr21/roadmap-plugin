@@ -486,10 +486,10 @@ import {
   sessionIsMaestro,
   queueMaestroIds,
   heldByNonMaestro,
+  orphanTake,
   stuckEntries,
   queueAlertMs,
   type StuckEntry,
-  projectMaestroOpen,
   releaseTurnId,
   openSteps,
   LAUNCH_PENDING_MS,
@@ -4301,7 +4301,7 @@ async function writeOwnQueue($: EngineInterface, ownId: string, change: (own: Gl
  * vol devient celle de ce Maestro, avec la trace de la reprise. Deux Maestros qui la reprennent au même pas : la
  * dernière écriture l'emporte, et chacun ne la lance qu'au pas suivant, s'il la tient encore. Rend la file écrite.
  */
-async function takeEntry($: EngineInterface, ownId: string, lost: GlobalQueued, now: number, wrongful = false): Promise<GlobalQueued[]> {
+async function takeEntry($: EngineInterface, ownId: string, lost: GlobalQueued, now: number, wrongful = false, keepHeld = false): Promise<GlobalQueued[]> {
   const stored = await readGlobalQueue($)
   const same = (e: GlobalQueued) => e.maestro === lost.maestro && e.id === lost.id && e.project === lost.project && e.kind !== 'resume'
   const found = stored.find(same)
@@ -4317,8 +4317,9 @@ async function takeEntry($: EngineInterface, ownId: string, lost: GlobalQueued, 
   const { failed: held, ...plain } = kept
   const unheld = held?.remote ? plain : kept
   // #389 : la retenue posée chez une session qui n'est pas un Maestro (son tour de relève fini sans lancement) ne vaut rien.
+  // #424 : celle d'un Maestro parti (`keepHeld`) vaut encore : l'entrée change de Maestro et attend toujours son ▶.
   const { held: _held, ...free } = unheld
-  const rest = wrongful ? free : unheld
+  const rest = wrongful && !keepHeld ? free : unheld
   const next = stored.map(e => (same(e) ? { ...rest, maestro: ownId, taken: { from: found.maestro, at: now } } : e))
   await storeSet($, LAUNCH_QUEUE_KEY, next as unknown as StoreValue)
   return next
@@ -4946,9 +4947,12 @@ async function relieveLaunches($: EngineInterface): Promise<void> {
         if (next.length !== stored.length) await storeSet($, LAUNCH_QUEUE_KEY, next as unknown as StoreValue)
         queue = next
       }
-      const wrongful = (e: GlobalQueued) => listed && heldByNonMaestro(e, state.rows, maestros) && (e.project === ownProject || !projectMaestroOpen(e, state.rows, maestros))
-      const lost = globalQueueOrder(queue).find(e => e.maestro !== ownId && e.kind !== 'resume' && !launchInFlight(e, now) && e.carded === undefined && (wrongful(e) || (!queueHeld(e) && (gone.has(e.maestro) || (!e.failed?.remote && !live.has(e) && gateOf(e).go)))))
-      if (lost) queue = await takeEntry($, ownId, lost, now, wrongful(lost))
+      // #424 : orpheline (session non Maestro, archivée ou absente de la liste complète), retenue comprise ; un Maestro
+      // d'un autre projet la prend aussi quand celui de son projet ne l'a pas prise en `QUEUE_ORPHAN_MS`.
+      const orphan = (e: GlobalQueued) => (listed ? orphanTake(e, { ownProject, rows: state.rows, maestros, marks: state.marks, complete: state.rows.length < LIST_LIMIT, now }) : undefined)
+      const lost = globalQueueOrder(queue).find(e => e.maestro !== ownId && e.kind !== 'resume' && !launchInFlight(e, now) && e.carded === undefined && (orphan(e)?.take === true || (!queueHeld(e) && (gone.has(e.maestro) || (!e.failed?.remote && !live.has(e) && gateOf(e).go)))))
+      const lostOrphan = lost ? orphan(lost) : undefined
+      if (lost) queue = await takeEntry($, ownId, lost, now, lostOrphan?.take === true, lostOrphan?.keepHeld === true)
     }
     // (d) et (e) : la tête, une entrée `resume` à reprendre ou une tâche à lancer ; un pas qui vient de poser ou lever une pause attend le suivant.
     // Une entrée en vol (#374) n'est plus une tête : elle attend sa session ; une entrée reprise à ce pas attend le suivant.

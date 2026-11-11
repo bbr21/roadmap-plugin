@@ -758,6 +758,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.264.2 (2026-11-11)** : maestro : une entrée de la file retenue chez une session archivée, absente ou qui n'est pas un Maestro est reprise par un Maestro ouvert, son projet d'abord (#424)
 - **0.264.1 (2026-11-11)** : panneau : le titre d'une ligne cloud ouvre la fiche de la tâche, qui porte « Ouvrir la PR N » (#435)
 - **0.264.0 (2026-11-11)** : maestro et panneau : la reco cloud ou Mac se juge par le modèle sur la tâche entière (ligne, spec, fiche, fichiers), gardée en cache dès qu'une tâche apparaît, la règle de mots en secours (#430)
 - **0.263.1 (2026-11-11)** : panneau : l'archive d'une ligne cloud lit sa session dans la PR et l'archive, sinon dit de l'archiver dans la liste de gauche (#435)

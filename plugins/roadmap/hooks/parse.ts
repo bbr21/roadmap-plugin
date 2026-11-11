@@ -4780,6 +4780,33 @@ export function projectMaestroOpen(e: { maestro: string; match: readonly string[
   })
 }
 
+/** Au-delà, une entrée orpheline (#424) n'attend plus le Maestro de son projet : n'importe quel Maestro ouvert la reprend. */
+export const QUEUE_ORPHAN_MS = 10 * 60_000
+
+/**
+ * L'entrée est-elle orpheline, et ce Maestro la reprend-il (#424) ? Orpheline : sa session est ouverte sans être un Maestro
+ * (#389), archivée, ou absente d'une liste complète (`complete` : la liste de l'app tient toutes les sessions ouvertes, ce
+ * qu'elle ne dit plus à sa limite). Un Maestro de son projet la prend tout de suite ; un autre seulement quand ce projet
+ * n'a pas de Maestro ouvert, ou après `QUEUE_ORPHAN_MS` (le 2026-11-10, #664 et #665 d'AAFES sont restées retenues depuis
+ * la veille chez « Tri HomeExchange »). Sa retenue (`held`) ne vaut que si elle venait d'un Maestro (sa marque) : celle
+ * d'une session planifiée qui a fini son tour sans lancer n'est pas un refus de la personne. `undefined` : rien à reprendre.
+ */
+export function orphanTake(
+  e: { maestro: string; project: string; match: readonly string[]; at: number; held?: { at: number } },
+  o: { ownProject: string; rows: readonly unknown[]; maestros: ReadonlySet<string>; marks: ReadonlySet<string>; complete: boolean; now: number },
+): { take: boolean; keepHeld: boolean } | undefined {
+  const row = rowOf(o.rows, e.maestro)
+  const since = e.held?.at ?? e.at
+  // Absente : la liste de l'app ne rend pas les archivées, mais un banc ou une liste en retard peut taire un Maestro qui
+  // tourne ; seule une entrée retenue depuis `QUEUE_ORPHAN_MS` s'y juge (une entrée libre a sa reprise de #374).
+  const absentGone = row === undefined && o.complete && e.held !== undefined && o.now - since >= QUEUE_ORPHAN_MS
+  const gone = absentGone || row?.isArchived === true
+  if (!gone && !heldByNonMaestro(e, o.rows, o.maestros)) return undefined
+  const keepHeld = gone && o.marks.has(e.maestro)
+  const take = e.project === o.ownProject || !projectMaestroOpen(e, o.rows, o.maestros) || o.now - since >= QUEUE_ORPHAN_MS
+  return { take, keepHeld }
+}
+
 /**
  * Maestro d'une sous-session (demande de Bertrand du 2026-10-27) : son Maestro racine (`maestroRootOf`,
  * #132). Une session sans parent ou détachée n'en a pas ; un Maestro racine non plus : ses cartes
