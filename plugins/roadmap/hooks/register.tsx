@@ -550,9 +550,19 @@ import {
   cloudBriefText,
   cloudStartRefusal,
   takeCloudLine,
-  cloudReco,
+  judgedReco,
+  parseRecoCache,
+  parseRecoVerdicts,
+  recoCacheText,
+  recoJudgePrompt,
+  recoKeyOf,
+  recosToJudge,
+  RECO_CACHE_FILE,
+  RECO_JUDGE_BATCH,
   withTargetNote,
   type CloudReco,
+  type JudgedReco,
+  type RecoCache,
   type Sessions,
   githubRepoOf,
   type CloudPr,
@@ -3974,7 +3984,10 @@ async function refresh($: EngineInterface): Promise<void> {
   bilanLogs.delete(source.dir)
   if (before !== undefined && before !== source.dir) await update($, themeStampAtom, v => v + 1)
   await refreshSessions($, source, false)
-  if (await restamp($, source)) await summarize($, source)
+  if (await restamp($, source)) {
+    await summarize($, source)
+    void judgeRecos($, source)
+  }
   await noteSurfacesSeen($)
 }
 
@@ -5263,7 +5276,10 @@ async function poll($: EngineInterface): Promise<void> {
     else {
       await checkZones($)
       await refreshSessions($, knownSource, true)
-      if (await restamp($, knownSource)) await summarize($, knownSource)
+      if (await restamp($, knownSource)) {
+        await summarize($, knownSource)
+        void judgeRecos($, knownSource)
+      }
       await restampQueue($)
     }
     await relieveLaunches($)
@@ -5315,11 +5331,115 @@ const cloudOpen = (source: Source): boolean => projectSettings(source).sessions 
 
 const recoSig = (task: Task) => `${task.label}|${task.spec ?? ''}|${task.fiche ?? ''}`
 
-/** La reco d'une tâche, avec ses documents s'ils sont déjà lus. */
-function recoOf(source: Source, task: Task): CloudReco {
+/** La reco d'une tâche : le verdict du modèle s'il est à jour (#430), sinon la règle, avec ses documents s'ils sont lus. */
+function recoOf(source: Source, task: Task): JudgedReco {
   const kept = recoDocs.get(taskKey(task))
-  const docs = kept && kept.sig === recoSig(task) ? kept.docs : []
-  return cloudReco(task, docs, { projet: projectSettings(source).travail === 'projet' })
+  const docs = kept && kept.sig === recoSig(task) ? kept.docs : undefined
+  return judgedReco(task, recoCache.cache, docs, { projet: projectSettings(source).travail === 'projet' })
+}
+
+// --- La reco jugée par le modèle (#430) ---------------------------------------------------------------
+// Dès qu'une tâche ouverte apparaît ou change (ligne, spec, fiche), le modèle des titres courts la juge sur la
+// tâche entière ; le verdict se garde dans `.git/roadmap-reco.json` du projet, que `reco_cloud.py` de Maestro lit
+// aussi. Le jugement tourne en fond, au changement de la roadmap et à l'ouverture d'une fiche ; une panne laisse
+// la règle des marqueurs répondre.
+
+/** Les verdicts du projet, relus une fois par dossier, et le chemin du cache (absent : pas de dossier `.git`). */
+const recoCache: { dir?: string; path?: string; cache: RecoCache } = { cache: {} }
+let judging = false
+let judgeAgain = false
+
+/** Le cache du projet, relu au premier besoin ou au changement de projet. */
+async function loadRecoCache($: EngineInterface, source: Source): Promise<void> {
+  const root = source.root ?? source.dir
+  if (recoCache.dir === root) return
+  recoCache.dir = root
+  recoCache.cache = {}
+  recoCache.path = undefined
+  try {
+    if ((await $.fs.stat(`${root}/.git`)).kind !== 'dir') return
+  } catch {
+    return
+  }
+  recoCache.path = `${root}/.git/${RECO_CACHE_FILE}`
+  const text = await readOr($, recoCache.path)
+  if (text !== undefined) recoCache.cache = parseRecoCache(text)
+}
+
+/** Les documents d'une tâche pour son jugement : ceux déjà lus, sinon lus maintenant et gardés. */
+async function recoDocsNow($: EngineInterface, source: Source, task: Task): Promise<string[]> {
+  const key = taskKey(task)
+  const sig = recoSig(task)
+  const kept = recoDocs.get(key)
+  if (kept?.sig === sig) return kept.docs
+  if (!task.spec && !task.fiche) return []
+  const found = await briefFound($, source, task)
+  const docs: string[] = []
+  for (const doc of briefDocs(source, task, found)) docs.push((await readOr($, doc)) ?? '')
+  recoDocs.set(key, { sig, docs })
+  return docs
+}
+
+/** Les tâches dont la fiche a déjà demandé un jugement, par clé et libellé : une fiche ne le redemande pas à chaque dessin. */
+const judgeAsked = new Set<string>()
+
+/** Une fiche à lancer sans verdict du modèle : le jugement part, une fois par tâche et par libellé (#430). */
+function askJudge($: EngineInterface, source: Source, task: Task): void {
+  const asked = `${recoKeyOf(task)}|${task.label}`
+  if (judgeAsked.has(asked) || recoOf(source, task).by === 'model') return
+  judgeAsked.add(asked)
+  void judgeRecos($, source)
+}
+
+/**
+ * Fait juger par le modèle les tâches ouvertes sans verdict à jour (#430), par paquets, puis garde les verdicts
+ * et redessine. Seulement dans un projet de code ouvert au cloud ; un appel en cours en reprend un second après lui.
+ */
+async function judgeRecos($: EngineInterface, source: Source): Promise<void> {
+  if (!cloudOpen(source) || projectSettings(source).travail === 'projet') return
+  if (judging) {
+    judgeAgain = true
+    return
+  }
+  judging = true
+  try {
+    await loadRecoCache($, source)
+    const open = await load($, files(source).open, 'ROADMAP.md')
+    if (typeof open === 'string') return
+    const tasks = open.filter(t => !t.done && !isRoutine(t))
+    const docs = new Map<Task, string[]>()
+    for (const t of tasks) docs.set(t, await recoDocsNow($, source, t))
+    const todo = recosToJudge(tasks, recoCache.cache, t => docs.get(t) ?? [])
+    if (todo.length === 0) return
+    const today = todayOf(await $.clock.now())
+    for (let i = 0; i < todo.length; i += RECO_JUDGE_BATCH) {
+      const batch = todo.slice(i, i + RECO_JUDGE_BATCH)
+      const reply = await $.model.complete({ model: settings.titleModel, prompt: recoJudgePrompt(batch), maxTokens: 2000 })
+      if (!reply.isAnswered) return
+      const verdicts = parseRecoVerdicts(reply.text)
+      let changed = false
+      for (const item of batch) {
+        const v = verdicts[item.key]
+        if (!v) continue
+        recoCache.cache[item.key] = { label: item.task.label.trim(), sig: item.sig, lieu: v.lieu, why: v.why, at: today }
+        changed = true
+      }
+      if (!changed) continue
+      // Les verdicts des tâches closes ou retirées partent : le cache ne garde que la roadmap ouverte.
+      const keep = new Set(tasks.map(recoKeyOf))
+      for (const key of Object.keys(recoCache.cache)) if (!keep.has(key)) delete recoCache.cache[key]
+      if (recoCache.path) await $.fs.write(recoCache.path, recoCacheText(recoCache.cache)).catch(() => undefined)
+      await update($, recoStampAtom, v => v + 1)
+    }
+  } catch {
+    // le modèle ou un fichier en panne : la règle des marqueurs répond, le prochain changement réessaie
+  } finally {
+    judging = false
+    if (judgeAgain) {
+      judgeAgain = false
+      void judgeRecos($, source)
+    }
+  }
 }
 
 /** Lit une fois la spec et la fiche d'une tâche pour sa reco, puis redessine. Une panne garde la reco de la ligne. */
@@ -5335,6 +5455,8 @@ function loadRecoDocs($: EngineInterface, source: Source, task: Task): void {
       for (const doc of briefDocs(source, task, found)) docs.push((await readOr($, doc)) ?? '')
       recoDocs.set(key, { sig, docs })
       await update($, recoStampAtom, v => v + 1)
+      // Une spec ou une fiche changée depuis le verdict : le modèle la rejuge (#430).
+      void judgeRecos($, source)
     } catch {
       recoDocs.set(key, { sig, docs: [] })
     } finally {
@@ -8274,6 +8396,7 @@ export const register: Register = (on, options) => {
       if (settings.autoOpen && !paneOpen) void openPane($, source)
       $.clock.every(TICK_MS, () => void poll($))
       void summarize($, source)
+      void judgeRecos($, source)
       void matchSessions($, source)
       // #277 : les étapes de journée passées avancent, une fois par jour, sans retenir le démarrage.
       void rollDayStepsOnStart($, source).catch(() => undefined)
@@ -12043,7 +12166,10 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     const launchable = !current.done && !live && !launched.includes(taskKey(current))
     // #416 (maquette B) : une routine n'a pas de cible ; une autre tâche lance vers la cible de l'interrupteur.
     const targeted = !isRoutine(current) && cloudOpen(source)
-    if (targeted && launchable) loadRecoDocs($, source, current)
+    if (targeted && launchable) {
+      loadRecoDocs($, source, current)
+      askJudge($, source, current)
+    }
     const reco = recoOf(source, current)
     const target = launchTargetOf(source, current)
     const launchNow = () =>

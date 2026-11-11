@@ -280,8 +280,16 @@ needs the iOS simulator, the browser pane for a real site, the keychain, launchd
 task that only needs mockups or a fidelity proof goes to the cloud too (#427): since #409 the cloud session publishes
 its mockups as a claude.ai Artifact, the person pastes the capture into it and `fidelite.py --maquette <url>` proves
 it, as `docs/session-cloud.md` says. The reason then says so.
-`python3 "<skill folder>/scripts/reco_cloud.py" <main folder> <id>` prints `#<id> · cloud · <reason>` or
-`#<id> · Mac · <reason>`, from the line, its spec and its fiche (the same markers as the panel). Before posting a
+The recommendation is judged by the model on the whole task (#430): as soon as an open task appears or changes
+(line, note, spec, fiche, the files they name), the panel asks the short-titles model and keeps the verdict in
+`<main folder>/.git/roadmap-reco.json`, outside the tracked repository; task size or complexity informs the judgement
+but never sends a task to the Mac. Without a fresh verdict (panel closed, model down, line just rewritten) the word
+markers answer.
+`python3 "<skill folder>/scripts/reco_cloud.py" <main folder> <id>` prints `#<id> · cloud · <reason> (<by>)` or
+`#<id> · Mac · <reason> (<by>)`, where `<by>` says « jugée sur la tâche entière » for the model's verdict and
+« règle des mots : pas encore jugée » for the markers (the same as the panel). On the markers, read the line, its
+spec and its fiche yourself before trusting it: only a real need of the Mac (local database or migration, iOS
+simulator, secrets or keychain, a unique locked resource, a real site in the browser pane) says Mac. Before posting a
 card, give that line and ask the target by the choice form, the recommendation first; nothing goes to the cloud
 without the person's choice. In the panel, the task's fiche carries a Cloud | Mac switch set on the recommendation,
 then « Lancer »: on a cloud choice the panel itself posts the cloud card (the same brief as `brief_cloud.py`) and,
