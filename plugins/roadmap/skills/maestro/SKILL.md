@@ -305,23 +305,40 @@ markers answer.
 `#<id> · Mac · <reason> (<by>)`, where `<by>` says « jugée sur la tâche entière » for the model's verdict and
 « règle des mots : pas encore jugée » for the markers (the same as the panel). On the markers, read the line, its
 spec and its fiche yourself before trusting it: only a real need of the Mac (local database or migration, iOS
-simulator, secrets or keychain, a unique locked resource, a real site in the browser pane) says Mac. Before posting a
-card, give that line and ask the target by the choice form, the recommendation first; nothing goes to the cloud
-without the person's choice. In the panel, the task's fiche carries a Cloud | Mac switch set on the recommendation,
+simulator, secrets or keychain, a unique locked resource, a real site in the browser pane) says Mac. **Maestro's card
+follows the recommendation** (#458, BBR's request of 2026-11-11: a task recommended for the cloud is proposed in
+the cloud, never on the Mac): before posting a task card, run
+`python3 "<skill folder>/scripts/reco_cloud.py" <main folder> <id> --carte`. It prints the card as JSON: `target`
+« cloud » when the recommendation says cloud and the project has `"sessions": "cloud"`, « mac » otherwise; `titre`,
+`#<id> · <nom> · cloud` or `#<id> · <nom> · Mac` (the target at the end, as the panel writes it, #436); `branche`, the
+cloud session's branch (`feat/<slug>` of the `nom:`, as the panel's), null for the Mac. Post the card on that target
+with that title, without asking the target first: the person still chooses by clicking Start, and can switch the
+target in the card's options. In the panel, the task's fiche carries a Cloud | Mac switch set on the recommendation,
 then « Lancer »: on a cloud choice the panel itself posts the cloud card (the same brief as `brief_cloud.py`) and,
 once the app accepts it, takes the line (`qui:`, `branche:` `feat/<slug>`, `lieu:cloud`, moved to « En cours ») and
 pushes `main`; nothing reaches you, and you follow it by its PR as below. A Mac card launched from the panel ends
 with « Cible : le Mac, … » and the recommendation. What changes for Maestro on a cloud launch:
 
-- **Take the line** as usual, plus `lieu:cloud`: `qui:<branche> | branche:<branche> | lieu:cloud`, with a
-  `feat/<slug>` branch Maestro chooses (the VM gets a `claude/…` branch from the app; the brief makes it switch).
-  Commit and push `main` before posting the card.
+- **Take the line when the person starts the card, never before** (#458): a line taken ahead blocks the panel's ▶,
+  and a card left unstarted would leave it held. The app tells Maestro « The user started your suggested background
+  task "<titre>" in a separate cloud session »: at once, run `python3 "<skill folder>/scripts/prendre_cloud.py"
+  <main folder> "<titre>" <branche>`, with the card's title as the app quotes it and the branch of its brief. It
+  writes the panel's take (`takeCloudLine`): `qui:<branche> | branche:<branche> | lieu:cloud`, `ouvert:` and
+  `après:-` if missing, the line moved to the bottom of « En cours »; then commit that file alone and push, by the two
+  commands it prints. The band then shows the cloud session from its start, before its PR (#502 and #447 of adBricks,
+  started by BBR on 2026-11-11, stayed invisible for want of a line and a PR). A line held by another branch is
+  refused (exit 2): say so in one line. A line already taken by that branch in the cloud is left as it is. The VM gets
+  a `claude/…` branch from the app; the brief makes it switch to the line's branch. A card the person switched to the
+  Mac at Start is a Mac session: take its line the Mac way.
 - **Push your own branch first** (#426): a cloud session starts from the branch of the session that posts its
   card. From a Maestro in a worktree, that branch must be on GitHub with nothing left to push, or the VM dies at start
   on « The requested branch or commit was not found ». `git push -u origin <your branch>` before the card; the panel
   refuses its own cloud card in that case and says so.
-- **Post the card** with `start_session`, `target: "cloud"`, title `#<id> · <nom>`, and as its prompt the output
-  of `python3 "<skill folder>/scripts/brief_cloud.py" <main folder> <id>`, unchanged: it opens on the three mission
+- **Post the card** with `start_session`, `target: "cloud"`, the `titre` of `reco_cloud.py --carte`, and as its
+  prompt the output of `python3 "<skill folder>/scripts/brief_cloud.py" <main folder> <id> --branche <branche>`
+  (the `branche` of `--carte`), unchanged: on a line not taken yet, it quotes the line as the take will write it, and
+  writes nothing. A line already taken (`branche:`) keeps its branch: `--branche` must repeat it, or be left out.
+  The brief is unchanged otherwise: it opens on the three mission
   lines and points to `docs/session-cloud.md`. No Maestro clause, no tree context: none of the plugin's rules reach
   the VM. The brief carries the person's session settings for the project instead (#449: one line of yes / no
   values, read from `~/.claude/reglages-session.json`; their rules for the VM are in `docs/session-cloud.md`,

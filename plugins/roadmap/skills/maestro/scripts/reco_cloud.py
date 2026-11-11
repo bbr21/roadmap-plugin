@@ -16,6 +16,12 @@ Avant la règle des mots, le verdict du modèle (#430) : le panneau fait juger c
 ligne est celui qu'il a jugé, ce verdict répond, suivi de « (jugée sur la tâche entière) ». Sans lui (panneau fermé,
 modèle indisponible, ligne changée), la règle répond, suivie de « (règle des mots : pas encore jugée) ».
 
+Avec `--carte` (#458), la carte que Maestro pose, en JSON : `target` « cloud » quand la reco dit cloud et que le projet
+a `"sessions": "cloud"` dans DEPOT/.claude/roadmap.json, « mac » sinon ; `titre` « #ID · <nom:> · cloud » (ou
+« · Mac »), coupé à 58 signes comme `targetTitle` du panneau ; `branche`, celle que nommeront le brief
+(`brief_cloud.py --branche`) et la prise (`prendre_cloud.py`) pour une carte cloud, sinon null ; `reco`, `raison`
+et `par`.
+
 Python 3.9 et plus, bibliothèque standard seulement.
 """
 
@@ -26,6 +32,7 @@ import re
 import sys
 import unicodedata
 
+import prendre_cloud
 import suivi_cloud
 
 MARQUEURS = [
@@ -88,10 +95,47 @@ def verdict(depot, id_, libelle):
     return {"lieu": v["lieu"], "why": v["why"].strip()}
 
 
+def projet_cloud(depot):
+    """Le projet ouvre-t-il le cloud (`"sessions": "cloud"` de DEPOT/.claude/roadmap.json) ?"""
+    try:
+        with open(os.path.join(depot, ".claude", "roadmap.json"), encoding="utf-8") as f:
+            return json.load(f).get("sessions") == "cloud"
+    except (OSError, ValueError, AttributeError):
+        return False
+
+
+def titre_carte(id_, nom, target):
+    """Le titre de la carte, la cible au bout, comme `targetTitle` du panneau (#436)."""
+    marque = " · %s" % ("cloud" if target == "cloud" else "Mac")
+    base = "#%s · %s" % (id_, nom)
+    place = 58 - len(marque)
+    if len(base) > place:
+        base = base[:place - 1].rstrip() + "…"
+    return base + marque
+
+
+def carte(depot, id_, ligne, r, par):
+    """La carte de Maestro pour la ligne #id_ (#458) : cloud quand la reco le dit et que le projet l'ouvre."""
+    nom = ligne["cles"].get("nom") or ligne["libelle"]
+    ouvert = projet_cloud(depot)
+    target = "cloud" if r["lieu"] == "cloud" and ouvert else "mac"
+    raison = r["why"] if ouvert else "%s ; mais le projet n'a pas \"sessions\": \"cloud\"" % r["why"]
+    return {
+        "id": id_,
+        "target": target,
+        "titre": titre_carte(id_, nom, target),
+        "branche": prendre_cloud.branche_cloud(nom, id_) if target == "cloud" else None,
+        "reco": r["lieu"],
+        "raison": raison,
+        "par": par,
+    }
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(description="La cible recommandée d'une tâche : cloud ou Mac.")
     p.add_argument("depot")
     p.add_argument("id")
+    p.add_argument("--carte", action="store_true", help="la carte à poser, en JSON (#458)")
     a = p.parse_args(argv)
     try:
         texte = suivi_cloud.lire_roadmap(a.depot)
@@ -109,6 +153,9 @@ def main(argv=None):
     r = verdict(a.depot, id_, ligne["libelle"])
     par = "jugée sur la tâche entière" if r else "règle des mots : pas encore jugée"
     r = r or reco(ligne["libelle"], *documents(a.depot, ligne["cles"]))
+    if a.carte:
+        print(json.dumps(carte(a.depot, id_, ligne, r, par), ensure_ascii=False))
+        return 0
     print("#%s · %s · %s (%s)" % (id_, "cloud" if r["lieu"] == "cloud" else "Mac", r["why"], par))
     return 0
 

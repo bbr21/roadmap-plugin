@@ -5,7 +5,12 @@ plan de la spec cite des chemins) et Fini quand, `---`, la ligne recopiée, la b
 `docs/session-cloud.md` par leur chemin (skill maestro, « Mode cloud », #408), et les réglages de session de la
 personne pour ce projet (#449), que la VM ne reçoit pas du plugin.
 
-  python3 brief_cloud.py DEPOT ID [--reglages FICHIER]
+  python3 brief_cloud.py DEPOT ID [--branche BRANCHE] [--reglages FICHIER]
+
+#458 : Maestro pose sa carte cloud avant la prise, qui n'a lieu qu'au départ de la session (`prendre_cloud.py`) :
+une ligne pas encore prise (sans `branche:`) se brief avec `--branche`, la branche que la prise posera ; la ligne
+citée est celle qu'écrira la prise (`prendre_cloud.prendre`), et rien n'est écrit ici. Une ligne déjà prise garde sa
+branche (`--branche` doit alors la redire).
 
 Les réglages se lisent dans ~/.claude/reglages-session.json (ou FICHIER) comme le plugin les lit (sessionPrefs de
 hooks/parse.ts) : les clés du haut, puis le bloc de `projets` dont la clé désigne DEPOT ; sans fichier, les défauts
@@ -13,17 +18,20 @@ hooks/parse.ts) : les clés du haut, puis le bloc de `projets` dont la clé dés
 
 Lit DEPOT/roadmap/ROADMAP.md (ou DEPOT/ROADMAP.md) et, pour le nom du projet, DEPOT/.claude/roadmap.json (clé
 « name », sinon le nom du dossier). Lecture seule. Code de retour 2 (message sur stderr) pour une ligne absente,
-close, non prise (sans `qui:` et `branche:`) ou sans `lieu:cloud`, ou une roadmap introuvable.
+close, non prise sans `--branche` (le message propose la branche du panneau), prise par une autre branche ou sans
+`lieu:cloud`, ou une roadmap introuvable.
 
 Python 3.9 et plus, bibliothèque standard seulement.
 """
 
 import argparse
+import datetime
 import json
 import os
 import re
 import sys
 
+import prendre_cloud
 import suivi_cloud
 
 
@@ -48,8 +56,9 @@ def nom_projet(depot):
     return os.path.basename(os.path.abspath(depot))
 
 
-def trouver_ligne(depot, ident):
-    """(chemin relatif de la roadmap, ligne lue) ; ErreurLigne si elle ne se lance pas en cloud."""
+def trouver_ligne(depot, ident, branche=None, aujourdhui=None):
+    """(chemin relatif de la roadmap, ligne lue, prise ou non) ; ErreurLigne si elle ne se lance pas en cloud.
+    Une ligne pas encore prise rend la ligne qu'écrira la prise à `branche` (#458), sans rien écrire."""
     for rel in ("roadmap/ROADMAP.md", "ROADMAP.md"):
         chemin = os.path.join(depot, rel)
         if os.path.isfile(chemin):
@@ -57,20 +66,34 @@ def trouver_ligne(depot, ident):
     else:
         raise suivi_cloud.ErreurDepot("roadmap introuvable dans %s" % depot)
     with open(chemin, encoding="utf-8") as f:
-        for brut in f.read().splitlines():
-            ligne = suivi_cloud.lire_ligne(brut)
-            if ligne and ligne["cles"].get("id") == str(ident):
-                break
-        else:
-            raise ErreurLigne("#%s : ligne absente de %s" % (ident, rel))
+        texte = f.read()
+    for brut in texte.splitlines():
+        ligne = suivi_cloud.lire_ligne(brut)
+        if ligne and ligne["cles"].get("id") == str(ident):
+            break
+    else:
+        raise ErreurLigne("#%s : ligne absente de %s" % (ident, rel))
     c = ligne["cles"]
     if ligne["close"]:
         raise ErreurLigne("#%s : ligne close" % ident)
-    if not (c.get("qui") and c.get("branche")):
+    if not c.get("branche"):
+        if not branche:
+            propre = prendre_cloud.branche_cloud(c.get("nom") or ligne["libelle"], ident)
+            raise ErreurLigne("#%s : ligne non prise : passe --branche %s (la branche que la prise posera au départ "
+                              "de la session)" % (ident, propre))
+        try:
+            _, prise = prendre_cloud.prendre(texte, str(ident), branche,
+                                             aujourdhui or datetime.date.today().isoformat())
+        except prendre_cloud.ErreurPrise as e:
+            raise ErreurLigne(str(e))
+        return rel, suivi_cloud.lire_ligne(prise), False
+    if not c.get("qui"):
         raise ErreurLigne("#%s : ligne non prise (qui: et branche: attendus)" % ident)
+    if branche and branche != c["branche"]:
+        raise ErreurLigne("#%s : ligne déjà prise par %s, pas par %s" % (ident, c["branche"], branche))
     if c.get("lieu") != "cloud":
         raise ErreurLigne("#%s : pas de lieu:cloud" % ident)
-    return rel, ligne
+    return rel, ligne, True
 
 
 def fichiers_du_plan(depot, spec):
@@ -136,8 +159,8 @@ def ligne_reglages(prefs, illisible=False):
             + CONSIGNE_REGLAGES)
 
 
-def construire(depot, ident, fichier_reglages=None, maison=None):
-    rel, ligne = trouver_ligne(depot, ident)
+def construire(depot, ident, fichier_reglages=None, maison=None, branche=None, aujourdhui=None):
+    rel, ligne, prise = trouver_ligne(depot, ident, branche, aujourdhui)
     c = ligne["cles"]
     branche = c["branche"]
     spec = c.get("spec")
@@ -160,6 +183,8 @@ def construire(depot, ident, fichier_reglages=None, maison=None):
         "tu ne la vois pas d'ici) :" % repo
         if repo
         else "Ta ligne, telle qu'écrite dans %s (prise pour toi, ne la modifie pas) :" % rel
+        if prise
+        else "Ta ligne, telle qu'elle sera prise pour toi dans %s au départ de ta session (ne la modifie pas) :" % rel
     )
     sortie += [
         "Fini quand : ce que dit la ligne #%s est livré, %s sur ta branche à jour de origin/main, la branche %s "
@@ -187,6 +212,7 @@ def main(argv=None):
     p = argparse.ArgumentParser(description="Brief d'une session cloud de Maestro.")
     p.add_argument("depot")
     p.add_argument("id")
+    p.add_argument("--branche", help="la branche de la session, pour une ligne pas encore prise (#458)")
     p.add_argument("--reglages", help="fichier des réglages de session (défaut : %s)" % FICHIER_REGLAGES)
     a = p.parse_args(argv)
     try:
@@ -195,7 +221,7 @@ def main(argv=None):
         print("brief_cloud : id « %s » non numérique" % a.id, file=sys.stderr)
         return 2
     try:
-        brief = construire(a.depot, ident, a.reglages)
+        brief = construire(a.depot, ident, a.reglages, branche=a.branche)
     except (ErreurLigne, suivi_cloud.ErreurDepot) as e:
         print("brief_cloud : %s" % e, file=sys.stderr)
         return 2
