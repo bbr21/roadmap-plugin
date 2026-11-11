@@ -20,7 +20,7 @@ roadmap panel, hit by any change of a render file, even one that only adds an `a
 A changed file that matches one of the globs (fnmatch, `*` crosses `/`) gets those tests in `declared`
 and in its `tests`.
 
-A project can also list its heavy test files (#434: over a minute in CI, roadmap.test.tsx 312 s), in
+A project can also list its heavy test files (#434: over a minute in CI, roadmap.test.tsx 312 s before #433 split it), in
 `.claude/roadmap.json`: `"lourds": {"seuil_s": 50, "releve": "…", "tests": {"path": seconds, …}}`, kept up
 to date by the project (here `tools/tests_lourds.py`, from the CI log). Each one the map names is marked
 « lourd : en dernier » and listed in `heavy`: the session runs it last, with the session's other targeted tests,

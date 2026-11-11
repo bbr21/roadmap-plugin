@@ -15614,7 +15614,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   }
   headZones = graphic && fixedZones + numberZones.size + groups.filter(g => !g.bare).length <= ZONE_LIMIT
 
-  // La ligne « En cours » de Maestro (#381, choix 1 de la maquette, après #367) : encadrée, la roue, « En cours » et son
+  // La ligne « En session » de Maestro (#381, choix 1 de la maquette, après #367 ; « En session » depuis #464) : encadrée, la roue, « En session » et son
   // chevron, qui la déplient ; puis « N ici » et l'icône du centre de contrôle, qui l'ouvre. « N ici » compte les sessions
   // du projet, tous Maestro du même dossier confondus (`liveBlockRows`) : autant que de lignes dépliées. « Mac X/Y » et
   // « N en file » vivent dans le centre de contrôle ; quand le Mac retient la file, le filet du cadre reste orange.
@@ -15627,8 +15627,9 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     return drawnPill({ text: c.text, bg: tone.bg, fg: tone.fg, weight: TEXT.weight.soft })
   }
   // #390 (maquette C2) : sous Remote Control, la pastille et, en mode Auto, « Passer en bypass », sur une rangée au-dessus
-  // du cadre « En cours » ; sans Remote Control, rien.
-  const remoteShown = maestroBrand ? remotePill(await readRemoteFacts($, now)) : undefined
+  // du cadre « En session » ; sans Remote Control, rien. #464 (maquette B) : hors mode Auto, seulement quand une tâche
+  // de ce Maestro attend en file (`doseView.queue` : ni reprise, ni départ en vol).
+  const remoteShown = maestroBrand ? remotePill({ ...(await readRemoteFacts($, now)), waiting: dose?.queue.length ?? 0 }) : undefined
   const remoteRow = remoteShown ? (
     <Box key="remote-row" flexDirection="row" alignItems="center" gap={SPACE.row} flexWrap="wrap" paddingX={SPACE.indent}>
       {drawnPill({ text: remoteShown.text, bg: palette.blockTint, fg: palette.blockOn, mark: 'warn', weight: TEXT.weight.soft })}
@@ -15644,7 +15645,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
               {spinner()}
             </Box>
             <Box flexShrink={1} minWidth={0}>
-              <Text weight="semibold" color={palette.text}>En cours</Text>
+              <Text weight="semibold" color={palette.text}>En session</Text>
             </Box>
             {graphic && Svg ? (
               <Box flexDirection="row" alignItems="center" flexShrink={0}>

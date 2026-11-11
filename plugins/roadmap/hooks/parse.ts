@@ -13913,11 +13913,15 @@ export function typedReleaseText(release: string | readonly string[]): string {
 
 /**
  * #390 (maquette C2) : la pastille en tête du panneau de Maestro quand Remote Control est allumé ; rien sinon. En mode
- * Auto, le ▶ passe par un message que l'app refuse aussi : la pastille le dit et porte « Passer en bypass ».
+ * Auto, le ▶ passe par un message que l'app refuse aussi : la pastille le dit et porte « Passer en bypass », file vide
+ * comprise. #464 (maquette B) : hors mode Auto, « la file attend ton mot » ne paraît que quand une tâche de ce Maestro
+ * attend vraiment en file (`waiting`, ni reprise ni départ en vol) ; file vide, rien, au lieu d'un défaut apparent du
+ * bloc « En session ».
  */
-export function remotePill(o: { remote: boolean; mode: string | undefined }): { text: string; bypass: boolean } | undefined {
+export function remotePill(o: { remote: boolean; mode: string | undefined; waiting: number }): { text: string; bypass: boolean } | undefined {
   if (!o.remote) return undefined
-  return o.mode === 'auto' ? { text: 'Remote Control · Auto : lancements refusés', bypass: true } : { text: 'Remote Control · la file attend ton mot', bypass: false }
+  if (o.mode === 'auto') return { text: 'Remote Control · Auto : lancements refusés', bypass: true }
+  return o.waiting > 0 ? { text: 'Remote Control · la file attend ton mot', bypass: false } : undefined
 }
 
 /** La ligne d'une entrée en file au centre de contrôle (#374) : en file, en vol, carte posée (#393), ou ratée avec son heure et son motif. */

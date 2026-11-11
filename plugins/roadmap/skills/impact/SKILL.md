@@ -64,13 +64,13 @@ tests, listed under « dont par règle du projet » (JSON: `declared`, also in `
 file or a malformed rule is skipped. When a test of this kind is missed, add its rule there rather
 than a path in this script.
 
-**Heavy tests** (#434): a test file that takes over a minute in CI (`roadmap.test.tsx`, 312 s) waits
+**Heavy tests** (#434): a test file that takes over a minute in CI (`roadmap.test.tsx`, 312 s before #433 split it by theme) waits
 for the Mac's heavy-test queue, then holds it (#416: 42 min of queue and tests for 50 min of work).
 The project lists them in `.claude/roadmap.json`, kept up to date from the CI log (here
 `python3 tools/tests_lourds.py --ecrire`, from the last green run of `main`):
 
 ```json
-"lourds": {"seuil_s": 50, "releve": "…", "tests": {"plugins/roadmap/tests/roadmap.test.tsx": 310}}
+"lourds": {"seuil_s": 50, "releve": "…", "tests": {"plugins/roadmap/tests/maestro-dose.test.tsx": 108}}
 ```
 
 Each one the map names is marked « lourd : en dernier » (JSON: `heavy`, `{path: seconds}`): run it
