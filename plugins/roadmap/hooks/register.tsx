@@ -463,6 +463,7 @@ import {
   sessionModeIn,
   oneTaskStep,
   isMaestroSession,
+  maestroFolderTitle,
   maestroSessionIds,
   withSelfRow,
   sessionScanNote,
@@ -926,6 +927,7 @@ const UNARCHIVE_SESSION_TOOL = 'mcp__ccd_session_mgmt__unarchive_session'
 const SESSION_ROWS = 4
 // Celui qui liste les autres sessions de l'app.
 const LIST_SESSIONS_TOOL = 'mcp__ccd_session_mgmt__list_sessions'
+const SET_TITLE_TOOL = 'mcp__ccd_session_mgmt__set_session_title'
 // Les sessions lancées depuis le panneau, gardées entre les sessions par empreinte du libellé.
 const LIVE_KEY = 'live-sessions'
 // Une session suivie au plus 7 jours ; sans fiche lisible, 12 heures.
@@ -2852,6 +2854,32 @@ async function markMaestro($: EngineInterface): Promise<void> {
   await storeSet($, MAESTROS_KEY, { ...Object.fromEntries(kept), [own.id]: now })
   // La marque n'est pas un atome : sans ce redessin, la bande attendait qu'une session bouge (#225).
   await update($, liveVersionAtom, v => v + 1)
+}
+
+/**
+ * #439 : « Maestro » dit dans une session au titre laissé à la main (« AAFES 258.1 ») la nomme du dossier de
+ * son projet, « Maestro · AAFES Cowork » (`maestroFolderTitle`) : une fois, puis le nom ne change plus. Ni
+ * dans une session de tâche, ni chez une session lancée par un Maestro. Le renommage refusé (mode auto,
+ * outil absent) : la consigne qui revient, pour que Claude le fasse lui-même ; sinon rien.
+ */
+async function nameMaestro($: EngineInterface): Promise<string | undefined> {
+  const own = await readOwnSession($, true)
+  if (maestroFolderTitle(own.title, 'x') === undefined) return undefined
+  const source = await sourceNow($)
+  const title = source ? maestroFolderTitle(own.title, source.root ?? source.dir) : undefined
+  if (title === undefined || (await parentIsMaestro($))) return undefined
+  try {
+    toolCalls++
+    const ran = await $.tool.call({ tool: SET_TITLE_TOOL, session_id: 'self', title })
+    if (ran.deny === undefined && !ran.isError) {
+      ownSession = { ...own, title }
+      await update($, liveVersionAtom, v => v + 1)
+      return undefined
+    }
+  } catch {
+    // outil absent : Claude renomme
+  }
+  return `Cette session est Maestro et son titre (« ${own.title} ») ne le dit pas (#439) : nomme-la « ${title} » par set_session_title (session courante), une seule fois, sans un mot dans ta réponse. Le nom se pose au lancement, puis ne change plus.`
 }
 
 /** Les propositions gardées pour les Maestros ; seules les entrées bien formées comptent. */
@@ -8614,6 +8642,12 @@ export const register: Register = (on, options) => {
         await markMaestro($)
       } catch {
         // fiche ou store illisible : le titre et la famille jugent seuls
+      }
+      try {
+        const rename = await nameMaestro($)
+        if (rename !== undefined) texts.push(rename)
+      } catch {
+        // fiche illisible : le titre reste, le prochain « Maestro » réessaie
       }
       // L'appel nu ou d'axe pose l'axe de la session, et le panneau ouvert bascule tout de suite.
       if (!call.scan) {

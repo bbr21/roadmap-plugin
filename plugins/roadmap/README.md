@@ -231,6 +231,9 @@ et dit en une ligne ce qu'elle montre, ou pourquoi rien : session de tâche ou l
 (son Maestro porte la bande), aucune session en cours dans le projet (#385), roadmap absente ou illisible, question de la
 boîte de fin à l'écran, app qui n'a jamais demandé la bande. Une session renommée « Maestro … » ou
 qui vient de dire « Maestro » voit aussi sa bande paraître seule, sans attendre qu'une session bouge.
+Une session au titre laissé à la main (« AAFES 258.1 ») qui dit « Maestro » prend le nom du dossier
+de son projet, « Maestro · AAFES Cowork » (#439), une fois : un titre déjà « Maestro … » ou de tâche
+ne change pas.
 
 **Les mots d'état du panneau** (#174) : « Completed » pour une tâche close (bande de Maestro, voies,
 pastille violette de sa fiche) et « Done » pour ce qui est fait (« 7/7 Done », « N Done » de l'en-tête,
@@ -760,6 +763,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.268.0 (2026-11-11)** : maestro : la session Maestro prend le nom du dossier de son projet (#439)
 - **0.267.0 (2026-11-11)** : panneau : cartes de tâche sans doublon, cible cloud ou Mac dans le titre de la carte native, icône sur les cartes custom, carte faite en violet (#436)
 - **0.266.0 (2026-11-11)** : tasks : regroupement à l'écriture (#438) ; impact : tests lourds laissés à la CI de la PR (#434) ; doctor : règles de l'outil à jour (#290)
 - **0.265.0 (2026-11-11)** : maestro : une branche dont la PR est verte se fusionne sans rejouer la CI de PR ; plusieurs branches prêtes passent d'affilée, une seule CI de main (#431)

@@ -110,6 +110,10 @@ rule at the end of a turn that executed (below).
   line; sessions are always all said. The keywords win over an axis of the same name
   (« Maestro sessions » is the action); « Maestro axe sessions » opens the axis. A word that is not
   an axis keeps its usual meaning.
+  Said in a session whose title is neither Maestro nor a task (« AAFES 258.1 », left by hand), « Maestro »
+  names it after its project's folder, `Maestro · AAFES Cowork` (#439): the panel renames it by
+  `set_session_title`; refused, its brief asks you to do it, once, without a word. The name is set
+  then, and never changes: a title already « Maestro … » or « #N · … » stays.
   The Roadmap panel recognises Maestro by that title, by the mark set when the person says
   « Maestro » in it, or by its having launched at least two sessions still open; an old title
   « Lot … » is still recognised (alias of the sessions opened before #112). It never marks it
@@ -815,6 +819,8 @@ The merge itself:
 - It recognises Maestro by its title « Maestro … » (or by the alias « Lot … » of old titles), by
   the mark set when the person says « Maestro » in it, or by its launched sessions still open (at
   least two).
+- « Maestro » said in a session titled neither Maestro nor task renames it `Maestro · <project folder>`
+  (#439, `maestroFolderTitle`), once; refused, it hands you the `set_session_title` to make.
 - « Maestro, <une demande> » that is neither a keyword, nor an axis, nor a state word (`scan`,
   `état`, `on en est où`…) is a request (#250): its brief quotes it first and gives the path of § 1
   (search with near spellings, frame by form, line, card, execute nothing, the ▶ on a refused card),

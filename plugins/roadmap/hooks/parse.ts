@@ -4595,6 +4595,18 @@ export function isMaestroSession(title: string): boolean {
   return (word !== undefined && isMaestroWord(word)) || LOT_ALIAS.test(title)
 }
 
+/**
+ * #439 (BBR, 2026-11-10) : le nom que prend une session dite « Maestro » quand son titre ne l'est pas encore
+ * (« AAFES 258.1 », laissé à la main) : « Maestro · <dossier du projet> ». « Maestro » reste en tête, par où le
+ * panneau la reconnaît ; un titre déjà Maestro (alias « Lot … » compris) ou de tâche (« #N · … ») ne change
+ * pas : le nom se pose une fois, puis ne change plus. Sans dossier : rien.
+ */
+export function maestroFolderTitle(title: string, folder: string): string | undefined {
+  if (isMaestroSession(title) || sessionTitleId(title) !== undefined) return undefined
+  const name = baseName(folder).trim()
+  return name === '' ? undefined : `Maestro · ${name}`
+}
+
 /** Le premier mot d'un texte, lettres seules, que ne suit ni un chiffre ni un souligné (#344). */
 const LEADING_WORD = /^\s*(\p{L}+)(?![\p{N}_])/u
 
