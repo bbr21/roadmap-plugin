@@ -16,6 +16,11 @@ Les réglages se lisent dans ~/.claude/reglages-session.json (ou FICHIER) comme 
 hooks/parse.ts) : les clés du haut, puis le bloc de `projets` dont la clé désigne DEPOT ; sans fichier, les défauts
 (tout oui, autonome non). Le panneau écrit la même ligne (cloudPrefsLine).
 
+Une tâche de rendu se clôt à sa publication et sa preuve de fidélité part en tâche à part, « Prouver la fidélité
+de #N » (#455) : chaque brief le rappelle en une ligne, et celui d'une telle tâche dit ce qu'elle attend (la capture
+collée dans la session), le chantier de #N (son `spec:`, lu dans ROADMAP-fait.md ou ROADMAP.md) et son « Fini
+quand » à elle : `fidelite.py verifier` vert, chaque écart confié à sa tâche de correctif.
+
 Lit DEPOT/roadmap/ROADMAP.md (ou DEPOT/ROADMAP.md) et, pour le nom du projet, DEPOT/.claude/roadmap.json (clé
 « name », sinon le nom du dossier). Lecture seule. Code de retour 2 (message sur stderr) pour une ligne absente,
 close, non prise sans `--branche` (le message propose la branche du panneau), prise par une autre branche ou sans
@@ -39,6 +44,13 @@ FICHIER_REGLAGES = "~/.claude/reglages-session.json"
 DEFAUTS = {"questions": True, "adhd": True, "francais": True, "autonome": False}
 ENTETE_REGLAGES = "Tes réglages de session (lus au Mac au lancement) : "
 CONSIGNE_REGLAGES = ". Leur consigne en cloud : `docs/session-cloud.md`, « La méthode et les réglages »."
+
+PREUVE = re.compile(r"^Prouver la fidélité de #(\d+)\b")
+REGLE_RENDU = (
+    "Un rendu codé d'après une maquette : ta ligne se clôt à sa publication et sa preuve de fidélité part en tâche "
+    "à part, « Prouver la fidélité de #N » (#455), qui ne retient ni ta tâche ni aucune autre (docs/session-cloud.md, "
+    "« Un chantier de rendu »)."
+)
 
 
 class ErreurLigne(Exception):
@@ -94,6 +106,22 @@ def trouver_ligne(depot, ident, branche=None, aujourdhui=None):
     if c.get("lieu") != "cloud":
         raise ErreurLigne("#%s : pas de lieu:cloud" % ident)
     return rel, ligne, True
+
+
+def chantier_de(depot, rel, ident):
+    """Le `spec:` de la ligne #ident, lue dans la roadmap puis dans ROADMAP-fait.md à côté ; None sinon."""
+    dossier = os.path.dirname(rel)
+    for nom in ("ROADMAP.md", "ROADMAP-fait.md"):
+        try:
+            with open(os.path.join(depot, dossier, nom), encoding="utf-8") as f:
+                texte = f.read()
+        except OSError:
+            continue
+        for brut in texte.splitlines():
+            ligne = suivi_cloud.lire_ligne(brut)
+            if ligne and ligne["cles"].get("id") == str(ident):
+                return ligne["cles"].get("spec") or None
+    return None
 
 
 def fichiers_du_plan(depot, spec):
@@ -186,10 +214,23 @@ def construire(depot, ident, fichier_reglages=None, maison=None, branche=None, a
         if prise
         else "Ta ligne, telle qu'elle sera prise pour toi dans %s au départ de ta session (ne la modifie pas) :" % rel
     )
+    preuve = PREUVE.match(ligne["libelle"])
+    if preuve:
+        # #455 : la preuve de fidélité d'une tâche close à sa publication ; rien d'autre ne l'attend.
+        rendu = preuve.group(1)
+        chantier = chantier_de(depot, rel, rendu) or "docs/plans/<type>-<slug>/ (le spec: de #%s)" % rendu
+        livre = (
+            "la capture collée dans ta session est posée à côté de la maquette validée de #%s par fidelite.py, "
+            "`fidelite.py verifier %s` est vert (chaque écart corrigé ou confié à sa tâche de correctif, "
+            "`data-ecart=\"tache\"` et son numéro, la tâche proposée sous « Hors de ma tâche : »), la page et sa "
+            "capture committées, %s" % (rendu, chantier, tests)
+        )
+    else:
+        livre = "ce que dit la ligne #%s est livré, %s" % (ident, tests)
     sortie += [
-        "Fini quand : ce que dit la ligne #%s est livré, %s sur ta branche à jour de origin/main, la branche %s "
+        "Fini quand : %s sur ta branche à jour de origin/main, la branche %s "
         "est poussée et sa PR vers main ouverte, un commentaire y colle ces tests et leur résultat, "
-        "le dernier porte ton compte rendu." % (ident, tests, branche),
+        "le dernier porte ton compte rendu." % (livre, branche),
         "---",
         "",
         entete,
@@ -202,7 +243,17 @@ def construire(depot, ident, fichier_reglages=None, maison=None, branche=None, a
         "règles du Mac de CLAUDE.md.",
         "",
         ligne_reglages(*reglages(depot, fichier_reglages, maison)),
+        "",
     ]
+    if preuve:
+        sortie.append(
+            "Ta tâche est une preuve de fidélité (#455) : #%s est close et publiée, rien d'autre ne t'attend. "
+            "Le chantier : `%s`. Si la capture n'est pas encore dans ta session, écris la consigne de capture au "
+            "gabarit (docs/session-cloud.md, « Une preuve de fidélité à part ») et attends-la ; un écart trouvé "
+            "ouvre sa tâche de correctif, il ne rouvre pas #%s." % (rendu, chantier, rendu)
+        )
+    else:
+        sortie.append(REGLE_RENDU)
     if spec:
         sortie += ["", "Ta spec et ton plan : `%s`" % spec]
     return "\n".join(sortie) + "\n"

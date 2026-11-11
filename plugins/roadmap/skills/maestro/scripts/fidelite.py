@@ -1,14 +1,18 @@
 #!/usr/bin/env python3
 """La preuve de fidélité d'un rendu (#357) : la capture du vrai rendu posée à côté de la maquette
-validée, les écarts listés puis corrigés, avant de se dire « prête à fusionner ».
+validée, les écarts listés puis corrigés ou confiés chacun à sa tâche de correctif. Depuis #455, la
+preuve ne retient plus rien : la tâche du rendu se clôt à sa publication et sa preuve se fait dans une
+tâche à part, « Prouver la fidélité de #N » (attend:BBR, après:-), reprise quand l'utilisateur colle la
+capture.
 
   python3 fidelite.py poser CHANTIER --maquette maquettes.html#a3 --capture IMAGE [--zone x,y,l,h]
   python3 fidelite.py verifier CHANTIER
 
 CHANTIER est le dossier du chantier (`docs/plans/<type>-<slug>/`). `poser` y écrit `capture-panneau.png`
 et `fidelite.html` : la capture à gauche, la maquette (son chemin relatif au chantier, avec son ancre)
-à droite, puis la liste des écarts, `<ol id="ecarts">`, un `<li data-ecart="ouvert|corrige|aucun">` par
-écart, que la session tient à la main. Relancé après les corrections, `poser` reprend la capture et
+à droite, puis la liste des écarts, `<ol id="ecarts">`, un `<li data-ecart="ouvert|corrige|aucun|tache">` par
+écart, que la session tient à la main : `tache` (#455) pour un écart confié à sa tâche de correctif, dont
+le texte cite le numéro (`#460`) ; sans numéro, il compte comme ouvert. Relancé après les corrections, `poser` reprend la capture et
 garde la liste.
 
 La capture, c'est l'utilisateur qui la prend (#377), jamais la session : après la publication, elle
@@ -24,7 +28,7 @@ hors du Mac). Depuis une session cloud (#409) : la capture collée arrive aussi 
 `--fenetre` (l'ancienne capture de la fenêtre de Claude par la session) est refusé, code 2.
 
 `verifier` rend 0 quand la preuve est complète : la page, l'image qu'elle cite, au moins un écart
-listé (« aucun » si la capture est fidèle), aucun encore ouvert ; 1 sinon, avec ce qui manque.
+listé (« aucun » si la capture est fidèle), aucun encore ouvert (chacun corrigé ou confié à sa tâche) ; 1 sinon, avec ce qui manque.
 Code 2 sur une entrée illisible ou sans `--capture`.
 
 Python 3.9 et plus, bibliothèque standard seulement.
@@ -42,7 +46,8 @@ import tempfile
 
 PAGE = "fidelite.html"
 IMAGE = "capture-panneau.png"
-ETATS = ("ouvert", "corrige", "aucun")
+ETATS = ("ouvert", "corrige", "aucun", "tache")
+NUMERO = re.compile(r"#\d+")
 CONSIGNE = ("la capture se prend par l'utilisateur, plus par la session (#377) : après la publication, écris-lui "
             "la consigne au gabarit references/consigne-capture.md de cette skill (#406 : la version du pied du "
             "panneau, les gestes, une étape par capture et ce qu'il doit y voir), qu'il colle dans le chat, puis "
@@ -78,7 +83,8 @@ def requise(fichiers):
 
 
 def ecarts(html):
-    """Les écarts de la liste, `(etat, texte)` ; un état inconnu compte comme ouvert."""
+    """Les écarts de la liste, `(etat, texte)` ; un état inconnu, ou `tache` sans numéro de tâche, compte
+    comme ouvert."""
     m = LISTE.search(html or "")
     if not m:
         return []
@@ -88,7 +94,10 @@ def ecarts(html):
         if not e:
             continue
         etat = e.group(1).strip().lower()
-        out.append((etat if etat in ETATS else "ouvert", re.sub(r"<[^>]+>", "", corps).strip()))
+        texte = re.sub(r"<[^>]+>", "", corps).strip()
+        if etat not in ETATS or (etat == "tache" and not NUMERO.search(texte)):
+            etat = "ouvert"
+        out.append((etat, texte))
     return out
 
 
@@ -137,11 +146,12 @@ def page(maquette, image, liste_html, quand):
   iframe { width: 100%%; height: 80vh; border: 1px solid #8884; }
   li[data-ecart="ouvert"] { color: #c0392b; }
   li[data-ecart="corrige"] { text-decoration: line-through; }
+  li[data-ecart="tache"] { font-style: italic; }
 </style>
 </head>
 <body>
 <h1>Fidélité à la maquette</h1>
-<p>Capture du <time>%s</time>. Chaque écart : <code>data-ecart="ouvert"</code>, puis <code>"corrige"</code> une fois corrigé et la capture reprise ; <code>"aucun"</code> si la capture est fidèle.</p>
+<p>Capture du <time>%s</time>. Chaque écart : <code>data-ecart="ouvert"</code>, puis <code>"corrige"</code> une fois corrigé et la capture reprise ; <code>"aucun"</code> si la capture est fidèle ; <code>"tache"</code> pour un écart confié à sa tâche de correctif, son numéro (#N) dans le texte.</p>
 <div class="paire">
 <figure><figcaption>Le rendu codé</figcaption><img class="capture" src="%s" alt="Capture du rendu codé"></figure>
 <figure><figcaption>La maquette validée</figcaption>%s</figure>
@@ -241,7 +251,8 @@ def main(argv=None):
             if a.fenetre or a.fenetre_id is not None:
                 raise Erreur("--fenetre refusé : " + CONSIGNE)
             poser(a.chantier, a.maquette, a.capture, a.zone)
-            print("Posée : %s. Liste les écarts (ouvert, puis corrige), corrige-les, relance poser, puis verifier."
+            print("Posée : %s. Liste les écarts (ouvert), puis chacun corrige ou tache (sa tâche de correctif, #N dans "
+                  "le texte), puis verifier."
                   % os.path.join(a.chantier, PAGE))
             return 0
         reste = verifier(a.chantier)

@@ -27,11 +27,12 @@ first three are on when the file does not exist, `autonome` is off.
 The plugin also states, in every session, the rule **« Maquettes avant un choix visuel »**: 2 or 3
 mockups on the project's design system, the person chooses, only the validated version is coded
 (#96, #322); mockups are interactive pages served over http, and a split choice ends with a final
-clickable mockup (#369). In a code project, the coded render is then compared to the validated mockup before
-saying it is ready (#357): the capture of the real render next to it, taken by the user on the session's exact instruction
-and posed by `fidelite.py poser --capture` (skill `roadmap:maestro`, in the chantier's folder; #377), gaps listed then fixed, `fidelite.py verifier` green;
-no merge without that proof. A session that says « prête à fusionner » without it gets a reminder
-at the end of its turn.
+clickable mockup (#369). In a code project, the coded render is then compared to the validated mockup on the
+published version (#357, #396): the capture of the real render next to it, taken by the user on the session's exact instruction
+and posed by `fidelite.py poser --capture` (skill `roadmap:maestro`, in the chantier's folder; #377), each gap opening its
+correction task, `fidelite.py verifier` green. The proof holds nothing back (#455): the task closes at its publication and
+its proof is a task apart, « Prouver la fidélité de #N » (`attend:`, `après:-`). A session that says « prête à
+fusionner » without it gets a reminder at the end of its turn.
 
 The plugin also states, in every session, the **starting framing** (« Cadrage de départ », #303):
 at the start of each task (▶, Maestro card, request in the conversation), before the first gesture

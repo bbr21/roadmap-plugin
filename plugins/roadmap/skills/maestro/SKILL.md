@@ -227,7 +227,9 @@ to it.
     published yet, nor to ask Maestro for a merge or a publication. Code done, tests green, branch
     pushed: say « prête à fusionner (tests : … ; capture après publication) » and ask Maestro
     yourself, by message to its id, « fusionne et publie #N », then end your turn. Maestro merges,
-    publishes right away and sends you the version back (« #N publiée X.Y.Z »). Only then, and never
+    publishes right away, closes your line at the publication, opens your proof as a task of its own,
+    « Prouver la fidélité de #N » (`attend:`, `après:-`, no line waits for it, #455), and sends you the
+    version and its number back (« #N publiée X.Y.Z, preuve en #M »). Only then, and never
     for a task without a render, the capture, taken by the user, never by the session: write them
     the instruction from the template `references/consigne-capture.md` of this skill (#406), in one
     message whose first sentence says « attend une réponse : captures de fidélité (X.Y.Z) »: one
@@ -236,14 +238,18 @@ to it.
     on screen, named as written on screen, one per step or chained in the step of their capture,
     one step per capture with its zone between two visible landmarks and what it must show
     (« Tu dois y voir : … »), then « Colle-les ici. » and the closing line « Pas pareil … ». Never explain how to take or paste a
-    capture: the user knows; the end of the turn reminds you of what the instruction lacks. A pasted image arrives with its path on disk (`[Image: source:
+    capture: the user knows; the end of the turn reminds you of what the instruction lacks. Your line is
+    closed: nothing waits for you any more, no « en test » holds it; the proof is task #M, which the user
+    launches (Mac or cloud) once the capture is taken, or pastes here, where you take it up and tell
+    Maestro. A pasted image arrives with its path on disk (`[Image: source:
     /private/tmp/…/images/1.png]`): run `fidelite.py poser <chantier> --maquette
     maquettes.html#<anchor> --capture <path of the pasted image>` (this skill's `scripts/`; `--zone
     x,y,l,h`, in pixels of the image, crops a too-wide one), list each gap in its `fidelite.html`
-    (`data-ecart="ouvert"`), fix them on your branch (merge of `main` first), ask Maestro again
-    « fusionne et publie #N », ask for the capture again on the new version, mark them `corrige` (a single
-    `aucun` when faithful) until `fidelite.py verifier` is green, and commit the page and its
-    capture. `--fenetre` is refused (exit 2): the session never captures the screen;
+    (`data-ecart="ouvert"`); a gap found never reopens #N: it opens its correction task (your card;
+    Maestro writes the line, a render that gets its own proof apart) and becomes `data-ecart="tache"`,
+    that task's number in its text (`#P`; without a number it still counts as open); a single `aucun` when
+    faithful; `fidelite.py verifier` green, commit the page and its capture on #M's branch, which then
+    closes. `--fenetre` is refused (exit 2): the session never captures the screen;
   - do not tick your line: your last report says what was done and the problem met;
   - your line closed (read in `ROADMAP-fait.md`, never assumed) and nothing left pending, your last
     turn ends on « fini, rien en attente », then your conclusion (#243): its title, then
@@ -374,9 +380,12 @@ with « Cible : le Mac, … » and the recommendation. What changes for Maestro 
 - **A task with a render** can go to the cloud too (#409), when the person chooses it: its recommendation (#416)
   still says « Mac », which keeps the browser pane and the capture at hand. In the cloud, the session publishes its mockups as an Artifact and
   asks the person by the question form; coded and green, its comment says « prête à fusionner (tests : … ;
-  capture après publication) » and asks « fusionne et publie #N ». Maestro merges, publishes, then answers by
-  PR comment « #N publiée X.Y.Z »; the session writes the capture instruction, the person pastes the capture in
-  the cloud session, which poses it (`fidelite.py poser --capture`). Fallback, when a paste does not reach the
+  capture après publication) » and asks « fusionne et publie #N ». Maestro merges, publishes, closes its line,
+  opens its proof apart (« Prouver la fidélité de #N sur la X.Y.Z », #455), then answers by PR comment « #N publiée
+  X.Y.Z, preuve en #M »; the session writes the capture instruction, also in its last PR comment. The person
+  pastes the capture in that session or launches #M (cloud or Mac; `brief_cloud.py` gives a proof task its own
+  brief: the chantier of #N, `fidelite.py verifier` green, each gap handed to its correction task), which poses
+  it (`fidelite.py poser --capture`). Fallback, when a paste does not reach the
   VM as a file: Maestro poses the image the person pasted on the Mac into the task's folder on the branch
   (`capture-panneau.png`), pushes, and tells the session by comment to pose it from there.
 
@@ -573,9 +582,18 @@ The merge order, from the first criterion to the last:
    session then writes the capture instruction to the person from the template
    `references/consigne-capture.md` (#406), citing the version the panel footer must show. Maestro never asks the person to capture, test or have a render published, never
    exchanges a « capture » with the session and takes none itself: the capture is the user's, on the
-   session's exact instruction (#377). The line is ticked only once `fidelite.py verifier
-   <chantier>` is green (§ 6); a gap fixed on the branch comes back as a new « fusionne et publie
-   #N »: § 5 again, a new publication, a new version sent back.
+   session's exact instruction (#377). **The proof holds nothing back (#455)**: at the publication,
+   Maestro ticks the line (§ 6) and opens its proof as a task of its own by the `roadmap:tasks` skill,
+   « Prouver la fidélité de #N sur la X.Y.Z », saying that the person's capture is posed next to the
+   validated mockup by fidelite.py and that a gap opens its task, with `attend:<personne>`, `après:-`, #N's
+   `parent:`, and no line's
+   `après:` on it; a line that had `après:#N` is unblocked by the publication, not by the proof. The
+   message back says its number (« #N publiée X.Y.Z, preuve en #M : demande la capture »). The proof is
+   taken up by a cloud or Mac session when the person pastes the capture (in #N's session still open, or
+   in #M's own session launched by ▶); a gap found opens its correction task, never reopens #N, and #M
+   closes once `fidelite.py verifier` is green (each gap `corrige`, `aucun` or `tache` with its number).
+   Case that made the rule: #436, published on 2026-11-11 at 05:28 UTC, held #443 back for want of a
+   capture.
 2. **Prerequisites first**: what unblocks other tasks (`après:`) goes ahead.
 3. **What frees** a unique resource or a file another task is waiting for.
 4. **When tied**, the smallest, the least exposed to conflicts.
@@ -677,8 +695,11 @@ The merge itself:
 ## 6. Close a task, then Maestro
 
 - **After the merge** (after the « c'est bon » for a published task in test, below; for a render,
-  once its fidelity proof is green, #396), Maestro ticks the line (`fait:`, what was delivered, the PR), moves it to the
+  at its publication, its proof going to a task apart, #455), Maestro ticks the line (`fait:`, what was delivered, the PR), moves it to the
   top of `ROADMAP-fait.md` and writes its bilan from the sub-session's last report.
+- **A render task does not go to test** (#455): its proof apart, « Prouver la fidélité de #N », is its test.
+  Maestro ticks it at the publication and posts no « Tester #N · X.Y.Z » card for it, even when the reminder below
+  names it: the person's feedback comes as the capture, and each gap as its correction task.
 - **A published task goes to test** (#366, the person's request of 2026-11-06): a version is only
   loaded by the sessions opened after the plugin's sync, so the person tries it in a new session, and
   their feedback goes to the session that coded the task, kept open. The panel adds the instruction

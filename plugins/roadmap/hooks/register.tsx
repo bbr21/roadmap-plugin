@@ -555,6 +555,8 @@ import {
   cloudWords,
   cloudBranchOf,
   cloudBriefText,
+  proofOf,
+  specOfLine,
   cloudDepotRefusal,
   cloudStartRefusal,
   takeCloudLine,
@@ -5586,7 +5588,10 @@ async function launchCloud($: EngineInterface, source: Source, task: Task, short
     // #449 : les réglages de session de la personne partent avec le brief ; une panne de lecture n'empêche pas le lancement.
     const read = await readSessionPrefs($).catch(() => undefined)
     const prefs = read ? { prefs: read.prefs, ...(read.error !== undefined ? { prefsError: read.error } : {}) } : {}
-    const prompt = cloudBriefText({ project: source.name, id: task.id, label: task.label, line: taken.line, branch, ...(task.spec ? { spec: task.spec } : {}), ...(depot ? { depot } : {}), ...prefs })
+    // #455 : une preuve de fidélité nomme le chantier de la tâche qu'elle prouve, lu à son `spec:` (ouverte ou close).
+    const proved = proofOf(task.label)
+    const proofSpec = proved ? specOfLine([taken.text, await $.fs.read(files(source).done).catch(() => undefined)], proved) : undefined
+    const prompt = cloudBriefText({ project: source.name, id: task.id, label: task.label, line: taken.line, branch, ...(task.spec ? { spec: task.spec } : {}), ...(depot ? { depot } : {}), ...(proofSpec ? { proofSpec } : {}), ...prefs })
     const card = {
       tool: START_SESSION_TOOL,
       initiation: 'own_initiative',

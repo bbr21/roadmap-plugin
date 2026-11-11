@@ -17,7 +17,8 @@ la branche reste « à mettre à jour » : le `merge --ff-only` de main l'exige.
 Une branche qui code un rendu d'après une maquette (une page `maquettes*.html` et un fichier de rendu)
 reste « prête, capture après publication » tant que son `fidelite.html` n'est pas complet (#357,
 `fidelite.py`) : elle se fusionne et se publie, puisque le panneau ne montre qu'une version publiée,
-et sa ligne ne se coche qu'une fois la preuve verte (#396).
+et sa ligne se clôt à la publication, sa preuve partant en tâche à part, « Prouver la fidélité de #N »,
+qui ne retient aucune autre tâche (#396, #455).
 
 Lecture seule sur le dépôt : git log, rev-list, diff et merge-tree (conflits réels, git 2.38 et
 plus ; plus ancien, ils sont dits inconnus). Rien n'est fusionné, aucun test n'est lancé. Code de
@@ -355,7 +356,9 @@ def texte(analyse):
     out.append("")
     sans_preuve = [t for t in analyse["taches"] if t["etat"] == FIDELITE]
     if sans_preuve:
-        out.append("Fidélité à la maquette (#357, #396) : fusionne et publie aussitôt, renvoie la version à la session pour la capture, ne coche qu'une fois `fidelite.py verifier` vert :")
+        out.append("Fidélité à la maquette (#357, #396, #455) : fusionne et publie aussitôt, close la ligne à la publication, "
+                   "ouvre sa preuve à part « Prouver la fidélité de #N sur la X.Y.Z » (attend:<personne>, après:-), renvoie la "
+                   "version et ce numéro à la session pour la capture :")
         for t in sans_preuve:
             out.append("- #%s : %s (%s)" % (t["id"], FIDELITE, " ; ".join(t["faits"]["fidelite"])))
         out.append("")

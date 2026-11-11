@@ -1229,10 +1229,11 @@ export function fidelityGaps(html: string | undefined, imageFound: boolean): str
   const out: string[] = []
   if (!imageFound) out.push(`capture absente (${fidelityImage(html) ?? 'capture-panneau.png'})`)
   const list = FIDELITY_LIST.exec(html)?.[0] ?? ''
-  const states = [...list.matchAll(/<li\b([^>]*)>/gi)]
-    .map(m => /data-ecart\s*=\s*["']([^"']*)["']/i.exec(m[1] ?? '')?.[1])
-    .filter((v): v is string => v !== undefined)
-    .map(v => (['ouvert', 'corrige', 'aucun'].includes(v.trim().toLowerCase()) ? v.trim().toLowerCase() : 'ouvert'))
+  // #455 : `tache`, un écart confié à sa tâche de correctif, compte comme réglé s'il cite son numéro (#460).
+  const states = [...list.matchAll(/<li\b([^>]*)>([\s\S]*?)<\/li>/gi)]
+    .map(m => ({ state: /data-ecart\s*=\s*["']([^"']*)["']/i.exec(m[1] ?? '')?.[1]?.trim().toLowerCase(), body: (m[2] ?? '').replace(/<[^>]+>/g, '') }))
+    .filter((v): v is { state: string; body: string } => v.state !== undefined)
+    .map(v => (['ouvert', 'corrige', 'aucun'].includes(v.state) || (v.state === 'tache' && /#\d+/.test(v.body)) ? v.state : 'ouvert'))
   if (states.length === 0) out.push('aucun écart listé (« aucun » si la capture est fidèle)')
   const open = states.filter(v => v === 'ouvert').length
   if (open > 0) out.push(`${open} écart${open > 1 ? 's' : ''} encore ouvert${open > 1 ? 's' : ''}`)
@@ -1307,7 +1308,7 @@ export function captureConsigneNoteText(gaps: readonly string[] | undefined, ref
 
 /** La règle de fidélité (#357), dite par la clause de Maestro et la règle des maquettes. */
 export const fidelityRule = (): string =>
-  "Un rendu codé d'après une maquette (#357) : sa fidélité se prouve sur la version publiée, la seule que le panneau montre (#396). Ne demande jamais à " + person() + " de tester ni de capturer un rendu qui n'est pas encore publié, ni de réclamer à Maestro une fusion ou une publication. Code fini, tests verts, branche poussée : ta première phrase dit « prête à fusionner (tests : … ; capture après publication) », et demande toi-même à Maestro de fusionner et publier : écris-lui, par message à son id, « fusionne et publie #N », puis finis ton tour. Maestro fusionne, publie aussitôt et te renvoie la version (« #N publiée X.Y.Z »). " + captureRule() + " Ta première phrase dit « attend une réponse : captures de fidélité (X.Y.Z) » (en mode ADHD : « **J'ai besoin de toi : captures de fidélité en X.Y.Z, …** »). L'image collée arrive avec son chemin (`[Image: source: …]`) : `python3 fidelite.py poser docs/plans/<type>-<slug> --maquette maquettes.html#<ancre> --capture <ce chemin>` (`fidelite.py` de la skill `roadmap:maestro`, dossier `skills/maestro/scripts/` du plugin roadmap ; `--zone x,y,l,h`, en pixels de l'image, pour la recadrer). Dans sa page `fidelite.html`, liste chaque écart (`<li data-ecart=\"ouvert\">`) ; un écart se corrige sur ta branche (merge de main d'abord), puis de nouveau « fusionne et publie #N » à Maestro et la capture sur la nouvelle version ; passe-les à `corrige` (un seul `aucun` si la capture est fidèle), jusqu'à `fidelite.py verifier` vert ; la page et sa capture se committent dans ta branche. Sans elle, ta ligne ne se coche pas."
+  "Un rendu codé d'après une maquette (#357) : sa fidélité se prouve sur la version publiée, la seule que le panneau montre (#396), et cette preuve ne retient ni ta tâche ni aucune autre (#455). Ne demande jamais à " + person() + " de tester ni de capturer un rendu qui n'est pas encore publié, ni de réclamer à Maestro une fusion ou une publication. Code fini, tests verts, branche poussée : ta première phrase dit « prête à fusionner (tests : … ; capture après publication) », et demande toi-même à Maestro de fusionner et publier : écris-lui, par message à son id, « fusionne et publie #N », puis finis ton tour. Maestro fusionne, publie aussitôt, clôt ta ligne à la publication, ouvre ta preuve en tâche à part, « Prouver la fidélité de #N » (attend:" + person() + ", après:-, aucune ligne ne l'attend), et te renvoie la version et son numéro (« #N publiée X.Y.Z, preuve en #M »). " + captureRule() + " Ta première phrase dit « attend une réponse : captures de fidélité (X.Y.Z) » (en mode ADHD : « **J'ai besoin de toi : captures de fidélité en X.Y.Z, …** »). Ta ligne est close : rien ne t'attend plus, aucun « en test » ne la retient, et la preuve est la tâche #M, que " + person() + " lance une fois sa capture prise (au Mac ou en cloud) ou colle ici, où tu la reprends en le disant à Maestro. L'image collée arrive avec son chemin (`[Image: source: …]`) : `python3 fidelite.py poser docs/plans/<type>-<slug> --maquette maquettes.html#<ancre> --capture <ce chemin>` (`fidelite.py` de la skill `roadmap:maestro`, dossier `skills/maestro/scripts/` du plugin roadmap ; `--zone x,y,l,h`, en pixels de l'image, pour la recadrer). Dans sa page `fidelite.html`, liste chaque écart (`<li data-ecart=\"ouvert\">`) ; un écart trouvé ouvre sa tâche de correctif (ta carte, ou « Hors de ma tâche : » en cloud : Maestro écrit sa ligne, un rendu qui aura sa propre preuve à part), et passe à `tache`, le numéro de cette tâche dans son texte (`<li data-ecart=\"tache\">… #P</li>`) ; un seul `aucun` si la capture est fidèle ; `fidelite.py verifier` vert, la page et sa capture se committent sur la branche de #M, qui se clôt alors."
 
 /**
  * Le rappel de fin de tour (#357) : la session se dit prête, sa branche code un rendu d'après une
@@ -1323,10 +1324,10 @@ export function fidelityNoteText(o: { recap?: string; answer?: string; files: re
   const name = mockup.slice(mockup.lastIndexOf('/') + 1)
   return [
     `Plugin roadmap (#357) : tu te dis prête à fusionner, et ta branche code un rendu d'après une maquette sans preuve de fidélité complète : ${gaps.join(' ; ')}.`,
-    `Le panneau ne montre qu'une version publiée (#396) : ne demande pas à ${person()} de capturer avant, ni de réclamer la publication à Maestro. Si ce n'est pas fait, écris toi-même à Maestro, par message, « fusionne et publie #N », et finis ton tour ; il publie et te renvoie la version.`,
+    `Le panneau ne montre qu'une version publiée (#396) : ne demande pas à ${person()} de capturer avant, ni de réclamer la publication à Maestro. Si ce n'est pas fait, écris toi-même à Maestro, par message, « fusionne et publie #N », et finis ton tour ; il publie, clôt ta ligne, ouvre ta preuve en tâche à part, « Prouver la fidélité de #N » (#455), et te renvoie la version et son numéro.`,
     `${captureRule()} Le gabarit, avec ses exemples (tâches 385 et 315) : \`${captureTemplatePath(o.script)}\`.`,
-    `Puis pose l'image collée à côté de la maquette validée : \`python3 "${o.script}" poser ${folder} --maquette ${name}#<ancre de la version validée> --capture "<chemin de l'image collée>"\` (le chemin que donne \`[Image: source: …]\` ; \`--zone x,y,l,h\`, en pixels de l'image, pour la recadrer). Puis liste les écarts dans \`${folder}/fidelite.html\`, corrige-les, relance \`poser\`, et \`python3 "${o.script}" verifier ${folder}\` vert ; committe la page et sa capture.`,
-    `Ta première phrase dit « prête à fusionner (… ; capture après publication) » jusqu'à la version renvoyée par Maestro, puis « attend une réponse : captures de fidélité (X.Y.Z) » tant que ${person()} n'a pas collé ses captures, puis « en cours : fidélité à la maquette ». Sans preuve verte, ta ligne ne se coche pas.`,
+    `Puis pose l'image collée à côté de la maquette validée : \`python3 "${o.script}" poser ${folder} --maquette ${name}#<ancre de la version validée> --capture "<chemin de l'image collée>"\` (le chemin que donne \`[Image: source: …]\` ; \`--zone x,y,l,h\`, en pixels de l'image, pour la recadrer). Puis liste les écarts dans \`${folder}/fidelite.html\` : chacun ouvre sa tâche de correctif et passe à \`tache\`, son numéro dans le texte (un seul \`aucun\` si la capture est fidèle), jusqu'à \`python3 "${o.script}" verifier ${folder}\` vert ; committe la page et sa capture sur la branche de la preuve.`,
+    `Ta première phrase dit « prête à fusionner (… ; capture après publication) » jusqu'à la version renvoyée par Maestro, puis « attend une réponse : captures de fidélité (X.Y.Z) ». Ta ligne se clôt à la publication ; la preuve se fait dans sa tâche à part, qui ne retient aucune autre tâche (#455).`,
   ].join('\n')
 }
 
@@ -5485,7 +5486,7 @@ function wakeTodo(w: ChildWake, id: string | undefined): string {
   const after = id ? `après:${id}` : 'après: sur cette tâche'
   switch (w.kind) {
     case 'ready':
-      return `relis son diff, puis fusionne-la si ses tests sont verts sur sa branche à jour de main, ou, pour une branche à PR, si sa dernière CI de PR est verte et qu'elle se fusionne dans main sans conflit, sans merge de main ni CI de PR rejoués (§ 5, #431), et préviens aussitôt les sessions dont la ligne porte ${after}. Si sa branche code un rendu d'après une maquette sans preuve de fidélité complète (#357, \`etat_maestro.py\` la dit « prête, capture après publication », ou \`fidelite.py verifier\` du chantier), la capture ne peut se faire que sur la version publiée (#396) : fusionne-la, publie-la aussitôt, sans attendre ${person()}, et renvoie-lui la version par message (« #N publiée X.Y.Z : demande la capture ») ; sa ligne ne se coche qu'une fois la preuve verte.`
+      return `relis son diff, puis fusionne-la si ses tests sont verts sur sa branche à jour de main, ou, pour une branche à PR, si sa dernière CI de PR est verte et qu'elle se fusionne dans main sans conflit, sans merge de main ni CI de PR rejoués (§ 5, #431), et préviens aussitôt les sessions dont la ligne porte ${after}. Si sa branche code un rendu d'après une maquette sans preuve de fidélité complète (#357, \`etat_maestro.py\` la dit « prête, capture après publication », ou \`fidelite.py verifier\` du chantier), la capture ne peut se faire que sur la version publiée (#396) : fusionne-la, publie-la aussitôt, sans attendre ${person()}, close sa ligne à la publication et ouvre sa preuve en tâche à part par la skill roadmap:tasks, « Prouver la fidélité de #N sur la X.Y.Z » (attend:${person()}, après:-, le parent: de #N, aucune ligne ne l'attend, #455), puis renvoie-lui la version et ce numéro par message (« #N publiée X.Y.Z, preuve en #M : demande la capture »).`
     case 'partial':
       return `vérifie sa preuve (le message parti au tiers), puis écris les deux lignes par la skill roadmap:tasks, opération handoff : à la fusion de sa branche en mode Code (§ 5), aussitôt en mode Projet ; dis « #A close, la suite chez <tiers> passe en #B ». ${partialCloseRule('maestro')}`
     case 'blocked':
@@ -9000,7 +9001,7 @@ function gesturesText(autonome: boolean): string {
 // Toute maquette s'appuie sur le design system que le projet déclare (#129, après celui du plugin, #108),
 // ou propose d'en poser un : la cohérence d'un projet ne tient plus à la mémoire de la session.
 function mockupText(design?: Design): string {
-  return "- **Maquettes avant un choix visuel** (avec ou sans code) : tout choix dont le résultat se voit (dans un projet de code : un écran, une vue, un panneau, un volet, un composant, une mise en page, un graphique ; sans code : la mise en page d'un document, d'un tableau ou d'une présentation) passe par 2 ou 3 maquettes simples, jamais par une description seule. Chacune a un parti net et son compromis, ta recommandation en premier ; " + person() + " choisit, et alors seulement tu codes ou tu décides. Tu ne codes que la version exacte qu'il a vue et validée d'un oui : une correction de sa part (« plutôt X », « plus petit ») n'est pas un oui, elle donne une nouvelle maquette, montrée, puis la question « Je code cette version ? » ; le plugin rappelle une édition d'un fichier de rendu faite sans oui depuis la dernière maquette dessinée (#322). Prends le support le plus léger qui permet de décider : l'aperçu de chaque option du formulaire à choix (champ `preview`) pour un petit choix (une disposition, un ordre, un libellé) ; sinon une page HTML interactive (elle se clique : survol, onglets, dépli, états vide et plein ; script en ligne ou à côté), posée dans le dossier du projet (dans un projet de code : `docs/plans/<type>-<slug>/maquettes.html`), servie par `python3 <skill mockups>/scripts/serve.py <page>` (le `serve.py` du plugin roadmap, skill `mockups`, dossier `scripts/`) et ouverte dans le volet navigateur par l'url `http://127.0.0.1:…` qu'il écrit (`preview_start`), jamais par le chemin du fichier (le volet n'y montre qu'une copie figée : aucun fichier lié, aucun rechargement). Un choix découpé en plusieurs maquettes finit par une maquette finale cliquable qui réunit les éléments validés (#369) : " + person() + " l'essaie dans le volet, et seul son oui à « Je code cette version ? » sur elle ouvre le code. " + designSkillText(design) + " " + designText(design) + " Dans un projet de code, le rendu codé se compare à la maquette validée (#357), sur la version publiée, la seule que le panneau montre (#396) : prête, demande toi-même la fusion et la publication (sous Maestro, « fusionne et publie #N » par message), jamais à " + person() + " de tester un rendu non publié ; après la publication, la capture du vrai rendu, prise par " + person() + " sur ta consigne exacte (la version que doit afficher le pied du panneau, fenêtre, onglet, état, zone) et collée dans le chat, posée à côté d'elle par `fidelite.py poser --capture` (skill `roadmap:maestro`, dossier du chantier, #377), les écarts listés puis corrigés, `fidelite.py verifier` vert ; sans cette preuve, la tâche ne se coche pas. Le réglage autonome ne s'y applique pas : un choix visuel revient à " + person() + ". Sans personne pour répondre, garde les maquettes dans le dossier du chantier, suis ta recommandation et dis-le. Pas pour un choix sans rendu (une règle, un format, un correctif de logique), ni pour un rendu déjà choisi sur maquette."
+  return "- **Maquettes avant un choix visuel** (avec ou sans code) : tout choix dont le résultat se voit (dans un projet de code : un écran, une vue, un panneau, un volet, un composant, une mise en page, un graphique ; sans code : la mise en page d'un document, d'un tableau ou d'une présentation) passe par 2 ou 3 maquettes simples, jamais par une description seule. Chacune a un parti net et son compromis, ta recommandation en premier ; " + person() + " choisit, et alors seulement tu codes ou tu décides. Tu ne codes que la version exacte qu'il a vue et validée d'un oui : une correction de sa part (« plutôt X », « plus petit ») n'est pas un oui, elle donne une nouvelle maquette, montrée, puis la question « Je code cette version ? » ; le plugin rappelle une édition d'un fichier de rendu faite sans oui depuis la dernière maquette dessinée (#322). Prends le support le plus léger qui permet de décider : l'aperçu de chaque option du formulaire à choix (champ `preview`) pour un petit choix (une disposition, un ordre, un libellé) ; sinon une page HTML interactive (elle se clique : survol, onglets, dépli, états vide et plein ; script en ligne ou à côté), posée dans le dossier du projet (dans un projet de code : `docs/plans/<type>-<slug>/maquettes.html`), servie par `python3 <skill mockups>/scripts/serve.py <page>` (le `serve.py` du plugin roadmap, skill `mockups`, dossier `scripts/`) et ouverte dans le volet navigateur par l'url `http://127.0.0.1:…` qu'il écrit (`preview_start`), jamais par le chemin du fichier (le volet n'y montre qu'une copie figée : aucun fichier lié, aucun rechargement). Un choix découpé en plusieurs maquettes finit par une maquette finale cliquable qui réunit les éléments validés (#369) : " + person() + " l'essaie dans le volet, et seul son oui à « Je code cette version ? » sur elle ouvre le code. " + designSkillText(design) + " " + designText(design) + " Dans un projet de code, le rendu codé se compare à la maquette validée (#357), sur la version publiée, la seule que le panneau montre (#396) : prête, demande toi-même la fusion et la publication (sous Maestro, « fusionne et publie #N » par message), jamais à " + person() + " de tester un rendu non publié ; après la publication, la capture du vrai rendu, prise par " + person() + " sur ta consigne exacte (la version que doit afficher le pied du panneau, fenêtre, onglet, état, zone) et collée dans le chat, posée à côté d'elle par `fidelite.py poser --capture` (skill `roadmap:maestro`, dossier du chantier, #377), les écarts listés, chacun ouvrant sa tâche de correctif, `fidelite.py verifier` vert ; la tâche se clôt à sa publication et sa preuve se fait dans une tâche à part, « Prouver la fidélité de #N » (attend:" + person() + ", après:-), qui ne retient aucune autre tâche (#455). Le réglage autonome ne s'y applique pas : un choix visuel revient à " + person() + ". Sans personne pour répondre, garde les maquettes dans le dossier du chantier, suis ta recommandation et dis-le. Pas pour un choix sans rendu (une règle, un format, un correctif de logique), ni pour un rendu déjà choisi sur maquette."
 }
 
 /** La skill de design dans la règle des maquettes (#292) : avant la première maquette, puis la relecture. */
@@ -10195,13 +10196,44 @@ export function cloudPrefsLine(prefs: SessionPrefs, error?: string): string {
   )
 }
 
-export function cloudBriefText(o: { project: string; id: string; label: string; line: string; branch: string; spec?: string; depot?: string; prefs?: SessionPrefs; prefsError?: string }): string {
+// #455 : une tâche de rendu se clôt à sa publication, sa preuve de fidélité part en tâche à part. Chaque brief cloud
+// le rappelle ; celui d'une preuve (« Prouver la fidélité de #N ») dit ce qu'elle attend et son chantier. Le même
+// texte que `brief_cloud.py` (REGLE_RENDU, PREUVE).
+export const CLOUD_RENDER_RULE =
+  "Un rendu codé d'après une maquette : ta ligne se clôt à sa publication et sa preuve de fidélité part en tâche à part, « Prouver la fidélité de #N » (#455), qui ne retient ni ta tâche ni aucune autre (docs/session-cloud.md, « Un chantier de rendu »)."
+
+/** Le numéro de la tâche dont une ligne « Prouver la fidélité de #N » prouve le rendu (#455), sinon rien. */
+export function proofOf(label: string): string | undefined {
+  return /^Prouver la fidélité de #(\d+)\b/.exec(label)?.[1]
+}
+
+/** Le `spec:` de la ligne #id, cherché dans les textes donnés (ROADMAP.md, puis ROADMAP-fait.md) ; rien sinon. */
+export function specOfLine(texts: readonly (string | undefined)[], id: string): string | undefined {
+  for (const text of texts) {
+    for (const raw of (text ?? '').split('\n')) {
+      const block = /`\[([^`]*)\]`\s*$/.exec(raw)?.[1]
+      if (block === undefined) continue
+      const fields = block.split('|').map(f => f.trim())
+      if (!fields.includes(`id:${id}`)) continue
+      const spec = fields.find(f => f.startsWith('spec:'))?.slice(5).trim()
+      return spec || undefined
+    }
+  }
+  return undefined
+}
+
+export function cloudBriefText(o: { project: string; id: string; label: string; line: string; branch: string; spec?: string; depot?: string; prefs?: SessionPrefs; prefsError?: string; proofSpec?: string }): string {
   // #444 : la roadmap vit hors du dépôt (`depot`) : ni carte d'impact ni check.mjs de Roadmap, les tests sont ceux
   // que nomme `docs/session-cloud.md` du dépôt, et la ligne n'existe que sur le Mac.
   const tests = o.depot ? 'les tests que nomme docs/session-cloud.md sont verts' : 'les tests de ta carte d\'impact et node scripts/check.mjs sont verts'
+  const proved = proofOf(o.label)
+  const chantier = o.proofSpec ?? `docs/plans/<type>-<slug>/ (le spec: de #${proved})`
+  const done = proved
+    ? `la capture collée dans ta session est posée à côté de la maquette validée de #${proved} par fidelite.py, \`fidelite.py verifier ${chantier}\` est vert (chaque écart corrigé ou confié à sa tâche de correctif, \`data-ecart="tache"\` et son numéro, la tâche proposée sous « Hors de ma tâche : »), la page et sa capture committées, ${tests}`
+    : `ce que dit la ligne #${o.id} est livré, ${tests}`
   return [
     `Mission : ${o.label.replace(/\.+$/, '')} (tâche #${o.id} de ${o.project}).`,
-    `Fini quand : ce que dit la ligne #${o.id} est livré, ${tests}, la branche ${o.branch} est poussée et sa PR vers main ouverte, son dernier commentaire porte ton compte rendu.`,
+    `Fini quand : ${done}, la branche ${o.branch} est poussée et sa PR vers main ouverte, son dernier commentaire porte ton compte rendu.`,
     '---',
     '',
     o.depot
@@ -10214,6 +10246,10 @@ export function cloudBriefText(o: { project: string; id: string; label: string; 
     '',
     'Tes règles : lis `docs/session-cloud.md` à la racine du dépôt avant tout geste ; elles remplacent les règles du Mac de CLAUDE.md.',
     ...(o.prefs ? ['', cloudPrefsLine(o.prefs, o.prefsError)] : []),
+    '',
+    proved
+      ? `Ta tâche est une preuve de fidélité (#455) : #${proved} est close et publiée, rien d'autre ne t'attend. Le chantier : \`${chantier}\`. Si la capture n'est pas encore dans ta session, écris la consigne de capture au gabarit (docs/session-cloud.md, « Une preuve de fidélité à part ») et attends-la ; un écart trouvé ouvre sa tâche de correctif, il ne rouvre pas #${proved}.`
+      : CLOUD_RENDER_RULE,
     ...(o.spec ? ['', `Ta spec et ton plan : \`${o.spec}\``] : []),
   ].join('\n') + '\n'
 }
