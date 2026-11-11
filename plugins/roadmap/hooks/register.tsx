@@ -64,6 +64,7 @@ import {
   imageIcon,
   archiveIcon,
   cloudIcon,
+  computerIcon,
   flaskIcon,
   cloudTints,
   unarchiveIcon,
@@ -549,6 +550,7 @@ import {
   cloudArchiveNote,
   cloudBrandTasks,
   cloudFiche,
+  cloudSteps,
   cloudSessionIdOf,
   cloudTakePickaxe,
   cloudTakenAt,
@@ -9383,7 +9385,8 @@ export const register: Register = (on, options) => {
         const task = all.find(x => x.id === t.id)
         return {
           since: sinceLabel(t.since, now),
-          text: t.cloud ? cloudWords(t.cloud.state).long : bandInfo({ view: views[i], finished: t.finished === true }),
+          // #440 (maquette B6) : une ligne cloud a son compte d'étapes, tiré de sa PR ; ses mots passent devant la jauge.
+          text: t.cloud ? cloudSteps(t.cloud.state).count : bandInfo({ view: views[i], finished: t.finished === true }),
           ...(task ? { square: { hex: axisColor(pal, ranks.get(task.axis) ?? 0), axis: task.axis, done: task.done === true || t.closed === true } } : {}),
         }
       })
@@ -10173,11 +10176,28 @@ function maestroBandTree(
   // L'horloge devant la durée, centrée sur le texte (#385) : sa case de 2 cellules sur chaque ligne dès qu'une en a.
   const clocked = infos.some(x => x.since !== '') || stuck.length > 0
   // L'icône de l'état, celles du bloc « En cours » (#211) ; au terminal, son signe.
+  // #440 (maquette B6) : où tourne la session, en gris, devant son numéro : le nuage ou l'ordinateur.
+  const placeMark = (cloud: boolean, key: string) =>
+    Svg ? (
+      <Box key={key} flexShrink={0} flexDirection="row" alignItems="center">
+        <Svg source={cloud ? cloudIcon(palette.text3, 14, 'Dans le cloud') : computerIcon(palette.text3, 14, 'Sur le Mac')} alt={cloud ? 'Dans le cloud' : 'Sur le Mac'} width={SIZE.icon.sm} height={SIZE.icon.sm} />
+      </Box>
+    ) : null
+  // #440 (maquette B6) : la jauge d'une ligne cloud, ses six étapes tirées de sa PR, aux couleurs d'une locale.
+  const cloudBar = (cloud: CloudPr, width: number, key: string) => {
+    if (!Svg) return null
+    const steps = cloudSteps(cloud.state)
+    const bar = stepsBarIcon(palette, steps.segments, { width, height: 4, waiting: cloud.state === 'red' || cloud.state === 'closed', merging: cloud.state === 'ready', finished: cloud.state === 'merged' })
+    return <Svg key={key} source={bar.source} alt={`étapes ${steps.count}`} width={bar.width} height={bar.height} />
+  }
   const stateIcon = (icon: ReturnType<typeof bandState>['icon'], word: string, hex: string, cloud?: CloudPr) => {
-    // Une session cloud : le nuage teinté par l'état de sa PR, à la place de la roue, de la main ou de la coche (#408, maquette A).
+    // #440 (maquette B6) : une session cloud a l'icône d'état d'une locale, tirée de sa PR (prête : la fusion) ;
+    // le nuage, gris, dit seulement où elle tourne, devant son numéro (`placeMark`).
     if (cloud) {
-      const tint = cloudTints(palette, cloud.state).cloud
-      return Svg ? <Svg source={cloudIcon(tint, 14, 'Dans le cloud')} alt="Dans le cloud" width={SIZE.icon.sm} height={SIZE.icon.sm} /> : <Text size="caption" color={tint}>☁</Text>
+      const m = cloudFiche(cloud.state).band.mark
+      icon = m === 'person' ? 'hand' : m
+      word = cloudFiche(cloud.state).band.word
+      hex = m === 'check' ? palette.finished : hex
     }
     if (!Svg) return <Text size="caption" color={hex}>{{ spinner: '◌', hand: '✋', merge: '⑂', check: '✓' }[icon]}</Text>
     const source =
@@ -10339,6 +10359,7 @@ function maestroBandTree(
                   {t.archivable && (t.sessionId || t.cloud) && archiveButton(t, done ? palette.finished : palette.text2)}
                 </Box>
               )}
+              {placeMark(t.cloud !== undefined, `band-place:${keyPart(t.id)}`)}
               {/* Le numéro à sa largeur, à un écart du titre (#211) ; barré avec le titre quand la tâche est close. */}
               <Box flexShrink={0}>
                 <Text size="caption" tabular color={done ? palette.finishedOn : palette.text3} {...(done ? { strikethrough: true } : {})}>{`#${t.id}`}</Text>
@@ -10353,10 +10374,15 @@ function maestroBandTree(
               </Box>
               {/* Jauge, info et durée à largeur fixe, sur chaque ligne (#172) : les barres partent de la même
                   colonne, quels que soient le titre, l'étape ou le compte. La case de la jauge suit son dessin (#326). */}
-              {/* Une session cloud : l'état de sa PR en mots, à la place de la jauge et du compte, sur leur largeur (#408). */}
+              {/* #440 (maquette B6) : une session cloud, le mot court de sa PR calé à droite devant sa jauge. */}
               {t.cloud && (
-                <Box key={`band-cloud:${keyPart(t.id)}`} flexShrink={0} minWidth={0} {...(Svg ? { width: pxCells(BAND_GAUGE.row) + 1 + cols.info } : {})} flexDirection="row" alignItems="center">
-                  <Text size="caption" color={cloudTints(palette, t.cloud.state).word} wrap="truncate-end">{cloudWords(t.cloud.state).long}</Text>
+                <Box key={`band-cloud:${keyPart(t.id)}`} flexShrink={0} flexDirection="row" alignItems="center">
+                  <Text size="caption" color={cloudTints(palette, t.cloud.state).word}>{cloudWords(t.cloud.state).short}</Text>
+                </Box>
+              )}
+              {Svg && t.cloud && (
+                <Box key={`band-gauge:${keyPart(t.id)}`} flexShrink={0} flexDirection="column" gap={0}>
+                  {cloudBar(t.cloud, BAND_GAUGE.row, `band-cloud-bar:${keyPart(t.id)}`)}
                 </Box>
               )}
               {Svg && !t.cloud && (
@@ -10369,7 +10395,7 @@ function maestroBandTree(
               )}
               {/* Le compte et l'étape, « 6/7 · Écrire les tests rouges », à la largeur du plus long texte (#174). Ils
                   ne rétrécissent pas : seul le titre cède sa place, sinon un titre long poussait la jauge (#326). */}
-              {cols.info > 0 && !t.cloud && (
+              {cols.info > 0 && (
                 <Box key={`band-info:${keyPart(t.id)}`} width={cols.info} flexShrink={0} minWidth={0} flexDirection="row" alignItems="center" gap={SPACE.row}>
                   {/* #425 (maquette A) : le mot d'état, à la couleur de l'état, dans sa colonne ; le compte et l'étape en gris
                       cèdent sa place, jamais le titre. */}
@@ -14343,7 +14369,21 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   const testWords = (version: string) => `en test ${version}`
   const testCells = Math.max(0, ...[...blockTasks, ...openTasks].flatMap(t => { const test = testOf(t); return test ? [pxCells(6.5 * [...testWords(test.version)].length)] : [] }))
   const wordsCells = Math.max(cloudColumn ? CLOUD_WORDS_CELLS : 0, testCells)
-  const stepsColumns = wordsCells > 0 ? Math.max(stepsCells.columns, ROW_STEPS.icon + 1 + wordsCells + 1 + ROW_STEPS.clock + stepsCells.count) : stepsCells.columns
+  // #440 (maquette B6) : une ligne cloud porte ses mots et sa jauge ; la colonne s'élargit des mots.
+  const stepsColumns = wordsCells > 0 ? Math.max(stepsCells.columns, ROW_STEPS.icon + 1 + wordsCells + 1 + (cloudColumn ? pxCells(ROW_STEPS.bar) + 1 : 0) + ROW_STEPS.clock + stepsCells.count) : stepsCells.columns
+  // L'icône d'état d'une ligne cloud, tirée de sa PR, et sa jauge (#440, maquette B6).
+  const cloudStateMark = (cloud: CloudPr) => {
+    const m = cloudFiche(cloud.state).band.mark
+    const word = cloudFiche(cloud.state).band.word
+    if (!Svg) return <Text size="caption" color={palette.text2}>{{ spinner: '◌', person: '✋', merge: '⑂', check: '✓' }[m]}</Text>
+    const source = m === 'spinner' ? spinnerIcon(palette.live, 14, word, false, now) : m === 'person' ? handIcon(palette.block, 14, STROKE.pill, word) : m === 'merge' ? mergeIcon(palette.wait, 14, STROKE.pill, word) : checkIcon(palette.finished, 14, STROKE.pill)
+    return <Svg source={source} alt={word} width={SIZE.icon.sm} height={SIZE.icon.sm} {...(m === 'spinner' ? { isInteractive: true } : {})} />
+  }
+  const cloudRowBar = (cloud: CloudPr, key: string) => {
+    const steps = cloudSteps(cloud.state)
+    const bar = stepsBarIcon(palette, steps.segments, { width: ROW_STEPS.bar, height: 4, waiting: cloud.state === 'red' || cloud.state === 'closed', merging: cloud.state === 'ready', finished: cloud.state === 'merged' })
+    return <Svg key={key} source={bar.source} alt={`étapes ${steps.count}`} width={bar.width} height={bar.height} />
+  }
   // Retour de test de #385 (maquette « version corrigée ») : plus de « Done » au bout d'une close du bloc, la coche
   // et la jauge violette le disent ; son archive vit entre sa case et son numéro (« Bouton archive […] apparaît
   // uniquement quand une task est done et pas encore archivée »), dans une case que toutes les lignes du bloc
@@ -14408,13 +14448,16 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
       // finit au bord, sous l'icône du centre de contrôle.
       <Box key={`steps:${t.key}`} flexDirection="row" alignItems="center" justifyContent="flex-end" gap={SPACE.row} flexShrink={0} {...(Svg ? { width: stepsColumns } : {})}>
         <Box width={ROW_STEPS.icon} flexShrink={0} flexDirection="row" justifyContent="center">
-          {cloud && tint ? (Svg ? <Svg source={cloudIcon(tint.cloud, 14, 'Dans le cloud')} alt="Dans le cloud" width={SIZE.icon.sm} height={SIZE.icon.sm} /> : <Text size="caption" color={tint.cloud}>☁</Text>) : test ? (Svg ? <Svg source={flaskIcon(palette.waitOn, 14, 'En test')} alt="En test" width={SIZE.icon.sm} height={SIZE.icon.sm} /> : <Text size="caption" color={palette.waitOn}>⚗</Text>) : completed ? (Svg ? <Svg source={checkIcon(checkHex, 14, STROKE.pill)} alt={completedWord} width={SIZE.icon.sm} height={SIZE.icon.sm} /> : <Text size="caption" color={checkHex}>✓</Text>) : merging ? mergeMark() : waiting ? hand() : spinner()}
+          {cloud && tint ? cloudStateMark(cloud) : test ? (Svg ? <Svg source={flaskIcon(palette.waitOn, 14, 'En test')} alt="En test" width={SIZE.icon.sm} height={SIZE.icon.sm} /> : <Text size="caption" color={palette.waitOn}>⚗</Text>) : completed ? (Svg ? <Svg source={checkIcon(checkHex, 14, STROKE.pill)} alt={completedWord} width={SIZE.icon.sm} height={SIZE.icon.sm} /> : <Text size="caption" color={checkHex}>✓</Text>) : merging ? mergeMark() : waiting ? hand() : spinner()}
         </Box>
         {cloud && tint ? (
-          // L'état de sa PR en mots, à la place de la barre d'étapes (#408, maquette A) ; la durée garde sa place.
-          <Box key={`cloud-words:${t.key}`} {...(Svg ? { width: CLOUD_WORDS_CELLS } : {})} flexShrink={0} minWidth={0} flexDirection="row" alignItems="center">
-            <Text size="caption" color={tint.word} wrap="truncate-end">{cloudWords(cloud.state).short}</Text>
-          </Box>
+          // #440 (maquette B6) : le mot court de sa PR, calé à droite devant sa jauge de six étapes ; la durée garde sa place.
+          [
+            <Box key={`cloud-words:${t.key}`} {...(Svg ? { width: CLOUD_WORDS_CELLS } : {})} flexShrink={0} minWidth={0} flexDirection="row" alignItems="center" justifyContent="flex-end">
+              <Text size="caption" color={tint.word} wrap="truncate-end">{cloudWords(cloud.state).short}</Text>
+            </Box>,
+            ...(Svg ? [cloudRowBar(cloud, `cloud-bar:${t.key}`)] : []),
+          ]
         ) : test && openTest ? (
           // #375 (maquette A) : « en test 0.268.0 » en sarcelle, à la place de la barre ; le texte ouvre la session de test.
           <Box key={`test-words:${t.key}`} {...(Svg ? { width: wordsCells } : {})} flexShrink={0} minWidth={0} flexDirection="row" alignItems="center">
@@ -14708,6 +14751,12 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
         {/* Le titre suit le numéro (#203, maquette C des étiquettes) : plus de colonne réservée devant
             lui ; les tags viennent à droite du titre, l'échéance au bout, en texte, à la place de l'âge. */}
         {block && blockArchive(t, block)}
+        {/* #440 (maquette B6) : au bloc « En cours », où tourne la session, en gris, devant son numéro. */}
+        {inLiveBlock && Svg && (
+          <Box key={`place:${t.key}`} flexShrink={0} flexDirection="row" alignItems="center">
+            <Svg source={block?.cloud ? cloudIcon(palette.text3, 14, 'Dans le cloud') : computerIcon(palette.text3, 14, 'Sur le Mac')} alt={block?.cloud ? 'Dans le cloud' : 'Sur le Mac'} width={SIZE.icon.sm} height={SIZE.icon.sm} />
+          </Box>
+        )}
         {!grouped && number}
         <Box key={`lead:${t.key}`} flexDirection="row" alignItems="center" flexGrow={1} flexShrink={1} minWidth={0}>
           {prioritized &&

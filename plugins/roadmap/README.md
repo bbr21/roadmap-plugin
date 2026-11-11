@@ -763,6 +763,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.277.1 (2026-11-11)** : release.py : status répond en une seconde, sans lancer le contrôle ; status --check le lance (#463)
 - **0.277.0 (2026-11-11)** : panneau : la fiche d'une ligne cloud dit l'état de sa PR au lieu de « À lancer » (#440)
 - **0.276.0 (2026-11-11)** : cloud : plugin muet en VM, skills seules (#457) ; bilans comptables, causes en liste fermée (#460) ; reco à profil de besoins (#461)
 - **0.275.0 (2026-11-11)** : fidélité : une tâche de rendu se clôt à sa publication, sa preuve part en tâche à part (#455)

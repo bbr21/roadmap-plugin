@@ -709,6 +709,18 @@ The merge itself:
   journal (#460, `ROADMAP-bilans.csv` of Roadmap once `tools/ranger_bilans.py --apply` ran) the
   bilan is required with its `type` (`code`, `doc`, `rendu`, `sans-code`), the cause from the closed
   list of the `tasks` skill (never « autre »); `lieu` comes from the line's `lieu:cloud`.
+- **The weekly reading of frictions** (#462): once a week, Maestro reads the bilans for frictions that come
+  back, so the person does not have to notice them. On its first turn of the day it runs
+  `python3 "<audit skill folder>/scripts/frictions.py" <main folder> hebdo --json`: `due` false says the
+  reading of the week was already done (nothing to do); otherwise its `propositions` are audit questions,
+  one per cause that came back three times on the same place (`lieu`) and type, the recommendation « Ouvrir la
+  tâche » first with its `add` operation ready for `tasks.py write`. Ask them by the form (four at most),
+  each question's `soucis` in the preview; « Ouvrir la tâche » writes the line through the `tasks` skill
+  (its label carries the friction's mark, which restarts the count), « Pas maintenant » runs
+  `frictions.py <main folder> ecarter <key>` (the count restarts that day). Autonomous or unattended, ask
+  nothing: add them to the audit's pending questions (`audit.py pending <main folder> --add <file>`). In the
+  Roadmap repository, a friction « environnement » in the cloud proposes adding its tasks to
+  `RECO_STALLED_EXAMPLES` (#461, below), those already there left out.
 - **A render task does not go to test** (#455): its proof apart, « Prouver la fidélité de #N », is its test.
   Maestro ticks it at the publication and posts no « Tester #N · X.Y.Z » card for it, even when the reminder below
   names it: the person's feedback comes as the capture, and each gap as its correction task.

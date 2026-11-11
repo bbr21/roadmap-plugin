@@ -61,7 +61,8 @@ at « ; » outside parentheses), `paquets` (two fragments or more), `trous` by t
 an open child is never `sans_due`), `doublons_possibles` (pairs with close words or subject,
 threshold 0.3: a lead, not a verdict; each says which one to keep, `garder`, and the other's words
 it lacks, `a_reprendre`), `axes_a_plat`, `regroupements` and `seules` (#284, below), `heritage`
-(the keys a child takes from its parent), `pistes_preuve`, `questions` and `en_attente` (below).
+(the keys a child takes from its parent), `pistes_preuve`, `questions`, `en_attente` (below) and
+`frictions` (#462, below).
 
 ## 2. Pending questions first
 
@@ -203,6 +204,17 @@ of the proof, `proof` = what proves it and where; adjust the option if you found
 qui reste ». Correct an option when the context says better (a closer call day, the project's
 `regles`), and say so.
 
+**Frictions** (#462): the survey's `frictions` is the reading of the bilans (`scripts/frictions.py`, the
+journal `tasks.py` writes at each closure): each cause of the closed list crossed with the bilan's `lieu`
+and `type`, over the last 28 days. `tableau` counts them; `propositions` holds one question (`kind`
+« friction ») per crossing that came back three times since its last proposal, three at most, the rest
+in `a_suivre`; the recommendation « Ouvrir la tâche » carries its `add` operation (its label ends with the
+friction's mark, « (friction <cause> · <lieu> · <type> : #a, #b, #c) », which restarts the count), and
+« Pas maintenant » has no operation: after it, run `python3 "<skill folder>/scripts/frictions.py" <project
+folder> ecarter <key>`. A journal not yet sorted (no `lieu` nor `type` columns) is read anyway: its
+`message` says so, and causes are counted alone (`tous`); `hors_liste` shows the causes outside the list,
+never proposed. Say the `message` in the report.
+
 ## 5. Validate
 
 Through the multiple-choice form, the recommendation first, **four questions at most per round**,
@@ -216,6 +228,7 @@ answer in writing, and their answer corrects the proposal:
 4. **One question per merge and per group**, both labels in the preview.
 5. **Dependencies** outside bundles, by group; the **other gaps**, one question per type.
 6. **The per-task questions** (step 4), in the survey's order.
+7. **The frictions** (step 4), each question's `soucis` in its preview.
 
 On a large roadmap (more than 40 bundles or 60 tasks), offer a scope first (an axis, a flat axis
 to group, the longest bundles, the late tasks); the scope the person names wins. Drop from the JSON what is refused,
@@ -262,7 +275,7 @@ When a scheduled task runs the audit (the prompt says so) or nobody can answer, 
 1. Survey; look for proofs (step 4). Write only the `done` operations whose proof is **clear**,
    through `tasks.py write` (step 6). Apply no structure change.
 2. Every other question waits: the survey's `questions` you did not settle, the `partial_proof`
-   ones, and each structure proposal as a `structure` question (its options carry `proposals`, a
+   ones, the `frictions` propositions as they are, and each structure proposal as a `structure` question (its options carry `proposals`, a
    piece of proposals.json, instead of `operations`). Write them to a JSON list and add them:
 
    ```bash

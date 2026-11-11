@@ -369,7 +369,17 @@ def releve(dossier, jour=None, perso="~/.claude/roadmap-perso.json"):
         "pistes_preuve": pistes,
         "questions": questions_par_tache(taches, trous, pistes, jour),
         "en_attente": _en_attente(_lire_questions(rdir), taches)[0],
+        "frictions": _frictions(dossier, jour),
     })
+
+
+def _frictions(dossier, jour):
+    """La lecture des frictions des bilans (#462), questions comprises ; une panne ne fait pas tomber l'audit."""
+    import frictions  # tasks.py importe audit : frictions, qui importe tasks, se charge ici
+    try:
+        return frictions.lire(dossier, jour=jour)
+    except Exception as e:  # noqa: BLE001
+        return {"erreur": "lecture des frictions impossible : %s" % e, "propositions": []}
 
 
 # ---------------------------------------------------------------- #159 : preuves et questions

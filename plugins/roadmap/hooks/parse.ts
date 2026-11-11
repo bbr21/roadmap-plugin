@@ -10442,6 +10442,21 @@ export function cloudFiche(state: CloudPr['state']): {
   }
 }
 
+/** Les six étapes de la jauge d'une ligne cloud (#440, maquette B6), tirées de sa PR faute de liste d'étapes lisible. */
+export const CLOUD_STEPS = ['Branche poussée', 'PR ouverte', 'Contrôles légers', 'Suite lourde', 'Prête', 'Fusionnée'] as const
+
+/**
+ * La jauge d'une ligne cloud (#440) : ses six segments et son compte d'étapes faites, comme une ligne locale (« 3/7 »).
+ * Sans PR, la branche est poussée ; ouverte ou rouge, les contrôles légers sont en cours (rouge : la teinte d'attente,
+ * posée au dessin) ; prête, « Prête » ; fusionnée, toutes faites ; fermée sans fusion, la PR s'est arrêtée ; inconnue,
+ * rien de fait.
+ */
+export function cloudSteps(state: CloudPr['state']): { segments: StepSegment[]; count: string } {
+  const now = { none: 1, open: 2, red: 2, ready: 4, merged: 6, closed: 1, unknown: -1 }[state]
+  const segments = CLOUD_STEPS.map((_, i): StepSegment => (now < 0 ? 'todo' : i < now ? 'done' : i === now ? 'now' : 'todo'))
+  return { segments, count: `${Math.max(0, now)}/${CLOUD_STEPS.length}` }
+}
+
 const CLOUD_SESSION_LINK = /https:\/\/claude\.ai\/code\/(session_[A-Za-z0-9]+)/
 
 /**
@@ -12757,12 +12772,15 @@ export function waitNote(kind: 'titles' | 'launched'): WaitNote {
  * Les débuts de commande d'une suite de tests lourde (#222) : chacune occupe le processeur de 2 à 6 min,
  * et plusieurs en même temps ont porté la charge du Mac à 380 pour 10 cœurs. Un test ciblé
  * (`npm test -- <fichier>`, `node --test`, un `test_*.py`) et `check.mjs` n'en sont pas. `rejouer_delais.py`
- * en est une : il lance la suite lui-même, puis en rejoue les délais dépassés (#249).
+ * en est une : il lance la suite lui-même, puis en rejoue les délais dépassés (#249). `release.py status` est
+ * léger, `status --check` lourd (#463).
  */
 const HEAVY_TESTS: readonly RegExp[] = [
   /^claude\s+plugin\s+test(?=\s|$)/,
   /^(?:\S*python3?\s+(?:-\S+\s+)*)?(?:\S*\/)?rejouer_delais\.py(?=\s|$)/,
   /^(?:\S*python3?\s+(?:-\S+\s+)*)?(?:\S*\/)?release\.py\s+(?:check|release)(?=\s|$)/,
+  // #463 : status --check lance le contrôle complet de check ; status seul reste léger.
+  /^(?:\S*python3?\s+(?:-\S+\s+)*)?(?:\S*\/)?release\.py\s+status(?:\s+[^\s|;&]+)*\s+--check(?=\s|$)/,
   /^npm\s+(?:test|t|run\s+test(?::\S+)?)(?=\s|$)(?!.*\s--(?:\s|$))/,
   /^(?:\S*\/)?test\.sh(?=\s|$)/,
   /^(?:(?:bash|sh)\s+)?(?:\S*\/)?un_test\.sh(?=\s|$)/,
@@ -12938,6 +12956,7 @@ const QUEUE_COMMANDS: readonly [RegExp, string][] = [
   [/un_test\.sh/, 'un test'],
   [/claude\s+plugin\s+test/, 'plugin test'],
   [/release\.py\s+check/, 'release.py check'],
+  [/release\.py\s+status\b.*--check/, 'release.py status --check'],
   [/release\.py\s+release/, 'release.py release'],
   [/rejouer_delais\.py/, 'rejouer_delais.py'],
   [/npm\s+(?:test|t|run\s+test)\b/, 'npm test'],
