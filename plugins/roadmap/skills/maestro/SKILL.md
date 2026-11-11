@@ -278,8 +278,10 @@ to it.
 ## 2 bis. Cloud mode (#408)
 
 A project whose roadmap lives outside its code repository (a Cowork folder without git) names that repository with
-`"depot": "owner/repo"` in `.claude/roadmap.json` (#444): the cloud card then starts on that repository
-(`repository`), `brief_cloud.py` points the session to that repository's own `docs/session-cloud.md` for its tests,
+`"depot": "owner/repo"` in `.claude/roadmap.json` (#444). The cloud card never carries `repository`: the app
+refuses an `own_initiative` card that does (« A proposal cannot carry a repository », #454), so the VM starts from
+the launching session, which must be open in that repository (its GitHub origin equals `depot`, e.g. adBricks'
+Maestro in its code clone); elsewhere, launch from a session opened there. `brief_cloud.py` points the session to that repository's own `docs/session-cloud.md` for its tests,
 and `suivi_cloud.py` reads the PRs there (`gh -R`).
 
 When the project's `.claude/roadmap.json` says `"sessions": "cloud"`, the cloud is open to the project: a task
@@ -321,7 +323,9 @@ with « Cible : le Mac, … » and the recommendation. What changes for Maestro 
 - **Post the card** with `start_session`, `target: "cloud"`, title `#<id> · <nom>`, and as its prompt the output
   of `python3 "<skill folder>/scripts/brief_cloud.py" <main folder> <id>`, unchanged: it opens on the three mission
   lines and points to `docs/session-cloud.md`. No Maestro clause, no tree context: none of the plugin's rules reach
-  the VM. A card refused because no cloud target is on screen (`not_on_screen`) is posted again with the person at
+  the VM. The brief carries the person's session settings for the project instead (#449: one line of yes / no
+  values, read from `~/.claude/reglages-session.json`; their rules for the VM are in `docs/session-cloud.md`,
+  section « La méthode et les réglages »). A card refused because no cloud target is on screen (`not_on_screen`) is posted again with the person at
   the screen; launching keeps their click on Start.
 - **Follow by the PR, not by notes**: a cloud session is absent from `list_sessions` and sends no note.
   `python3 "<skill folder>/scripts/suivi_cloud.py" <main folder>` lists every taken `lieu:cloud` line with its PR

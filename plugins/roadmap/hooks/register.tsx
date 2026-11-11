@@ -555,6 +555,7 @@ import {
   cloudWords,
   cloudBranchOf,
   cloudBriefText,
+  cloudDepotRefusal,
   cloudStartRefusal,
   takeCloudLine,
   judgedReco,
@@ -5559,33 +5560,38 @@ async function launchCloud($: EngineInterface, source: Source, task: Task, short
     const brief = await workBrief($, source, task, shortTitle)
     const refused = await launchRefusal($, { title: brief.title })
     if (refused !== undefined) return void (await fail(refused))
-    // #444 : une roadmap hors du dépôt de code nomme son dépôt (`depot`) ; la VM part de lui, pas de cette session.
+    // #444 : une roadmap hors du dépôt de code nomme son dépôt (`depot`). L'app refuse une carte own_initiative qui
+    // porte un `repository` (#454) : la VM part toujours de cette session, qui doit donc être ouverte dans ce dépôt.
     const depot = projectSettings(source).depot
-    if (depot === undefined) {
-      // La VM part de la branche de cette session : elle doit être sur GitHub, sans commit en retard (#426).
-      const here = await $.session.cwd()
-      const git = (...args: string[]) => $.process.run(['git', '-C', here, ...args], { timeoutMs: 30_000 })
-      const head = await git('rev-parse', '--abbrev-ref', 'HEAD')
-      const ahead = head.exitCode === 0 ? await git('rev-list', '--count', '@{u}..HEAD') : undefined
-      const startRefused = cloudStartRefusal({
-        inGit: head.exitCode === 0,
-        branch: head.stdout.trim(),
-        upstream: ahead?.exitCode === 0,
-        ahead: Number(ahead?.stdout.trim() || 0),
-      })
-      if (startRefused !== undefined) return void (await fail(startRefused))
+    // La VM part de la branche de cette session : elle doit être sur GitHub, sans commit en retard (#426).
+    const here = await $.session.cwd()
+    if (depot !== undefined) {
+      const depotRefused = cloudDepotRefusal(depot, await cloudRepoOf($, here))
+      if (depotRefused !== undefined) return void (await fail(depotRefused))
     }
+    const git = (...args: string[]) => $.process.run(['git', '-C', here, ...args], { timeoutMs: 30_000 })
+    const head = await git('rev-parse', '--abbrev-ref', 'HEAD')
+    const ahead = head.exitCode === 0 ? await git('rev-list', '--count', '@{u}..HEAD') : undefined
+    const startRefused = cloudStartRefusal({
+      inGit: head.exitCode === 0,
+      branch: head.stdout.trim(),
+      upstream: ahead?.exitCode === 0,
+      ahead: Number(ahead?.stdout.trim() || 0),
+    })
+    if (startRefused !== undefined) return void (await fail(startRefused))
     const { open } = files(source)
     const branch = cloudBranchOf(task)
     const taken = takeCloudLine(await $.fs.read(open), task.id, branch, todayOf(await $.clock.now()))
     if ('error' in taken) return void (await fail(taken.error))
-    const prompt = cloudBriefText({ project: source.name, id: task.id, label: task.label, line: taken.line, branch, ...(task.spec ? { spec: task.spec } : {}), ...(depot ? { depot } : {}) })
+    // #449 : les réglages de session de la personne partent avec le brief ; une panne de lecture n'empêche pas le lancement.
+    const read = await readSessionPrefs($).catch(() => undefined)
+    const prefs = read ? { prefs: read.prefs, ...(read.error !== undefined ? { prefsError: read.error } : {}) } : {}
+    const prompt = cloudBriefText({ project: source.name, id: task.id, label: task.label, line: taken.line, branch, ...(task.spec ? { spec: task.spec } : {}), ...(depot ? { depot } : {}), ...prefs })
     const card = {
       tool: START_SESSION_TOOL,
       initiation: 'own_initiative',
       context: 'fresh',
       target: 'cloud',
-      ...(depot ? { repository: depot } : {}),
       title: brief.title,
       prompt,
       background: `Tâche #${task.id} du projet ${source.name}, lancée en cloud depuis le panneau roadmap (#416) : la session tourne dans une VM claude.ai sans le plugin ; ses règles sont dans docs/session-cloud.md du dépôt${depot ? ` ${depot}` : ''}, Maestro la suit par sa PR sur le Mac.`,

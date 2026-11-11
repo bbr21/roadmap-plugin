@@ -10164,10 +10164,38 @@ export function cloudStartRefusal(o: { inGit: boolean; branch?: string; upstream
 }
 
 /**
+ * #454 : une roadmap qui nomme son dépôt (`depot`) ne lance en cloud que d'une session déjà ouverte dans ce dépôt
+ * (`here`, l'origine GitHub de son dossier) : l'app refuse une carte own_initiative qui porte un `repository`
+ * (« A proposal cannot carry a repository », 2026-11-11), la VM part donc de la session qui lance. Les noms GitHub
+ * ne tiennent pas à la casse. Rien quand la session y est, sinon la raison de la note.
+ */
+export function cloudDepotRefusal(depot: string, here: string | undefined): string | undefined {
+  if (here !== undefined && here.toLowerCase() === depot.toLowerCase()) return undefined
+  const where = here === undefined ? 'n’est pas dans un dépôt GitHub' : `est dans ${here}`
+  return `le code de ce projet vit dans ${depot}, mais cette session ${where} : lance depuis une session ouverte dans ce dépôt (la carte cloud ne peut pas nommer de dépôt)`
+}
+
+/**
  * Le brief d'une session cloud posée par le panneau (#416), le même que `brief_cloud.py` de la skill maestro : il
  * se suffit sans plugin (la VM n'en charge pas) et renvoie aux règles du dépôt, `docs/session-cloud.md`.
  */
-export function cloudBriefText(o: { project: string; id: string; label: string; line: string; branch: string; spec?: string; depot?: string }): string {
+/**
+ * Les réglages de session de la personne dans le brief cloud (#449, BBR, 2026-11-11 : « le même niveau de qualité »
+ * en cloud) : la VM n'a pas le plugin qui les injecte au Mac. Le brief en porte les valeurs, lues au Mac au
+ * lancement ; leur consigne, adaptée à la VM, est dans `docs/session-cloud.md` du dépôt. `brief_cloud.py` écrit la
+ * même ligne (ENTETE_REGLAGES, CONSIGNE_REGLAGES, que son test retrouve ici mot pour mot).
+ */
+export function cloudPrefsLine(prefs: SessionPrefs, error?: string): string {
+  const yes = (b: boolean) => (b ? 'oui' : 'non')
+  return (
+    'Tes réglages de session (lus au Mac au lancement) : ' +
+    `questions en formulaire ${yes(prefs.questions)}, mode ADHD ${yes(prefs.adhd)}, français ${yes(prefs.francais)}, autonome ${yes(prefs.autonome)}` +
+    (error === undefined ? '' : ' (fichier des réglages illisible : réglages par défaut)') +
+    '. Leur consigne en cloud : `docs/session-cloud.md`, « La méthode et les réglages ».'
+  )
+}
+
+export function cloudBriefText(o: { project: string; id: string; label: string; line: string; branch: string; spec?: string; depot?: string; prefs?: SessionPrefs; prefsError?: string }): string {
   // #444 : la roadmap vit hors du dépôt (`depot`) : ni carte d'impact ni check.mjs de Roadmap, les tests sont ceux
   // que nomme `docs/session-cloud.md` du dépôt, et la ligne n'existe que sur le Mac.
   const tests = o.depot ? 'les tests que nomme docs/session-cloud.md sont verts' : 'les tests de ta carte d\'impact et node scripts/check.mjs sont verts'
@@ -10185,6 +10213,7 @@ export function cloudBriefText(o: { project: string; id: string; label: string; 
     `Travaille sur la branche \`${o.branch}\`, partie de \`origin/main\`.`,
     '',
     'Tes règles : lis `docs/session-cloud.md` à la racine du dépôt avant tout geste ; elles remplacent les règles du Mac de CLAUDE.md.',
+    ...(o.prefs ? ['', cloudPrefsLine(o.prefs, o.prefsError)] : []),
     ...(o.spec ? ['', `Ta spec et ton plan : \`${o.spec}\``] : []),
   ].join('\n') + '\n'
 }

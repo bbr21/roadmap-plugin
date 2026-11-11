@@ -2,9 +2,14 @@
 """Brief d'une session cloud de Maestro : écrit sur la sortie standard le brief entier d'une ligne de roadmap
 `lieu:cloud`, qui se suffit sans plugin (la session cloud n'en charge pas) : les lignes Mission, Fichiers (si le
 plan de la spec cite des chemins) et Fini quand, `---`, la ligne recopiée, la branche, puis les règles de
-`docs/session-cloud.md` par leur chemin (skill maestro, « Mode cloud », #408).
+`docs/session-cloud.md` par leur chemin (skill maestro, « Mode cloud », #408), et les réglages de session de la
+personne pour ce projet (#449), que la VM ne reçoit pas du plugin.
 
-  python3 brief_cloud.py DEPOT ID
+  python3 brief_cloud.py DEPOT ID [--reglages FICHIER]
+
+Les réglages se lisent dans ~/.claude/reglages-session.json (ou FICHIER) comme le plugin les lit (sessionPrefs de
+hooks/parse.ts) : les clés du haut, puis le bloc de `projets` dont la clé désigne DEPOT ; sans fichier, les défauts
+(tout oui, autonome non). Le panneau écrit la même ligne (cloudPrefsLine).
 
 Lit DEPOT/roadmap/ROADMAP.md (ou DEPOT/ROADMAP.md) et, pour le nom du projet, DEPOT/.claude/roadmap.json (clé
 « name », sinon le nom du dossier). Lecture seule. Code de retour 2 (message sur stderr) pour une ligne absente,
@@ -20,6 +25,12 @@ import re
 import sys
 
 import suivi_cloud
+
+
+FICHIER_REGLAGES = "~/.claude/reglages-session.json"
+DEFAUTS = {"questions": True, "adhd": True, "francais": True, "autonome": False}
+ENTETE_REGLAGES = "Tes réglages de session (lus au Mac au lancement) : "
+CONSIGNE_REGLAGES = ". Leur consigne en cloud : `docs/session-cloud.md`, « La méthode et les réglages »."
 
 
 class ErreurLigne(Exception):
@@ -79,7 +90,53 @@ def fichiers_du_plan(depot, spec):
     return vus
 
 
-def construire(depot, ident):
+def _booleens(bloc):
+    if not isinstance(bloc, dict):
+        return {}
+    return {k: v for k, v in bloc.items() if k in DEFAUTS and isinstance(v, bool)}
+
+
+def _dossier(cle, maison):
+    if cle.startswith("~/"):
+        cle = maison.rstrip("/") + "/" + cle[2:]
+    return cle.rstrip("/")
+
+
+def reglages(depot, fichier=None, maison=None):
+    """(réglages du projet DEPOT, True si le fichier est illisible), comme sessionPrefs du plugin."""
+    maison = maison if maison is not None else os.path.expanduser("~")
+    fichier = fichier or os.path.expanduser(FICHIER_REGLAGES)
+    prefs = dict(DEFAUTS)
+    try:
+        with open(fichier, encoding="utf-8") as f:
+            texte = f.read()
+    except OSError:
+        return prefs, False
+    try:
+        brut = json.loads(texte)
+    except ValueError:
+        return prefs, True
+    if not isinstance(brut, dict):
+        return prefs, False
+    prefs.update(_booleens(brut))
+    projets = brut.get("projets")
+    if isinstance(projets, dict):
+        ici = os.path.abspath(depot).rstrip("/")
+        for cle, bloc in projets.items():
+            if isinstance(cle, str) and _dossier(cle, maison) == ici:
+                prefs.update(_booleens(bloc))
+    return prefs, False
+
+
+def ligne_reglages(prefs, illisible=False):
+    oui = lambda b: "oui" if b else "non"  # noqa: E731
+    return (ENTETE_REGLAGES + "questions en formulaire %s, mode ADHD %s, français %s, autonome %s"
+            % (oui(prefs["questions"]), oui(prefs["adhd"]), oui(prefs["francais"]), oui(prefs["autonome"]))
+            + (" (fichier des réglages illisible : réglages par défaut)" if illisible else "")
+            + CONSIGNE_REGLAGES)
+
+
+def construire(depot, ident, fichier_reglages=None, maison=None):
     rel, ligne = trouver_ligne(depot, ident)
     c = ligne["cles"]
     branche = c["branche"]
@@ -118,6 +175,8 @@ def construire(depot, ident):
         "",
         "Tes règles : lis `docs/session-cloud.md` à la racine du dépôt avant tout geste ; elles remplacent les "
         "règles du Mac de CLAUDE.md.",
+        "",
+        ligne_reglages(*reglages(depot, fichier_reglages, maison)),
     ]
     if spec:
         sortie += ["", "Ta spec et ton plan : `%s`" % spec]
@@ -128,6 +187,7 @@ def main(argv=None):
     p = argparse.ArgumentParser(description="Brief d'une session cloud de Maestro.")
     p.add_argument("depot")
     p.add_argument("id")
+    p.add_argument("--reglages", help="fichier des réglages de session (défaut : %s)" % FICHIER_REGLAGES)
     a = p.parse_args(argv)
     try:
         ident = int(a.id)
@@ -135,7 +195,7 @@ def main(argv=None):
         print("brief_cloud : id « %s » non numérique" % a.id, file=sys.stderr)
         return 2
     try:
-        brief = construire(a.depot, ident)
+        brief = construire(a.depot, ident, a.reglages)
     except (ErreurLigne, suivi_cloud.ErreurDepot) as e:
         print("brief_cloud : %s" % e, file=sys.stderr)
         return 2

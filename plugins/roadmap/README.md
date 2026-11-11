@@ -763,6 +763,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.272.0 (2026-11-11)** : cloud : tes réglages et la méthode du Mac dans le brief cloud (#449) ; ▶ Cloud d'un projet à depot sans champ repository (#454)
 - **0.271.0 (2026-11-11)** : panneau : le ▶ reconnaît le refus de l'app sous Remote Control (#452) ; état « en test » d'une tâche publiée (#375)
 - **0.270.0 (2026-11-11)** : tests ciblés par session, suite entière une fois sur main avant publication (#448)
 - **0.269.0 (2026-11-11)** : tests hors de GitHub Actions (#446) ; cloud pour une roadmap hors du dépôt, clé depot (#444) ; suivi d'une session cloud lancée par la carte (#445) ; tâche mère sans gras ni ▶ (#447)
