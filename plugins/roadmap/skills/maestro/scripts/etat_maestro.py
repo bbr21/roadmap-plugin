@@ -7,7 +7,12 @@ d'étapes (skill maestro, § 3 et 5) ; plus de carte HTML depuis #104. Rendu en 
 
 MAESTRO.json (« - » : l'entrée standard), écrit par Maestro :
   {"base": "main", "taches": [{"id": 95, "titre": "Carte de Maestro", "branche": "feat/x",
-   "tests": "verts" | "rouges" (absent : à lancer), "relue": true, "apres": [94]}]}
+   "tests": "verts" | "rouges" (absent : à lancer), "relue": true, "apres": [94], "pr": 18}]}
+
+`pr` (le numéro de la PR, absent sans PR) : une branche à PR dont la dernière CI est verte (`tests: verts`) et
+que main a dépassée sans conflit est « prête, main mêlé à la fusion » (#431) : GitHub fait la fusion
+(`gh pr merge`), la CI de main teste le code mêlé, et la PR ne repasse pas pour un merge de main. Sans PR,
+la branche reste « à mettre à jour » : le `merge --ff-only` de main l'exige.
 
 Une branche qui code un rendu d'après une maquette (une page `maquettes*.html` et un fichier de rendu)
 reste « prête, capture après publication » tant que son `fidelite.html` n'est pas complet (#357,
@@ -32,6 +37,7 @@ import fidelite
 INTROUVABLE, RIEN, CONFLIT, INCONNU = "introuvable", "rien à fusionner", "conflit avec main", "conflits inconnus"
 ROUGES, A_LANCER, A_RELIRE, RETARD, PRETE = "tests rouges", "tests à lancer", "à relire", "à mettre à jour", "prête"
 FIDELITE = "prête, capture après publication"
+PRETE_MELEE = "prête, main mêlé à la fusion"
 HORS_ORDRE = (INTROUVABLE, RIEN)
 SEP = "\x1f"
 FORMAT_COMMIT = "%h" + SEP + "%an" + SEP + "%ct" + SEP + "%s"
@@ -141,12 +147,16 @@ def analyser(entree, faits, conflits):
             # #357 : un rendu codé d'après une maquette prouve sa fidélité ; #396 : après la
             # publication, seule version que le panneau montre. Il se fusionne et se publie.
             etat = FIDELITE
+        elif fa["retard"] > 0 and t.get("pr"):
+            # #431 : la dernière CI de la PR est verte et main a avancé sans conflit (vu plus haut) ;
+            # gh pr merge mêle les deux, la CI de main en fait la preuve : pas de merge de main rejoué.
+            etat = PRETE_MELEE
         elif fa["retard"] > 0:
             etat = RETARD
         else:
             etat = PRETE
         t["etat"] = etat
-        t["pret"] = etat in (PRETE, FIDELITE)
+        t["pret"] = etat in (PRETE, FIDELITE, PRETE_MELEE)
         t["attend"] = attend
         t["partages"] = len([f for f in fa["fichiers"] if f in partages]) if t["id"] in ids_vivants else 0
 
