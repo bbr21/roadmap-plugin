@@ -275,8 +275,11 @@ in the Roadmap repository). The plugin does not load there: the session gets its
 own.
 
 **Each task gets a recommended target, and the person chooses it at every launch (#416).** The aim is to relieve
-the Mac, so the recommendation says « cloud » for every task of logic, loaded Mac or not, and « Mac » only when the
-task needs a mockup, a capture, the iOS simulator, the browser pane or another resource of the Mac:
+the Mac, so the recommendation says « cloud » for every task, loaded Mac or not, and « Mac » only when the task
+needs the iOS simulator, the browser pane for a real site, the keychain, launchd or another resource of the Mac. A
+task that only needs mockups or a fidelity proof goes to the cloud too (#427): since #409 the cloud session publishes
+its mockups as a claude.ai Artifact, the person pastes the capture into it and `fidelite.py --maquette <url>` proves
+it, as `docs/session-cloud.md` says. The reason then says so.
 `python3 "<skill folder>/scripts/reco_cloud.py" <main folder> <id>` prints `#<id> · cloud · <reason>` or
 `#<id> · Mac · <reason>`, from the line, its spec and its fiche (the same markers as the panel). Before posting a
 card, give that line and ask the target by the choice form, the recommendation first; nothing goes to the cloud
@@ -307,7 +310,9 @@ with « Cible : le Mac, … » and the recommendation. What changes for Maestro 
   feedback); the session is subscribed to its PR and wakes on it. Its answer is its next comment.
 - **Merge** by the project's rule, on the Mac: `git -C <main folder> fetch origin <branche>`, review the diff
   (`git diff main...origin/<branche>`), run the tests its impact map names on a local checkout of the branch, then
-  `git -C <main folder> merge --ff-only origin/<branche>` and push: GitHub closes the PR as merged by itself. A
+  let GitHub merge the PR itself, on the head that was tested: `gh pr merge <n> --merge --match-head-commit
+  <head>` (`<head>`: `git -C <main folder> rev-parse origin/<branche>`), then `git -C <main folder> pull --ff-only`.
+  The PR ends « Merged ». Never `merge --ff-only` then a push of `main` for a branch with a PR (#428, below). A
   branch behind `main` is not rebased by Maestro: ask the session by comment to merge `main` into its branch.
 - **Fall back on the Mac when the cloud stalls** (#416): a cloud card refused for want of a cloud environment, a
   quota or a missing tool, or a cloud session whose last report says « bloquée » for its VM (environment, quota, tool,
@@ -535,6 +540,15 @@ The merge itself:
   archiving always keep the person's click.
 - **One branch at a time**, on an up-to-date `main`, by the project's merge rule (projects set up
   by onboarding: « Finir un chantier »). Never two merges at the same time.
+- **A branch with a PR is merged by GitHub** (#428): the branch pushed and up to date with `main`, its
+  tests green, then `gh pr merge <n> --merge --match-head-commit <head>` (the tested head, read by
+  `git rev-parse <branche>`), then `git -C <main folder> pull --ff-only`. A `merge --ff-only` in the
+  main folder followed by a push of `main` lets GitHub close the PR « Closed » instead of « Merged »
+  whenever `main` reaches GitHub before the PR's head is recorded: a rebased branch pushed after
+  `main` (PR 9 of 2026-11-10), or a head push GitHub had not processed yet (PR 17). The app then
+  shows the session in red, struck-out branch, although its task is closed. `--match-head-commit`
+  refuses a head that moved since the review; a refused `gh pr merge` (conflict, head moved) sends
+  the branch back to its update. Without a PR, the project's `merge --ff-only` and push stay.
 - **As soon as a branch is ready** (#131): its session's message is enough, Maestro reviews it and
   merges it (without the `autonome` setting, proposes it) without waiting for the other sessions to
   finish.

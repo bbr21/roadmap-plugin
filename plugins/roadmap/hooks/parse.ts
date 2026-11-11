@@ -9831,43 +9831,49 @@ export function maestroRelaunchContext(o: { source: Source; tasks: readonly Task
 export type BrandTask = { id: string; label: string; state: 'wait' | 'live' | 'merge' | 'done'; sessionId?: string; closed?: true; finished?: true; archivable?: true; launchedAt?: number; since?: number; cloud?: CloudPr }
 
 // --- La cible recommandée d'une tâche (#416) ---------------------------------------------------------
-// Pour alléger le Mac, une tâche de logique part en cloud ; ce qui demande une ressource du Mac (maquette,
-// capture, simulateur, volet navigateur, trousseau…) reste sur le Mac. La reco se lit sur la ligne, sa spec
-// et sa fiche ; BBR choisit la cible à chaque lancement. La même liste vit dans `reco_cloud.py` de la skill
-// maestro, que `test_reco_cloud.py` compare à celle-ci.
+// Pour alléger le Mac, une tâche part en cloud ; seule une ressource du Mac (simulateur iOS, volet navigateur
+// pour un vrai site, trousseau, launchd…) la garde sur le Mac. Maquettes et preuve de fidélité se font depuis le
+// cloud depuis #409 (Artifact, capture collée par BBR) : elles n'y comptent plus (#427). La reco se lit sur la
+// ligne, sa spec et sa fiche ; BBR choisit la cible à chaque lancement. Les mêmes listes vivent dans
+// `reco_cloud.py` de la skill maestro, que `test_reco_cloud.py` compare à celles-ci.
 
 /** La cible recommandée d'une tâche et sa raison, en une ligne. */
 export type CloudReco = { lieu: Sessions; why: string }
 
 /**
  * Les marqueurs d'une tâche qui reste sur le Mac, dans l'ordre où la raison se dit : chaque mot est une
- * expression lue sur le texte en minuscules sans accents, à un début de mot (`\b`).
+ * expression lue sur le texte en minuscules sans accents, à un début de mot (`\b`). Le navigateur ne compte
+ * qu'en volet ou pour un vrai site : « BBR l'ouvre dans son navigateur » d'une maquette publiée ne compte pas.
  */
 export const CLOUD_MAC_MARKERS: readonly { words: readonly string[]; why: string }[] = [
-  { words: ['maquette', 'mockup'], why: 'maquettes à faire : le volet navigateur et la preuve de fidélité sont sur le Mac' },
-  { words: ['capture', 'fidelite', 'screenshot'], why: 'une capture du rendu, prise sur le Mac' },
   { words: ['simulateur', 'simulator', 'xcode', 'ios\\b', 'iphone'], why: 'le simulateur iOS et Xcode sont sur le Mac' },
-  { words: ['navigateur', 'browser', 'preview_start'], why: 'le volet navigateur est sur le Mac' },
+  { words: ['volet navigateur', 'browser pane', 'preview_start', 'vrai site', 'site reel'], why: 'le volet navigateur, pour un vrai site, est sur le Mac' },
   { words: ['trousseau', 'keychain', 'launchd', 'osascript', 'computer-use', 'reglages systeme'], why: 'une ressource du Mac (trousseau, launchd, réglages système)' },
 ]
 
+/** Les marqueurs d'une tâche de rendu, qui part en cloud depuis #409 (#427) : seule sa raison change. */
+export const CLOUD_RENDER_MARKERS: { words: readonly string[]; why: string } = { words: ['maquette', 'mockup', 'capture', 'fidelite', 'screenshot'], why: 'maquettes et preuve de fidélité : faites depuis le cloud (Artifact, capture collée, #409)' }
+
 /** La raison d'une reco cloud. */
-export const CLOUD_LOGIC_WHY = 'tâche de logique : ni maquette, ni capture, ni simulateur, ni volet navigateur'
+export const CLOUD_LOGIC_WHY = 'tâche de logique : ni simulateur, ni volet navigateur pour un vrai site, ni ressource du Mac'
 /** La raison d'un projet sans code : son dossier n'est pas un dépôt que le cloud clone. */
 export const CLOUD_PROJECT_WHY = 'projet sans code : son dossier vit sur le Mac'
 
 const foldText = (text: string): string => text.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
+const hasMarker = (text: string, words: readonly string[]): boolean => words.some(w => new RegExp(`\\b${w}`).test(text))
 
 /**
- * La cible recommandée d'une tâche (#416) : « mac » dès qu'un marqueur se lit dans son libellé, sa note ou
- * ses documents (spec, fiche), ou pour un projet sans code ; sinon « cloud ». Le Mac chargé ou non n'y entre pas.
+ * La cible recommandée d'une tâche (#416) : « mac » dès qu'un marqueur du Mac se lit dans son libellé, sa note ou
+ * ses documents (spec, fiche), ou pour un projet sans code ; sinon « cloud », une tâche de rendu avec sa raison à
+ * elle (#427). Le Mac chargé ou non n'y entre pas.
  */
 export function cloudReco(task: Task, docs: readonly string[] = [], o: { projet?: boolean } = {}): CloudReco {
   if (o.projet) return { lieu: 'mac', why: CLOUD_PROJECT_WHY }
   const text = foldText([task.label, task.note ?? '', ...docs].join('\n'))
   for (const m of CLOUD_MAC_MARKERS) {
-    if (m.words.some(w => new RegExp(`\\b${w}`).test(text))) return { lieu: 'mac', why: m.why }
+    if (hasMarker(text, m.words)) return { lieu: 'mac', why: m.why }
   }
+  if (hasMarker(text, CLOUD_RENDER_MARKERS.words)) return { lieu: 'cloud', why: CLOUD_RENDER_MARKERS.why }
   return { lieu: 'cloud', why: CLOUD_LOGIC_WHY }
 }
 
@@ -10037,23 +10043,34 @@ export function githubRepoOf(remote: string): string | undefined {
 }
 
 /**
+ * Le motif `git log --pickaxe-regex -S` de la prise d'une ligne cloud (#426) : `branche:<branche>` entière (suivie
+ * de « | » ou « ] », pour que `feat/a` ne trouve pas `feat/a-b`), ses signes de regex échappés. Le dernier commit
+ * de `ROADMAP.md` où ce motif change de compte est la prise de la ligne : la durée part de là.
+ */
+export function cloudTakePickaxe(branche: string): string {
+  return `branche:${branche.replace(/[.[\]{}()\\*+?|^$]/g, '\\$&')}[] |]`
+}
+
+/** La date de la prise, en ms, d'une sortie `git log -1 --format=%ct` ; rien pour une sortie vide ou illisible. */
+export function cloudTakenAt(stdout: string): number | undefined {
+  const m = stdout.trim().match(/^(\d{9,11})$/)
+  return m ? Number(m[1]) * 1000 : undefined
+}
+
+/**
  * Les lignes cloud du bloc « En cours » et de la bande : les tâches ouvertes `lieu:cloud` déjà prises (`branche:`) et
  * numérotées, chacune avec l'état de sa PR. `red` et `ready` : elle t'attend (`wait`) ; fusionnée : finie et archivable
- * (aucune session locale à archiver : l'archive la cache) ; sinon elle tourne (`live`). Le lancement et la durée :
- * l'ouverture de sa PR, sinon minuit local de `ouvert:` (jamais une date après `today`) ; rien plutôt qu'une durée fausse.
- * Rangées par lancement, les sans-date à la fin.
+ * (aucune session locale à archiver : l'archive la cache) ; sinon elle tourne (`live`). Le lancement et la durée : la
+ * prise de sa ligne (`takenAt`, le commit qui a posé `branche:`, #426), sinon l'ouverture de sa PR ; jamais après `now`,
+ * jamais `ouvert:` (la ligne peut dormir des jours avant d'être prise : #319 disait « 6 j » prise à l'instant) ; rien
+ * plutôt qu'une durée fausse. Rangées par lancement, les sans-date à la fin.
  */
-export function cloudBrandTasks(open: readonly Task[], prs: unknown, today: string): BrandTask[] {
-  const midnight = (iso: string | undefined): number | undefined => {
-    const m = iso?.match(/^(\d{4})-(\d{2})-(\d{2})$/)
-    if (!m || iso! > today) return undefined
-    const at = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])).getTime()
-    return Number.isFinite(at) ? at : undefined
-  }
+export function cloudBrandTasks(open: readonly Task[], prs: unknown, now: number, takenAt: (branche: string) => number | undefined = () => undefined): BrandTask[] {
+  const past = (at: number | undefined): number | undefined => (at !== undefined && Number.isFinite(at) && at <= now ? at : undefined)
   const rows = open.flatMap(t => {
     if (t.done || t.lieu !== 'cloud' || !t.branche || !t.id) return []
     const cloud = cloudPrOf(prs, t.branche)
-    const launched = cloud.createdAt ?? midnight(t.ouvert)
+    const launched = past(takenAt(t.branche)) ?? past(cloud.createdAt)
     const row: BrandTask = {
       id: t.id,
       label: t.label,
@@ -11740,7 +11757,11 @@ function plainText(command: string, { bodies, texts }: Pick<ShellLine, 'bodies' 
 }
 
 /** Une livraison (#136) : une fusion (`git merge`, avec le dossier où elle tourne) ou une publication (`release.py release`). */
-export type Delivery = { kind: 'fusion'; dir: string } | { kind: 'publication' }
+/**
+ * `github` : la fusion d'une PR par GitHub lui-même (`gh pr merge`, #428), qui la laisse « Merged » ;
+ * elle vaut d'où qu'elle parte, le dossier principal la récupère ensuite par `git pull --ff-only`.
+ */
+export type Delivery = { kind: 'fusion'; dir: string; github?: true } | { kind: 'publication' }
 
 /**
  * Les livraisons d'une ligne shell, dans l'ordre (#136). Une fusion se dit avec son dossier : seul le
@@ -11752,6 +11773,7 @@ export function deliveries(command: string, cwd: string, home: string): Delivery
   for (const step of shellSteps(command, cwd, home)) {
     const call = gitCall(step)
     if (call?.sub === 'merge') found.push({ kind: 'fusion', dir: call.dir })
+    if (/(^|\/)gh$/.test(step.words[0] ?? '') && step.words[1] === 'pr' && step.words[2] === 'merge') found.push({ kind: 'fusion', dir: step.dir, github: true })
     const tool = step.words.findIndex(w => /(^|\/)release\.py$/.test(w))
     // `remote` (#410) : la publication par l'action GitHub, suivie depuis le Mac jusqu'à sa fin.
     if (tool >= 0 && (step.words[tool + 1] === 'release' || step.words[tool + 1] === 'remote')) found.push({ kind: 'publication' })

@@ -541,6 +541,8 @@ import {
   toggleFold,
   unlocksOf,
   cloudBrandTasks,
+  cloudTakePickaxe,
+  cloudTakenAt,
   cloudWords,
   cloudBranchOf,
   cloudBriefText,
@@ -1800,13 +1802,17 @@ function stepListNote(): string | undefined {
  */
 let delivered: { kinds: Delivery['kind'][]; maestro: boolean } = { kinds: [], maestro: false }
 
-/** Les livraisons d'une commande Bash réussie : une fusion seulement dans le dossier principal du dépôt. */
+/** Les livraisons d'une commande Bash réussie : une fusion dans le dossier principal du dépôt, ou celle d'une PR par GitHub (`gh pr merge`, #428). */
 async function deliveredBy($: EngineInterface, command: unknown): Promise<Delivery['kind'][]> {
   if (typeof command !== 'string' || !/\bmerge\b|release\.py/.test(command)) return []
   const kinds: Delivery['kind'][] = []
   for (const d of deliveries(command, await $.session.cwd(), (await $.env.get('HOME')) ?? '')) {
     if (d.kind === 'publication') {
       kinds.push('publication')
+      continue
+    }
+    if (d.github) {
+      kinds.push('fusion')
       continue
     }
     const repo = /[$`]/.test(d.dir) ? undefined : await repoOf($, d.dir)
@@ -6488,6 +6494,38 @@ async function readCloudPrs($: EngineInterface, root: string): Promise<unknown> 
   }
 }
 
+/** La prise de chaque ligne cloud (#426), par `<dossier>|<branche>` : trouvée, elle ne change plus ; pas trouvée, relue après 60 s. */
+const cloudTakeMem = new Map<string, { at?: number; read: number }>()
+
+/**
+ * La date de la prise des lignes cloud (#426) : le dernier commit de `ROADMAP.md` où `branche:<branche>` change de
+ * compte (`cloudTakePickaxe`), lu par `git log`, une fois par branche. `git` absent, dossier hors git, prise pas encore
+ * tirée sur ce clone : rien, relu au plus toutes les 60 s ; jamais d'exception.
+ */
+async function cloudTakes($: EngineInterface, dir: string, branches: readonly string[], now: number): Promise<Map<string, number>> {
+  const out = new Map<string, number>()
+  await Promise.all(
+    branches.map(async branche => {
+      const key = `${dir}|${branche}`
+      const kept = cloudTakeMem.get(key)
+      if (kept && (kept.at !== undefined || now - kept.read < CLOUD_PRS_MS)) {
+        if (kept.at !== undefined) out.set(branche, kept.at)
+        return
+      }
+      let at: number | undefined
+      try {
+        const ran = await $.process.run(['git', '-C', dir, 'log', '-1', '--format=%ct', '--pickaxe-regex', '-S', cloudTakePickaxe(branche), '--', 'ROADMAP.md'], { timeoutMs: 5_000 })
+        at = ran.exitCode === 0 ? cloudTakenAt(ran.stdout) : undefined
+      } catch {
+        at = undefined
+      }
+      cloudTakeMem.set(key, { at, read: now })
+      if (at !== undefined) out.set(branche, at)
+    }),
+  )
+  return out
+}
+
 /** Les lignes cloud fusionnées dont Bertrand a « archivé » la ligne (`<dossier>|#<id>`) ; relues au plus toutes les 60 s. */
 async function cloudHidden($: EngineInterface, now: number): Promise<Set<string>> {
   if (cloudHiddenMem && now - cloudHiddenMem.at < CLOUD_PRS_MS) return cloudHiddenMem.keys
@@ -6505,9 +6543,13 @@ async function cloudTasksOf($: EngineInterface, source: Source, tasks: readonly 
   const wanted = tasks.filter(t => !t.done && t.lieu === 'cloud' && t.branche !== undefined && t.id !== undefined)
   if (wanted.length === 0) return []
   const root = source.root ?? source.dir
-  const [prs, hidden] = await Promise.all([readCloudPrs($, root), cloudHidden($, now).catch(() => new Set<string>())])
+  const [prs, hidden, taken] = await Promise.all([
+    readCloudPrs($, root),
+    cloudHidden($, now).catch(() => new Set<string>()),
+    cloudTakes($, source.dir, wanted.map(t => t.branche as string), now).catch(() => new Map<string, number>()),
+  ])
   const byId = new Map(wanted.map(t => [t.id as string, t] as const))
-  return cloudBrandTasks(wanted, prs, todayOf(now))
+  return cloudBrandTasks(wanted, prs, now, b => taken.get(b))
     .filter(bt => !(bt.cloud?.state === 'merged' && hidden.has(`${root}|#${bt.id}`)))
     .map(bt => {
       const task = byId.get(bt.id)

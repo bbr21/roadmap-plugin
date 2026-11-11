@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
-"""La cible recommandée d'une tâche (#416) : « cloud » pour une tâche de logique, « Mac » quand il y faut une
-maquette, une capture, le simulateur, le volet navigateur ou une autre ressource du Mac, avec sa raison en une
-ligne. Le Mac chargé ou non n'y entre pas. Maestro la lit avant de poser une carte ; BBR choisit la cible.
+"""La cible recommandée d'une tâche (#416) : « cloud » sauf quand il y faut une ressource du Mac (le simulateur iOS,
+le volet navigateur pour un vrai site, le trousseau, launchd…), avec sa raison en une ligne. Maquettes et preuve de
+fidélité se font depuis le cloud depuis #409 : une tâche qui n'a besoin que d'elles part en cloud, avec sa raison à
+elle (#427). Le Mac chargé ou non n'y entre pas. Maestro la lit avant de poser une carte ; BBR choisit la cible.
 
   python3 reco_cloud.py DEPOT ID
 
 Lit la ligne #ID de DEPOT/roadmap/ROADMAP.md (ou DEPOT/ROADMAP.md), sa spec (`spec.md` du dossier, ou le fichier)
 et sa fiche, et écrit `#ID · cloud · <raison>` ou `#ID · Mac · <raison>`. Lecture seule. Code de retour 2 pour une
-ligne absente ou une roadmap introuvable. Les marqueurs sont ceux de `CLOUD_MAC_MARKERS` de hooks/parse.ts, le
-panneau : `test_reco_cloud.py` vérifie qu'ils restent les mêmes.
+ligne absente ou une roadmap introuvable. Les marqueurs sont ceux de `CLOUD_MAC_MARKERS` et `CLOUD_RENDER_MARKERS`
+de hooks/parse.ts, le panneau : `test_reco_cloud.py` vérifie qu'ils restent les mêmes.
 
 Python 3.9 et plus, bibliothèque standard seulement.
 """
@@ -22,13 +23,12 @@ import unicodedata
 import suivi_cloud
 
 MARQUEURS = [
-    {"words": ["maquette", "mockup"], "why": "maquettes à faire : le volet navigateur et la preuve de fidélité sont sur le Mac"},
-    {"words": ["capture", "fidelite", "screenshot"], "why": "une capture du rendu, prise sur le Mac"},
     {"words": ["simulateur", "simulator", "xcode", "ios\\b", "iphone"], "why": "le simulateur iOS et Xcode sont sur le Mac"},
-    {"words": ["navigateur", "browser", "preview_start"], "why": "le volet navigateur est sur le Mac"},
+    {"words": ["volet navigateur", "browser pane", "preview_start", "vrai site", "site reel"], "why": "le volet navigateur, pour un vrai site, est sur le Mac"},
     {"words": ["trousseau", "keychain", "launchd", "osascript", "computer-use", "reglages systeme"], "why": "une ressource du Mac (trousseau, launchd, réglages système)"},
 ]
-LOGIQUE = "tâche de logique : ni maquette, ni capture, ni simulateur, ni volet navigateur"
+RENDU = {"words": ["maquette", "mockup", "capture", "fidelite", "screenshot"], "why": "maquettes et preuve de fidélité : faites depuis le cloud (Artifact, capture collée, #409)"}
+LOGIQUE = "tâche de logique : ni simulateur, ni volet navigateur pour un vrai site, ni ressource du Mac"
 
 
 def plier(texte):
@@ -42,6 +42,8 @@ def reco(*textes):
     for m in MARQUEURS:
         if any(re.search(r"\b" + w, t) for w in m["words"]):
             return {"lieu": "mac", "why": m["why"]}
+    if any(re.search(r"\b" + w, t) for w in RENDU["words"]):
+        return {"lieu": "cloud", "why": RENDU["why"]}
     return {"lieu": "cloud", "why": LOGIQUE}
 
 
