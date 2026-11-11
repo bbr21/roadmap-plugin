@@ -604,20 +604,36 @@ The merge itself:
   sends it back to its session, the others continue), review its diff, merge, publish, send the list
   again and say the recap line, and only then the next one. With a CI on `main`, do not wait for its
   run between two merges of the series: read **one** run of `main` after the last one (the
-  `concurrency` of `main` replaces the run that waits). In Roadmap (#446, #448: no CI, sessions run only their targeted tests), run the whole suite
-  **once** on `main` from the main folder after the last one, through the Mac's queue
-  (`python3 tools/rejouer_delais.py plugins/roadmap`, in the background). Without such a CI, keep the project's rule:
+  `concurrency` of `main` replaces the run that waits). In Roadmap (#446, #448: no CI, sessions run only their targeted tests), the whole suite runs
+  **once** on `main` after the last one, in a cloud session, not on the Mac (#450, see « The suite of `main` in the
+  cloud » below); the Mac's queue (`python3 tools/rejouer_delais.py plugins/roadmap`, in the background) is only its
+  fallback. Without such a CI, keep the project's rule:
   update the branch from `main` and rerun the tests its impact map names before merging it. **One publication per merge** (the person's choice, 2026-10-30, rule
   « Finir un chantier » of the projects set up by onboarding): each task has its version, which its recap line
   and the final sheet state, and a mistake is undone task by task.
 - **A red run of `main` after a series** (#431): stop the merges that remain, then find the faulty
   merge: `python3 "<skill folder>/scripts/serie_main.py" <main folder> <last green sha of main>
-  origin/main --echec <failing test files>` (the files from the failing run: Maestro's rerun on the Mac, or `gh run view <id> --log-failed`). A single
+  origin/main --echec <failing test files>` (the files from the failing run: `--cloud` takes them from the cloud suite's
+  result, #450; else Maestro's rerun on the Mac, or `gh run view <id> --log-failed`). A single
   PR merge in the series is the faulty one; otherwise it bisects: rerun only the failing tests on the
   middle commit, in a detached copy (`git worktree add --detach`, then `tools/un_test.sh`), red: the
   faulty one is there or before, green: after. Send the faulty branch back to its session by message
   or PR comment, the failing job and test named: it merges `main` into its branch, fixes, and is ready
   again by green targeted tests. The merges stopped resume once `main` is green again.
+- **The suite of `main` in the cloud** (#450, BBR's choice of 2026-11-11: keep the Mac for publishing only). After
+  the last merge of a series, push `main`, then post a cloud card (`start_session`, `target: "cloud"`, title
+  `Suite de main · <sha7>`, the card of the repository, no line to take) whose prompt is the output of
+  `python3 "<skill folder>/scripts/suite_cloud.py" brief <main folder>`, unchanged: the VM checks out that commit of
+  `main`, runs `rejouer_delais.py` then `release.py check` (`suite_cloud.py lancer`) and posts the result as a
+  comment on the repository's open issue « Suite de main » (created by the VM if missing), with a machine marker.
+  Without the `autonome` setting the card waits for BBR's click, like any card. It takes 15 to 25 min: do not wait
+  in a loop; read it when the session ends or the person asks, with
+  `python3 "<skill folder>/scripts/suite_cloud.py" lire <main folder> --marquer` (code 0 green, 1 red, 3 no result
+  yet, 4 blocked). Green: `--marquer` writes the tested tree to `release.py`'s green fingerprint when it is the main
+  folder's HEAD, so `release.py release` publishes without rerunning its tests (a commit pushed since: the tree
+  differs and `release.py` tests again, on the Mac). Red: the bisection above, `serie_main.py … --cloud`. Blocked
+  (no `claude`, network, quota) or a card refused for want of a cloud target: run the suite on the Mac's queue as
+  before. The cloud session archives like any other; it has no PR and no line.
 - **How to publish** (#410, #446): the way the project's `CLAUDE.md` gives (« Finir un chantier »). In
   Roadmap, `python3 tools/release.py release patch|minor "<skill> : <ce qui change> (#N)"` from the main
   folder, in the background (`run_in_background`), on the Mac: checks, version, history, tag
@@ -631,9 +647,9 @@ The merge itself:
   --exit-status`); a red run goes back to the merged task's session, the failing job and test named
   (after a series: the bisection above). Roadmap has no such CI since #446 (`tests.yml` runs by hand
   only): a session's « ready » carries the result of the tests its impact map names (on the Mac, or in a PR comment from
-  its VM; none for a task without code), which Maestro reads instead of `gh pr checks`, and Maestro runs the whole suite once on `main`
-  after the series and before each publication (#448); nobody else does. Without CI, run it once from the main
-  checkout: on the Mac's single test queue (#323) a suite started on `main` or by Maestro goes ahead of
+  its VM; none for a task without code), which Maestro reads instead of `gh pr checks`, and Maestro has the whole suite run once on `main`
+  after the series and before each publication (#448); nobody else does. In Roadmap it runs in a cloud session
+  (#450, above). Without CI and without the cloud, run it once from the main checkout: on the Mac's single test queue (#323) a suite started on `main` or by Maestro goes ahead of
   every session's tests, two merges in arrival order, without cutting the suite already running;
   `release.py` does not rerun it for the tree that has just passed `release.py check`. Then notify right away, by message, the
   sub-sessions whose line carries `après:` on the merged task (it can start or resume) and those

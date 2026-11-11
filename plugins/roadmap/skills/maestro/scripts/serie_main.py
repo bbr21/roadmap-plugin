@@ -5,11 +5,12 @@ Maestro fusionne plusieurs branches prêtes l'une après l'autre sans attendre l
 puis lit une seule CI de main, celle du dernier envoi (le `concurrency` de main remplace le passage qui
 attend). Rouge, il arrête les fusions suivantes et lance ce script :
 
-  python3 serie_main.py DEPOT AVANT [APRES] [--echec FICHIER ...] [--json]
+  python3 serie_main.py DEPOT AVANT [APRES] [--echec FICHIER ...] [--cloud] [--json]
 
 AVANT : le dernier commit de main dont la CI est verte (avant la série) ; APRES : la tête de main lue rouge
 (défaut : origin/main). --echec : les fichiers de test que la CI rouge nomme (`gh run view <id>
---log-failed`). Le script liste les commits de main entre les deux (premier parent, du plus ancien au plus
+--log-failed`). --cloud (#450) : les prend dans le dernier résultat de la suite de main lancée en session cloud
+(`suite_cloud.py`, commentaire de l'issue « Suite de main »), celui d'APRES ; il s'ajoute à --echec. Le script liste les commits de main entre les deux (premier parent, du plus ancien au plus
 récent), chacun avec sa PR et sa branche quand c'est une fusion de PR, et les fichiers qu'il change. Il
 désigne la fautive :
 
@@ -28,9 +29,12 @@ Python 3.9 et plus, bibliothèque standard seulement.
 
 import argparse
 import json
+import os
 import re
 import subprocess
 import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 SEP = "\x1f"
 FUSION_PR = re.compile(r"^Merge pull request #(\d+) from [^/\s]+/(\S+)")
@@ -116,12 +120,29 @@ def texte(analyse, depot, echecs):
     return "\n".join(out)
 
 
-def main(argv=None):
+def echecs_cloud(depot, apres, run=None):
+    """(fichiers en échec, note) du dernier résultat cloud de la suite de main pour APRES (#450)."""
+    import suite_cloud
+    try:
+        sha = git(depot, "rev-parse", "--verify", "--quiet", apres + "^{commit}").strip()
+    except ErreurDepot:
+        sha = None
+    d, raison = suite_cloud.resultat(depot, sha, run=run)
+    if not d:
+        return [], "suite cloud : %s ; --echec seul compte" % raison
+    if d["etat"] != "rouge":
+        return [], "suite cloud %s sur %s : aucun échec à reprendre" % (d["etat"], str(d.get("sha"))[:7])
+    return list(d["echecs"]), "suite cloud rouge sur %s (%s) : %s" % (
+        str(d.get("sha"))[:7], d.get("url") or "?", ", ".join(d["echecs"]) or "aucun fichier nommé")
+
+
+def main(argv=None, run=None):
     p = argparse.ArgumentParser(description="La série de fusions qu'une CI de main rouge met en cause (#431).")
     p.add_argument("depot")
     p.add_argument("avant")
     p.add_argument("apres", nargs="?", default="origin/main")
     p.add_argument("--echec", nargs="*", default=[])
+    p.add_argument("--cloud", action="store_true")
     p.add_argument("--json", action="store_true")
     a = p.parse_args(argv)
     try:
@@ -129,6 +150,10 @@ def main(argv=None):
     except ErreurDepot as err:
         print(str(err), file=sys.stderr)
         return 2
+    if a.cloud:
+        echecs, note = echecs_cloud(a.depot, a.apres, run=run)
+        print(note, file=sys.stderr)
+        a.echec = list(a.echec) + [e for e in echecs if e not in a.echec]
     analyse = analyser(commits, a.echec)
     print(json.dumps(analyse, ensure_ascii=False, indent=2) if a.json else texte(analyse, a.depot, a.echec))
     return 0
