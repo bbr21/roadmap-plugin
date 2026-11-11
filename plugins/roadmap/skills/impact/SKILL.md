@@ -73,8 +73,9 @@ The project lists them in `.claude/roadmap.json`, kept up to date from the CI lo
 "lourds": {"seuil_s": 50, "releve": "…", "tests": {"plugins/roadmap/tests/roadmap.test.tsx": 310}}
 ```
 
-Each one the map names is marked « lourd : CI de la PR » (JSON: `heavy`, `{path: seconds}`): do not
-run it on the Mac; push the branch and read its result with `gh pr checks <n°>`.
+Each one the map names is marked « lourd : en dernier » (JSON: `heavy`, `{path: seconds}`): run it
+last, once, with the whole suite, through the test queue (#446: Roadmap has no PR CI any more since
+GitHub Actions' quota was spent; the marks keep the order and the time, not a ban).
 
 Then run the project's whole test suite (its CLAUDE.md, « Commandes »), whatever the map says: the
 map tells what to read and which test to write, not which tests may be skipped.

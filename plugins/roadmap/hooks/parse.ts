@@ -129,6 +129,8 @@ export type Source = {
   mission?: MissionStyle
   /** `sessions` (#408) : où Maestro lance les sessions de tâche par défaut ; `mac` sans réglage. */
   sessions?: Sessions
+  /** `depot` (#444) : le dépôt GitHub du code (`owner/repo`) quand la roadmap vit hors de lui ; sans, l'origine git du dossier. */
+  depot?: string
   /** `a_preuve` (#277) : les `ref:` des coquilles dont les étapes de semaine attendent la preuve, sans report. */
   aPreuve?: string[]
   /** `axes` (#286) : la couleur et le libellé choisis pour un axe, par son slug ; sans, le rang et `axisLabel`. */
@@ -200,6 +202,8 @@ export type ProjectSettings = {
   mission: MissionStyle
   /** `sessions` (#408) : où Maestro lance par défaut ; `mac` par défaut. */
   sessions: Sessions
+  /** `depot` (#444) : le dépôt GitHub du code quand la roadmap vit hors de lui ; absent : l'origine git du dossier. */
+  depot?: string
   /** `a_preuve` (#277) : les coquilles dont les étapes ne passent pas seules à la semaine suivante ; aucune par défaut. */
   aPreuve: string[]
 }
@@ -238,6 +242,8 @@ export function projectSettings(source: Source): ProjectSettings {
     ...(source.publier ? { publier: source.publier } : {}),
     mission: source.mission ?? 'phrase',
     sessions: source.sessions ?? 'mac', // #408
+    // #444 : relu ici aussi, car une entrée de roadmap-perso.json arrive brute.
+    ...(depotOf(source.depot) ? { depot: depotOf(source.depot) } : {}),
     aPreuve: source.aPreuve ?? [],
   }
 }
@@ -5262,7 +5268,7 @@ export function maestroClause(maestro: string, travail: Travail = 'code'): strin
   return [
     `Tu travailles pour Maestro : la session qui t'a lancée, « ${maestro} », coordonne ses tâches et fusionne pour elles (skill \`roadmap:maestro\`).`,
     `- ${remoteControlClause()}`,
-    '- Travaille sur ta branche, dans ton worktree ; rejoue sur ta branche les tests que nomme ta carte d\'impact, jamais la suite entière (Maestro la lance sur main après la fusion, #323), sauf ceux qu\'elle marque « lourd : CI de la PR » (#434), pousse-la, et ouvre ta PR si le projet en a ; la CI de la PR lance ces tests lourds : lis leur résultat par `gh pr checks <n°>`.',
+    '- Travaille sur ta branche, dans ton worktree ; rejoue sur ta branche les tests que nomme ta carte d\'impact, puis, avant « prête », la suite entière du projet sur ta branche à jour de main, une fois, par la file des tests du Mac (les tests qu\'elle marque lourds en dernier, #446), pousse-la, et ouvre ta PR si le projet en a ; ton compte rendu « prête » dit le résultat de la suite.',
     '- Ne fusionne pas sur main : Maestro fusionne, une branche à la fois, dans l\'ordre qu\'il choisit.',
     '- Une ressource unique (simulateur iOS, appareil, base, déploiement, compte de test) ne se prend qu\'avec la main de Maestro : dis-le en tête de ton compte rendu et termine ton tour ; il te la donne par message, et tu la rends dès que tu as fini.',
     `- ${maestroAutonome()}`,
@@ -6933,7 +6939,7 @@ const FOLDER_MAX = 20
  * Splitmybill #245 n'étaient pas des appels de fonctions, `docs/plans/spike-carte-impact/`).
  */
 const IMPACT_LINE =
-  "- Sa carte d'impact : avant ta première édition, lance la skill `roadmap:impact` sur les fichiers et les symboles que tu comptes changer ; elle dit les tests et le code qui les citent. Chaque test qu'elle nomme se lance ou se met à jour dans ton changement, et un symbole changé qu'aucun test ne nomme en reçoit un, rouge d'abord. Un test qu'elle marque « lourd : CI de la PR » (plus d'une minute en CI, #434) ne se lance pas sur le Mac : pousse ta branche et lis son résultat par `gh pr checks <n°>`."
+  "- Sa carte d'impact : avant ta première édition, lance la skill `roadmap:impact` sur les fichiers et les symboles que tu comptes changer ; elle dit les tests et le code qui les citent. Chaque test qu'elle nomme se lance ou se met à jour dans ton changement, et un symbole changé qu'aucun test ne nomme en reçoit un, rouge d'abord. Avant « prête », la suite entière du projet se lance une fois sur ta branche à jour de main (sur le Mac par la file des tests ; dans une VM cloud, dans la VM) ; un test qu'elle marque « lourd : en dernier » (plus d'une minute, #434) passe en dernier (#446)."
 
 const FOLDER_RULES = ['CLAUDE.md', 'AGENTS.md'] as const
 const FOLDER_MAPS = ['INDEX.md', 'docs/README.md', 'README.md'] as const
@@ -7278,7 +7284,7 @@ export function routineBrief(
 export function parseProjectConfig(text: string, base: string, defaults: { name: string; me: string[] }): Source | undefined {
   const data: unknown = JSON.parse(text)
   if (typeof data !== 'object' || data === null) return undefined
-  const c = data as { name?: unknown; dir?: unknown; me?: unknown; subjects?: unknown; mode?: unknown; requis?: unknown; requis_sur?: unknown; cles?: unknown; rangement?: unknown; relance?: unknown; design?: unknown; cles_visibles?: unknown; ranger_par?: unknown; regles?: unknown; ecriture?: unknown; preuves?: unknown; publier?: unknown; mission?: unknown; a_preuve?: unknown; sessions?: unknown }
+  const c = data as { name?: unknown; dir?: unknown; me?: unknown; subjects?: unknown; mode?: unknown; requis?: unknown; requis_sur?: unknown; cles?: unknown; rangement?: unknown; relance?: unknown; design?: unknown; cles_visibles?: unknown; ranger_par?: unknown; regles?: unknown; ecriture?: unknown; preuves?: unknown; publier?: unknown; mission?: unknown; a_preuve?: unknown; sessions?: unknown; depot?: unknown }
   const dir = typeof c.dir === 'string' && c.dir !== '' ? (c.dir.startsWith('/') ? c.dir : `${base}/${c.dir}`) : base
   const strings = (v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : undefined)
   // Une valeur inconnue ou d'un mauvais type prend le défaut : le panneau s'ouvre quand même. `auto`
@@ -7343,7 +7349,21 @@ export function parseProjectConfig(text: string, base: string, defaults: { name:
     ...(MISSION_STYLES.includes(c.mission as MissionStyle) && c.mission !== 'phrase' ? { mission: c.mission as MissionStyle } : {}),
     // #408 : `sessions` ne se garde que pour `cloud` ; `mac`, valeur par défaut, et toute autre valeur restent absents.
     ...(c.sessions === 'cloud' && SESSIONS.includes(c.sessions) ? { sessions: c.sessions as Sessions } : {}),
+    // #444 : un `owner/repo` GitHub, ou son adresse ; toute autre valeur s'ignore et le doctor la signale.
+    ...(depotOf(c.depot) ? { depot: depotOf(c.depot) } : {}),
   }
+}
+
+/**
+ * Le dépôt GitHub que nomme `depot` de roadmap.json (#444) : `owner/repo`, ou son adresse ssh ou https, rendu en
+ * `owner/repo` ; rien pour une autre valeur. Pour un projet dont la roadmap vit hors du dépôt de code (un dossier
+ * Cowork sans git) : la carte cloud part sur ce dépôt et le panneau y lit les PR.
+ */
+export function depotOf(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined
+  const v = value.trim()
+  if (/^[A-Za-z0-9][A-Za-z0-9_.-]*\/[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(v)) return v.replace(/\.git$/, '')
+  return githubRepoOf(v)
 }
 
 /** Un nom de skill, avec ou sans le préfixe de son plugin (`maison:charte`) : rien qui sorte en consigne. */
@@ -10147,13 +10167,18 @@ export function cloudStartRefusal(o: { inGit: boolean; branch?: string; upstream
  * Le brief d'une session cloud posée par le panneau (#416), le même que `brief_cloud.py` de la skill maestro : il
  * se suffit sans plugin (la VM n'en charge pas) et renvoie aux règles du dépôt, `docs/session-cloud.md`.
  */
-export function cloudBriefText(o: { project: string; id: string; label: string; line: string; branch: string; spec?: string }): string {
+export function cloudBriefText(o: { project: string; id: string; label: string; line: string; branch: string; spec?: string; depot?: string }): string {
+  // #444 : la roadmap vit hors du dépôt (`depot`) : ni carte d'impact ni check.mjs de Roadmap, les tests sont ceux
+  // que nomme `docs/session-cloud.md` du dépôt, et la ligne n'existe que sur le Mac.
+  const tests = o.depot ? 'les tests que nomme docs/session-cloud.md sont verts' : 'les tests de ta carte d\'impact et node scripts/check.mjs sont verts'
   return [
     `Mission : ${o.label.replace(/\.+$/, '')} (tâche #${o.id} de ${o.project}).`,
-    `Fini quand : ce que dit la ligne #${o.id} est livré, les tests de ta carte d'impact et node scripts/check.mjs sont verts, la branche ${o.branch} est poussée et sa PR vers main ouverte, son dernier commentaire porte ton compte rendu.`,
+    `Fini quand : ce que dit la ligne #${o.id} est livré, ${tests}, la branche ${o.branch} est poussée et sa PR vers main ouverte, son dernier commentaire porte ton compte rendu.`,
     '---',
     '',
-    'Ta ligne, telle qu\'écrite dans la roadmap (prise pour toi, ne la modifie pas) :',
+    o.depot
+      ? `Ta ligne, telle qu'écrite dans la roadmap du projet, qui vit sur le Mac hors du dépôt ${o.depot} (prise pour toi, tu ne la vois pas d'ici) :`
+      : 'Ta ligne, telle qu\'écrite dans la roadmap (prise pour toi, ne la modifie pas) :',
     '',
     `> ${o.line}`,
     '',
@@ -10300,6 +10325,58 @@ export function cloudTakenAt(stdout: string): number | undefined {
   return m ? Number(m[1]) * 1000 : undefined
 }
 
+/** Le numéro de tâche d'un titre de PR (#445) : « #N » en tête (« #445 · … », « #445: … », « [#445] … ») ou « (#N) » en fin. */
+export function cloudTitleId(title: unknown): string | undefined {
+  if (typeof title !== 'string') return undefined
+  const m = title.match(/^\s*\[?#([1-9]\d*)(?![\d\w])/) ?? title.match(/\(#([1-9]\d*)\)\s*$/)
+  return m?.[1]
+}
+
+/** Une PR fermée ou fusionnée ne rattache une tâche non prise que si elle a moins de 7 jours (#445). */
+export const CLOUD_ADOPT_MS = 7 * 24 * 3600_000
+
+/**
+ * Les tâches ouvertes et non prises (sans `branche:`) qu'une PR du dépôt rattache par le
+ * « #N » de son titre (#445) : la session cloud lancée par la carte native, sans ligne prise d'avance. Rend, par id,
+ * la branche de cette PR. Une PR d'un fork ne compte pas, ni celle d'une branche qu'une autre ligne porte déjà ; une
+ * ouverte l'emporte, sinon la plus récente, et une PR close de plus de 7 jours ne rattache plus rien (une vieille PR
+ * « #N » d'une tâche rouverte ne la ferait pas passer pour lancée). Illisible : rien, jamais d'exception.
+ */
+export function cloudAdopted(tasks: readonly Task[], prs: unknown, now: number): Map<string, string> {
+  const out = new Map<string, string>()
+  let list: unknown = prs
+  if (typeof list === 'string') {
+    try {
+      list = JSON.parse(list)
+    } catch {
+      return out
+    }
+  }
+  if (!Array.isArray(list)) return out
+  const taken = new Set(tasks.flatMap(t => (t.branche ? [t.branche] : [])))
+  const free = new Set(tasks.filter(t => !t.done && t.id !== undefined && !t.branche).map(t => t.id as string))
+  const at = (p: Record<string, unknown>) => (typeof p.createdAt === 'string' ? Date.parse(p.createdAt) : Number.NaN)
+  const best = new Map<string, Record<string, unknown>>()
+  for (const p of list) {
+    if (typeof p !== 'object' || p === null) continue
+    const pr = p as Record<string, unknown>
+    const id = cloudTitleId(pr.title)
+    const head = pr.headRefName
+    if (id === undefined || !free.has(id) || typeof head !== 'string' || head === '' || taken.has(head) || pr.isCrossRepository === true) continue
+    if (pr.state !== 'OPEN' && !(Number.isFinite(at(pr)) && now - at(pr) <= CLOUD_ADOPT_MS)) continue
+    const prev = best.get(id)
+    const rank = (x: Record<string, unknown>) => [x.state === 'OPEN' ? 1 : 0, Number.isFinite(at(x)) ? at(x) : -Infinity] as const
+    if (!prev) best.set(id, pr)
+    else {
+      const [a1, a2] = rank(pr)
+      const [b1, b2] = rank(prev)
+      if (a1 > b1 || (a1 === b1 && a2 > b2)) best.set(id, pr)
+    }
+  }
+  for (const [id, pr] of best) out.set(id, pr.headRefName as string)
+  return out
+}
+
 /**
  * Les lignes cloud du bloc « En cours » et de la bande : les tâches ouvertes `lieu:cloud` déjà prises (`branche:`) et
  * numérotées, chacune avec l'état de sa PR. `red` et `ready` : elle t'attend (`wait`) ; fusionnée : finie et archivable
@@ -10310,7 +10387,11 @@ export function cloudTakenAt(stdout: string): number | undefined {
  */
 export function cloudBrandTasks(open: readonly Task[], prs: unknown, now: number, takenAt: (branche: string) => number | undefined = () => undefined): BrandTask[] {
   const past = (at: number | undefined): number | undefined => (at !== undefined && Number.isFinite(at) && at <= now ? at : undefined)
-  const rows = open.flatMap(t => {
+  // #445 : une session cloud lancée hors du ▶ (carte native, Options puis cloud) n'a pas de ligne prise ; sa PR la
+  // rattache à sa tâche par le « #N » de son titre, et sa branche tient lieu de `branche:`.
+  const adopted = cloudAdopted(open, prs, now)
+  const tasks = open.map(t => (t.id !== undefined && adopted.has(t.id) ? { ...t, lieu: 'cloud' as const, branche: adopted.get(t.id) } : t))
+  const rows = tasks.flatMap(t => {
     if (t.done || t.lieu !== 'cloud' || !t.branche || !t.id) return []
     const cloud = cloudPrOf(prs, t.branche)
     const launched = past(takenAt(t.branche)) ?? past(cloud.createdAt)
@@ -11112,7 +11193,15 @@ export function sessionBrand(o: {
 }
 
 /**
- * Les tâches qu'on peut lancer maintenant : ouvertes, ni bloquées par leur prérequise, ni déjà en
+ * Une mère (#447) : une tâche dont une autre porte le numéro en `parent:`. Elle n'a rien à livrer seule,
+ * ses étapes se font une à une : ni ▶, ni « Lancer », ni candidate de Maestro (#443 lancée par erreur).
+ */
+export function isMother(task: Task, tasks: readonly Task[]): boolean {
+  return task.id !== undefined && tasks.some(k => k !== task && k.id !== task.id && k.parent === task.id)
+}
+
+/**
+ * Les tâches qu'on peut lancer maintenant : ouvertes, ni mères (#447), ni bloquées par leur prérequise, ni déjà en
  * session. Rangées pour avancer : celles qui ne dorment pas chez un tiers, puis celles qui
  * débloquent le plus de tâches, puis l'échéance la plus proche, puis la plus ancienne (une tâche ne
  * doit pas pourrir en bas de liste) ; la priorité, invisible, n'y compte plus (#130).
@@ -11124,7 +11213,7 @@ export function launchable(
   const open = tasks.filter(t => !t.done)
   const unlocks = new Map(open.map(t => [t, unlockedBy(t, open, o.prereqOf).length]))
   return open
-    .filter(t => !prereqList(o.prereqOf, t).some(p => !p.done) && !o.isLive(t))
+    .filter(t => !isMother(t, tasks) && !prereqList(o.prereqOf, t).some(p => !p.done) && !o.isLive(t))
     .sort(
       (a, b) =>
         Number(!isMine(a, o.me)) - Number(!isMine(b, o.me)) ||

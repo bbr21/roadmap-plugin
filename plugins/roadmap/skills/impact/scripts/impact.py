@@ -23,8 +23,8 @@ and in its `tests`.
 A project can also list its heavy test files (#434: over a minute in CI, roadmap.test.tsx 312 s), in
 `.claude/roadmap.json`: `"lourds": {"seuil_s": 50, "releve": "…", "tests": {"path": seconds, …}}`, kept up
 to date by the project (here `tools/tests_lourds.py`, from the CI log). Each one the map names is marked
-« lourd : CI de la PR » and listed in `heavy`: the session does not run it on the Mac, it pushes its branch
-and reads `gh pr checks <n°>`.
+« lourd : en dernier » and listed in `heavy`: the session runs it last, once, with the whole suite, through
+the test queue (#446: no PR CI any more).
 
 Exit 0 (map written, or nothing changed), 2 (not a git repository, or git failed).
 JSON: {"base", "cut", "heavy": {path: seconds}, "ranked": [{"path", "hits"}], "files": [{"path", "tests", "code", "docs", "declared"}], "symbols": [{"name", "tests", "code", "docs"}]}.
@@ -348,7 +348,7 @@ def ranked(result):
     return [{"path": p, "hits": n} for p, n in order[:RANKED]]
 
 
-HEAVY_MARK = " (lourd : CI de la PR)"
+HEAVY_MARK = " (lourd : en dernier)"
 
 
 def shown_path(p, heavy=()):
@@ -400,8 +400,8 @@ def render(result):
         for s in result["symbols"]:
             out += block("- `%s`" % s["name"], s, heavy)
     if heavy:
-        out += ["", "Tests lourds (lents en CI, .claude/roadmap.json, lourds) : %s. Ne les lance pas sur le Mac : "
-                "pousse ta branche, puis lis leur résultat par `gh pr checks <n°>` (la CI de la PR les lance)."
+        out += ["", "Tests lourds (plus d'une minute, .claude/roadmap.json, lourds) : %s. Lance-les en dernier, "
+                "avec la suite entière, une fois, par la file des tests (#446)."
                 % ", ".join("`%s` (%d s)" % (p, s) for p, s in heavy.items())]
     out += ["", "À faire : chaque test nommé se lance (ou se met à jour), chaque fichier de code nommé se relit ; "
             "un symbole changé sans test en reçoit un ; puis toutes les suites du projet."]

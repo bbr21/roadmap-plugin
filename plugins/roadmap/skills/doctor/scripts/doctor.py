@@ -44,6 +44,18 @@ CHECKSUMS_AU = "https://raw.githubusercontent.com/" + DEPOT_PUBLIC + "/%s/CHECKS
 COMMITS_API = "https://api.github.com/repos/%s/commits?path=CHECKSUMS.txt&per_page=100" % DEPOT_PUBLIC
 
 
+
+DEPOT_GITHUB = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*/[A-Za-z0-9][A-Za-z0-9_.-]*$")
+ADRESSE_GITHUB = re.compile(
+    r"^(?:git@github\.com:|(?:ssh://git@|https?://|git://)github\.com[:/])"
+    r"[A-Za-z0-9][A-Za-z0-9_.-]*/[A-Za-z0-9][A-Za-z0-9_.-]*?(?:\.git)?/?$"
+)
+
+
+def depot_valide(v):
+    """`depot` de roadmap.json (#444) : la même lecture que `depotOf` du panneau."""
+    return isinstance(v, str) and bool(DEPOT_GITHUB.match(v.strip()) or ADRESSE_GITHUB.match(v.strip()))
+
 def charger_requis():
     with open(REQUIS, encoding="utf-8") as f:
         return json.load(f)
@@ -625,6 +637,11 @@ def reglages_projet(main):
     mission = cfg.get("mission")
     if mission is not None and mission not in ("phrase", "puces"):
         soucis.append("mission « %s » inconnue (phrase ou puces), le panneau montre la phrase" % mission)
+    # #444 : le dépôt GitHub du code d'une roadmap qui vit hors de lui, `owner/repo` ou son adresse GitHub.
+    depot = cfg.get("depot")
+    if depot is not None and not depot_valide(depot):
+        soucis.append("depot « %s » illisible (owner/repo d'un dépôt GitHub), ignoré : la carte cloud part de "
+                      "l'origine git du dossier" % depot)
     # #277 : les ref: des coquilles « à preuve », dont les étapes de semaine ne passent pas seules.
     a_preuve = cfg.get("a_preuve")
     if a_preuve is not None and not (isinstance(a_preuve, list) and all(isinstance(r, str) and r.strip() for r in a_preuve)):

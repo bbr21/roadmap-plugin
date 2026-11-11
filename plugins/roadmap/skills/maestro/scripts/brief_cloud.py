@@ -88,13 +88,28 @@ def construire(depot, ident):
     fichiers = fichiers_du_plan(depot, spec) if spec else []
     if fichiers:
         sortie.append("Fichiers : " + ", ".join(fichiers))
+    # #444 : une roadmap hors du dépôt de code (`depot` de roadmap.json) : les tests sont ceux du dépôt, et la
+    # ligne ne se voit pas depuis la VM.
+    repo = suivi_cloud.depot_github(depot)
+    tests = (
+        "la suite entière que nomme docs/session-cloud.md, lancée dans ta VM, est verte"
+        if repo
+        else "la suite entière lancée dans ta VM (claude plugin test plugins/roadmap, python3 tools/release.py "
+        "check, node scripts/check.mjs) est verte"
+    )
+    entete = (
+        "Ta ligne, telle qu'écrite dans la roadmap du projet, qui vit sur le Mac hors du dépôt %s (prise pour toi, "
+        "tu ne la vois pas d'ici) :" % repo
+        if repo
+        else "Ta ligne, telle qu'écrite dans %s (prise pour toi, ne la modifie pas) :" % rel
+    )
     sortie += [
-        "Fini quand : ce que dit la ligne #%s est livré, les tests de ta carte d'impact et node scripts/check.mjs "
-        "sont verts, la branche %s est poussée et sa PR vers main ouverte, son dernier commentaire porte ton "
-        "compte rendu." % (ident, branche),
+        "Fini quand : ce que dit la ligne #%s est livré, %s sur ta branche à jour de origin/main, la branche %s "
+        "est poussée et sa PR vers main ouverte, un commentaire y colle le résultat de la suite (compte de tests, "
+        "rouges) et le dernier porte ton compte rendu." % (ident, tests, branche),
         "---",
         "",
-        "Ta ligne, telle qu'écrite dans %s (prise pour toi, ne la modifie pas) :" % rel,
+        entete,
         "",
         "> " + ligne["brut"],
         "",

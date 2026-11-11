@@ -281,6 +281,7 @@ import {
   closeCaption,
   closeRoute,
   isRoutine,
+  isMother,
   nextDue,
   rollDaySteps,
   rollRoute,
@@ -5553,31 +5554,36 @@ async function launchCloud($: EngineInterface, source: Source, task: Task, short
     const brief = await workBrief($, source, task, shortTitle)
     const refused = await launchRefusal($, { title: brief.title })
     if (refused !== undefined) return void (await fail(refused))
-    // La VM part de la branche de cette session : elle doit être sur GitHub, sans commit en retard (#426).
-    const here = await $.session.cwd()
-    const git = (...args: string[]) => $.process.run(['git', '-C', here, ...args], { timeoutMs: 30_000 })
-    const head = await git('rev-parse', '--abbrev-ref', 'HEAD')
-    const ahead = head.exitCode === 0 ? await git('rev-list', '--count', '@{u}..HEAD') : undefined
-    const startRefused = cloudStartRefusal({
-      inGit: head.exitCode === 0,
-      branch: head.stdout.trim(),
-      upstream: ahead?.exitCode === 0,
-      ahead: Number(ahead?.stdout.trim() || 0),
-    })
-    if (startRefused !== undefined) return void (await fail(startRefused))
+    // #444 : une roadmap hors du dépôt de code nomme son dépôt (`depot`) ; la VM part de lui, pas de cette session.
+    const depot = projectSettings(source).depot
+    if (depot === undefined) {
+      // La VM part de la branche de cette session : elle doit être sur GitHub, sans commit en retard (#426).
+      const here = await $.session.cwd()
+      const git = (...args: string[]) => $.process.run(['git', '-C', here, ...args], { timeoutMs: 30_000 })
+      const head = await git('rev-parse', '--abbrev-ref', 'HEAD')
+      const ahead = head.exitCode === 0 ? await git('rev-list', '--count', '@{u}..HEAD') : undefined
+      const startRefused = cloudStartRefusal({
+        inGit: head.exitCode === 0,
+        branch: head.stdout.trim(),
+        upstream: ahead?.exitCode === 0,
+        ahead: Number(ahead?.stdout.trim() || 0),
+      })
+      if (startRefused !== undefined) return void (await fail(startRefused))
+    }
     const { open } = files(source)
     const branch = cloudBranchOf(task)
     const taken = takeCloudLine(await $.fs.read(open), task.id, branch, todayOf(await $.clock.now()))
     if ('error' in taken) return void (await fail(taken.error))
-    const prompt = cloudBriefText({ project: source.name, id: task.id, label: task.label, line: taken.line, branch, ...(task.spec ? { spec: task.spec } : {}) })
+    const prompt = cloudBriefText({ project: source.name, id: task.id, label: task.label, line: taken.line, branch, ...(task.spec ? { spec: task.spec } : {}), ...(depot ? { depot } : {}) })
     const card = {
       tool: START_SESSION_TOOL,
       initiation: 'own_initiative',
       context: 'fresh',
       target: 'cloud',
+      ...(depot ? { repository: depot } : {}),
       title: brief.title,
       prompt,
-      background: `Tâche #${task.id} du projet ${source.name}, lancée en cloud depuis le panneau roadmap (#416) : la session tourne dans une VM claude.ai sans le plugin ; ses règles sont dans docs/session-cloud.md du dépôt, Maestro la suit par sa PR sur le Mac.`,
+      background: `Tâche #${task.id} du projet ${source.name}, lancée en cloud depuis le panneau roadmap (#416) : la session tourne dans une VM claude.ai sans le plugin ; ses règles sont dans docs/session-cloud.md du dépôt${depot ? ` ${depot}` : ''}, Maestro la suit par sa PR sur le Mac.`,
     }
     const posted = await proposeCard($, card, [])
     if (posted.ran.deny !== undefined || posted.ran.isError) return void (await fail(cardReason(posted.ran)))
@@ -6607,7 +6613,8 @@ async function archiveBandSession($: EngineInterface, t: BrandTask, now: number)
 const CLOUD_PRS_KEY = 'cloud-prs'
 const CLOUD_HIDDEN_KEY = 'cloud-hidden'
 const CLOUD_PRS_MS = 60_000
-const CLOUD_PR_FIELDS = 'headRefName,number,url,state,isDraft,mergeable,statusCheckRollup,createdAt,isCrossRepository'
+// `title` : le « #N » qui rattache à sa tâche une session cloud lancée par la carte native (#445).
+const CLOUD_PR_FIELDS = 'headRefName,title,number,url,state,isDraft,mergeable,statusCheckRollup,createdAt,isCrossRepository'
 let cloudPrsMem: { root: string; at: number; value: unknown } | undefined
 let cloudPrsFlight: { root: string; run: Promise<unknown> } | undefined
 let cloudHiddenMem: { at: number; keys: Set<string> } | undefined
@@ -6638,8 +6645,9 @@ async function runGh($: EngineInterface, args: string[]): Promise<unknown> {
   return undefined
 }
 
-/** `owner/repo` du dépôt d'origine de `root` ; `undefined` sans `git` ou hors GitHub. */
-async function cloudRepoOf($: EngineInterface, root: string): Promise<string | undefined> {
+/** `owner/repo` du dépôt du projet : `depot` de roadmap.json (#444), sinon l'origine git de `root` ; `undefined` sans `git` ou hors GitHub. */
+async function cloudRepoOf($: EngineInterface, root: string, depot?: string): Promise<string | undefined> {
+  if (depot !== undefined) return depot
   try {
     const remote = await $.process.run(['git', '-C', root, 'remote', 'get-url', 'origin'], { timeoutMs: 5_000 })
     return remote.exitCode === 0 ? githubRepoOf(remote.stdout) : undefined
@@ -6649,8 +6657,8 @@ async function cloudRepoOf($: EngineInterface, root: string): Promise<string | u
 }
 
 /** `gh pr list` du dépôt d'origine de `root` ; `undefined` si `git` ou `gh` manquent, ne sont pas connectés ou lèvent. */
-async function runCloudGh($: EngineInterface, root: string): Promise<unknown> {
-  const repo = await cloudRepoOf($, root)
+async function runCloudGh($: EngineInterface, root: string, depot?: string): Promise<unknown> {
+  const repo = await cloudRepoOf($, root, depot)
   if (!repo) return undefined
   return runGh($, ['pr', 'list', '-R', repo, '--state', 'all', '--limit', '100', '--json', CLOUD_PR_FIELDS])
 }
@@ -6659,7 +6667,7 @@ async function runCloudGh($: EngineInterface, root: string): Promise<unknown> {
  * Les PR du dépôt de `root`, gardées en mémoire et au store (`cloud-prs`, par dossier) 60 s : la minuterie de 3 s ne
  * relance jamais `gh`, et les sessions ouvertes se partagent la lecture. Jamais d'exception : `undefined` dit « inconnu ».
  */
-async function readCloudPrs($: EngineInterface, root: string): Promise<unknown> {
+async function readCloudPrs($: EngineInterface, root: string, depot?: string): Promise<unknown> {
   try {
     const now = await $.clock.now()
     if (cloudPrsMem && cloudPrsMem.root === root && now - cloudPrsMem.at < CLOUD_PRS_MS) return cloudPrsMem.value
@@ -6671,7 +6679,7 @@ async function readCloudPrs($: EngineInterface, root: string): Promise<unknown> 
         cloudPrsMem = { root, at: kept.at, value: kept.value }
         return kept.value
       }
-      const value = await runCloudGh($, root)
+      const value = await runCloudGh($, root, depot)
       cloudPrsMem = { root, at: now, value }
       if (value !== undefined) {
         const all = typeof stored === 'object' && stored !== null ? { ...(stored as Record<string, unknown>) } : {}
@@ -6733,20 +6741,22 @@ async function cloudHidden($: EngineInterface, now: number): Promise<Set<string>
 
 /**
  * Les lignes cloud du projet pour le bloc « En cours » et la bande (`cloudBrandTasks`) : rien, sans lire quoi que ce
- * soit, tant qu'aucune ligne ouverte n'est `lieu:cloud` et prise. Le titre court de la tâche remplace son libellé ;
- * une fusionnée déjà archivée n'y est plus.
+ * soit, tant qu'aucune ligne ouverte n'est `lieu:cloud` et prise et que le projet n'est pas ouvert au cloud. Ouvert
+ * (`sessions: "cloud"`), les PR se lisent même sans ligne cloud : une session lancée par la carte native, sans ligne
+ * prise, s'y reconnaît au « #N » du titre de sa PR (#445). Le titre court de la tâche remplace son libellé ; une
+ * fusionnée déjà archivée n'y est plus.
  */
 async function cloudTasksOf($: EngineInterface, source: Source, tasks: readonly Task[], short: (t: Task) => string, now: number): Promise<BrandTask[]> {
   const wanted = tasks.filter(t => !t.done && t.lieu === 'cloud' && t.branche !== undefined && t.id !== undefined)
-  if (wanted.length === 0) return []
+  if (wanted.length === 0 && !cloudOpen(source)) return []
   const root = source.root ?? source.dir
   const [prs, hidden, taken] = await Promise.all([
-    readCloudPrs($, root),
+    readCloudPrs($, root, projectSettings(source).depot),
     cloudHidden($, now).catch(() => new Set<string>()),
     cloudTakes($, source.dir, wanted.map(t => t.branche as string), now).catch(() => new Map<string, number>()),
   ])
-  const byId = new Map(wanted.map(t => [t.id as string, t] as const))
-  return cloudBrandTasks(wanted, prs, now, b => taken.get(b))
+  const byId = new Map(tasks.flatMap(t => (t.id !== undefined ? [[t.id, t] as const] : [])))
+  return cloudBrandTasks(tasks.filter(t => !t.done), prs, now, b => taken.get(b))
     .filter(bt => !(bt.cloud?.state === 'merged' && hidden.has(`${root}|#${bt.id}`)))
     .map(bt => {
       const task = byId.get(bt.id)
@@ -6765,7 +6775,7 @@ async function archiveCloudRow($: EngineInterface, t: BrandTask): Promise<void> 
   await hideCloudRow($, t, source)
   const root = source.root ?? source.dir
   const number = t.cloud?.number
-  const repo = number === undefined ? undefined : await cloudRepoOf($, root)
+  const repo = number === undefined ? undefined : await cloudRepoOf($, root, projectSettings(source).depot)
   const pr = repo === undefined ? undefined : await runGh($, ['pr', 'view', String(number), '-R', repo, '--json', 'body,comments'])
   const sessionId = cloudSessionIdOf(pr)
   const title = t.label
@@ -9494,7 +9504,8 @@ async function projectBandOthers($: EngineInterface, data: NonNullable<Awaited<R
     return tracked?.entry.sessionId ? [{ task: t, entry: tracked.entry, inferred: tracked.inferred, sessionId: tracked.entry.sessionId }] : []
   })
   // #408 : les sessions cloud du projet, lues par leur PR, entrent dans la bande comme les autres.
-  const cloud = (await cloudTasksOf($, data.source, data.tasks, data.short, now)).filter(c => !mine.has(c.id))
+  // #445 : une PR « #N » ne prend pas la place d'une session locale qui tient déjà sa tâche sans ligne prise.
+  const cloud = (await cloudTasksOf($, data.source, data.tasks, data.short, now)).filter(c => !mine.has(c.id) && !found.some(f => f.task.id === c.id && !f.task.branche))
   if (found.length === 0) return cloud
   await learnCreated($, found.map(f => f.sessionId), now)
   await refreshAhead($, data.source, found.map(f => f.sessionId), now)
@@ -11267,7 +11278,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     ])
     const draft = await readDraft($, deliverables)
     // #435 : une tâche cloud prise a sa PR ; la fiche porte son lien, au motif de « Ouvrir la session ».
-    const cloudPr = current.lieu === 'cloud' && current.branche ? cloudPrOf(await readCloudPrs($, source.root ?? source.dir), current.branche) : undefined
+    const cloudPr = current.lieu === 'cloud' && current.branche ? cloudPrOf(await readCloudPrs($, source.root ?? source.dir, projectSettings(source).depot), current.branche) : undefined
     const prLink = cloudPr?.url !== undefined ? cloudPr : undefined
     const storedRecap = current.id ? recapOf(recapRaw) : undefined
     // #307 (maquette A) : la Mission garde la demande ; le récap de fin ouvre la carte Fin.
@@ -11503,7 +11514,8 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
         const blocker = x.done || o.mother ? undefined : blockerFor(x)
         const due = !x.done && !o.mother && blocker === undefined && x.due !== undefined ? duePill(x.due, today, { short: true }) : undefined
         const end = x.done ? (isAbandoned(x) ? 'annulée' : 'fait') : blocker?.pre ? `${blocker.parent ? 'parent ' : ''}après ${blocker.pre.id ? `#${blocker.pre.id}` : short(blocker.pre).titre}` : undefined
-        const strong = o.mother || here
+        // Seule la tâche de la fiche en demi-gras : la mère au poids normal, comme dans la liste (#447).
+        const strong = here
         const title = <Text wrap="truncate-end" {...(strong ? { weight: 'semibold' as const } : {})} {...(x.done ? { strikethrough: true, color: palette.text3 } : {})}>{short(x).titre}</Text>
         return (
           <Box key={`chain-row:${x.key}`} flexDirection="row" alignItems="center" gap={SPACE.row} {...(here ? { backgroundColor: palette.sel } : {})}>
@@ -12238,7 +12250,8 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     // Le geste du moment en tête : en session, « Ouvrir la session », la roue et la durée à droite (la bande
     // d'état et la carte de la session ne font plus qu'un) ; à lancer, « Lancer » et « Vérifier », et le message
     // au brief derrière « + Ajouter un message au brief ».
-    const launchable = !current.done && !live && !launched.includes(taskKey(current))
+    // Une mère (#447) : ni « Lancer » ni l'interrupteur Cloud | Mac ; ses étapes se lancent une à une.
+    const launchable = !current.done && !live && !launched.includes(taskKey(current)) && !isMother(current, allTasks)
     // #416 (maquette B) : une routine n'a pas de cible ; une autre tâche lance vers la cible de l'interrupteur.
     const targeted = !isRoutine(current) && cloudOpen(source)
     if (targeted && launchable) {
@@ -13257,6 +13270,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
                 {!current.done &&
                   !live &&
                   !launched.includes(taskKey(current)) &&
+                  !isMother(current, allTasks) &&
                   // Une routine (#280) : « Lancer » fait le geste de son ▶ (coche, redate, carte).
                   primary('launch', playIcon(palette.priText, 14), 'Lancer', () =>
                     void (isRoutine(current) ? launchRoutine($, source, current, s.titre) : launchSession($, source, current, s.titre, launchExtra)),
@@ -13804,7 +13818,10 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   await learnCreated($, openTasks.filter(isLive).map(t => liveOf(t)?.entry.sessionId).filter((id): id is string => id !== undefined), now)
   // Une session close et pas archivée y garde sa ligne, « Completed », comme dans la bande (#218).
   // #408 : les lignes `lieu:cloud` prises entrent dans le bloc avec l'état de leur PR (aucune session locale à suivre).
-  const cloudRows = maestroBrand ? (await cloudTasksOf($, source, openTasks, t => short(t).titre, now)).filter(c => !maestroBrand.tasks.some(b => b.id === c.id)) : []
+  // #445 : et celles qu'une session cloud lancée par la carte native travaille, sans ligne prise, par le « #N » de leur PR.
+  const cloudRows = maestroBrand
+    ? (await cloudTasksOf($, source, openTasks, t => short(t).titre, now)).filter(c => !maestroBrand.tasks.some(b => b.id === c.id) && !openTasks.some(t => t.id === c.id && !t.branche && isLive(t)))
+    : []
   const blockRows = maestroBrand ? liveBlockRows([...maestroBrand.tasks, ...cloudRows], openTasks, isLive, t => launchOf(t, liveOf(t)?.entry.sessionId, now), doneTasks) : []
   const blockOf = new Map(blockRows.flatMap(r => (r.brand ? [[r.brand.id, r.brand] as const] : [])))
   const blockKeys = new Set(blockRows.map(r => taskKey(r.task)))
@@ -14403,7 +14420,8 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     // « Lancer ». Un bouton de l'app, sans zone de clic : il tient sur toutes les lignes sous
     // ZONE_LIMIT. Ni sur une tâche en session, bloquée ou déjà demandée ; sa colonne reste, vide,
     // pour garder les carrés alignés.
-    const playable = !t.done && !ghost && !inSession && !locked && !launched.includes(taskKey(t))
+    // Ni sur une mère (#447) : elle n'a rien à livrer seule, dans l'arbre comme hors de lui (recherche).
+    const playable = !t.done && !ghost && !head && !inSession && !locked && !launched.includes(taskKey(t)) && !isMother(t, allTasks)
     const parts = rowParts(t, { tree: tree !== undefined, ghost, inSession, locked, open: head?.open === true, ...(child?.parent ? { parent: child.parent } : {}) })
     // En session, la ligne tient dans la largeur (#177, #248 de Splitmybill) : une pastille qui ne laisse
     // pas sa place au titre part, avant que la colonne de session ne soit poussée hors du panneau. Ses
@@ -14528,11 +14546,11 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
             ) : (
               <Text key={`prio:${t.key}`} color={palette.lateOn}>{'⚑ '}</Text>
             ))}
-          {/* Sur le bureau (#224, maquette C de #212), le titre est un texte : la mère en gras, une faite grise
+          {/* Sur le bureau (#224, maquette C de #212), le titre est un texte : la mère au poids d'une tâche seule (#447), une faite grise
               et barrée (#198), un titre provisoire estompé ; un bouton natif imposerait son encre, sa
               graisse et sa marge. Un bouton sans encre le couvre et ouvre la fiche. Au terminal, le bouton. */}
           {Svg ? (
-            <Text wrap="truncate-end" {...(head ? { weight: 'semibold' as const } : {})} {...(t.done || cloudMerged ? { strikethrough: true, color: lingering ? palette.text2 : palette.text3 } : greyed || !titled(t) ? { color: palette.text2 } : {})}>
+            <Text wrap="truncate-end" {...(t.done || cloudMerged ? { strikethrough: true, color: lingering ? palette.text2 : palette.text3 } : greyed || !titled(t) ? { color: palette.text2 } : {})}>
               {s.titre}
             </Text>
           ) : null}

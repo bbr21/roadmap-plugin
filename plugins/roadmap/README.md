@@ -377,8 +377,8 @@ filtres, « Qui », les rangements) vaut dans tout projet.
   et le numéro ; un choix dans « Ranger » reste. Hors sujet, chaque section est un bandeau teinté à
   son icône (#238).
   L'arbre « Le fil » (#125, redessiné par #163, maquette A) : une tâche est seule, mère ou étape ; un
-  bloc par mère, sa ligne en tête une seule fois, en gras, avec sa case, son département, sa barre
-  d'avancement (`1/3`), la date de sa prochaine étape et son ▶ ; ses étapes dessous, en retrait sur
+  bloc par mère, sa ligne en tête une seule fois, au poids d'une tâche seule (#447), avec sa case, son département, sa barre
+  d'avancement (`1/3`) et la date de sa prochaine étape, sans ▶ ni « Lancer » : elle n'a rien à livrer seule (#447) ; ses étapes dessous, en retrait sur
   un fil fin qui porte leur rang (1, 2 : en séquence par `après:` ; 1, 1 : en parallèle), avec leur
   case, leur département, puis « Rodney · 29/10 » (responsable et date en texte, rouge en retard,
   orange dans les 7 jours) ou le cadenas « après #437 ». Lignes de 30 px, plus d'âge sur la ligne.
@@ -763,6 +763,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.269.0 (2026-11-11)** : tests hors de GitHub Actions (#446) ; cloud pour une roadmap hors du dépôt, clé depot (#444) ; suivi d'une session cloud lancée par la carte (#445) ; tâche mère sans gras ni ▶ (#447)
 - **0.268.0 (2026-11-11)** : maestro : la session Maestro prend le nom du dossier de son projet (#439)
 - **0.267.0 (2026-11-11)** : panneau : cartes de tâche sans doublon, cible cloud ou Mac dans le titre de la carte native, icône sur les cartes custom, carte faite en violet (#436)
 - **0.266.0 (2026-11-11)** : tasks : regroupement à l'écriture (#438) ; impact : tests lourds laissés à la CI de la PR (#434) ; doctor : règles de l'outil à jour (#290)

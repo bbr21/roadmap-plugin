@@ -3,11 +3,15 @@
 son état (aucune, ouverte, en cours, rouges, prête, fusionnée, fermée, ou inconnu si `gh` ne répond pas) et la
 première phrase de son dernier commentaire, l'état que dit la session elle-même (skill maestro, « Mode cloud »).
 Une session cloud n'envoie aucune note et n'est pas dans list_sessions : on la suit par sa PR (#408).
+Une session cloud lancée hors du ▶ du panneau (carte native, Options puis cloud) n'a pas de ligne prise : une PR dont le
+titre porte « #N » en tête (ou « (#N) » en fin) la rattache à la tâche N ouverte et non prise, sa branche tenant lieu
+de `branche:` (#445) ; la ligne texte le dit « sans ligne prise ».
 
   python3 suivi_cloud.py DEPOT [--json]
 
 Lit DEPOT/roadmap/ROADMAP.md (ou DEPOT/ROADMAP.md) et lance `gh pr list --head <branche> --state all --json …`
-par ligne, dans DEPOT, avec un délai de 20 s. Lecture seule : rien n'est écrit, aucune PR n'est touchée. `gh`
+par ligne, dans DEPOT, avec un délai de 20 s ; si DEPOT/.claude/roadmap.json nomme un dépôt GitHub (`depot`, une
+roadmap qui vit hors de son dépôt de code, #444), `gh` le vise par `-R`. Lecture seule : rien n'est écrit, aucune PR n'est touchée. `gh`
 absent, non connecté, trop lent ou illisible : l'état de la ligne est « inconnu », rien ne lève. Code de retour 2
 quand le dépôt ou sa roadmap sont introuvables. Sortie en texte, une ligne par tâche :
 
@@ -20,17 +24,25 @@ Python 3.9 et plus, bibliothèque standard seulement.
 """
 
 import argparse
+import datetime
 import json
 import os
 import re
 import subprocess
 import sys
+import time
 
 DELAI = 20
 CHAMPS = "number,url,state,isDraft,mergeable,statusCheckRollup,createdAt,comments,author,isCrossRepository"
 ROUGES = {"FAILURE", "ERROR", "CANCELLED", "TIMED_OUT"}
 EN_ATTENTE = {"PENDING", "EXPECTED"}
 LIGNE = re.compile(r"^- \[( |x|X)\] (.*)$")
+# #445 : le « #N » d'un titre de PR, en tête (« #500 · … », « [#500] … ») ou « (#N) » en fin ; même règle que
+# `cloudTitleId` du panneau (hooks/parse.ts).
+TITRE_TETE = re.compile(r"^\s*\[?#([1-9]\d*)(?![\d\w])")
+TITRE_FIN = re.compile(r"\(#([1-9]\d*)\)\s*$")
+CHAMPS_TITRES = "headRefName,title,state,createdAt,isCrossRepository"
+ADOPTION_S = 7 * 24 * 3600
 
 
 class ErreurDepot(Exception):
@@ -77,6 +89,58 @@ def lignes_cloud(texte_roadmap):
             continue
         rendu.append({"id": ident, "nom": c.get("nom") or ligne["libelle"], "branche": c["branche"]})
     return rendu
+
+
+def titre_id(titre):
+    """Le numéro de tâche d'un titre de PR (#445), ou None."""
+    if not isinstance(titre, str):
+        return None
+    m = TITRE_TETE.match(titre) or TITRE_FIN.search(titre)
+    return int(m.group(1)) if m else None
+
+
+def _date(texte):
+    try:
+        return datetime.datetime.strptime(texte, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=datetime.timezone.utc).timestamp()
+    except (TypeError, ValueError):
+        return None
+
+
+def lignes_rattachees(texte_roadmap, prs, maintenant):
+    """Les tâches ouvertes non prises (sans `branche:`) qu'une PR rattache par le « #N » de son titre (#445) : id, nom,
+    branche de la PR. Pas une PR d'un fork, ni celle d'une branche qu'une ligne porte déjà ; l'ouverte l'emporte, sinon
+    la plus récente ; une close de plus de 7 jours ne rattache plus. Même règle que `cloudAdopted` du panneau."""
+    libres, prises = {}, set()
+    for brut in texte_roadmap.splitlines():
+        ligne = lire_ligne(brut)
+        if not ligne:
+            continue
+        c = ligne["cles"]
+        if c.get("branche"):
+            prises.add(c["branche"])
+            continue
+        if ligne["close"]:
+            continue
+        try:
+            ident = int(c.get("id", ""))
+        except ValueError:
+            continue
+        libres[ident] = c.get("nom") or ligne["libelle"]
+    meilleure = {}
+    for p in prs if isinstance(prs, list) else []:
+        if not isinstance(p, dict) or p.get("isCrossRepository"):
+            continue
+        ident, tete = titre_id(p.get("title")), p.get("headRefName")
+        if ident not in libres or not isinstance(tete, str) or not tete or tete in prises:
+            continue
+        quand = _date(p.get("createdAt"))
+        ouverte = p.get("state") == "OPEN"
+        if not ouverte and (quand is None or maintenant - quand > ADOPTION_S):
+            continue
+        rang = (1 if ouverte else 0, quand if quand is not None else float("-inf"))
+        if ident not in meilleure or rang > meilleure[ident][0]:
+            meilleure[ident] = (rang, tete)
+    return [{"id": i, "nom": libres[i], "branche": meilleure[i][1], "rattachee": True} for i in sorted(meilleure)]
 
 
 def premiere_phrase(corps):
@@ -166,8 +230,33 @@ def lire_roadmap(depot):
     raise ErreurDepot("roadmap introuvable dans %s" % depot)
 
 
-def pr_de(depot, branche, run):
+DEPOT_GITHUB = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*/[A-Za-z0-9][A-Za-z0-9_.-]*$")
+ADRESSE_GITHUB = re.compile(
+    r"^(?:git@github\.com:|(?:ssh://git@|https?://|git://)github\.com[:/])"
+    r"([A-Za-z0-9][A-Za-z0-9_.-]*)/([A-Za-z0-9][A-Za-z0-9_.-]*?)(?:\.git)?/?$"
+)
+
+
+def depot_github(depot):
+    """`owner/repo` que nomme `depot` de DEPOT/.claude/roadmap.json (#444) ; None sans clé, ou valeur douteuse."""
+    try:
+        with open(os.path.join(depot, ".claude", "roadmap.json"), encoding="utf-8") as f:
+            v = json.load(f).get("depot")
+    except (OSError, ValueError, AttributeError):
+        return None
+    if not isinstance(v, str):
+        return None
+    v = v.strip()
+    if DEPOT_GITHUB.match(v):
+        return re.sub(r"\.git$", "", v)
+    m = ADRESSE_GITHUB.match(v)
+    return "%s/%s" % (m.group(1), m.group(2)) if m else None
+
+
+def pr_de(depot, branche, run, repo=None):
     cmd = ["gh", "pr", "list", "--head", branche, "--state", "all", "--limit", "20", "--json", CHAMPS]
+    if repo:
+        cmd += ["-R", repo]
     try:
         prs = json.loads(run(cmd, depot))
     except (OSError, subprocess.SubprocessError, ValueError):
@@ -177,14 +266,35 @@ def pr_de(depot, branche, run):
     return etat_pr(prs)
 
 
-def suivre(depot, run=None):
-    """Une entrée par ligne `lieu:cloud` prise : id, nom, branche et l'état de sa PR."""
+def titres_prs(depot, run, repo=None):
+    """Les PR du dépôt avec leur titre (#445), lues sur `repo` s'il est nommé (#444) ; [] si `gh` ne répond pas."""
+    cmd = ["gh", "pr", "list", "--state", "all", "--limit", "100", "--json", CHAMPS_TITRES]
+    if repo:
+        cmd += ["-R", repo]
+    try:
+        prs = json.loads(run(cmd, depot))
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return []
+    return prs if isinstance(prs, list) else []
+
+
+def suivre(depot, run=None, maintenant=None):
+    """Une entrée par ligne `lieu:cloud` prise, puis par tâche non prise qu'une PR « #N » rattache (#445) : id, nom,
+    branche et l'état de sa PR."""
     run = run or run_gh
-    return [dict(l, **pr_de(depot, l["branche"], run)) for l in lignes_cloud(lire_roadmap(depot))]
+    repo = depot_github(depot)
+    texte = lire_roadmap(depot)
+    cloud = lignes_cloud(texte)
+    vues = {l["id"] for l in cloud}
+    quand = time.time() if maintenant is None else maintenant
+    rattachees = [l for l in lignes_rattachees(texte, titres_prs(depot, run, repo), quand) if l["id"] not in vues]
+    return [dict(l, **pr_de(depot, l["branche"], run, repo)) for l in cloud + rattachees]
 
 
 def ligne_texte(t):
     parts = ["#%d %s" % (t["id"], t["nom"])]
+    if t.get("rattachee"):
+        parts.append("sans ligne prise (%s)" % t["branche"])
     if t["etat"] == "inconnu":
         parts.append("état inconnu")
     elif t["etat"] == "aucune":
@@ -213,7 +323,7 @@ def main(argv=None, run=None):
     if a.en_json:
         print(json.dumps(taches, ensure_ascii=False, indent=2))
     elif not taches:
-        print("Aucune ligne lieu:cloud prise.")
+        print("Aucune ligne lieu:cloud prise, ni PR « #N » d'une tâche non prise.")
     else:
         print("\n".join(ligne_texte(t) for t in taches))
     return 0
