@@ -64,6 +64,7 @@ import {
   imageIcon,
   archiveIcon,
   cloudIcon,
+  flaskIcon,
   cloudTints,
   unarchiveIcon,
   pencilIcon,
@@ -518,6 +519,8 @@ import {
   REMOTE_OFF_MAX_TRIES,
   type RemoteOffMemo,
   isRemoteControlRefusal,
+  cardNotProposed,
+  remoteCardWhy,
   remotePill,
   sessionRemoteIn,
   remoteHeldText,
@@ -2747,7 +2750,7 @@ async function proposeCard($: EngineInterface, raw: Record<string, unknown>, opt
     refusals.push(`${dropped[2]} : ${cardReason(ran)}`)
     ran = await $.tool.call(withFields())
   }
-  if (ran.deny === undefined && !ran.isError) await noteNativeCard($, card.title)
+  if (ran.deny === undefined && !ran.isError && !cardNotProposed(ran)) await noteNativeCard($, card.title)
   return { ran, refusals }
 }
 
@@ -3696,6 +3699,8 @@ let openSessionIds = new Set<string>()
 const archivedSessionIds = new Set<string>()
 /** Les rangées de la dernière relecture, fiche de cette session comprise : les filles de Maestro s'y lisent (#137). */
 let sessionRows: unknown[] = []
+/** #375 : les rangées de la dernière relecture, lues par le panneau, où un `sessionRows` local les masque. */
+const listedSessionRows = (): readonly unknown[] => sessionRows
 let listDenied = false
 
 /** Les sessions lues par relecture : au-delà des 40 d'avant, une journée chargée en laissait dehors. */
@@ -5587,6 +5592,8 @@ async function launchCloud($: EngineInterface, source: Source, task: Task, short
     }
     const posted = await proposeCard($, card, [])
     if (posted.ran.deny !== undefined || posted.ran.isError) return void (await fail(cardReason(posted.ran)))
+    // #452 : « Nothing was proposed » sous Remote Control n'est ni deny ni isError : aucune carte, la ligne reste libre.
+    if (cardNotProposed(posted.ran)) return void (await fail(remoteCardWhy()))
     const wrote = await writeRoadmapFiles($, source, ['ROADMAP.md'], `roadmap: take ${branch.replace(/^feat\//, '')} (#${task.id}, cloud)`, async () => {
       const again = takeCloudLine(await $.fs.read(open), task.id!, branch, todayOf(await $.clock.now()))
       return 'error' in again ? again : { 'ROADMAP.md': again.text }
@@ -5693,6 +5700,13 @@ async function launchSession($: EngineInterface, source: Source, task: Task, sho
     const posted = await proposeCard($, card, optional)
     const proposed = posted.ran
     refusals.push(...posted.refusals)
+    // #452 : même réponse sous Remote Control pour le ▶ Mac : pas de carte, donc ni réservation ni repli par Claude.
+    if (cardNotProposed(proposed)) {
+      refusals.push(reasonOf(proposed))
+      noteLaunch('panel')
+      await setView($, v => ({ launched: v.launched.filter(k => k !== key), launchNote: `Lancement impossible : ${remoteCardWhy()}` }))
+      return
+    }
     if (proposed.deny === undefined && !proposed.isError) {
       if (dose.ownId) await reserveCard($, brief.title)
       noteLaunch('panel')
@@ -10823,7 +10837,7 @@ function stepsCard(
 const STEP_WORDS: Record<StepSegment, string> = { done: 'faite', now: 'en cours', todo: 'à faire' }
 const STEP_MARKS: Record<StepSegment, string> = { done: '✓', now: '›', todo: '○' }
 /** Ce que dit l'icône de la bande d'état de la fiche (#199). */
-const BAND_MARK_WORDS: Record<NonNullable<ReturnType<typeof stateBand>['mark']>, string> = { person: 'attend ta réponse', spinner: 'en cours', merge: 'fusion', check: 'faite' }
+const BAND_MARK_WORDS: Record<NonNullable<ReturnType<typeof stateBand>['mark']>, string> = { person: 'attend ta réponse', spinner: 'en cours', merge: 'fusion', check: 'faite', flask: 'en test' }
 
 async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<RenderElement> {
   // Les gestionnaires de clic ne se vident pas ici : un rendu attend ses lectures, et un clic
@@ -11017,6 +11031,10 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     return found && found.state === 'open' ? found : undefined
   }
   const isLive = (t: Task) => liveOf(t) !== undefined
+  // #375 (maquette A) : en test, une session « Tester #N · X.Y.Z » ouverte ; sa ligne le dit à la place de sa barre.
+  const testsNow = testSessions(listedSessionRows())
+  const testOf = (t: Task) => (t.done || t.id === undefined ? undefined : testsNow.get(t.id))
+  const testEntry = (test: { sessionId: string; title: string }): LiveEntry => ({ sessionId: test.sessionId, startedAt: now, title: test.title })
   // Les notes d'étapes des tâches en session (#143) : la mini-barre et la carte de leur ligne.
   // Avec « Fusionner » ajoutée dans un dossier à git (#191).
   const rowSteps = new Map<string, ChildStatus>()
@@ -11304,6 +11322,8 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     const srcPath = srcFile(current.src) ? `${source.dir}/${current.src!.trim()}` : undefined
     const due = current.due && !current.done ? dueLabel(current.due, today) : undefined
     const live = liveOf(current)
+    // #375 (maquette A) : publiée, sa session « Tester #N · X.Y.Z » ouverte : la carte sarcelle remplace la bleue.
+    const ficheTest = testOf(current)
     // Depuis quand elle tourne (#341) : la date de création de sa session, apprise une fois, en fond ; sans elle,
     // une session repérée par son titre n'a que sa dernière activité.
     if (live?.entry.sessionId && !current.done) void learnCreated($, [live.entry.sessionId], now)
@@ -12087,9 +12107,11 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     const stepsPart = ficheSteps($, e, palette, stepsNote, now, stepsDone, stepsSession, headState)
     // L'état sous l'en-tête (#199, choix de Bertrand) : une bande teintée, son icône, son mot et pourquoi ;
     // il a quitté la ligne « Tâche lancée par Maestro », où il flottait à droite.
-    const band = headState
+    // #375 (maquette A) : en test, la bande dit « en test · version X.Y.Z » en sarcelle, fiole devant.
+    const band = headState || (ficheTest && !current.done)
       ? stateBand({
-          state: headState,
+          state: headState ?? 'live',
+          ...(ficheTest ? { test: ficheTest.version } : {}),
           abandoned,
           ...(stepsNote?.question ? { question: stepsNote.question.text } : {}),
           ...(stepsNote?.steps.find(x => x.status === 'in_progress') ? { current: stepsNote.steps.find(x => x.status === 'in_progress')!.content } : {}),
@@ -12103,6 +12125,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
         wait: [palette.blockTint, palette.blockOn],
         live: [palette.liveTint, palette.liveOn],
         merge: [palette.waitTint, palette.waitOn],
+        test: [palette.waitTint, palette.waitOn],
         done: [palette.finishedTint, palette.finishedOn],
         cancel: [palette.sel, palette.text2],
       }[band.tone]
@@ -12115,7 +12138,9 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
               ? checkIcon(fg, SIZE.icon.sm, STROKE.pill)
               : band.mark === 'spinner'
                 ? spinnerIcon(fg, SIZE.icon.sm, undefined, false, now)
-                : undefined
+                : band.mark === 'flask'
+                  ? flaskIcon(fg, SIZE.icon.sm)
+                  : undefined
       const row = (
         <Box key="state-band-row" paddingX={SPACE.indent}>
           <Box key="state-band" flexDirection="row" alignItems="center" gap={SPACE.row} paddingX={SPACE.indent} flexGrow={1} backgroundColor={bg}>
@@ -12345,10 +12370,49 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
         {primary('open-pr', externalIcon(palette.priText, 14), pr.number !== undefined ? `Ouvrir la PR ${pr.number}` : 'Ouvrir la PR', () => void openCloudPr($, pr))}
       </Box>
     )
+    // #375 (maquette A) : en test, « Ouvrir la session de test » en sarcelle et, hors d'elle, « Session d'origine »
+    // (où arrivent les retours) ; puis la règle en une ligne.
+    const testAction = (test: { sessionId: string; title: string }): RenderElement => {
+      const openTest = () => void openSession($, testEntry(test))
+      const origin = live && !inSession ? live : undefined
+      const openOrigin = () => void (origin ? openSession($, origin.entry) : undefined)
+      return (
+        <Box key="top-action" flexDirection="column" gap={SPACE.block} paddingX={SPACE.indent}>
+          <Box flexDirection="row" alignItems="stretch" gap={SPACE.row}>
+            {pressable(
+              'open-test-session',
+              openTest,
+              <Box flexDirection="row" alignItems="center" gap={SPACE.row} paddingX={SPACE.indent} flexGrow={1} backgroundColor={palette.wait} hover={{ backgroundColor: mixOver(palette.wait, palette.bg, MIX.primaryHover) }}>
+                {corners(RADIUS.control, palette.bg)}
+                {strut(SIZE.strut.control)}
+                {Svg && <Svg source={externalIcon(palette.bg, 14)} alt="Ouvrir" width={SIZE.icon.sm} height={SIZE.icon.sm} />}
+                <Text weight="semibold" color={palette.bg}>Ouvrir la session de test</Text>
+                <Box flexGrow={1} />
+              </Box>,
+              <Button key="open-test-session" variant="primary" label="Ouvrir la session de test" onPress={openTest} />,
+              true,
+            )}
+            {origin &&
+              pressable(
+                'open-origin-session',
+                openOrigin,
+                // Une Box à filet pose son paddingY, 0 compris (#352).
+                <Box flexDirection="row" alignItems="center" paddingX={SPACE.indent} paddingY={0} borderStyle="round" borderColor={palette.waitOn} hover={{ backgroundColor: palette.waitTint }}>
+                  {strut(SIZE.strut.control)}
+                  <Text color={palette.waitOn}>Session d'origine</Text>
+                </Box>,
+                <Button key="open-origin-session" plain label="Session d'origine" onPress={openOrigin} />,
+              )}
+          </Box>
+          <Text size="caption" color={palette.text2} wrap="wrap">Tes retours dans la session de test vont à la session d'origine. « Test validé » la coche.</Text>
+        </Box>
+      )
+    }
     const topAction = (): RenderElement | null => {
       if (current.done && inSession && stepsDone) return archiveSelfBand()
       if (prLink && !live) return prAction(prLink)
       if (current.done) return null
+      if (ficheTest) return testAction(ficheTest)
       // Dans sa propre session, « Ouvrir la session » n'a pas de sens (#336) : la bande d'état suffit.
       if (live && inSession) return null
       if (live) {
@@ -14189,11 +14253,15 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     const sid = block?.sessionId ?? live?.entry.sessionId
     return sinceLabel(block?.since ?? sinceOf(sid, live?.entry, live?.inferred ?? true), now)
   }
-  const stepsCells = rowStepsCells([...blockTasks.map(t => sinceText(t, blockOf.get(t.id as string))), ...openTasks.filter(t => !inBlock(t) && isLive(t)).map(t => sinceText(t))])
+  const stepsCells = rowStepsCells([...blockTasks.map(t => sinceText(t, blockOf.get(t.id as string))), ...openTasks.filter(t => !inBlock(t) && (isLive(t) || testOf(t) !== undefined)).map(t => sinceText(t))])
   // #408 : une ligne cloud écrit l'état de sa PR là où les autres ont leur barre : la colonne s'élargit à ces mots, et
   // la durée de chaque ligne reste au bord droit.
   const cloudColumn = [...blockOf.values()].some(bt => bt.cloud !== undefined)
-  const stepsColumns = cloudColumn ? Math.max(stepsCells.columns, ROW_STEPS.icon + 1 + CLOUD_WORDS_CELLS + 1 + ROW_STEPS.clock + stepsCells.count) : stepsCells.columns
+  // #375 (maquette A) : « en test X.Y.Z » à la place de la barre ; la colonne s'élargit au plus long de ces mots.
+  const testWords = (version: string) => `en test ${version}`
+  const testCells = Math.max(0, ...[...blockTasks, ...openTasks].flatMap(t => { const test = testOf(t); return test ? [pxCells(6.5 * [...testWords(test.version)].length)] : [] }))
+  const wordsCells = Math.max(cloudColumn ? CLOUD_WORDS_CELLS : 0, testCells)
+  const stepsColumns = wordsCells > 0 ? Math.max(stepsCells.columns, ROW_STEPS.icon + 1 + wordsCells + 1 + ROW_STEPS.clock + stepsCells.count) : stepsCells.columns
   // Retour de test de #385 (maquette « version corrigée ») : plus de « Done » au bout d'une close du bloc, la coche
   // et la jauge violette le disent ; son archive vit entre sa case et son numéro (« Bouton archive […] apparaît
   // uniquement quand une task est done et pas encore archivée »), dans une case que toutes les lignes du bloc
@@ -14249,18 +14317,39 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     const queued = block && t.branche !== undefined ? heavyMarks.get(t.branche) : undefined
     const cloud = block?.cloud
     const tint = cloud ? cloudTints(palette, cloud.state) : undefined
+    // #375 : en test, la fiole et la version, qui ouvrent la session de test ; le numéro garde la session d'origine.
+    const test = cloud ? undefined : testOf(t)
+    const openTest = test ? () => void openSession($, testEntry(test)) : undefined
     return (
       // Calée à droite (capture de 0.249.0, BBR : « Le temps doit être aligné à droite avec le bouton file d'attente ») :
       // la case est comptée en cellules, plus larges dans l'app que dans le compte ; le vide part à gauche, la durée
       // finit au bord, sous l'icône du centre de contrôle.
       <Box key={`steps:${t.key}`} flexDirection="row" alignItems="center" justifyContent="flex-end" gap={SPACE.row} flexShrink={0} {...(Svg ? { width: stepsColumns } : {})}>
         <Box width={ROW_STEPS.icon} flexShrink={0} flexDirection="row" justifyContent="center">
-          {cloud && tint ? (Svg ? <Svg source={cloudIcon(tint.cloud, 14, 'Dans le cloud')} alt="Dans le cloud" width={SIZE.icon.sm} height={SIZE.icon.sm} /> : <Text size="caption" color={tint.cloud}>☁</Text>) : completed ? (Svg ? <Svg source={checkIcon(checkHex, 14, STROKE.pill)} alt={completedWord} width={SIZE.icon.sm} height={SIZE.icon.sm} /> : <Text size="caption" color={checkHex}>✓</Text>) : merging ? mergeMark() : waiting ? hand() : spinner()}
+          {cloud && tint ? (Svg ? <Svg source={cloudIcon(tint.cloud, 14, 'Dans le cloud')} alt="Dans le cloud" width={SIZE.icon.sm} height={SIZE.icon.sm} /> : <Text size="caption" color={tint.cloud}>☁</Text>) : test ? (Svg ? <Svg source={flaskIcon(palette.waitOn, 14, 'En test')} alt="En test" width={SIZE.icon.sm} height={SIZE.icon.sm} /> : <Text size="caption" color={palette.waitOn}>⚗</Text>) : completed ? (Svg ? <Svg source={checkIcon(checkHex, 14, STROKE.pill)} alt={completedWord} width={SIZE.icon.sm} height={SIZE.icon.sm} /> : <Text size="caption" color={checkHex}>✓</Text>) : merging ? mergeMark() : waiting ? hand() : spinner()}
         </Box>
         {cloud && tint ? (
           // L'état de sa PR en mots, à la place de la barre d'étapes (#408, maquette A) ; la durée garde sa place.
           <Box key={`cloud-words:${t.key}`} {...(Svg ? { width: CLOUD_WORDS_CELLS } : {})} flexShrink={0} minWidth={0} flexDirection="row" alignItems="center">
             <Text size="caption" color={tint.word} wrap="truncate-end">{cloudWords(cloud.state).short}</Text>
+          </Box>
+        ) : test && openTest ? (
+          // #375 (maquette A) : « en test 0.268.0 » en sarcelle, à la place de la barre ; le texte ouvre la session de test.
+          <Box key={`test-words:${t.key}`} {...(Svg ? { width: wordsCells } : {})} flexShrink={0} minWidth={0} flexDirection="row" alignItems="center">
+            {Svg ? (
+              <Box flexDirection="row" alignItems="center" minWidth={0} hover={{ backgroundColor: palette.hover }}>
+                <Text size="caption" color={palette.waitOn} wrap="truncate-end">{testWords(test.version)}</Text>
+                <Box position="absolute" top={0} left={0}>
+                  <Button key={`row-test:${t.id}`} plain onPress={openTest}>
+                    {titleOverlay(testWords(test.version))}
+                  </Button>
+                </Box>
+              </Box>
+            ) : (
+              <Button key={`row-test:${t.id}`} plain onPress={openTest}>
+                <Text color={palette.waitOn}>{testWords(test.version)}</Text>
+              </Button>
+            )}
           </Box>
         ) : queued ? (
           <Box flexGrow={1} flexShrink={1} minWidth={0} flexDirection="row" justifyContent="flex-end">
@@ -14272,7 +14361,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
           ) : (
             <Svg source={`<svg xmlns="http://www.w3.org/2000/svg" width="${ROW_STEPS.bar}" height="4"/>`} alt="espace" width={ROW_STEPS.bar} height={4} />
           ))}
-        {cloudColumn && !queued && <Box key={`cloud-gap:${t.key}`} flexGrow={1} />}
+        {wordsCells > 0 && !queued && <Box key={`cloud-gap:${t.key}`} flexGrow={1} />}
         {!queued && (
           <Box width={ROW_STEPS.clock + stepsCells.count} flexShrink={0} flexDirection="row" alignItems="center" justifyContent="flex-end" gap={0}>
             {since !== '' && (
@@ -14408,10 +14497,11 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     const right = dueQuiet ? '' : doneRights.get(t) ?? (tree ? (t.done ? 'fait' : days === undefined ? '' : ageLabel(days)) : t.done ? axisShown(t.axis) : days === undefined ? '' : ageLabel(days))
     // Une tâche faite dont la session reste ouverte : y retourner, ou l'archiver, d'un clic.
     const kept = block === undefined && sessionRows.has(taskKey(t)) ? doneSessionOf(t) : undefined
-    const inSession = isLive(t) || block !== undefined
+    const inSession = isLive(t) || block !== undefined || testOf(t) !== undefined
     // La session de la tâche, ouverte ou faite : son numéro y mène ; dans le bloc, celle de Maestro.
     const blockEntry = block?.sessionId ? { sessionId: block.sessionId, startedAt: now, title: block.label } : undefined
-    const rowSession = liveOf(t) ?? doneSessionOf(t) ?? (blockEntry ? { entry: blockEntry } : undefined)
+    const rowTest = testOf(t)
+    const rowSession = liveOf(t) ?? doneSessionOf(t) ?? (blockEntry ? { entry: blockEntry } : undefined) ?? (rowTest ? { entry: testEntry(rowTest) } : undefined)
     // La roue l'emporte sur le cadenas : une tâche en session n'attend plus sa prérequise.
     const blocker = inSession ? undefined : blockerFor(t)
     const locked = blocker !== undefined

@@ -381,6 +381,11 @@ export function cloudIcon(hex: string, size = 14, title?: string): string {
   return line(hex, size, 2, '<path d="M17.5 19H7a5 5 0 1 1 1.3-9.84A6 6 0 0 1 19.8 11.4 3.8 3.8 0 0 1 17.5 19z"/>', title)
 }
 
+/** Fiole : une tâche publiée en test (#375, maquette A) ; une session « Tester #N · X.Y.Z » est ouverte. Trait 2, bouts ronds. */
+export function flaskIcon(hex: string, size = 14, title?: string): string {
+  return line(hex, size, 2, '<path d="M9 3h6"/><path d="M10 3v6.5L4.6 18.8A1.5 1.5 0 0 0 5.9 21h12.2a1.5 1.5 0 0 0 1.3-2.2L14 9.5V3"/><path d="M7.2 15h9.6"/>', title)
+}
+
 /** Portable : une tâche qui tourne sur le Mac (#436), le pendant du nuage ; même trait 2, bouts ronds. */
 export function laptopIcon(hex: string, size = 14, title?: string): string {
   return line(hex, size, 2, '<rect x="4" y="5" width="16" height="11" rx="1.5"/><path d="M2.5 19h19"/>', title)

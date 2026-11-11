@@ -10951,12 +10951,14 @@ export function ficheCards(o: {
  * La bande d'état de la fiche (#199, sous l'en-tête, hors de la ligne « Tâche lancée par Maestro ») : le
  * mot de la pastille de Maestro, pourquoi, l'icône devant et sa teinte. Une close dit « Completed », une annulée « annulée », sans icône.
  */
-export function stateBand(o: { state: 'wait' | 'live' | 'merge' | 'done'; question?: string; current?: string; ahead?: number; fait?: string; abandoned?: boolean }): {
+export function stateBand(o: { state: 'wait' | 'live' | 'merge' | 'done'; question?: string; current?: string; ahead?: number; fait?: string; abandoned?: boolean; test?: string }): {
   word: string
   why: string
-  mark?: 'person' | 'spinner' | 'merge' | 'check'
-  tone: 'wait' | 'live' | 'merge' | 'done' | 'cancel'
+  mark?: 'person' | 'spinner' | 'merge' | 'check' | 'flask'
+  tone: 'wait' | 'live' | 'merge' | 'done' | 'cancel' | 'test'
 } {
+  // #375 (maquette A) : publiée, une session « Tester #N · X.Y.Z » ouverte ; la close l'emporte.
+  if (o.test && o.state !== 'done') return { word: 'en test', why: `version ${o.test}`, mark: 'flask', tone: 'test' }
   if (o.state === 'done' && o.abandoned) return { word: 'annulée', why: o.fait ? `annulée le ${shortDate(o.fait)}` : '', tone: 'cancel' }
   if (o.state === 'wait') return { word: "t'attend", why: o.question ?? "la session s'est arrêtée", mark: 'person', tone: 'wait' }
   if (o.state === 'live') return { word: 'en session', why: o.current ?? '', mark: 'spinner', tone: 'live' }
@@ -13677,6 +13679,19 @@ export function pausingPill(mode: 'stop' | 'soft'): string {
  */
 export function isRemoteControlRefusal(text: string): boolean {
   return /working over Remote Control/i.test(text)
+}
+
+/**
+ * #452 : l'app répond « Nothing was proposed. The user is working over Remote Control… » comme un résultat normal,
+ * sans `deny` ni `isError` : une carte posée par le panneau n'existe pas. Le texte seul le dit.
+ */
+export function cardNotProposed(r: { deny?: string; isError?: boolean; text?: string }): boolean {
+  return r.deny === undefined && r.isError !== true && isRemoteControlRefusal(r.text ?? '')
+}
+
+/** #452 : la note du panneau quand la carte n'est pas posée sous Remote Control : la vraie cause et le geste. */
+export function remoteCardWhy(): string {
+  return `${REMOTE_CAUSE}. Tape un mot dans l'app sur le Mac (pas au téléphone), puis relance`
 }
 
 /** #390 : la cause du refus, ses deux conditions, dite à Claude comme à la personne. */
