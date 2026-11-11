@@ -9835,20 +9835,77 @@ export function withTargetNote(prompt: string, chosen: Sessions, reco: CloudReco
   return `${prompt}\n\nCible : ${where}, ${said}.`
 }
 
+/** La branche d'une tâche lancée en cloud (#416) : `feat/` et le slug de son nom court (sinon de son libellé), 40 caractères au plus. */
+export function cloudBranchOf(task: Task): string {
+  const slug = axisSlug(task.nom ?? task.label)
+  const cut = slug.length <= 40 ? slug : slug.slice(0, 40).replace(/-[^-]*$/, '')
+  return `feat/${cut || `tache-${task.id ?? 'x'}`}`
+}
+
 /**
- * Le message à Claude d'un lancement en cloud depuis le panneau (#416) : le mode cloud de Maestro (#408),
- * la ligne prise avec `lieu:cloud`, la carte cible cloud au brief de `brief_cloud.py`, et le repli sur le Mac
- * par `repli_mac.py` si le cloud cale. La carte garde le clic de BBR sur Start.
+ * La prise d'une ligne pour une session cloud (#416), par le panneau : `qui:` et `branche:` à la branche, `lieu:cloud`,
+ * `après:-` si rien n'est dit, et la ligne monte au bas de « En cours ». Une ligne déjà tenue (`branche:`), close ou
+ * absente est refusée. Rend le texte réécrit et la ligne prise.
  */
-export function cloudLaunchText(task: Task, title: string, reco: CloudReco): string {
-  const id = task.id ?? '?'
-  const recoSaid = reco.lieu === 'cloud' ? `recommandé : cloud, ${reco.why}` : `recommandé : Mac, ${reco.why} ; le cloud choisi quand même`
+export function takeCloudLine(text: string, id: string, branch: string, today: string): { text: string; line: string } | { error: string } {
+  const lines = text.split('\n')
+  const at = lines.findIndex(l => /^- \[ \] /.test(l) && new RegExp(`\\| id:${id}( |\\|)`).test(l.slice(l.lastIndexOf('`[')) + ' '))
+  if (at < 0) return { error: `#${id} introuvable dans la roadmap` }
+  const raw = lines[at]!
+  const cut = raw.lastIndexOf('`[')
+  const fields = raw.slice(cut + 2, raw.endsWith(']`') ? -2 : undefined).split('|').map(f => f.trim())
+  const held = fields.find(f => f.startsWith('branche:'))
+  if (held) return { error: `#${id} est déjà tenue par ${held.slice(8)}` }
+  const kept = fields.filter(f => !/^(qui|lieu):/.test(f))
+  if (!kept.some(f => f.startsWith('ouvert:'))) kept.push(`ouvert:${today}`)
+  if (!kept.some(f => f.startsWith('après:'))) kept.push('après:-')
+  kept.push(`qui:${branch}`, `branche:${branch}`, 'lieu:cloud')
+  const line = `${raw.slice(0, cut)}\`[${kept.join(' | ')}]\``
+  lines.splice(at, 1)
+  const head = lines.findIndex(l => /^## En cours\s*$/.test(l))
+  if (head < 0) {
+    lines.splice(at, 0, line)
+    return { text: lines.join('\n'), line }
+  }
+  let end = head + 1
+  while (end < lines.length && !lines[end]!.startsWith('## ')) end++
+  let last = end - 1
+  while (last > head && lines[last]!.trim() === '') last--
+  lines.splice(last + 1, 0, ...(last === head ? ['', line] : [line]))
+  return { text: lines.join('\n'), line }
+}
+
+/**
+ * Le refus d'une carte cloud (#416) : la VM démarre sur la branche de la session qui pose la carte, qui doit donc être
+ * sur GitHub et sans commit en retard (le 2026-11-10, #426 est morte sur « branch or commit not found »). Hors git : rien.
+ */
+export function cloudStartRefusal(o: { inGit: boolean; branch?: string; upstream?: boolean; ahead?: number }): string | undefined {
+  if (!o.inGit) return undefined
+  const b = o.branch ?? '?'
+  if (!o.upstream) return `la branche ${b} de cette session n’est pas sur GitHub : la session cloud partirait d’un commit introuvable (git push -u origin ${b})`
+  if ((o.ahead ?? 0) > 0) return `la branche ${b} a ${o.ahead} commit${o.ahead === 1 ? '' : 's'} pas encore poussé${o.ahead === 1 ? '' : 's'} : la session cloud partirait d’un commit introuvable (git push)`
+  return undefined
+}
+
+/**
+ * Le brief d'une session cloud posée par le panneau (#416), le même que `brief_cloud.py` de la skill maestro : il
+ * se suffit sans plugin (la VM n'en charge pas) et renvoie aux règles du dépôt, `docs/session-cloud.md`.
+ */
+export function cloudBriefText(o: { project: string; id: string; label: string; line: string; branch: string; spec?: string }): string {
   return [
-    `Lance « ${title} » en cloud, choisi dans le panneau (${recoSaid}).`,
-    `Suis « Cloud mode » (§ 2 bis) de la skill roadmap:maestro : prends la ligne #${id} avec \`qui:feat/<slug> | branche:feat/<slug> | lieu:cloud\`, committe et pousse main, puis pose la carte start_session avec target: "cloud", titre « ${title} », et pour prompt la sortie de \`python3 <skill maestro>/scripts/brief_cloud.py <dossier principal> ${id}\`, telle quelle.`,
-    `Si le cloud cale (carte refusée faute d'environnement cloud, quota, outil absent, ou la session cloud qui se dit bloquée pour cela) : \`python3 <skill maestro>/scripts/repli_mac.py <dossier principal> ${id}\` retire lieu:cloud de la ligne et garde sa branche ; committe et pousse main, puis relance la tâche sur le Mac avec la consigne qu'il écrit.`,
-    'Pose la carte sans essayer de la lancer, puis réponds en une phrase au plus.',
-  ].join('\n\n')
+    `Mission : ${o.label.replace(/\.+$/, '')} (tâche #${o.id} de ${o.project}).`,
+    `Fini quand : ce que dit la ligne #${o.id} est livré, les tests de ta carte d'impact et node scripts/check.mjs sont verts, la branche ${o.branch} est poussée et sa PR vers main ouverte, son dernier commentaire porte ton compte rendu.`,
+    '---',
+    '',
+    'Ta ligne, telle qu\'écrite dans la roadmap (prise pour toi, ne la modifie pas) :',
+    '',
+    `> ${o.line}`,
+    '',
+    `Travaille sur la branche \`${o.branch}\`, partie de \`origin/main\`.`,
+    '',
+    'Tes règles : lis `docs/session-cloud.md` à la racine du dépôt avant tout geste ; elles remplacent les règles du Mac de CLAUDE.md.',
+    ...(o.spec ? ['', `Ta spec et ton plan : \`${o.spec}\``] : []),
+  ].join('\n') + '\n'
 }
 
 // --- Sessions cloud (#408, tâche 5) --------------------------------------------------------------

@@ -1,6 +1,6 @@
 # Est-il sûr de l'installer ?
 
-Version décrite : roadmap 0.260.0
+Version décrite : roadmap 0.261.0
 Un plugin de Claude Code fait tourner du code sur ta machine, donc la question se pose. Certains plugins
 malveillants ont l'air inoffensifs quand on les installe, puis téléchargent et lancent autre chose plus
 tard. Cette page dit tout ce que fait roadmap. Un test vérifie à chaque version qu'elle dit vrai, et tu
@@ -111,7 +111,7 @@ le moteur saute les hooks).
 
 | Fichier | Écrit par | Quand |
 |---|---|---|
-| la roadmap du projet : `ROADMAP.md`, `ROADMAP-fait.md`, `ROADMAP-bilans.csv` | `hooks/register.tsx` | quand tu coches, rouvres ou édites une tâche dans le panneau ; et `ROADMAP.md` seul, une fois par jour au démarrage d'une session, pour reporter à la semaine suivante les étapes de journée passées (`due:` seul, #277) |
+| la roadmap du projet : `ROADMAP.md`, `ROADMAP-fait.md`, `ROADMAP-bilans.csv` | `hooks/register.tsx` | quand tu coches, rouvres ou édites une tâche dans le panneau, ou la lances en cloud (`ROADMAP.md`, sa ligne prise, #416) ; et `ROADMAP.md` seul, une fois par jour au démarrage d'une session, pour reporter à la semaine suivante les étapes de journée passées (`due:` seul, #277) |
 | l'état du panneau, dans le stockage du plugin que tient l'app | `hooks/register.tsx` | en continu |
 | les vignettes des pièces jointes, dans un dossier privé de `$TMPDIR` | `hooks/register.tsx` | quand une fiche montre une image |
 | `~/.claude/reglages-session.json` | `hooks/reglages.tsx` | quand tu changes un réglage de session dans le volet Réglages |

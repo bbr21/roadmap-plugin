@@ -758,6 +758,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.261.0 (2026-11-11)** : maestro : la carte cloud part du panneau lui-même, qui prend la ligne ; l'interrupteur Cloud | Mac redessine sans recharger ; une carte cloud refuse une branche absente de GitHub (#416)
 - **0.260.0 (2026-11-11)** : panneau : la bande Maestro dit l'état en mot et en couleur (en session, t'attend, à fusionner, Done), la durée à la couleur de l'état, une tâche faite toute en violet (#425)
 - **0.259.0 (2026-11-10)** : panneau, maestro : reco cloud ou Mac pour chaque tâche, interrupteur Cloud | Mac dans la fiche, repli sur le Mac (#416)
 - **0.258.1 (2026-11-10)** : panneau : centre de contrôle, une session mise en pause à la main se montre et reprend même la file de lancement éteinte (#415)

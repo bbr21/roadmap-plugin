@@ -17,6 +17,8 @@ declare module 'claude-code' {
       retry: number
       /** Monte quand une session lancée change d'état : le panneau se redessine. */
       liveVersion: number
+      /** #416 : redessine la fiche (interrupteur Cloud | Mac, reco lue) sans recharger les données du panneau. */
+      recoStamp: number
       /** Génération des zones de clic (suffixe `-g<N>` de leurs clés) : monte quand leur cadre n'a pas dit « prêt ». */
       zoneGen: number
       /** Monte à la fin du mouvement d'une case cochée ou rouverte (#182) : la case redevient fixe, la cochée quitte les ouvertes. */

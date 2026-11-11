@@ -541,7 +541,10 @@ import {
   unlocksOf,
   cloudBrandTasks,
   cloudWords,
-  cloudLaunchText,
+  cloudBranchOf,
+  cloudBriefText,
+  cloudStartRefusal,
+  takeCloudLine,
   cloudReco,
   withTargetNote,
   type CloudReco,
@@ -950,6 +953,8 @@ const titlesVersionAtom = atom({ plugin: 'roadmap', key: 'titlesVersion' } as co
 const titleNoteAtom = atom({ plugin: 'roadmap', key: 'titleNote' } as const, '')
 const themeStampAtom = atom({ plugin: 'roadmap', key: 'themeStamp' } as const, 0)
 const liveVersionAtom = atom({ plugin: 'roadmap', key: 'liveVersion' } as const, 0)
+/** #416 : redessine le panneau sans recharger ses données (l'interrupteur Cloud | Mac, la reco lue). */
+const recoStampAtom = atom({ plugin: 'roadmap', key: 'recoStamp' } as const, 0)
 const retryAtom = atom({ plugin: 'roadmap', key: 'retry' } as const, 0)
 const zoneGenAtom = atom({ plugin: 'roadmap', key: 'zoneGen' } as const, 0)
 const checkMoveAtom = atom({ plugin: 'roadmap', key: 'checkMove' } as const, 0)
@@ -5320,7 +5325,7 @@ function loadRecoDocs($: EngineInterface, source: Source, task: Task): void {
       const docs: string[] = []
       for (const doc of briefDocs(source, task, found)) docs.push((await readOr($, doc)) ?? '')
       recoDocs.set(key, { sig, docs })
-      await update($, liveVersionAtom, v => v + 1)
+      await update($, recoStampAtom, v => v + 1)
     } catch {
       recoDocs.set(key, { sig, docs: [] })
     } finally {
@@ -5335,36 +5340,69 @@ function launchTargetOf(source: Source, task: Task): Sessions {
   return launchTargets.get(taskKey(task)) ?? recoOf(source, task).lieu
 }
 
-/** Un clic sur l'interrupteur : la cible change, la fiche se redessine. */
+/** Un clic sur l'interrupteur : la cible change, la fiche se redessine sans recharger les données du panneau. */
 async function setLaunchTarget($: EngineInterface, task: Task, target: Sessions): Promise<void> {
   launchTargets.set(taskKey(task), target)
-  await update($, liveVersionAtom, v => v + 1)
+  await update($, recoStampAtom, v => v + 1)
 }
 
 /**
- * Le lancement en cloud (#416), choisi par BBR sur l'interrupteur : Claude prend la ligne avec `lieu:cloud` et
- * pose la carte cible cloud (mode cloud de Maestro, #408), ou replie sur le Mac si le cloud cale. Une session
- * cloud ne prend pas de place au Mac : pas de file.
+ * Le lancement en cloud (#416), choisi sur l'interrupteur : le panneau pose lui-même la carte cible cloud, au brief
+ * qui se suffit (`cloudBriefText`, celui de `brief_cloud.py`), comme le ▶ du Mac pose la sienne ; un message à Claude
+ * était refusé sous Remote Control (retour de BBR, 0.259.0). La carte posée, il prend la ligne (`qui:`, `branche:`,
+ * `lieu:cloud`, montée dans « En cours ») et la pousse sur main. Une carte refusée ne prend rien : la ligne reste
+ * libre, la note dit pourquoi et le Mac reste à un clic. Une session cloud ne prend pas de place au Mac : pas de file.
  */
 async function launchCloud($: EngineInterface, source: Source, task: Task, shortTitle: string): Promise<void> {
   const key = taskKey(task)
+  const fail = (why: string) => setView($, v => ({ launched: v.launched.filter(k => k !== key), launchNote: `Lancement en cloud impossible : ${why}` }))
   await setView($, v => ({ launched: v.launched.includes(key) ? v.launched : [...v.launched, key], launchNote: LAUNCHING }))
   try {
+    if (!task.id) return void (await fail('la tâche n\'a pas de numéro (id:)'))
     const brief = await workBrief($, source, task, shortTitle)
     const refused = await launchRefusal($, { title: brief.title })
-    if (refused !== undefined) {
-      await setView($, v => ({ launched: v.launched.filter(k => k !== key), launchNote: `Lancement impossible : ${refused}` }))
-      return
+    if (refused !== undefined) return void (await fail(refused))
+    // La VM part de la branche de cette session : elle doit être sur GitHub, sans commit en retard (#426).
+    const here = await $.session.cwd()
+    const git = (...args: string[]) => $.process.run(['git', '-C', here, ...args], { timeoutMs: 30_000 })
+    const head = await git('rev-parse', '--abbrev-ref', 'HEAD')
+    const ahead = head.exitCode === 0 ? await git('rev-list', '--count', '@{u}..HEAD') : undefined
+    const startRefused = cloudStartRefusal({
+      inGit: head.exitCode === 0,
+      branch: head.stdout.trim(),
+      upstream: ahead?.exitCode === 0,
+      ahead: Number(ahead?.stdout.trim() || 0),
+    })
+    if (startRefused !== undefined) return void (await fail(startRefused))
+    const { open } = files(source)
+    const branch = cloudBranchOf(task)
+    const taken = takeCloudLine(await $.fs.read(open), task.id, branch, todayOf(await $.clock.now()))
+    if ('error' in taken) return void (await fail(taken.error))
+    const prompt = cloudBriefText({ project: source.name, id: task.id, label: task.label, line: taken.line, branch, ...(task.spec ? { spec: task.spec } : {}) })
+    const card = {
+      tool: START_SESSION_TOOL,
+      initiation: 'own_initiative',
+      context: 'fresh',
+      target: 'cloud',
+      title: brief.title,
+      prompt,
+      background: `Tâche #${task.id} du projet ${source.name}, lancée en cloud depuis le panneau roadmap (#416) : la session tourne dans une VM claude.ai sans le plugin ; ses règles sont dans docs/session-cloud.md du dépôt, Maestro la suit par sa PR sur le Mac.`,
     }
-    queueSubmit($, launchPrompt(brief.title, cloudLaunchText(task, brief.title, recoOf(source, task))))
-    await setView($, () => ({ launchNote: CLOUD_VIA_CLAUDE }))
+    const posted = await proposeCard($, card, [])
+    if (posted.ran.deny !== undefined || posted.ran.isError) return void (await fail(cardReason(posted.ran)))
+    const wrote = await writeRoadmapFiles($, source, ['ROADMAP.md'], `roadmap: take ${branch.replace(/^feat\//, '')} (#${task.id}, cloud)`, async () => {
+      const again = takeCloudLine(await $.fs.read(open), task.id!, branch, todayOf(await $.clock.now()))
+      return 'error' in again ? again : { 'ROADMAP.md': again.text }
+    })
+    const note = 'error' in wrote ? `Carte cloud posée, mais la ligne n'est pas prise : ${wrote.error}` : wrote.note ? `Carte cloud posée ; ${wrote.note}` : CLOUD_PROPOSED
+    await setView($, () => ({ launchNote: note }))
   } catch (err) {
-    await setView($, v => ({ launched: v.launched.filter(k => k !== key), launchNote: `Lancement impossible : ${err instanceof Error ? err.message : String(err)}` }))
+    await fail(err instanceof Error ? err.message : String(err))
   }
 }
 
-/** La note d'un lancement en cloud : Claude prend la ligne et pose la carte. */
-const CLOUD_VIA_CLAUDE = 'En cloud : Claude prend la ligne et pose la carte.'
+/** La note d'un lancement en cloud réussi : la carte attend Start, la ligne est prise et poussée. */
+const CLOUD_PROPOSED = 'Carte cloud posée : clique Start. La ligne est prise (lieu:cloud).'
 
 /** Le « Message additionnel » tapé dans le détail, ajouté au brief ; vidé à chaque changement de tâche. */
 let launchExtra = ''
@@ -10562,6 +10600,8 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     read($, viewAtom), read($, searchAtom), read($, titleNoteAtom), read($, zoneGenAtom), $.clock.now(), read($, scanNoteAtom),
     // Lu pour être redessiné à la fin d'un mouvement de case (#182), sans relire les fichiers.
     read($, checkMoveAtom),
+    // #416 : l'interrupteur Cloud | Mac et la reco lue redessinent sans relire les fichiers.
+    read($, recoStampAtom),
   ])
   const {
     axis: axisRaw, attend: attendRaw, who: whoRaw = 'all', moreFilters = false, showDone: doneChosen, groupBy, selected, openGroups, closedGroups, moreGroups,
@@ -11962,7 +12002,10 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     const recoLine = (): RenderElement => (
       <Box key="launch-reco" flexDirection="row" gap={SPACE.tight} alignItems="flex-start" minWidth={0}>
         {Svg && <Svg source={reco.lieu === 'cloud' ? cloudIcon(palette.live, SIZE.icon.sm) : playIcon(palette.text3, SIZE.icon.sm)} alt={reco.lieu === 'cloud' ? 'cloud' : 'Mac'} width={SIZE.icon.sm} height={SIZE.icon.sm} />}
-        <Text size="caption" weight="semibold" color={palette.text}>{`Recommandé : ${reco.lieu === 'cloud' ? 'cloud' : 'Mac'}`}</Text>
+        {/* Le mot ne se coupe pas (capture de BBR, 0.259.0) : seule la raison passe à la ligne. */}
+        <Box flexShrink={0}>
+          <Text size="caption" weight="semibold" color={palette.text} wrap="truncate-end">{`Recommandé : ${reco.lieu === 'cloud' ? 'cloud' : 'Mac'}`}</Text>
+        </Box>
         <Box flexGrow={1} flexShrink={1} minWidth={0}>
           <Text size="caption" color={palette.text2} wrap="wrap">{`· ${reco.why}`}</Text>
         </Box>

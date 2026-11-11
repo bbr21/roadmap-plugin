@@ -281,13 +281,18 @@ task needs a mockup, a capture, the iOS simulator, the browser pane or another r
 `#<id> · Mac · <reason>`, from the line, its spec and its fiche (the same markers as the panel). Before posting a
 card, give that line and ask the target by the choice form, the recommendation first; nothing goes to the cloud
 without the person's choice. In the panel, the task's fiche carries a Cloud | Mac switch set on the recommendation,
-then « Lancer »: a cloud choice reaches you as a launch message saying the task goes to the cloud, chosen in the
-panel, which is that choice already made: take the line and post the cloud card below, without asking again. A Mac card launched from
-the panel ends with « Cible : le Mac, … » and the recommendation. What changes for Maestro on a cloud launch:
+then « Lancer »: on a cloud choice the panel itself posts the cloud card (the same brief as `brief_cloud.py`) and,
+once the app accepts it, takes the line (`qui:`, `branche:` `feat/<slug>`, `lieu:cloud`, moved to « En cours ») and
+pushes `main`; nothing reaches you, and you follow it by its PR as below. A Mac card launched from the panel ends
+with « Cible : le Mac, … » and the recommendation. What changes for Maestro on a cloud launch:
 
 - **Take the line** as usual, plus `lieu:cloud`: `qui:<branche> | branche:<branche> | lieu:cloud`, with a
   `feat/<slug>` branch Maestro chooses (the VM gets a `claude/…` branch from the app; the brief makes it switch).
   Commit and push `main` before posting the card.
+- **Push your own branch first** (#426): a cloud session starts from the branch of the session that posts its
+  card. From a Maestro in a worktree, that branch must be on GitHub with nothing left to push, or the VM dies at start
+  on « The requested branch or commit was not found ». `git push -u origin <your branch>` before the card; the panel
+  refuses its own cloud card in that case and says so.
 - **Post the card** with `start_session`, `target: "cloud"`, title `#<id> · <nom>`, and as its prompt the output
   of `python3 "<skill folder>/scripts/brief_cloud.py" <main folder> <id>`, unchanged: it opens on the three mission
   lines and points to `docs/session-cloud.md`. No Maestro clause, no tree context: none of the plugin's rules reach
