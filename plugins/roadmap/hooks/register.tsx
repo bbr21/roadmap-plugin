@@ -111,7 +111,7 @@ import {
 import { MIX, PX, RADIUS, SIZE, SPACE, TEXT } from './tokens'
 import { BEFORE_KEY, CLOSED_KEY, NATIVE_KEY, beforeMap, closedKeys, drawWrittenMessage, keepBefore, keepClosed, keepNative, nativeKeys, splitWritten, testSessions, withoutClosed, withoutNative, writtenCards, type WrittenLine, type WrittenStart, type WrittenWho } from './cartes'
 import { CARD_DEADLINE_MS, CARD_LATE_WHY, cardTargetOf, dismissCall, panelChoiceIn, proposalIdIn, recoTargetRefusal, type Place } from './depart'
-import { CLOUD_WATCH_EVERY_MS, CLOUD_WATCH_KEY, MISSION_START_KEY, addMissionStart, addWatch, briefBranchOf, dueWatches, lineVerdict, missionStartList, pushedSince, remoteHeads, startedCardTitles, watchList, type CloudWatch } from './prise-cloud'
+import { CLOUD_WATCH_EVERY_MS, CLOUD_WATCH_KEY, MISSION_START_KEY, addMissionStart, addWatch, startedAtCall, briefBranchOf, dueWatches, lineVerdict, missionStartList, pushedSince, remoteHeads, startedCardTitles, watchList, type CloudWatch } from './prise-cloud'
 import { CLOUD_WAKE_EVERY_MS, CLOUD_WAKE_KEY, CLOUD_WAKE_PR_FIELDS, cloudWakeDue, cloudWakes, wakePrompt, wakeStateOf, type WakeRole } from './reveil-cloud'
 import { gardienCardRefusal, gardienDeliveryNote, gardienOf, gardienReminder, goesToGardien, isGardienSession, withoutGardien } from './gardien'
 import { CONTROL_PANE, drawControl, openControl, redrawControl, type ControlDeps } from './controle'
@@ -3188,12 +3188,31 @@ async function missionCardOf($: EngineInterface, e: unknown): Promise<{ card: Re
   }
 }
 
-/** #512, #510 : la carte de mission posée se garde ; sa ligne se prendra à son départ. Rend ce que Claude en apprend. */
-async function takeMissionOnCard($: EngineInterface, m: { source: Source; id: string }): Promise<string> {
+/**
+ * #512, #510 : la carte de mission posée se garde ; sa ligne se prendra à son départ. Lancée directement (`started`,
+ * cas AAFES #644), le départ est maintenant : la ligne se prend tout de suite. Rend ce que Claude en apprend.
+ */
+async function takeMissionOnCard($: EngineInterface, m: { source: Source; id: string }, started = false): Promise<string> {
   pendingMissions.delete(pendingKey(m.source, m.id))
+  if (started) {
+    const error = await takeMissionNow($, m.source, m.id)
+    await setView($, () => ({ launchNote: error === undefined ? 'Mission lancée : la ligne est prise (qui:mission).' : `Mission lancée, mais la ligne n'est pas prise : ${error}` }))
+    return missionTakenText(m.id, error, true)
+  }
   await rememberMissionStart($, m.source, m.id)
   await setView($, () => ({ launchNote: MISSION_PROPOSED }))
   return missionTakenText(m.id)
+}
+
+/** La prise d'une mission à son départ (#510) : `qui:mission | lieu:cloud` ; déjà prise, rien à refaire. Rend l'erreur, sinon rien. */
+async function takeMissionNow($: EngineInterface, source: Source, id: string): Promise<string | undefined> {
+  const { open } = files(source)
+  const done = await writeRoadmapFiles($, source, ['ROADMAP.md'], `roadmap: take mission (#${id}, cloud)`, async () => {
+    const again = takeMissionLine(await $.fs.read(open), id, todayOf(await $.clock.now()))
+    // Maestro l'a déjà prise : rien à refaire.
+    return 'error' in again ? (/déjà partie en mission/.test(again.error) ? ({} as Record<string, string>) : again) : { 'ROADMAP.md': again.text }
+  }).catch((err: unknown) => ({ error: err instanceof Error ? err.message : String(err) }))
+  return 'error' in done ? done.error : undefined
 }
 
 /** Les cartes de mission posées par ce module (la garde du store est partagée ; celle-ci tient si le store est en panne). */
@@ -3223,19 +3242,13 @@ async function takeStartedLines($: EngineInterface, text: unknown): Promise<void
   const source = knownSource ?? (await sourceNow($).catch(() => undefined))
   if (!source) return
   const root = source.root ?? source.dir
-  const { open } = files(source)
   for (const title of titles) {
     const id = sessionTitleId(title)
     if (id === undefined) continue
     const key = `${root}|${id}`
     const stored = missionStartList(await storeGet($, MISSION_START_KEY).catch(() => undefined))
     if (missionStarts.has(key) || stored.some(m => m.key === key)) {
-      const done = await writeRoadmapFiles($, source, ['ROADMAP.md'], `roadmap: take mission (#${id}, cloud)`, async () => {
-        const again = takeMissionLine(await $.fs.read(open), id, todayOf(await $.clock.now()))
-        // Maestro l'a déjà prise : rien à refaire.
-        return 'error' in again ? (/déjà partie en mission/.test(again.error) ? ({} as Record<string, string>) : again) : { 'ROADMAP.md': again.text }
-      })
-      if ('error' in done) continue
+      if ((await takeMissionNow($, source, id)) !== undefined) continue
       missionStarts.delete(key)
       await storeSet($, MISSION_START_KEY, stored.filter(m => m.key !== key) as unknown as StoreValue).catch(() => undefined)
       await update($, liveVersionAtom, v => v + 1)
@@ -10358,7 +10371,7 @@ export const register: Register = (on, options) => {
     }
     // #512 : la carte de mission posée prend sa ligne, et sa réponse dit à Claude si elle est prise.
     if (mission && ran.deny === undefined && !ran.isError && !cardNotProposed(ran)) {
-      return { ...ran, text: `${ran.text ?? ''}\n\n${await takeMissionOnCard($, mission)}`.trim() }
+      return { ...ran, text: `${ran.text ?? ''}\n\n${await takeMissionOnCard($, mission, startedAtCall(e as { initiation?: unknown }, ran.text))}`.trim() }
     }
     // #528 : la première carte de tâche d'un Maestro de code sans gardien lui rappelle de poser celle du gardien.
     if (byModel && id !== undefined && ran.deny === undefined && !gardienTold) {

@@ -482,7 +482,8 @@ otherwise they see an empty worktree.
   user started your suggested background task "<titre>" … »: a line held by `qui:mission` is a mission in flight,
   followed below. When Maestro posts the card, it takes the line at that same message, never before, by
   `python3 "<skill folder>/scripts/prendre_cloud.py" <main folder> "<titre>" --mission` (`takeMissionLine`'s twin);
-  a line the panel already took is left as it is. Outside Bypass the app refuses a mod's own card
+  a line the panel already took is left as it is. A mission you start directly (`initiation: user_asked`, when the person told you to launch it) gets no
+  start message: the plugin takes its line at once, and its answer says so (#510, AAFES #644). Outside Bypass the app refuses a mod's own card
   (« needs a person's approval », AAFES #694, #512): the ▶ Cloud then asks Claude in the conversation, as the other
   launches do (#248), with the exact instruction of `missionCardPrompt` as the card's `prompt`, and a refused direct
   card falls back to the same way. The plugin enforces it on any cloud card the model posts in such a project

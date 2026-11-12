@@ -132,3 +132,12 @@ export function missionStartList(stored: unknown): MissionStart[] {
 export function addMissionStart(list: readonly MissionStart[], entry: MissionStart, now: number): MissionStart[] {
   return [...list.filter(w => w.key !== entry.key && now - w.at <= CLOUD_WATCH_TTL_MS), entry].slice(-CLOUD_WATCH_MAX)
 }
+
+/**
+ * Le départ a-t-il eu lieu à l'appel même (#510, cas AAFES #644) ? Un lancement direct (`initiation: user_asked`) démarre
+ * la session sans carte : l'app n'enverra jamais « The user started your suggested background task », et la ligne se
+ * prend tout de suite. Une carte proposée (« Proposed the session »), même retombée d'un user_asked, attend Start.
+ */
+export function startedAtCall(card: { initiation?: unknown }, text: string | undefined): boolean {
+  return card.initiation === 'user_asked' && !/\bProposed the session\b/i.test(text ?? '')
+}

@@ -11061,7 +11061,8 @@ export function missionViaClaudeNote(refused: boolean): string {
 }
 
 /** #512 : ce que la réponse de la carte de mission dit à Claude de la ligne, prise ou non. */
-export function missionTakenText(id: string, error?: string): string {
+export function missionTakenText(id: string, error?: string, started = false): string {
+  if (started) return error === undefined ? `Plugin roadmap : la mission #${id} est lancée, sa ligne est prise (qui:mission | lieu:cloud).` : `Plugin roadmap : la ligne #${id} n'est pas prise (${error}). Prends-la toi-même si elle est libre : qui:mission | lieu:cloud, sans branche:.`
   return error === undefined
     ? `Plugin roadmap : la ligne #${id} se prendra au départ de la mission (qui:mission | lieu:cloud), au message de l'app qui dit que la personne a cliqué Start (#510).`
     : `Plugin roadmap : la ligne #${id} n'est pas prise (${error}). Prends-la toi-même si elle est libre : qui:mission | lieu:cloud, sans branche:.`
