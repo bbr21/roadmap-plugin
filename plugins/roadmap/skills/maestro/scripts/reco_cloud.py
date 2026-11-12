@@ -22,8 +22,9 @@ vrai rendu, ressource unique, secrets, maquettes, code seul ; le lieu en découl
 Avec `--carte` (#458), la carte que Maestro pose, en JSON : `target` « cloud » quand la reco dit cloud et que le projet
 a `"sessions": "cloud"` dans DEPOT/.claude/roadmap.json, « mac » sinon ; `titre` « #ID · <nom:> · cloud » (ou
 « · Mac »), coupé à 58 signes comme `targetTitle` du panneau ; `branche`, celle que nommeront le brief
-(`brief_cloud.py --branche`) et la prise (`prendre_cloud.py`) pour une carte cloud, sinon null ; `reco`, `besoins`,
-`raison` et `par`. Le hook `start_session` du panneau refuse une carte de Maestro dont le lieu contredit cette reco
+(`brief_cloud.py --branche`) et la prise (`prendre_cloud.py`) pour une carte cloud, sinon null ; `mission`, vrai pour
+une carte cloud d'un projet `"cloud": "missions"` (#476 : le brief vient de `mission_cloud.py carte`, la ligne se prend
+en `qui` « mission » et `lieu:cloud`, sans branche, et `qui` le dit) ; `reco`, `besoins`, `raison` et `par`. Le hook `start_session` du panneau refuse une carte de Maestro dont le lieu contredit cette reco
 (#465) : c'est cette carte qui passe.
 
 Python 3.9 et plus, bibliothèque standard seulement.
@@ -133,13 +134,23 @@ def verdict(depot, id_, libelle):
     return {"lieu": v["lieu"], "why": v["why"].strip()}
 
 
-def projet_cloud(depot):
-    """Le projet ouvre-t-il le cloud (`"sessions": "cloud"` de DEPOT/.claude/roadmap.json) ?"""
+def _reglages(depot):
     try:
         with open(os.path.join(depot, ".claude", "roadmap.json"), encoding="utf-8") as f:
-            return json.load(f).get("sessions") == "cloud"
-    except (OSError, ValueError, AttributeError):
-        return False
+            r = json.load(f)
+        return r if isinstance(r, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def projet_missions(depot):
+    """Le projet lance-t-il des missions (`"cloud": "missions"` de DEPOT/.claude/roadmap.json, #476) ?"""
+    return _reglages(depot).get("cloud") == "missions"
+
+
+def projet_cloud(depot):
+    """Le projet ouvre-t-il le cloud (`"sessions": "cloud"`, ou `"cloud": "missions"` depuis #476) ?"""
+    return _reglages(depot).get("sessions") == "cloud" or projet_missions(depot)
 
 
 def titre_carte(id_, nom, target):
@@ -158,16 +169,22 @@ def carte(depot, id_, ligne, r, par):
     ouvert = projet_cloud(depot)
     target = "cloud" if r["lieu"] == "cloud" and ouvert else "mac"
     raison = r["why"] if ouvert else "%s ; mais le projet n'a pas \"sessions\": \"cloud\"" % r["why"]
-    return {
+    # #476 : un projet en missions part en mission (mission_cloud.py carte, ligne prise en qui:mission), sans branche.
+    mission = target == "cloud" and projet_missions(depot)
+    carte_ = {
         "id": id_,
         "target": target,
         "titre": titre_carte(id_, nom, target),
-        "branche": prendre_cloud.branche_cloud(nom, id_) if target == "cloud" else None,
+        "branche": prendre_cloud.branche_cloud(nom, id_) if target == "cloud" and not mission else None,
+        "mission": mission,
         "reco": r["lieu"],
         "besoins": r.get("besoins", []),
         "raison": raison,
         "par": par,
     }
+    if mission:
+        carte_["qui"] = "mission"
+    return carte_
 
 
 def main(argv=None):

@@ -221,6 +221,8 @@ export type WrittenCardsOptions = {
   before?: ReadonlyMap<string, WrittenBefore>
   /** Les bilans de la roadmap (`ROADMAP-bilans.csv`, déjà en mémoire du panneau) : la description et la version d'une faite. */
   bilans?: ReadonlyMap<string, Bilan>
+  /** #479 : le lieu où part le Start d'une Nouvelle (la cible de l'interrupteur, sinon la reco) ; absent : celui de sa ligne. */
+  reco?: (t: Task) => Sessions | undefined
 }
 
 /**
@@ -271,7 +273,8 @@ export function writtenCards(lines: readonly WrittenLine[], tasks: readonly Task
       foot,
       ...(who?.session ? { session: true as const } : {}),
       ...(startable ? { start: true as const } : {}),
-      ...(task ? { lieu: task.lieu === 'cloud' ? ('cloud' as const) : ('mac' as const) } : {}),
+      // #479 : une Nouvelle que personne ne tient dit le lieu recommandé, celui où part son Start.
+      ...(task ? { lieu: task.lieu === 'cloud' ? ('cloud' as const) : startable ? (o.reco?.(task) ?? ('mac' as const)) : ('mac' as const) } : {}),
     }
   })
 }
@@ -449,8 +452,8 @@ export function drawWrittenMessage(el: ReturnType<EngineInterface['ui']['resolve
     const done = c.kind === 'done'
     const ink = kindInk(palette, c.kind)
     const bandBg = done ? mixOver(palette.finished, palette.finishedTint, 0.22) : palette.hover
-    // #436 : l'icône et le mot du lieu à droite du bandeau ; pas sur une Nouvelle, dont la carte native dit la cible.
-    const place = c.lieu !== undefined && c.kind !== 'new' && (() => {
+    // #436 : l'icône et le mot du lieu à droite du bandeau ; sur une Nouvelle aussi, le lieu où part son Start (#479).
+    const place = c.lieu !== undefined && (() => {
       const cloud = c.lieu === 'cloud'
       const word = cloud ? 'cloud' : 'Mac'
       const alt = cloud ? 'Dans le cloud' : 'Sur le Mac'

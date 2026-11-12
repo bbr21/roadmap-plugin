@@ -106,7 +106,7 @@ import {
 } from './icons'
 import { MIX, PX, RADIUS, SIZE, SPACE, TEXT } from './tokens'
 import { BEFORE_KEY, CLOSED_KEY, NATIVE_KEY, beforeMap, closedKeys, drawWrittenMessage, keepBefore, keepClosed, keepNative, nativeKeys, splitWritten, testSessions, withoutClosed, withoutNative, writtenCards, type WrittenLine, type WrittenStart, type WrittenWho } from './cartes'
-import { CARD_DEADLINE_MS, CARD_LATE_WHY, cardTargetOf, dismissCall, proposalIdIn, recoTargetRefusal, type Place } from './depart'
+import { CARD_DEADLINE_MS, CARD_LATE_WHY, cardTargetOf, dismissCall, panelChoiceIn, proposalIdIn, recoTargetRefusal, type Place } from './depart'
 import { CONTROL_PANE, drawControl, openControl, redrawControl, type ControlDeps } from './controle'
 import { SETTINGS_PANE, drawSettings, openSettings, prefsFile, redrawSettings, rememberLoadedOptions, sessionProject, watchSettings, type SettingsProject } from './reglages'
 import {
@@ -2800,7 +2800,9 @@ async function dismissPendingCard($: EngineInterface, source: Source, id: string
 /**
  * #465 : la carte que pose le modèle (Maestro) pour la ligne #N part au lieu de sa reco, la même que `reco_cloud.py
  * --carte` : dans un projet ouvert au cloud, une carte dont le lieu la contredit se refuse, avec l'appel juste. Sans
- * #N, sans roadmap, ligne absente ou close, projet fermé au cloud, démarrage d'une proposition : rien.
+ * #N, sans roadmap, ligne absente ou close, projet fermé au cloud, démarrage d'une proposition : rien. Un projet
+ * `cloud: missions` (#476) non plus : la reco d'un projet sans code dit toujours Mac, et Maestro y choisit la mission
+ * ou le Mac par le § 2 ter de sa skill.
  */
 async function recoCardRefusal($: EngineInterface, e: unknown): Promise<string | undefined> {
   const card = e as Record<string, unknown>
@@ -2809,7 +2811,7 @@ async function recoCardRefusal($: EngineInterface, e: unknown): Promise<string |
   if (id === undefined) return undefined
   try {
     const source = await sourceNow($)
-    if (!source || !cloudOpen(source)) return undefined
+    if (!source || !cloudOpen(source) || projectSettings(source).cloud === 'missions') return undefined
     const open = await load($, files(source).open, 'ROADMAP.md')
     if (typeof open === 'string') return undefined
     const task = open.find(t => t.id === id && !t.done)
@@ -2820,7 +2822,9 @@ async function recoCardRefusal($: EngineInterface, e: unknown): Promise<string |
     for (const doc of briefDocs(source, task, found)) docs.push((await readOr($, doc)) ?? '')
     const reco = judgedReco(task, recoCache.cache, task.spec || task.fiche ? docs : undefined, { projet: projectSettings(source).travail === 'projet' })
     const title = card.title.replace(/ · (?:cloud|Mac)$/, '')
-    return recoTargetRefusal({ id, cardTarget: cardTargetOf(card), reco: reco.lieu, why: reco.why, title, branch: cloudBranchOf(task) })
+    // #479 : le lieu choisi dans le panneau, que dit le brief du ▶ passé par Claude, l'emporte sur la reco.
+    const chosen = panelChoiceIn(card.prompt)
+    return recoTargetRefusal({ id, cardTarget: cardTargetOf(card), reco: reco.lieu, why: reco.why, title, branch: cloudBranchOf(task), ...(chosen ? { chosen } : {}) })
   } catch {
     return undefined
   }
@@ -3010,6 +3014,12 @@ async function startFromCard($: EngineInterface, source: Source, id: string, sho
     const tasks = typeof opened === 'string' ? [] : opened
     const task = tasks.find(t => t.id === id && !t.done)
     if (!task) return
+    // #479 : Start part au lieu que dit la carte ; le cloud ne prend pas de place au Mac, donc pas de file de Maestro.
+    if (cloudOpen(source) && !isRoutine(task) && launchTargetOf(source, task) === 'cloud') {
+      await launchCloud($, source, task, shortTitle)
+      if (!(await read($, viewAtom)).launchNote.startsWith('Lancement en cloud impossible')) cardStarts.set(key, { state: 'proposed' })
+      return
+    }
     const maestro = await rootMaestro($)
     if (maestro) {
       const now = await $.clock.now()
@@ -9451,7 +9461,7 @@ export const register: Register = (on, options) => {
         return found.entry.sessionId !== undefined && runningBySession.get(found.entry.sessionId) === false ? { text: "t'attend", tone: 'soon', session: true } : { text: 'en session', tone: 'live', session: true }
       }
       // Les bilans : ce que le panneau a déjà en mémoire (`paneData`), jamais une nouvelle lecture.
-      const cards = (lines: WrittenLine[]) => writtenCards(lines, tasks, { short: t => shownTitle(t, data.titles), today: todayOf(now), me: source.me, who, bilans: data.bilan.bilans, ...(before ? { before } : {}) })
+      const cards = (lines: WrittenLine[]) => writtenCards(lines, tasks, { short: t => shownTitle(t, data.titles), today: todayOf(now), me: source.me, who, bilans: data.bilan.bilans, ...(before ? { before } : {}), ...(cloudOpen(source) ? { reco: (t: Task) => (isRoutine(t) ? 'mac' : launchTargetOf(source, t)) } : {}) })
       const openSessionOf = (id: string) => {
         const entry = sessions.get(id)
         void (entry ? openSession($, entry) : openTaskFiche($, source, id))

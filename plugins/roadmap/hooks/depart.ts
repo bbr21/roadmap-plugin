@@ -1,5 +1,6 @@
-// Le départ au lieu de la reco (#465, demande de BBR du 2026-11-11) : tout départ, ▶ de la fiche ou carte de Maestro,
-// part au lieu que dit la reco, cloud ou Mac, sans exception. Fonctions pures, sans moteur : `register.tsx` les appelle.
+// Le départ au lieu de la reco (#465, demande de BBR du 2026-11-11) : la carte que Maestro pose de lui-même part au lieu
+// que dit la reco, cloud ou Mac ; le lieu que BBR choisit dans le panneau l'emporte (#479). Fonctions pures, sans
+// moteur : `register.tsx` les appelle.
 
 /** Le lieu d'une session : le cloud (une VM claude.ai) ou le Mac. */
 export type Place = 'cloud' | 'mac'
@@ -19,14 +20,26 @@ export function cardTargetOf(card: Record<string, unknown>): Place {
 }
 
 /**
- * Le refus d'une carte dont le lieu contredit la reco de sa ligne #N, avec l'appel juste : `target`, titre de la ligne
- * (sans la marque de cible, que le hook ajoute), et pour le cloud la branche et le brief de `brief_cloud.py`. Même lieu :
- * `undefined`. Le lieu se change encore au Start de la carte, par la personne : la carte, elle, part toujours à la reco.
+ * #479 : le lieu que la personne a choisi dans le panneau, lu dans le brief de la carte : la ligne « Cible : le Mac,
+ * choisi dans le panneau … » (ou « le cloud ») que le panneau écrit (`withTargetNote`) quand le ▶ contredit la reco et
+ * passe par Claude. Seule une ligne entière qui commence ainsi compte ; « comme recommandé » ou rien : `undefined`.
  */
-export function recoTargetRefusal(o: { id: string; cardTarget: Place; reco: Place; why: string; title: string; branch: string }): string | undefined {
-  if (o.cardTarget === o.reco) return undefined
+export function panelChoiceIn(prompt: unknown): Place | undefined {
+  if (typeof prompt !== 'string') return undefined
+  const m = /^Cible : le (Mac|cloud), choisi dans le panneau\b/m.exec(prompt)
+  return m ? (m[1] === 'cloud' ? 'cloud' : 'mac') : undefined
+}
+
+/**
+ * Le refus d'une carte dont le lieu contredit la reco de sa ligne #N, avec l'appel juste : `target`, titre de la ligne
+ * (sans la marque de cible, que le hook ajoute), et pour le cloud la branche et le brief de `brief_cloud.py`. Même lieu,
+ * ou lieu choisi dans le panneau (`chosen`, #479) : `undefined`. Seule la carte que Maestro pose de lui-même suit la reco ;
+ * le lieu se change encore au Start de la carte, par la personne.
+ */
+export function recoTargetRefusal(o: { id: string; cardTarget: Place; reco: Place; why: string; title: string; branch: string; chosen?: Place }): string | undefined {
+  if (o.cardTarget === o.reco || o.chosen === o.cardTarget) return undefined
   const why = o.why.trim() ? ` (${o.why.trim()})` : ''
-  const head = `Carte refusée (#465) : la reco de #${o.id} dit ${o.reco === 'cloud' ? 'cloud' : 'Mac'}${why}, et une carte part toujours au lieu de la reco.`
+  const head = `Carte refusée (#465) : la reco de #${o.id} dit ${o.reco === 'cloud' ? 'cloud' : 'Mac'}${why}, et une carte que tu poses de toi-même part au lieu de la reco (seul un choix fait dans le panneau, que son brief dit, l'emporte).`
   if (o.reco === 'cloud') {
     return `${head} Repose-la avec start_session, target: "cloud", le titre « ${o.title} » et pour prompt la sortie de brief_cloud.py <dossier principal> ${o.id} --branche ${o.branch} (reco_cloud.py <dossier principal> ${o.id} --carte donne la même carte). La personne peut encore choisir le Mac au Start de la carte.`
   }

@@ -429,7 +429,10 @@ otherwise they see an empty worktree.
   `use_worktree: false`; the doctor asks neither `docs/session-cloud.md` nor a branch. The panel's Cloud switch is open
   and its ▶ Cloud posts the mission card itself (the task's line as the instruction) and takes the line
   `qui:mission | lieu:cloud`, with no `branche:`: a line held by `qui:mission` is a mission in flight, followed below.
-  When Maestro posts the card, it takes the line the same way.
+  When Maestro posts the card, it takes the line the same way. `reco_cloud.py <dossier> <id> --carte` knows the
+  setting: its card says `"mission": true`, `"qui": "mission"` and no `branche`, so the brief comes from
+  `mission_cloud.py carte`, never from `brief_cloud.py`. The panel's #465 guard does not hold such a project's cards:
+  a project without code is always advised Mac, and § 2 ter, not the reco, decides between a mission and the Mac.
 - **Follow**: the card answers only « started », with no session number. `RemoteTrigger list` then
   `python3 "<skill folder>/scripts/mission_cloud.py" retour <id>` (the list on stdin) gives the reminder and the
   session that posted it; `RemoteTrigger get_run_log` with that session, piped to `mission_cloud.py fin`, gives
