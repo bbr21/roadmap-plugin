@@ -589,6 +589,10 @@ import {
   takeCloudLine,
   takeMissionLine,
   missionCardPrompt,
+  isMissionPrompt,
+  missionAskText,
+  missionViaClaudeNote,
+  missionTakenText,
   MISSION_QUI,
   judgedReco,
   parseRecoCache,
@@ -2813,6 +2817,58 @@ function withTargetTitle(card: Record<string, unknown>): Record<string, unknown>
  */
 const pendingCards = new Map<string, { target: Place; proposal?: string }>()
 const pendingKey = (source: Source, id: string) => `${source.root ?? source.dir}|${id}`
+
+/**
+ * #512 : les consignes de mission que le panneau a demandé à Claude de poser, par tâche (`<projet>|<id>`) : la carte
+ * que Claude pose pour elle part avec ce prompt, mot pour mot. En mémoire du module, comme `pendingCards`.
+ */
+const pendingMissions = new Map<string, string>()
+
+/**
+ * #512 (cas AAFES #694) : la carte cloud que pose Claude dans un projet `cloud: missions` est une mission. Elle part
+ * avec la consigne que le panneau a demandée, sinon avec la sienne si elle porte le rappel « #N · retour » (Maestro,
+ * `mission_cloud.py carte`), sinon avec celle de la ligne (`missionCardPrompt`) : jamais un brief rédigé par Claude,
+ * ni bloc de réglages, ni `permission_mode`. Pas une mission (projet, cible Mac, ligne absente) : `undefined`.
+ */
+async function missionCardOf($: EngineInterface, e: unknown): Promise<{ card: Record<string, unknown>; source: Source; id: string } | undefined> {
+  const card = e as Record<string, unknown>
+  if (typeof card.title !== 'string' || card.proposal_id !== undefined) return undefined
+  const id = sessionTitleId(card.title)
+  if (id === undefined) return undefined
+  try {
+    const source = await sourceNow($)
+    if (!source || projectSettings(source).cloud !== 'missions') return undefined
+    const pending = pendingMissions.get(pendingKey(source, id))
+    if (pending === undefined && cardTargetOf(card) !== 'cloud') return undefined
+    const open = await load($, files(source).open, 'ROADMAP.md')
+    if (typeof open === 'string') return undefined
+    const task = open.find(t => t.id === id && !t.done)
+    if (!task || isRoutine(task)) return undefined
+    const prompt = pending ?? (isMissionPrompt(card.prompt, id) ? card.prompt : missionCardPrompt({ project: source.name, id, label: task.label }))
+    const { permission_mode: _, ...rest } = card
+    return { card: { ...rest, target: 'cloud', context: 'fresh', prompt }, source, id }
+  } catch {
+    return undefined
+  }
+}
+
+/** #512 : la carte de mission posée, la ligne se prend (`qui:mission | lieu:cloud`) ; rend ce que Claude en apprend. */
+async function takeMissionOnCard($: EngineInterface, m: { source: Source; id: string }): Promise<string> {
+  pendingMissions.delete(pendingKey(m.source, m.id))
+  try {
+    const { open } = files(m.source)
+    const done = await writeRoadmapFiles($, m.source, ['ROADMAP.md'], `roadmap: take mission (#${m.id}, cloud)`, async () => {
+      const again = takeMissionLine(await $.fs.read(open), m.id, todayOf(await $.clock.now()))
+      return 'error' in again ? again : { 'ROADMAP.md': again.text }
+    })
+    // Maestro qui l'a déjà prise : elle est tenue, rien à refaire.
+    const error = 'error' in done && !/déjà partie en mission/.test(done.error) ? done.error : undefined
+    await setView($, () => ({ launchNote: error !== undefined ? `Carte de mission posée, mais la ligne n'est pas prise : ${error}` : 'note' in done && done.note ? `Carte de mission posée ; ${done.note}` : MISSION_PROPOSED }))
+    return missionTakenText(m.id, error)
+  } catch (err) {
+    return missionTakenText(m.id, err instanceof Error ? err.message : String(err))
+  }
+}
 
 /**
  * #465 : avant un départ vers `target`, la carte de la même tâche qui attend Start ailleurs est retirée (`dismiss_task`).
@@ -5710,10 +5766,19 @@ async function launchCloud($: EngineInterface, source: Source, task: Task, short
         prompt: missionCardPrompt({ project: source.name, id: task.id, label: task.label }),
         background: `Mission #${task.id} du projet ${source.name}, lancée en cloud depuis le panneau roadmap (#476) : sans branche ni PR ; Maestro la suit par mission_cloud.py retour puis fin (skill roadmap:maestro, § 2 ter).`,
       }
+      // #512 (cas AAFES #694) : hors Bypass, l'app refuse la carte d'un mod (« needs a person's approval ») ; comme les
+      // autres départs (#248), la mission passe alors par Claude, sa consigne exacte imposée, et sa pose prend la ligne.
+      const viaClaude = async (refused: boolean) => {
+        pendingMissions.set(pendingKey(source, task.id!), missionCard.prompt)
+        queueSubmit($, missionAskText({ title: targetTitle(brief.title, 'cloud'), id: task.id!, prompt: missionCard.prompt, background: missionCard.background }))
+        await setView($, () => ({ launchNote: missionViaClaudeNote(refused) }))
+      }
+      const mode = await ownMode($)
+      if (mode !== undefined && mode !== BYPASS_MODE) return void (await viaClaude(false))
       await dismissPendingCard($, source, task.id, 'cloud')
       const sent = await withinMs($, proposeCard($, missionCard, []), CARD_DEADLINE_MS)
       if (sent === 'late') return void (await fail(CARD_LATE_WHY))
-      if (sent.ran.deny !== undefined || sent.ran.isError) return void (await fail(cardReason(sent.ran)))
+      if (sent.ran.deny !== undefined || sent.ran.isError) return void (await viaClaude(true))
       if (cardNotProposed(sent.ran)) return void (await fail(remoteCardWhy()))
       const done = await writeRoadmapFiles($, source, ['ROADMAP.md'], `roadmap: take mission (#${task.id}, cloud)`, async () => {
         const again = take(await $.fs.read(open), todayOf(await $.clock.now()))
@@ -9104,8 +9169,11 @@ export const register: Register = (on, options) => {
   // Option « Lancer en bypass » : la carte qui reste ici demande le bypass (#87).
   on('tool.call', { tool: START_SESSION_TOOL }, async ($, raw, next) => {
     if (await inCloud($)) return next(raw)
+    const byModel = next.origin.plugin === 'engine' && !fromAgent(raw)
+    // #512 : la carte de mission part avec sa consigne seule : ni arbre, ni dossier, ni bypass, ni file du Mac.
+    const mission = byModel ? await missionCardOf($, raw) : undefined
     // Une carte du modèle reçoit la section de l'arbre, comme le ▶ (#237).
-    const e = next.origin.plugin === 'engine' && !fromAgent(raw) ? ((await withTree($, raw)) as typeof raw) : raw
+    const e = mission ? (mission.card as typeof raw) : byModel ? ((await withTree($, raw)) as typeof raw) : raw
     // #263 : la carte qui se pose ici (pas remontée à Maestro) part seulement si son titre vient de la ligne écrite.
     let titleRefused = false
     const ran = await forwardProposal($, e, next.origin.plugin, async () => {
@@ -9129,13 +9197,13 @@ export const register: Register = (on, options) => {
       }
       // #324 : chez Maestro, la carte ne part que s'il reste une place ; sinon elle entre dans la file.
       const cardTitle = (e as { title?: unknown }).title
-      const dose = fromAgent(e) || typeof cardTitle !== 'string' ? {} : await doseLaunch($, sessionTitleId(cardTitle), { title: cardTitle, card: e as Record<string, unknown> })
+      const dose = mission || fromAgent(e) || typeof cardTitle !== 'string' ? {} : await doseLaunch($, sessionTitleId(cardTitle), { title: cardTitle, card: e as Record<string, unknown> })
       if (dose.refusal !== undefined) {
         titleRefused = true
         return { deny: dose.refusal }
       }
       // #436 : la cible finit le titre de la carte posée ; le titre lu ici (file, réservation) reste celui de la ligne.
-      const posted = await launchWithMode($, e, card => next(withTargetTitle(card) as typeof e))
+      const posted = mission ? await next(withTargetTitle(e) as typeof e) : await launchWithMode($, e, card => next(withTargetTitle(card) as typeof e))
       if (dose.ownId && typeof cardTitle === 'string' && posted.deny === undefined && !posted.isError) await reserveCard($, cardTitle)
       // #374 : la réponse de l'app règle l'entrée en file : acceptée, elle sort ; refusée, elle reste avec sa trace.
       if (dose.ownId && typeof cardTitle === 'string') {
@@ -9161,6 +9229,10 @@ export const register: Register = (on, options) => {
     // #474 : la carte cloud de Maestro posée, le panneau guette sa branche sur origin pour prendre la ligne au départ.
     if (id !== undefined && next.origin.plugin === 'engine' && ran.deny === undefined && cardTargetOf(e as Record<string, unknown>) === 'cloud') {
       await watchCloudCard($, id, (e as { prompt?: unknown }).prompt)
+    }
+    // #512 : la carte de mission posée prend sa ligne, et sa réponse dit à Claude si elle est prise.
+    if (mission && ran.deny === undefined && !ran.isError && !cardNotProposed(ran)) {
+      return { ...ran, text: `${ran.text ?? ''}\n\n${await takeMissionOnCard($, mission)}`.trim() }
     }
     return ran
   })
@@ -16198,8 +16270,10 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   ) : null
   const liveBlock =
     showLive ? (
-      <Box flexDirection="column" borderStyle="round" borderColor={dose && dose.why !== 'project' ? palette.block : palette.border} paddingX={0} paddingY="xs">
-        <Box flexDirection="row" alignItems="center" gap={SPACE.row} paddingX={SPACE.indent}>
+      // #513 (captures de BBR, 0.286.1) : l'en-tête porte lui-même ses marges, la même boîte plié comme déplié ; le
+      // cadre n'en pose aucune, sinon déplié la rangée collait au séparateur et remontait sous le filet du haut.
+      <Box flexDirection="column" borderStyle="round" borderColor={dose && dose.why !== 'project' ? palette.block : palette.border} paddingX={0} paddingY={0}>
+        <Box flexDirection="row" alignItems="center" gap={SPACE.row} paddingX={SPACE.indent} paddingY={SPACE.tight}>
           <Box key="hit:live-fold" flexDirection="row" alignItems="center" gap={SPACE.row} flexShrink={1} minWidth={0} hover={{ backgroundColor: palette.hover }}>
             <Box flexDirection="row" alignItems="center" flexShrink={0}>
               {spinner()}
@@ -16237,7 +16311,11 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
           </Box>
         </Box>
         {liveOpen && Svg && <Svg source={ruleIcon(palette.border, wide)} alt="séparateur" height={1} />}
-        {liveOpen && blockTasks.map(t => row(t, undefined, undefined, blockOf.get(t.id as string), true))}
+        {liveOpen && (
+          <Box key="live-rows" flexDirection="column" paddingY={SPACE.tight}>
+            {blockTasks.map(t => row(t, undefined, undefined, blockOf.get(t.id as string), true))}
+          </Box>
+        )}
       </Box>
     ) : null
 

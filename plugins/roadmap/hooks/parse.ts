@@ -10456,6 +10456,46 @@ export function missionCardPrompt(o: { project: string; id: string; label: strin
 }
 
 /**
+ * #512 : la consigne porte-t-elle le rappel « #N · retour » de la mission `id` (celle de `missionCardPrompt` ou de
+ * `mission_cloud.py carte`) ? Une carte cloud qui l'a garde sa consigne ; sans lui, c'est un brief rédigé par Claude.
+ */
+export function isMissionPrompt(prompt: unknown, id: string): boolean {
+  return typeof prompt === 'string' && prompt.includes('send_later') && prompt.includes(`« #${id} · retour »`)
+}
+
+/**
+ * #512 : le ▶ Cloud d'une mission que le panneau ne peut pas poser (hors Bypass, ou carte refusée) passe par Claude,
+ * comme les autres départs (#248). Le texte impose la carte cloud et sa consigne exacte comme `prompt`, sans brief
+ * rédigé ni bloc de réglages, et dit la prise `qui:mission | lieu:cloud`, que le plugin fait à la pose de la carte.
+ * Sa première ligne seule se montre (`launchPrompt`, #140).
+ */
+export function missionAskText(o: { title: string; id: string; prompt: string; background: string }): string {
+  return launchPrompt(
+    o.title,
+    [
+      `Propose cette mission sous forme de carte (outil start_session, initiation own_initiative, contexte fresh, target cloud), titre « ${o.title} ». Son prompt est la consigne ci-dessous, mot pour mot, de sa première ligne à « Échec : … » : n'écris aucun brief à toi (ni « Background », ni « Task », ni « Mission : »), n'y ajoute aucun bloc (réglages, bypass, modèle, effort, arbre, dossier), et ne pose ni permission_mode, ni model, ni effort. Pose la carte sans essayer de la lancer, puis réponds en une phrase au plus.`,
+      `La ligne #${o.id} se prend quand la carte est posée : le plugin roadmap y écrit qui:mission | lieu:cloud, sans branche:. Ne touche pas à la roadmap toi-même, sauf si la réponse de la carte dit que la ligne n'est pas prise : alors prends-la (sur la ligne #${o.id} de ROADMAP.md, qui:mission | lieu:cloud, après:- s'il manque, montée au bas de « En cours »).`,
+      '',
+      o.prompt,
+      '',
+      `Contexte : ${o.background}`,
+    ].join('\n'),
+  )
+}
+
+/** #512 : la note du panneau quand la mission passe par Claude ; `refused` : l'app a refusé la carte du panneau. */
+export function missionViaClaudeNote(refused: boolean): string {
+  return `Carte de mission demandée à Claude dans la conversation${refused ? " (l'app a refusé au panneau)" : ' (hors Bypass, seul Claude peut la poser)'} : la ligne se prend quand elle est posée (qui:mission).`
+}
+
+/** #512 : ce que la réponse de la carte de mission dit à Claude de la ligne, prise ou non. */
+export function missionTakenText(id: string, error?: string): string {
+  return error === undefined
+    ? `Plugin roadmap : la ligne #${id} est prise (qui:mission | lieu:cloud).`
+    : `Plugin roadmap : la ligne #${id} n'est pas prise (${error}). Prends-la toi-même si elle est libre : qui:mission | lieu:cloud, sans branche:.`
+}
+
+/**
  * Le refus d'une carte cloud (#416) : la VM démarre sur la branche de la session qui pose la carte, qui doit donc être
  * sur GitHub et sans commit en retard (le 2026-11-10, #426 est morte sur « branch or commit not found »). Hors git : rien.
  */
@@ -13095,12 +13135,14 @@ export function waitNote(kind: 'titles' | 'launched'): WaitNote {
  * Les débuts de commande d'une suite de tests lourde (#222) : chacune occupe le processeur de 2 à 6 min,
  * et plusieurs en même temps ont porté la charge du Mac à 380 pour 10 cœurs. Un test ciblé
  * (`npm test -- <fichier>`, `node --test`, un `test_*.py`) et `check.mjs` n'en sont pas. `rejouer_delais.py`
- * en est une : il lance la suite lui-même, puis en rejoue les délais dépassés (#249). `release.py status` est
- * léger, `status --check` lourd (#463).
+ * en est une : il lance la suite lui-même, puis en rejoue les délais dépassés (#249). `banc_panneau.py` en est
+ * une (#524) : il lance le banc par `claude plugin test`, plusieurs minutes ; son `--compare` ne lit que deux
+ * relevés et reste léger. `release.py status` est léger, `status --check` lourd (#463).
  */
 const HEAVY_TESTS: readonly RegExp[] = [
   /^claude\s+plugin\s+test(?=\s|$)/,
   /^(?:\S*python3?\s+(?:-\S+\s+)*)?(?:\S*\/)?rejouer_delais\.py(?=\s|$)/,
+  /^(?:\S*python3?\s+(?:-\S+\s+)*)?(?:\S*\/)?banc_panneau\.py(?=\s|$)(?!.*\s--compare(?:\s|$))/,
   /^(?:\S*python3?\s+(?:-\S+\s+)*)?(?:\S*\/)?release\.py\s+(?:check|release)(?=\s|$)/,
   // #463 : status --check lance le contrôle complet de check ; status seul reste léger.
   /^(?:\S*python3?\s+(?:-\S+\s+)*)?(?:\S*\/)?release\.py\s+status(?:\s+[^\s|;&]+)*\s+--check(?=\s|$)/,
@@ -13282,6 +13324,7 @@ const QUEUE_COMMANDS: readonly [RegExp, string][] = [
   [/release\.py\s+status\b.*--check/, 'release.py status --check'],
   [/release\.py\s+release/, 'release.py release'],
   [/rejouer_delais\.py/, 'rejouer_delais.py'],
+  [/banc_panneau\.py/, 'banc_panneau.py'],
   [/npm\s+(?:test|t|run\s+test)\b/, 'npm test'],
   [/xcodebuild\s/, 'xcodebuild test'],
   [/swift\s+test/, 'swift test'],

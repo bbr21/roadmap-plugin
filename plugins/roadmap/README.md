@@ -763,6 +763,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.287.0 (2026-11-12)** : panneau : le ▶ Cloud de mission passe par Claude hors Bypass, sa consigne imposée (#512) ; en-tête En session identique plié ou déplié (#513) ; budgets du panneau qui rougissent à toute dérive d'appels (#524)
 - **0.286.1 (2026-11-12)** : doctor : le geste du dépôt porte ne pousse plus, règle « worktree toujours off » pour AAFES et Sharp Cowork (#475)
 - **0.286.0 (2026-11-11)** : panneau : version du pied prise du module chargé, vue Faites légère pour un grand projet (#505, #497)
 - **0.285.1 (2026-11-11)** : panneau : la date de publication d'une livraison collée au bord droit de sa rangée (#504)

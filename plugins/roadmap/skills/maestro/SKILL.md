@@ -447,7 +447,13 @@ otherwise they see an empty worktree.
   `use_worktree: false`; the doctor asks neither `docs/session-cloud.md` nor a branch. The panel's Cloud switch is open
   and its ▶ Cloud posts the mission card itself (the task's line as the instruction) and takes the line
   `qui:mission | lieu:cloud`, with no `branche:`: a line held by `qui:mission` is a mission in flight, followed below.
-  When Maestro posts the card, it takes the line the same way. `reco_cloud.py <dossier> <id> --carte` knows the
+  When Maestro posts the card, it takes the line the same way. Outside Bypass the app refuses a mod's own card
+  (« needs a person's approval », AAFES #694, #512): the ▶ Cloud then asks Claude in the conversation, as the other
+  launches do (#248), with the exact instruction of `missionCardPrompt` as the card's `prompt`, and a refused direct
+  card falls back to the same way. The plugin enforces it on any cloud card the model posts in such a project
+  (`missionCardOf`): the card keeps a prompt that carries the `#<id> · retour` reminder, otherwise it gets the line's
+  instruction; never a brief written by Claude, a settings block or `permission_mode`; and once posted, the plugin
+  takes the line `qui:mission | lieu:cloud` itself and its answer says so (a line Maestro already took stays held). `reco_cloud.py <dossier> <id> --carte` knows the
   setting: its card says `"mission": true`, `"qui": "mission"` and no `branche`, so the brief comes from
   `mission_cloud.py carte`, never from `brief_cloud.py`. The panel's #465 guard does not hold such a project's cards:
   a project without code is always advised Mac, and § 2 ter, not the reco, decides between a mission and the Mac.
