@@ -763,6 +763,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.283.0 (2026-11-11)** : panneau et maestro : En session compté par lieu, ligne cloud prise au départ, modèle et effort selon la charge jugée, cartes depuis le cloud, Fille de sans gras, croix ronde (#468, #474, #486, #488, #489, #490, #492, #493)
 - **0.282.0 (2026-11-11)** : maestro : reco_cloud lit le réglage missions, le garde-fou laisse passer les missions (#476) ; panneau : le lieu choisi dans le panneau prime sur la reco, la carte Nouvelle tâche dit le lieu (#479)
 - **0.281.0 (2026-11-11)** : panneau, doctor, maestro : réglage de projet « cloud : missions » pour un dossier sans code, le bouton Cloud pose une carte de mission sans branche ni PR (#476)
 - **0.280.0 (2026-11-11)** : maestro : les missions cloud des projets sans code partent par carte de l'app, leur « Fait » remonte par le rappel « #N · retour » (mission_cloud.py carte et retour, #473)

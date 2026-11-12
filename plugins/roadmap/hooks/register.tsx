@@ -16,6 +16,7 @@ import {
   axisTint,
   percentIcon,
   pillIcon,
+  herePillIcon,
   filterPillIcon,
   type PillMark,
   checkIcon,
@@ -107,6 +108,7 @@ import {
 import { MIX, PX, RADIUS, SIZE, SPACE, TEXT } from './tokens'
 import { BEFORE_KEY, CLOSED_KEY, NATIVE_KEY, beforeMap, closedKeys, drawWrittenMessage, keepBefore, keepClosed, keepNative, nativeKeys, splitWritten, testSessions, withoutClosed, withoutNative, writtenCards, type WrittenLine, type WrittenStart, type WrittenWho } from './cartes'
 import { CARD_DEADLINE_MS, CARD_LATE_WHY, cardTargetOf, dismissCall, panelChoiceIn, proposalIdIn, recoTargetRefusal, type Place } from './depart'
+import { CLOUD_WATCH_EVERY_MS, CLOUD_WATCH_KEY, addWatch, briefBranchOf, dueWatches, lineVerdict, pushedSince, remoteHeads, watchList, type CloudWatch } from './prise-cloud'
 import { CONTROL_PANE, drawControl, openControl, redrawControl, type ControlDeps } from './controle'
 import { SETTINGS_PANE, drawSettings, openSettings, prefsFile, redrawSettings, rememberLoadedOptions, sessionProject, watchSettings, type SettingsProject } from './reglages'
 import {
@@ -327,6 +329,9 @@ import {
   isPlanLine,
   launchModelOf,
   codeModelOf,
+  chargeLaunch,
+  judgedCharge,
+  type TaskCharge,
   MODEL_IDS,
   missingPrereqs,
   projectSettings,
@@ -552,6 +557,12 @@ import {
   unlocksOf,
   cloudArchiveNote,
   cloudBrandTasks,
+  CLOUD_ADOPT_MS,
+  blockRowFit,
+  bandRowFit,
+  mergedLocalIds,
+  BAND_INFO_MAX,
+  blockWord,
   cloudFiche,
   cloudSteps,
   cloudSessionIdOf,
@@ -1048,6 +1059,18 @@ let settings = { me: [] as string[], autoOpen: true, titleModel: 'sonnet', captu
 function launchModelId(): string | undefined {
   const m = launchModelOf(settings.launchModel)
   return m === 'hérite' ? undefined : MODEL_IDS[m]
+}
+
+/**
+ * Le modèle et l'effort d'une session lancée pour cette tâche (#490) : sa charge, jugée par le modèle sur la tâche
+ * entière (#492), sinon lue sur son libellé, les choisit parmi « Modèle qui cadre » et « Modèle qui code », l'effort
+ * borné par le réglage « Effort ».
+ */
+async function taskLaunch($: EngineInterface, source: Source, task: Task): Promise<{ charge: TaskCharge; model?: 'opus' | 'sonnet'; modelId?: string; effort?: string }> {
+  await loadRecoCache($, source).catch(() => undefined)
+  const { charge } = judgedCharge(task, recoCache.cache)
+  const l = chargeLaunch(charge, launchModelOf(settings.launchModel), codeModelOf(settings.codeModel, launchModelOf(settings.launchModel)), LAUNCH_EFFORTS.has(settings.launchEffort) ? settings.launchEffort : 'hérite')
+  return { charge, ...l, ...(l.model ? { modelId: MODEL_IDS[l.model] } : {}) }
 }
 
 /** L'apparence de l'app de bureau lue en dernier (#417) : son fichier, gardé par sa date et sa taille, et le Mac, relu après MAC_APPEARANCE_MS. */
@@ -2106,7 +2129,7 @@ async function checkRoadmap($: EngineInterface, c: Capture, before?: { open?: st
     if (problems.length > 0) notes.push(problemsText(file, problems))
     if (!done) {
       const added = addedOpenTasks((before ?? c.seen).open, after)
-      const step = await markWorking($, c.source, added)
+      const step = await addedLinesNote($, added)
       if (step) notes.push(step)
       // #171 : une ligne neuve rappelle le fichier des règles, s'il existe ; jamais un refus.
       const regles = reglesPath(c.source)
@@ -2579,14 +2602,14 @@ async function loadLive($: EngineInterface): Promise<Record<string, LiveEntry>> 
   // Seules les entrées bien formées comptent : une valeur abîmée ne met aucune tâche en session.
   const out: Record<string, LiveEntry> = {}
   for (const [hash, value] of Object.entries(stored as Record<string, unknown>)) {
-    const v = value as Partial<LiveEntry> | null
-    if (v && typeof v.startedAt === 'number' && typeof v.title === 'string') {
+    const v = value as (Partial<LiveEntry> & { via?: unknown }) | null
+    // #486 : une entrée « via: write » (ligne écrite par une session, d'avant #486) ne tient plus sa tâche.
+    if (v && typeof v.startedAt === 'number' && typeof v.title === 'string' && v.via === undefined) {
       out[hash] = {
         startedAt: v.startedAt,
         title: v.title,
         ...(typeof v.sessionId === 'string' ? { sessionId: v.sessionId } : {}),
         ...(typeof v.link === 'string' ? { link: v.link } : {}),
-        ...(v.via === 'write' ? { via: 'write' as const } : {}),
       }
     }
   }
@@ -3697,48 +3720,32 @@ function trackedSession(
   // Une session trouvée par son titre est ouverte par construction (non archivée, listée).
   const state = liveEntries[hash] ? (liveStatus.get(hash) ?? (entry.sessionId ? 'open' : 'unknown')) : 'open'
   if (state === 'closed' || (state === 'unknown' && now - entry.startedAt > UNKNOWN_MAX_MS)) return undefined
-  // Déduite (ligne écrite par la session, ou titre de session) plutôt que lancée du panneau.
-  return { entry, state, key: hash, inferred: !liveEntries[hash] || entry.via === 'write' }
+  // Déduite (titre de session) plutôt que lancée du panneau.
+  return { entry, state, key: hash, inferred: !liveEntries[hash] }
 }
 
 function liveKeyOf(source: Source, task: Task): string {
   return task.id ? `${source.dir}|#${task.id}` : hashLabel(task.label)
 }
 
-async function markWorking($: EngineInterface, source: Source, added: Task[]): Promise<string | undefined> {
+/**
+ * Après qu'une session a ajouté des lignes : la note qu'elle reçoit, ou rien. Écrire une ligne ne fait
+ * pas de la session sa tenante (#486) : la ligne reste ouverte, cherchable et lançable par son ▶. Seule
+ * une session lancée par le panneau, titrée #N, ou une ligne prise (`qui:`, `branche:`) tient une tâche.
+ */
+async function addedLinesNote($: EngineInterface, added: Task[]): Promise<string | undefined> {
   if (added.length === 0) return undefined
-  let note: string | undefined
   try {
     const own = await readOwnSession($, true)
-    const { id: sessionId, title } = own
-    if (!sessionId) return undefined
-    const live = await loadLive($)
-    const ignored = await loadIgnored($)
-    const mine = Object.keys(live).filter(k => live[k]?.via === 'write' && live[k]?.sessionId === sessionId)
-    const keys = new Set([...mine, ...added.map(t => liveKeyOf(source, t))])
+    if (!own.id) return undefined
     // Un Maestro (titre ou famille) n'est sur aucune tâche : il les lance.
-    const maestro = await ownIsMaestro($, own)
-    if (maestro) note = maestroTasksNote(added)
-    const step = oneTaskStep(title, added)
-    if (!maestro && step.kind === 'other') return otherTaskNote(step.own, step.task, await shortTitleOf($, step.task))
-    if (maestro || keys.size > 1) {
-      for (const k of mine) {
-        delete live[k]
-        liveStatus.delete(k)
-      }
-    } else {
-      const task = added[0] as Task
-      const key = liveKeyOf(source, task)
-      if (ignored[taskKey(task)]?.includes(sessionId)) return undefined
-      live[key] = { sessionId, startedAt: await $.clock.now(), title: clip(task.label, 58), via: 'write' }
-      liveStatus.set(key, 'open')
-    }
-    await storeSet($, LIVE_KEY, live)
-    await update($, liveVersionAtom, v => v + 1)
+    if (await ownIsMaestro($, own)) return maestroTasksNote(added)
+    const step = oneTaskStep(own.title, added)
+    if (step.kind === 'other') return otherTaskNote(step.own, step.task, await shortTitleOf($, step.task))
   } catch {
-    // stockage indisponible : la tâche ne passe pas « en session », l'écriture reste valable
+    // fiche de la session illisible : pas de note, l'écriture reste valable
   }
-  return note
+  return undefined
 }
 
 /** Les sessions écartées à la main d'une tâche (« Pas en cours ») : clé de tâche → identifiants. */
@@ -4692,8 +4699,8 @@ async function releaseBrief($: EngineInterface, head: GlobalQueued, source: Sour
   const shortTitle = head.launch?.shortTitle ?? head.title.replace(/^#\d+\s*·\s*/, '')
   const brief = await briefOf($, source, task, shortTitle, head.launch?.extra ?? '', head.launch?.kind ?? '')
   const bypass = wantsBypass(settings.launchBypass, await ownMode($))
-  const effort = LAUNCH_EFFORTS.has(settings.launchEffort) ? settings.launchEffort : undefined
-  const model = launchModelId()
+  // #490 : le modèle et l'effort que dit la tâche.
+  const { effort, modelId: model } = await taskLaunch($, source, task)
   return {
     id: head.id,
     title: brief.title,
@@ -5403,6 +5410,8 @@ async function poll($: EngineInterface): Promise<void> {
   tickStats = new Map()
   try {
     pollTick++
+    // #474 : la garde des cartes cloud, qui ne dépend d'aucune autre étape du pas (elle ne lève jamais).
+    await checkCloudWatches($)
     if (resting) {
       // Au repos (#348) : la file de lancement de Maestro avance quand même ; le reste attend sa minute.
       await checkZones($)
@@ -5493,24 +5502,31 @@ function recoOf(source: Source, task: Task): JudgedReco {
 // aussi. Le jugement tourne en fond, au changement de la roadmap et à l'ouverture d'une fiche ; une panne laisse
 // la règle des marqueurs répondre.
 
-/** Les verdicts du projet, relus une fois par dossier, et le chemin du cache (absent : pas de dossier `.git`). */
+/** Les verdicts du projet, relus une fois par dossier, et le chemin du cache (absent : ni `.git` ni `.claude`). */
 const recoCache: { dir?: string; path?: string; cache: RecoCache } = { cache: {} }
 let judging = false
 let judgeAgain = false
 
-/** Le cache du projet, relu au premier besoin ou au changement de projet. */
+/**
+ * Le cache du projet, relu au premier besoin ou au changement de projet : dans `.git`, hors du dépôt suivi ; un
+ * projet sans code qui n'a pas de `.git` le garde dans son `.claude` (#492), sinon chaque session rejugerait tout.
+ */
 async function loadRecoCache($: EngineInterface, source: Source): Promise<void> {
   const root = source.root ?? source.dir
   if (recoCache.dir === root) return
   recoCache.dir = root
   recoCache.cache = {}
   recoCache.path = undefined
-  try {
-    if ((await $.fs.stat(`${root}/.git`)).kind !== 'dir') return
-  } catch {
-    return
+  const isDir = async (path: string): Promise<boolean> => {
+    try {
+      return (await $.fs.stat(path)).kind === 'dir'
+    } catch {
+      return false
+    }
   }
-  recoCache.path = `${root}/.git/${RECO_CACHE_FILE}`
+  const dir = (await isDir(`${root}/.git`)) ? '.git' : (await isDir(`${root}/.claude`)) ? '.claude' : undefined
+  if (!dir) return
+  recoCache.path = `${root}/${dir}/${RECO_CACHE_FILE}`
   const text = await readOr($, recoCache.path)
   if (text !== undefined) recoCache.cache = parseRecoCache(text)
 }
@@ -5535,17 +5551,20 @@ const judgeAsked = new Set<string>()
 /** Une fiche à lancer sans verdict du modèle : le jugement part, une fois par tâche et par libellé (#430). */
 function askJudge($: EngineInterface, source: Source, task: Task): void {
   const asked = `${recoKeyOf(task)}|${task.label}`
-  if (judgeAsked.has(asked) || recoOf(source, task).by === 'model') return
+  // #492 : un projet sans code n'a jamais de lieu jugé ; sa charge jugée suffit.
+  const judged = projectSettings(source).travail === 'projet' ? judgedCharge(task, recoCache.cache).by === 'model' : recoOf(source, task).by === 'model'
+  if (judgeAsked.has(asked) || judged) return
   judgeAsked.add(asked)
   void judgeRecos($, source)
 }
 
 /**
  * Fait juger par le modèle les tâches ouvertes sans verdict à jour (#430), par paquets, puis garde les verdicts
- * et redessine. Seulement dans un projet de code ouvert au cloud ; un appel en cours en reprend un second après lui.
+ * et redessine. Dans un projet ouvert au cloud, et depuis #492 dans tout projet sans code, où le verdict ne sert qu'à
+ * la charge (son lieu reste le Mac) ; un appel en cours en reprend un second après lui.
  */
 async function judgeRecos($: EngineInterface, source: Source): Promise<void> {
-  if (!cloudOpen(source) || projectSettings(source).travail === 'projet') return
+  if (!cloudOpen(source) && projectSettings(source).travail !== 'projet') return
   if (judging) {
     judgeAgain = true
     return
@@ -5553,7 +5572,8 @@ async function judgeRecos($: EngineInterface, source: Source): Promise<void> {
   judging = true
   try {
     await loadRecoCache($, source)
-    const open = await load($, files(source).open, 'ROADMAP.md')
+    // #492 : le juge tourne aussi dans un projet sans code ; il prend la roadmap déjà lue par la minuterie (#337).
+    const open = await loadParsed($, files(source).open, 'ROADMAP.md')
     if (typeof open === 'string') return
     const tasks = open.filter(t => !t.done && !isRoutine(t))
     const docs = new Map<Task, string[]>()
@@ -5570,7 +5590,7 @@ async function judgeRecos($: EngineInterface, source: Source): Promise<void> {
       for (const item of batch) {
         const v = verdicts[item.key]
         if (!v) continue
-        recoCache.cache[item.key] = { label: item.task.label.trim(), sig: item.sig, lieu: v.lieu, why: v.why, ...(v.besoins ? { besoins: v.besoins } : {}), at: today }
+        recoCache.cache[item.key] = { label: item.task.label.trim(), sig: item.sig, lieu: v.lieu, why: v.why, ...(v.besoins ? { besoins: v.besoins } : {}), ...(v.charge ? { charge: v.charge } : {}), at: today }
         changed = true
       }
       if (!changed) continue
@@ -5697,7 +5717,9 @@ async function launchCloud($: EngineInterface, source: Source, task: Task, short
     // #455 : une preuve de fidélité nomme le chantier de la tâche qu'elle prouve, lu à son `spec:` (ouverte ou close).
     const proved = proofOf(task.label)
     const proofSpec = proved ? specOfLine([taken.text, await $.fs.read(files(source).done).catch(() => undefined)], proved) : undefined
-    const prompt = cloudBriefText({ project: source.name, id: task.id, label: task.label, line: taken.line, branch, ...(task.spec ? { spec: task.spec } : {}), ...(depot ? { depot } : {}), ...(proofSpec ? { proofSpec } : {}), ...prefs })
+    // #490 : la carte cloud ne porte ni modèle ni effort ; le brief les dit, avec la consigne #327.
+    const tl = await taskLaunch($, source, task)
+    const prompt = cloudBriefText({ launch: { charge: tl.charge, ...(tl.effort ? { effort: tl.effort } : {}), ...(tl.model ? { model: tl.model } : {}) }, project: source.name, id: task.id, label: task.label, line: taken.line, branch, ...(task.spec ? { spec: task.spec } : {}), ...(depot ? { depot } : {}), ...(proofSpec ? { proofSpec } : {}), ...prefs })
     const card = {
       tool: START_SESSION_TOOL,
       initiation: 'own_initiative',
@@ -5726,6 +5748,104 @@ async function launchCloud($: EngineInterface, source: Source, task: Task, short
   }
 }
 
+// --- La ligne prise au départ d'une carte cloud de Maestro (#474) -------------------------------------------------
+// Maestro pose sa carte cloud ; l'app ne lui dit son départ qu'au réveil suivant. Le brief fait pousser la branche
+// dans la première minute : le panneau la guette sur origin (une fois par minute au plus, toutes sessions confondues,
+// et seulement tant qu'une carte attend) et prend la ligne comme `prendre_cloud.py`. La liste vit au store, partagée :
+// un autre panneau ouvert, ou un module rechargé, reprend la garde ; la prise est la même partout, la seconde ne
+// change rien. La minuterie ne lit le store qu'une fois par minute, et plus du tout quand rien n'attend.
+
+/** Le module a des cartes à guetter (ou n'a pas encore relu le store une fois). */
+let cloudWatchArmed = false
+let cloudWatchLoaded = false
+const cloudWatchStart = Date.now()
+let cloudWatchNextAt = 0
+let cloudWatching = false
+
+/** La tête de `branch` sur l'origin de `repo` ('' : absente ; `undefined` : git en panne). */
+async function remoteHeadsOf($: EngineInterface, repo: string, branches: readonly string[]): Promise<Record<string, string> | undefined> {
+  const run = await $.process.run(['git', '-C', repo, 'ls-remote', '--heads', 'origin', ...branches], { timeoutMs: 20_000 }).catch(() => undefined)
+  return run && run.exitCode === 0 ? remoteHeads(run.stdout) : undefined
+}
+
+async function watchCloudCard($: EngineInterface, id: string, prompt: unknown): Promise<void> {
+  const branch = briefBranchOf(prompt)
+  if (branch === undefined) return
+  try {
+    const source = knownSource === undefined ? await sourceNow($) : (knownSource ?? undefined)
+    if (!source) return
+    const root = source.root ?? source.dir
+    // #444 : une roadmap hors du dépôt de code ; la carte part de la session, ouverte dans ce dépôt.
+    const repo = projectSettings(source).depot !== undefined ? await $.session.cwd() : root
+    const heads = await remoteHeadsOf($, repo, [branch])
+    const now = await $.clock.now()
+    const entry: CloudWatch = { key: `${root}|${id}`, root, id, branch, repo, base: heads?.[branch] ?? '', at: now, checkedAt: now }
+    await storeSet($, CLOUD_WATCH_KEY, addWatch(watchList(await $.store.get(CLOUD_WATCH_KEY).catch(() => undefined)), entry) as unknown as StoreValue)
+    cloudWatchArmed = true
+    cloudWatchLoaded = true
+    cloudWatchNextAt = now + CLOUD_WATCH_EVERY_MS
+  } catch {
+    // store ou git en panne : la prise de Maestro au message de l'app reste le filet
+  }
+}
+
+/** Un pas de la minuterie : rien tant que la minute n'est pas passée ; sinon les cartes dues de ce projet. */
+async function checkCloudWatches($: EngineInterface): Promise<void> {
+  if (cloudWatching) return
+  if (!cloudWatchArmed && (cloudWatchLoaded || tick() - cloudWatchStart < CLOUD_WATCH_EVERY_MS)) return
+  const source = knownSource ?? undefined
+  if (!source) return
+  cloudWatching = true
+  try {
+    const now = await $.clock.now()
+    // Une horloge revenue en arrière (veille, réglage) ne fige pas la garde.
+    if (now < cloudWatchNextAt && cloudWatchNextAt - now <= CLOUD_WATCH_EVERY_MS) return
+    cloudWatchNextAt = now + CLOUD_WATCH_EVERY_MS
+    cloudWatchLoaded = true
+    const root = source.root ?? source.dir
+    const { due, kept } = dueWatches(watchList(await $.store.get(CLOUD_WATCH_KEY).catch(() => undefined)), now)
+    cloudWatchArmed = kept.length > 0
+    const mine = due.filter(w => w.root === root)
+    if (mine.length === 0) return
+    // La garde prise pour cette minute : un autre panneau ne regarde pas les mêmes cartes en même temps.
+    const claimed = new Set(mine.map(w => w.key))
+    await storeSet($, CLOUD_WATCH_KEY, kept.map(w => (claimed.has(w.key) ? { ...w, checkedAt: now } : w)) as unknown as StoreValue)
+    const done = new Set<string>()
+    for (const repo of new Set(mine.map(w => w.repo))) {
+      const group = mine.filter(w => w.repo === repo)
+      const heads = await remoteHeadsOf($, repo, group.map(w => w.branch))
+      if (!heads) continue
+      for (const w of group) {
+        if (!pushedSince(w, heads)) continue
+        if (await takeWatchedLine($, source, w)) done.add(w.key)
+      }
+    }
+    if (done.size === 0) return
+    const left = watchList(await $.store.get(CLOUD_WATCH_KEY).catch(() => undefined)).filter(w => !done.has(w.key))
+    await storeSet($, CLOUD_WATCH_KEY, left as unknown as StoreValue)
+    cloudWatchArmed = left.length > 0
+    await update($, liveVersionAtom, v => v + 1)
+  } catch {
+    // un regard raté : la minute suivante réessaie
+  } finally {
+    cloudWatching = false
+  }
+}
+
+/** La prise de la ligne guettée ; vrai quand la garde s'arrête (prise, déjà prise, plus à prendre). */
+async function takeWatchedLine($: EngineInterface, source: Source, w: CloudWatch): Promise<boolean> {
+  const { open } = files(source)
+  if (lineVerdict(await $.fs.read(open), w.id, w.branch) !== 'take') return true
+  const wrote = await writeRoadmapFiles($, source, ['ROADMAP.md'], `roadmap: take ${w.branch.replace(/^feat\//, '')} (#${w.id}, cloud)`, async () => {
+    // Relue après le pull : Maestro, ou un autre panneau, est peut-être passé entre-temps.
+    const text = await $.fs.read(open)
+    if (lineVerdict(text, w.id, w.branch) !== 'take') return {}
+    const again = takeCloudLine(text, w.id, w.branch, todayOf(await $.clock.now()))
+    return 'error' in again ? again : { 'ROADMAP.md': again.text }
+  })
+  return !('error' in wrote)
+}
+
 /** La note d'un lancement en cloud réussi : la carte attend Start, la ligne est prise et poussée. */
 const CLOUD_PROPOSED = 'Carte cloud posée : clique Start. La ligne est prise (lieu:cloud).'
 
@@ -5742,7 +5862,9 @@ async function launchSession($: EngineInterface, source: Source, task: Task, sho
   // Le bouton se grise et dit « Lancement… » : une seule écriture.
   await setView($, v => ({ launched: v.launched.includes(key) ? v.launched : [...v.launched, key], launchNote: LAUNCHING }))
   const projet = projectSettings(source).travail === 'projet'
-  const brief = await briefOf($, source, task, shortTitle, extra, kind, routineClosed)
+  // #490 : le modèle et l'effort de la tâche partent avec le brief, jusqu'à la carte que pose Claude en repli.
+  const launch = await taskLaunch($, source, task)
+  const brief = { ...(await briefOf($, source, task, shortTitle, extra, kind, routineClosed)), launch }
   // Un refus net de l'app ou une panne : rien n'est parti, le bouton redevient cliquable.
   const release = () => setView($, v => ({ launched: v.launched.filter(k => k !== key) }))
   // #263 : le titre vient de la ligne, mais une session ouverte (endormie, le ▶ revenu) peut déjà porter son #N.
@@ -5813,13 +5935,12 @@ async function launchSession($: EngineInterface, source: Source, task: Task, sho
     // Bertrand, 2026-10-23 ; borné à celui de la session qui lance), puis, sans code (#76, #176), le
     // dossier du projet sans worktree (le panneau ne lit pas la copie d'un worktree). Un champ tombé
     // hérite de la session qui lance.
-    const effort = LAUNCH_EFFORTS.has(settings.launchEffort) ? settings.launchEffort : undefined
+    const effort = launch.effort
     const optional: [field: string, value: unknown, note: string][] = []
     if (wantsBypass(settings.launchBypass, mode)) optional.push(['permission_mode', BYPASS_MODE, `en ${BYPASS_MODE}`])
     if (effort) optional.push(['effort', effort, `avec effort ${effort}`])
-    // #327 : le modèle qui cadre (« hérite » n'en pose aucun) ; un refus qui le nomme le fait tomber seul.
-    const launchModel = launchModelOf(settings.launchModel)
-    if (launchModel !== 'hérite') optional.push(['model', MODEL_IDS[launchModel], `avec le modèle ${launchModel}`])
+    // #327, #490 : le modèle que dit la tâche (« hérite » n'en pose aucun) ; un refus qui le nomme le fait tomber seul.
+    if (launch.model) optional.push(['model', launch.modelId, `avec le modèle ${launch.model}`])
     if (projet) optional.push(['use_worktree', false, 'sans worktree'])
     // #465 : une carte cloud de la même tâche qui attend Start est retirée ; l'app muette ne fait pas tourner la fiche.
     await dismissPendingCard($, source, task.id, 'mac')
@@ -6318,7 +6439,9 @@ async function submitWelcome($: EngineInterface, text: string): Promise<void> {
 }
 
 /** Sans outil de lancement utilisable, la demande part à Claude dans la conversation en cours. */
-async function askClaude($: EngineInterface, brief: { title: string; prompt: string; background: string }, refusals: readonly string[] = [], note = viaClaudeNote(refusals)): Promise<void> {
+type LaunchBrief = { title: string; prompt: string; background: string; launch?: { modelId?: string; effort?: string } }
+
+async function askClaude($: EngineInterface, brief: LaunchBrief, refusals: readonly string[] = [], note = viaClaudeNote(refusals)): Promise<void> {
   try {
     const source = await sourceNow($)
     await submitLaunch($, brief, note, source ? projectSettings(source).travail : 'code')
@@ -6354,12 +6477,12 @@ function queueSubmit($: EngineInterface, text: string): void {
   }
 }
 
-async function submitLaunch($: EngineInterface, brief: { title: string; prompt: string; background: string }, note: string, travail: Travail = 'code'): Promise<void> {
+async function submitLaunch($: EngineInterface, brief: LaunchBrief, note: string, travail: Travail = 'code'): Promise<void> {
   // La conversation n'en montre que la première ligne : le hook prompt.submit passe le reste en contexte (#140).
   const text = launchPrompt(
     brief.title,
     [
-      `Propose cette session sous forme de carte (${cardTool(LAUNCH_EFFORTS.has(settings.launchEffort) ? settings.launchEffort : undefined, travail, launchModelId())}), titre « ${brief.title} », avec ce brief. Pose la carte sans essayer de la lancer, puis réponds en une phrase au plus :`,
+      `Propose cette session sous forme de carte (${cardTool(brief.launch ? brief.launch.effort : LAUNCH_EFFORTS.has(settings.launchEffort) ? settings.launchEffort : undefined, travail, brief.launch ? brief.launch.modelId : launchModelId())}), titre « ${brief.title} », avec ce brief. Pose la carte sans essayer de la lancer, puis réponds en une phrase au plus :`,
       '',
       brief.prompt,
       '',
@@ -6757,6 +6880,11 @@ async function archiveBandSession($: EngineInterface, t: BrandTask, now: number)
 
 const CLOUD_PRS_KEY = 'cloud-prs'
 const CLOUD_HIDDEN_KEY = 'cloud-hidden'
+/** Les branches des lignes cloud vues ouvertes (`<dossier>|#<id>` → branche, #468) : une ligne close perd `branche:`. */
+const CLOUD_SEEN_KEY = 'cloud-seen'
+/** Au-delà, les plus anciennes branches vues s'oublient : une livrée ne se montre que 7 jours. */
+const CLOUD_SEEN_MAX = 60
+let cloudSeenMem: { at: number; map: Record<string, string> } | undefined
 const CLOUD_PRS_MS = 60_000
 // `title` : le « #N » qui rattache à sa tâche une session cloud lancée par la carte native (#445).
 const CLOUD_PR_FIELDS = 'headRefName,title,number,url,state,isDraft,mergeable,statusCheckRollup,createdAt,isCrossRepository'
@@ -6876,6 +7004,33 @@ async function cloudTakes($: EngineInterface, dir: string, branches: readonly st
   return out
 }
 
+/**
+ * Les branches des lignes cloud déjà vues ouvertes (#468), relues au plus toutes les 60 s ; une ligne nouvelle s'y
+ * ajoute, une seule écriture par changement. C'est par elles qu'une ligne close dans ROADMAP-fait, qui a perdu
+ * `branche:`, retrouve sa PR et se montre livrée.
+ */
+async function cloudSeen($: EngineInterface, root: string, open: readonly Task[], now: number): Promise<Record<string, string>> {
+  if (!cloudSeenMem || now - cloudSeenMem.at >= CLOUD_PRS_MS) {
+    const stored = await $.store.get(CLOUD_SEEN_KEY).catch(() => undefined)
+    const map: Record<string, string> = {}
+    if (stored && typeof stored === 'object' && !Array.isArray(stored)) for (const [k, v] of Object.entries(stored)) if (typeof v === 'string') map[k] = v
+    cloudSeenMem = { at: now, map }
+  }
+  const map = cloudSeenMem.map
+  const fresh = open.filter(t => t.id !== undefined && t.branche !== undefined && map[`${root}|#${t.id}`] !== t.branche)
+  if (fresh.length > 0) {
+    for (const t of fresh) {
+      const key = `${root}|#${t.id}`
+      delete map[key]
+      map[key] = t.branche as string
+    }
+    const keys = Object.keys(map)
+    for (const k of keys.slice(0, Math.max(0, keys.length - CLOUD_SEEN_MAX))) delete map[k]
+    await storeSet($, CLOUD_SEEN_KEY, { ...map } as StoreValue).catch(() => undefined)
+  }
+  return map
+}
+
 /** Les lignes cloud fusionnées dont Bertrand a « archivé » la ligne (`<dossier>|#<id>`) ; relues au plus toutes les 60 s. */
 async function cloudHidden($: EngineInterface, now: number): Promise<Set<string>> {
   if (cloudHiddenMem && now - cloudHiddenMem.at < CLOUD_PRS_MS) return cloudHiddenMem.keys
@@ -6893,20 +7048,37 @@ async function cloudHidden($: EngineInterface, now: number): Promise<Set<string>
  */
 async function cloudTasksOf($: EngineInterface, source: Source, tasks: readonly Task[], short: (t: Task) => string, now: number): Promise<BrandTask[]> {
   const wanted = tasks.filter(t => !t.done && t.lieu === 'cloud' && t.branche !== undefined && t.id !== undefined)
-  if (wanted.length === 0 && !cloudOpen(source)) return []
   const root = source.root ?? source.dir
+  // #468 : une ligne close dans ROADMAP-fait (à la publication) retrouve sa branche par ce que le panneau a vu.
+  const recent = tasks.some(t => t.done && t.fait !== undefined && now - Date.parse(t.fait.slice(0, 10)) <= CLOUD_ADOPT_MS)
+  const seen = wanted.length > 0 || cloudOpen(source) || recent ? await cloudSeen($, root, wanted, now).catch(() => ({}) as Record<string, string>) : {}
+  const closed = tasks.flatMap(t => {
+    const branche = t.done && t.id !== undefined ? seen[`${root}|#${t.id}`] : undefined
+    return branche ? [{ ...t, lieu: 'cloud' as const, branche }] : []
+  })
+  if (wanted.length === 0 && closed.length === 0 && !cloudOpen(source)) return []
   const [prs, hidden, taken] = await Promise.all([
     readCloudPrs($, root, projectSettings(source).depot),
     cloudHidden($, now).catch(() => new Set<string>()),
     cloudTakes($, source.dir, wanted.map(t => t.branche as string), now).catch(() => new Map<string, number>()),
   ])
   const byId = new Map(tasks.flatMap(t => (t.id !== undefined ? [[t.id, t] as const] : [])))
-  return cloudBrandTasks(tasks.filter(t => !t.done), prs, now, b => taken.get(b))
-    .filter(bt => !(bt.cloud?.state === 'merged' && hidden.has(`${root}|#${bt.id}`)))
+  return cloudBrandTasks(tasks.filter(t => !t.done), prs, now, b => taken.get(b), closed)
+    .filter(bt => !((bt.cloud?.state === 'merged' || bt.cloud?.state === 'delivered') && hidden.has(`${root}|#${bt.id}`)))
     .map(bt => {
       const task = byId.get(bt.id)
       return task ? { ...bt, label: short(task) } : bt
     })
+}
+
+/**
+ * Les tâches ouvertes du Mac dont la PR de la branche est fusionnée (#468, `mergedLocalIds`) : la même lecture des PR que
+ * les lignes cloud (`readCloudPrs`, gardée 60 s), et rien à lire tant qu'aucune tâche ouverte du Mac n'a de `branche:`.
+ */
+async function mergedIdsOf($: EngineInterface, source: Source, tasks: readonly Task[]): Promise<Set<string>> {
+  if (!tasks.some(t => !t.done && t.branche && t.lieu !== 'cloud')) return new Set()
+  const prs = await readCloudPrs($, source.root ?? source.dir, projectSettings(source).depot).catch(() => undefined)
+  return mergedLocalIds(tasks, prs)
 }
 
 /**
@@ -6936,7 +7108,7 @@ async function archiveCloudRow($: EngineInterface, t: BrandTask): Promise<void> 
   await setView($, () => ({ openAt: '', openNote: cloudArchiveNote(title, outcome) }))
 }
 
-/** Cache une ligne cloud fusionnée du bloc et de la bande (`cloud-hidden`) : aucune session locale à archiver (#408). */
+/** Cache une ligne cloud livrée du bloc et de la bande (`cloud-hidden`) : aucune session locale à archiver (#408). */
 async function hideCloudRow($: EngineInterface, t: BrandTask, source: Source): Promise<void> {
   const key = `${source.root ?? source.dir}|#${t.id}`
   const stored = await $.store.get(CLOUD_HIDDEN_KEY).catch(() => undefined)
@@ -8935,6 +9107,10 @@ export const register: Register = (on, options) => {
     const id = !ran.isError && !fromAgent(e) && typeof title === 'string' ? sessionTitleId(title) : undefined
     if (id !== undefined) launchTurn.cards.push(`#${id}`)
     if (id !== undefined && next.origin.plugin === 'engine' && ran.deny === undefined) await noteNativeCard($, title, { target: cardTargetOf(e as Record<string, unknown>), text: ran.text })
+    // #474 : la carte cloud de Maestro posée, le panneau guette sa branche sur origin pour prendre la ligne au départ.
+    if (id !== undefined && next.origin.plugin === 'engine' && ran.deny === undefined && cardTargetOf(e as Record<string, unknown>) === 'cloud') {
+      await watchCloudCard($, id, (e as { prompt?: unknown }).prompt)
+    }
     return ran
   })
   // Un enfant note son état pour son parent (#84) : sa liste d'étapes, sa question, son récap.
@@ -9507,8 +9683,8 @@ export const register: Register = (on, options) => {
         const task = all.find(x => x.id === t.id)
         return {
           since: sinceLabel(t.since, now),
-          // #440 (maquette B6) : une ligne cloud a son compte d'étapes, tiré de sa PR ; ses mots passent devant la jauge.
-          text: t.cloud ? cloudSteps(t.cloud.state).count : bandInfo({ view: views[i], finished: t.finished === true }),
+          // #440 (maquette B6) : une ligne cloud a son compte d'étapes, tiré de sa PR ; #468 (bande v2) : et le numéro de sa PR.
+          text: t.cloud ? `${cloudSteps(t.cloud.state).count}${t.cloud.number !== undefined ? ` · PR ${t.cloud.number}` : ''}` : bandInfo({ view: views[i], finished: t.finished === true }),
           ...(task ? { square: { hex: axisColor(pal, ranks.get(task.axis) ?? 0), axis: task.axis, done: task.done === true || t.closed === true } } : {}),
         }
       })
@@ -9668,6 +9844,7 @@ async function maestroTasksOf(
   // #384 : une seule lecture de la note par session ; sa question et son verdict disent l'état à l'arrêt.
   const notes = new Map(await Promise.all(found.map(async f => [f.sessionId, await readSteps($, f.sessionId)] as const)))
   const asking = new Map([...notes].map(([sid, n]) => [sid, n?.question !== undefined] as const))
+  const merged = await mergedIdsOf($, source, found.map(f => f.task))
   return maestroBrandTasks(
     found.map(({ task: t, sessionId: sid }) => ({
       id: t.id as string,
@@ -9682,6 +9859,7 @@ async function maestroTasksOf(
       launchedAt: launchOf(t, sid, now),
       ...(aheadBySession.get(sid)?.ahead !== undefined ? { ahead: aheadBySession.get(sid)?.ahead as number } : {}),
       asking: asking.get(sid) === true,
+      ...(merged.has(t.id as string) ? { merged: true } : {}),
       ...(notes.get(sid) ? { status: notes.get(sid) as ChildStatus } : {}),
       ...(sinceOf(sid, live[liveKeyOf(source, t)]) !== undefined ? { since: sinceOf(sid, live[liveKeyOf(source, t)]) as number } : {}),
     })),
@@ -9691,13 +9869,13 @@ async function maestroTasksOf(
 /**
  * Depuis quand une session tourne (#385) : sa création lue par `get_session` ; à défaut, son lancement
  * par le panneau (`startedAt` de son suivi) ; sinon rien, plutôt qu'une durée fausse. Une session
- * déduite (trouvée par son titre, ligne écrite) n'a pour `startedAt` que sa dernière activité (#341) :
+ * déduite (trouvée par son titre) n'a pour `startedAt` que sa dernière activité (#341) :
  * elle ne compte pas.
  */
 function sinceOf(sessionId: string | undefined, entry?: LiveEntry, inferred = false): number | undefined {
   const created = sessionId !== undefined ? createdBySession.get(sessionId) : undefined
   if (created !== undefined && Number.isFinite(created)) return created
-  return !inferred && entry && entry.sessionId === sessionId && entry.via !== 'write' && Number.isFinite(entry.startedAt) ? entry.startedAt : undefined
+  return !inferred && entry && entry.sessionId === sessionId && Number.isFinite(entry.startedAt) ? entry.startedAt : undefined
 }
 
 /**
@@ -9722,13 +9900,17 @@ async function projectBandOthers($: EngineInterface, data: NonNullable<Awaited<R
   await learnCreated($, found.map(f => f.sessionId), now)
   await refreshAhead($, data.source, found.map(f => f.sessionId), now)
   const notes = await Promise.all(found.map(f => readSteps($, f.sessionId)))
+  const merged = await mergedIdsOf($, data.source, found.map(f => f.task))
   const local: BrandTask[] = found.map(({ task: t, entry, inferred, sessionId: sid }, i) => {
     const status = notes[i]
     const since = sinceOf(sid, entry, inferred)
+    // #468 : à l'arrêt, sans question, sa PR fusionnée : « fusionnée · suite de main », pas « t'attend ».
+    const isMerged = runningBySession.get(sid) === false && status?.question === undefined && merged.has(t.id as string)
     return {
       id: t.id as string,
       label: sessionName(rowTitle(sid) ?? '') ?? data.short(t),
-      state: runningBySession.get(sid) === false ? stoppedState({ asking: status?.question !== undefined, ahead: aheadBySession.get(sid)?.ahead, status }) : 'live',
+      state: isMerged ? 'live' : runningBySession.get(sid) === false ? stoppedState({ asking: status?.question !== undefined, ahead: aheadBySession.get(sid)?.ahead, status }) : 'live',
+      ...(isMerged ? { merged: true as const } : {}),
       sessionId: sid,
       launchedAt: launchOf(t, sid, now),
       ...(since !== undefined ? { since } : {}),
@@ -10287,9 +10469,13 @@ function maestroBandTree(
   // case, la durée dans la sienne, au bord droit.
   const marks = band.tasks.map(bandState)
   // #425 (maquette A) : le mot d'état en tête de la case de l'info ; une ligne cloud garde ses mots à elle.
-  const labels = band.tasks.map((t, i) => (t.cloud ? '' : (marks[i]?.word ?? '')))
+  // #468 (maquette A v2 de la bande, BBR) : la grille du bloc « En session » : l'icône d'état collée à son mot, le même
+  // pour une ligne du Mac et du cloud (`blockWord`), puis la jauge, le détail et la durée, à la couleur du mot.
+  const rowWord = (t: BrandTask) => blockWord({ state: t.finished ? 'done' : t.state, ...(t.cloud ? { cloud: t.cloud } : {}), ...(t.merged ? { merged: true } : {}) })
+  const rowInk = (t: BrandTask) => (t.cloud ? cloudTints(palette, t.cloud.state).word : hue(t)[1])
+  const labels: string[] = []
   const cols = bandColumns({
-    labels: labels.filter(w => w !== ''),
+    labels,
     infos: infos.map(x => x.text),
     // #400 : la durée en file d'une entrée bloquée partage la colonne de la durée des sessions.
     sinces: [...infos.map(x => x.since), ...stuck.map(s => s.since)],
@@ -10309,10 +10495,10 @@ function maestroBandTree(
   const cloudBar = (cloud: CloudPr, width: number, key: string) => {
     if (!Svg) return null
     const steps = cloudSteps(cloud.state)
-    const bar = stepsBarIcon(palette, steps.segments, { width, height: 4, waiting: cloud.state === 'red' || cloud.state === 'closed', merging: cloud.state === 'ready', finished: cloud.state === 'merged' })
+    const bar = stepsBarIcon(palette, steps.segments, { width, height: 4, waiting: cloud.state === 'red' || cloud.state === 'closed', merging: cloud.state === 'ready' || cloud.state === 'merged', finished: cloud.state === 'delivered' })
     return <Svg key={key} source={bar.source} alt={`étapes ${steps.count}`} width={bar.width} height={bar.height} />
   }
-  const stateIcon = (icon: ReturnType<typeof bandState>['icon'], word: string, hex: string, cloud?: CloudPr) => {
+  const stateIcon = (icon: ReturnType<typeof bandState>['icon'], word: string, hex: string, cloud?: CloudPr, merged = false) => {
     // #440 (maquette B6) : une session cloud a l'icône d'état d'une locale, tirée de sa PR (prête : la fusion) ;
     // le nuage, gris, dit seulement où elle tourne, devant son numéro (`placeMark`).
     if (cloud) {
@@ -10324,7 +10510,7 @@ function maestroBandTree(
     if (!Svg) return <Text size="caption" color={hex}>{{ spinner: '◌', hand: '✋', merge: '⑂', check: '✓' }[icon]}</Text>
     const source =
       icon === 'spinner'
-        ? spinnerIcon(palette.live, 14, word, false, now)
+        ? spinnerIcon(cloud?.state === 'merged' || merged ? palette.wait : palette.live, 14, word, false, now)
         : icon === 'hand'
           ? handIcon(palette.block, 14, STROKE.pill, word)
           : icon === 'merge'
@@ -10428,6 +10614,17 @@ function maestroBandTree(
     return row
   }
   const bodyColumns = (e.props as { bodyColumns?: number }).bodyColumns ?? 48
+  // #468 (compte par lieu) : mélangées, chaque lieu et son nombre ; toutes au même endroit, son icône seule.
+  const bandCloud = band.tasks.filter(t => t.cloud !== undefined).length
+  const bandMac = band.tasks.length - bandCloud
+  const bandPlaces: { where: 'cloud' | 'mac'; n: number }[] =
+    bandCloud > 0 && bandMac > 0 ? [{ where: 'cloud', n: bandCloud }, { where: 'mac', n: bandMac }] : bandCloud > 0 ? [{ where: 'cloud', n: 0 }] : bandMac > 0 ? [{ where: 'mac', n: 0 }] : []
+  // #468 : les colonnes de la grille, à la largeur du plus long texte montré ; ce qui part quand la place manque.
+  const bandNumberCells = Math.max(0, ...band.tasks.map(t => `#${t.id}`.length))
+  const bandWordCells = Math.max(0, ...band.tasks.map(t => [...rowWord(t)].length))
+  const bandDetailCells = Math.min(BAND_INFO_MAX, Math.max(0, ...infos.map(x => [...x.text].length)))
+  const bandFixedCells = 2 + pxCells(MARK_SQUARE_PX) + 2 + bandNumberCells + 2 + pxCells(BAND_GAUGE.row) + 2 + cols.since + 7
+  const bandFit = bandRowFit({ columns: bodyColumns, fixed: bandFixedCells, word: bandWordCells, detail: bandDetailCells })
   return (
     <Box flexDirection="column" gap={SPACE.tight} backgroundColor={palette.bg} padding="sm">
       {/* L'en-tête commence comme une ligne, par le même trait d'espace : « Maestro » au droit des pastilles (#326). */}
@@ -10435,6 +10632,15 @@ function maestroBandTree(
         {strut}
         <Text size="footnote" weight="semibold">{words.title}</Text>
         {words.foot !== '' && <Text size="caption" color={palette.text3}>{`· ${words.foot}`}</Text>}
+        {/* #468 (maquette A du compte) : le compte par lieu après le compte des sessions, en gris, avec les icônes des lignes. */}
+        {Svg && bandPlaces.length > 0 &&
+          bandPlaces.map(p => (
+            <Box key={`band-place-count:${p.where}`} flexDirection="row" alignItems="center" gap={SPACE.tight} flexShrink={0}>
+              <Text size="caption" color={palette.text3}>·</Text>
+              <Svg source={p.where === 'cloud' ? cloudIcon(palette.text3, 12, 'Dans le cloud') : computerIcon(palette.text3, 12, 'Sur le Mac')} alt={p.where === 'cloud' ? `${p.n} dans le cloud` : `${p.n} sur le Mac`} width={12} height={12} />
+              {p.n > 0 && <Text size="caption" tabular color={palette.text3}>{String(p.n)}</Text>}
+            </Box>
+          ))}
         {/* Le contexte de Maestro, seul : « Contexte 40 % », sans tokens ni jauge (#174) ; au-delà de 65 %,
             le % en rouge, suivi de « Compacter » (#197). */}
         {mine && <Box flexGrow={1} />}
@@ -10452,8 +10658,8 @@ function maestroBandTree(
         {stuck.length > 0 && band.tasks.length > 0 && Svg && <Svg key="band-stuck-rule" source={ruleIcon(palette.border, fullWidth(bodyColumns))} alt="séparateur" height={1} />}
         {band.tasks.map((t, i) => {
           const view = views[i]
-          const [dot, word] = hue(t)
-          const bar = view && Svg ? stepsBarIcon(palette, view.segments, { width: BAND_GAUGE.row, height: 4, waiting: t.state === 'wait', merging: t.state === 'merge', finished: t.finished === true }) : undefined
+          const [dot] = hue(t)
+          const bar = view && Svg ? stepsBarIcon(palette, view.segments, { width: BAND_GAUGE.row, height: 4, waiting: t.state === 'wait', merging: t.state === 'merge' || t.merged === true, finished: t.finished === true }) : undefined
           // Le contexte de la session en jauge fine sous sa jauge d'étapes (#157, revenu par #217) ; sans mesure, rien.
           // L'écart entre les deux est dessiné dans l'image, à BAND_GAUGE.gap px (#241).
           const ctx = contexts.rows[i]
@@ -10462,6 +10668,9 @@ function maestroBandTree(
           const info = infos[i]
           const square = info?.square
           const done = square?.done === true
+          const ink = rowInk(t)
+          const detail = info?.text ?? ''
+          const archivable = t.archivable === true && Boolean(t.sessionId || t.cloud)
           return (
             <Box key={`band-row:${keyPart(t.id)}`} flexDirection="row" alignItems="center" gap={SPACE.row} hover={{ backgroundColor: palette.hover }}>
               {strut}
@@ -10473,77 +10682,46 @@ function maestroBandTree(
                 ) : (
                   <Svg source={discIcon(dot, 12)} alt={t.state === 'done' ? bandState(t).word : (words.states[i] ?? bandState(t).word)} width={12} height={12} />
                 ))}
-              {/* L'archive entre la case et le numéro (« Apparaît uniquement quand une task est done et pas encore
-                  archivée »), dans une case que toutes les lignes gardent dès qu'une en a besoin : les numéros
-                  restent alignés. Au terminal, le bouton prend sa largeur. */}
-              {cols.archive > 0 && (
-                <Box key={`band-archive-slot:${keyPart(t.id)}`} width={Svg ? cols.archive : undefined} flexShrink={0} flexDirection="row" justifyContent="center">
-                  {t.archivable && (t.sessionId || t.cloud) && archiveButton(t, done ? palette.finished : palette.text2)}
-                </Box>
-              )}
               {placeMark(t.cloud !== undefined, `band-place:${keyPart(t.id)}`)}
               {/* Le numéro à sa largeur, à un écart du titre (#211) ; barré avec le titre quand la tâche est close. */}
-              <Box flexShrink={0}>
+              <Box flexShrink={0} {...(Svg ? { width: bandNumberCells } : {})} flexDirection="row" justifyContent="flex-end">
                 <Text size="caption" tabular color={done ? palette.finishedOn : palette.text3} {...(done ? { strikethrough: true } : {})}>{`#${t.id}`}</Text>
               </Box>
-              <Box flexShrink={1} minWidth={0}>
-                {titleOf(t, done, palette.finishedOn)}
+              {/* #468 : le titre seul grandit ; en très étroit, il part avant la durée, sa place reste. */}
+              <Box flexGrow={1} flexShrink={1} minWidth={0}>
+                {(bandFit.title || !Svg) && titleOf(t, done, palette.finishedOn)}
               </Box>
-              <Box flexGrow={1} />
-              {/* L'état en icône seule (bande A) : la roue, la main, la branche ou la coche, devant la jauge. */}
-              <Box key={`band-mark:${keyPart(t.id)}`} flexShrink={0} flexDirection="row" alignItems="center">
-                {stateIcon(mark.icon, mark.word, dot, t.cloud)}
+              {/* L'icône d'état collée au début de son mot (#468), dans une colonne à la largeur du plus long mot. */}
+              <Box key={`band-state:${keyPart(t.id)}`} flexShrink={0} flexDirection="row" alignItems="center" gap={SPACE.row} {...(Svg ? { width: 2 + (bandFit.word ? 1 + bandWordCells : 0) } : {})}>
+                <Box key={`band-mark:${keyPart(t.id)}`} width={2} flexShrink={0} flexDirection="row" justifyContent="center">
+                  {stateIcon(mark.icon, mark.word, dot, t.cloud, t.merged === true)}
+                </Box>
+                {(bandFit.word || !Svg) && <Text key={`band-word:${keyPart(t.id)}`} size="caption" color={ink} wrap="truncate-end">{rowWord(t)}</Text>}
               </Box>
-              {/* Jauge, info et durée à largeur fixe, sur chaque ligne (#172) : les barres partent de la même
-                  colonne, quels que soient le titre, l'étape ou le compte. La case de la jauge suit son dessin (#326). */}
-              {/* #440 (maquette B6) : une session cloud, le mot court de sa PR calé à droite devant sa jauge. */}
-              {t.cloud && (
-                <Box key={`band-cloud:${keyPart(t.id)}`} flexShrink={0} flexDirection="row" alignItems="center">
-                  <Text size="caption" color={cloudTints(palette, t.cloud.state).word}>{cloudWords(t.cloud.state).short}</Text>
-                </Box>
-              )}
-              {Svg && t.cloud && (
+              {/* La jauge, d'étapes ou de PR, et sous elle la jauge de contexte (#157, #217), à la même place sur chaque ligne. */}
+              {Svg && (
                 <Box key={`band-gauge:${keyPart(t.id)}`} flexShrink={0} flexDirection="column" gap={0}>
-                  {cloudBar(t.cloud, BAND_GAUGE.row, `band-cloud-bar:${keyPart(t.id)}`)}
+                  {t.cloud ? cloudBar(t.cloud, BAND_GAUGE.row, `band-cloud-bar:${keyPart(t.id)}`) : bar ? <Svg source={bar.source} alt={`étapes ${view?.count ?? ''}`} width={bar.width} height={bar.height} /> : <Svg source={`<svg xmlns="http://www.w3.org/2000/svg" width="${BAND_GAUGE.row}" height="4"/>`} alt="espace" width={BAND_GAUGE.row} height={4} />}
+                  {!t.cloud && ctxBar && ctx && <Svg source={ctxBar.source} alt={`contexte ${ctx.text}`} width={ctxBar.width} height={ctxBar.height} />}
                 </Box>
               )}
-              {Svg && !t.cloud && (
-                <Box key={`band-gauge:${keyPart(t.id)}`} flexShrink={0} flexDirection="column" gap={0}>
-                  {bar && <Svg source={bar.source} alt={`étapes ${view?.count ?? ''}`} width={bar.width} height={bar.height} />}
-                  {/* Sans note, la case garde la largeur d'une jauge : le compte et l'étape restent en colonne (#326). */}
-                  {!bar && <Svg source={`<svg xmlns="http://www.w3.org/2000/svg" width="${BAND_GAUGE.row}" height="4"/>`} alt="espace" width={BAND_GAUGE.row} height={4} />}
-                  {ctxBar && ctx && <Svg source={ctxBar.source} alt={`contexte ${ctx.text}`} width={ctxBar.width} height={ctxBar.height} />}
+              {/* Le détail, ce que la bande a la place de dire en plus du bloc : « 4/8 · Coder le réglage », « 2/6 · PR 72 ». */}
+              {bandFit.detail && (
+                <Box key={`band-info:${keyPart(t.id)}`} width={bandDetailCells} flexShrink={0} minWidth={0} flexDirection="row" alignItems="center">
+                  {detail !== '' && <Text size="caption" tabular color={palette.text3} wrap="truncate-end">{detail}</Text>}
                 </Box>
               )}
-              {/* Le compte et l'étape, « 6/7 · Écrire les tests rouges », à la largeur du plus long texte (#174). Ils
-                  ne rétrécissent pas : seul le titre cède sa place, sinon un titre long poussait la jauge (#326). */}
-              {cols.info > 0 && (
-                <Box key={`band-info:${keyPart(t.id)}`} width={cols.info} flexShrink={0} minWidth={0} flexDirection="row" alignItems="center" gap={SPACE.row}>
-                  {/* #425 (maquette A) : le mot d'état, à la couleur de l'état, dans sa colonne ; le compte et l'étape en gris
-                      cèdent sa place, jamais le titre. */}
-                  {cols.label > 0 && labels[i] !== '' && (
-                    <Box key={`band-label:${keyPart(t.id)}`} width={cols.label} flexShrink={0}>
-                      <Text size="caption" weight="medium" color={word}>{labels[i]}</Text>
-                    </Box>
-                  )}
-                  {info && info.text !== '' && (
-                    <Box key={`band-step:${keyPart(t.id)}`} flexShrink={1} minWidth={0}>
-                      <Text size="caption" tabular color={palette.text3} wrap="truncate-end">{info.text}</Text>
-                    </Box>
-                  )}
-                </Box>
-              )}
-              {/* La durée depuis le lancement, l'horloge devant, au bord droit, sous « Contexte 48 % » (retour de test
-                  de #385 : « ◷ 8 h 11 » glisse au bout de la ligne), calée à droite. */}
-              {clocked && (
+              {/* La durée au bord droit, à la couleur du mot de sa ligne (#468, BBR) ; une livrée y met son archive. */}
+              {(clocked || archivable) && (
                 <Box key={`band-since:${keyPart(t.id)}`} width={2 + cols.since} flexShrink={0} flexDirection="row" alignItems="center" justifyContent="flex-end" gap={0}>
-                  {info?.since && (
-                    <Box width={2} flexShrink={0} flexDirection="row" alignItems="center">
-                      {Svg ? <Svg source={clockIcon(word, 12)} alt="lancée depuis" width={12} height={12} /> : <Text size="caption" color={word}>◷</Text>}
-                    </Box>
-                  )}
-                  {/* #425 : la durée à la couleur de l'état. */}
-                  {info?.since && <Text size="caption" tabular color={word}>{info.since}</Text>}
+                  {archivable
+                    ? archiveButton(t, done ? palette.finished : palette.text2)
+                    : info?.since && [
+                        <Box key={`band-clock:${keyPart(t.id)}`} width={2} flexShrink={0} flexDirection="row" alignItems="center">
+                          {Svg ? <Svg source={clockIcon(ink, 12)} alt="lancée depuis" width={12} height={12} /> : <Text size="caption" color={ink}>◷</Text>}
+                        </Box>,
+                        <Text key={`band-since-text:${keyPart(t.id)}`} size="caption" tabular color={ink}>{info.since}</Text>,
+                      ]}
                 </Box>
               )}
             </Box>
@@ -12302,8 +12480,10 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
           : undefined
     if (!inSession) await refreshAhead($, source, [stepsSession], now)
     const aheadNow = stepsSession ? aheadBySession.get(stepsSession)?.ahead : undefined
+    // #468 (BBR) : à l'arrêt, sans question, sa PR fusionnée et sa ligne ouverte : « fusionnée · suite de main ».
+    const ficheMerged = waitState === 'wait' && !current.done && stepsNote?.question === undefined && current.id !== undefined && (await mergedIdsOf($, source, [current])).has(current.id)
     const headState: BrandTask['state'] | undefined =
-      waitState === 'wait' ? brandStateOf(taskSessionState({ asking: stepsNote?.question !== undefined, ahead: aheadNow ?? 0, ...(stepsNote ? { status: stepsNote } : {}) })) : waitState
+      waitState === 'wait' ? brandStateOf(taskSessionState({ asking: stepsNote?.question !== undefined, ahead: aheadNow ?? 0, ...(stepsNote ? { status: stepsNote } : {}), ...(ficheMerged ? { merged: true } : {}) })) : waitState
     // #440 : une ligne cloud n'a ni session locale ni étapes à lire ; sa fiche dit l'état de sa PR, celui de la bande.
     const cloudNow =
       !current.done && !headState && current.id !== undefined && !ficheTest
@@ -12346,6 +12526,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
           ...(stepsNote?.steps.find(x => x.status === 'in_progress') ? { current: stepsNote.steps.find(x => x.status === 'in_progress')!.content } : {}),
           ...(aheadNow ? { ahead: aheadNow } : {}),
           ...(current.fait ? { fait: current.fait } : {}),
+          ...(ficheMerged ? { merged: true } : {}),
         })
       : undefined
     const stateBox = () => {
@@ -12510,6 +12691,9 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     const targeted = !isRoutine(current) && cloudOpen(source)
     if (targeted && launchable) {
       loadRecoDocs($, source, current)
+      askJudge($, source, current)
+    } else if (launchable && !isRoutine(current) && projectSettings(source).travail === 'projet') {
+      // #492 : dans un projet sans code, le verdict ne dit que la charge de la tâche, que le ▶ prend.
       askJudge($, source, current)
     }
     const reco = recoOf(source, current)
@@ -12747,7 +12931,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
       ...(current.due ? { due: current.due } : {}),
       ...(current.ouvert ? { ouvert: current.ouvert } : {}),
       ...(current.fait ? { fait: current.fait } : {}),
-      ...(cloudNow ? { cloud: cloudNow.state } : {}),
+      ...(cloudNow ? { cloud: cloudNow.state } : ficheMerged ? { cloud: 'merged' as const } : {}),
       today,
     })
     const cartonLook = {
@@ -13065,7 +13249,8 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
               ) : (
                 <Text color={palette.text2}>■</Text>
               ),
-              title: <Text weight="semibold" wrap="truncate-end">{lead.title}</Text>,
+              // #488 : au poids normal, comme ses filles ; la ligne de la fiche se dit par son fond et son « ici ».
+              title: <Text wrap="truncate-end">{lead.title}</Text>,
               right: [
                 ...(Svg ? [<Svg key="family-gauge" source={gaugeIcon(lead.kinds, chainColors, 56, 6)} alt={`${f.count}`} width={56} height={6} />] : []),
                 <Text key="family-count" size="caption" tabular color={palette.text2}>{lead.right}</Text>,
@@ -13092,7 +13277,6 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
                 title: (
                   <Text
                     wrap="truncate-end"
-                    {...(r.here ? { weight: 'semibold' as const } : {})}
                     {...(r.state === 'done' || r.state === 'cancelled' ? { strikethrough: true, color: palette.text3 } : {})}
                   >
                     {r.title}
@@ -14116,8 +14300,10 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   // #408 : les lignes `lieu:cloud` prises entrent dans le bloc avec l'état de leur PR (aucune session locale à suivre).
   // #445 : et celles qu'une session cloud lancée par la carte native travaille, sans ligne prise, par le « #N » de leur PR.
   const cloudRows = maestroBrand
-    ? (await cloudTasksOf($, source, openTasks, t => short(t).titre, now)).filter(c => !maestroBrand.tasks.some(b => b.id === c.id) && !openTasks.some(t => t.id === c.id && !t.branche && isLive(t)))
+    ? (await cloudTasksOf($, source, [...openTasks, ...doneTasks], t => short(t).titre, now)).filter(c => !maestroBrand.tasks.some(b => b.id === c.id) && !openTasks.some(t => t.id === c.id && !t.branche && isLive(t)))
     : []
+  // #468 (BBR) : les tâches du Mac dont la PR est fusionnée et la ligne ouverte disent « fusionnée · suite de main ».
+  const mergedIds = maestroBrand ? await mergedIdsOf($, source, openTasks) : new Set<string>()
   const blockRows = maestroBrand ? liveBlockRows([...maestroBrand.tasks, ...cloudRows], openTasks, isLive, t => launchOf(t, liveOf(t)?.entry.sessionId, now), doneTasks) : []
   const blockOf = new Map(blockRows.flatMap(r => (r.brand ? [[r.brand.id, r.brand] as const] : [])))
   const blockKeys = new Set(blockRows.map(r => taskKey(r.task)))
@@ -14195,9 +14381,10 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   const treeShown = recurringToday.length > 0 ? shown.filter(t => !recurringToday.includes(t)) : shown
   // La recherche : ouvertes puis faites, toutes, quels que soient les filtres.
   const titleOf = (t: Task) => cachedTitle(t, titles)
-  const foundOpen = searching ? sortTasks(searchTasks(openTasks.filter(t => !inBlock(t)), search, titleOf), sortOrder) : []
+  // #486 : une tâche du bloc « En session » se trouve aussi : la recherche les prend toutes.
+  const foundOpen = searching ? sortTasks(searchTasks(openTasks, search, titleOf), sortOrder) : []
   const foundDone = searching
-    ? searchTasks(doneTasks.filter(t => !inBlock(t)), search, titleOf).sort((a, b) => (b.fait ?? '').localeCompare(a.fait ?? ''))
+    ? searchTasks(doneTasks, search, titleOf).sort((a, b) => (b.fait ?? '').localeCompare(a.fait ?? ''))
     : []
   const foundCount = foundOpen.length + foundDone.length
   const foundShown = foundOpen.slice(0, SEARCH_MAX)
@@ -14505,34 +14692,13 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   }
   const cloudRowBar = (cloud: CloudPr, key: string) => {
     const steps = cloudSteps(cloud.state)
-    const bar = stepsBarIcon(palette, steps.segments, { width: ROW_STEPS.bar, height: 4, waiting: cloud.state === 'red' || cloud.state === 'closed', merging: cloud.state === 'ready', finished: cloud.state === 'merged' })
+    const bar = stepsBarIcon(palette, steps.segments, { width: ROW_STEPS.bar, height: 4, waiting: cloud.state === 'red' || cloud.state === 'closed', merging: cloud.state === 'ready' || cloud.state === 'merged', finished: cloud.state === 'delivered' })
     return <Svg key={key} source={bar.source} alt={`étapes ${steps.count}`} width={bar.width} height={bar.height} />
   }
-  // Retour de test de #385 (maquette « version corrigée ») : plus de « Done » au bout d'une close du bloc, la coche
-  // et la jauge violette le disent ; son archive vit entre sa case et son numéro (« Bouton archive […] apparaît
-  // uniquement quand une task est done et pas encore archivée »), dans une case que toutes les lignes du bloc
-  // gardent dès qu'une en a besoin : les numéros restent alignés.
+  // Retour de test de #385 : plus de « Done » au bout d'une close du bloc, la coche et la jauge violette le disent.
+  // #468 (maquette A v3) : son archive passe au bout de la ligne, à la place de la durée (`blockColumns`).
   const completedWord = stateBand({ state: 'done' }).word
   const blockArchivable = (bt: BrandTask | undefined) => bt?.state === 'done' && bt.archivable === true && (bt.sessionId !== undefined || bt.cloud !== undefined)
-  const blockArchiveCells = [...blockOf.values()].some(blockArchivable) ? 3 : 0
-  const blockArchive = (t: Task, block: BrandTask) => {
-    if (blockArchiveCells === 0) return null
-    const id = `block-archive:${t.id ?? keyPart(t.key)}`
-    return (
-      <Box key={`ba:${t.key}`} flexDirection="row" alignItems="center" justifyContent="center" flexShrink={0} {...(Svg ? { width: blockArchiveCells } : {})}>
-        {blockArchivable(block) &&
-          (Svg ? (
-            <Box flexDirection="row" alignItems="center" flexShrink={0}>
-              {strut(SIZE.strut.row)}
-              <Svg source={archiveIcon(palette.text2, 16)} alt="Archiver la session" width={SIZE.icon.md} height={SIZE.icon.md} />
-              {hit(id, () => void archiveBandSession($, block, now), 1)}
-            </Box>
-          ) : (
-            <Button key={id} plain dimColor label="Archiver" onPress={() => void archiveBandSession($, block, now)} />
-          ))}
-      </Box>
-    )
-  }
   // La pastille d'une suite de la file (#321) : son texte au dessin, sa commande dans son alt.
   const queuePill = (m: QueueMark) => {
     const tone = m.tone === 'block' ? { bg: palette.blockTint, fg: palette.blockOn } : m.tone === 'live' ? { bg: palette.liveTint, fg: palette.liveOn } : { bg: palette.sel, fg: palette.text2 }
@@ -14625,6 +14791,128 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     )
   }
 
+  // #468 (maquette A v3, choisie par BBR le 2026-11-11) : une seule grille pour toutes les lignes du bloc « En session »,
+  // du Mac comme du cloud : case, lieu, numéro, titre (le seul qui grandit), l'icône d'état collée à son mot, la jauge,
+  // la durée (l'archive d'une livrée à sa place). Quand la place manque, le mot part d'abord, puis le titre ; le numéro
+  // et la durée restent toujours, rien ne sort du cadre.
+  // Une ligne du bloc sans BrandTask : une tâche qu'une autre session travaille (#187), lue par sa liste d'étapes.
+  const blockStatus = (t: Task, block?: BrandTask) => (block ? blockSteps.get(block.id) : rowSteps.get(taskKey(t)))
+  // #468 (BBR) : à l'arrêt, sans question, sa PR fusionnée et sa ligne ouverte : ni la main, ni « t'attend ».
+  const blockMerged = (t: Task, block?: BrandTask) => (block ? block.merged === true : waitingOn(t) && blockStatus(t)?.question === undefined && t.id !== undefined && mergedIds.has(t.id))
+  const blockState = (t: Task, block?: BrandTask): 'wait' | 'live' | 'merge' | 'done' => {
+    const status = blockStatus(t, block)
+    if (!block && blockMerged(t)) return 'live'
+    if (block) {
+      if (block.state === 'done') return 'done'
+      if (block.state === 'merge') return 'merge'
+      return block.state === 'wait' || status?.question !== undefined ? 'wait' : 'live'
+    }
+    const sid = liveOf(t)?.entry.sessionId
+    const stopped = waitingOn(t) ? brandStateOf(taskSessionState({ asking: status?.question !== undefined, ahead: (sid ? aheadBySession.get(sid)?.ahead : undefined) ?? 0, ...(status ? { status } : {}) })) : undefined
+    return stopped === 'merge' ? 'merge' : stopped === 'wait' || status?.question !== undefined ? 'wait' : 'live'
+  }
+  const blockWordOf = (t: Task, block?: BrandTask) => {
+    const test = block?.cloud ? undefined : testOf(t)
+    return test ? testWords(test.version) : blockWord({ state: blockState(t, block), ...(block?.cloud ? { cloud: block.cloud } : {}), ...(blockMerged(t, block) ? { merged: true } : {}) })
+  }
+  const blockWordCells = Math.max(0, ...blockTasks.map(t => pxCells(6.5 * [...blockWordOf(t, blockOf.get(t.id as string))].length)))
+  const blockEndCells = ROW_STEPS.clock + stepsCells.count
+  // Ce qui reste toujours : marges du panneau et du cadre, case (32 px), lieu, numéro, icône, jauge, durée, et leurs écarts.
+  const blockFixedCells = 6 + pxCells(32) + 2 + treeNumCells + ROW_STEPS.icon + pxCells(ROW_STEPS.bar) + blockEndCells + 6
+  const blockFit = blockRowFit({ columns: (e.props as { bodyColumns?: number }).bodyColumns ?? 56, fixed: blockFixedCells, word: blockWordCells })
+  const blockColumns = (t: Task, block?: BrandTask) => {
+    const status = blockStatus(t, block)
+    const state = blockState(t, block)
+    const cloud = block?.cloud
+    const test = cloud ? undefined : testOf(t)
+    const openTest = test ? () => void openSession($, testEntry(test)) : undefined
+    const word = blockWordOf(t, block)
+    const merged = !cloud && blockMerged(t, block)
+    const ink = cloud ? cloudTints(palette, cloud.state).word : test || merged ? palette.waitOn : { live: palette.liveOn, wait: palette.blockOn, merge: palette.waitOn, done: palette.finishedOn }[state]
+    const checkHex = block?.finished ? palette.finished : palette.done
+    const icon = cloud
+      ? cloudStateMark(cloud)
+      : test
+        ? Svg ? <Svg source={flaskIcon(palette.waitOn, 14, 'En test')} alt="En test" width={SIZE.icon.sm} height={SIZE.icon.sm} /> : <Text size="caption" color={palette.waitOn}>⚗</Text>
+        : state === 'done'
+          ? Svg ? <Svg source={checkIcon(checkHex, 14, STROKE.pill)} alt={word} width={SIZE.icon.sm} height={SIZE.icon.sm} /> : <Text size="caption" color={checkHex}>✓</Text>
+          : merged
+            ? Svg ? <Svg source={spinnerIcon(palette.wait, 14, word, false, now)} alt={word} width={SIZE.icon.sm} height={SIZE.icon.sm} isInteractive /> : <Text size="caption" color={palette.waitOn}>◌</Text>
+            : state === 'merge' ? mergeMark() : state === 'wait' ? hand() : spinner()
+    const view = status ? stepsView(status.steps, { now, at: status.at, closed: block ? block.closed === true : t.done }) : undefined
+    const queued = t.branche !== undefined ? heavyMarks.get(t.branche) : undefined
+    const bar = cloud
+      ? (() => {
+          const steps = cloudSteps(cloud.state)
+          const drawn = stepsBarIcon(palette, steps.segments, { width: ROW_STEPS.bar, height: 4, waiting: cloud.state === 'red' || cloud.state === 'closed', merging: cloud.state === 'ready' || cloud.state === 'merged', finished: cloud.state === 'delivered' })
+          return { source: drawn.source, width: drawn.width, height: drawn.height, alt: `étapes ${steps.count}` }
+        })()
+      : status && view
+        ? (() => {
+            const drawn = stepsBarIcon(palette, view.segments, { width: ROW_STEPS.bar, height: 4, waiting: state === 'wait', merging: state === 'merge' || merged, finished: block?.finished === true })
+            return { source: drawn.source, width: drawn.width, height: drawn.height, alt: `étapes ${view.count}` }
+          })()
+        : undefined
+    const since = sinceText(t, block)
+    const archivable = block !== undefined && blockArchivable(block)
+    const archiveId = `block-archive:${t.id ?? keyPart(t.key)}`
+    return [
+      // L'icône d'état collée au début de son mot (retour de BBR sur la v2) : les icônes en colonne, le mot à gauche.
+      <Box key={`state:${t.key}`} flexDirection="row" alignItems="center" gap={SPACE.row} flexShrink={0} {...(Svg ? { width: ROW_STEPS.icon + (blockFit.word ? 1 + blockWordCells : 0) } : {})}>
+        <Box width={ROW_STEPS.icon} flexShrink={0} flexDirection="row" justifyContent="center">
+          {icon}
+        </Box>
+        {(blockFit.word || !Svg) &&
+          (openTest ? (
+            <Box key={`test-words:${t.key}`} flexShrink={1} minWidth={0} flexDirection="row" alignItems="center">
+              {Svg ? (
+                <Box flexDirection="row" alignItems="center" minWidth={0} hover={{ backgroundColor: palette.hover }}>
+                  <Text size="caption" color={ink} wrap="truncate-end">{word}</Text>
+                  <Box position="absolute" top={0} left={0}>
+                    <Button key={`row-test:${t.id}`} plain onPress={openTest}>
+                      {titleOverlay(word)}
+                    </Button>
+                  </Box>
+                </Box>
+              ) : (
+                <Button key={`row-test:${t.id}`} plain onPress={openTest}>
+                  <Text color={ink}>{word}</Text>
+                </Button>
+              )}
+            </Box>
+          ) : (
+            <Text key={`word:${t.key}`} size="caption" color={ink} wrap="truncate-end">{word}</Text>
+          ))}
+      </Box>,
+      // La jauge, ou la pastille de sa suite dans la file des tests lourds (#321), à la même place.
+      <Box key={`gauge:${t.key}`} flexShrink={0} flexDirection="row" alignItems="center" justifyContent="flex-start" {...(Svg ? { width: pxCells(ROW_STEPS.bar) } : {})}>
+        {queued ? queuePill(queued) : Svg && (bar ? <Svg source={bar.source} alt={bar.alt} width={bar.width} height={bar.height} /> : <Svg source={`<svg xmlns="http://www.w3.org/2000/svg" width="${ROW_STEPS.bar}" height="4"/>`} alt="espace" width={ROW_STEPS.bar} height={4} />)}
+      </Box>,
+      // La durée au bord droit ; une livrée y met son archive (#468), qui n'a plus de durée à dire.
+      <Box key={`end:${t.key}`} width={blockEndCells} flexShrink={0} flexDirection="row" alignItems="center" justifyContent="flex-end" gap={0}>
+        {archivable && block ? (
+          Svg ? (
+            <Box flexDirection="row" alignItems="center" flexShrink={0}>
+              {strut(SIZE.strut.row)}
+              <Svg source={archiveIcon(palette.text2, 16)} alt="Archiver la session" width={SIZE.icon.md} height={SIZE.icon.md} />
+              {hit(archiveId, () => void (block.cloud ? archiveCloudRow($, block) : archiveBandSession($, block, now)), 1)}
+            </Box>
+          ) : (
+            <Button key={archiveId} plain dimColor label="Archiver" onPress={() => void (block.cloud ? archiveCloudRow($, block) : archiveBandSession($, block, now))} />
+          )
+        ) : (
+          since !== '' && [
+            // #468 (bande v2, BBR) : la durée à la couleur du mot de sa ligne, comme dans la bande.
+            <Box key={`clock:${t.key}`} width={ROW_STEPS.clock} flexShrink={0} flexDirection="row" alignItems="center">
+              {Svg ? <Svg source={clockIcon(ink, 12)} alt="lancée depuis" width={12} height={12} /> : <Text size="caption" color={ink}>◷</Text>}
+            </Box>,
+            <Text key={`since:${t.key}`} size="caption" tabular color={ink}>{since}</Text>,
+          ]
+        )}
+      </Box>,
+    ]
+  }
+
   // Une tâche, toujours sur une ligne : carré d'axe, pastilles, titre tronqué, âge, ▶ (#149).
   // Une tâche faite : la coche, le titre et son axe à droite.
   const row = (t: Task, chain?: ChainStep, tree?: TreeMark, block?: BrandTask, inLiveBlock = block !== undefined) => {
@@ -14653,8 +14941,9 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     // Une tâche d'une chaîne : le trait et son étape font partie de la marque, un seul dessin.
     // Une faite (#180, maquette C) : le carré de son axe, à pleine couleur, coché de blanc ; on le
     // reclique pour la rouvrir. Une mère faite garde sa flèche.
-    // Une ligne cloud dont la PR est fusionnée se coche et se barre comme une close, sa ligne de roadmap encore ouverte (#408).
-    const cloudMerged = block?.cloud?.state === 'merged'
+    // #468 : une ligne cloud ne se coche et ne se barre qu'une fois livrée, sa ligne close dans ROADMAP-fait ; fusionnée,
+    // sa ligne encore ouverte, elle attend la suite de main et la publication.
+    const cloudMerged = block?.cloud?.state === 'delivered'
     const checkedMark = (t.done || cloudMerged) && !head && Svg !== undefined
     // La case qui vient d'être cochée ou rouverte joue son mouvement (#182, maquette A), une fois, dans
     // le cadre interactif qui seul joue le SMIL ; ensuite, le dessin fixe.
@@ -14798,7 +15087,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
             fitRowPills({
               columns: (e.props as { bodyColumns?: number }).bodyColumns ?? 56,
               inset: 6,
-              steps: stepsColumns + (block ? blockArchiveCells : 0) + priorityCells,
+              steps: (inLiveBlock ? ROW_STEPS.icon + (blockFit.word ? 1 + blockWordCells : 0) + pxCells(ROW_STEPS.bar) + blockEndCells + 3 : stepsColumns) + priorityCells,
               pills: parts.tags.map(spec => pxCells(pillIcon(spec).width)),
               mark: grouped ? 0 : markWidth,
               number: grouped ? treeNumCells + TREE_LEAD_CELLS : treeNumCells,
@@ -14874,7 +15163,6 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
         )}
         {/* Le titre suit le numéro (#203, maquette C des étiquettes) : plus de colonne réservée devant
             lui ; les tags viennent à droite du titre, l'échéance au bout, en texte, à la place de l'âge. */}
-        {block && blockArchive(t, block)}
         {/* #440 (maquette B6) : au bloc « En cours », où tourne la session, en gris, devant son numéro. */}
         {inLiveBlock && Svg && (
           <Box key={`place:${t.key}`} flexShrink={0} flexDirection="row" alignItems="center">
@@ -14882,6 +15170,8 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
           </Box>
         )}
         {!grouped && number}
+        {/* #468 : en très étroit, le titre du bloc part avant la durée ; sa place reste, vide, et le numéro ouvre la session. */}
+        {inLiveBlock && Svg && !blockFit.title ? <Box key={`lead:${t.key}`} flexGrow={1} flexShrink={1} minWidth={0} /> : (
         <Box key={`lead:${t.key}`} flexDirection="row" alignItems="center" flexGrow={1} flexShrink={1} minWidth={0}>
           {prioritized &&
             (Svg ? (
@@ -14920,6 +15210,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
             </Box>
           )}
         </Box>
+        )}
         {pills.length > 0 && (
           <Box key={`tags:${t.key}`} flexDirection="row" alignItems="center" gap={SPACE.row} flexShrink={0}>
             {pills}
@@ -14934,7 +15225,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
         {/* En session : la roue ou la main qui t'attend, la barre et le compte (#143, #145), chez Maestro
             aussi, dans son bloc « En cours », sans arbre (#160). */}
         {(inSession || locked) && due}
-        {inSession && sessionColumn(t, block)}
+        {inSession && (inLiveBlock ? blockColumns(t, block) : sessionColumn(t, block))}
         {/* Le cadenas dit ce qu'il attend (#125) : « après » et le numéro de sa prérequise, ou « parent après » celui qu'attend son parent. */}
         {locked && pre && (
           <Box key={`lock:${t.key}`} flexDirection="row" alignItems="center" gap={SPACE.row} flexShrink={0}>
@@ -15782,7 +16073,16 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
             {graphic && hit('live-fold', toggleLive)}
           </Box>
           <Box flexGrow={1} />
-          <Box flexShrink={0}>{counterPill(counters.here)}</Box>
+          {/* #468 (maquette A du compte, BBR) : « 6 ici · ☁ 4 · 🖥 2 », le compte par lieu dans la pastille ; en étroit, sans « ici ». */}
+          <Box flexShrink={0}>
+            {Svg
+              ? (() => {
+                  const cloudHere = blockTasks.filter(t => blockOf.get(t.id as string)?.cloud !== undefined).length
+                  const pill = herePillIcon({ cloud: cloudHere, mac: blockTasks.length - cloudHere, bg: palette.liveTint, fg: palette.liveOn, short: ((e.props as { bodyColumns?: number }).bodyColumns ?? 56) < 44 })
+                  return <Svg source={pill.source} alt={pill.alt} width={pill.width} height={pill.height} />
+                })()
+              : counterPill(counters.here)}
+          </Box>
           <Box key="hit:live-open" flexDirection="row" alignItems="center" flexShrink={0} hover={{ backgroundColor: palette.hover }}>
             {graphic && Svg ? (
               <Svg source={controlIcon(palette.text3, 16)} alt="Centre de contrôle" width={SIZE.icon.md} height={SIZE.icon.md} />

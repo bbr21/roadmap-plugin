@@ -9,7 +9,8 @@ personne pour ce projet (#449), que la VM ne reçoit pas du plugin.
 
 #458 : Maestro pose sa carte cloud avant la prise, qui n'a lieu qu'au départ de la session (`prendre_cloud.py`) :
 une ligne pas encore prise (sans `branche:`) se brief avec `--branche`, la branche que la prise posera ; la ligne
-citée est celle qu'écrira la prise (`prendre_cloud.prendre`), et rien n'est écrit ici. Une ligne déjà prise garde sa
+citée est celle qu'écrira la prise (`prendre_cloud.prendre`), et rien n'est écrit ici. #474 : sous la branche, la
+consigne `REGLE_DEPART` fait pousser la branche dans la première minute, que le panneau guette pour prendre la ligne. Une ligne déjà prise garde sa
 branche (`--branche` doit alors la redire).
 
 Les réglages se lisent dans ~/.claude/reglages-session.json (ou FICHIER) comme le plugin les lit (sessionPrefs de
@@ -26,6 +27,11 @@ Lit DEPOT/roadmap/ROADMAP.md (ou DEPOT/ROADMAP.md) et, pour le nom du projet, DE
 close, non prise sans `--branche` (le message propose la branche du panneau), prise par une autre branche ou sans
 `lieu:cloud`, ou une roadmap introuvable.
 
+#490 : la carte cloud ne porte ni `model` ni `effort` (start_session les ignore en cloud) : la ligne qui suit « Fini quand »
+dit ce que BBR choisit dans les Options de la carte (la charge et le modèle de `reco_cloud.py`), et un paragraphe
+« Ton modèle » dit à la session de s'y mettre elle-même si elle en a l'outil, puis la consigne #327 : chaque étape
+du plan chez un sous-agent Sonnet. Mêmes textes que `cloudBriefText` du panneau.
+
 Python 3.9 et plus, bibliothèque standard seulement.
 """
 
@@ -37,6 +43,7 @@ import re
 import sys
 
 import prendre_cloud
+import reco_cloud
 import suivi_cloud
 
 
@@ -51,6 +58,39 @@ REGLE_RENDU = (
     "à part, « Prouver la fidélité de #N » (#455), qui ne retient ni ta tâche ni aucune autre (docs/session-cloud.md, "
     "« Un chantier de rendu »)."
 )
+
+# #474 : la branche poussée au départ, le panneau la voit sur origin et prend la ligne sans attendre que Maestro se
+# réveille ; `briefBranchOf` de hooks/prise-cloud.ts lit la branche dans la phrase « Travaille sur la branche … ».
+REGLE_DEPART = (
+    "Pousse cette branche dans ta première minute, avant tout autre geste qui dure : `git commit --allow-empty -m "
+    "\"Départ de la session cloud\"` puis `git push -u origin %(branche)s`. C'est ce départ que voit le panneau du Mac "
+    "pour prendre ta ligne (#474)."
+)
+
+
+# #490 : le modèle de la tâche, dit dans le brief (la carte cloud ne le porte pas).
+OPTIONS_SUITE = ", à choisir dans Options avant Start : la carte cloud ne les porte pas."
+SE_METTRE_AU_MODELE = (
+    "Si tu tournes sur un autre modèle, mets-toi à celui-ci toi-même : `set_session_model` puis `set_session_effort`, "
+    "`session_id: \"self\"`, chargés par ToolSearch ; absents ou refusés, dis-le en une ligne et continue (`/model` ne "
+    "se tape que par la personne)."
+)
+CONSIGNE_327 = (
+    "Économie (#327) : le cadrage, la spec et le plan se font ici ; chaque étape du plan part chez un sous-agent avec "
+    "`model: \"sonnet\"` passé à l'outil Agent. Tu relis le diff de chaque étape et reprends la main sur un test rouge "
+    "qui résiste à deux essais."
+)
+NOMS_CHARGES = {"retouche": "une retouche", "normale": "une tâche normale", "lourde": "une tâche lourde"}
+
+
+def ligne_options(mots):
+    return "Options de la carte (#490) : " + mots + OPTIONS_SUITE
+
+
+def paragraphe_modele(charge):
+    m, e = reco_cloud.modele(charge)
+    return "Ton modèle (#490) : cette tâche est %s, prévue en %s, effort %s. %s %s" % (
+        NOMS_CHARGES[charge], reco_cloud.NOMS_MODELES[m], e, SE_METTRE_AU_MODELE, CONSIGNE_327)
 
 
 class ErreurLigne(Exception):
@@ -192,6 +232,7 @@ def construire(depot, ident, fichier_reglages=None, maison=None, branche=None, a
     c = ligne["cles"]
     branche = c["branche"]
     spec = c.get("spec")
+    charge = reco_cloud.charge(ligne["libelle"])
     sortie = ["Mission : %s (tâche #%s de %s)." % (ligne["libelle"].rstrip("."), ident, nom_projet(depot))]
     fichiers = fichiers_du_plan(depot, spec) if spec else []
     if fichiers:
@@ -231,6 +272,7 @@ def construire(depot, ident, fichier_reglages=None, maison=None, branche=None, a
         "Fini quand : %s sur ta branche à jour de origin/main, la branche %s "
         "est poussée et sa PR vers main ouverte, un commentaire y colle ces tests et leur résultat, "
         "le dernier porte ton compte rendu." % (livre, branche),
+        ligne_options(reco_cloud.options(charge)),
         "---",
         "",
         entete,
@@ -238,11 +280,14 @@ def construire(depot, ident, fichier_reglages=None, maison=None, branche=None, a
         "> " + ligne["brut"],
         "",
         "Travaille sur la branche `%s`, partie de `origin/main`." % branche,
+        REGLE_DEPART % {"branche": branche},
         "",
         "Tes règles : lis `docs/session-cloud.md` à la racine du dépôt avant tout geste ; elles remplacent les "
         "règles du Mac de CLAUDE.md.",
         "",
         ligne_reglages(*reglages(depot, fichier_reglages, maison)),
+        "",
+        paragraphe_modele(charge),
         "",
     ]
     if preuve:

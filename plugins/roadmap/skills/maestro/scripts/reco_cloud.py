@@ -27,6 +27,18 @@ une carte cloud d'un projet `"cloud": "missions"` (#476 : le brief vient de `mis
 en `qui` « mission » et `lieu:cloud`, sans branche, et `qui` le dit) ; `reco`, `besoins`, `raison` et `par`. Le hook `start_session` du panneau refuse une carte de Maestro dont le lieu contredit cette reco
 (#465) : c'est cette carte qui passe.
 
+#490 : la reco rend aussi la charge de la tâche, lue sur son libellé (`charge`) : « retouche » (un gras, une croix,
+un libellé, une couleur), « lourde » (architecture, refonte, migration, contrat ; elle l'emporte), sinon « normale ».
+Le modèle et l'effort en découlent (`modele`, MODELES) : Sonnet 5.5 en high pour une retouche, Opus 5.5 en medium
+pour une normale, en high pour une lourde. La carte les porte (`model`, `effort`, `charge`, et `options`, les mots à
+choisir dans les Options d'une carte cloud, que `start_session` ne règle pas). Les mots sont ceux de
+TASK_CHARGE_MARKERS de hooks/parse.ts, les modèles ceux de CHARGE_MODELS.
+
+#492 : le juge du panneau rend aussi la charge, sur la tâche entière (profondeur de réflexion et connecteurs à croiser
+compris), champ facultatif `charge` du verdict gardé. Tant que le libellé est celui qu'il a jugé, elle l'emporte sur les
+mots ; un ancien verdict sans elle, ou une valeur inconnue, laisse les mots répondre. Un projet sans dossier .git garde
+son cache dans DEPOT/.claude/roadmap-reco.json.
+
 Python 3.9 et plus, bibliothèque standard seulement.
 """
 
@@ -58,6 +70,18 @@ MARQUEURS = [
     {"need": "vrai_rendu", "words": ["au mac\\b", "sur le mac\\b", "app de bureau", "depuis le bureau"], "why": "une étape se fait au Mac, sur le bureau (Maestro, le panneau en direct) : le cloud ne la voit pas"},
 ]
 RENDU = {"words": ["maquette", "mockup", "capture", "fidelite", "screenshot"], "why": "maquettes et preuve de fidélité : faites depuis le cloud (Artifact, capture collée, #409)"}
+# #490 : la charge d'une tâche, lue sur son libellé ; « lourde » l'emporte sur « retouche », sans mot : « normale ».
+CHARGES = [
+    {"charge": "lourde", "words": ["architecture", "refonte", "refondre", "migration", "migrer", "concurren", "contrat", "securite", "tronc"]},
+    {"charge": "retouche", "words": ["gras\\b", "libelle", "renommer", "croix", "couleur", "typo", "coquille", "faute\\b", "icone", "glyphe", "marge", "espacement", "alignement", "police", "style\\b", "cosmetique", "retouche", "reformuler"]},
+]
+# Le modèle et l'effort de chaque charge (CHARGE_MODELS du panneau, avec les réglages par défaut).
+MODELES = {
+    "retouche": ("claude-sonnet-5-5", "high"),
+    "normale": ("claude-opus-5-5", "medium"),
+    "lourde": ("claude-opus-5-5", "high"),
+}
+NOMS_MODELES = {"claude-sonnet-5-5": "Sonnet 5.5", "claude-opus-5-5": "Opus 5.5"}
 CACHE = "roadmap-reco.json"
 LOGIQUE = "tâche de logique : ni simulateur, ni volet navigateur pour un vrai site, ni ressource du Mac"
 
@@ -65,6 +89,26 @@ LOGIQUE = "tâche de logique : ni simulateur, ni volet navigateur pour un vrai s
 def plier(texte):
     """Le texte en minuscules, sans accents (comme `foldText` du panneau)."""
     return "".join(c for c in unicodedata.normalize("NFD", texte) if not unicodedata.combining(c)).lower()
+
+
+def charge(libelle):
+    """La charge d'une tâche d'après son libellé (#490) : « lourde », « retouche » ou « normale »."""
+    t = plier(libelle)
+    for c in CHARGES:
+        if any(re.search(r"\b" + w, t) for w in c["words"]):
+            return c["charge"]
+    return "normale"
+
+
+def modele(charge_):
+    """(identifiant du modèle, effort) d'une charge (#490)."""
+    return MODELES.get(charge_, MODELES["normale"])
+
+
+def options(charge_):
+    """Les mots des Options d'une carte cloud (#490) : « Model Sonnet 5.5, Effort high »."""
+    m, e = modele(charge_)
+    return "Model %s, Effort %s" % (NOMS_MODELES[m], e)
 
 
 def lieu_des_besoins(besoins):
@@ -109,10 +153,17 @@ def documents(depot, cles):
     return textes
 
 
+def chemin_cache(depot):
+    """Le cache des verdicts : dans .git ; sans .git, dans .claude (#492, comme `loadRecoCache` du panneau)."""
+    dossier = ".git" if os.path.isdir(os.path.join(depot, ".git")) else ".claude"
+    return os.path.join(depot, dossier, CACHE)
+
+
 def verdict(depot, id_, libelle):
-    """Le verdict du modèle gardé par le panneau pour la ligne #id_ (#430), s'il porte sur ce libellé ; sinon None."""
+    """Le verdict du modèle gardé par le panneau pour la ligne #id_ (#430), s'il porte sur ce libellé ; sinon None.
+    Avec `charge` (#492) quand le verdict en porte une connue."""
     try:
-        with open(os.path.join(depot, ".git", CACHE), encoding="utf-8") as f:
+        with open(chemin_cache(depot), encoding="utf-8") as f:
             v = json.load(f).get("recos", {}).get(id_)
     except (OSError, ValueError, AttributeError):
         return None
@@ -128,10 +179,14 @@ def verdict(depot, id_, libelle):
                 besoins.append(b)
         if not besoins:
             return None
-        return {"lieu": lieu_des_besoins(besoins), "why": v["why"].strip(), "besoins": besoins}
-    if v.get("lieu") not in ("cloud", "mac"):
+        r = {"lieu": lieu_des_besoins(besoins), "why": v["why"].strip(), "besoins": besoins}
+    elif v.get("lieu") in ("cloud", "mac"):
+        r = {"lieu": v["lieu"], "why": v["why"].strip()}
+    else:
         return None
-    return {"lieu": v["lieu"], "why": v["why"].strip()}
+    if v.get("charge") in MODELES:
+        r["charge"] = v["charge"]
+    return r
 
 
 def _reglages(depot):
@@ -182,6 +237,12 @@ def carte(depot, id_, ligne, r, par):
         "raison": raison,
         "par": par,
     }
+    # #490 : le modèle et l'effort de la tâche ; en cloud, `options` dit ce qu'il faut choisir dans les Options.
+    # #492 : la charge jugée par le modèle, sinon les mots du libellé.
+    charge_ = r.get("charge") or charge(ligne["libelle"])
+    carte_["charge"] = charge_
+    carte_["model"], carte_["effort"] = modele(charge_)
+    carte_["options"] = options(charge_)
     if mission:
         carte_["qui"] = "mission"
     return carte_

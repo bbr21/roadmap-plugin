@@ -401,15 +401,19 @@ export function laptopIcon(hex: string, size = 14, title?: string): string {
  * bleu en cours ; orange rouge ; vert prête (le nuage seulement : le mot reste à l'encre, le vert fait 4,17:1 sur
  * le fond de survol clair) ; violet fusionnée.
  */
-export function cloudTints(palette: Palette, state: 'none' | 'open' | 'red' | 'ready' | 'merged' | 'closed' | 'unknown'): { cloud: string; word: string } {
+export function cloudTints(palette: Palette, state: 'none' | 'open' | 'red' | 'ready' | 'merged' | 'delivered' | 'closed' | 'unknown'): { cloud: string; word: string } {
   switch (state) {
     case 'open':
       return { cloud: palette.live, word: palette.liveOn }
     case 'red':
       return { cloud: palette.block, word: palette.blockOn }
     case 'ready':
-      return { cloud: palette.ok, word: palette.text }
+      // #468 (bande v2, BBR) : le mot et la durée au turquoise de la fusion, comme son icône.
+      return { cloud: palette.ok, word: palette.waitOn }
     case 'merged':
+      // #468 : fusionnée n'est pas faite, le turquoise de « à fusionner » ; seule une livrée passe au violet.
+      return { cloud: palette.wait, word: palette.waitOn }
+    case 'delivered':
       return { cloud: palette.finished, word: palette.finishedOn }
     default:
       return { cloud: palette.text3, word: palette.text3 }
@@ -600,6 +604,53 @@ function pillIconRaw(o: {
 }
 
 export const pillIcon = memo(pillIconRaw)
+
+/**
+ * La pastille « N ici » du bloc « En session » avec son compte par lieu (#468, maquette A de maquettes-compte.html,
+ * BBR) : mélangées, « 6 ici · ☁ 4 · 🖥 2 », les icônes de la colonne « lieu » des lignes ; toutes au même endroit,
+ * son icône devant, « ☁ 3 ici » ; aucune, « 0 ici ». `short` (panneau étroit) : « ici » part. Le texte au poids doux de
+ * la pastille d'avant (500), 18 px de haut.
+ */
+export function herePillIcon(o: { cloud: number; mac: number; bg: string; fg: string; short?: boolean }): { source: string; width: number; height: number; alt: string } {
+  const height = SIZE.pill.row
+  const size = TEXT.pill
+  const padX = 7
+  const gap = 4
+  const total = o.cloud + o.mac
+  const head = o.short ? String(total) : `${total} ici`
+  type Part = { text: string } | { icon: 'cloud' | 'mac' }
+  const parts: Part[] =
+    o.cloud > 0 && o.mac > 0
+      ? [{ text: head }, { text: '·' }, { icon: 'cloud' }, { text: String(o.cloud) }, { text: '·' }, { icon: 'mac' }, { text: String(o.mac) }]
+      : o.cloud > 0
+        ? [{ icon: 'cloud' }, { text: head }]
+        : o.mac > 0
+          ? [{ icon: 'mac' }, { text: head }]
+          : [{ text: head }]
+  const mid = height / 2
+  let x = padX
+  const drawn: string[] = []
+  parts.forEach((part, i) => {
+    if (i > 0) x += gap
+    if ('icon' in part) {
+      const svg = part.icon === 'cloud' ? cloudIcon(o.fg, 12) : computerIcon(o.fg, 12)
+      drawn.push(svg.replace('<svg ', `<svg x="${x}" y="${mid - 6}" `))
+      x += 12
+    } else {
+      const w = textWidth(part.text, size, false)
+      drawn.push(`<text x="${x}" y="${mid}" dominant-baseline="central" font-family="${FONT}" font-size="${size}" font-weight="500" fill="${o.fg}"${part.text === '·' ? ' fill-opacity="0.55"' : ''} style="font-variant-numeric:tabular-nums">${escapeXml(part.text)}</text>`)
+      x += w
+    }
+  })
+  const width = Math.ceil(x + padX)
+  const where = [o.cloud > 0 ? `${o.cloud} dans le cloud` : '', o.mac > 0 ? `${o.mac} sur le Mac` : ''].filter(Boolean).join(', ')
+  return {
+    source: `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}"><rect width="${width}" height="${height}" rx="${mid}" fill="${o.bg}"/>${drawn.join('')}</svg>`,
+    width,
+    height,
+    alt: where ? `${total} ici : ${where}` : `${total} ici`,
+  }
+}
 
 /**
  * #472 : la taille de texte qui fait tenir une pastille dans `max` px, de 12 px (`TEXT.pill`) à 10 px au plus petit ;

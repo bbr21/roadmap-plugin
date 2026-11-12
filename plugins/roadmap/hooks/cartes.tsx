@@ -448,7 +448,7 @@ export function drawWrittenMessage(el: ReturnType<EngineInterface['ui']['resolve
     seen.set(c.id, n + 1)
     const suffix = n === 0 ? '' : `:${n}`
     const cancelled = c.kind === 'cancel'
-    // #436 (maquette A) : la faite ressort au violet de fin : fond, filet, bandeau mêlé, coche, titre en heading, croix encadrée.
+    // #436 (maquette A) : la faite ressort au violet de fin : fond, filet, bandeau mêlé, coche, titre en heading ; la croix encadrée sur toutes les sortes (#489).
     const done = c.kind === 'done'
     const ink = kindInk(palette, c.kind)
     const bandBg = done ? mixOver(palette.finished, palette.finishedTint, 0.22) : palette.hover
@@ -504,17 +504,12 @@ export function drawWrittenMessage(el: ReturnType<EngineInterface['ui']['resolve
             <Box key="written-title-text" flexGrow={1} flexShrink={1} minWidth={0}>
               <Text {...(done ? { size: 'heading' as const, weight: 'semibold' as const, color: palette.finishedOn } : { size: 'body' as const, weight: 'medium' as const })} wrap="truncate-end" {...(cancelled ? { strikethrough: true, color: palette.text3 } : done ? {} : { color: palette.text })}>{`#${c.id} · ${c.title}`}</Text>
             </Box>
-            {done ? (
-              <Box key={`written-close-frame:${c.id}${suffix}`} borderStyle="round" borderColor={palette.finished} paddingX={0} paddingY={0} flexShrink={0}>
-                <Button key={`written-close:${c.id}${suffix}`} plain onPress={() => o.close?.(c.id)}>
-                  <Text color={palette.finishedOn}>×</Text>
-                </Button>
-              </Box>
-            ) : (
+            {/* #489 (choix de BBR du 2026-11-12) : la croix de toute carte a le même rond, au filet de sa carte. */}
+            <Box key={`written-close-frame:${c.id}${suffix}`} borderStyle="round" borderColor={done ? palette.finished : palette.border} paddingX={0} paddingY={0} flexShrink={0}>
               <Button key={`written-close:${c.id}${suffix}`} plain onPress={() => o.close?.(c.id)}>
-                <Text color={palette.text3}>×</Text>
+                <Text color={done ? palette.finishedOn : palette.text3}>×</Text>
               </Button>
-            )}
+            </Box>
           </Box>
           {c.change !== '' && <Text size="body" color={palette.text2} wrap="wrap">{clampDescription(c.change)}</Text>}
         </Box>

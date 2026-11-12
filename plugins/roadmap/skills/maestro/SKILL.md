@@ -157,15 +157,26 @@ to it.
   title never changes: an open session with a wrong name is not renamed, the screen shows its title.
 - **The panel's ▶**: title `#<id> · <nom>`, full brief opened by its mission, and the
   Maestro clause added by itself.
-- **Which model on the card** (#327): the card carries `model` (an id, `claude-opus-5-5` or
-  `claude-sonnet-5-5`), from the two launch settings « Modèle qui cadre » (default Opus) and
-  « Modèle qui code » (default Sonnet), read in the panel's Réglages:
+- **Which model on the card** (#327, #490, #492): the recommendation gives it. `reco_cloud.py <main folder> <id>
+  --carte` returns the task's `charge`, judged by the model on the whole task (#492: the `charge` of the cached
+  verdict; a decision to weigh, a strategy, a document to build, or several connectors to cross make it `lourde`,
+  in a project without code too), else read on its label, with its `model` (an id) and `effort`; the panel's ▶ takes
+  the same charge (`judgedCharge`), the model taken from the two launch settings « Modèle qui cadre » (default Opus)
+  and « Modèle qui code » (default Sonnet), the effort capped by the « Effort » setting:
 
-  | The task | Model on the card |
-  |---|---|
-  | Rename, retouch a label or a text, a doc alone, a roadmap line, a study that only reads and concludes | « Modèle qui code » |
-  | Everything else: a feature, a behaviour fix, a visual choice, an architecture, a hook, a failing test | « Modèle qui cadre » |
-  | In doubt | « Modèle qui cadre » |
+  | Charge | The task | Model, effort |
+  |---|---|---|
+  | `retouche` | a bold, a cross, a label, a colour, an icon, a margin, a style, a rename, a typo | « Modèle qui code » (Sonnet 5.5), high |
+  | `normale` | everything else: a feature, a behaviour fix, a hook, a failing test | « Modèle qui cadre » (Opus 5.5), medium |
+  | `lourde` | architecture, refonte, migration, a contract, security (it wins over `retouche`); for the model, also a decision to weigh, a strategy, a document to build, several connectors (MCP, accounts, sources) to cross | « Modèle qui cadre » (Opus 5.5), high |
+
+  A Mac card carries `model` and `effort` as `--carte` gives them; if you judge the label misleads (a « retouche »
+  that rewrites a hook), take the row that fits and say so in one line. A cloud card carries neither (`start_session`
+  ignores them in the cloud): the brief of `brief_cloud.py` says them right after « Fini quand » (« Options de la carte :
+  Model …, Effort … », the `options` of `--carte`), which the person sets in the card's Options before Start, and its
+  « Ton modèle » paragraph has the session switch itself (`set_session_model`, `set_session_effort` on `self`, when it
+  has them) and delegate each plan step to a Sonnet sub-agent. When you post a cloud card, tell the person in one line
+  which Model and Effort to pick in its Options.
 
   The session keeps framing, spec, plan, diff review and stubborn debugging for itself and has each
   plan step coded by a sub-agent of « Modèle qui code »: its brief says so, Maestro adds nothing.
@@ -351,7 +362,11 @@ with « Cible : le Mac, … » and the recommendation. What changes for Maestro 
   `après:-` if missing, the line moved to the bottom of « En cours »; then commit that file alone and push, by the two
   commands it prints. The band then shows the cloud session from its start, before its PR (#502 and #447 of adBricks,
   started by BBR on 2026-11-11, stayed invisible for want of a line and a PR). A line held by another branch is
-  refused (exit 2): say so in one line. A line already taken by that branch in the cloud is left as it is. The VM gets
+  refused (exit 2): say so in one line. A line already taken by that branch in the cloud is left as it is: most
+  often the panel took it first (#474). The app tells you only at your next wake-up, so the brief makes the session
+  push its branch in its first minute, and the panel, which saw your cloud card pass its `start_session` hook,
+  watches that branch on origin (once a minute at most, while a card waits) and takes the line itself the same way;
+  your take at the app's message stays the safety net. The VM gets
   a `claude/…` branch from the app; the brief makes it switch to the line's branch. A card the person switched to the
   Mac at Start is a Mac session: take its line the Mac way.
 - **Push your own branch first** (#426): a cloud session starts from the branch of the session that posts its

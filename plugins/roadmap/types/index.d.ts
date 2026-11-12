@@ -158,8 +158,6 @@ export type LiveEntry = {
   startedAt: number
   title: string
   link?: string
-  /** `write` : déduite d'une ligne ajoutée par la session ; absente : lancée depuis le panneau. */
-  via?: 'write'
 }
 
 /** Le titre court et le sujet d'une task, gardés dans `$.store` par empreinte du libellé. */
