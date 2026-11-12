@@ -98,3 +98,37 @@ export function lineVerdict(text: string, id: string, branch: string): 'take' | 
   }
   return 'gone'
 }
+
+// --- La prise au départ d'une mission (#510, C4) --------------------------------------------------------------------
+// Une mission (projet sans code, #476) n'a pas de branche à guetter : sa ligne se prend au message de départ que l'app
+// envoie à la session qui a posé la carte, comme le fait Maestro (`prendre_cloud.py --mission`). La carte posée se
+// garde ici, au store, partagée par les panneaux ; une carte jamais démarrée tombe au bout de 12 h, la ligne libre.
+
+/** Une carte de mission posée, pas encore démarrée. */
+export type MissionStart = { key: string; root: string; id: string; at: number }
+
+/** La clé du store des cartes de mission posées. */
+export const MISSION_START_KEY = 'mission-starts'
+
+/**
+ * Les titres que cite le message de départ de l'app : « The user started your suggested background task "<titre>" in
+ * a separate cloud session » (un par carte démarrée).
+ */
+export function startedCardTitles(text: unknown): string[] {
+  if (typeof text !== 'string') return []
+  return [...text.matchAll(/started your suggested background task "([^"\n]+)"/g)].map(m => m[1]!)
+}
+
+/** La liste gardée au store, les entrées mal formées écartées. */
+export function missionStartList(stored: unknown): MissionStart[] {
+  if (!Array.isArray(stored)) return []
+  return stored.filter((w): w is MissionStart => {
+    const o = w as Record<string, unknown> | null
+    return !!o && ['key', 'root', 'id'].every(k => typeof o[k] === 'string') && typeof o.at === 'number'
+  })
+}
+
+/** Une carte de plus : elle remplace celle de la même tâche ; les autres posées il y a plus de 12 h tombent. */
+export function addMissionStart(list: readonly MissionStart[], entry: MissionStart, now: number): MissionStart[] {
+  return [...list.filter(w => w.key !== entry.key && now - w.at <= CLOUD_WATCH_TTL_MS), entry].slice(-CLOUD_WATCH_MAX)
+}

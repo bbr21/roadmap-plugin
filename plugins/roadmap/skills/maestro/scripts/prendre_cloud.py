@@ -5,6 +5,10 @@ jamais avant (une ligne prise d'avance bloque le ▶ du panneau). La bande montr
 départ, avant sa PR.
 
   python3 prendre_cloud.py DEPOT ID|TITRE BRANCHE
+  python3 prendre_cloud.py DEPOT ID|TITRE --mission
+
+Une mission (projet sans code, #476) se prend de même au départ, sans branche : `qui:mission | lieu:cloud`, comme
+`takeMissionLine` du panneau (#510).
 
 ID est le numéro de la tâche (« 458 », « #458 ») ou le titre de la carte, que redit le message de l'app
 (« #458 · Ligne prise au départ · cloud ») ; BRANCHE est celle que nomme le brief de la carte (`brief_cloud.py
@@ -26,6 +30,9 @@ import sys
 import unicodedata
 
 
+MISSION = "mission"  # le qui: d'une mission (MISSION_QUI du panneau)
+
+
 class ErreurPrise(Exception):
     """La ligne ne se prend pas."""
 
@@ -44,25 +51,25 @@ def _trouver(lignes, ident):
     return -1
 
 
-def prendre(texte, ident, branche, aujourdhui):
-    """(texte réécrit, ligne prise), comme `takeCloudLine` ; ErreurPrise sinon."""
+def _deplacer(texte, ident, aujourdhui, revendiquer):
+    """Le déplacement commun des prises, comme `takeLine` du panneau : `revendiquer(champs)` rend les champs à poser
+    (ou None : la ligne reste telle quelle) ou lève ErreurPrise ; les anciens `qui:` et `lieu:` partent, `ouvert:` et
+    `après:-` s'ajoutent s'ils manquent, et la ligne monte au bas de « En cours »."""
     lignes = texte.split("\n")
     at = _trouver(lignes, ident)
     if at < 0:
         raise ErreurPrise("#%s introuvable dans la roadmap" % ident)
     brut = lignes[at]
     coupe, champs = _champs(brut)
-    tenue = next((f for f in champs if f.startswith("branche:")), None)
-    if tenue:
-        if tenue[8:].strip() == branche and "lieu:cloud" in champs:
-            return texte, brut
-        raise ErreurPrise("#%s est déjà tenue par %s" % (ident, tenue[8:]))
+    poses = revendiquer(champs)
+    if poses is None:
+        return texte, brut
     gardes = [f for f in champs if not re.match(r"^(qui|lieu):", f)]
     if not any(f.startswith("ouvert:") for f in gardes):
         gardes.append("ouvert:%s" % aujourdhui)
     if not any(f.startswith("après:") for f in gardes):
         gardes.append("après:-")
-    gardes += ["qui:%s" % branche, "branche:%s" % branche, "lieu:cloud"]
+    gardes += poses
     ligne = "%s`[%s]`" % (brut[:coupe], " | ".join(gardes))
     del lignes[at]
     tete = next((n for n, l in enumerate(lignes) if re.match(r"^## En cours\s*$", l)), -1)
@@ -77,6 +84,32 @@ def prendre(texte, ident, branche, aujourdhui):
         dernier -= 1
     lignes[dernier + 1:dernier + 1] = ["", ligne] if dernier == tete else [ligne]
     return "\n".join(lignes), ligne
+
+
+def prendre(texte, ident, branche, aujourdhui):
+    """(texte réécrit, ligne prise), comme `takeCloudLine` ; ErreurPrise sinon. Déjà prise en cloud par cette
+    branche : rien ne change."""
+    def revendiquer(champs):
+        tenue = next((f for f in champs if f.startswith("branche:")), None)
+        if tenue:
+            if tenue[8:].strip() == branche and "lieu:cloud" in champs:
+                return None
+            raise ErreurPrise("#%s est déjà tenue par %s" % (ident, tenue[8:]))
+        return ["qui:%s" % branche, "branche:%s" % branche, "lieu:cloud"]
+    return _deplacer(texte, ident, aujourdhui, revendiquer)
+
+
+def prendre_mission(texte, ident, aujourdhui):
+    """(texte réécrit, ligne prise) pour une mission (#476, #510), comme `takeMissionLine` : `qui:mission` et
+    `lieu:cloud`, jamais de `branche:` ; une ligne tenue, déjà en mission, close ou absente est refusée."""
+    def revendiquer(champs):
+        tenue = next((f for f in champs if f.startswith("branche:")), None)
+        if tenue:
+            raise ErreurPrise("#%s est déjà tenue par %s" % (ident, tenue[8:]))
+        if "qui:%s" % MISSION in champs:
+            raise ErreurPrise("#%s est déjà partie en mission" % ident)
+        return ["qui:%s" % MISSION, "lieu:cloud"]
+    return _deplacer(texte, ident, aujourdhui, revendiquer)
 
 
 def id_de(texte):
@@ -108,18 +141,23 @@ def main(argv=None):
     p = argparse.ArgumentParser(description="Prendre la ligne d'une tâche démarrée en cloud.")
     p.add_argument("depot")
     p.add_argument("id", help="le numéro (458, #458) ou le titre de la carte (« #458 · … · cloud »)")
-    p.add_argument("branche")
+    p.add_argument("branche", nargs="?", help="la branche du brief ; absente avec --mission")
+    p.add_argument("--mission", action="store_true", help="une mission (#476, #510) : qui:mission, sans branche")
     a = p.parse_args(argv)
     ident = id_de(a.id)
     if ident is None:
         print("prendre_cloud : « %s » ne donne aucun #N" % a.id, file=sys.stderr)
+        return 2
+    if bool(a.mission) == bool(a.branche):
+        print("prendre_cloud : une BRANCHE, ou --mission sans branche", file=sys.stderr)
         return 2
     try:
         rel = chemin_roadmap(a.depot)
         chemin = os.path.join(a.depot, rel)
         with open(chemin, encoding="utf-8") as f:
             texte = f.read()
-        nouveau, ligne = prendre(texte, ident, a.branche, datetime.date.today().isoformat())
+        jour = datetime.date.today().isoformat()
+        nouveau, ligne = prendre_mission(texte, ident, jour) if a.mission else prendre(texte, ident, a.branche, jour)
     except ErreurPrise as e:
         print("prendre_cloud : %s" % e, file=sys.stderr)
         return 2
@@ -128,10 +166,11 @@ def main(argv=None):
         return 0
     with open(chemin, "w", encoding="utf-8") as f:
         f.write(nouveau)
-    slug = re.sub(r"^feat/", "", a.branche)
+    qui = MISSION if a.mission else a.branche
+    slug = MISSION if a.mission else re.sub(r"^feat/", "", a.branche)
     print("#%s prise pour %s (lieu:cloud) dans %s :\n%s\n\nCommitte ce seul fichier, puis pousse :\n"
           "git -C %s commit %s -m \"roadmap: take %s (#%s, cloud)\"\ngit -C %s push"
-          % (ident, a.branche, rel, ligne, a.depot, rel, slug, ident, a.depot))
+          % (ident, qui, rel, ligne, a.depot, rel, slug, ident, a.depot))
     return 0
 
 

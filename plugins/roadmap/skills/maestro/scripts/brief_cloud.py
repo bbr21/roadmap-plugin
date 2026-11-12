@@ -59,6 +59,27 @@ REGLE_RENDU = (
     "« Un chantier de rendu »)."
 )
 
+# #537 : le bloc fixe qui ouvre le compte rendu « prête », que Maestro lit sans ouvrir la session. `REGLE_BLOC` est la
+# ligne du brief, mot pour mot celle du panneau (`CLOUD_REPORT_BLOCK_RULE`, hooks/parse.ts). `BLOC` est son gabarit,
+# tel que le définit `reportBlockLines` du plugin et que le citent docs/session-cloud.md et la skill maestro
+# (`%(qui)s` : la personne, sous son nom) ; `test_brief_cloud.py` compare les quatre.
+REGLE_BLOC = (
+    "Ton compte rendu « prête » s'ouvre, sous sa première phrase, par le bloc fixe que Maestro lit sans ouvrir ta "
+    "session (#537) : la ligne `**Compte rendu**`, puis six puces, toutes, dans cet ordre : PR (son numéro et sa "
+    "tête), Tests (chaque commande, verte ou rouge, son compte), Écarts au brief, Pour Maestro, Pour la personne "
+    "(sous son nom), Méthode non suivie ; une puce sans rien à dire le dit d'un mot. Son gabarit : "
+    "`docs/session-cloud.md`, « Le bloc fixe du compte rendu »."
+)
+BLOC = (
+    "**Compte rendu**",
+    "- **PR** : #<numéro>, tête <sha court>",
+    "- **Tests** : <chaque commande, verte ou rouge, son compte de tests passés sur lancés>",
+    "- **Écarts au brief** : <ce que le brief demandait et qui manque ou diffère, et pourquoi>",
+    "- **Pour Maestro** : <ce qui lui revient en plus de la fusion : une ligne pas prise, un fichier à régénérer>",
+    "- **Pour %(qui)s** : <son geste ou son choix, avec où et comment>",
+    "- **Méthode non suivie** : <la skill ou l'étape de méthode sautée, et pourquoi>",
+)
+
 # #474 : la branche poussée au départ, le panneau la voit sur origin et prend la ligne sans attendre que Maestro se
 # réveille ; `briefBranchOf` de hooks/prise-cloud.ts lit la branche dans la phrase « Travaille sur la branche … ».
 REGLE_DEPART = (
@@ -106,6 +127,24 @@ def nom_projet(depot):
     except (OSError, ValueError, AttributeError):
         pass
     return os.path.basename(os.path.abspath(depot))
+
+
+def ligne_de(depot, ident):
+    """La ligne ouverte #ident de DEPOT, lue (ErreurLigne si absente ou close), sans rien exiger de sa prise."""
+    for rel in ("roadmap/ROADMAP.md", "ROADMAP.md"):
+        chemin = os.path.join(depot, rel)
+        if os.path.isfile(chemin):
+            break
+    else:
+        raise ErreurLigne("roadmap introuvable dans %s" % depot)
+    with open(chemin, encoding="utf-8") as f:
+        for brut in f.read().splitlines():
+            ligne = suivi_cloud.lire_ligne(brut)
+            if ligne and ligne["cles"].get("id") == str(ident):
+                if ligne["close"]:
+                    raise ErreurLigne("#%s : ligne close" % ident)
+                return ligne
+    raise ErreurLigne("#%s : ligne absente de %s" % (ident, rel))
 
 
 def trouver_ligne(depot, ident, branche=None, aujourdhui=None):
@@ -168,9 +207,13 @@ def fichiers_du_plan(depot, spec):
     """Les chemins que cite le plan de la spec entre accents graves, sans doublon, dans l'ordre."""
     try:
         with open(os.path.join(depot, spec, "plan.md"), encoding="utf-8") as f:
-            texte = f.read()
+            return chemins_cites(f.read())
     except OSError:
         return []
+
+
+def chemins_cites(texte):
+    """Les chemins cités entre accents graves d'un plan, sans doublon, dans l'ordre (jumelle de `planFiles`, #510)."""
     vus = []
     for m in re.finditer(r"`([^`\n]+)`", texte):
         t = m.group(1)
@@ -228,18 +271,47 @@ def ligne_reglages(prefs, illisible=False):
 
 
 def construire(depot, ident, fichier_reglages=None, maison=None, branche=None, aujourdhui=None):
+    return texte_brief(entree_brief(depot, ident, fichier_reglages, maison, branche, aujourdhui))
+
+
+NOMS_COURTS = {"opus": "Opus 5.5", "sonnet": "Sonnet 5.5"}
+
+
+def entree_brief(depot, ident, fichier_reglages=None, maison=None, branche=None, aujourdhui=None):
+    """Ce que le brief dit de la ligne #ident de DEPOT, lu une fois : l'entrée de `texte_brief`, la même que celle de
+    `cloudBriefText` du panneau (#510, jumelles : `tests/jumelles-cas.ts`)."""
     rel, ligne, prise = trouver_ligne(depot, ident, branche, aujourdhui)
     c = ligne["cles"]
-    branche = c["branche"]
-    spec = c.get("spec")
     charge = reco_cloud.charge(ligne["libelle"])
-    sortie = ["Mission : %s (tâche #%s de %s)." % (ligne["libelle"].rstrip("."), ident, nom_projet(depot))]
-    fichiers = fichiers_du_plan(depot, spec) if spec else []
-    if fichiers:
-        sortie.append("Fichiers : " + ", ".join(fichiers))
+    modele, effort = reco_cloud.modele(charge)
+    prefs, illisible = reglages(depot, fichier_reglages, maison)
+    entree = {
+        "project": nom_projet(depot), "id": str(ident), "label": ligne["libelle"], "line": ligne["brut"],
+        "branch": c["branche"], "rel": rel, "taken": prise,
+        "files": fichiers_du_plan(depot, c["spec"]) if c.get("spec") else [],
+        "prefs": prefs, "prefsError": illisible,
+        "launch": {"charge": charge, "model": "sonnet" if "sonnet" in modele else "opus", "effort": effort},
+    }
+    if c.get("spec"):
+        entree["spec"] = c["spec"]
+    repo = suivi_cloud.depot_github(depot)
+    if repo:
+        entree["depot"] = repo
+    preuve = PREUVE.match(ligne["libelle"])
+    chantier = chantier_de(depot, rel, preuve.group(1)) if preuve else None
+    if chantier:
+        entree["proofSpec"] = chantier
+    return entree
+
+
+def texte_brief(e):
+    """Le brief d'une session cloud d'après son entrée (`entree_brief`), mot pour mot celui de `cloudBriefText`."""
+    ident, branche, spec, repo = e["id"], e["branch"], e.get("spec"), e.get("depot")
+    sortie = ["Mission : %s (tâche #%s de %s)." % (e["label"].rstrip("."), ident, e["project"])]
+    if e["files"]:
+        sortie.append("Fichiers : " + ", ".join(e["files"]))
     # #444 : une roadmap hors du dépôt de code (`depot` de roadmap.json) : les tests sont ceux du dépôt, et la
     # ligne ne se voit pas depuis la VM.
-    repo = suivi_cloud.depot_github(depot)
     tests = (
         "les seuls tests que nomme ta carte d'impact, lancés dans ta VM comme le dit docs/session-cloud.md, "
         "sont verts"
@@ -251,15 +323,15 @@ def construire(depot, ident, fichier_reglages=None, maison=None, branche=None, a
         "Ta ligne, telle qu'écrite dans la roadmap du projet, qui vit sur le Mac hors du dépôt %s (prise pour toi, "
         "tu ne la vois pas d'ici) :" % repo
         if repo
-        else "Ta ligne, telle qu'écrite dans %s (prise pour toi, ne la modifie pas) :" % rel
-        if prise
-        else "Ta ligne, telle qu'elle sera prise pour toi dans %s au départ de ta session (ne la modifie pas) :" % rel
+        else "Ta ligne, telle qu'écrite dans %s (prise pour toi, ne la modifie pas) :" % e["rel"]
+        if e["taken"]
+        else "Ta ligne, telle qu'elle sera prise pour toi dans %s au départ de ta session (ne la modifie pas) :" % e["rel"]
     )
-    preuve = PREUVE.match(ligne["libelle"])
+    preuve = PREUVE.match(e["label"])
     if preuve:
         # #455 : la preuve de fidélité d'une tâche close à sa publication ; rien d'autre ne l'attend.
         rendu = preuve.group(1)
-        chantier = chantier_de(depot, rel, rendu) or "docs/plans/<type>-<slug>/ (le spec: de #%s)" % rendu
+        chantier = e.get("proofSpec") or "docs/plans/<type>-<slug>/ (le spec: de #%s)" % rendu
         livre = (
             "la capture collée dans ta session est posée à côté de la maquette validée de #%s par fidelite.py, "
             "`fidelite.py verifier %s` est vert (chaque écart corrigé ou confié à sa tâche de correctif, "
@@ -268,16 +340,18 @@ def construire(depot, ident, fichier_reglages=None, maison=None, branche=None, a
         )
     else:
         livre = "ce que dit la ligne #%s est livré, %s" % (ident, tests)
+    l = e["launch"]
+    nom = NOMS_COURTS[l["model"]]
     sortie += [
         "Fini quand : %s sur ta branche à jour de origin/main, la branche %s "
         "est poussée et sa PR vers main ouverte, un commentaire y colle ces tests et leur résultat, "
         "le dernier porte ton compte rendu." % (livre, branche),
-        ligne_options(reco_cloud.options(charge)),
+        ligne_options("Model %s, Effort %s" % (nom, l["effort"])),
         "---",
         "",
         entete,
         "",
-        "> " + ligne["brut"],
+        "> " + e["line"],
         "",
         "Travaille sur la branche `%s`, partie de `origin/main`." % branche,
         REGLE_DEPART % {"branche": branche},
@@ -285,9 +359,12 @@ def construire(depot, ident, fichier_reglages=None, maison=None, branche=None, a
         "Tes règles : lis `docs/session-cloud.md` à la racine du dépôt avant tout geste ; elles remplacent les "
         "règles du Mac de CLAUDE.md.",
         "",
-        ligne_reglages(*reglages(depot, fichier_reglages, maison)),
+        ligne_reglages(e["prefs"], e["prefsError"]),
         "",
-        paragraphe_modele(charge),
+        "Ton modèle (#490) : cette tâche est %s, prévue en %s, effort %s. %s %s" % (
+            NOMS_CHARGES[l["charge"]], nom, l["effort"], SE_METTRE_AU_MODELE, CONSIGNE_327),
+        "",
+        REGLE_BLOC,
         "",
         # #496 : le secours humain du réveil de Maestro ; le panneau du Mac lit aussi la première phrase.
         "Ton compte rendu « prête », « bloquée » ou « attend une réponse » (dernier commentaire de ta PR et message "

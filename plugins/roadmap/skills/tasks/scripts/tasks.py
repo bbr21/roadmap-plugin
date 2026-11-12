@@ -18,6 +18,7 @@ lisent et écrivent une ligne de la même façon.
 
 import csv
 import datetime
+import functools
 import io
 import json
 import math
@@ -343,7 +344,9 @@ def contexte(dossier, jour=None, perso="~/.claude/roadmap-perso.json"):
         "cles_valeurs": {k: v for k, v in cles.items() if isinstance(v, list)},
         # #320 : ce qui a été fait, pour reconnaître une suite : la fiche, la spec et le bilan d'une tâche close.
         "closes": [{"id": im.champ(t, "id"), "libelle": t["libelle"], "fait": im.champ(t, "fait"),
-                    "champs": {k: im.champ(t, k) for k in ("fiche", "spec") if im.champ(t, k)},
+                    # #538 : les champs de marque aussi (`marques_tache`), pour reconnaître le sujet d'une close.
+                    "champs": {k: im.champ(t, k) for k in ("fiche", "spec", *cles, *MARQUES_SPECIALES)
+                               if im.champ(t, k)},
                     "livre": livres.get(im.champ(t, "id") or "")} for t in closes],
         "declarations": ob.declarations(c["dossier"], cfg),
     })
@@ -361,24 +364,216 @@ def _livres(dossier, rdir):
         return {}
 
 
+@functools.lru_cache(maxsize=8192)
+def _mots(texte):
+    """`audit.mots`, gardé : `lots` rejoue chaque feuille contre toutes les autres (#538)."""
+    return frozenset(audit.mots(texte))
+
+
 def poids_des_mots(libelles):
     """Le poids de chaque mot des libellés (#255) : sa rareté, ln(1 + N/df)², N les libellés, df ceux
     qui le portent. Un nom propre, un code, un fournisseur pèsent lourd ; « point », « envoyer », peu."""
     df = {}
     for l in libelles:
-        for w in audit.mots(l):
+        for w in _mots(l):
             df[w] = df.get(w, 0) + 1
     n = len(libelles)
     return {w: math.log(1 + n / c) ** 2 for w, c in df.items()}
 
 
-def rapprocher(ctx, texte, n=5, zone=None, apres=None):
+# ---------------------------------------------------------------- les marques d'un sujet (#538)
+
+# Une marque est une paire clé:valeur qui dit le sujet d'une tâche : une clé déclarée par le projet (`client`, `type`…),
+# `attend` ou `resp`. Une tâche la porte par son champ (celui de sa mère pour une clé héritée) ou parce que son
+# libellé dit la valeur en mots entiers ; une valeur est connue quand le projet la déclare ou qu'une tâche ouverte ou
+# close la porte en champ. Une marque portée par plus de tâches que la borne des lieux (#320) ne dit rien.
+MARQUES_SPECIALES = ("attend", "resp")
+VALEUR_MIN = 3
+
+
+def _forme(texte):
+    """Une valeur ou un texte comparable mot à mot : sans accents, en minuscules, la ponctuation en espaces."""
+    return " ".join(re.findall(r"[a-z0-9]+", _norme(texte)))
+
+
+def _valeurs_du_champ(ctx, cle, brut):
+    """Les valeurs d'un champ, une par virgule. `attend` sans sa parenthèse, jamais un renvoi `#N` ni soi-même,
+    `resp` jamais soi-même (`me`)."""
+    texte = qui_attend(brut) if cle == "attend" else audit._propre(brut)
+    sortie = []
+    for v in texte.split(","):
+        v = v.strip()
+        if v in ("", "-") or (cle in MARQUES_SPECIALES and not est_un_tiers(v, ctx.get("me") or [])):
+            continue
+        sortie.append(v)
+    return sortie
+
+
+def _etat_marques(ctx):
+    """Le relevé des marques du contexte, gardé dans `ctx["_marques"]` : les clés, les valeurs connues
+    ({clé: {forme: valeur}}), la marque de chaque tâche. Une copie de `ctx` faite après lui le partage."""
+    etat = ctx.get("_marques")
+    if etat is not None:
+        return etat
+    cles = list(dict.fromkeys(list(ctx.get("cles") or []) + list(MARQUES_SPECIALES)))
+    etat = {"cles": cles, "valeurs": {k: {} for k in cles}, "affichage": {}, "taches": {},
+            "par_id": {t["id"]: t for t in ctx["taches"]}}
+    for k, valeurs in (ctx.get("cles_valeurs") or {}).items():
+        for v in valeurs if k in etat["valeurs"] else []:
+            etat["valeurs"][k].setdefault(_forme(v), v)
+    for t in list(ctx["taches"]) + list(ctx.get("closes") or []):
+        for k in cles:
+            for v in _valeurs_du_champ(ctx, k, (t.get("champs") or {}).get(k)):
+                etat["valeurs"][k].setdefault(_forme(v), v)
+    ctx["_marques"] = etat
+    return etat
+
+
+def _marques_brutes(ctx, etat, libelle, champs):
+    """{(clé, forme)} : les champs de marque donnés, plus les valeurs connues que le libellé dit en mots entiers."""
+    marques = set()
+    for k in etat["cles"]:
+        for v in _valeurs_du_champ(ctx, k, (champs or {}).get(k)):
+            if _forme(v):
+                marques.add((k, _forme(v)))
+                etat["affichage"].setdefault((k, _forme(v)), v)
+    dit = " %s " % _forme(libelle)
+    for k, valeurs in etat["valeurs"].items():
+        marques |= {(k, f) for f in valeurs if len(f) >= VALEUR_MIN and " %s " % f in dit}
+    return marques
+
+
+def _marques_de_tache(ctx, etat, t):
+    """Les marques d'une tâche ouverte ou close, rares ou non : ses champs (ceux de sa mère pour une clé héritée),
+    et son libellé, avec celui de sa mère comme le fait le score de mots."""
+    if t["id"] not in etat["taches"]:
+        champs, libelle = dict(t.get("champs") or {}), t["libelle"]
+        mere = etat["par_id"].get(t.get("parent"))
+        if mere is not None:
+            for k in ctx.get("heritage") or []:
+                if not champs.get(k) and (mere.get("champs") or {}).get(k):
+                    champs[k] = mere["champs"][k]
+            libelle += " " + mere["libelle"]
+        etat["taches"][t["id"]] = frozenset(_marques_brutes(ctx, etat, libelle, champs))
+    return etat["taches"][t["id"]]
+
+
+def _rares(ctx, etat):
+    """Le test d'une marque rare : portée par au plus max(LIEU_COMMUN_MIN, LIEU_COMMUN_PART * n) tâches ouvertes."""
+    porteurs = {}
+    for t in ctx["taches"]:
+        for m in _marques_de_tache(ctx, etat, t):
+            porteurs[m] = porteurs.get(m, 0) + 1
+    borne = max(LIEU_COMMUN_MIN, LIEU_COMMUN_PART * len(ctx["taches"]))
+    return lambda m: porteurs.get(m, 0) <= borne
+
+
+def _dire(etat, marques):
+    """Les marques en « clé:valeur », triées, la valeur telle que le projet l'écrit."""
+    return ["%s:%s" % (k, etat["valeurs"].get(k, {}).get(f) or etat["affichage"].get((k, f)) or f)
+            for k, f in sorted(marques)]
+
+
+def marques_tache(ctx, ref):
+    """#538 : les marques rares d'une tâche, ouverte ou close, par son numéro : « client:Acme »."""
+    etat = _etat_marques(ctx)
+    t = next((x for x in list(ctx["taches"]) + list(ctx.get("closes") or []) if x.get("id") == str(ref)), None)
+    if t is None:
+        return []
+    rare = _rares(ctx, etat)
+    return _dire(etat, {m for m in _marques_de_tache(ctx, etat, t) if rare(m)})
+
+
+def marques_action(ctx, texte, champs=None):
+    """#538 : les marques rares d'une action : les champs qu'elle donne (`fields` d'un `add`), et les valeurs
+    connues que son texte dit en mots entiers."""
+    etat = _etat_marques(ctx)
+    rare = _rares(ctx, etat)
+    return _dire(etat, {m for m in _marques_brutes(ctx, etat, texte, champs) if rare(m)})
+
+
+# Le mot commun qui ne dit pas une valeur : deux ensembles de mots qui pèsent ce quart des mots de l'action font un
+# sujet net avec une seule marque (la borne de #438 pour un thème).
+PART_HORS_NET = 0.25
+
+
+def meme_sujet(ctx, texte, champs=None, parent=None):
+    """#538 : (ouvertes, closes), les tâches du même sujet qu'une action, avec leurs raisons : `marques` (les
+    marques rares qu'elles partagent), `hors` (les mots communs qui ne sont pas ceux d'une valeur partagée), `score`
+    (les mots, comme `rapprocher`), `net`, `branche` (si prise). Même sujet : la règle des mots (score >= SEUIL et
+    deux mots communs), ou deux marques, ou une marque et un mot hors valeurs. Net : la règle des mots, ou deux
+    marques et un mot hors valeurs, ou une marque et deux mots hors valeurs qui pèsent PART_HORS_NET des mots de
+    l'action ; jamais quand deux familles (une mère et ses filles) sont au même sujet. Rangées par nombre de marques,
+    score, mère d'abord. `parent` : le parent de l'action (une tâche existante, `lots`) : le même compte pour une
+    marque, et les marques que porte cette mère ne comptent plus entre ses filles."""
+    etat = _etat_marques(ctx)
+    rare = _rares(ctx, etat)
+    cible = _mots(texte)
+    closes_ctx = [t for t in ctx.get("closes") or [] if t.get("id")]
+    poids = poids_des_mots([t["libelle"] for t in ctx["taches"]] + [t["libelle"] for t in ctx.get("closes") or []])
+    total = sum(poids.get(w, POIDS_INCONNU) for w in cible)
+    assez = min(MOTS_PARTAGES_MIN, len(cible))
+    action = {m for m in _marques_brutes(ctx, etat, texte, champs) if rare(m)}
+    par_id = {t["id"]: t for t in ctx["taches"]}
+
+    def peser(mots):
+        return sum(poids.get(w, POIDS_INCONNU) for w in mots)
+
+    def candidate(t, libelle, marques_t, role, p, famille):
+        communs = cible & _mots(libelle)
+        partagees = action & marques_t
+        soeurs = bool(parent) and p == parent
+        if soeurs and parent in par_id:
+            # Deux sœurs : les marques de leur mère sont celles de la famille, pas un signe entre elles.
+            partagees = partagees - _marques_de_tache(ctx, etat, par_id[parent])
+        marques = _dire(etat, partagees) + (["parent:%s" % parent] if soeurs else [])
+        hors = sorted(communs - set().union(*[_mots(f) for _, f in partagees]))
+        score = round(peser(communs) / total, 2) if total else 0.0
+        par_les_mots = score >= SEUIL and len(communs) >= assez
+        if not (par_les_mots or len(marques) >= 2 or (marques and hors)):
+            return None
+        net = (par_les_mots or (len(marques) >= 2 and bool(hors))
+               or (bool(marques) and len(hors) >= 2 and total and peser(hors) / total >= PART_HORS_NET))
+        champs_t = t.get("champs") or {}
+        return {"id": t["id"], "libelle": t["libelle"], "role": role, "parent": p, "marques": marques, "hors": hors,
+                "score": score, "net": bool(net), "branche": champs_t.get("branche") if champs_t.get("qui") else None,
+                "famille": famille}
+
+    def rang(c):
+        return (-len(c["marques"]), -c["score"], c["role"] != "parent", int(c["id"]) if c["id"].isdigit() else 0)
+
+    def finir(liste):
+        liste.sort(key=rang)
+        if len({c["famille"] for c in liste}) > 1:
+            for c in liste:
+                c["net"] = False
+        return [{k: v for k, v in c.items() if k != "famille"} for c in liste]
+
+    ouvertes = []
+    for t in ctx["taches"]:
+        p, mere = t["parent"], par_id.get(t["parent"])
+        role = "enfant" if p else ("parent" if t["enfants"] else "seule")
+        c = candidate(t, t["libelle"] + (" " + mere["libelle"] if mere else ""),
+                      {m for m in _marques_de_tache(ctx, etat, t) if rare(m)}, role, p, p or t["id"])
+        if c:
+            ouvertes.append(c)
+    closes = []
+    for t in closes_ctx:
+        c = candidate(t, t["libelle"], {m for m in _marques_de_tache(ctx, etat, t) if rare(m)}, "close", None, t["id"])
+        if c:
+            closes.append(c)
+    return finir(ouvertes), finir(closes)
+
+
+def rapprocher(ctx, texte, n=5, zone=None, apres=None, champs=None):
     """Les tâches ouvertes et closes du même sujet qu'une action, par la part pondérée de ses mots
     qu'elles portent (celle d'un enfant compte le libellé de son parent), les mots partagés, et le
     cas probable. Un mot pèse sa rareté dans la roadmap (#255). Plus, par le contexte des tâches
     ouvertes et la zone de l'action, celles où la verser (`a_verser`, #320). Et `en_cours_memes_fichiers`
     (#366) : les tâches prises dont la branche change, ou dont le contexte nomme, un fichier que l'action
-    touche, avec `meme_but` quand l'action les cite ou leur ressemble. Claude tranche."""
+    touche, avec `meme_but` quand l'action les cite ou leur ressemble. Et par les marques (#538) : `meme_structure`
+    (les ouvertes du même sujet, leurs marques, `net`) et `closes_meme_structure` ; `champs` : les `fields` de
+    l'action. Claude tranche."""
     cible = audit.mots(texte)
     par_id = {t["id"]: t for t in ctx["taches"]}
     closes_ctx = ctx.get("closes") or []
@@ -409,13 +604,15 @@ def rapprocher(ctx, texte, n=5, zone=None, apres=None):
     def couvre(liste):
         return any(t["score"] >= SEUIL and len(t["communs"]) >= assez for t in liste)
 
-    if couvre(ouvertes):
+    meme_o, meme_c = meme_sujet(ctx, texte, champs)
+    if couvre(ouvertes) or meme_o:
         cas = "couverte_ou_a_etoffer"
-    elif couvre(closes):
+    elif couvre(closes) or meme_c:
         cas = "deja_faite"
     else:
         cas = "nouvelle"
     return {"texte": texte, "ouvertes": ouvertes[:n], "closes": closes[:n], "cas_probable": cas,
+            "meme_structure": meme_o[:n], "closes_meme_structure": meme_c[:n],
             "a_verser": a_verser(ctx, texte, zone, apres),
             "en_cours_memes_fichiers": en_cours_memes_fichiers(ctx, texte, zone, apres),
             "faites_au_meme_endroit": faites_au_meme_endroit(ctx, texte, zone, apres)}
@@ -633,14 +830,22 @@ def faites_au_meme_endroit(ctx, texte, zone=None, apres=None):
     return _au_meme_endroit(ctx["dossier"], closes, texte, lieux, cites, feuilles=False)
 
 
+def lieux_communs(raisons):
+    """Les lieux qu'une paire partage (#320), vides pour une paire que seul le sujet rapproche (#538)."""
+    return raisons["lieux_communs"] + raisons["fichiers_communs"]
+
+
 def lots(ctx):
     """#320 : un regard extérieur sur toutes les tâches ouvertes. Chaque feuille rejouée comme une action,
     avec les lieux que son contexte nomme pour zone : deux tâches au même endroit, au même but, au résultat
     petit, deviennent une question (kind `merge`, sur la tâche versée) : « Verser #V dans #R » (`append` à
     #R, `drop` de #V), par sa session quand #R est prise (`relay`), ou « Les garder à part ». La tâche versée
-    est la plus récente des deux libres, ou la libre quand l'autre est prise ; deux tâches prises, rien."""
+    est la plus récente des deux libres, ou la libre quand l'autre est prise ; deux tâches prises, rien. #538 : deux
+    feuilles au même sujet net (`meme_sujet` : le même parent compte pour une marque) qui partagent une marque à elles,
+    autre que leur mère et ses marques, donnent la même question, qui dit alors leurs marques à la place des lieux."""
     par_id = {t["id"]: t for t in ctx["taches"]}
     paires = {}
+    _etat_marques(ctx)
     for t in ctx["taches"]:
         if t["enfants"]:
             continue
@@ -648,6 +853,13 @@ def lots(ctx):
         autres = dict(ctx, taches=[x for x in ctx["taches"] if x["id"] != t["id"]])
         for cand in a_verser(autres, t["libelle"], list(c["lieux"]), t["champs"].get("après")):
             paires.setdefault(frozenset((t["id"], cand["id"])), cand)
+        for cand in meme_sujet(autres, t["libelle"], t["champs"], t["parent"])[0]:
+            # Une marque à elles deux, en plus de la mère : des sœurs au même gabarit (« Prouver la fidélité de #N »)
+            # partagent leur mère et leurs mots sans être un doublon.
+            if cand["net"] and cand["role"] != "parent" and any(not m.startswith("parent:") for m in cand["marques"]):
+                paires.setdefault(frozenset((t["id"], cand["id"])),
+                                  {"lieux_communs": [], "fichiers_communs": [], "marques": cand["marques"],
+                                   "hors": cand["hors"]})
 
     def prise(t):
         return t["champs"].get("branche") if t["champs"].get("qui") and t["champs"].get("branche") else None
@@ -667,12 +879,14 @@ def lots(ctx):
         tv = par_id[v]
         recus = sorted(par_versee[v], key=lambda x: (prise(par_id[x[0]]) is not None, rang(x[0])))[:CANDIDATES_MAX]
         options = []
-        for r, _ in recus:
+        for r, raisons_r in recus:
             tr = par_id[r]
             abandon = {"op": "drop", "id": v, "reason": "versée dans #%s" % r,
                        "bilan": {"fait": "versée dans #%s" % r, "souci": "", "ressenti": "fluide", "cause": "aucune",
                                  "corrections": "0",
-                                 "note": "Même endroit et même but que #%s : l'action y est versée (#320)." % r}}
+                                 "note": ("Même endroit et même but que #%s : l'action y est versée (#320)." % r)
+                                 if lieux_communs(raisons_r) else
+                                 "Même sujet que #%s : l'action y est versée (#538)." % r}}
             if prise(tr):
                 options.append({"label": "Verser #%s dans #%s, tenue par la session de %s" % (v, r, prise(tr)),
                                 "operations": [abandon], "relay": {"id": r, "branche": prise(tr), "action": tv["libelle"]}})
@@ -685,11 +899,15 @@ def lots(ctx):
         options[0] = dict(options[0], label=options[0]["label"] + " (recommandé)")
         options.append({"label": "Les garder à part", "operations": []})
         r0, raisons = recus[0]
+        if lieux_communs(raisons):
+            quoi = "touchent le même endroit (%s)" % ", ".join(lieux_communs(raisons))
+        else:
+            quoi = "sont du même sujet (%s)" % ", ".join(raisons["marques"] + (
+                ["mots " + ", ".join(raisons["hors"])] if raisons["hors"] else []))
         questions.append({
             "key": "merge-%s" % v, "task": v, "kind": "merge",
-            "question": "#%s « %s » et #%s « %s » touchent le même endroit (%s) ; verser #%s dans #%s ?"
-                        % (v, _court(tv["libelle"]), r0, _court(par_id[r0]["libelle"]),
-                           ", ".join(raisons["lieux_communs"] + raisons["fichiers_communs"]), v, r0),
+            "question": "#%s « %s » et #%s « %s » %s ; verser #%s dans #%s ?"
+                        % (v, _court(tv["libelle"]), r0, _court(par_id[r0]["libelle"]), quoi, v, r0),
             "options": options})
     return questions
 
@@ -734,49 +952,155 @@ def _sans_cle_apres(op, cle):
     return dict(op, fields=champs) if op.get("fields") is not None else op
 
 
+def _distinct_saute(distinct, ident):
+    """#538 : un `distinct` ne dispense de la règle de sujet que s'il est le choix de la personne (`A_PART`), commence
+    par « tâche à part », ou cite le `#N` de la tâche la plus proche ; toute autre phrase laisse poser la question.
+    La mère d'un regroupement (#438) porte les mots de ses filles : elle passe, c'est le choix de la personne."""
+    d = audit._propre(distinct)
+    return bool(d) and (d in (A_PART, MERE_DE_GROUPE) or _norme(d).startswith("tache a part")
+                        or ident in CITE_RE.findall(d))
+
+
+def _pourquoi_sujet(c):
+    """Ce qui rapproche une candidate de l'action, en clair : ses marques, ou ses mots à défaut."""
+    return ", ".join(c["marques"]) if c["marques"] else "mots " + ", ".join(c["hors"])
+
+
+def _op_verser(ctx, tache, a, texte):
+    """L'`update` qui verse un ajout dans une tâche libre (#320, #538) : `append` ; en `fields`, les marques de l'ajout
+    que la tâche ne porte pas encore en champ (une clé déclarée, `attend`) et sa `src` jointe. Jamais sa `due`,
+    son `resp` ni son `ouvert` : la tâche garde les siens."""
+    portes = tache.get("champs") or {}
+    donnes = a.get("fields") or {}
+    champs = {k: audit._propre(v) for k, v in donnes.items()
+              if (k in (ctx.get("cles") or []) or k == "attend") and audit._propre(v) and not portes.get(k)}
+    src = audit._propre(donnes.get("src"))
+    if src:
+        champs["src"] = "%s ; %s" % (portes["src"], src) if portes.get("src") else src
+    op = {"op": "update", "id": tache["id"], "append": texte}
+    return dict(op, fields=champs) if champs else op
+
+
+def _op_sous(a, ident):
+    """L'ajout rangé sous une mère : il n'a plus d'axe, de section ni de `distinct` à lui (il prend ceux de sa mère)."""
+    return dict({c: v for c, v in a.items() if c not in ("axis", "section", "distinct")}, parent=ident)
+
+
 def un_sujet(ctx, operations, deja=frozenset()):
-    """#288 : les ajouts sans parent que `rapprocher` trouve couverts par une tâche ouverte (score ≥ 0,5
-    et deux mots communs), sauf `distinct`, retenus avec ce qui les vise dans le lot ; chacun devient une
-    question (kind `subject`) : « Sous #N (recommandé) », « Tâche à part », « Ne rien ajouter ». Une tâche
-    que le lot close ne couvre rien. Rend (clés retenues, questions)."""
+    """#288, refait par #538 : les ajouts sans parent du même sujet qu'une tâche ouverte (`meme_sujet` : mots ou
+    marques), sauf `distinct` (`_distinct_saute`). Net, sans rien d'autre dans le lot qui vise l'ajout, et sans tâche
+    prise : versé d'office, dans la tâche (`update` avec `append`), ou sous elle quand c'est une mère. Sinon une
+    question (kind `subject`) : « Mettre à jour #N (recommandé) » (deux candidates au plus, « Sous #M » pour une
+    mère), « Tâche à part », « Ne rien ajouter » ; pour une tâche prise et nette : « Tâche à part, suite de #N »,
+    « Verser dans #N, tenue par la session de … » (`relay`). Ce qui vise la clé de l'ajout dans le lot : toujours la
+    question de #288 (« Sous #N »). Sans ouverte au même sujet, une close au même sujet : la question `followup`.
+    Une tâche que le lot close ne couvre rien. Rend (clés retenues, questions, {clé: opérations à la place de
+    l'ajout}, versements d'office)."""
+    _etat_marques(ctx)
     fermees = {str(op.get("id")) for op in operations if op.get("op") in ("drop", "done", "handoff")}
     ctx_ouvert = dict(ctx, taches=[t for t in ctx["taches"] if t["id"] not in fermees])
-    retenues, questions = set(), []
+    par_id = {t["id"]: t for t in ctx_ouvert["taches"]}
+    retenues, questions, a_la_place, versees = set(), [], {}, []
     for a in operations:
-        if (a.get("op") != "add" or not _sans_ref(a.get("parent")) or audit._propre(a.get("distinct"))
-                or a.get("key") in retenues or a.get("key") in deja):
+        k = a.get("key")
+        if a.get("op") != "add" or not _sans_ref(a.get("parent")) or k in retenues or k in deja:
             continue
         libelle = audit._propre(a.get("label"))
-        r = rapprocher(ctx_ouvert, libelle)
-        if r["cas_probable"] != "couverte_ou_a_etoffer":
+        ouvertes, closes = meme_sujet(ctx_ouvert, libelle, a.get("fields"))
+        meilleure = (ouvertes or closes or [None])[0]
+        if meilleure is None or _distinct_saute(a.get("distinct"), meilleure["id"]):
             continue
-        assez = min(MOTS_PARTAGES_MIN, len(audit.mots(libelle)))
-        meilleure = next(t for t in r["ouvertes"] if t["score"] >= SEUIL and len(t["communs"]) >= assez)
-        cible = meilleure["parent"] if meilleure["role"] == "enfant" and meilleure["parent"] else meilleure["id"]
-        k = a.get("key")
         groupe, cles = [a], {k}
         for op in operations:
             if op is not a and _refs_op(op) & cles:
                 groupe.append(op)
                 if op.get("key"):
                     cles.add(op["key"])
+        texte = _aparte(libelle, audit._propre(a.get("note")))
+        if not ouvertes:
+            if len(groupe) > 1:
+                continue
+            questions.append(_question_suite(k, libelle, a, meilleure, _pourquoi_sujet(meilleure),
+                                             "est du même sujet que"))
+            retenues |= cles
+            continue
+        m = meilleure
         retenues |= cles
-        enfants = [op for op in groupe if op is not a and str(op.get("parent") or "").lstrip("#") == k]
-        if enfants:
-            # Deux niveaux au plus : ses enfants passent sous la cible, la mère proposée s'efface.
-            sous = [dict(_sans_cle_apres(op, k), parent=cible) if op in enfants else _sans_cle_apres(op, k)
-                    for op in groupe if op is not a]
+        if len(groupe) > 1:
+            # Quelque chose du lot vise cet ajout (#288) : jamais d'office. Deux niveaux au plus : la cible est la mère.
+            cible = m["parent"] if m["role"] == "enfant" and m["parent"] else m["id"]
+            enfants = [op for op in groupe if op is not a and str(op.get("parent") or "").lstrip("#") == k]
+            if enfants:
+                # Ses enfants passent sous la cible, la mère proposée s'efface.
+                sous = [dict(_sans_cle_apres(op, k), parent=cible) if op in enfants else _sans_cle_apres(op, k)
+                        for op in groupe if op is not a]
+            else:
+                sous = [_op_sous(a, cible)] + groupe[1:]
+            questions.append({
+                "key": "subject-%s" % k, "about": libelle, "kind": "subject",
+                "question": "« %s » : même sujet que #%s « %s » ; l'ajouter sous #%s, ou en tâche à part ?"
+                            % (_court(libelle), m["id"], _court(m["libelle"]), cible),
+                "options": [{"label": "Sous #%s (recommandé)" % cible, "operations": sous},
+                            {"label": "Tâche à part", "operations": [dict(a, distinct=A_PART)] + groupe[1:]},
+                            {"label": "Ne rien ajouter : #%s couvre déjà l'action" % m["id"], "operations": []}]})
+            continue
+        pourquoi = _pourquoi_sujet(m)
+        if m["net"] and not audit._propre(a.get("distinct")) and not m["branche"]:
+            if m["role"] == "parent":
+                a_la_place[k] = [_op_sous(a, m["id"])]
+            else:
+                a_la_place[k] = [_op_verser(ctx, par_id[m["id"]], a, texte)]
+            versees.append({"key": k, "id": m["id"], "comment": "sous" if m["role"] == "parent" else "versee",
+                            "pourquoi": "même sujet : " + pourquoi})
+            continue
+        ne_rien = {"label": "Ne rien ajouter : #%s couvre déjà l'action" % m["id"], "operations": []}
+        if m["net"] and m["branche"]:
+            notes = (audit._propre(a.get("note")), "suite de #%s" % m["id"])
+            suite = dict(a, distinct=A_PART, note="; ".join(x for x in notes if x))
+            options = [{"label": "Tâche à part, suite de #%s (recommandé)" % m["id"], "operations": [suite]},
+                       {"label": "Verser dans #%s, tenue par la session de %s" % (m["id"], m["branche"]),
+                        "operations": [], "relay": {"id": m["id"], "branche": m["branche"], "action": texte}},
+                       ne_rien]
+            phrase = ("#%s est tenue par la session de %s, on ne la rouvre pas sans le dire : la verser dans #%s "
+                      "(renvoyée à sa session), ou en tâche à part, suite de #%s ?"
+                      % (m["id"], m["branche"], m["id"], m["id"]))
         else:
-            sous = [dict({c: v for c, v in a.items() if c not in ("axis", "section", "distinct")}, parent=cible)] + groupe[1:]
-        a_part = [dict(a, distinct=A_PART)] + groupe[1:]
+            options = []
+            for c in ouvertes[:CANDIDATES_MAX]:
+                if c["role"] == "parent":
+                    options.append({"label": "Sous #%s" % c["id"], "operations": [_op_sous(a, c["id"])]})
+                elif c["branche"]:
+                    options.append({"label": "Verser dans #%s, tenue par la session de %s" % (c["id"], c["branche"]),
+                                    "operations": [],
+                                    "relay": {"id": c["id"], "branche": c["branche"], "action": texte}})
+                else:
+                    options.append({"label": "Mettre à jour #%s" % c["id"],
+                                    "operations": [_op_verser(ctx, par_id[c["id"]], a, texte)]})
+            options[0] = dict(options[0], label=options[0]["label"] + " (recommandé)")
+            options += [{"label": "Tâche à part", "operations": [dict(a, distinct=A_PART)]}, ne_rien]
+            geste = "l'ajouter sous" if m["role"] == "parent" else "la verser dans"
+            phrase = "%s #%s, ou en tâche à part ?" % (geste, m["id"])
         questions.append({
             "key": "subject-%s" % k, "about": libelle, "kind": "subject",
-            "question": "« %s » : même sujet que #%s « %s » ; l'ajouter sous #%s, ou en tâche à part ?"
-                        % (_court(libelle), meilleure["id"], _court(meilleure["libelle"]), cible),
-            "options": [{"label": "Sous #%s (recommandé)" % cible, "operations": sous},
-                        {"label": "Tâche à part", "operations": a_part},
-                        {"label": "Ne rien ajouter : #%s couvre déjà l'action" % meilleure["id"], "operations": []}]})
-    return retenues, questions
+            "question": "« %s » : même sujet que #%s « %s » (%s) ; %s"
+                        % (_court(libelle), m["id"], _court(m["libelle"]), pourquoi, phrase),
+            "options": options})
+    return retenues, questions, a_la_place, versees
+
+
+def _question_suite(k, libelle, a, f, pourquoi, lien="touche le même endroit que"):
+    """#320, #538 : l'action est peut-être la suite d'une tâche close (kind `followup`) : « Suite de #N (recommandé) »
+    (l'ajout à part, avec « suite de #N » en aparté), « Déjà fait par #N : ne rien ajouter », « Tâche à part »."""
+    return {
+        "key": "followup-%s" % k, "about": libelle, "kind": "followup",
+        "question": "« %s » %s #%s « %s », close (%s) ; en est-ce la suite, ou est-ce déjà fait ?"
+                    % (_court(libelle), lien, f["id"], _court(f["libelle"]), pourquoi),
+        "options": [{"label": "Suite de #%s (recommandé)" % f["id"],
+                     "operations": [dict(a, note="; ".join(x for x in (audit._propre(a.get("note")),
+                                                                     "suite de #%s" % f["id"]) if x),
+                                         distinct=A_PART)]},
+                    {"label": "Déjà fait par #%s : ne rien ajouter" % f["id"], "operations": []},
+                    {"label": "Tâche à part", "operations": [dict(a, distinct=A_PART)]}]}
 
 
 def _question_memes_fichiers(k, libelle, texte, ajout, entrees):
@@ -827,17 +1151,8 @@ def un_lot(ctx, operations, retenues):
             faites = faites_au_meme_endroit(ctx, texte, zone, apres)
             if faites:
                 f = faites[0]
-                questions.append({
-                    "key": "followup-%s" % k, "about": libelle, "kind": "followup",
-                    "question": "« %s » touche le même endroit que #%s « %s », close (%s) ; en est-ce la suite, ou est-ce déjà fait ?"
-                                % (_court(libelle), f["id"], _court(f["libelle"]),
-                                   ", ".join(f["lieux_communs"] + f["fichiers_communs"])),
-                    "options": [{"label": "Suite de #%s (recommandé)" % f["id"],
-                                 "operations": [dict(a, note="; ".join(x for x in (audit._propre(a.get("note")),
-                                                                                 "suite de #%s" % f["id"]) if x),
-                                                     distinct=A_PART)]},
-                                {"label": "Déjà fait par #%s : ne rien ajouter" % f["id"], "operations": []},
-                                {"label": "Tâche à part", "operations": [dict(a, distinct=A_PART)]}]})
+                questions.append(_question_suite(k, libelle, a, f,
+                                                 ", ".join(f["lieux_communs"] + f["fichiers_communs"])))
                 cles.add(k)
             continue
         options = []
@@ -1204,6 +1519,9 @@ class _Tenue(audit._Preparation):
         # #288 : les mères qui reçoivent une fille dans ce lot (leur numéro ou leur clé), et celles qui en avaient.
         self.meres_du_lot = []
         self.meres_avant = {t["parent"] for t in ctx["taches"] if t.get("parent")}
+        # #538 : ce que `un_sujet` verse d'office, pour que le compte rendu le dise : par numéro de tâche
+        # complétée, par clé d'ajout rangé sous une mère.
+        self.versees_maj, self.versees_sous = {}, {}
 
     # -- règles
 
@@ -1241,8 +1559,9 @@ class _Tenue(audit._Preparation):
                          "écris en tête du fichier « Statut : envoyé le AAAA-MM-JJ (par où) », la preuve d'envoi"
                          % (quoi, "livrable" if len(attente) == 1 else "livrables", ", ".join(attente)))
 
-    def changer(self, t, change):
-        self.compte["mises_a_jour"].append({"id": t.id, "libelle": _court(t.libelle), "change": change})
+    def changer(self, t, change, d_office=False):
+        self.compte["mises_a_jour"].append(dict({"id": t.id, "libelle": _court(t.libelle), "change": change},
+                                                **({"d_office": True} if d_office else {})))
 
     # -- opérations
 
@@ -1290,8 +1609,10 @@ class _Tenue(audit._Preparation):
         self.placer(t, mere, op.get("section"), quoi)
         self.bilan["enfants"] += 1
         self.tenue["ajoutees"].append(t.id)
-        self.compte["ajoutees"].append({"id": t.id, "libelle": _court(libelle), "parent": mere.id if mere else None,
-                                        "due": t.get("due")})
+        ajoutee = {"id": t.id, "libelle": _court(libelle), "parent": mere.id if mere else None, "due": t.get("due")}
+        if op.get("key") in self.versees_sous:
+            ajoutee["d_office"] = self.versees_sous[op["key"]]
+        self.compte["ajoutees"].append(ajoutee)
 
     def placer(self, t, mere, section, quoi):
         """Un enfant sous son parent, après ses autres enfants ; une autre tâche au bout de sa section."""
@@ -1362,7 +1683,10 @@ class _Tenue(audit._Preparation):
         # #275 : les noms des clés, jamais leurs valeurs brutes (un src: de trois lignes dans le compte rendu).
         dit = (["libellé"] if "append" in op else []) + [
             "%s retiré" % k if v is None else k for k, v in (op.get("fields") or {}).items()]
-        self.changer(t, "complétée : %s" % ", ".join(dit))
+        if t.id in self.versees_maj:
+            self.changer(t, "complétée d'office (%s)" % self.versees_maj[t.id], d_office=True)
+        else:
+            self.changer(t, "complétée : %s" % ", ".join(dit))
 
     def redater(self, op):
         t = self.tache(op.get("id"), "redate")
@@ -1756,15 +2080,22 @@ def preparer(ctx, props, maintenant=None):
         _verifier_operation(op)
     # #438 d'abord : un thème de plusieurs sœurs se range sous une mère commune ; une paire reste à #288 et #320.
     retenues, du_lot = un_groupe(ctx, operations, set())
-    sujet_cles, sujet_questions = un_sujet(ctx, operations, retenues)
+    sujet_cles, sujet_questions, a_la_place, versees = un_sujet(ctx, operations, retenues)
     retenues |= sujet_cles
     du_lot += sujet_questions
+    # #538 : ce qui se verse d'office s'écrit à la place de l'ajout, au même rang.
+    prep.versees_maj = {v["id"]: v["pourquoi"] for v in versees if v["comment"] == "versee"}
+    prep.versees_sous = {v["key"]: v["pourquoi"] for v in versees if v["comment"] == "sous"}
     a_verser_cles, a_verser_questions = un_lot(ctx, operations, retenues)
     retenues |= a_verser_cles
     du_lot += a_verser_questions
+    a_ecrire = []
     for op in operations:
-        if op.get("key") in retenues:
-            continue
+        if op.get("op") == "add" and op.get("key") in a_la_place:
+            a_ecrire += a_la_place[op["key"]]
+        elif op.get("key") not in retenues:
+            a_ecrire.append(op)
+    for op in a_ecrire:
         {"add": prep.ajouter, "update": prep.completer_tache, "reschedule": prep.redater,
          "done": prep.cocher, "drop": prep.abandonner, "pause": prep.mettre_en_pause,
          "handoff": prep.passer_la_main}[op["op"]](op)
@@ -1794,7 +2125,7 @@ def preparer(ctx, props, maintenant=None):
         fichiers[chemin_bilans] = bilans
     fichiers = {p: t for p, t in fichiers.items() if audit._lire_fichier(p) != t}
     bilan = dict(prep.tenue, ids_crees=prep.bilan["ids_crees"], notes=prep.notes, comptes=prep.bilan.get("comptes"),
-                 questions=du_lot,
+                 questions=du_lot, versees=versees,
                  compte_rendu=prep.compte, jour=prep.jour,
                  lignes={os.path.basename(p): audit.lignes_changees(audit._lire_fichier(p), t) for p, t in fichiers.items()})
     return fichiers, bilan
@@ -1853,11 +2184,13 @@ def rendre_compte_rendu(cr, etat, jour, outil=None, sauvegarde=None):
               for s in suites]
     for a in cr["ajoutees"]:
         extra = [x for x in ("sous #" + a["parent"] if a["parent"] else "",
+                             "d'office : " + a["d_office"] if a.get("d_office") else "",
                              "due " + _jj_mm(a["due"]) if a["due"] else "") if x]
         lignes.append("- Roadmap : #%s ajoutée — %s%s" % (a["id"], _plat(a["libelle"]), " (%s)" % ", ".join(extra) if extra else ""))
     for m in cr["mises_a_jour"]:
         if m["id"] not in closes:
-            lignes.append("- Roadmap : #%s %s — %s" % (m["id"], _plat(m["change"]), _plat(m["libelle"])))
+            a_part = " ; à part : redis-le avec distinct" if m.get("d_office") else ""
+            lignes.append("- Roadmap : #%s %s — %s%s" % (m["id"], _plat(m["change"]), _plat(m["libelle"]), a_part))
     questions = ["> **Une question :** %s%s (%s) — recommandé : %s" % ("#%s " % q["id"] if q["id"] else "", _plat(q["question"]),
                                                                       q["raison"], _plat(q["recommande"])) for q in cr["t_attendent"]]
     blocs = (["\n".join(lignes)] if lignes else []) + questions
@@ -1924,6 +2257,8 @@ def main(argv=None):
     r.add_argument("--text", dest="texte", action="append", required=True)
     r.add_argument("--zone", action="append", help="a place the action touches (file, function, command, area); "
                                                    "repeat it, it applies to every --text (#320)")
+    r.add_argument("--field", action="append", help="a field the action carries, key=value (client=Acme); repeat it, "
+                                                    "it applies to every --text (#538)")
     lo = sous.add_parser("lots", help="the open tasks that should be poured into one another, as questions (#320)")
     lo.add_argument("dossier")
     gr = sous.add_parser("groupes", help="the open tasks of one theme that should share a parent, as questions (#438)")
@@ -1950,7 +2285,14 @@ def main(argv=None):
             print(json.dumps(migration_prio(contexte(args.dossier, args.jour, args.perso)), ensure_ascii=False, indent=2))
         elif args.commande == "match":
             ctx = contexte(args.dossier, args.jour, args.perso)
-            print(json.dumps([rapprocher(ctx, t, zone=args.zone) for t in args.texte], ensure_ascii=False, indent=2))
+            champs = {}
+            for f in args.field or []:
+                cle, egal, valeur = f.partition("=")
+                if not egal or not cle.strip() or not valeur.strip():
+                    raise Erreur("--field attend cle=valeur, pas %r" % f)
+                champs[cle.strip()] = ",".join(x for x in (champs.get(cle.strip()), valeur.strip()) if x)
+            print(json.dumps([rapprocher(ctx, t, zone=args.zone, champs=champs) for t in args.texte],
+                             ensure_ascii=False, indent=2))
         else:
             maintenant = datetime.datetime.now()
             if args.jour:

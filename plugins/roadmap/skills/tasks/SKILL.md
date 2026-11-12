@@ -75,7 +75,8 @@ A roadmap where a task has no `id:` is refused: run the import first (`onboardin
 ## 2. Match by subject, before writing
 
 ```bash
-python3 "<skill folder>/scripts/tasks.py" match <project folder> --text "<action 1>" --text "<action 2>"
+python3 "<skill folder>/scripts/tasks.py" match <project folder> --text "<action 1>" --text "<action 2>" \
+  --field client=Martin --field attend=Martin
 ```
 
 For each action: the nearby open and closed tasks (`score`: the share of the action's words they
@@ -85,8 +86,28 @@ words they share (`communs`), their `role` and a `cas_probable` (`couverte_ou_a_
 a name, a code or a supplier that few tasks carry weighs much more than « point », « envoyer » or
 « message », and a word no task carries weighs as a frequent one. A task covers the action from a
 score of 0.5 with at least two shared words (one, for a one-word action): a rare name alone shows
-the task, without calling the action covered. The score is a lead: read the labels, and put each
-action in **exactly one case**:
+the task, without calling the action covered.
+
+**Words are not enough: match by what structures the project (#538).** Two tasks on one subject
+said with different words share no telling word (« Relancer Martin pour le devis », « Obtenir le
+chiffrage de Martin »), above all in a project without files. So `match` also compares **marks**:
+the keys the project declares (`cles`: `client`, `type`…), `attend` (without its parenthesis,
+never a `#N` nor yourself) and `resp` (never yourself). A task carries a mark by its field (its
+parent's for an inherited key) or because its label says a known value in whole words; the action
+carries its own by `--field key=value` (repeat it; give every field the `add` will have) and by
+the known values its text says. A mark carried by more than 3 open tasks and more than a quarter
+of them says nothing. `match` gives `meme_structure`: the open tasks on the **same subject** (the
+word rule above, or two shared marks, or one mark and a shared word outside the shared values),
+each with its `marques`, its words `hors` the values, and `net`: the word rule, or two marks and
+a shared word, or one mark and two shared words worth 0.25 of the action's, and no candidate of
+another family (a parent and its children). `closes_meme_structure` gives the closed ones.
+`cas_probable` says `couverte_ou_a_etoffer` as soon as an open task is on the same subject.
+
+**Update before creating.** When an open task is on the same subject, the action goes into it: an
+`update` with `append` (and the new facts in `fields`), a `reschedule`, or a child under it when
+it is a parent. An `add` is the exception, and it says why in `distinct`, naming the nearest task
+(« #12 is the quote, this is the invoice »). The score and the marks are leads: read the labels of
+the five nearest tasks and judge the meaning, then put each action in **exactly one case**:
 
 | Case | What happens |
 |---|---|
@@ -99,13 +120,27 @@ action in **exactly one case**:
 **Never a new task for a subject that already has one.** Two actions of the same batch on one
 subject: the second goes under the first (`parent` set to its `key`).
 
-`write` holds this rule (#288), as a question, never a refusal: an `add` without `parent` that an
-open task covers (the match above: score ≥ 0.5 and two shared words), unless it says `distinct`, is
-not written; it and the operations of the batch that point to its `key` become a `subject`
-question: « Sous #N (recommandé) » (under the covering task, or under its parent when it is a
-child; an `add` with children of its own leaves its place to them, two levels at most), « Tâche à
-part » (the same operations, with `distinct`), « Ne rien ajouter ». A task the batch closes covers
-nothing. The rest of the batch is written.
+`write` holds this rule (#288, #538), in both kinds of project: an `add` without `parent` whose
+subject an open task already has (`meme_structure` above) is not written as a new line.
+
+| The match | What `write` does |
+|---|---|
+| Clear (`net`), the task is a free leaf | pours the action into it without a question: `append` to its label, the `add`'s new marks set as fields, its `src:` joined; the report says « complétée d'office (même sujet : …) » and the bilan lists it in `versees` |
+| Clear, the task is a parent | writes the `add` under it, without a question |
+| Clear, the task is taken by a session (`qui:` and `branche:`) | a `subject` question, never a silent write (the task may be tested already): « Tâche à part, suite de #N (recommandé) », « Verser dans #N, tenue par la session de … » (a relay, as in #320), « Ne rien ajouter » |
+| Same subject, not clear | a `subject` question: « Mettre à jour #N (recommandé) » (two candidates at most; « Sous #M » for a parent), « Tâche à part » (the same `add`, with `distinct`), « Ne rien ajouter » |
+
+An `add` that other operations of the batch point to (its `key` as their `parent` or `après:`)
+is never poured silently: it and they become the question (an `add` with children of its own
+leaves its place to them, two levels at most). A task the batch closes covers nothing. The rest
+of the batch is written. `distinct` skips the rule only when it names the nearest task (`#N`) or
+is the person's choice (« Tâche à part »): any other `distinct` gets the question. Tell the person
+in one line what was poured where; if they say it was a task of its own, undo the `append` and
+write the `add` with `distinct`.
+
+**A closed task on the same subject (#538).** With no open task on the subject, a closed one (by
+words or by marks) gives a `followup` question: « Suite de #N (recommandé) », « Déjà fait par #N :
+ne rien ajouter », « Tâche à part ». Nothing is reopened or re-created silently.
 
 **One theme, one parent (#438).** `write` first looks for a **theme**: the open tasks and the other
 `add`s of the batch that share a rare place (a file, function, command or area carried by 8 open
@@ -176,7 +211,11 @@ the note « suite de #N » and `distinct`), « Déjà fait par #N : ne rien ajou
 folder>` replays each open leaf as an action, with the places its context names for zone, and
 returns `{"questions": [...]}` (the audit's format, kind `merge`, on the task to pour): two tasks at
 the same place, for the same purpose, with a small result. The one poured in is the newer of two
-free tasks, or the free one when the other is taken; two taken tasks give nothing. Options:
+free tasks, or the free one when the other is taken; two taken tasks give nothing. Two leaves
+clearly on the same subject (#538) that share a mark of their own give the same question, which
+names the marks instead of the places: the same `parent` counts as one more mark, but the parent,
+its marks and shared words alone never do (sisters written on one template, « Prouver la fidélité
+de #N », are not duplicates). Options:
 « Verser #V dans #R » (`update` with `append` on R, `drop` of V with its bilan), or for a taken R
 the same with `relay` and only the `drop`, then « Les garder à part ». Ask them with the batch's
 other questions; the chosen option's operations go to `write`.
@@ -255,7 +294,8 @@ Write `<scratchpad>/operations.json`:
   parent carries a subject name), `axis` (a child's is its parent's: leave it out, another one is
   refused), `parent` (an `id`
   or a `key`), `section` (default « Prochain », else the first open section), `distinct` (#288: why this action
-  is a task of its own though an open task looks like the same subject; never written in the
+  is a task of its own though an open task looks like the same subject, naming that task (`#N`,
+  #538: without its number the subject question is still asked); never written in the
   line; it skips #288 and #320, never the theme of #438: only « Tâche à part » does), `zone` (#320: the places the action touches, files, functions, commands or an area in
   words, used to match it with the open tasks; never written), `note` (written in the label,
   between parentheses: « Réserver le studio son (demandé par Linda) », never after the field block,

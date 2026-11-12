@@ -1,6 +1,6 @@
 # Est-il sûr de l'installer ?
 
-Version décrite : roadmap 0.289.0
+Version décrite : roadmap 0.290.0
 Un plugin de Claude Code fait tourner du code sur ta machine, donc la question se pose. Certains plugins
 malveillants ont l'air inoffensifs quand on les installe, puis téléchargent et lancent autre chose plus
 tard. Cette page dit tout ce que fait roadmap. Un test vérifie à chaque version qu'elle dit vrai, et tu
@@ -124,6 +124,7 @@ le moteur saute les hooks).
 | la roadmap du projet, après une copie de sauvegarde à côté d'elle | `skills/audit/scripts/audit.py` | quand tu valides un audit, ou une écriture de la skill tasks, qui passe par lui |
 | les fichiers que pose l'onboarding dans le projet (`CLAUDE.md`, `docs/`, `roadmap/`, `scripts/`, `.claude/roadmap.json`…) | `skills/onboarding/scripts/onboarding.py` | quand tu lances l'onboarding et valides son plan |
 | la roadmap importée, après une copie de sauvegarde | `skills/onboarding/scripts/importer.py` | quand l'onboarding reprend une roadmap existante |
+| `ROADMAP-findings.json`, à côté de la roadmap du projet | `skills/maestro/scripts/findings.py` | quand Maestro relève au registre ce qu'une session a trouvé hors de sa tâche, ou lui donne son sort (#531) |
 | `fidelite.html` et `capture-panneau.png`, dans le dossier du chantier (`docs/plans/<type>-<slug>/`) | `skills/maestro/scripts/fidelite.py` | quand une session pose la preuve de fidélité d'un rendu à sa maquette (#357) |
 | `ROADMAP.md` du projet, la ligne d'une tâche que tu viens de démarrer en cloud depuis une carte de Maestro (`qui:`, `branche:`, `lieu:cloud`, montée dans « En cours ») | `skills/maestro/scripts/prendre_cloud.py` | quand l'app dit à Maestro que tu as démarré sa carte cloud (#458) |
 | `roadmap-check-vert`, dans le dossier `.git` du projet (la liste des arbres dont les tests ont passé, que `tools/release.py` tient aussi) ; et, dans la VM d'une session cloud, le fichier que nomme `--sortie` (le commentaire du résultat) | `skills/maestro/scripts/suite_cloud.py` | `lire --marquer` : quand Maestro relit une suite de main verte, faite dans une session cloud, sur l'arbre même de ton dossier, pour que la publication ne relance pas ses tests (#450) ; `lancer --sortie` : dans la VM, à la fin de la suite |

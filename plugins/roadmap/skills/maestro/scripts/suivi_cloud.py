@@ -19,6 +19,9 @@ quand le dépôt ou sa roadmap sont introuvables. Sortie en texte, une ligne par
 
   #413 Purger les vieilles sauvegardes · prête · Maestro fusionne · « Prête à fusionner (tests : verts). » · <url>
 
+Une PR dont les comptes rendus portent des findings (#531, `findings.py`) le dit : « 2 findings : findings.py
+relever --pr 107 » ; le JSON en donne le nombre (`findings`).
+
 Le texte dit le mot du vocabulaire (`mots_etat.mot_pr`, #509) et son détail ; le JSON garde le champ `etat` (le code
 d'avant : aucune, ouverte, en cours, rouges, prête, fusionnée, fermée, inconnu) et ajoute `mot` et `detail`.
 
@@ -38,6 +41,7 @@ import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
 
+from findings import lire as lire_findings
 from mots_etat import ROUGES, mot_pr
 
 DELAI = 20
@@ -182,7 +186,7 @@ def etat_pr(prs):
     # Revue de sécurité (#408) : une PR venue d'un fork, même sur le nom de la branche, n'est pas celle de la session.
     prs = [p for p in prs if isinstance(p, dict) and not p.get("isCrossRepository")]
     if not prs:
-        return {"etat": "aucune", "url": None, "numero": None, "depuis": None, "dit": ""}
+        return {"etat": "aucune", "url": None, "numero": None, "depuis": None, "dit": "", "findings": 0}
     ouvertes = [p for p in prs if p.get("state") == "OPEN"]
     pool = ouvertes or prs
     pr = max(pool, key=lambda p: p.get("createdAt") or "")
@@ -207,7 +211,10 @@ def etat_pr(prs):
     commentaires = [c for c in (pr.get("comments") or [])
                     if isinstance(c, dict) and auteur and (c.get("author") or {}).get("login") == auteur]
     dit = premiere_phrase(commentaires[-1].get("body")) if commentaires else ""
-    return {"etat": etat, "url": pr.get("url"), "numero": pr.get("number"), "depuis": pr.get("createdAt"), "dit": dit}
+    # #531 : les findings de ses comptes rendus, comptés une fois chacun ; Maestro les relève (`findings.py`).
+    findings = len({f["brut"] for c in commentaires for f in lire_findings(c.get("body"))})
+    return {"etat": etat, "url": pr.get("url"), "numero": pr.get("number"), "depuis": pr.get("createdAt"), "dit": dit,
+            "findings": findings}
 
 
 # Le cloud a calé (#416) : la session se dit bloquée par sa VM (environnement, quota, outil absent, réseau), pas
@@ -269,9 +276,9 @@ def pr_de(depot, branche, run, repo=None):
     try:
         prs = json.loads(run(cmd, depot))
     except (OSError, subprocess.SubprocessError, ValueError):
-        return {"etat": "inconnu", "url": None, "numero": None, "depuis": None, "dit": ""}
+        return {"etat": "inconnu", "url": None, "numero": None, "depuis": None, "dit": "", "findings": 0}
     if not isinstance(prs, list):
-        return {"etat": "inconnu", "url": None, "numero": None, "depuis": None, "dit": ""}
+        return {"etat": "inconnu", "url": None, "numero": None, "depuis": None, "dit": "", "findings": 0}
     return etat_pr(prs)
 
 
@@ -325,6 +332,9 @@ def ligne_texte(t):
             parts.append("« %s »" % t["dit"])
         if calee(t["dit"]):
             parts.append("calée : repli_mac.py")
+        if t.get("findings"):
+            parts.append("%d finding%s : findings.py relever --pr %s" % (
+                t["findings"], "s" if t["findings"] > 1 else "", t["numero"]))
         if t["url"]:
             parts.append(t["url"])
     return " · ".join(parts)

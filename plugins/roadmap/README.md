@@ -249,6 +249,15 @@ et donne seul la main sur une ressource unique (#105). Il répond lui-même à u
 attend, sauf pour une question d'architecture ou un geste qui revient à Bertrand. Sans le réglage,
 la fusion et la publication attendent le clic de Bertrand (tableau « Autonome éteint », #304).
 
+**Le gardien** (#528) : en projet de code, Maestro pose avec sa première carte de tâche la carte de
+son gardien, une session permanente « Gardien · <projet> » (modèle qui code, dossier principal, sans
+worktree) ; Bertrand clique Start une fois. Gardien ouvert, lui seul relit, fusionne une branche à la
+fois, publie et clôt les lignes ; Maestro garde la conversation, les lignes et les lancements, et
+reçoit une ligne par livraison (« #N livrée X.Y.Z : ce qui change »). Les « prête à fusionner » des
+sessions et le réveil cloud (#496) vont au gardien ; sans gardien ouvert, ou muet depuis 3 minutes
+pour le réveil cloud, ils reviennent à Maestro, qui livre comme avant. En projet sans code, le gardien
+se lance à la demande et tient le suivi (relances, échéances, preuve avant clôture, point du jour).
+
 **Le récap au fil des fusions** (#136) : après chaque `git merge` réussi dans le dossier principal
 et chaque `release.py release`, le panneau rappelle dans le résultat de la commande de renvoyer la
 liste d'étapes entière avant la suivante ; chez Maestro, l'étape de la tâche dit `· livrée <version>`,
@@ -791,6 +800,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.290.0 (2026-11-12)** : un tronc local et cloud, gardien des fusions, findings, bloc fixe du compte rendu, why dans la fiche, tâches mises à jour avant d'en créer ; perf : minuterie, dessins, zones de clic, panneau sans la liste (#510 #528 #531 #537 #535 #538 #522 #519 #520 #516 #539 #530 #527 #498)
 - **0.289.0 (2026-11-12)** : commande why, ▶ Cloud par Claude, réveil de Maestro par le cloud, nature des projets, mots d'état, clôture partielle, fiche sans roue ; perf : store, hooks, scripts (#529 #515 #496 #508 #509 #487 #532 #518 #523 #525 #526 #533)
 - **0.288.0 (2026-11-12)** : file des tests : une seconde place pour les tests ciblés (un_test.sh), plafond de charge à 180 s, départ quand la charge cesse de baisser, place d'un shell mort rendue, historique des attentes (#521)
 - **0.287.0 (2026-11-12)** : panneau : le ▶ Cloud de mission passe par Claude hors Bypass, sa consigne imposée (#512) ; en-tête En session identique plié ou déplié (#513) ; budgets du panneau qui rougissent à toute dérive d'appels (#524)

@@ -14,20 +14,15 @@ export type PressHitProps = {
 
 type Ref = { props: PressHitProps; down: boolean }
 
-// Le signal « prêt » : posté une fois par chargement du cadre, au premier appel, et partagé par
-// toutes les instances de ce cadre (un message par instance inonderait la page). Le module de
-// hooks relance les zones quand il ne l'a pas reçu (cadre jamais chargé, 2026-10-23).
-let readySent = false
-
 const PressHit: ClientModule<PressHitProps, Ref> = (props, surface) => {
-  if (!readySent) {
-    readySent = true
-    surface.post({ ready: 'press-hit' })
-  }
   const ref = surface.state ?? { props, down: false }
   ref.props = props
   if (surface.state === undefined) {
     surface.setState(ref)
+    // Le signal « prêt » : un message par instance, à son montage, jamais par rendu (#516). Partagé par
+    // tout le cadre (2026-10-23), il ne disait rien d'une zone remontée seule après une panne : le
+    // module de hooks relançait alors toutes les zones.
+    surface.post({ ready: 'press-hit' })
     // Le clic part à l'appui ; si l'appui n'est pas arrivé (premier clic sur une région qui vient
     // d'apparaître, 2026-10-22), il part au relâchement. Jamais les deux pour un même clic.
     surface.onPointer(event => {

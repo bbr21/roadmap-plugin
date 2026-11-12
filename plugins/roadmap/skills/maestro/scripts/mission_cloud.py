@@ -86,6 +86,15 @@ def consigne_carte(id_tache, consigne):
     return rappel + "\n\n" + consigne.strip() + FIN_CONSIGNE
 
 
+def consigne_de_ligne(id_tache, projet, libelle):
+    """La consigne d'une carte de mission tirée de sa ligne (#510), celle que pose le ▶ Cloud du panneau
+    (`missionCardPrompt`) : le libellé aplati (accents graves en apostrophes, blancs en un espace), puis l'ordre de
+    ne faire que lui."""
+    plat = " ".join(libelle.replace("`", "'").split()).rstrip(".")
+    return consigne_carte(id_tache, "Mission #%s du projet %s : %s. Fais exactement ce que dit cette ligne, rien "
+                                    "d'autre : une écriture qu'elle ne nomme pas ne se fait pas." % (id_tache, projet, plat))
+
+
 def _nom_retour(id_tache):
     return "#%s · retour" % id_tache
 
@@ -123,8 +132,10 @@ def fin(journal):
     return {"etat": etat, "phrase": phrase, "session": session}
 
 
-def ecrire_etat(racine, id_tache, etat, maintenant=None):
-    """Garde l'état d'une mission pour le panneau (#469) : `racine`/.git/ sinon `racine`/.claude/. Rend le chemin écrit."""
+def ecrire_etat(racine, id_tache, etat, maintenant=None, session=None):
+    """Garde l'état d'une mission pour le panneau (#469) : `racine`/.git/ sinon `racine`/.claude/. Rend le chemin écrit.
+    `session` : la session cloud lue au retour (`retour`), par laquelle le panneau archive la mission (#510, C8) ; une
+    session déjà gardée reste quand elle n'est pas redite."""
     dossier = next((os.path.join(racine, d) for d in (".git", ".claude") if os.path.isdir(os.path.join(racine, d))), None)
     if dossier is None:
         raise ValueError("ni .git ni .claude dans %s" % racine)
@@ -140,6 +151,9 @@ def ecrire_etat(racine, id_tache, etat, maintenant=None):
     entree = {"etat": etat["etat"]}
     if etat.get("phrase"):
         entree["phrase"] = etat["phrase"]
+    avant = missions.get(str(id_tache), {}).get("session")
+    if session or avant:
+        entree["session"] = session or avant
     quand = maintenant or datetime.datetime.now(datetime.timezone.utc)
     entree["at"] = quand.strftime("%Y-%m-%dT%H:%M:%SZ")
     missions[str(id_tache)] = entree
@@ -186,16 +200,27 @@ def main(argv=None):
     f = sub.add_parser("fin")
     f.add_argument("--ecrire", metavar="ID")
     f.add_argument("--racine", metavar="DOSSIER")
+    f.add_argument("--session", metavar="SESSION", help="la session lue par `retour`, gardée pour l'archivage (#510)")
     t = sub.add_parser("trouver")
     t.add_argument("id")
     k = sub.add_parser("carte")
     k.add_argument("id")
+    k.add_argument("--depot", metavar="DOSSIER", help="la consigne tirée de la ligne #id, celle du ▶ Cloud du panneau (#510)")
     r = sub.add_parser("retour")
     r.add_argument("id")
     a = p.parse_args(argv)
     if a.cmd == "fin" and bool(a.ecrire) != bool(a.racine):
         print("mission_cloud : --ecrire et --racine vont ensemble", file=sys.stderr)
         return 2
+    if a.cmd == "carte" and a.depot:
+        import brief_cloud  # noqa: E402 : la ligne et le nom du projet, lus comme le brief cloud
+        try:
+            ligne = brief_cloud.ligne_de(a.depot, a.id)
+        except (brief_cloud.ErreurLigne, OSError, ValueError) as e:
+            print("mission_cloud : %s" % e, file=sys.stderr)
+            return 2
+        print(consigne_de_ligne(a.id, brief_cloud.nom_projet(a.depot), ligne["libelle"]))
+        return 0
     entree = sys.stdin.read()
     if a.cmd == "corps":
         cons = [{"connector_uuid": u, "name": n, "url": url} for u, n, url in a.connecteur]
@@ -208,7 +233,7 @@ def main(argv=None):
         f = fin(entree)
         if a.ecrire:
             try:
-                ecrire_etat(a.racine, a.ecrire, f)
+                ecrire_etat(a.racine, a.ecrire, f, session=a.session)
             except (ValueError, OSError) as e:
                 print("mission_cloud : %s" % e, file=sys.stderr)
                 return 2

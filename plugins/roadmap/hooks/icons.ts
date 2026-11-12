@@ -654,13 +654,56 @@ export function herePillIcon(o: { cloud: number; mac: number; bg: string; fg: st
 }
 
 /**
- * #472 : la taille de texte qui fait tenir une pastille dans `max` px, de 12 px (`TEXT.pill`) à 10 px au plus petit ;
- * la plus petite si rien ne tient. Pour une pastille qui doit rester sur une ligne du panneau (Remote Control).
+ * #498 : une pastille qui passe à la ligne, entre deux mots, quand son texte ne tient pas dans `max` px, comme celle de
+ * l'aperçu validé (`apercu-472.html` : texte de 12 px, `white-space: normal`). Une ligne : la pastille de `pillIcon`,
+ * telle quelle. Plusieurs : 16 px par ligne, la parenthèse (la cause) entière sur la sienne, l'icône devant la
+ * première, le rayon d'une pastille d'une ligne. Remplace le texte rétréci jusqu'à 10 px de #472, que le libellé
+ * validé dépassait encore (430 px pour 368).
  */
-export function fitPillSize(o: Omit<Parameters<typeof pillIconRaw>[0], 'size'>, max: number): number {
-  for (let size = TEXT.pill; size > 10; size--) if (pillIcon({ ...o, size }).width <= max) return size
-  return 10
+function wrapPillIconRaw(o: Omit<Parameters<typeof pillIconRaw>[0], 'size' | 'height'>, max: number): { source: string; width: number; height: number; lines: string[] } {
+  const one = pillIcon(o)
+  if (one.width <= max) return { ...one, lines: [o.text] }
+  const size = TEXT.pill
+  const bold = (o.weight ?? 600) === 600
+  const padX = 8
+  const icon = o.mark ? 12 + 4 - 2 : 0
+  const room = max - padX * 2 - icon
+  const fill = (text: string): string[] => {
+    const out: string[] = []
+    for (const word of text.split(' ')) {
+      const last = out[out.length - 1]
+      if (last !== undefined && textWidth(`${last} ${word}`, size, bold) <= room) out[out.length - 1] = `${last} ${word}`
+      else out.push(word)
+    }
+    return out
+  }
+  // La parenthèse (la cause) part entière à la ligne plutôt que coupée en son milieu.
+  const paren = o.text.lastIndexOf(' (')
+  const lines = paren > 0 ? [...fill(o.text.slice(0, paren)), ...fill(o.text.slice(paren + 1))] : fill(o.text)
+  const lineHeight = 16
+  const padY = (SIZE.pill.row - lineHeight) / 2
+  const width = Math.ceil(padX * 2 + icon + Math.max(...lines.map(line => textWidth(line, size, bold))))
+  const height = lines.length * lineHeight + padY * 2
+  const x0 = padX - (o.mark ? 2 : 0)
+  const mark =
+    o.mark === undefined
+      ? ''
+      : `<g transform="translate(${x0} ${padY + lineHeight / 2 - 6}) scale(0.5)" fill="none" stroke="${o.fg}" stroke-width="${STROKE.pill}" stroke-linecap="round" stroke-linejoin="round">${MARK_PATHS[o.mark]}</g>`
+  const text = lines
+    .map(
+      (line, i) =>
+        `<text x="${padX + icon}" y="${padY + lineHeight * (i + 0.5)}" dominant-baseline="central" font-family="${FONT}" font-size="${size}" font-weight="${o.weight ?? 600}" fill="${o.fg}" style="font-variant-numeric:tabular-nums">${escapeXml(line)}</text>`,
+    )
+    .join('')
+  return {
+    source: `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}"><rect width="${width}" height="${height}" rx="${RADIUS.axisPill}" fill="${o.bg}"/>${mark}${text}</svg>`,
+    width,
+    height,
+    lines,
+  }
 }
+
+export const wrapPillIcon = memo(wrapPillIconRaw)
 
 /**
  * Une pastille de filtre (#149, maquette C′) : l'icône de trait de sa ligne d'avant, son nom, son compte,

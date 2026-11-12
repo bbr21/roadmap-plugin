@@ -105,14 +105,15 @@ import {
   type ThemeName,
   donutDotIcon,
   donutIcon,
-  fitPillSize,
   PANE_PILL_MAX,
+  wrapPillIcon,
 } from './icons'
 import { MIX, PX, RADIUS, SIZE, SPACE, TEXT } from './tokens'
 import { BEFORE_KEY, CLOSED_KEY, NATIVE_KEY, beforeMap, closedKeys, drawWrittenMessage, keepBefore, keepClosed, keepNative, nativeKeys, splitWritten, testSessions, withoutClosed, withoutNative, writtenCards, type WrittenLine, type WrittenStart, type WrittenWho } from './cartes'
 import { CARD_DEADLINE_MS, CARD_LATE_WHY, cardTargetOf, dismissCall, panelChoiceIn, proposalIdIn, recoTargetRefusal, type Place } from './depart'
-import { CLOUD_WATCH_EVERY_MS, CLOUD_WATCH_KEY, addWatch, briefBranchOf, dueWatches, lineVerdict, pushedSince, remoteHeads, watchList, type CloudWatch } from './prise-cloud'
-import { CLOUD_WAKE_EVERY_MS, CLOUD_WAKE_KEY, CLOUD_WAKE_PR_FIELDS, cloudWakes, wakePrompt, wakeStateOf } from './reveil-cloud'
+import { CLOUD_WATCH_EVERY_MS, CLOUD_WATCH_KEY, MISSION_START_KEY, addMissionStart, addWatch, briefBranchOf, dueWatches, lineVerdict, missionStartList, pushedSince, remoteHeads, startedCardTitles, watchList, type CloudWatch } from './prise-cloud'
+import { CLOUD_WAKE_EVERY_MS, CLOUD_WAKE_KEY, CLOUD_WAKE_PR_FIELDS, cloudWakeDue, cloudWakes, wakePrompt, wakeStateOf, type WakeRole } from './reveil-cloud'
+import { gardienCardRefusal, gardienDeliveryNote, gardienOf, gardienReminder, goesToGardien, isGardienSession, withoutGardien } from './gardien'
 import { CONTROL_PANE, drawControl, openControl, redrawControl, type ControlDeps } from './controle'
 import { SETTINGS_PANE, drawSettings, openSettings, prefsFile, redrawSettings, rememberLoadedOptions, sessionProject, watchSettings, type SettingsProject } from './reglages'
 import {
@@ -366,6 +367,10 @@ import {
   launchable,
   maestroCall,
   whyCall,
+  whyFiches,
+  whyFresh,
+  whyKey,
+  whyOf,
   whyContext,
   maestroAxisNote,
   maestroContext,
@@ -597,6 +602,11 @@ import {
   cloudWords,
   cloudBranchOf,
   cloudBriefText,
+  planFiles,
+  launchLayer,
+  archiveRoute,
+  cloudGate,
+  cloudPlaces,
   proofOf,
   specOfLine,
   cloudDepotRefusal,
@@ -641,6 +651,8 @@ import {
   type Task,
   zoneDrawn,
   zoneFault,
+  zoneKeyOf,
+  zoneRedraw,
   zoneReady,
   zoneReload,
   zoneWatch,
@@ -670,6 +682,10 @@ import {
   type ContextView,
   closingBlockGaps,
   archivedChildrenOf,
+  closedWhen,
+  finishedLabel,
+  finishedOpenSessions,
+  type FinishedSession,
   archivedOpenText,
   type ArchivedOpen,
   ownLineState,
@@ -716,6 +732,10 @@ import {
   PROPOSAL_OPTIONS,
   ELSEWHERE_OPTIONS,
   proposalRetryNote,
+  FINDING_LINE_MAX,
+  findingLines,
+  findingsText,
+  ledgerFindings,
   maestroProposalText,
   proposalSentNote,
   type MaestroProposal,
@@ -825,6 +845,7 @@ import {
   type AxisStyle,
 } from './parse'
 import type { HeavyQueue, QueueMark, StoreSeen } from './parse'
+import { holdWrite } from './parse'
 
 /**
  * L'attente du moteur entre deux essais d'une écriture du store (#350) : son horloge, sinon `setTimeout` ;
@@ -1656,6 +1677,42 @@ async function maestroHere($: EngineInterface): Promise<boolean> {
 }
 
 /**
+ * Cette session est un gardien (#528) : titrée « Gardien … » et lancée par une autre session. Rend l'id de son
+ * Maestro, sinon rien ; une fiche illisible dit non.
+ */
+async function gardienHere($: EngineInterface): Promise<string | undefined> {
+  try {
+    const own = await readOwnSession($)
+    if (!isGardienSession(own.title)) return undefined
+    return typeof own.parent === 'string' && own.parent !== '' ? own.parent : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/** #528 : le rappel de poser la carte du gardien, dit une fois par chargement ; une carte Gardien posée le vaut. */
+let gardienTold = false
+
+/** Le rappel de la carte du gardien pour cette carte de tâche, ou rien ; dit, il ne revient plus. */
+async function gardienCardNote($: EngineInterface, cardTitle: string): Promise<string | undefined> {
+  const maestro = await maestroHere($)
+  if (!maestro) return undefined
+  const source = await sourceNow($)
+  if (!source) return undefined
+  const own = await readOwnSession($)
+  const note = gardienReminder({
+    maestro,
+    code: projectSettings(source).travail !== 'projet',
+    cardTitle,
+    open: own.id !== undefined && gardienOf((await readListRows($)).rows, own.id) !== undefined,
+    told: gardienTold,
+    script: `${$.plugin.root}/skills/maestro/scripts/gardien.py`,
+  })
+  if (note !== undefined) gardienTold = true
+  return note
+}
+
+/**
  * La boîte de fin d'un tour réveillé qui repose une question en attente (#133) : refusée une fois par
  * tour ; une question vraiment nouvelle passe au second envoi.
  */
@@ -1752,6 +1809,28 @@ async function savePitches($: EngineInterface, answer: string | undefined): Prom
     for (const b of blocks) await storeSet($, pitchKey(c.source.name, b.id), { text: b.text, at })
   } catch {
     // store illisible : la fiche garde la mission seule
+  }
+}
+
+/**
+ * Les fiches « why N » d'un message de Claude (#535), gardées sous leur tâche dans le store comme « Ce qu'on va
+ * lancer » : l'accroche et les quatre cases du gabarit de #529, avec l'empreinte du libellé de la ligne expliquée,
+ * pour que la fiche du panneau la montre sans la redemander. Une tâche inconnue de la roadmap ne garde rien.
+ */
+async function saveWhys($: EngineInterface, answer: string | undefined): Promise<void> {
+  if (!settings.capture || !capture || !answer) return
+  const fiches = whyFiches(answer)
+  if (fiches.length === 0) return
+  try {
+    const data = await brandData($)
+    if (!data) return
+    const at = await $.clock.now()
+    for (const f of fiches) {
+      const task = data.tasks.find(t => t.id === f.id)
+      if (task) await storeSet($, whyKey(data.source.name, f.id), { hook: f.hook, rows: f.rows, at, line: hashLabel(task.label) })
+    }
+  } catch {
+    // roadmap ou store illisible : la fiche garde son lien « Expliquer cette tâche »
   }
 }
 
@@ -2658,8 +2737,8 @@ async function load($: EngineInterface, path: string, file: string): Promise<Tas
 /**
  * Le parse d'un fichier de la roadmap, gardé tant que sa date et sa taille ne bougent pas (#337, O1) : un pas
  * de 3 s sans changement ne relit plus les deux fichiers (250 Ko sur 600 tâches). Une lecture en panne, ou un
- * fichier dont la date est illisible, ne se garde pas : la suivante relit. Seule la minuterie (`matchSessions`)
- * s'en sert : un dessin dont la version a changé (« Réessayer », une écriture du plugin) relit toujours.
+ * fichier dont la date est illisible, ne se garde pas : la suivante relit. La minuterie (`matchSessions`) et le
+ * dessin (`paneData`, #520) s'en servent ; « Rafraîchir », « Réessayer » et un module rechargé vident la mémoire.
  */
 const parsedFiles = new Map<string, { stamp: string; tasks: Task[] }>()
 
@@ -2679,9 +2758,18 @@ async function loadParsed($: EngineInterface, path: string, file: string): Promi
   return tasks
 }
 
-async function loadTitles($: EngineInterface): Promise<Record<string, ShortTitle>> {
+/**
+ * Les titres courts, gardés en mémoire du module (#519) : `titles-langue` pèse 167 Ko chez Bertrand et se relisait à chaque
+ * pas de 3 s. Ils ne changent que par `summarize`, qui relit le store (`fresh`) quand la roadmap a bougé, garde ce qu'il
+ * écrit, et monte `titlesVersionAtom` quand une autre session en a écrit : le dessin suit sans relire.
+ */
+let titlesMemo: Record<string, ShortTitle> | undefined
+
+async function loadTitles($: EngineInterface, fresh = false): Promise<Record<string, ShortTitle>> {
+  if (titlesMemo && !fresh) return titlesMemo
   const stored = await storeGet($, STORE_KEY)
-  return typeof stored === 'object' && stored !== null ? (stored as Record<string, ShortTitle>) : {}
+  titlesMemo = typeof stored === 'object' && stored !== null ? (stored as Record<string, ShortTitle>) : {}
+  return titlesMemo
 }
 
 let summarizing = false
@@ -2699,7 +2787,10 @@ async function summarize($: EngineInterface, source: Source): Promise<void> {
       // Toutes les faites : elles se rangent par sujet et se cherchent par leur titre court.
       ...(typeof doneTasks === 'string' ? [] : doneTasks.filter(t => t.done)),
     ]
-    const titles = await loadTitles($)
+    // #519 : relus du store, une autre session a pu en écrire ; ceux qu'elle a ajoutés redessinent le panneau.
+    const before = titlesMemo
+    const titles = { ...(await loadTitles($, true)) }
+    if (before && Object.keys(titles).some(id => !before[id])) await update($, titlesVersionAtom, v => v + 1)
     const missing = new Map<string, string>()
     for (const t of tasks) {
       const id = hashLabel(t.label)
@@ -2721,6 +2812,7 @@ async function summarize($: EngineInterface, source: Source): Promise<void> {
       if (Object.keys(found).length === 0) continue
       Object.assign(titles, found)
       await storeSet($, STORE_KEY, titles)
+      titlesMemo = { ...titles }
       await update($, titlesVersionAtom, v => v + 1)
     }
     await update($, titleNoteAtom, () => '')
@@ -2735,8 +2827,15 @@ async function summarize($: EngineInterface, source: Source): Promise<void> {
 
 type LiveState = 'open' | 'closed' | 'unknown'
 
+/**
+ * `live-sessions` lu une fois par pas de la minuterie (#519) : `stepsMoved` puis `probeLive` le relisaient l'un après
+ * l'autre. Hors du pas (un clic, un hook), il se relit toujours ; une écriture de ce module le remplace.
+ */
+let liveMemo: { tick: number; stored: unknown } | undefined
+
 async function loadLive($: EngineInterface): Promise<Record<string, LiveEntry>> {
-  const stored = await storeGet($, LIVE_KEY)
+  const stored = polling && liveMemo?.tick === pollTick ? liveMemo.stored : await storeGet($, LIVE_KEY)
+  if (polling) liveMemo = { tick: pollTick, stored }
   if (typeof stored !== 'object' || stored === null) return {}
   // Seules les entrées bien formées comptent : une valeur abîmée ne met aucune tâche en session.
   const out: Record<string, LiveEntry> = {}
@@ -2800,7 +2899,9 @@ async function probeLive($: EngineInterface): Promise<void> {
     await Promise.all([...toRead].map(async sessionId => {
       try {
         toolCalls++
-        const ran = await $.tool.call({ tool: GET_SESSION_TOOL, session_id: sessionId })
+        const ran = await sessionCall($, { tool: GET_SESSION_TOOL, session_id: sessionId })
+        // #539 : une fiche sans réponse dans son temps ne dit rien de la session, surtout pas qu'elle est close.
+        if (ran === LATE_SESSION_CALL) return
         if (ran.deny !== undefined) probeDenied = true
         else if (ran.isError) cards.set(sessionId, { state: 'closed' })
         else {
@@ -2845,8 +2946,11 @@ async function probeLive($: EngineInterface): Promise<void> {
       changed = true
     }
   }
-  if (pruned) await storeSet($, LIVE_KEY, live)
-  if (changed || pruned) await update($, liveVersionAtom, v => v + 1)
+  if (pruned) {
+    await storeSet($, LIVE_KEY, live)
+    liveMemo = undefined
+  }
+  if (changed || pruned) await stepUpdate($, 'liveVersion', v => v + 1)
 }
 
 /**
@@ -2883,11 +2987,11 @@ function closeTurnWindow(): void {
  * fiche refusée, en erreur ou rejetée ne se garde pas (#185). Hors fenêtre : l'appel tel quel.
  */
 function sessionRead($: EngineInterface, call: { tool: string } & Record<string, unknown>): Promise<ToolCallResult> {
-  if (!turnWindow) return $.tool.call(call as never)
+  if (!turnWindow) return sessionCall($, call)
   const key = JSON.stringify(call)
   const kept = sessionReads.get(key)
   if (kept && Date.now() - kept.at < SESSION_KEEP_MS) return kept.ran
-  const ran = $.tool.call(call as never)
+  const ran = sessionCall($, call)
   const entry = { at: Date.now(), ran }
   sessionReads.set(key, entry)
   const drop = () => {
@@ -2921,6 +3025,8 @@ async function readOwnSession($: EngineInterface, fresh = false): Promise<{ id: 
   if (ownSession !== null && !fresh) return ownSession
   try {
     const ran = await sessionRead($, { tool: GET_SESSION_TOOL, session_id: 'self' })
+    // #539 : une fiche sans réponse dans son temps ne se garde pas, la suivante la relit.
+    if (ran === LATE_SESSION_CALL) return ownSession ?? { id: undefined, title: '' }
     const text = ran.deny === undefined && !ran.isError ? (ran.text ?? '') : ''
     ownSession = { id: sessionIdIn(text), title: sessionTitleIn(text), parent: sessionParentIn(text) }
   } catch {
@@ -2935,7 +3041,7 @@ async function readOwnSession($: EngineInterface, fresh = false): Promise<{ id: 
  */
 async function ownMode($: EngineInterface): Promise<string | undefined> {
   try {
-    const ran = await $.tool.call({ tool: GET_SESSION_TOOL, session_id: 'self' })
+    const ran = await sessionCall($, { tool: GET_SESSION_TOOL, session_id: 'self' })
     return ran.deny === undefined && !ran.isError ? sessionModeIn(ran.text ?? '') : undefined
   } catch {
     return undefined
@@ -2952,7 +3058,7 @@ const REMOTE_FACTS_MS = 15_000
 async function readRemoteFacts($: EngineInterface, now: number): Promise<{ remote: boolean; mode: string | undefined }> {
   if (remoteFacts && now - remoteFacts.at < REMOTE_FACTS_MS) return remoteFacts
   try {
-    const ran = await $.tool.call({ tool: GET_SESSION_TOOL, session_id: 'self' })
+    const ran = await sessionCall($, { tool: GET_SESSION_TOOL, session_id: 'self' })
     const text = ran.deny === undefined && !ran.isError ? (ran.text ?? '') : ''
     // Fiche refusée ou illisible : la dernière lecture tient (#185), sinon rien ne s'affiche.
     if (text === '') return remoteFacts ?? { remote: false, mode: undefined }
@@ -3065,21 +3171,65 @@ async function missionCardOf($: EngineInterface, e: unknown): Promise<{ card: Re
   }
 }
 
-/** #512 : la carte de mission posée, la ligne se prend (`qui:mission | lieu:cloud`) ; rend ce que Claude en apprend. */
+/** #512, #510 : la carte de mission posée se garde ; sa ligne se prendra à son départ. Rend ce que Claude en apprend. */
 async function takeMissionOnCard($: EngineInterface, m: { source: Source; id: string }): Promise<string> {
   pendingMissions.delete(pendingKey(m.source, m.id))
+  await rememberMissionStart($, m.source, m.id)
+  await setView($, () => ({ launchNote: MISSION_PROPOSED }))
+  return missionTakenText(m.id)
+}
+
+/** Les cartes de mission posées par ce module (la garde du store est partagée ; celle-ci tient si le store est en panne). */
+const missionStarts = new Map<string, { root: string; id: string; at: number }>()
+
+/** Garde la carte de mission posée (#510) : sa ligne se prendra au message de départ de l'app. */
+async function rememberMissionStart($: EngineInterface, source: Source, id: string): Promise<void> {
+  const root = source.root ?? source.dir
+  const now = await $.clock.now()
+  const entry = { key: `${root}|${id}`, root, id, at: now }
+  missionStarts.set(entry.key, entry)
   try {
-    const { open } = files(m.source)
-    const done = await writeRoadmapFiles($, m.source, ['ROADMAP.md'], `roadmap: take mission (#${m.id}, cloud)`, async () => {
-      const again = takeMissionLine(await $.fs.read(open), m.id, todayOf(await $.clock.now()))
-      return 'error' in again ? again : { 'ROADMAP.md': again.text }
-    })
-    // Maestro qui l'a déjà prise : elle est tenue, rien à refaire.
-    const error = 'error' in done && !/déjà partie en mission/.test(done.error) ? done.error : undefined
-    await setView($, () => ({ launchNote: error !== undefined ? `Carte de mission posée, mais la ligne n'est pas prise : ${error}` : 'note' in done && done.note ? `Carte de mission posée ; ${done.note}` : MISSION_PROPOSED }))
-    return missionTakenText(m.id, error)
-  } catch (err) {
-    return missionTakenText(m.id, err instanceof Error ? err.message : String(err))
+    await storeSet($, MISSION_START_KEY, addMissionStart(missionStartList(await storeGet($, MISSION_START_KEY).catch(() => undefined)), entry, now) as unknown as StoreValue)
+  } catch {
+    // store en panne : la garde en mémoire, et Maestro au message de l'app, restent
+  }
+}
+
+/**
+ * Le message de départ de l'app (« The user started your suggested background task "<titre>" … », #510, C4) : la carte
+ * démarrée prend sa ligne, une mission (`qui:mission | lieu:cloud`) ou une session cloud que le panneau guettait (sa
+ * branche). Une carte inconnue d'ici ne prend rien : Maestro la prend par `prendre_cloud.py`.
+ */
+async function takeStartedLines($: EngineInterface, text: unknown): Promise<void> {
+  const titles = startedCardTitles(text)
+  if (titles.length === 0) return
+  const source = knownSource ?? (await sourceNow($).catch(() => undefined))
+  if (!source) return
+  const root = source.root ?? source.dir
+  const { open } = files(source)
+  for (const title of titles) {
+    const id = sessionTitleId(title)
+    if (id === undefined) continue
+    const key = `${root}|${id}`
+    const stored = missionStartList(await storeGet($, MISSION_START_KEY).catch(() => undefined))
+    if (missionStarts.has(key) || stored.some(m => m.key === key)) {
+      const done = await writeRoadmapFiles($, source, ['ROADMAP.md'], `roadmap: take mission (#${id}, cloud)`, async () => {
+        const again = takeMissionLine(await $.fs.read(open), id, todayOf(await $.clock.now()))
+        // Maestro l'a déjà prise : rien à refaire.
+        return 'error' in again ? (/déjà partie en mission/.test(again.error) ? ({} as Record<string, string>) : again) : { 'ROADMAP.md': again.text }
+      })
+      if ('error' in done) continue
+      missionStarts.delete(key)
+      await storeSet($, MISSION_START_KEY, stored.filter(m => m.key !== key) as unknown as StoreValue).catch(() => undefined)
+      await update($, liveVersionAtom, v => v + 1)
+      continue
+    }
+    const watched = watchList(await storeGet($, CLOUD_WATCH_KEY).catch(() => undefined))
+    const w = watched.find(x => x.key === key)
+    if (w && (await takeWatchedLine($, source, w))) {
+      await storeSet($, CLOUD_WATCH_KEY, watchList(await storeGet($, CLOUD_WATCH_KEY).catch(() => undefined)).filter(x => x.key !== key) as unknown as StoreValue).catch(() => undefined)
+      await update($, liveVersionAtom, v => v + 1)
+    }
   }
 }
 
@@ -3125,7 +3275,7 @@ async function recoCardRefusal($: EngineInterface, e: unknown): Promise<string |
     const found = await briefFound($, source, task)
     const docs: string[] = []
     for (const doc of briefDocs(source, task, found)) docs.push((await readOr($, doc)) ?? '')
-    const reco = judgedReco(task, recoCache.cache, task.spec || task.fiche ? docs : undefined, { projet: false })
+    const reco = judgedReco(task, recoCache.cache, task.spec || task.fiche ? docs : undefined)
     const title = card.title.replace(/ · (?:cloud|local|Mac)$/, '')
     // #479 : le lieu choisi dans le panneau, que dit le brief du ▶ passé par Claude, l'emporte sur la reco.
     const chosen = panelChoiceIn(card.prompt)
@@ -3213,9 +3363,17 @@ async function ownIsMaestro($: EngineInterface, own: { id: string | undefined; t
 }
 
 /** Les marques Maestro (identifiant → dernier « Maestro ») ; store illisible : aucune. */
+/**
+ * Les marques lues par la minuterie (#519), gardées un pas complet (15 s) : elles ne changent qu'au « Maestro » tapé dans
+ * une session, qui les écrit par `markMaestro` et se juge hors du pas (son hook relit le store).
+ */
+let maestrosMemo: { tick: number; stored: unknown } | undefined
+
 async function loadMaestros($: EngineInterface): Promise<Record<string, number>> {
   try {
-    const stored = await storeGet($, MAESTROS_KEY)
+    const kept = polling && maestrosMemo && pollTick - maestrosMemo.tick < POLL_MS / TICK_MS
+    const stored = kept ? (maestrosMemo as { stored: unknown }).stored : await storeGet($, MAESTROS_KEY)
+    if (polling && !kept) maestrosMemo = { tick: pollTick, stored }
     if (typeof stored !== 'object' || stored === null || Array.isArray(stored)) return {}
     return Object.fromEntries(Object.entries(stored).filter((e): e is [string, number] => typeof e[1] === 'number'))
   } catch {
@@ -3234,6 +3392,7 @@ async function markMaestro($: EngineInterface): Promise<void> {
   const now = await $.clock.now()
   const kept = Object.entries(await loadMaestros($)).filter(([, at]) => now - at <= MAESTRO_MARK_MS)
   await storeSet($, MAESTROS_KEY, { ...Object.fromEntries(kept), [own.id]: now })
+  maestrosMemo = undefined
   // La marque n'est pas un atome : sans ce redessin, la bande attendait qu'une session bouge (#225).
   await update($, liveVersionAtom, v => v + 1)
 }
@@ -3319,12 +3478,9 @@ async function startFromCard($: EngineInterface, source: Source, id: string, sho
     const tasks = typeof opened === 'string' ? [] : opened
     const task = tasks.find(t => t.id === id && !t.done)
     if (!task) return
-    // #479 : Start part au lieu que dit la carte ; le cloud ne prend pas de place au Mac, donc pas de file de Maestro.
-    if (!isRoutine(task) && launchTargetOf(source, task) === 'cloud') {
-      await launchCloud($, source, task, shortTitle)
-      if (!(await read($, viewAtom)).launchNote.startsWith('Lancement en cloud impossible')) cardStarts.set(key, { state: 'proposed' })
-      return
-    }
+    // #479 : Start part au lieu que dit la carte ; #510 : sous un Maestro, la file commune pour les deux cibles (une
+    // entrée cloud n'y attend que le plafond du projet), sinon le ▶, local ou cloud (`launchTask`).
+    const target: Sessions = !isRoutine(task) && launchTargetOf(source, task) === 'cloud' ? 'cloud' : 'mac'
     const maestro = await rootMaestro($)
     if (maestro) {
       const now = await $.clock.now()
@@ -3337,7 +3493,7 @@ async function startFromCard($: EngineInterface, source: Source, id: string, sho
         const entry: GlobalQueued = {
           id,
           title: sessionTitleFor(task, shortTitle),
-          launch: { shortTitle },
+          launch: { shortTitle, ...(target === 'cloud' ? { target } : {}) },
           at: before?.at ?? now,
           maestro: maestro.id,
           project,
@@ -3351,8 +3507,9 @@ async function startFromCard($: EngineInterface, source: Source, id: string, sho
       const rank = Math.max(1, order.findIndex(q => q.id === id && q.project === project) + 1)
       cardStarts.set(key, { state: 'queued', rank, maestro: maestro.title || 'Maestro' })
     } else {
-      await launchSession($, source, task, shortTitle)
-      cardStarts.set(key, { state: 'proposed' })
+      await launchTask($, source, task, shortTitle, target)
+      const note = (await read($, viewAtom)).launchNote
+      if (!note.startsWith('Lancement impossible') && !note.startsWith('Lancement en cloud impossible')) cardStarts.set(key, { state: 'proposed' })
     }
   } catch {
     // une panne : la carte garde son « Start », un nouveau clic réessaie
@@ -3510,6 +3667,69 @@ async function parentIsMaestro($: EngineInterface): Promise<boolean> {
 
 // --- Réveil de Maestro (#131) ------------------------------------------------------------------
 
+// --- Findings (#531) -------------------------------------------------------------------------------
+// Ce qu'une fille de Maestro trouve hors de sa tâche et écrit dans son compte rendu est gardé pour lui dans le
+// store ; Maestro le relit à chaque message tant qu'il n'est pas au registre, puis tant qu'il n'a pas son sort.
+
+const FINDINGS_KEY = 'maestro-findings'
+/** Un finding gardé pour un Maestro qui n'est plus là tombe après deux semaines. */
+const FINDING_MAX_MS = 14 * 24 * 3600 * 1000
+
+type KeptFinding = { lot: string; from: string; fromTitle: string; line: string; at: number }
+
+/** Le registre des findings, à côté de la roadmap du projet. */
+const findingsPath = (source: Source) => files(source).open.replace(/[^/]*$/, 'ROADMAP-findings.json')
+
+async function loadFindings($: EngineInterface): Promise<KeptFinding[]> {
+  const stored = await storeGet($, FINDINGS_KEY)
+  if (!Array.isArray(stored)) return []
+  return stored.filter((k): k is KeptFinding => {
+    const v = k as Partial<KeptFinding> | null
+    return !!v && typeof v.lot === 'string' && typeof v.from === 'string' && typeof v.line === 'string' && typeof v.at === 'number'
+  })
+}
+
+/**
+ * La fin du tour d'une fille de Maestro : les findings de sa réponse sont gardés pour lui, une fois chacun.
+ * Sans finding, aucun appel ; aucune panne ne bloque le tour.
+ */
+async function keepFindings($: EngineInterface, answer: unknown): Promise<void> {
+  const lines = [...new Set((typeof answer === 'string' ? findingLines(answer) : []).map(l => l.slice(0, FINDING_LINE_MAX).trimEnd()))]
+  if (lines.length === 0) return
+  try {
+    if (!(await parentIsMaestro($))) return
+    const me = await ownParent($)
+    if (!me) return
+    const kept = await loadFindings($)
+    const fresh = lines.filter(line => !kept.some(k => k.from === me.id && k.line === line))
+    if (fresh.length === 0) return
+    const ran = await sessionRead($, { tool: GET_SESSION_TOOL, session_id: 'self' })
+    const title = ran.deny === undefined && !ran.isError ? sessionTitleIn(ran.text ?? '') : ''
+    const at = await clockOrDate($)
+    await storeSet($, FINDINGS_KEY, [...kept, ...fresh.map(line => ({ lot: me.parent, from: me.id, fromTitle: title || me.id, line, at }))])
+  } catch {
+    // store ou fiche illisible : le finding reste dans le compte rendu, que Maestro lit
+  }
+}
+
+/**
+ * Chez Maestro, à chaque message : les findings de ses sessions pas encore au registre, puis ceux du registre
+ * sans sort ; rien quand tout est traité. Un finding gardé sort du store dès que le registre a sa ligne.
+ * Appelée seulement quand le message a déjà lu que la session est Maestro : elle ne relit pas sa fiche pour le
+ * savoir (une session de tâche ne paie ni `get_session` ni lecture du store, `roadmap-chaines-cartes.test.tsx`).
+ */
+async function receiveFindings($: EngineInterface): Promise<string | undefined> {
+  const kept = await loadFindings($)
+  const source = await localSource($)
+  const ledger = ledgerFindings(source ? await readKept($, findingsPath(source)) : undefined)
+  if (kept.length === 0) return findingsText([], ledger.open)
+  const id = (await readOwnSession($)).id
+  const now = await clockOrDate($)
+  const rest = kept.filter(k => (k.lot === id ? !ledger.lines.has(k.line) : now - k.at <= FINDING_MAX_MS))
+  if (rest.length !== kept.length) await storeSet($, FINDINGS_KEY, rest)
+  return findingsText(rest.filter(k => k.lot === id), ledger.open)
+}
+
 /** La clé du dernier état dit à Maestro : le même ne repart pas tant qu'aucun vrai message n'a relancé la session. */
 let toldMaestro: string | undefined
 
@@ -3567,6 +3787,19 @@ async function tellMaestro($: EngineInterface, said: ChildWake | (() => Promise<
       id: me.id,
       title: typeof fiche.title === 'string' ? fiche.title : '',
       ...(typeof fiche.branch === 'string' && fiche.branch !== '' ? { branch: fiche.branch } : {}),
+    }
+    // #528 : le gardien ne réveille pas Maestro à chaque fin de tour ; il lui écrit lui-même ses livraisons.
+    if (isGardienSession(child.title)) return
+    // #528 : une livraison à faire va au gardien ouvert de son Maestro ; aucun, ou message refusé : à Maestro.
+    if (goesToGardien(wake.kind)) {
+      const gardien = gardienOf((await readListRows($)).rows, me.parent)
+      if (gardien !== undefined && gardien !== me.id) {
+        const toGardien = await $.tool.call({ tool: SEND_MESSAGE_TOOL, session_id: gardien, message: childWakeText(wake, child, { maestro: me.parent }) })
+        if (toGardien.deny === undefined && !toGardien.isError) {
+          toldMaestro = wake.key
+          return
+        }
+      }
     }
     const sent = await $.tool.call({ tool: SEND_MESSAGE_TOOL, session_id: me.parent, message: childWakeText(wake, child) })
     if (sent.deny === undefined && !sent.isError) toldMaestro = wake.key
@@ -3850,7 +4083,7 @@ async function childAlertContext($: EngineInterface): Promise<string | undefined
     }
   }
   // #366 : une tâche en test (sa session d'origine, sa session de test) attend la personne : ni « prête » ni « silencieuse ».
-  const alerts = withoutTests(childAlerts({ children, statuses, finished, alerted, now: await $.clock.now(), lines: openLines, me }), testsUnder(rows, publishedTests))
+  const alerts = withoutTests(childAlerts({ children: withoutGardien(children), statuses, finished, alerted, now: await $.clock.now(), lines: openLines, me }), testsUnder(rows, publishedTests))
   // Les relances de cette fois s'ajoutent, avec l'étape de l'enfant ; un enfant qui n'est plus listé sort.
   const next: Record<string, ChildRelaunch> = {}
   for (const child of children) if (alerted[child.id] !== undefined) next[child.id] = alerted[child.id] as ChildRelaunch
@@ -3905,7 +4138,7 @@ async function launchAsk($: EngineInterface, box: { ask?: unknown; actions?: unk
   let rows: unknown[] = []
   let selfId = ''
   try {
-    const listed = await $.tool.call({ tool: LIST_SESSIONS_TOOL, linked: true, include_archived: true, limit: LIST_LIMIT })
+    const listed = await sessionCall($, { tool: LIST_SESSIONS_TOOL, linked: true, include_archived: true, limit: LIST_LIMIT })
     const parsed: unknown = listed.deny === undefined && !listed.isError ? JSON.parse(listed.text ?? '[]') : []
     if (Array.isArray(parsed) && parsed.length > 0) {
       rows = parsed
@@ -4082,16 +4315,88 @@ const startedBySession = new Map<string, string>()
 let openSessionIds = new Set<string>()
 // Les sessions archivées par le panneau ou la bande (#174) : fermées avant la relecture suivante des sessions.
 const archivedSessionIds = new Set<string>()
+/** #522 : la bande « Finies » pliée (par défaut) ; et le dernier archivage fait d'un clic, ses refusées gardées sur leur ligne. */
+let finishedFolded = true
+let finishedBatch: { archived: number; refused: Set<string> } | undefined
+
+/** « Archiver les N » de la bande « Finies » (#522) : le clic de BBR archive chacune ; une refusée le dit sur sa ligne. */
+async function archiveFinished($: EngineInterface, list: readonly FinishedSession[]): Promise<void> {
+  let archived = 0
+  const refused = new Set<string>()
+  for (const s of list) {
+    if (await archiveSession($, `session:${s.sessionId}`, { sessionId: s.sessionId, startedAt: Date.now(), title: s.title })) archived++
+    else refused.add(s.sessionId)
+  }
+  finishedBatch = { archived, refused }
+  if (refused.size > 0) finishedFolded = false
+  await update($, liveVersionAtom, v => v + 1)
+}
 /** Les rangées de la dernière relecture, fiche de cette session comprise : les filles de Maestro s'y lisent (#137). */
 let sessionRows: unknown[] = []
 /** #375 : les rangées de la dernière relecture, lues par le panneau, où un `sessionRows` local les masque. */
 const listedSessionRows = (): readonly unknown[] => sessionRows
 let listDenied = false
 
+// ── Les lectures de sessions bornées (#539) ──────────────────────────────────
+
+/**
+ * Le temps qu'une lecture de sessions (`list_sessions`, `get_session`) se laisse. La nuit du 11 au 12/11, sous une
+ * charge de 20 à 100, `list_sessions` a pris de 1 à 24 s (0,1 s d'ordinaire), et une réponse jamais venue a tenu la
+ * minuterie, le dessin et les commandes du Maestro deux heures. Au-delà, la lecture compte pour une panne : chacun
+ * garde ce qu'il savait, et la réponse tardive, si elle vient, sert au suivant.
+ */
+const SESSION_CALL_MS = 4_000
+/** Le résultat d'une lecture de sessions restée sans réponse dans son temps (comparé par identité). */
+const LATE_SESSION_CALL = { result: {}, isError: true, text: '' } as unknown as ToolCallResult
+
+/**
+ * L'échéance partagée des lectures de sessions : un appel à l'horloge du moteur est un aller-retour, et un pas de la
+ * minuterie lit plusieurs fiches. Les lectures parties dans la même seconde attendent la même échéance (3 à 4 s).
+ */
+let sessionDeadline: { at: number; fired: boolean; late: Promise<'late'> } | undefined
+function sharedSessionDeadline($: EngineInterface): Promise<'late'> {
+  const now = Date.now()
+  // Une échéance déjà passée ne se reprend jamais : la lecture qui la reprendrait serait « en retard » d'office.
+  if (!sessionDeadline || sessionDeadline.fired || now - sessionDeadline.at >= 1_000) {
+    const next: { at: number; fired: boolean; late: Promise<'late'> } = { at: now, fired: false, late: Promise.resolve('late' as const) }
+    next.late = engineWait($, SESSION_CALL_MS).then(() => {
+      next.fired = true
+      return 'late' as const
+    })
+    sessionDeadline = next
+  }
+  return sessionDeadline.late
+}
+
+/** Une lecture de sessions, bornée à `SESSION_CALL_MS` : sans réponse, `LATE_SESSION_CALL` ; l'appel continue en fond. */
+function sessionCall($: EngineInterface, call: { tool: string } & Record<string, unknown>): Promise<ToolCallResult> {
+  const ran = Promise.resolve().then(() => $.tool.call(call as never))
+  return Promise.race([ran, sharedSessionDeadline($)]).then(r => (r === 'late' ? LATE_SESSION_CALL : r))
+}
+
+/**
+ * Ce que le dessin attend d'une relecture de sessions (fiches des filles, avance des branches) : `DRAW_SIDE_MS` au
+ * plus (#539). Au-delà, le dessin part avec ce qui est connu et se refait quand la relecture finit.
+ */
+const DRAW_SIDE_MS = 300
+async function behindDraw($: EngineInterface, work: Promise<unknown>): Promise<void> {
+  let done = false
+  const settled = work.catch(() => undefined).then(() => {
+    done = true
+  })
+  // Le cas courant, tout connu : la relecture finit sans attendre le moteur, et l'horloge n'est pas appelée.
+  for (let i = 0; i < 4 && !done; i++) await Promise.resolve()
+  if (done) return
+  if ((await withinMs($, settled, DRAW_SIDE_MS)) !== 'late') return
+  void settled.then(() => update($, liveVersionAtom, v => v + 1)).catch(() => undefined)
+}
+
 /** Les sessions lues par relecture : au-delà des 40 d'avant, une journée chargée en laissait dehors. */
 const LIST_LIMIT = 100
 /** La dernière liste lue : une panne passagère la garde, au lieu de vider « En cours » le temps d'un pas. */
 let lastListRows: unknown[] = []
+/** Le pas de la minuterie où `lastListRows` a été lue (#519) : `doseState` la reprend dans ce même pas. */
+let listReadTick = -1
 /**
  * Ce que la fin d'un tour de cette session a dit (`turn.start` / `turn.complete`) et quand : pendant
  * OWN_EVENT_MS, il l'emporte sur `isRunning` de sa fiche, que l'app pose un peu après l'événement.
@@ -4115,18 +4420,35 @@ let listDeniedTick = 0
 async function readListRows($: EngineInterface): Promise<{ rows: unknown[]; note: string }> {
   const kept = () => ({ rows: lastListRows, note: lastListRows.length > 0 ? '' : sessionScanNote('denied') })
   if (listDenied && pollTick - listDeniedTick < LIST_RETRY_TICKS) return kept()
-  let ran: ToolCallResult
-  try {
+  // #539 : une seule lecture en vol ; sans réponse dans son temps, la dernière liste lue, et la réponse
+  // tardive, si elle vient, remplace la liste gardée pour le pas suivant.
+  if (!listCall || Date.now() - listCall.at > LIST_CALL_DEAD_MS) {
     toolCalls++
-    ran = await $.tool.call({ tool: LIST_SESSIONS_TOOL, limit: LIST_LIMIT })
-  } catch {
-    return { rows: lastListRows, note: '' }
+    const at = Date.now()
+    const ran = Promise.resolve()
+      .then(() => $.tool.call({ tool: LIST_SESSIONS_TOOL, limit: LIST_LIMIT }))
+      .then(takeListRows, () => ({ rows: lastListRows, note: '' }))
+    listCall = { at, ran }
+    void ran.finally(() => {
+      if (listCall?.ran === ran) listCall = undefined
+    })
   }
+  const read = await Promise.race([listCall.ran, sharedSessionDeadline($)])
+  return read === 'late' ? { rows: lastListRows, note: '' } : read
+}
+
+/** La lecture de `list_sessions` en vol (#539), et quand elle est partie. */
+let listCall: { at: number; ran: Promise<{ rows: unknown[]; note: string }> } | undefined
+/** Une lecture en vol depuis plus longtemps est tenue pour perdue : la suivante repart. */
+const LIST_CALL_DEAD_MS = 60_000
+
+/** La réponse de `list_sessions`, prise en compte quand elle arrive, même après son temps (#539). */
+function takeListRows(ran: ToolCallResult): { rows: unknown[]; note: string } {
   if (ran.deny !== undefined) {
     listDenied = true
     listDeniedTick = pollTick
     if (!isAutoModeRefusal(ran.deny)) lastListRows = []
-    return kept()
+    return { rows: lastListRows, note: lastListRows.length > 0 ? '' : sessionScanNote('denied') }
   }
   listDenied = false
   if (ran.isError) return { rows: lastListRows, note: sessionScanNote('error', ran.text ?? '') }
@@ -4134,6 +4456,7 @@ async function readListRows($: EngineInterface): Promise<{ rows: unknown[]; note
     const rows: unknown = JSON.parse(ran.text ?? '[]')
     if (!Array.isArray(rows)) return { rows: lastListRows, note: sessionScanNote('error', 'réponse inattendue') }
     lastListRows = rows
+    listReadTick = pollTick
     return { rows, note: '' }
   } catch {
     return { rows: lastListRows, note: sessionScanNote('error', 'réponse illisible') }
@@ -4148,7 +4471,7 @@ async function readListRows($: EngineInterface): Promise<{ rows: unknown[]; note
 async function readSelfRow($: EngineInterface): Promise<unknown> {
   try {
     toolCalls++
-    const ran = await $.tool.call({ tool: GET_SESSION_TOOL, session_id: 'self' })
+    const ran = await sessionCall($, { tool: GET_SESSION_TOOL, session_id: 'self' })
     if (ran.deny !== undefined || ran.isError) return undefined
     const text = ran.text ?? ''
     const row: unknown = JSON.parse(text)
@@ -4156,7 +4479,7 @@ async function readSelfRow($: EngineInterface): Promise<unknown> {
     const before = ownSession
     ownSession = { id: sessionIdIn(text), title: sessionTitleIn(text), parent: sessionParentIn(text) }
     // Une session renommée « Maestro … » (ou une fiche enfin lue) : la bande se redessine (#225).
-    if (before?.id !== ownSession.id || before?.title !== ownSession.title) await update($, liveVersionAtom, v => v + 1)
+    if (before?.id !== ownSession.id || before?.title !== ownSession.title) await stepUpdate($, 'liveVersion', v => v + 1)
     return row
   } catch {
     return undefined
@@ -4250,7 +4573,7 @@ async function matchSessions($: EngineInterface, source: Source): Promise<void> 
     sessionMatches = next
     // Les étapes des sessions suivies (#143) : une étape cochée en plein tour redessine le panneau.
     const stepsChanged = await stepsMoved($)
-    if (!same || runningChanged || stepsChanged) await update($, liveVersionAtom, v => v + 1)
+    if (!same || runningChanged || stepsChanged) await stepUpdate($, 'liveVersion', v => v + 1)
   } catch {
     // réponse illisible : rien
   }
@@ -4277,6 +4600,8 @@ async function sourceNow($: EngineInterface): Promise<Source | undefined> {
  */
 type PaneData = {
   key: string
+  /** La version des sessions suivies (`liveVersion`) : changée, seuls `live` et `ignored` se relisent (#520). */
+  liveKey: string
   palette: Palette
   open: Task[] | string
   done: Task[]
@@ -4295,27 +4620,49 @@ function parsePending(text: string, file: string): Task[] | string {
   }
 }
 
-async function paneData($: EngineInterface, source: Source, version: string): Promise<PaneData> {
+/** L'empreinte et « Réessayer » (avec le dossier) du dernier dessin qui a lu les fichiers : changés, ils se relisent. */
+let parsedFor: string | undefined
+
+/** `version` : l'empreinte des fichiers, les titres, le thème et « Réessayer », joints par `|`, dans cet ordre. */
+async function paneData($: EngineInterface, source: Source, version: string, liveVersion: number): Promise<PaneData> {
   // L'attente d'affichage (#354) entre dans la clé ici, pas chez l'appelant : la marque (`brandData`) partage
   // ce cache, et deux clés différentes pour les mêmes données le faisaient relire à chaque dessin.
   const key = `${source.dir}\u0000${version}\u0000${pendingRev}`
+  // #520 : les sessions suivies et la file des tests changent `liveVersion` au moins une fois par minute ; elles
+  // ne relisent que ce qui dépend d'elles, jamais les fichiers (~760 Ko relus à chaque raté chez Bertrand).
+  const liveKey = `${source.dir}\u0000${liveVersion}`
   if (paneCache?.key === key) {
     perfCached = true
-    return paneCache
+    if (paneCache.liveKey === liveKey) return paneCache
+    const kept = paneCache
+    const [live, ignored] = await Promise.all([loadLive($), loadIgnored($).catch(() => ({}) as Record<string, string[]>)])
+    const data: PaneData = { ...kept, liveKey, live, ignored }
+    if (paneCache === kept) paneCache = data
+    return data
+  }
+  // L'empreinte des fichiers ou « Réessayer » a changé : les fichiers se relisent en entier. Une écriture du plugin
+  // (une case cochée, `afterCheck`) relance `retryAtom` sans que la date ni la taille bougent forcément, et
+  // `loadParsed` rendait l'ancienne roadmap : la ligne cochée perdait sa tenue (#520, correctif).
+  const [stamp = '', , , retry = ''] = version.split('|')
+  const filesFor = `${source.dir}\u0000${stamp}\u0000${retry}`
+  if (filesFor !== parsedFor) {
+    parsedFor = filesFor
+    parsedFiles.clear()
   }
   const paths = files(source)
   // Une édition enregistrée et pas encore écrite (#354) : le panneau montre ce que la roadmap dira.
   const pending = pendingFor(source)
+  // #520 : un fichier dont la date et la taille n'ont pas bougé ne se relit pas (`loadParsed`), quand seuls un titre ou le thème changent.
   const [palette, open, done, titles, live, ignored, bilan] = await Promise.all([
     paletteOf($),
-    pending?.open !== undefined ? parsePending(pending.open, 'ROADMAP.md') : load($, paths.open, 'ROADMAP.md'),
-    pending?.done !== undefined ? parsePending(pending.done, 'ROADMAP-fait.md') : load($, paths.done, 'ROADMAP-fait.md'),
+    pending?.open !== undefined ? parsePending(pending.open, 'ROADMAP.md') : loadParsed($, paths.open, 'ROADMAP.md'),
+    pending?.done !== undefined ? parsePending(pending.done, 'ROADMAP-fait.md') : loadParsed($, paths.done, 'ROADMAP-fait.md'),
     loadTitles($),
     loadLive($),
     loadIgnored($).catch(() => ({}) as Record<string, string[]>),
     loadBilan($, source),
   ])
-  const data: PaneData = { key, palette, open, done: typeof done === 'string' ? [] : done, titles, live, ignored, bilan }
+  const data: PaneData = { key, liveKey, palette, open, done: typeof done === 'string' ? [] : done, titles, live, ignored, bilan }
   paneCache = typeof open === 'string' ? undefined : data
   return data
 }
@@ -4324,13 +4671,13 @@ async function paneData($: EngineInterface, source: Source, version: string): Pr
 async function restamp($: EngineInterface, source: Source): Promise<boolean> {
   const next = await stampOf($, source)
   if (next === (await read($, stampAtom))) return false
-  await update($, stampAtom, () => next)
+  await stepUpdate($, 'stamp', () => next)
   return true
 }
 
 /** Des zones dessinées dont le cadre n'a pas dit « prêt » : nouvelles clés, l'app recharge le cadre. */
 async function checkZones($: EngineInterface): Promise<void> {
-  if (zones.drawnAt.size > 0 && zoneReload(zones, await $.clock.now())) await update($, zoneGenAtom, v => v + 1)
+  if (zones.drawnAt.size > 0 && zoneReload(zones, await $.clock.now())) await stepUpdate($, 'zoneGen', v => v + 1)
 }
 
 /**
@@ -4390,9 +4737,67 @@ async function readVisibility($: EngineInterface): Promise<string[] | undefined>
 /** Une arrivée de l'app : la session sort du repos et se relit tout de suite. */
 function wake($: EngineInterface): void {
   resting = false
+  idleTicks = 0
+  paneHidden = false
+  slowSkipped = 0
   wokeUp = true
   if (polling) pollAgain = true
   else void poll($)
+}
+
+// ── La minuterie lente (#522, rang 6 de l'audit #514) ─────────────────────────
+
+/**
+ * Une session au repos coûte ~2 % d'un cœur, surtout par la minuterie de 3 s. Elle ne fait plus qu'un pas toutes
+ * les `SLOW_MS` quand le panneau est caché (présent mais pas montré), quand la session n'a vu aucun geste depuis
+ * `IDLE_MS`, ou au repos de #348. Les pas sautés ne font aucun appel au moteur : l'inactivité se compte en pas.
+ * Le premier geste (un message, un clic dans le panneau, une arrivée) relit tout de suite et remet les 3 s.
+ * Une liste des volets illisible ne change rien (décision de #348 : sans signal, 3 s).
+ */
+const SLOW_MS = 15_000
+const IDLE_MS = 5 * 60_000
+/** Les pas de 3 s depuis le dernier geste. */
+let idleTicks = 0
+/** Le panneau présent mais pas montré, lu au pas complet ; `false` sans signal. */
+let paneHidden = false
+/** Les pas sautés depuis le dernier pas fait, en marche lente. */
+let slowSkipped = 0
+
+/** La marche lente : panneau caché, session sans geste depuis 5 min, ou au repos. */
+const pollIsSlow = (): boolean => resting || paneHidden || idleTicks * TICK_MS >= IDLE_MS
+
+/** Un pas de la minuterie : en marche lente, un sur `SLOW_MS / TICK_MS`, les autres sautés sans rien lire. */
+function onTick($: EngineInterface): void {
+  clockTicks++
+  idleTicks++
+  if (pollIsSlow()) {
+    slowSkipped++
+    if (slowSkipped < SLOW_MS / TICK_MS) return
+  }
+  slowSkipped = 0
+  void poll($)
+}
+
+/** Un geste de la personne : la marche lente cesse ; en marche lente, la session se relit tout de suite. */
+function gesture($: EngineInterface): void {
+  const wasSlow = pollIsSlow() && !resting
+  idleTicks = 0
+  paneHidden = false
+  slowSkipped = 0
+  if (!wasSlow) return
+  wokeUp = true
+  if (polling) pollAgain = true
+  else void poll($)
+}
+
+/** Le panneau présent mais pas montré ; une liste illisible le garde pour montré (sans signal, 3 s). */
+async function readPaneHidden($: EngineInterface): Promise<void> {
+  try {
+    const pane = (await $.ui.panes()).find(p => p.id === PANE)
+    paneHidden = pane !== undefined && pane.isShown === false
+  } catch {
+    paneHidden = false
+  }
 }
 
 /** Les surfaces de cette session, relues au pas complet : elles mettent la session au repos ou l'en sortent (#348). */
@@ -4408,9 +4813,11 @@ async function refresh($: EngineInterface): Promise<void> {
   if (!source) return
   // Le pas complet relit `cowork.json` : un journal des bilans renommé se voit dans les 15 s.
   bilanLogs.delete(source.dir)
-  if (before !== undefined && before !== source.dir) await update($, themeStampAtom, v => v + 1)
+  if (before !== undefined && before !== source.dir) await stepUpdate($, 'themeStamp', v => v + 1)
   await refreshSessions($, source, false)
-  if (await restamp($, source)) {
+  const stamped = await restamp($, source)
+  await flushStep($)
+  if (stamped) {
     await summarize($, source)
     void judgeRecos($, source)
   }
@@ -4545,6 +4952,7 @@ async function refreshAll($: EngineInterface): Promise<void> {
     const session = await loadSessionVersion($)
     await update($, versionNoteAtom, () => ({ state: 'checking', text: '', foot: `roadmap ${session} · vérification…`, session }))
     paneCache = undefined
+    parsedFiles.clear()
     await update($, retryAtom, v => v + 1)
     await refresh($)
     const [app, published] = await Promise.all([appVersion($), publishedVersion($)])
@@ -4615,7 +5023,7 @@ async function restampQueue($: EngineInterface): Promise<void> {
   const seen = q ? JSON.stringify([q, Math.floor((await $.clock.now()) / 60_000)]) : ''
   if (seen === queueSeen) return
   queueSeen = seen
-  await update($, liveVersionAtom, v => v + 1)
+  await stepUpdate($, 'liveVersion', v => v + 1)
 }
 
 // ---------------------------------------------------------------- Maestro dose ses sessions (#324)
@@ -4880,20 +5288,25 @@ export async function writePause($: EngineInterface, sessionId: string, p: Sessi
 }
 
 /** Ce que les décisions de ce pas lisent : les places du Mac, les cartes réservées, la charge, les plafonds. */
-type DoseState = { pauses: Record<string, SessionPause>; maestros: Set<string>; marks: Set<string>; statuses: Map<string, ChildStatus | undefined>; rows: unknown[]; cwds: string[]; reserved: string[]; cards: DoseCard[]; macTaken: number; macSessions: number; load?: MacLoad; projectMax: number; macMax: number }
+type DoseState = { pauses: Record<string, SessionPause>; maestros: Set<string>; marks: Set<string>; statuses: Map<string, ChildStatus | undefined>; rows: unknown[]; cwds: string[]; reserved: string[]; cards: DoseCard[]; macTaken: number; macSessions: number; load?: MacLoad; projectMax: number; macMax: number; cloudTaken?: number }
 
 async function doseState($: EngineInterface, now: number, read?: Record<string, SessionPause>, cached = false): Promise<DoseState> {
   const pauses = read ?? (await readPauses($))
   // `cached` (#367) : la dernière liste lue, sans appel d'outil ; la file vide ne fait pas relire la liste à chaque pas (#348).
-  const rows = cached ? lastListRows : (await readListRows($)).rows
+  // #519 : la liste lue par ce pas de la minuterie (`matchSessions`, juste avant) ne se relit pas.
+  const rows = cached || (polling && listReadTick === pollTick) ? lastListRows : (await readListRows($)).rows
   const statuses = new Map<string, ChildStatus | undefined>()
-  for (const raw of rows) {
+  // #519 : les notes ensemble, et les marques avec elles, pas l'une après l'autre.
+  const ids = rows.flatMap(raw => {
     const r = raw as { sessionId?: unknown; title?: unknown; isRunning?: unknown }
-    if (typeof r.sessionId === 'string' && typeof r.title === 'string' && r.isRunning !== true && sessionTitleId(r.title) !== undefined) {
-      statuses.set(r.sessionId, childStatusOf(await storeGet($, `${CHILD_STATUS_PREFIX}${r.sessionId}`).catch(() => undefined)))
-    }
-  }
-  const marks = new Set(Object.keys(await loadMaestros($)))
+    return typeof r.sessionId === 'string' && typeof r.title === 'string' && r.isRunning !== true && sessionTitleId(r.title) !== undefined ? [r.sessionId] : []
+  })
+  const [notes, stored] = await Promise.all([
+    Promise.all(ids.map(id => storeGet($, `${CHILD_STATUS_PREFIX}${id}`).then(childStatusOf, () => undefined))),
+    loadMaestros($),
+  ])
+  ids.forEach((id, i) => statuses.set(id, notes[i]))
+  const marks = new Set(Object.keys(stored))
   const maestros = maestroSessionIds(rows, marks)
   const cards = await doseCards($, now)
   // #367 : une session en pause ne tient aucune place
@@ -4901,17 +5314,42 @@ async function doseState($: EngineInterface, now: number, read?: Record<string, 
   const places = launchPlaces(rows, id => statuses.get(id), cards, now, maestros, doseProject().match, paused, doseIdleMs())
   const { projectMax, macMax } = doseMaxes()
   const load = places.taken < macMax ? await readMacLoad($, now) : doseLoad.load
-  return { pauses, maestros, marks, statuses, rows, cwds: places.cwds, reserved: places.reserved, cards, macTaken: places.taken, macSessions: places.taken - places.reserved.length, ...(load ? { load } : {}), projectMax, macMax }
+  // #510 : les lignes cloud tenues du projet (la roadmap se garde par sa date et sa taille, #337) ; au repos (`cached`),
+  // le dernier compte, sans appel au moteur.
+  if (!cached) lastCloudTaken = cloudPlaces(await openTasksNow($), places.reserved)
+  const cloudTaken = lastCloudTaken
+  return { cloudTaken, pauses, maestros, marks, statuses, rows, cwds: places.cwds, reserved: places.reserved, cards, macTaken: places.taken, macSessions: places.taken - places.reserved.length, ...(load ? { load } : {}), projectMax, macMax }
+}
+
+/** Les places tenues par les lignes cloud du projet, au dernier pas qui a relu la roadmap (#510). */
+let lastCloudTaken = 0
+
+/** Les tâches ouvertes du projet de ce panneau, vides en panne (la roadmap se garde par sa date et sa taille, #337). */
+async function openTasksNow($: EngineInterface): Promise<Task[]> {
+  if (!knownSource) return []
+  const loaded = await load($, files(knownSource).open, 'ROADMAP.md').catch(() => [] as Task[])
+  return typeof loaded === 'string' ? [] : loaded
 }
 
 /** Les places d'un projet : ses sessions (par `cwd`) et ses cartes réservées dont la session n'est pas ouverte. */
 function placesOf(state: DoseState, project: string, match: readonly string[]): number {
   const cards = state.cards.filter(c => c.project === project && state.reserved.includes(sessionTitleId(c.title) ?? '')).length
-  return projectTaken(state.cwds, match) + cards
+  // #510 : les sessions cloud du projet de ce Maestro, par leurs lignes (la liste de l'app ne les montre pas).
+  const cloud = project === doseProject().project ? (state.cloudTaken ?? 0) : 0
+  return projectTaken(state.cwds, match) + cards + cloud
 }
 
-/** La décision pour un projet : son plafond, celui du Mac, puis la charge. */
-function gateFor(state: DoseState, project: string, match: readonly string[]) {
+/** Une entrée de la file qui part en cloud (#510) : un ▶ Cloud, ou la carte cible cloud d'un modèle, mission comprise. */
+function entryIsCloud(e: Pick<QueuedLaunch, 'launch' | 'card'>): boolean {
+  return e.launch?.target === 'cloud' || (e.card !== undefined && cardTargetOf(e.card) === 'cloud')
+}
+
+/**
+ * La décision pour un projet : son plafond, celui du Mac, puis la charge. Une entrée cloud (#510) ne regarde que le
+ * plafond du projet : elle tient une place chez Maestro, mais ne charge pas le Mac.
+ */
+function gateFor(state: DoseState, project: string, match: readonly string[], cloud = false) {
+  if (cloud) return cloudGate({ projectTaken: placesOf(state, project, match), projectMax: state.projectMax })
   return launchGate({ projectTaken: placesOf(state, project, match), projectMax: state.projectMax, macTaken: state.macTaken, macMax: state.macMax, ...(state.load ? { load: state.load } : {}) })
 }
 
@@ -4935,9 +5373,9 @@ async function doseLaunch($: EngineInterface, id: string | undefined, entry: Omi
     await migrateOldQueue($, ownId)
     const { project, match, name } = doseProject()
     const state = await doseState($, now)
-    const gate = gateFor(state, project, match)
+    const gate = gateFor(state, project, match, entryIsCloud(entry))
     const queue = await readGlobalQueue($)
-    const gateOf = (e: GlobalQueued) => gateFor(state, e.project, e.match)
+    const gateOf = (e: GlobalQueued) => gateFor(state, e.project, e.match, entryIsCloud(e))
     // #383 : ni une entrée retenue ni une entrée en vol (sa place est déjà réservée) ne sont tête.
     // #389 : une entrée retenue par Remote Control non plus : elle garde son rang, la suivante passe.
     const head = queueHead(liveQueue(globalQueueOrder(queue), gateOf, ownId, queueSince, now).filter(e => !queueRetained(e) && !launchInFlight(e, now)), gateOf)
@@ -4976,6 +5414,18 @@ async function releaseBrief($: EngineInterface, head: GlobalQueued, source: Sour
   if ((!head.launch && !head.card) || !source || !task) return undefined
   const shortTitle = head.launch?.shortTitle ?? head.title.replace(/^#\d+\s*·\s*/, '')
   const brief = await briefOf($, source, task, shortTitle, head.launch?.extra ?? '', head.launch?.kind ?? '')
+  // #510 : un ▶ Cloud mis en file repart en cloud : sa carte (brief cloud ou mission) se refait par sa couche, et le
+  // crochet de `start_session` la donne telle quelle à la carte que pose Maestro (#512, #515).
+  if (entryIsCloud(head) && task.id) {
+    const mission = launchLayer(source, task, 'cloud') === 'mission'
+    const layer = cloudLayer($, source, task, brief.title, mission)
+    const prepared = await layer.prepare().catch(() => undefined)
+    if (!prepared || 'why' in prepared) return undefined
+    const prompt = String(prepared.card.prompt ?? '')
+    if (mission) pendingMissions.set(pendingKey(source, task.id), prompt)
+    else pendingClouds.set(pendingKey(source, task.id), withTargetNote(prompt, 'cloud', recoOf(source, task)))
+    return { id: head.id, title: targetTitle(brief.title, 'cloud'), prompt, background: String(prepared.card.background ?? ''), travail: taskWork(source, task), bypass: false, target: 'cloud' }
+  }
   const bypass = wantsBypass(settings.launchBypass, await ownMode($))
   // #490 : le modèle et l'effort que dit la tâche.
   const { effort, modelId: model } = await taskLaunch($, source, task)
@@ -5068,7 +5518,7 @@ async function pickVictim(
   tasks: readonly Task[] | string,
   now: number,
 ): Promise<{ sessionId: string; maestro: string } | undefined> {
-  const gate = gateFor(state, first.project, first.match)
+  const gate = gateFor(state, first.project, first.match, entryIsCloud(first))
   if (gate.go) return undefined
   const mine = doseProject()
   const marks = prioMarksOf(await storeGet($, PRIO_MARKS_KEY).catch(() => undefined))
@@ -5192,7 +5642,7 @@ function controlDeps($: EngineInterface): ControlDeps {
     pressZone: async (id, onPress) => {
       pressHandlers.set(id, onPress)
       zoneDrawn(zones, 'press-hit', await $.clock.now())
-      return `${pressKey(id)}-g${await read($, zoneGenAtom)}`
+      return zoneKeyOf(zones, pressKey(id), await read($, zoneGenAtom))
     },
   }
 }
@@ -5234,7 +5684,7 @@ async function relieveLaunches($: EngineInterface): Promise<void> {
     const now = await $.clock.now()
     const state = await doseState($, now, pauses)
     const fileOn = settings.launchQueue
-    const gateOf = fileOn ? (e: GlobalQueued) => gateFor(state, e.project, e.match) : () => ({ go: true as const })
+    const gateOf = fileOn ? (e: GlobalQueued) => gateFor(state, e.project, e.match, entryIsCloud(e)) : () => ({ go: true as const })
     const counted = (q: readonly GlobalQueued[]) => (fileOn ? liveQueue(globalQueueOrder(q), gateOf, ownId, queueSince, now) : globalQueueOrder(q).filter(e => e.maestro === ownId))
     // Les compteurs du panneau ; ses propres entrées en file, chez un Maestro seulement.
     const showCounts = async (mine: boolean) => {
@@ -5250,7 +5700,8 @@ async function relieveLaunches($: EngineInterface): Promise<void> {
       await showCounts(false)
       return
     }
-    const tasks = source ? await load($, files(source).open, 'ROADMAP.md') : []
+    // #519 : le parse gardé tant que le fichier ne bouge pas, comme `matchSessions` au même pas.
+    const tasks = source ? await loadParsed($, files(source).open, 'ROADMAP.md') : []
     const open = typeof tasks === 'string' ? undefined : tasks
     // #374 : « déjà en session » se juge dans les dossiers de l'entrée (un même numéro vit dans plusieurs projets).
     const sessions = state.rows.flatMap(r => {
@@ -5335,7 +5786,7 @@ async function relieveLaunches($: EngineInterface): Promise<void> {
     // (c) la tête prioritaire est refusée et personne n'a déjà demandé de pause pour elle : une session cède sa place
     // #374 : une entrée en vol a déjà sa place réservée : elle ne demande pas une autre pause.
     const first = fileOn && !changed ? counted(queue).filter(q => !launchInFlight(q, now) && !queueRetained(q))[0] : undefined
-    if (first?.prio && first.kind !== 'resume' && !gateFor(state, first.project, first.match).go) {
+    if (first?.prio && first.kind !== 'resume' && !gateFor(state, first.project, first.match, entryIsCloud(first)).go) {
       const fresh = await readPauses($)
       if (!Object.values(fresh).some(p => p.state === 'asked' && p.for === first.id)) {
         const victim = await pickVictim($, ownId, state, queue, first, fresh, tasks, now)
@@ -5602,7 +6053,7 @@ async function queueAlertOf($: EngineInterface, queue: readonly GlobalQueued[], 
     alertMs,
     rows: state.rows,
     maestros,
-    gate: e => gateFor(state, e.project, e.match),
+    gate: e => gateFor(state, e.project, e.match, entryIsCloud(e)),
     places: e => ({ projectTaken: placesOf(state, e.project, e.match), projectMax: state.projectMax, macTaken: state.macTaken, macMax: state.macMax, ...(state.load?.live !== undefined ? { live: state.load.live } : {}) }),
     name: project => projectNames.get(project) ?? baseName(project),
   })
@@ -5678,14 +6129,62 @@ async function turnOffChildRemote($: EngineInterface): Promise<void> {
 let pollTick = 0
 let polling = false
 
+// ── Un pas, un dessin (#520) ────────────────────────────────────────────────
+
+/** Les atomes qu'un pas de la minuterie écrit et que le dessin du panneau lit, par leur nom. */
+type StepAtom = 'stamp' | 'liveVersion' | 'zoneGen' | 'themeStamp'
+/**
+ * Les écritures d'atomes du pas en cours, gardées par atome (`holdWrite`) ; `undefined` hors d'un pas. Le moteur
+ * redessine à chaque écriture : les sessions, l'empreinte des fichiers et la file des tests, écrites l'une après
+ * l'autre entre deux lectures lentes, donnaient deux dessins à moins de 50 ms (audit #514, rang 4).
+ */
+let stepWrites: Map<StepAtom, (v: number) => number> | undefined
+
+/** L'écriture elle-même : le contrôle du plugin veut un atome nommé à chaque `update`. */
+function writeStepAtom($: EngineInterface, a: StepAtom, fn: (v: number) => number): Promise<unknown> {
+  if (a === 'stamp') return update($, stampAtom, fn)
+  if (a === 'liveVersion') return update($, liveVersionAtom, fn)
+  if (a === 'zoneGen') return update($, zoneGenAtom, fn)
+  return update($, themeStampAtom, fn)
+}
+
+/** Écrit un atome du dessin, ou le garde pour la fin du pas s'il y en a un en cours. */
+async function stepUpdate($: EngineInterface, a: StepAtom, fn: (v: number) => number): Promise<void> {
+  if (stepWrites) return void holdWrite(stepWrites, a, fn)
+  await writeStepAtom($, a, fn)
+}
+
+/** Pose d'un coup les écritures gardées du pas : une par atome, l'une derrière l'autre, sans lecture entre elles. */
+async function flushStep($: EngineInterface): Promise<void> {
+  const held = stepWrites
+  if (!held || held.size === 0) return
+  stepWrites = new Map()
+  for (const [a, fn] of held) await writeStepAtom($, a, fn)
+}
+
 /**
  * Un pas de la minuterie : les zones, les sessions et l'empreinte des fichiers ; tous les POLL_MS,
  * la relecture complète, qui recherche aussi le dossier.
  */
+/** Les coups de la minuterie depuis le chargement, marche lente comprise (#539). */
+let clockTicks = 0
+/** Le pas en cours, et le coup de minuterie où il est parti (#539). */
+let pollGen = 0
+let pollStartedTick = 0
+/**
+ * Un pas en vol depuis tant de coups de minuterie (30 s) est tenu pour perdu (#539) : un appel au moteur resté
+ * sans réponse tenait `polling` et la minuterie ne faisait plus rien, ni relecture ni redessin, deux heures durant.
+ * Le pas suivant repart ; l'ancien, s'il finit un jour, ne touche plus à l'état du pas.
+ */
+const POLL_STUCK_TICKS = 10
+
 async function poll($: EngineInterface): Promise<void> {
-  if (polling) return
+  if (polling && clockTicks - pollStartedTick < POLL_STUCK_TICKS) return
+  const gen = ++pollGen
   polling = true
+  pollStartedTick = clockTicks
   tickStats = new Map()
+  stepWrites = new Map()
   try {
     pollTick++
     // #474 : la garde des cartes cloud, qui ne dépend d'aucune autre étape du pas (elle ne lève jamais).
@@ -5706,15 +6205,20 @@ async function poll($: EngineInterface): Promise<void> {
     }
     const full = wokeUp || pollTick % (POLL_MS / TICK_MS) === 0
     wokeUp = false
+    // #522 : le panneau caché se lit au pas complet, et à chaque pas de la marche lente (il peut revenir à l'écran).
+    if (full || pollIsSlow()) await readPaneHidden($)
     if (full || !knownSource) await refresh($)
     else {
       await checkZones($)
       await refreshSessions($, knownSource, true)
-      if (await restamp($, knownSource)) {
+      const stamped = await restamp($, knownSource)
+      await restampQueue($)
+      // Les sessions, l'empreinte et la file : un seul dessin, avant les titres courts, qui attendent le modèle.
+      await flushStep($)
+      if (stamped) {
         await summarize($, knownSource)
         void judgeRecos($, knownSource)
       }
-      await restampQueue($)
     }
     await relieveLaunches($)
     await turnOffChildRemote($)
@@ -5722,11 +6226,16 @@ async function poll($: EngineInterface): Promise<void> {
   } catch {
     // un pas raté (module rechargé, état indisponible) : le suivant réessaie, sans rejet laissé en l'air
   } finally {
-    polling = false
-    tickStats = undefined
-    if (pollAgain) {
-      pollAgain = false
-      void poll($)
+    // #539 : un pas tenu pour perdu, s'il finit un jour, ne touche plus à l'état du pas en cours.
+    if (gen === pollGen) {
+      await flushStep($).catch(() => undefined)
+      stepWrites = undefined
+      polling = false
+      tickStats = undefined
+      if (pollAgain) {
+        pollAgain = false
+        void poll($)
+      }
     }
   }
 }
@@ -5766,7 +6275,7 @@ const recoSig = (task: Task) => `${task.label}|${task.spec ?? ''}|${task.fiche ?
 function recoOf(source: Source, task: Task): JudgedReco {
   const kept = recoDocs.get(taskKey(task))
   const docs = kept && kept.sig === recoSig(task) ? kept.docs : undefined
-  return judgedReco(task, recoCache.cache, docs, { projet: taskWork(source, task) === 'projet' })
+  return judgedReco(task, recoCache.cache, docs)
 }
 
 // --- La reco jugée par le modèle (#430) ---------------------------------------------------------------
@@ -5917,123 +6426,115 @@ async function setLaunchTarget($: EngineInterface, task: Task, target: Sessions)
   await update($, recoStampAtom, v => v + 1)
 }
 
-/**
- * Le lancement en cloud (#416), choisi sur l'interrupteur : le panneau pose lui-même la carte cible cloud, au brief
- * qui se suffit (`cloudBriefText`, celui de `brief_cloud.py`), comme le ▶ du Mac pose la sienne ; un message à Claude
- * était refusé sous Remote Control (retour de BBR, 0.259.0). La carte posée, il prend la ligne (`qui:`, `branche:`,
- * `lieu:cloud`, montée dans « En cours ») et la pousse sur main. Une carte refusée ne prend rien : la ligne reste
- * libre, la note dit pourquoi et le Mac reste à un clic. Une session cloud ne prend pas de place au Mac : pas de file.
- */
+/** Le lancement en cloud (#416), choisi sur l'interrupteur : le même chemin que le local (`launchTask`, #510). */
 async function launchCloud($: EngineInterface, source: Source, task: Task, shortTitle: string): Promise<void> {
-  const key = taskKey(task)
-  const fail = (why: string) => setView($, v => ({ launched: v.launched.filter(k => k !== key), launchNote: `Lancement en cloud impossible : ${why}` }))
-  await setView($, v => ({ launched: v.launched.includes(key) ? v.launched : [...v.launched, key], launchNote: LAUNCHING }))
-  try {
-    if (!task.id) return void (await fail('la tâche n\'a pas de numéro (id:)'))
-    const brief = await workBrief($, source, task, shortTitle)
-    const refused = await launchRefusal($, { title: brief.title })
-    if (refused !== undefined) return void (await fail(refused))
-    // #444 : une roadmap hors du dépôt de code nomme son dépôt (`depot`). L'app refuse une carte own_initiative qui
-    // porte un `repository` (#454) : la VM part toujours de cette session, qui doit donc être ouverte dans ce dépôt.
-    const depot = projectSettings(source).depot
-    // La VM part de la branche de cette session : elle doit être sur GitHub, sans commit en retard (#426).
-    const here = await $.session.cwd()
-    if (depot !== undefined) {
-      const depotRefused = cloudDepotRefusal(depot, await cloudRepoOf($, here))
-      if (depotRefused !== undefined) return void (await fail(depotRefused))
-    }
-    const git = (...args: string[]) => $.process.run(['git', '-C', here, ...args], { timeoutMs: 30_000 })
-    const head = await git('rev-parse', '--abbrev-ref', 'HEAD')
-    const ahead = head.exitCode === 0 ? await git('rev-list', '--count', '@{u}..HEAD') : undefined
-    const startRefused = cloudStartRefusal({
-      inGit: head.exitCode === 0,
-      branch: head.stdout.trim(),
-      upstream: ahead?.exitCode === 0,
-      ahead: Number(ahead?.stdout.trim() || 0),
-    })
-    if (startRefused !== undefined) return void (await fail(startRefused))
-    const { open } = files(source)
-    // #476 : un projet `cloud: missions` lance une mission : ni branche, ni PR, ni brief de dépôt.
-    const mission = taskWork(source, task) === 'projet'
-    const branch = mission ? MISSION_QUI : cloudBranchOf(task)
-    const take = (text: string, today: string) => (mission ? takeMissionLine(text, task.id!, today) : takeCloudLine(text, task.id!, branch, today))
-    const taken = take(await $.fs.read(open), todayOf(await $.clock.now()))
-    if ('error' in taken) return void (await fail(taken.error))
-    if (mission) {
-      const missionCard = {
+  await launchTask($, source, task, shortTitle, 'cloud')
+}
+
+/** Ce qu'une couche ajoute au tronc du lancement (#510) : sa carte, son repli par Claude, et la suite de sa pose. */
+type LaunchLayer = {
+  /** Rien ne part : la raison (dépôt, branche à pousser, ligne à prendre), sinon la carte et ses champs facultatifs. */
+  prepare: () => Promise<{ why: string } | { card: Record<string, unknown>; optional: [field: string, value: unknown, note: string][] }>
+  /** Passer droit par Claude sans essayer la carte (le mode de la session). */
+  skipCard: (mode: string | undefined) => boolean
+  /** Un refus de la carte que Claude contourne en la posant lui-même. */
+  fallsBack: (reason: string) => boolean
+  /** Le repli par Claude : `refusals`, ce que l'app a répondu. */
+  viaClaude: (refusals: readonly string[], auto: boolean) => Promise<void>
+  /** La carte posée : la suite (réservation, prise de ligne, note). */
+  posted: () => Promise<void>
+}
+
+/**
+ * La couche cloud d'un lancement (#416, #476) : la carte cible cloud au brief qui se suffit (`cloudBriefText`), ou pour
+ * une tâche de projet la mission (`missionCardPrompt`) ; une session cloud part de la branche de cette session, qui
+ * doit être sur GitHub (#426), dans le dépôt que nomme `depot` (#444, #454) ; une mission n'a ni branche ni PR.
+ */
+function cloudLayer($: EngineInterface, source: Source, task: Task, title: string, mission: boolean): LaunchLayer {
+  const id = task.id!
+  const { open } = files(source)
+  const branch = mission ? MISSION_QUI : cloudBranchOf(task)
+  const take = (text: string, today: string) => (mission ? takeMissionLine(text, id, today) : takeCloudLine(text, id, branch, today))
+  let card: Record<string, unknown> = {}
+  return {
+    prepare: async () => {
+      const depot = projectSettings(source).depot
+      const here = await $.session.cwd()
+      if (depot !== undefined) {
+        const depotRefused = cloudDepotRefusal(depot, await cloudRepoOf($, here))
+        if (depotRefused !== undefined) return { why: depotRefused }
+      }
+      // La VM part de la branche de cette session, mission comprise (le dépôt porte) : elle doit être sur GitHub, sans
+      // commit en retard (#426).
+      const git = (...args: string[]) => $.process.run(['git', '-C', here, ...args], { timeoutMs: 30_000 })
+      const head = await git('rev-parse', '--abbrev-ref', 'HEAD')
+      const ahead = head.exitCode === 0 ? await git('rev-list', '--count', '@{u}..HEAD') : undefined
+      const startRefused = cloudStartRefusal({ inGit: head.exitCode === 0, branch: head.stdout.trim(), upstream: ahead?.exitCode === 0, ahead: Number(ahead?.stdout.trim() || 0) })
+      if (startRefused !== undefined) return { why: startRefused }
+      const taken = take(await $.fs.read(open), todayOf(await $.clock.now()))
+      if ('error' in taken) return { why: taken.error }
+      if (mission) {
+        card = {
+          tool: START_SESSION_TOOL,
+          initiation: 'own_initiative',
+          context: 'fresh',
+          target: 'cloud',
+          title,
+          prompt: missionCardPrompt({ project: source.name, id, label: task.label }),
+          background: `Mission #${id} du projet ${source.name}, lancée en cloud depuis le panneau roadmap (#476) : sans branche ni PR ; Maestro la suit par mission_cloud.py retour puis fin (skill roadmap:maestro, § 2 ter).`,
+        }
+        return { card, optional: [] }
+      }
+      // #449 : les réglages de session de la personne partent avec le brief ; une panne de lecture n'empêche pas le lancement.
+      const read = await readSessionPrefs($).catch(() => undefined)
+      const prefs = read ? { prefs: read.prefs, ...(read.error !== undefined ? { prefsError: read.error } : {}) } : {}
+      // #455 : une preuve de fidélité nomme le chantier de la tâche qu'elle prouve, lu à son `spec:` (ouverte ou close).
+      const proved = proofOf(task.label)
+      const proofSpec = proved ? specOfLine([taken.text, await $.fs.read(files(source).done).catch(() => undefined)], proved) : undefined
+      // #490 : la carte cloud ne porte ni modèle ni effort ; le brief les dit, avec la consigne #327.
+      const tl = await taskLaunch($, source, task)
+      // #510 : le brief est la jumelle de `brief_cloud.py` : le chemin de la roadmap et les fichiers que cite le plan.
+      const root = source.root ?? source.dir
+      const rel = open.startsWith(`${root}/`) ? open.slice(root.length + 1) : 'ROADMAP.md'
+      const plan = task.spec ? await readOr($, `${root}/${task.spec.replace(/\/+$/, '')}/plan.md`) : undefined
+      const prompt = cloudBriefText({ launch: { charge: tl.charge, ...(tl.effort ? { effort: tl.effort } : {}), ...(tl.model ? { model: tl.model } : {}) }, project: source.name, id, label: task.label, line: taken.line, branch, rel, taken: false, files: plan ? planFiles(plan) : [], ...(task.spec ? { spec: task.spec } : {}), ...(depot ? { depot } : {}), ...(proofSpec ? { proofSpec } : {}), ...prefs })
+      card = {
         tool: START_SESSION_TOOL,
         initiation: 'own_initiative',
         context: 'fresh',
         target: 'cloud',
-        title: brief.title,
-        prompt: missionCardPrompt({ project: source.name, id: task.id, label: task.label }),
-        background: `Mission #${task.id} du projet ${source.name}, lancée en cloud depuis le panneau roadmap (#476) : sans branche ni PR ; Maestro la suit par mission_cloud.py retour puis fin (skill roadmap:maestro, § 2 ter).`,
+        title,
+        prompt,
+        background: `Tâche #${id} du projet ${source.name}, lancée en cloud depuis le panneau roadmap (#416) : la session tourne dans une VM claude.ai où le plugin ne sert que par ses skills (#457) ; ses règles sont dans docs/session-cloud.md du dépôt${depot ? ` ${depot}` : ''}, Maestro la suit par sa PR sur le Mac.`,
       }
-      // #512 (cas AAFES #694) : hors Bypass, l'app refuse la carte d'un mod (« needs a person's approval ») ; comme les
-      // autres départs (#248), la mission passe alors par Claude, sa consigne exacte imposée, et sa pose prend la ligne.
-      const viaClaude = async (refused: boolean) => {
-        pendingMissions.set(pendingKey(source, task.id!), missionCard.prompt)
-        queueSubmit($, missionAskText({ title: targetTitle(brief.title, 'cloud'), id: task.id!, prompt: missionCard.prompt, background: missionCard.background }))
-        await setView($, () => ({ launchNote: missionViaClaudeNote(refused) }))
+      return { card, optional: [] }
+    },
+    // #512 : hors Bypass, l'app refuse la carte d'une mission posée par un mod ; le mode auto refuse tout clic du panneau (#248).
+    skipCard: mode => mode === 'auto' || (mission && mode !== undefined && mode !== BYPASS_MODE),
+    // #515 : seul le refus que lève une carte de Claude passe par lui ; une mission y passe toujours (#512).
+    fallsBack: reason => mission || isPanelOnlyRefusal(reason),
+    viaClaude: async refusals => {
+      const prompt = String(card.prompt ?? '')
+      const background = String(card.background ?? '')
+      if (mission) {
+        pendingMissions.set(pendingKey(source, id), prompt)
+        queueSubmit($, missionAskText({ title: targetTitle(title, 'cloud'), id, prompt, background }))
+        await setView($, () => ({ launchNote: missionViaClaudeNote(refusals.length > 0) }))
+        return
       }
-      const mode = await ownMode($)
-      if (mode !== undefined && mode !== BYPASS_MODE) return void (await viaClaude(false))
-      await dismissPendingCard($, source, task.id, 'cloud')
-      const sent = await withinMs($, proposeCard($, missionCard, []), CARD_DEADLINE_MS)
-      if (sent === 'late') return void (await fail(CARD_LATE_WHY))
-      if (sent.ran.deny !== undefined || sent.ran.isError) return void (await viaClaude(true))
-      if (cardNotProposed(sent.ran)) return void (await fail(remoteCardWhy()))
-      const done = await writeRoadmapFiles($, source, ['ROADMAP.md'], `roadmap: take mission (#${task.id}, cloud)`, async () => {
-        const again = take(await $.fs.read(open), todayOf(await $.clock.now()))
-        return 'error' in again ? again : { 'ROADMAP.md': again.text }
-      })
-      const missionNote = 'error' in done ? `Carte de mission posée, mais la ligne n'est pas prise : ${done.error}` : done.note ? `Carte de mission posée ; ${done.note}` : MISSION_PROPOSED
-      await setView($, () => ({ launchNote: missionNote }))
-      return
-    }
-    // #449 : les réglages de session de la personne partent avec le brief ; une panne de lecture n'empêche pas le lancement.
-    const read = await readSessionPrefs($).catch(() => undefined)
-    const prefs = read ? { prefs: read.prefs, ...(read.error !== undefined ? { prefsError: read.error } : {}) } : {}
-    // #455 : une preuve de fidélité nomme le chantier de la tâche qu'elle prouve, lu à son `spec:` (ouverte ou close).
-    const proved = proofOf(task.label)
-    const proofSpec = proved ? specOfLine([taken.text, await $.fs.read(files(source).done).catch(() => undefined)], proved) : undefined
-    // #490 : la carte cloud ne porte ni modèle ni effort ; le brief les dit, avec la consigne #327.
-    const tl = await taskLaunch($, source, task)
-    const prompt = cloudBriefText({ launch: { charge: tl.charge, ...(tl.effort ? { effort: tl.effort } : {}), ...(tl.model ? { model: tl.model } : {}) }, project: source.name, id: task.id, label: task.label, line: taken.line, branch, ...(task.spec ? { spec: task.spec } : {}), ...(depot ? { depot } : {}), ...(proofSpec ? { proofSpec } : {}), ...prefs })
-    const card = {
-      tool: START_SESSION_TOOL,
-      initiation: 'own_initiative',
-      context: 'fresh',
-      target: 'cloud',
-      title: brief.title,
-      prompt,
-      background: `Tâche #${task.id} du projet ${source.name}, lancée en cloud depuis le panneau roadmap (#416) : la session tourne dans une VM claude.ai où le plugin ne sert que par ses skills (#457) ; ses règles sont dans docs/session-cloud.md du dépôt${depot ? ` ${depot}` : ''}, Maestro la suit par sa PR sur le Mac.`,
-    }
-    // #465 : une carte Mac de la même tâche qui attend Start ne retient pas le départ : elle est retirée.
-    await dismissPendingCard($, source, task.id, 'cloud')
-    // #465 : l'app qui ne répond pas ne laisse pas la fiche sur « Lancement… » : rien n'est parti, elle le dit.
-    const posted = await withinMs($, proposeCard($, card, []), CARD_DEADLINE_MS)
-    if (posted === 'late') return void (await fail(CARD_LATE_WHY))
-    // #515 (constat sur #487, 0.286.1) : hors Bypass, l'app refuse la carte d'un mod (« needs a person's approval ») ;
-    // comme le ▶ Mac (#248) et la mission (#512), la carte passe alors par Claude, son brief imposé mot pour mot, avec
-    // la cible choisie (la reco ne la retient pas, #479), et la ligne se prend au départ de la session (#474).
-    if ((posted.ran.deny !== undefined || posted.ran.isError) && isPanelOnlyRefusal(cardReason(posted.ran))) {
+      // Le brief imposé mot pour mot, avec la cible choisie (la reco ne la retient pas, #479).
       const asked = withTargetNote(prompt, 'cloud', recoOf(source, task))
-      pendingClouds.set(pendingKey(source, task.id), asked)
-      queueSubmit($, cloudAskText({ title: targetTitle(brief.title, 'cloud'), id: task.id, branch, prompt: asked, background: card.background }))
-      return void (await setView($, () => ({ launchNote: cloudViaClaudeNote() })))
-    }
-    if (posted.ran.deny !== undefined || posted.ran.isError) return void (await fail(cardReason(posted.ran)))
-    // #452 : « Nothing was proposed » sous Remote Control n'est ni deny ni isError : aucune carte, la ligne reste libre.
-    if (cardNotProposed(posted.ran)) return void (await fail(remoteCardWhy()))
-    const wrote = await writeRoadmapFiles($, source, ['ROADMAP.md'], `roadmap: take ${branch.replace(/^feat\//, '')} (#${task.id}, cloud)`, async () => {
-      const again = takeCloudLine(await $.fs.read(open), task.id!, branch, todayOf(await $.clock.now()))
-      return 'error' in again ? again : { 'ROADMAP.md': again.text }
-    })
-    const note = 'error' in wrote ? `Carte cloud posée, mais la ligne n'est pas prise : ${wrote.error}` : wrote.note ? `Carte cloud posée ; ${wrote.note}` : CLOUD_PROPOSED
-    await setView($, () => ({ launchNote: note }))
-  } catch (err) {
-    await fail(err instanceof Error ? err.message : String(err))
+      pendingClouds.set(pendingKey(source, id), asked)
+      queueSubmit($, cloudAskText({ title: targetTitle(title, 'cloud'), id, branch, prompt: asked, background }))
+      await setView($, () => ({ launchNote: cloudViaClaudeNote() }))
+    },
+    // #510 (C4) : la carte posée ne prend rien ; la ligne se prend au départ de la session : sa branche poussée (#474)
+    // ou le message de départ de l'app pour une session de code, ce message seul pour une mission.
+    posted: async () => {
+      if (mission) await rememberMissionStart($, source, id)
+      else await watchCloudCard($, id, card.prompt)
+      await setView($, () => ({ launchNote: mission ? MISSION_PROPOSED : CLOUD_PROPOSED }))
+    },
   }
 }
 
@@ -6182,7 +6683,10 @@ async function checkCloudWake($: EngineInterface): Promise<void> {
   if (cloudWaking || !knownSource || !ownSession) return
   cloudWaking = true
   try {
-    if (!(await isMaestroHere($))) return
+    // #528 : le gardien lit les PR à la place de Maestro, qui ne les reprend que s'il se tait.
+    const gardienOfMaestro = (await isMaestroHere($)) ? undefined : await gardienHere($)
+    const role: WakeRole | undefined = gardienOfMaestro !== undefined ? 'gardien' : (await isMaestroHere($)) ? 'maestro' : undefined
+    if (role === undefined) return
     const now = await $.clock.now()
     // Une horloge revenue en arrière (veille, réglage) ne fige pas la garde.
     if (now < cloudWakeNextAt && cloudWakeNextAt - now <= CLOUD_WAKE_EVERY_MS) return
@@ -6195,19 +6699,19 @@ async function checkCloudWake($: EngineInterface): Promise<void> {
     const root = source.root ?? source.dir
     const stored = await storeGet($, CLOUD_WAKE_KEY).catch(() => undefined)
     const state = wakeStateOf(stored, root)
-    // Une autre session Maestro du projet a pris cette minute.
-    if (now >= state.at && now - state.at < CLOUD_WAKE_EVERY_MS) return
+    // Une autre session du projet a pris cette minute ; derrière un gardien qui lit, Maestro attend (#528).
+    if (!cloudWakeDue(state, now, role)) return
     const all = (o: unknown) => (typeof o === 'object' && o !== null && !Array.isArray(o) ? { ...(o as Record<string, unknown>) } : {})
-    await storeSet($, CLOUD_WAKE_KEY, { ...all(stored), [root]: { at: now, seen: state.seen } } as unknown as StoreValue)
+    await storeSet($, CLOUD_WAKE_KEY, { ...all(stored), [root]: { at: now, seen: state.seen, by: role } } as unknown as StoreValue)
     const repo = await cloudRepoOf($, root, projectSettings(source).depot)
     if (!repo) return
     const prs = await runGh($, ['pr', 'list', '-R', repo, '--state', 'open', '--limit', '100', '--json', CLOUD_WAKE_PR_FIELDS])
     if (prs === undefined) return
     const { events, seen } = cloudWakes(tasks, prs, state.seen, now)
     const again = await storeGet($, CLOUD_WAKE_KEY).catch(() => undefined)
-    await storeSet($, CLOUD_WAKE_KEY, { ...all(again), [root]: { at: now, seen } } as unknown as StoreValue)
+    await storeSet($, CLOUD_WAKE_KEY, { ...all(again), [root]: { at: now, seen, by: role } } as unknown as StoreValue)
     if (events.length === 0) return
-    queueWake($, wakePrompt(events))
+    queueWake($, wakePrompt(events, role, gardienOfMaestro))
     // Le panneau se redessine et envoie le réveil.
     await update($, liveVersionAtom, v => v + 1)
   } catch {
@@ -6217,135 +6721,167 @@ async function checkCloudWake($: EngineInterface): Promise<void> {
   }
 }
 
-/** La note d'un lancement en cloud réussi : la carte attend Start, la ligne est prise et poussée. */
-const CLOUD_PROPOSED = 'Carte cloud posée : clique Start. La ligne est prise (lieu:cloud).'
+/** La note d'un lancement en cloud réussi : la carte attend Start, la ligne se prendra à son départ (#510). */
+const CLOUD_PROPOSED = 'Carte cloud posée : clique Start. La ligne se prendra à son départ (lieu:cloud).'
 
-/** La note d'une mission cloud posée (#476) : la carte attend Start, la ligne est prise sans branche. */
-const MISSION_PROPOSED = 'Carte de mission posée : clique Start. La ligne est prise (qui:mission).'
+/** La note d'une mission cloud posée (#476) : la carte attend Start, la ligne se prendra à son départ, sans branche (#510). */
+const MISSION_PROPOSED = 'Carte de mission posée : clique Start. La ligne se prendra à son départ (qui:mission).'
 
 /** Le « Message additionnel » tapé dans le détail, ajouté au brief ; vidé à chaque changement de tâche. */
 let launchExtra = ''
 
 async function launchSession($: EngineInterface, source: Source, task: Task, shortTitle: string, extra = '', kind = '', routineClosed = false): Promise<void> {
+  await launchTask($, source, task, shortTitle, 'mac', extra, kind, routineClosed)
+}
+
+/**
+ * Le lancement d'une tâche, un seul chemin pour le local, le cloud et la mission (#510, C2, décision #482) : le
+ * numéro, le brief et le refus du titre (#263), la file de Maestro (#324 ; une session cloud y tient une place mais
+ * n'attend jamais la charge du Mac, choix de BBR), la carte d'une même tâche sur l'autre cible retirée (#465), la
+ * carte posée dans son délai, le repli par Claude (#248, #512, #515), « Nothing was proposed » sous Remote Control
+ * (#452), puis la suite de la pose. La couche (`launchLayer`) ne choisit que la carte, son repli et cette suite.
+ */
+async function launchTask($: EngineInterface, source: Source, task: Task, shortTitle: string, target: Sessions, extra = '', kind = '', routineClosed = false): Promise<void> {
   // `check` : le bouton « Vérifier », une session qui contrôle la tâche sans la faire.
-  // Le brief de lancement dit où écrire le bilan de clôture : le journal du dossier, ou celui par défaut.
   const key = taskKey(task)
+  const layerKind = launchLayer(source, task, target)
+  const failPrefix = layerKind === 'mac' ? 'Lancement impossible : ' : 'Lancement en cloud impossible : '
   // Le bouton se grise et dit « Lancement… » : une seule écriture.
   await setView($, v => ({ launched: v.launched.includes(key) ? v.launched : [...v.launched, key], launchNote: LAUNCHING }))
-  const projet = taskWork(source, task) === 'projet'
-  // #490 : le modèle et l'effort de la tâche partent avec le brief, jusqu'à la carte que pose Claude en repli.
-  const launch = await taskLaunch($, source, task)
-  const brief = { ...(await briefOf($, source, task, shortTitle, extra, kind, routineClosed)), launch, travail: taskWork(source, task) }
   // Un refus net de l'app ou une panne : rien n'est parti, le bouton redevient cliquable.
-  const release = () => setView($, v => ({ launched: v.launched.filter(k => k !== key) }))
-  // #263 : le titre vient de la ligne, mais une session ouverte (endormie, le ▶ revenu) peut déjà porter son #N.
-  const titleRefused = await launchRefusal($, { title: brief.title })
-  if (titleRefused !== undefined) {
-    await setView($, v => ({ launched: v.launched.filter(k => k !== key), launchNote: `Lancement impossible : ${titleRefused}` }))
-    return
-  }
-  // #324 : chez Maestro, plus de place ou le Mac chargé, la tâche entre dans la file ; la relève rejouera ce ▶.
-  const dose = kind === 'routine' ? {} : await doseLaunch($, task.id, { title: brief.title, launch: { shortTitle, ...(extra.trim() ? { extra } : {}), ...(kind ? { kind } : {}) } })
-  if (dose.refusal !== undefined) {
-    const held = dose.refusal
-    await setView($, v => ({ launched: v.launched.filter(k => k !== key), launchNote: `En file : ${held}` }))
-    await update($, liveVersionAtom, v => v + 1)
-    return
-  }
-  // Ce que l'app a répondu à chaque essai : la note en tire sa cause, le relevé le garde tel quel.
-  const refusals: string[] = []
-  const reasonOf = (r: ToolCallResult) => (r.deny ?? r.text ?? 'sans motif').replace(/\s+/g, ' ').trim()
-  const started = tick()
-  const noteLaunch = (via: LaunchRow['via'], skipped = false) => {
-    pushPerf({
-      mod: PERF_MOD,
-      at: tick(),
-      kind: 'launch',
-      via,
-      launchMs: tick() - started,
-      ...(refusals.length > 0 ? { refusal: clip(refusals.join(' ; '), 300) } : {}),
-      ...(skipped ? { skipped } : {}),
-    })
-    perfFlush?.()
-  }
-  // En mode auto, le panneau n'essaie pas : son contrôle refuse un appel qu'aucun message de la
-  // personne ne demande (un clic lui est invisible), et l'essai coûtait ~40 s avant le repli (#248).
-  const mode = await ownMode($)
-  if (mode === 'auto') {
-    noteLaunch('claude', true)
-    await askClaude($, brief, [], AUTO_VIA_CLAUDE)
-    if ((await read($, viewAtom)).launchNote.startsWith('Lancement impossible')) await release()
-    return
-  }
-  // Le mode auto vient de refuser la carte du panneau : elle passe droit par Claude.
-  if (autoModeRefusal && tick() - autoModeRefusal.at < AUTO_MODE_SKIP_MS) {
-    refusals.push(autoModeRefusal.text)
-    noteLaunch('claude', true)
-    await askClaude($, brief, refusals)
-    if ((await read($, viewAtom)).launchNote.startsWith('Lancement impossible')) await release()
-    return
-  }
+  const fail = (why: string) => setView($, v => ({ launched: v.launched.filter(k => k !== key), launchNote: `${failPrefix}${why}` }))
   try {
-    // L'app ne démarre jamais une session sur un clic de plugin : elle n'accepte qu'une
-    // proposition, la carte « New session » que la personne démarre d'un clic sur « Start ».
-    // On la pose donc directement, sans essayer de lancer (deux refus mesurés le 2026-10-22).
-    const card = {
-      tool: START_SESSION_TOOL,
-      initiation: 'own_initiative',
-      context: 'fresh',
-      title: brief.title,
-      // Option « Lancer en bypass » (#87) : la session lancée se relève elle-même si l'app ne l'y
-      // lance pas. La consigne n'entre que dans la carte : envoyée dans la conversation qui lance
-      // (repli par Claude), elle aurait pu y relever cette session-ci ; là, le crochet l'ajoute à la
-      // carte que pose Claude (relecture de sécurité du 2026-10-29).
-      prompt: wantsBypass(settings.launchBypass, mode) ? withBypassClause(brief.prompt) : brief.prompt,
-      background: brief.background,
-    } as const
-    // Les champs que l'app peut refuser, dans l'ordre où ils tombent, un par refus : le mode (#87 :
-    // l'app n'accorde le bypass que depuis une session déjà en bypass), l'effort (haut par défaut,
-    // Bertrand, 2026-10-23 ; borné à celui de la session qui lance), puis, sans code (#76, #176), le
-    // dossier du projet sans worktree (le panneau ne lit pas la copie d'un worktree). Un champ tombé
-    // hérite de la session qui lance.
-    const effort = launch.effort
-    const optional: [field: string, value: unknown, note: string][] = []
-    if (wantsBypass(settings.launchBypass, mode)) optional.push(['permission_mode', BYPASS_MODE, `en ${BYPASS_MODE}`])
-    if (effort) optional.push(['effort', effort, `avec effort ${effort}`])
-    // #327, #490 : le modèle que dit la tâche (« hérite » n'en pose aucun) ; un refus qui le nomme le fait tomber seul.
-    if (launch.model) optional.push(['model', launch.modelId, `avec le modèle ${launch.model}`])
-    if (projet) optional.push(['use_worktree', false, 'sans worktree'])
-    // #465 : une carte cloud de la même tâche qui attend Start est retirée ; l'app muette ne fait pas tourner la fiche.
-    await dismissPendingCard($, source, task.id, 'mac')
-    const posted = await withinMs($, proposeCard($, card, optional), CARD_DEADLINE_MS)
+    if (layerKind !== 'mac' && !task.id) return void (await fail('la tâche n\'a pas de numéro (id:)'))
+    const projet = taskWork(source, task) === 'projet'
+    // #490 : le modèle et l'effort de la tâche partent avec le brief, jusqu'à la carte que pose Claude en repli.
+    const launch = await taskLaunch($, source, task)
+    const brief = { ...(await briefOf($, source, task, shortTitle, extra, kind, routineClosed)), launch, travail: taskWork(source, task) }
+    // #263 : le titre vient de la ligne, mais une session ouverte (endormie, le ▶ revenu) peut déjà porter son #N.
+    const titleRefused = await launchRefusal($, { title: brief.title })
+    if (titleRefused !== undefined) return void (await fail(titleRefused))
+    // #324 : chez Maestro, plus de place ou le Mac chargé, la tâche entre dans la file ; la relève rejouera ce ▶.
+    const dose = kind === 'routine' ? {} : await doseLaunch($, task.id, { title: brief.title, launch: { shortTitle, ...(extra.trim() ? { extra } : {}), ...(kind ? { kind } : {}), ...(target === 'cloud' ? { target } : {}) } })
+    if (dose.refusal !== undefined) {
+      const held = dose.refusal
+      await setView($, v => ({ launched: v.launched.filter(k => k !== key), launchNote: `En file : ${held}` }))
+      await update($, liveVersionAtom, v => v + 1)
+      return
+    }
+    const mode = await ownMode($)
+    const layer = layerKind === 'mac' ? macLayer($, brief, launch, mode, projet) : cloudLayer($, source, task, brief.title, layerKind === 'mission')
+    const prepared = await layer.prepare()
+    if ('why' in prepared) return void (await fail(prepared.why))
+    // Ce que l'app a répondu à chaque essai : la note en tire sa cause, le relevé le garde tel quel.
+    const refusals: string[] = []
+    const reasonOf = (r: ToolCallResult) => (r.deny ?? r.text ?? 'sans motif').replace(/\s+/g, ' ').trim()
+    const started = tick()
+    const noteLaunch = (via: LaunchRow['via'], skipped = false) => {
+      pushPerf({
+        mod: PERF_MOD,
+        at: tick(),
+        kind: 'launch',
+        via,
+        launchMs: tick() - started,
+        ...(refusals.length > 0 ? { refusal: clip(refusals.join(' ; '), 300) } : {}),
+        ...(skipped ? { skipped } : {}),
+      })
+      perfFlush?.()
+    }
+    const settle = async () => {
+      if ((await read($, viewAtom)).launchNote.startsWith(failPrefix)) await setView($, v => ({ launched: v.launched.filter(k => k !== key) }))
+    }
+    // En mode auto, le panneau n'essaie pas : son contrôle refuse un appel qu'aucun message de la personne ne demande
+    // (un clic lui est invisible), et l'essai coûtait ~40 s avant le repli (#248).
+    if (layer.skipCard(mode)) {
+      noteLaunch('claude', true)
+      await layer.viaClaude([], mode === 'auto')
+      return void (await settle())
+    }
+    // Le mode auto vient de refuser la carte du panneau : elle passe droit par Claude.
+    if (autoModeRefusal && tick() - autoModeRefusal.at < AUTO_MODE_SKIP_MS) {
+      refusals.push(autoModeRefusal.text)
+      noteLaunch('claude', true)
+      await layer.viaClaude(refusals, false)
+      return void (await settle())
+    }
+    // #465 : une carte de la même tâche sur l'autre cible, qui attend Start, est retirée.
+    await dismissPendingCard($, source, task.id, target === 'cloud' ? 'cloud' : 'mac')
+    // L'app ne démarre jamais une session sur un clic de plugin : elle n'accepte qu'une proposition, la carte « New
+    // session » que la personne démarre d'un clic sur « Start » (deux refus mesurés le 2026-10-22). #465 : l'app qui ne
+    // répond pas ne laisse pas la fiche sur « Lancement… ».
+    const posted = await withinMs($, proposeCard($, prepared.card, prepared.optional), CARD_DEADLINE_MS)
     if (posted === 'late') {
       noteLaunch('panel')
-      await setView($, v => ({ launched: v.launched.filter(k => k !== key), launchNote: `Lancement impossible : ${CARD_LATE_WHY}` }))
-      return
+      return void (await fail(CARD_LATE_WHY))
     }
     const proposed = posted.ran
     refusals.push(...posted.refusals)
-    // #452 : même réponse sous Remote Control pour le ▶ Mac : pas de carte, donc ni réservation ni repli par Claude.
+    // #452 : « Nothing was proposed » sous Remote Control n'est ni deny ni isError : aucune carte, rien n'est pris ni réservé.
     if (cardNotProposed(proposed)) {
       refusals.push(reasonOf(proposed))
       noteLaunch('panel')
-      await setView($, v => ({ launched: v.launched.filter(k => k !== key), launchNote: `Lancement impossible : ${remoteCardWhy()}` }))
-      return
+      return void (await fail(remoteCardWhy()))
     }
     if (proposed.deny === undefined && !proposed.isError) {
+      // #510 : une carte cloud tient sa place chez Maestro comme une carte locale.
       if (dose.ownId) await reserveCard($, brief.title)
       noteLaunch('panel')
-      await setView($, () => ({ launchNote: PROPOSED }))
+      await layer.posted()
       return
     }
+    const reason = reasonOf(proposed)
+    refusals.push(reason)
+    if (isAutoModeRefusal(reason)) autoModeRefusal = { at: tick(), text: reason }
+    if (!layer.fallsBack(cardReason(proposed))) {
+      noteLaunch('panel')
+      return void (await fail(cardReason(proposed)))
+    }
     // Refusée depuis le panneau : Claude la pose dans la conversation.
-    refusals.push(reasonOf(proposed))
-    if (isAutoModeRefusal(reasonOf(proposed))) autoModeRefusal = { at: tick(), text: reasonOf(proposed) }
     noteLaunch('claude')
-    await askClaude($, brief, refusals)
-  } catch {
-    noteLaunch('claude')
-    await askClaude($, brief)
+    await layer.viaClaude(refusals, false)
+    await settle()
+  } catch (err) {
+    if (layerKind !== 'mac') return void (await fail(err instanceof Error ? err.message : String(err)))
+    // Le local en panne passe par Claude, comme avant (#248).
+    const brief = await briefOf($, source, task, shortTitle, extra, kind, routineClosed).catch(() => undefined)
+    if (brief) await askClaude($, { ...brief, launch: await taskLaunch($, source, task), travail: taskWork(source, task) })
+    if ((await read($, viewAtom)).launchNote.startsWith(failPrefix)) await setView($, v => ({ launched: v.launched.filter(k => k !== key) }))
   }
-  if ((await read($, viewAtom)).launchNote.startsWith('Lancement impossible')) await release()
+}
+
+/**
+ * La couche locale d'un lancement (#510) : la carte « New session » et ses champs que l'app peut refuser, dans l'ordre
+ * où ils tombent, un par refus : le mode (#87 : l'app n'accorde le bypass que depuis une session déjà en bypass),
+ * l'effort (borné à celui de la session qui lance), le modèle (#327, #490), puis, sans code (#76, #176), le dossier du
+ * projet sans worktree (le panneau ne lit pas la copie d'un worktree). Un champ tombé hérite de la session qui lance.
+ */
+function macLayer($: EngineInterface, brief: LaunchBrief, launch: { modelId?: string; model?: string; effort?: string }, mode: string | undefined, projet: boolean): LaunchLayer {
+  return {
+    prepare: async () => {
+      const optional: [field: string, value: unknown, note: string][] = []
+      if (wantsBypass(settings.launchBypass, mode)) optional.push(['permission_mode', BYPASS_MODE, `en ${BYPASS_MODE}`])
+      if (launch.effort) optional.push(['effort', launch.effort, `avec effort ${launch.effort}`])
+      if (launch.model && launch.modelId) optional.push(['model', launch.modelId, `avec le modèle ${launch.model}`])
+      if (projet) optional.push(['use_worktree', false, 'sans worktree'])
+      return {
+        card: {
+          tool: START_SESSION_TOOL,
+          initiation: 'own_initiative',
+          context: 'fresh',
+          title: brief.title,
+          // Option « Lancer en bypass » (#87) : la consigne n'entre que dans la carte ; envoyée dans la conversation qui
+          // lance (repli par Claude), elle aurait pu y relever cette session-ci (relecture de sécurité du 2026-10-29).
+          prompt: wantsBypass(settings.launchBypass, mode) ? withBypassClause(brief.prompt) : brief.prompt,
+          background: brief.background,
+        },
+        optional,
+      }
+    },
+    skipCard: m => m === 'auto',
+    fallsBack: () => true,
+    viaClaude: (refusals, auto) => (auto ? askClaude($, brief, refusals, AUTO_VIA_CLAUDE) : askClaude($, brief, refusals)),
+    posted: () => setView($, () => ({ launchNote: PROPOSED })),
+  }
 }
 
 /**
@@ -6449,6 +6985,15 @@ async function launchRefusal($: EngineInterface, e: unknown): Promise<string | u
   if (typeof card.title !== 'string' || card.proposal_id !== undefined) return undefined
   if (ELSEWHERE_OPTIONS.some(k => card[k] !== undefined)) return undefined
   try {
+    // #528 : la carte du gardien n'a pas de #N ; seul Maestro la pose, une seule ouverte à la fois.
+    if (isGardienSession(card.title)) {
+      const own = await readOwnSession($)
+      const maestro = await maestroHere($)
+      const open = maestro && own.id !== undefined && gardienOf((await readListRows($)).rows, own.id) !== undefined
+      const refused = gardienCardRefusal({ title: card.title, maestro, open })
+      if (refused === undefined) gardienTold = true
+      return refused
+    }
     const source = await sourceNow($)
     if (!source) return undefined
     const [open, done] = await Promise.all([load($, files(source).open, 'ROADMAP.md'), load($, files(source).done, 'ROADMAP-fait.md')])
@@ -6764,6 +7309,31 @@ function notePaneDraw($: EngineInterface, kind: 'reachedAt' | 'drawnAt' | 'faile
   return paneDrawWrites
 }
 
+/** Le premier nouvel essai seul d'un dessin qui a dépassé son temps, puis le double à chaque échec, 5 min au plus (#539). */
+const PANE_RETRY_FIRST_MS = 15_000
+const PANE_RETRY_MAX_MS = 5 * 60_000
+let paneRetryMs = 0
+let paneRetryArmed = false
+
+/**
+ * Un dessin qui a dépassé son temps se retente seul (#539) : le 12/11, la carte d'erreur est restée deux heures,
+ * rien ne redessinait le panneau. L'attente double à chaque échec (15 s, 30 s… 5 min), le temps que la charge
+ * retombe, et repart de zéro au premier dessin réussi. Le redessin passe par `checkMoveAtom`, qui ne relit pas les fichiers.
+ */
+function armPaneRetry($: EngineInterface): void {
+  if (paneRetryArmed) return
+  paneRetryArmed = true
+  paneRetryMs = paneRetryMs === 0 ? PANE_RETRY_FIRST_MS : Math.min(PANE_RETRY_MAX_MS, paneRetryMs * 2)
+  void engineWait($, paneRetryMs)
+    .then(() => {
+      paneRetryArmed = false
+      return update($, checkMoveAtom, v => v + 1)
+    })
+    .catch(() => {
+      paneRetryArmed = false
+    })
+}
+
 /**
  * La carte d'un dessin du panneau en panne (#220) : ce qui s'est passé, le message, la version du plugin et
  * « Réessayer », plutôt que « has not drawn in this pane ». Rien de ce que le dessin lit d'ordinaire n'est
@@ -6771,6 +7341,7 @@ function notePaneDraw($: EngineInterface, kind: 'reachedAt' | 'drawnAt' | 'faile
  */
 async function paneFailure($: EngineInterface, e: RenderInput<'Pane'>, failure: PaneFailure): Promise<RenderElement> {
   void notePaneDraw($, 'failedAt', failure)
+  if (failure.kind === 'timeout') armPaneRetry($)
   const { Box, Text, Button } = $.ui.resolve(e)
   // Rien n'attend plus d'un instant (#414) : la carte doit paraître même quand le moteur ne répond plus.
   const bounded = <T,>(p: Promise<T>) => withinMs($, p, PANE_FAILURE_WAIT_MS).catch(() => 'late' as const)
@@ -6783,6 +7354,7 @@ async function paneFailure($: EngineInterface, e: RenderInput<'Pane'>, failure: 
   const retry = () => {
     knownSource = undefined
     paneCache = undefined
+    parsedFiles.clear()
     paneLineCap = LINE_CAP
     // Un dessin trop gros (#414) : ce qui était déplié se replie, sinon le même dessin reviendrait.
     if (failure.kind === 'heavy') void setView($, () => ({ openGroups: [], moreGroups: [] }))
@@ -6993,6 +7565,7 @@ async function archiveSession($: EngineInterface, key: string, entry: LiveEntry)
       const live = await loadLive($)
       for (const k of Object.keys(live)) if (live[k]?.sessionId === entry.sessionId) delete live[k]
       await storeSet($, LIVE_KEY, live)
+      liveMemo = undefined
       await update($, liveVersionAtom, v => v + 1)
     } catch {
       // stockage indisponible : l'entrée reste, marquée close ; le sondage suivant la retire
@@ -7029,7 +7602,7 @@ async function indexedTaskSession($: EngineInterface, source: Source, t: Task, i
   const id = ids[`${source.name}:${t.id}`]
   if (id === undefined) return undefined
   try {
-    const ran = await $.tool.call({ tool: GET_SESSION_TOOL, session_id: id })
+    const ran = await sessionCall($, { tool: GET_SESSION_TOOL, session_id: id })
     if (ran.deny !== undefined || ran.isError || !ran.text) return undefined
     return taskSessionRow(t, [JSON.parse(ran.text)], source.match)
   } catch {
@@ -7277,14 +7850,42 @@ async function rereadBandContext($: EngineInterface): Promise<void> {
   }
 }
 
-/** L'icône d'archivage d'une ligne de la bande de Maestro (#174) : la session de sa tâche, par son suivi s'il y en a un. */
-async function archiveBandSession($: EngineInterface, t: BrandTask, now: number): Promise<void> {
-  // Une ligne cloud fusionnée : la ligne se cache (#408) et sa session cloud s'archive par l'id de sa PR (#435).
-  if (t.cloud) return archiveCloudRow($, t)
-  if (!t.sessionId) return
-  const live = await loadLive($).catch(() => ({}) as Record<string, LiveEntry>)
-  const key = Object.keys(live).find(k => live[k]?.sessionId === t.sessionId)
-  await archiveSession($, key ?? `session:${t.sessionId}`, (key ? live[key] : undefined) ?? { sessionId: t.sessionId, startedAt: now, title: t.label })
+/**
+ * L'archivage d'une ligne de la bande ou du bloc (#174, #510 C8), une seule entrée pour le local, le cloud et la
+ * mission (`archiveRoute`) : une ligne locale s'archive par sa session, par son suivi s'il y en a un ; une ligne cloud
+ * ou de mission se cache (#408), puis sa session cloud s'archive par l'id que porte sa PR (#435) ou que Maestro a lu
+ * au retour de la mission. L'app refuse, ou l'id manque : la note dit d'archiver dans la liste de gauche.
+ */
+async function archiveTaskRow($: EngineInterface, t: BrandTask, now: number): Promise<void> {
+  const route = archiveRoute(t)
+  if (!route) return
+  if (route.kind === 'local') {
+    const live = await loadLive($).catch(() => ({}) as Record<string, LiveEntry>)
+    const key = Object.keys(live).find(k => live[k]?.sessionId === route.sessionId)
+    await archiveSession($, key ?? `session:${route.sessionId}`, (key ? live[key] : undefined) ?? { sessionId: route.sessionId, startedAt: now, title: t.label })
+    return
+  }
+  const source = await sourceNow($).catch(() => undefined)
+  if (!source) return
+  await hideCloudRow($, t, source)
+  let sessionId: string | undefined
+  if (route.kind === 'mission') sessionId = route.sessionId
+  else if (route.number !== undefined) {
+    const repo = await cloudRepoOf($, source.root ?? source.dir, projectSettings(source).depot)
+    const pr = repo === undefined ? undefined : await runGh($, ['pr', 'view', String(route.number), '-R', repo, '--json', 'body,comments'])
+    sessionId = cloudSessionIdOf(pr)
+  }
+  const title = t.label
+  if (sessionId === undefined) return setView($, () => ({ openAt: '', openNote: cloudArchiveNote(title, route.kind === 'mission' ? 'no-return' : 'no-id') }))
+  let outcome: 'archived' | 'refused' = 'refused'
+  try {
+    const ran = await $.tool.call({ tool: ARCHIVE_SESSION_TOOL, session_id: sessionId })
+    if (ran.deny === undefined && !ran.isError) outcome = 'archived'
+  } catch {
+    // outil absent ou en panne : la note dit où archiver
+  }
+  if (outcome === 'archived') archivedSessionIds.add(sessionId)
+  await setView($, () => ({ openAt: '', openNote: cloudArchiveNote(title, outcome) }))
 }
 
 // --- Sessions cloud (#408, tâche 5) ----------------------------------------------------------------
@@ -7584,34 +8185,6 @@ function currentPr(prs: unknown, t: Task): { number?: number; state: CloudPr['st
   if (!t.branche || prs === undefined) return undefined
   const pr = cloudPrOf(prs, t.branche)
   return pr.state === 'none' || pr.state === 'unknown' ? undefined : { ...(pr.number !== undefined ? { number: pr.number } : {}), state: pr.state }
-}
-
-/**
- * L'archive d'une ligne cloud fusionnée (#435) : la ligne se cache (`hideCloudRow`), puis sa vraie session cloud
- * s'archive par l'identifiant que porte sa PR (`gh pr view`, lien `claude.ai/code/session_…`). L'app refuse (son outil
- * ne connaît que les sessions locales) ou la PR ne le dit pas : la note dit à BBR d'archiver dans la liste de gauche.
- */
-async function archiveCloudRow($: EngineInterface, t: BrandTask): Promise<void> {
-  const source = await sourceNow($).catch(() => undefined)
-  if (!source) return
-  await hideCloudRow($, t, source)
-  if (t.mission) return // #469 : une mission n'a ni PR ni session à retrouver, sa ligne se cache seule
-  const root = source.root ?? source.dir
-  const number = t.cloud?.number
-  const repo = number === undefined ? undefined : await cloudRepoOf($, root, projectSettings(source).depot)
-  const pr = repo === undefined ? undefined : await runGh($, ['pr', 'view', String(number), '-R', repo, '--json', 'body,comments'])
-  const sessionId = cloudSessionIdOf(pr)
-  const title = t.label
-  if (sessionId === undefined) return setView($, () => ({ openAt: '', openNote: cloudArchiveNote(title, 'no-id') }))
-  let outcome: 'archived' | 'refused' = 'refused'
-  try {
-    const ran = await $.tool.call({ tool: ARCHIVE_SESSION_TOOL, session_id: sessionId })
-    if (ran.deny === undefined && !ran.isError) outcome = 'archived'
-  } catch {
-    // outil absent ou en panne : la note dit où archiver
-  }
-  if (outcome === 'archived') archivedSessionIds.add(sessionId)
-  await setView($, () => ({ openAt: '', openNote: cloudArchiveNote(title, outcome) }))
 }
 
 /** Cache une ligne cloud livrée du bloc et de la bande (`cloud-hidden`) : aucune session locale à archiver (#408). */
@@ -8164,7 +8737,10 @@ let backgroundChain: Promise<unknown> = Promise.resolve()
 function setPending(next: PendingEdit | undefined): void {
   pendingEdit = next
   pendingRev++
+  // Une écriture du plugin relit toujours ses fichiers : la date et la taille d'une ligne cochée (`[ ]` → `[x]`) peuvent
+  // ne pas bouger, et `loadParsed` rendrait l'ancienne roadmap (#520, la tenue d'une ligne cochée perdue).
   paneCache = undefined
+  parsedFiles.clear()
 }
 
 /** L'attente de cette source, s'il y en a une. */
@@ -8211,7 +8787,10 @@ function inBackground($: EngineInterface, job: () => Promise<boolean>): void {
     .then(async ok => {
       backgroundJobs--
       if (!ok || backgroundJobs === 0) setPending(undefined)
-      else paneCache = undefined
+      else {
+        paneCache = undefined
+        parsedFiles.clear()
+      }
       knownSource = undefined
       await update($, retryAtom, v => v + 1).catch(() => undefined)
     })
@@ -9001,7 +9580,8 @@ export function weighTree(tree: unknown): { elements: number; svg: number; clien
   return { elements, svg, clients, kb: Math.round(size / 102.4) / 10 }
 }
 
-function notePerf(t0: number, tree: unknown, scroll?: { offset: number; bodyRows: number }): void {
+/** Le relevé d'un dessin, avec le poids que le dessin a déjà pesé : l'arbre ne se sérialise qu'une fois (#520). */
+function notePerf(t0: number, weight: ReturnType<typeof weighTree>, scroll?: { offset: number; bodyRows: number }): void {
   const end = tick()
   const press = perfPress
   perfPress = undefined
@@ -9013,7 +9593,7 @@ function notePerf(t0: number, tree: unknown, scroll?: { offset: number; bodyRows
     loadMs: Math.max(0, perfLoaded - t0),
     cached: perfCached,
     ...(scroll ? { offset: scroll.offset, bodyRows: scroll.bodyRows } : {}),
-    ...weighTree(tree),
+    ...weight,
   })
   perfFlush?.()
 }
@@ -9162,9 +9742,19 @@ async function skillPaneNote($: EngineInterface, name: string): Promise<string |
   if (!PANEL_SKILL.test(name)) return undefined
   const source = await sourceNow($)
   if (!source) return undefined
-  await refresh($)
+  await refreshForCommand($)
   await openPane($, source)
   return panelSkillNote(source.name)
+}
+
+/**
+ * La relecture d'une commande du panneau, attendue `COMMAND_REFRESH_MS` au plus (#539) : le 12/11, `/roadmap:roadmap-panel`
+ * attendait une liste des sessions qui ne revenait pas, et la commande arrivait au modèle comme du texte. La
+ * relecture finit en fond ; le panneau se dessine avec ce qu'il sait.
+ */
+const COMMAND_REFRESH_MS = 2_000
+async function refreshForCommand($: EngineInterface): Promise<void> {
+  await withinMs($, refresh($).catch(() => undefined), COMMAND_REFRESH_MS)
 }
 
 /** La réponse de /roadmap (et de /roadmap:roadmap-panel tapée seule) : le panneau ouvert, ou ce qui manque. */
@@ -9175,7 +9765,7 @@ async function openCommand($: EngineInterface): Promise<{ text: string }> {
       text: `Aucune roadmap pour ce projet (${await $.session.root()}) : la skill onboarding la pose dans le dépôt, ou ajoute un ROADMAP.md à sa racine, ou un .claude/roadmap.json qui dit où elle est.`,
     }
   }
-  await refresh($)
+  await refreshForCommand($)
   await openPane($, source)
 
   return { text: `Panneau de la roadmap ${source.name} ouvert.` }
@@ -9204,19 +9794,32 @@ export const register: Register = (on, options) => {
   rememberLoadedOptions(options as Readonly<Record<string, unknown>>)
   // Un chargement neuf relit tout : les données gardées en mémoire viennent du chargement d'avant.
   paneCache = undefined
+  parsedFiles.clear()
   knownSource = undefined
   taskSourceMemo = undefined
   missingSearch = undefined
   sourceTitle = undefined
   // La session et le droit de lister les sessions se relisent aussi (un refus de la liste ne survit pas).
   ownSession = null
+  gardienTold = false
   bandAsked = undefined
   listDenied = false
   lastListRows = []
+  listCall = undefined
+  sessionDeadline = undefined
+  paneRetryMs = 0
+  paneRetryArmed = false
+  listReadTick = -1
+  titlesMemo = undefined
+  liveMemo = undefined
+  maestrosMemo = undefined
   listDeniedTick = 0
   ownRunningEvent = undefined
   pollTick = 0
   polling = false
+  clockTicks = 0
+  pollStartedTick = 0
+  pollGen++
   queuePids = { key: '', at: 0 }
   queueSeen = ''
   queueWanted = false
@@ -9340,7 +9943,7 @@ export const register: Register = (on, options) => {
       // Le panneau toujours ouvert (#117) s'ouvre s'il manque, rechargement compris (une option allumée
       // dans le volet Réglages doit se voir) ; déjà là, il reste tel quel, le volet Réglages devant.
       if (settings.autoOpen && !paneOpen) void openPane($, source)
-      $.clock.every(TICK_MS, () => void poll($))
+      $.clock.every(TICK_MS, () => onTick($))
       void summarize($, source)
       void judgeRecos($, source)
       void matchSessions($, source)
@@ -9431,6 +10034,8 @@ export const register: Register = (on, options) => {
   // Par prompt.submit, que sec-default laisse aux plugins installés (#116), le contexte joint à la descente.
   on('prompt.submit', async ($, e, next) => {
     if (await inCloud($)) return next(e)
+    // #522 : un message est un geste : la minuterie lente reprend son pas de 3 s.
+    gesture($)
     // La fenêtre de tour s'ouvre avec le message (#523) ; le turn.start qui suit ne la rouvre pas.
     openTurnWindow()
     submitOpened = true
@@ -9442,6 +10047,8 @@ export const register: Register = (on, options) => {
       backgroundShells = shellsAfterNotice(backgroundShells, e.text ?? '')
       noticeTurn = true
     }
+    // #510 (C4) : le message de départ d'une carte cloud prend sa ligne.
+    if (typeof e.text === 'string' && e.text.includes('started your suggested background task')) await takeStartedLines($, e.text).catch(() => undefined)
     const texts: string[] = []
     // L'heure locale du Mac à chaque message, projet à roadmap ou non (#331) : « hier » se mesure contre elle.
     try {
@@ -9492,6 +10099,8 @@ export const register: Register = (on, options) => {
     // Les réglages complets : quand aucun démarrage ne les a donnés à cette conversation, ou quand ils
     // ont changé depuis le dernier bloc donné (#119 : le volet, la skill, une autre session du projet) ;
     // le nouveau bloc remplace alors l'ancien. Puis le rappel du mode ADHD.
+    // Maestro ou non, tel que ce message l'a déjà lu : les findings ne relisent pas la fiche pour le savoir (#531).
+    let maestroSeen = false
     try {
       const current = await readSessionPrefs($)
       const block = sessionPrefsText(current.prefs, current.error, current.project, current.design, current.roadmap)
@@ -9502,6 +10111,7 @@ export const register: Register = (on, options) => {
       }
       // Chez Maestro (#133) : au réveil, le rappel du réveil ; aux tours de la personne, l'en-tête stable.
       const maestro = await maestroHere($)
+      maestroSeen = maestro
       const wake = maestro && wakeTurn(e.text)
       const reminder = wake
         ? maestroWakeReminder(await read($, pendingAsksAtom))
@@ -9519,6 +10129,13 @@ export const register: Register = (on, options) => {
       if (proposals !== undefined) texts.push(proposals)
     } catch {
       // store illisible : elles attendent le message suivant
+    }
+    // Un Maestro relit les findings de ses sessions tant qu'ils n'ont pas leur sort (#531).
+    try {
+      const findings = maestroSeen ? await receiveFindings($) : undefined
+      if (findings !== undefined) texts.push(findings)
+    } catch {
+      // store ou registre illisible : ils attendent le message suivant
     }
     // Un parent reçoit les nouvelles de ses enfants qui coincent ou sont à archiver (#84).
     try {
@@ -9638,7 +10255,8 @@ export const register: Register = (on, options) => {
       }
       // #324 : chez Maestro, la carte ne part que s'il reste une place ; sinon elle entre dans la file.
       const cardTitle = (e as { title?: unknown }).title
-      const dose = mission || fromAgent(e) || typeof cardTitle !== 'string' ? {} : await doseLaunch($, sessionTitleId(cardTitle), { title: cardTitle, card: e as Record<string, unknown> })
+      // #510 : une mission tient sa place comme une session cloud (cible cloud : ni le Mac ni sa charge).
+      const dose = fromAgent(e) || typeof cardTitle !== 'string' ? {} : await doseLaunch($, sessionTitleId(cardTitle), { title: cardTitle, card: e as Record<string, unknown> })
       if (dose.refusal !== undefined) {
         titleRefused = true
         return { deny: dose.refusal }
@@ -9676,6 +10294,11 @@ export const register: Register = (on, options) => {
     // #512 : la carte de mission posée prend sa ligne, et sa réponse dit à Claude si elle est prise.
     if (mission && ran.deny === undefined && !ran.isError && !cardNotProposed(ran)) {
       return { ...ran, text: `${ran.text ?? ''}\n\n${await takeMissionOnCard($, mission)}`.trim() }
+    }
+    // #528 : la première carte de tâche d'un Maestro de code sans gardien lui rappelle de poser celle du gardien.
+    if (byModel && id !== undefined && ran.deny === undefined && !gardienTold) {
+      const note = await gardienCardNote($, title as string).catch(() => undefined)
+      if (note !== undefined) return { ...ran, context: [...(ran.context ?? []), note] }
     }
     return ran
   })
@@ -9849,14 +10472,16 @@ export const register: Register = (on, options) => {
     try {
       const kinds = await deliveredBy($, e.command)
       if (kinds.length === 0) return ran
-      const maestro = await maestroHere($)
+      // #528 : le gardien livre à la place de Maestro : mêmes rappels, plus sa ligne à Maestro.
+      const gardienFor = await gardienHere($)
+      const maestro = gardienFor !== undefined || (await maestroHere($))
       delivered = { kinds: [...new Set([...delivered.kinds, ...kinds])], maestro: maestro || delivered.maestro }
       // #366 : chez Maestro, la tâche publiée passe en test ; le rappel porte sa carte.
       const said = (ran.result as { stdout?: unknown } | undefined)?.stdout
       const test = maestro && kinds.includes('publication')
         ? await testAfterRelease($, e.command, typeof said === 'string' ? said : (ran.text ?? '')).catch(() => undefined)
         : undefined
-      return { ...ran, context: [...(ran.context ?? []), deliveryReminder(kinds, maestro, false, closingTurn.wake), ...(test ? [test] : [])] }
+      return { ...ran, context: [...(ran.context ?? []), deliveryReminder(kinds, maestro, false, closingTurn.wake), ...(test ? [test] : []), ...(gardienFor !== undefined ? [gardienDeliveryNote(gardienFor)] : [])] }
     } catch {
       return ran
     }
@@ -9945,6 +10570,8 @@ export const register: Register = (on, options) => {
     if (!e.isAborted) await saveEndFiche($, e.answer)
     // Et ce qu'elle va lancer, pour la fiche d'une tâche à lancer (#341).
     if (!e.isAborted) await savePitches($, e.answer)
+    // Et la fiche de « why N », pour la carte « Pourquoi » de la fiche de sa tâche (#535).
+    if (!e.isAborted) await saveWhys($, e.answer)
     // Et ce que la session a changé, zone par zone (#269).
     if (!e.isAborted) await saveChanges($, e.answer)
     // Et le temps du tour (#314), même interrompu.
@@ -9953,6 +10580,8 @@ export const register: Register = (on, options) => {
     // #384 : le même réveil dit à Maestro et noté (verdict, attente de fond) ; calculé une fois, pour une session qui a un parent.
     let wakeOnce: Promise<ChildWake> | undefined
     const wakeNow = () => (wakeOnce ??= (async () => childWake({ ...wakeBox, answer: e.answer, background: await inFlight($, e.turnId) }))())
+    // Ses findings sont gardés pour Maestro avant qu'il soit réveillé (#531).
+    if (!e.isAborted) await keepFindings($, e.answer)
     if (!e.isAborted) await tellMaestro($, wakeNow)
     try {
       const wake = e.isAborted ? undefined : (await ownParent($)) ? await wakeNow() : undefined
@@ -10015,6 +10644,7 @@ export const register: Register = (on, options) => {
       // La conclusion se garde ici (#307) : si ce Stop relance Claude, la fin de tour ne lira que la réponse relancée.
       await saveEndFiche($, e.last_assistant_message)
       await savePitches($, e.last_assistant_message)
+      await saveWhys($, e.last_assistant_message)
       const result = await next(e)
       // La fin du tour relit git une fois (#523), comme turn.complete.
       forgetGit()
@@ -10023,10 +10653,12 @@ export const register: Register = (on, options) => {
     })
   }
 
-  // Une zone de clic démolie par l'app, même après son « prêt » (#152) : nouvelles clés, de nouvelles instances.
+  // Une zone de clic démolie par l'app, même après son « prêt » (#152) : sa seule région change de clé (#516),
+  // une nouvelle instance ; les autres zones restent montées. Un seul redessin par rafale de pannes.
   on('ui.fault', async ($, e, next) => {
     if (await inCloud($)) return next(e)
-    if (zoneFault(zones, e.module, e.element, await read($, zoneGenAtom))) await update($, zoneGenAtom, v => v + 1)
+    const [gen, now] = await Promise.all([read($, zoneGenAtom), $.clock.now()])
+    if (zoneFault(zones, e.module, e.element, gen, now) && zoneRedraw(zones)) $.ui.invalidate('ui.render')
     return next(e)
   })
 
@@ -10035,7 +10667,7 @@ export const register: Register = (on, options) => {
     if (await inCloud($)) return next(e)
     const ready = (e.data as { ready?: unknown } | null)?.ready
     if (typeof ready === 'string') {
-      zoneReady(zones, ready, await $.clock.now())
+      zoneReady(zones, ready, await $.clock.now(), e.element)
       return {}
     }
     if (e.element.startsWith(PRESS)) {
@@ -10070,6 +10702,7 @@ export const register: Register = (on, options) => {
   on('ui.press', async ($, e, next) => {
     if (await inCloud($)) return next(e)
     if (e.plugin === 'roadmap') {
+      gesture($)
       notePress(e.element)
       await closeReopenAsk($, e.element)
     }
@@ -10087,6 +10720,7 @@ export const register: Register = (on, options) => {
   // Un choix dans un menu du panneau (« Ranger », « Qui ») : le menu quitte le focus au dessin suivant (#228).
   on('ui.select', { component: 'Pane', requestId: PANE }, async ($, e, next) => {
     if (await inCloud($)) return next(e)
+    gesture($)
     const result = await next(e)
     if (e.surface === 'desktop') retireActedFocus(focusHeld, e.element)
     return result
@@ -10200,8 +10834,8 @@ export const register: Register = (on, options) => {
     try {
       const source = knownSource === undefined ? await sourceNow($) : (knownSource ?? undefined)
       if (!source) return next(e)
-      const version = await Promise.all([read($, stampAtom), read($, titlesVersionAtom), read($, themeStampAtom), read($, retryAtom), read($, liveVersionAtom)])
-      const data = await paneData($, source, version.join('|'))
+      const [stamp, titlesVersion, themeStamp, retry, liveVersion] = await Promise.all([read($, stampAtom), read($, titlesVersionAtom), read($, themeStampAtom), read($, retryAtom), read($, liveVersionAtom)])
+      const data = await paneData($, source, [stamp, titlesVersion, themeStamp, retry].join('|'), liveVersion)
       if (typeof data.open === 'string') return next(e)
       const tasks = [...data.open, ...data.done]
       const now = await $.clock.now()
@@ -10290,7 +10924,7 @@ export const register: Register = (on, options) => {
       })
       return maestroBandTree($, e, band, found.data.palette, views, infos, {
         open: t => void (t.cloud ? openTaskFiche($, src, t.id) : t.sessionId ? openSession($, { sessionId: t.sessionId, startedAt: now, title: t.label }) : undefined),
-        archive: t => void (t.cloud ? archiveCloudRow($, t) : archiveBandSession($, t, now)),
+        archive: t => void archiveTaskRow($, t, now),
         compact: () => void compactFromBand($),
         openStuck: s => void (s.open ? openSession($, { sessionId: s.open, startedAt: now, title: `Maestro ${s.project}` }) : undefined),
       }, now, contexts, await read($, zoneGenAtom), stuck)
@@ -10311,6 +10945,7 @@ export const register: Register = (on, options) => {
     perfLoaded = t0
     perfCached = false
     let tree: RenderElement
+    let weighed: ReturnType<typeof weighTree>
     try {
       paneStage = ''
       const drawing = drawPane($, e)
@@ -10322,14 +10957,16 @@ export const register: Register = (on, options) => {
       }
       tree = retireFocusKeys(drawn, focusHeld.epochs)
       // Trop gros pour l'app (#414) : le même dessin, avec moins de lignes.
-      let weight = weighTree(tree).kb
+      weighed = weighTree(tree)
+      let weight = weighed.kb
       for (let again = 0; again < 2 && weight > PANE_TARGET_KB && paneLineCap > LINE_CAP_MIN; again++) {
         paneLineCap = Math.max(LINE_CAP_MIN, Math.floor(((paneLineCap * PANE_TARGET_KB) / weight) * 0.9))
         paneStage = 'un dessin plus léger'
         const lighter = await withinMs($, drawPane($, e), PANE_DEADLINE_MS)
         if (lighter === 'late') return paneFailure($, e, { kind: 'timeout', message: '', stage: paneStage })
         tree = retireFocusKeys(lighter, focusHeld.epochs)
-        weight = weighTree(tree).kb
+        weighed = weighTree(tree)
+        weight = weighed.kb
       }
       if (weight > PANE_MAX_KB) {
         return paneFailure($, e, { kind: 'heavy', message: `${Math.round(weight)} Ko dessinés, ${PANE_MAX_KB} au plus. Filtre par axe (un clic sur sa ligne, ou « Maestro <axe> »), puis « Réessayer ».` })
@@ -10337,7 +10974,8 @@ export const register: Register = (on, options) => {
     } catch (err) {
       return paneFailure($, e, { kind: 'throw', message: err instanceof Error ? err.message : String(err), ...(err instanceof Error && err.stack ? { stack: err.stack } : {}) })
     }
-    notePerf(t0, tree, e.props.scroll)
+    notePerf(t0, weighed, e.props.scroll)
+    paneRetryMs = 0
     void notePaneDraw($, 'drawnAt')
     return tree
   }).catch(async ($, e, next) => paneFailure($, e, { kind: next.error.kind, message: next.error.message ?? '' }))
@@ -10349,6 +10987,8 @@ export const register: Register = (on, options) => {
     const t0 = tick()
     const result = await next(e)
     noteScroll(e, result, tick() - t0)
+    // #522 : un défilement de la personne est un geste.
+    if (e.origin.kind === 'person') gesture($)
     if (e.origin.kind === 'person' && result.deny === undefined) retireHeldFocus(focusHeld, e.by)
     return result
   })
@@ -10390,7 +11030,7 @@ async function learnCreated($: EngineInterface, ids: readonly string[], now: num
     missing.map(async id => {
       createdTriedAt.set(id, now)
       try {
-        const ran = await $.tool.call({ tool: GET_SESSION_TOOL, session_id: id })
+        const ran = await sessionCall($, { tool: GET_SESSION_TOOL, session_id: id })
         if (ran.deny !== undefined || ran.isError) return
         const created = (JSON.parse(ran.text ?? '{}') as { createdAt?: unknown }).createdAt
         const at = typeof created === 'number' ? created : typeof created === 'string' ? Date.parse(created) : Number.NaN
@@ -10410,7 +11050,7 @@ async function retryCreated($: EngineInterface): Promise<void> {
   const pending = [...createdTriedAt.keys()].filter(id => !createdBySession.has(id))
   if (pending.length === 0) return
   await learnCreated($, pending, await $.clock.now())
-  if (pending.some(id => createdBySession.has(id))) await update($, liveVersionAtom, v => v + 1)
+  if (pending.some(id => createdBySession.has(id))) await stepUpdate($, 'liveVersion', v => v + 1)
 }
 
 /**
@@ -10440,9 +11080,10 @@ async function maestroTasksOf(
   const rows = [...sessionRows, ...[...startedBySession].map(([sessionId, startedBy]) => ({ sessionId, startedBy }))]
   const found = maestroTaskSessions({ tasks, me, rows, tracked })
   const now = await $.clock.now()
-  await learnCreated($, found.map(f => f.sessionId), now)
+  // #539 : les fiches des filles et l'avance de leurs branches ne retiennent pas le dessin ; il se refait à leur arrivée.
+  await behindDraw($, learnCreated($, found.map(f => f.sessionId), now))
   // #191 : l'avance de leur branche, et la question qui attend, séparent « à fusionner » de « t'attend ».
-  await refreshAhead($, source, found.map(f => f.sessionId), now)
+  await behindDraw($, refreshAhead($, source, found.map(f => f.sessionId), now))
   // #384 : une seule lecture de la note par session ; sa question et son verdict disent l'état à l'arrêt.
   const notes = new Map(await Promise.all(found.map(async f => [f.sessionId, await readSteps($, f.sessionId)] as const)))
   const asking = new Map([...notes].map(([sid, n]) => [sid, n?.question !== undefined] as const))
@@ -10499,8 +11140,9 @@ async function projectBandOthers($: EngineInterface, data: NonNullable<Awaited<R
   // #445 : une PR « #N » ne prend pas la place d'une session locale qui tient déjà sa tâche sans ligne prise.
   const cloud = (await cloudTasksOf($, data.source, data.tasks, data.short, now)).filter(c => !mine.has(c.id) && !found.some(f => f.task.id === c.id && !f.task.branche))
   if (found.length === 0) return cloud
-  await learnCreated($, found.map(f => f.sessionId), now)
-  await refreshAhead($, data.source, found.map(f => f.sessionId), now)
+  // #539 : comme chez Maestro, les fiches et l'avance des branches ne retiennent pas le dessin.
+  await behindDraw($, learnCreated($, found.map(f => f.sessionId), now))
+  await behindDraw($, refreshAhead($, data.source, found.map(f => f.sessionId), now))
   const notes = await Promise.all(found.map(f => readSteps($, f.sessionId)))
   const merged = await mergedIdsOf($, data.source, found.map(f => f.task))
   const local: BrandTask[] = found.map(({ task: t, entry, inferred, sessionId: sid }, i) => {
@@ -10528,8 +11170,8 @@ async function projectBandOthers($: EngineInterface, data: NonNullable<Awaited<R
 async function brandData($: EngineInterface) {
   const source = knownSource === undefined ? await sourceNow($) : (knownSource ?? undefined)
   if (!source) return undefined
-  const version = await Promise.all([read($, stampAtom), read($, titlesVersionAtom), read($, themeStampAtom), read($, retryAtom), read($, liveVersionAtom)])
-  const data = await paneData($, source, version.join('|'))
+  const [stamp, titlesVersion, themeStamp, retry, liveVersion] = await Promise.all([read($, stampAtom), read($, titlesVersionAtom), read($, themeStampAtom), read($, retryAtom), read($, liveVersionAtom)])
+  const data = await paneData($, source, [stamp, titlesVersion, themeStamp, retry].join('|'), liveVersion)
   if (typeof data.open === 'string') return undefined
   const tasks = [...data.open, ...data.done]
   const own = await readOwnSession($)
@@ -11045,7 +11687,7 @@ function maestroBandTree(
         <Svg source={archiveIcon(hex, 14)} alt="Archiver la session" width={SIZE.icon.sm} height={SIZE.icon.sm} />
         {/* Une ligne de haut : sous une icône, une zone sans hauteur ne reçoit aucun clic (2026-10-23). */}
         <Box position="absolute" top={0} left={0} right={0}>
-          <Client key={`${pressKey(id)}-g${zoneGen}`} module="./press-hit.tsx" props={{ id }} width="100%" height={1} />
+          <Client key={zoneKeyOf(zones, pressKey(id), zoneGen)} module="./press-hit.tsx" props={{ id }} width="100%" height={1} />
         </Box>
       </Box>
     )
@@ -11062,7 +11704,7 @@ function maestroBandTree(
       <Box key={id} flexDirection="row" alignItems="center">
         <Svg source={pill.source} alt="Compacter" width={pill.width} height={pill.height} />
         <Box position="absolute" top={0} left={0} right={0}>
-          <Client key={`${pressKey(id)}-g${zoneGen}`} module="./press-hit.tsx" props={{ id }} width="100%" height={1} />
+          <Client key={zoneKeyOf(zones, pressKey(id), zoneGen)} module="./press-hit.tsx" props={{ id }} width="100%" height={1} />
         </Box>
       </Box>
     )
@@ -11148,7 +11790,7 @@ function maestroBandTree(
       <Box key={id} minWidth={0}>
         {name}
         <Box position="absolute" top={0} left={0} right={0}>
-          <Client key={`${pressKey(id)}-g${zoneGen}`} module="./press-hit.tsx" props={{ id }} width="100%" height={1} />
+          <Client key={zoneKeyOf(zones, pressKey(id), zoneGen)} module="./press-hit.tsx" props={{ id }} width="100%" height={1} />
         </Box>
       </Box>
     )
@@ -11202,7 +11844,7 @@ function maestroBandTree(
         </Box>
         {zone && Client && (
           <Box position="absolute" top={0} left={0} right={0}>
-            <Client key={`${pressKey(id)}-g${zoneGen}`} module="./press-hit.tsx" props={{ id }} width="100%" height={1} />
+            <Client key={zoneKeyOf(zones, pressKey(id), zoneGen)} module="./press-hit.tsx" props={{ id }} width="100%" height={1} />
           </Box>
         )}
       </Box>
@@ -11453,6 +12095,8 @@ async function refreshAhead($: EngineInterface, source: Source, sessionIds: read
       if (!sid) return
       const known = aheadBySession.get(sid)
       if (known && now - known.at < FOCUS_FACTS_MS) return
+      // #539 : la relecture en vol compte pour faite ; un dessin qui n'attend pas ne la relance pas.
+      aheadBySession.set(sid, { at: now, ahead: known?.ahead })
       let ahead: number | undefined
       try {
         const row = sessionRows.find(r => typeof r === 'object' && r !== null && (r as { sessionId?: unknown }).sessionId === sid) as { branch?: unknown } | undefined
@@ -11934,7 +12578,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   ])
   const {
     axis: axisRaw, attend: attendRaw, who: whoRaw = 'all', moreFilters = false, showDone: doneChosen, groupBy, selected, openGroups, closedGroups, moreGroups,
-    launchNote, launched, openNote, openAt = '', conclusionOpen, missionOpen = '', draftOpen = '', draftFolded = '', reopenAsk = '', cancelAsk = '', closeKind = 'abandon', cancelNote = '',
+    launchNote, launched, openNote, openAt = '', conclusionOpen, missionOpen = '', whyAsked = '', draftOpen = '', draftFolded = '', reopenAsk = '', cancelAsk = '', closeKind = 'abandon', cancelNote = '',
     editing: editingKey = '', editOpen = '', editSaved = '', editNote = '', editField = '', foldedCards = [], openedCards = [], gaugePick = '', briefOpen = '',
   } = view
   // Le plafond de lignes (#414) repart quand les filtres changent : une vue plus légère reprend ses lignes.
@@ -11945,7 +12589,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   }
   const lineCap = paneLineCap
   paneStage = 'les fichiers de la roadmap'
-  const data = await paneData($, source, [stamp, titlesVersion, themeStamp, retry, liveVersion].join('|'))
+  const data = await paneData($, source, [stamp, titlesVersion, themeStamp, retry].join('|'), liveVersion)
   const { palette, bilan: bilanData, titles, live: liveEntries, ignored } = data
   const [versionKept, ownVersion] = await Promise.all([read($, versionNoteAtom), loadSessionVersion($)])
   // La note du dernier « Rafraîchir » vit dans l'état de la session, qui survit au rechargement du module :
@@ -11957,7 +12601,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   // La clé d'une zone de clic, à la génération courante ; son premier dessin compte pour la relance.
   const zoneKey = (base: string, module: string) => {
     zoneDrawn(zones, module, now)
-    return `${base}-g${zoneGen}`
+    return zoneKeyOf(zones, base, zoneGen)
   }
 
   const paths = files(source)
@@ -11994,7 +12638,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   // sans attendre le premier message ; ensuite, les hooks le tiennent.
   if (titleId !== undefined && !parentAsked) {
     parentAsked = true
-    await parentIsMaestro($)
+    await behindDraw($, parentIsMaestro($))
   }
   const ownBrand = await sessionBrandOf($)
   const isMaestro = isMaestroSession(own.title) || (own.id !== undefined && (await loadMaestros($))[own.id] !== undefined)
@@ -12068,7 +12712,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   // Avec « Fusionner » ajoutée dans un dossier à git (#191).
   const rowSteps = new Map<string, ChildStatus>()
   paneStage = 'les étapes des sessions'
-  await refreshAhead($, source, openTasks.map(t => liveOf(t)?.entry.sessionId), now)
+  await behindDraw($, refreshAhead($, source, openTasks.map(t => liveOf(t)?.entry.sessionId), now))
   await Promise.all(
     openTasks.map(async t => {
       const sid = liveOf(t)?.entry.sessionId
@@ -12257,6 +12901,12 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
       </Box>
     )
   }
+  // #498 : une pastille qui passe à la ligne entre deux mots au-delà de `max` px (la pastille Remote Control).
+  const wrappedPill = (o: { text: string; bg: string; fg: string; mark?: PillMark; weight?: 500 | 600 }, max: number) => {
+    if (!Svg) return drawnPill(o)
+    const pill = wrapPillIcon(o, max)
+    return <Svg source={pill.source} alt={o.text} width={pill.width} height={pill.height} />
+  }
   // Une pastille du détail : grise (date relative), rouge (retard, horloge) ou violette (tiers, personne).
   const tag = (text: string, kind: 'soft' | 'late' | 'soon' | 'wait') =>
     kind === 'late'
@@ -12308,7 +12958,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     const stored = (key: string) => storeGet($, key).catch(() => undefined)
     // #387 : toutes les lectures de la fiche partent ensemble. L'une après l'autre, chacune un aller-retour, le
     // dessin d'une close dépassait son temps sur un Mac chargé (« Le dessin attendait encore : la fiche de la tâche »).
-    const [facts, docs, mockupPage, attachments, deliverables, unsentNow, fileHits, recapRaw, changesRaw, timingRaw, pitchRaw] = await Promise.all([
+    const [facts, docs, mockupPage, attachments, deliverables, unsentNow, fileHits, recapRaw, changesRaw, timingRaw, pitchRaw, whyRaw] = await Promise.all([
       inSession && ownBrand ? readFocusFacts($, ownBrand.data.source, current, ownBrand.data.own.id, now) : undefined,
       readFicheDocs($, ficheSource, current, now),
       readMockupPage($, ficheSource, current, now),
@@ -12322,6 +12972,8 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
       current.done && current.id ? stored(timingKey(ficheSource.name, current.id)) : undefined,
       // Ce qu'on va lancer (#341, C1) : les phrases simples qu'a écrites Claude en ouvrant la ligne.
       !current.done && current.id ? stored(pitchKey(ficheSource.name, current.id)) : undefined,
+      // L'explication de « why N » (#535), gardée à sa première demande : ouverte ou close.
+      current.id ? stored(whyKey(ficheSource.name, current.id)) : undefined,
     ])
     const draft = await readDraft($, deliverables)
     // #435 : une tâche cloud prise a sa PR ; la fiche porte son lien, au motif de « Ouvrir la session ».
@@ -12333,6 +12985,9 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     const storedChanges = current.id ? changesOf(changesRaw) : undefined
     const storedTiming = current.done && current.id ? timingOf(timingRaw) : undefined
     const storedPitch = !current.done && current.id ? pitchOf(pitchRaw) : undefined
+    // #535 : l'explication gardée d'une ouverte ne vaut que pour sa ligne d'alors ; une close garde la sienne.
+    const keptWhy = current.id ? whyOf(whyRaw) : undefined
+    const storedWhy = keptWhy && (current.done || whyFresh(keptWhy, current.label)) ? keptWhy : undefined
     // Le morceau « livré : … » de la note d'une close va dans la carte Fin (#150) ; le reste de la note reste.
     const noteShown = current.done ? livreOfNote(current.note).rest : current.note
     // #278 : un projet en `mission: puces` montre le libellé un fait par puce (maquette A de Caroline) ;
@@ -12628,6 +13283,56 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     const duration = storedTiming ? durationView(storedTiming, current.fait) : undefined
     const finValue = (r: { tone?: string }, md: string) =>
       r.tone === 'ok' ? <Text wrap="wrap" color={palette.ok}>{md}</Text> : <Markdown text={codeKeptWhole(md)} {...(r.tone === 'dim' ? { dimColor: true } : {})} />
+    // #535 (maquette A, version finale choisie par BBR le 2026-11-12) : l'explication de « why N » gardée, en carte
+    // « Pourquoi » repliée d'office sous le carton : l'accroche, puis les quatre cases, l'étiquette au-dessus de son
+    // texte (la colonne d'étiquettes coupe à 7 signes). Sans elle, sur une ouverte : le lien « Expliquer cette
+    // tâche », qui envoie « why N » par la boîte d'envoi (le hook prompt.submit y joint le contexte, #140) ; une
+    // ligne réécrite depuis propose de la refaire. Une close sans explication ne montre rien.
+    const askWhy = () => {
+      queueSubmit($, `why ${current.id}`)
+      // La note redessine le panneau, et ce dessin envoie le message.
+      void setView($, () => ({ whyAsked: current.key }))
+    }
+    const whyBox = (): RenderElement | null => {
+      if (storedWhy)
+        return card(
+          'why',
+          'Pourquoi',
+          `expliquée le ${shortDate(todayOf(storedWhy.at))}`,
+          <Box key="why-body" flexDirection="column" gap={SPACE.tight}>
+            <Text key="why-hook" size="footnote" weight="semibold" wrap="wrap">{storedWhy.hook}</Text>
+            {storedWhy.rows.map(r => (
+              <Box key={`why:${keyPart(r.name)}`} flexDirection="column">
+                {ruleAbove}
+                <Text size="caption" color={palette.text2}>{r.name}</Text>
+                <Text size="footnote" wrap="wrap">{r.text}</Text>
+              </Box>
+            ))}
+          </Box>,
+        )
+      if (current.done || !current.id) return null
+      if (whyAsked === current.key)
+        return (
+          <Box key="why-sent" paddingX={SPACE.indent}>
+            <Box paddingX="sm" minWidth={0}><Text size="caption" color={palette.text2} wrap="wrap">{`« why ${current.id} » envoyé : la carte arrive ici dès que Claude a répondu.`}</Text></Box>
+          </Box>
+        )
+      const label = keptWhy ? "La ligne a changé · Refaire l'explication" : 'Expliquer cette tâche'
+      return (
+        <Box key="why-ask-row" paddingX={SPACE.indent}>
+          <Box paddingX="sm" flexDirection="row" minWidth={0}>
+            {graphic && Client ? (
+              <Box key="hit:why-ask" hover={{ backgroundColor: palette.hover }}>
+                <Text size="footnote" color={palette.liveOn}>{label}</Text>
+                {hit('why-ask', askWhy, 1)}
+              </Box>
+            ) : (
+              <Button key="why-ask" plain dimColor label={label} onPress={askWhy} />
+            )}
+          </Box>
+        </Box>
+      )
+    }
     const finBox = (): RenderElement | null => {
       if (!fin) return null
       const opened = conclusionOpen === current.key
@@ -13098,7 +13803,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
             ? 'wait'
             : 'live'
           : undefined
-    if (!inSession) await refreshAhead($, source, [stepsSession], now)
+    if (!inSession) await behindDraw($, refreshAhead($, source, [stepsSession], now))
     const aheadNow = stepsSession ? aheadBySession.get(stepsSession)?.ahead : undefined
     // #468 (BBR) : à l'arrêt, sans question, sa PR fusionnée et sa ligne ouverte : « fusionnée · suite de main ».
     const ficheMerged = waitState === 'wait' && !current.done && stepsNote?.question === undefined && current.id !== undefined && (await mergedIdsOf($, source, [current])).has(current.id)
@@ -14918,6 +15623,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
             <Box paddingX="sm" minWidth={0}><Text size="caption" color={palette.blockOn} wrap="wrap">{stepsQuestion}</Text></Box>
           </Box>
         )}
+        {whyBox()}
         {finBox()}
         {changesBox()}
         {layout.cards.filter(c => c !== 'details').map(c => cards[c]())}
@@ -14964,7 +15670,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   // qu'une autre session travaille (#187), en lignes ; la liste de la roadmap dessous ne les redit pas.
   // Toutes rangées par premier lancement (#195) : celles des autres sessions aussi, par la date de la leur.
   // #385 : partout, la date de chaque session en cours dit depuis quand elle tourne (une lecture par session).
-  await learnCreated($, openTasks.filter(isLive).map(t => liveOf(t)?.entry.sessionId).filter((id): id is string => id !== undefined), now)
+  await behindDraw($, learnCreated($, openTasks.filter(isLive).map(t => liveOf(t)?.entry.sessionId).filter((id): id is string => id !== undefined), now))
   // Une session close et pas archivée y garde sa ligne, « Completed », comme dans la bande (#218).
   // #408 : les lignes `lieu:cloud` prises entrent dans le bloc avec l'état de leur PR (aucune session locale à suivre).
   // #445 : et celles qu'une session cloud lancée par la carte native travaille, sans ligne prise, par le « #N » de leur PR.
@@ -15591,10 +16297,10 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
             <Box flexDirection="row" alignItems="center" flexShrink={0}>
               {strut(SIZE.strut.row)}
               <Svg source={archiveIcon(palette.text2, 16)} alt="Archiver la session" width={SIZE.icon.md} height={SIZE.icon.md} />
-              {hit(archiveId, () => void (block.cloud ? archiveCloudRow($, block) : archiveBandSession($, block, now)), 1)}
+              {hit(archiveId, () => void archiveTaskRow($, block, now), 1)}
             </Box>
           ) : (
-            <Button key={archiveId} plain dimColor label="Archiver" onPress={() => void (block.cloud ? archiveCloudRow($, block) : archiveBandSession($, block, now))} />
+            <Button key={archiveId} plain dimColor label="Archiver" onPress={() => void archiveTaskRow($, block, now)} />
           )
         ) : (
           since !== '' && [
@@ -16721,9 +17427,87 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   // Les zones fixes : le compte des faites, les axes, le chevron du bloc « En cours », la roue, les
   // pastilles cliquables et « Plus › » (#115), les boutons de session des faites.
   const showLive = blockTasks.length > 0 || (dose?.queued ?? 0) > 0
+  // #522 (maquette A, BBR le 2026-11-12) : la bande « Finies » en tête de la liste : les sessions du projet dont la ligne est
+  // close et qui restent ouvertes (`finishedOpenSessions`), leur compte, « Archiver les N » (le clic de BBR, jamais seul) ;
+  // le chevron déplie une ligne par session. Chez Maestro, ses sessions restent dans son bloc « En session ».
+  const finishedSkip = new Set<string>([...archivedSessionIds, ...blockTasks.map(t => liveOf(t)?.entry.sessionId).filter((s): s is string => s !== undefined)])
+  const finished = finishedOpenSessions(listedSessionRows(), {
+    done: new Set(doneTasks.map(t => t.id).filter((x): x is string => x !== undefined)),
+    open: new Set(openTasks.map(t => t.id).filter((x): x is string => x !== undefined)),
+    match: source.match,
+    ...(ownSession?.id ? { selfId: ownSession.id } : {}),
+    skip: finishedSkip,
+  })
+  const finishedRefused = finished.filter(s => finishedBatch?.refused.has(s.sessionId))
+  const finishedAfter = finishedBatch !== undefined && finishedRefused.length > 0
+  const toggleFinished = () => {
+    finishedFolded = !finishedFolded
+    void update($, liveVersionAtom, v => v + 1)
+  }
+  const finishedRow = (s: FinishedSession) => {
+    const task = doneTasks.find(t => t.id === s.id)
+    const refused = finishedBatch?.refused.has(s.sessionId) === true
+    return (
+      <Box key={`finished:${s.sessionId}`} flexDirection="row" alignItems="center" gap={SPACE.row} paddingX={SPACE.indent} hover={{ backgroundColor: palette.hover }}>
+        {strut(SIZE.strut.row)}
+        {Svg && task && <Svg source={squareRowIcon(axisHex(task.axis))} alt={`axe ${task.axis}`} width={SIZE.icon.sm} height={SIZE.icon.sm} />}
+        <Box flexShrink={0}>
+          <Text size="caption" tabular color={palette.text2}>{`#${s.id}`}</Text>
+        </Box>
+        <Box flexShrink={1} minWidth={0}>
+          <Text size="footnote" wrap="truncate-end">{task ? short(task).titre : s.title.replace(/^#\d+\s*·\s*/, '')}</Text>
+        </Box>
+        <Box flexGrow={1} />
+        <Box flexShrink={0}>
+          {refused ? <Text size="caption" color={palette.lateOn}>refusée par l'app</Text> : <Text size="caption" tabular color={palette.text2}>{closedWhen(task?.fait, today)}</Text>}
+        </Box>
+      </Box>
+    )
+  }
+  const finishedCount = finishedAfter ? finishedRefused.length : finished.length
+  const finishedBand =
+    finished.length > 0 ? (
+      <Box key="finished-band" flexDirection="column" borderStyle="round" borderColor={palette.border} paddingX={0} paddingY={0}>
+        <Box flexDirection="row" alignItems="center" gap={SPACE.row} paddingX={SPACE.indent} paddingY={SPACE.tight}>
+          {Svg && (
+            <Box flexDirection="row" alignItems="center" flexShrink={0}>
+              <Svg source={archiveIcon(palette.finished, 16)} alt="Sessions finies" width={SIZE.icon.md} height={SIZE.icon.md} />
+            </Box>
+          )}
+          <Box key="hit:finished-fold" flexDirection="row" alignItems="center" gap={SPACE.row} flexShrink={1} minWidth={0} hover={{ backgroundColor: palette.hover }}>
+            <Box flexShrink={0}>{drawnPill({ text: String(finishedCount), bg: palette.finishedTint, fg: palette.finishedOn, weight: TEXT.weight.soft })}</Box>
+            <Box flexShrink={1} minWidth={0}>
+              <Text color={palette.text} wrap="truncate-end">{finishedLabel(finishedCount, finishedAfter)}</Text>
+            </Box>
+            {graphic && Svg ? (
+              <Box flexDirection="row" alignItems="center" flexShrink={0}>
+                <Svg source={rowMark(chevronIcon(palette.text3, !finishedFolded, 14), 14, 24)} alt={finishedFolded ? 'déplier' : 'replier'} width={SIZE.icon.sm} height={24} />
+              </Box>
+            ) : (
+              <Button key="finished-fold" plain dimColor label={finishedFolded ? '›' : '⌄'} onPress={toggleFinished} />
+            )}
+            {graphic && hit('finished-fold', toggleFinished)}
+          </Box>
+          <Box flexGrow={1} />
+          <Box flexShrink={0}>
+            {finishedAfter ? (
+              <Text size="footnote" color={palette.text2}>{`${finishedBatch?.archived ?? 0} archivée${(finishedBatch?.archived ?? 0) > 1 ? 's' : ''}`}</Text>
+            ) : (
+              <Button key="finished-archive" label={finished.length === 1 ? 'Archiver' : `Archiver les ${finished.length}`} onPress={() => void archiveFinished($, finished)} />
+            )}
+          </Box>
+        </Box>
+        {!finishedFolded && Svg && <Svg source={ruleIcon(palette.border, wide)} alt="séparateur" height={1} />}
+        {!finishedFolded && (
+          <Box key="finished-rows" flexDirection="column" paddingY={SPACE.tight}>
+            {finished.map(finishedRow)}
+          </Box>
+        )}
+      </Box>
+    ) : null
   // Pliée tant que Bertrand ne l'a pas dépliée (#251, #381).
   const liveOpen = !(view.liveFolded ?? true)
-  const fixedZones = 1 + axes.length + (showLive ? 2 : 0) + 1 + todo.filter(todoClickable).length + (todoBlock && (secondary.length > 0 || people.length > 0) ? 1 : 0) + 2 * sessionRows.size
+  const fixedZones = 1 + axes.length + (showLive ? 2 : 0) + (finishedBand ? 1 : 0) + 1 + todo.filter(todoClickable).length + (todoBlock && (secondary.length > 0 || people.length > 0) ? 1 : 0) + 2 * sessionRows.size
   if (graphic) {
     // Les lignes dépliées de « En cours » d'abord (#160, #381) : leur numéro ouvre leur session.
     const shownWithSession = [...(liveOpen ? blockTasks : []), ...drawnTasks.filter(t => t.id && (liveOf(t) ?? doneSessionOf(t)))]
@@ -16746,11 +17530,12 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   // #390 (maquette C2) : sous Remote Control, la pastille et, en mode Auto, « Passer en bypass », sur une rangée au-dessus
   // du cadre « En session » ; sans Remote Control, rien. #464 (maquette B) : hors mode Auto, seulement quand une tâche
   // de ce Maestro attend en file (`doseView.queue` : ni reprise, ni départ en vol) ; #472 : « Tape go dans Maestro »,
-  // son numéro (ou leur nombre) et la cause.
+  // son numéro (ou leur nombre) et la cause ; #498 : le libellé de l'aperçu validé, son nom compris, qui passe à la
+  // ligne dans la pastille quand il dépasse le panneau.
   const remoteShown = maestroBrand ? remotePill({ ...(await readRemoteFacts($, now)), waiting: dose?.queue ?? [] }) : undefined
   const remoteRow = remoteShown ? (
     <Box key="remote-row" flexDirection="row" alignItems="center" gap={SPACE.row} flexWrap="wrap" paddingX={SPACE.indent}>
-      {drawnPill({ text: remoteShown.text, bg: palette.blockTint, fg: palette.blockOn, mark: 'warn', weight: TEXT.weight.soft, size: fitPillSize({ text: remoteShown.text, bg: palette.blockTint, fg: palette.blockOn, mark: 'warn', weight: TEXT.weight.soft }, PANE_PILL_MAX) })}
+      {wrappedPill({ text: remoteShown.text, bg: palette.blockTint, fg: palette.blockOn, mark: 'warn', weight: TEXT.weight.soft }, PANE_PILL_MAX)}
       {remoteShown.bypass && <Button key="remote-bypass" label="Passer en bypass" onPress={() => void switchMaestroToBypass($)} />}
     </Box>
   ) : null
@@ -16896,6 +17681,8 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
       {remoteRow}
 
       {liveBlock}
+
+      {finishedBand}
 
       {todoBlock}
 
