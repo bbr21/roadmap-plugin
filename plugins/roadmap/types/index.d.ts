@@ -88,6 +88,8 @@ export type View = {
   openAt: string
   /** Sections dépliées en entier, au-delà du budget de lignes d'un dessin ; vidé à chaque changement de filtre. */
   moreGroups: string[]
+  /** Les jours que montre la vue Faites (#497) : 14 d'office, 14 de plus par « Voir 14 jours de plus » ; absent, 14. */
+  doneDays?: number
   /** Sections repliées sous un filtre, où tout est déplié par défaut ; vidé à chaque changement de filtre. */
   closedGroups: string[]
   /** Tâche close dont la confirmation « désarchiver la session » est ouverte (clé `taskKey`, #302) ; vide ou absente sinon. */
@@ -164,4 +166,5 @@ export type LiveEntry = {
 export type ShortTitle = { titre: string; sujet: string }
 
 /** Le résultat du bouton Rafraîchir (#138) : `foot` pour le pied du panneau, `text` et `gesture` pour l'encart quand une version retarde ; `action`, le geste que porte le panneau (#162). */
-export type VersionCheck = { state: 'none' | 'checking' | 'ok' | 'late' | 'unknown'; text: string; gesture?: string; action?: 'reload' | 'open-plugins'; foot: string }
+/** `session` : la version du module qui a écrit la note ; le pied ne montre que celle du module chargé (#505). */
+export type VersionCheck = { state: 'none' | 'checking' | 'ok' | 'late' | 'unknown'; text: string; gesture?: string; action?: 'reload' | 'open-plugins' | 'update-local'; foot: string; session?: string }

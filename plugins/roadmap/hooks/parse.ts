@@ -4159,6 +4159,39 @@ export function doneTree(
 }
 
 /**
+ * La fenêtre de la vue Faites (#497, maquette A choisie par BBR le 2026-11-12) : les 14 derniers jours qui ont
+ * des faites, puis 14 de plus à chaque « Voir 14 jours de plus ». Sans elle, chaque jour gardait sa tête de
+ * section, même repliée : ~1,1 Ko par jour, 252 Ko pour 600 faites sur 100 jours (AAFES : 243 Ko, panne).
+ */
+export const DONE_DAYS_STEP = 14
+export const DONE_DAYS_MIN = 3
+
+/**
+ * Les jours que montre la fenêtre : ceux choisis (`chosen`, 14 d'office), resserrés comme le plafond de lignes
+ * quand un dessin pèse trop, 3 au moins : le plafond retire aussi des têtes de jour. Un plafond à peine
+ * resserré (trois quarts et plus de `fullCap`) ne touche qu'aux lignes : quelques lignes de moins suffisent
+ * à un dessin qui frôle le seuil, sans annoncer un dessin allégé à chaque ouverture.
+ */
+export function doneWindowDays(chosen: number | undefined, lineCap: number, fullCap: number): number {
+  const days = Math.max(DONE_DAYS_STEP, Math.floor(chosen ?? DONE_DAYS_STEP))
+  if (lineCap * 4 >= fullCap * 3) return days
+  return Math.max(DONE_DAYS_MIN, Math.floor((days * lineCap) / fullCap))
+}
+
+/**
+ * Les faites des `days` jours les plus récents qui en ont (jour de `fait:`), et ce qui reste : son compte et
+ * ses jours. Une faite sans date ne paraît qu'une fois tous les jours datés dans la fenêtre.
+ */
+export function doneWindow<T extends { fait?: string }>(done: readonly T[], days: number): { shown: T[]; rest: number; restDays: number } {
+  const dayOf = (t: T) => (t.fait ?? '').slice(0, 10)
+  const dated = [...new Set(done.map(dayOf).filter(d => d !== ''))].sort((a, b) => b.localeCompare(a))
+  const kept = new Set(dated.slice(0, Math.max(0, days)))
+  const all = dated.length <= kept.size
+  const shown = done.filter(t => (dayOf(t) === '' ? all : kept.has(dayOf(t))))
+  return { shown, rest: done.length - shown.length, restDays: dated.length - kept.size }
+}
+
+/**
  * Le texte de droite d'une faite (#203) : ce que le rangement ne dit pas. Par jour, `fallback` (son
  * sujet), ou le jour de sa clôture quand ce n'est pas celui de sa section ; par sujet, ce jour.
  */
@@ -13026,6 +13059,20 @@ export function versionNote(v: { session: string; app?: string; published?: stri
     }
   }
   return { state: 'ok', text: `roadmap ${v.session}, à jour`, foot: `roadmap ${v.session} · à jour` }
+}
+
+/** La note de version que garde l'état de la session (`versionNote`) : `session`, la version du module qui l'a écrite. */
+export type FootNote = { state: 'none' | 'checking' | 'ok' | 'late' | 'unknown'; text: string; gesture?: string; action?: VersionNote['action']; foot: string; session?: string }
+
+/**
+ * Ce que montrent le pied du panneau et son encart (#505) : la note du dernier « Rafraîchir » si ce module l'a
+ * écrite, sinon la version du module chargé. La note vit dans l'état de la session, qui survit au rechargement du
+ * module (synchro de l'app, /reload-plugins) : sans ce garde, la 0.284.0 dessinait « roadmap 0.282.0 · à jour ».
+ * Une note sans `session` (écrite avant #505) ne se montre pas.
+ */
+export function footNote(note: FootNote, own: string): FootNote {
+  if (note.state !== 'none' && note.session === own) return note
+  return { state: 'none', text: '', foot: `roadmap ${own}` }
 }
 
 /** Une note d'attente du panneau (#169, maquette A) : la bande bleue, un titre en gras et son explication. */

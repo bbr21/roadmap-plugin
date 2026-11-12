@@ -270,7 +270,10 @@ import {
   taskBrandOf,
   DONE_TREE_PREFIX,
   doneRight,
+  DONE_DAYS_STEP,
   doneTree,
+  doneWindow,
+  doneWindowDays,
   dueInk,
   groupingOf,
   nextGrouping,
@@ -752,6 +755,7 @@ import {
   RELOAD_COMMAND,
   reloadOutcome,
   versionNote,
+  footNote,
   LOCAL_UPDATE_REQUEST,
   localAppVersion,
   STORE_MARKETS,
@@ -4273,16 +4277,16 @@ async function refreshAll($: EngineInterface): Promise<void> {
   refreshing = true
   try {
     const session = await loadSessionVersion($)
-    await update($, versionNoteAtom, () => ({ state: 'checking', text: '', foot: `roadmap ${session} · vérification…` }))
+    await update($, versionNoteAtom, () => ({ state: 'checking', text: '', foot: `roadmap ${session} · vérification…`, session }))
     paneCache = undefined
     await update($, retryAtom, v => v + 1)
     await refresh($)
     const [app, published] = await Promise.all([appVersion($), publishedVersion($)])
     const note = versionNote({ session, app: app.version, source: app.source, published: published.version, publishedError: published.error })
-    await update($, versionNoteAtom, () => note)
+    await update($, versionNoteAtom, () => ({ ...note, session }))
   } catch {
     const session = await loadSessionVersion($)
-    await update($, versionNoteAtom, () => ({ state: 'unknown', text: '', foot: `roadmap ${session} · non vérifiée` }))
+    await update($, versionNoteAtom, () => ({ state: 'unknown', text: '', foot: `roadmap ${session} · non vérifiée`, session }))
   } finally {
     refreshing = false
   }
@@ -8309,7 +8313,8 @@ function pressAxis($: EngineInterface, a: string): void {
 
 /** `shown` : la vue Done telle que dessinée, d'office comprise (#202) : le clic en sort. */
 function pressDone($: EngineInterface, shown: boolean): void {
-  void setView($, () => ({ showDone: !shown, axis: 'all', attend: 'all', closedGroups: [], moreGroups: [] }))
+  // La fenêtre des faites repart à 14 jours (#497).
+  void setView($, () => ({ showDone: !shown, axis: 'all', attend: 'all', closedGroups: [], moreGroups: [], doneDays: DONE_DAYS_STEP }))
 }
 
 // --- Mesures du rendu (2026-10-23) ------------------------------------------------------------
@@ -11381,7 +11386,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     editing: editingKey = '', editOpen = '', editSaved = '', editNote = '', editField = '', foldedCards = [], openedCards = [], gaugePick = '', briefOpen = '',
   } = view
   // Le plafond de lignes (#414) repart quand les filtres changent : une vue plus légère reprend ses lignes.
-  const capView = [view.axis, view.attend, view.who ?? 'all', view.showDone, view.groupBy, search.trim() !== '', view.selected ?? ''].join('|')
+  const capView = [view.axis, view.attend, view.who ?? 'all', view.showDone, view.groupBy, search.trim() !== '', view.selected ?? '', view.doneDays ?? DONE_DAYS_STEP].join('|')
   if (capView !== paneCapView) {
     paneCapView = capView
     paneLineCap = LINE_CAP
@@ -11390,7 +11395,10 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   paneStage = 'les fichiers de la roadmap'
   const data = await paneData($, source, [stamp, titlesVersion, themeStamp, retry, liveVersion].join('|'))
   const { palette, bilan: bilanData, titles, live: liveEntries, ignored } = data
-  const [versionCheck, ownVersion] = await Promise.all([read($, versionNoteAtom), loadSessionVersion($)])
+  const [versionKept, ownVersion] = await Promise.all([read($, versionNoteAtom), loadSessionVersion($)])
+  // La note du dernier « Rafraîchir » vit dans l'état de la session, qui survit au rechargement du module :
+  // seule celle que ce module a écrite se montre, sinon le pied dit la version du module chargé (#505).
+  const versionCheck = footNote(versionKept, ownVersion)
   const searching = search.trim() !== ''
   const today = todayOf(now)
   const me = source.me
@@ -11724,7 +11732,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
       )}
       <Box flexShrink={1} minWidth={0} marginLeft={1}>
         <Text size="caption" tabular color={versionCheck.state === 'late' ? palette.blockOn : palette.text3} wrap="truncate-end">
-          {versionCheck.state === 'none' ? `roadmap ${ownVersion}` : versionCheck.foot}
+          {versionCheck.foot}
         </Text>
       </Box>
     </Box>
@@ -15714,9 +15722,15 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
 
   // Toutes les faites de l'axe, la plus récente d'abord ; rangées par jour ou par sujet.
   // Une close du bloc « En cours » (#218) n'y est pas redite : sa ligne est dans le bloc.
-  const doneShown = doneTasks
+  const doneAll = doneTasks
     .filter(t => matches(t, axis, 'all', me) && !inBlock(t))
     .sort((a, b) => (b.fait ?? '').localeCompare(a.fait ?? ''))
+  // La fenêtre des faites (#497, maquette A) : les 14 derniers jours, 14 de plus par clic ; un dessin trop
+  // lourd la resserre avec le plafond de lignes, au lieu de tomber en panne : chaque jour a sa tête.
+  const doneDaysChosen = Math.max(DONE_DAYS_STEP, view.doneDays ?? DONE_DAYS_STEP)
+  const doneDaysShown = doneWindowDays(doneDaysChosen, lineCap, LINE_CAP)
+  const doneWin = showDone && !searching ? doneWindow(doneAll, doneDaysShown) : { shown: doneAll, rest: 0, restDays: 0 }
+  const doneShown = doneWin.shown
   // Les faites en familles (#203, maquette C) : une sous-tâche sous sa mère, par jour ou par sujet ;
   // à droite, ce que le rangement ne dit pas (le sujet, ou le jour de clôture).
   const doneMode = by === 'subject' ? 'subject' : 'day'
@@ -16406,6 +16420,26 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
       )}
 
       <Box flexDirection="column">{groups.map(g => (g.band ? bandRow(idOf(g), g.name, g.band.count, g.band.lead, g.band.axis, g.band.look) : section(idOf(g), g.name, g.tasks, rowsOf.get(idOf(g)) ?? 0, g.lead, g.mark, g.block, g.bare, g.focus)))}</Box>
+
+      {/* La fin de la fenêtre des faites (#497, maquette A) : ce qui reste, et 14 jours de plus ; un dessin
+          allégé par le plafond le dit dessous, au lieu de la carte d'erreur. */}
+      {doneWin.rest > 0 && (
+        <Box key="done-older" flexDirection="column" gap="xs">
+          {Svg && <Svg source={ruleIcon(palette.border, wide)} alt="séparateur" height={1} />}
+          <Box flexDirection="row" alignItems="center" justifyContent="space-between" gap={SPACE.row} paddingX={SPACE.indent}>
+            <Text color={palette.text2} wrap="wrap">{`Plus anciennes : ${doneWin.rest} faite${doneWin.rest > 1 ? 's' : ''} sur ${doneWin.restDays} jour${doneWin.restDays > 1 ? 's' : ''}`}</Text>
+            <Box key="done-older-row" flexShrink={0} paddingX={SPACE.indent} alignItems="center" backgroundColor={palette.btn} hover={{ backgroundColor: palette.btnHover }}>
+              {corners(RADIUS.control, palette.bg)}
+              <Button key="done-older" plain label={`Voir ${DONE_DAYS_STEP} jours de plus`} onPress={() => void setView($, () => ({ doneDays: doneDaysChosen + DONE_DAYS_STEP }))} />
+            </Box>
+          </Box>
+          {doneDaysShown < doneDaysChosen && (
+            <Box paddingX={SPACE.indent}>
+              <Text size="caption" color={palette.text3} wrap="wrap">{`Dessin allégé pour l'app : ${doneDaysShown} jours au lieu de ${doneDaysChosen}.`}</Text>
+            </Box>
+          )}
+        </Box>
+      )}
 
       {/* Le pied (#138, puis #162, maquette B) : la roue des réglages, la version de cette session, et à droite
           « Rafraîchir », qui relit tout et la compare à la publiée, « Recharger » quand seule la session retarde, ou « Mettre à jour » quand l'app retarde sur le catalogue local (#178). */}
