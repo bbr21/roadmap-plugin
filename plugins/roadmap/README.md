@@ -800,6 +800,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.291.2 (2026-11-12)** : roadmap : la bande Finies au gabarit des lignes (#544), la carte posée par Claude reçoit un contexte pour la mission et le cloud (#510)
 - **0.291.1 (2026-11-12)** : roadmap : une mission lancée en direct prend sa ligne à l'appel (#510)
 - **0.291.0 (2026-11-12)** : roadmap : le mode prio passe devant tout (pause des autres sessions, file des tests en voie 0), suite de main fichier par fichier (#536)
 - **0.290.0 (2026-11-12)** : un tronc local et cloud, gardien des fusions, findings, bloc fixe du compte rendu, why dans la fiche, tâches mises à jour avant d'en créer ; perf : minuterie, dessins, zones de clic, panneau sans la liste (#510 #528 #531 #537 #535 #538 #522 #519 #520 #516 #539 #530 #527 #498)

@@ -110,7 +110,7 @@ import {
 } from './icons'
 import { MIX, PX, RADIUS, SIZE, SPACE, TEXT } from './tokens'
 import { BEFORE_KEY, CLOSED_KEY, NATIVE_KEY, beforeMap, closedKeys, drawWrittenMessage, keepBefore, keepClosed, keepNative, nativeKeys, splitWritten, testSessions, withoutClosed, withoutNative, writtenCards, type WrittenLine, type WrittenStart, type WrittenWho } from './cartes'
-import { CARD_DEADLINE_MS, CARD_LATE_WHY, cardTargetOf, dismissCall, panelChoiceIn, proposalIdIn, recoTargetRefusal, type Place } from './depart'
+import { CARD_DEADLINE_MS, CARD_LATE_WHY, cardTargetOf, dismissCall, panelChoiceIn, proposalIdIn, recoTargetRefusal, withFreshBackground, type Place } from './depart'
 import { CLOUD_WATCH_EVERY_MS, CLOUD_WATCH_KEY, MISSION_START_KEY, addMissionStart, addWatch, startedAtCall, briefBranchOf, dueWatches, lineVerdict, missionStartList, pushedSince, remoteHeads, startedCardTitles, watchList, type CloudWatch } from './prise-cloud'
 import { CLOUD_WAKE_EVERY_MS, CLOUD_WAKE_KEY, CLOUD_WAKE_PR_FIELDS, cloudWakeDue, cloudWakes, wakePrompt, wakeStateOf, type WakeRole } from './reveil-cloud'
 import { gardienCardRefusal, gardienDeliveryNote, gardienOf, gardienReminder, goesToGardien, isGardienSession, withoutGardien } from './gardien'
@@ -3138,6 +3138,17 @@ const pendingMissions = new Map<string, string>()
  */
 const pendingClouds = new Map<string, string>()
 
+/** Le contexte d'une carte de mission (#476), le même pour la carte du panneau et celle que pose Claude (#510). */
+function missionCardBackground(source: Source, id: string): string {
+  return `Mission #${id} du projet ${source.name}, lancée en cloud depuis le panneau roadmap (#476) : sans branche ni PR ; Maestro la suit par mission_cloud.py retour puis fin (skill roadmap:maestro, § 2 ter).`
+}
+
+/** Le contexte d'une carte cloud de code (#416), le même pour la carte du panneau et celle que pose Claude (#510). */
+function cloudCardBackground(source: Source, id: string): string {
+  const depot = projectSettings(source).depot
+  return `Tâche #${id} du projet ${source.name}, lancée en cloud depuis le panneau roadmap (#416) : la session tourne dans une VM claude.ai où le plugin ne sert que par ses skills (#457) ; ses règles sont dans docs/session-cloud.md du dépôt${depot ? ` ${depot}` : ''}, Maestro la suit par sa PR sur le Mac.`
+}
+
 /**
  * #515 : la carte que pose Claude pour un ▶ Cloud refusé au panneau : cible cloud, contexte neuf, et le brief que le
  * panneau a écrit (`cloudBriefText`) à la place du sien. Rien en attente pour ce #N : `undefined`, la carte suit le
@@ -3153,7 +3164,8 @@ async function cloudCardOf($: EngineInterface, e: unknown): Promise<{ card: Reco
     if (!source) return undefined
     const key = pendingKey(source, id)
     const prompt = pendingClouds.get(key)
-    return prompt === undefined ? undefined : { card: { ...card, target: 'cloud', context: 'fresh', prompt }, key }
+    // #510 (cas AAFES #653) : en contexte neuf, l'app exige un contexte de 80 caractères : celui du panneau si Claude n'en a pas donné.
+    return prompt === undefined ? undefined : { card: withFreshBackground({ ...card, target: 'cloud', context: 'fresh', prompt }, cloudCardBackground(source, id)), key }
   } catch {
     return undefined
   }
@@ -3182,7 +3194,8 @@ async function missionCardOf($: EngineInterface, e: unknown): Promise<{ card: Re
     if (!task || isRoutine(task) || taskWork(source, task) !== 'projet') return undefined
     const prompt = pending ?? (isMissionPrompt(card.prompt, id) ? card.prompt : missionCardPrompt({ project: source.name, id, label: task.label }))
     const { permission_mode: _, ...rest } = card
-    return { card: { ...rest, target: 'cloud', context: 'fresh', prompt }, source, id }
+    // #510 (cas AAFES #653) : en contexte neuf, l'app exige un contexte de 80 caractères : celui du panneau si Claude n'en a pas donné.
+    return { card: withFreshBackground({ ...rest, target: 'cloud', context: 'fresh', prompt }, missionCardBackground(source, id)), source, id }
   } catch {
     return undefined
   }
@@ -6559,7 +6572,7 @@ function cloudLayer($: EngineInterface, source: Source, task: Task, title: strin
           target: 'cloud',
           title,
           prompt: missionCardPrompt({ project: source.name, id, label: task.label }),
-          background: `Mission #${id} du projet ${source.name}, lancée en cloud depuis le panneau roadmap (#476) : sans branche ni PR ; Maestro la suit par mission_cloud.py retour puis fin (skill roadmap:maestro, § 2 ter).`,
+          background: missionCardBackground(source, id),
         }
         return { card, optional: [] }
       }
@@ -6583,7 +6596,7 @@ function cloudLayer($: EngineInterface, source: Source, task: Task, title: strin
         target: 'cloud',
         title,
         prompt,
-        background: `Tâche #${id} du projet ${source.name}, lancée en cloud depuis le panneau roadmap (#416) : la session tourne dans une VM claude.ai où le plugin ne sert que par ses skills (#457) ; ses règles sont dans docs/session-cloud.md du dépôt${depot ? ` ${depot}` : ''}, Maestro la suit par sa PR sur le Mac.`,
+        background: cloudCardBackground(source, id),
       }
       return { card, optional: [] }
     },
@@ -17527,13 +17540,15 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     const refused = finishedBatch?.refused.has(s.sessionId) === true
     return (
       <Box key={`finished:${s.sessionId}`} flexDirection="row" alignItems="center" gap={SPACE.row} paddingX={SPACE.indent} hover={{ backgroundColor: palette.hover }}>
-        {strut(SIZE.strut.row)}
-        {Svg && task && <Svg source={squareRowIcon(axisHex(task.axis))} alt={`axe ${task.axis}`} width={SIZE.icon.sm} height={SIZE.icon.sm} />}
+        {/* #544 (écarts de la preuve #541) : au gabarit d'une ligne de la liste, comme la maquette A. La marque du carré se
+            pose à sa taille (16 × 24 : rétrécie à 14 × 14, son carré de 10 px tombait à 6) et tient la hauteur de la ligne ;
+            sans tâche lue, la cale la tient. Le numéro en `caption` comme `taskNumber`, le titre à la taille du corps. */}
+        {Svg && task ? <Svg source={squareRowIcon(axisHex(task.axis))} alt={`axe ${task.axis}`} width={MARK_SQUARE_PX} height={SIZE.strut.row} /> : strut(SIZE.strut.row)}
         <Box flexShrink={0}>
           <Text size="caption" tabular color={palette.text2}>{`#${s.id}`}</Text>
         </Box>
         <Box flexShrink={1} minWidth={0}>
-          <Text size="footnote" wrap="truncate-end">{task ? short(task).titre : s.title.replace(/^#\d+\s*·\s*/, '')}</Text>
+          <Text wrap="truncate-end">{task ? short(task).titre : s.title.replace(/^#\d+\s*·\s*/, '')}</Text>
         </Box>
         <Box flexGrow={1} />
         <Box flexShrink={0}>

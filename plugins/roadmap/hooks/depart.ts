@@ -60,3 +60,15 @@ export function proposalIdIn(text: string | undefined): string | undefined {
 export function dismissCall(id: string, target: Place): { tool: string; task_id: string; reason: string } {
   return { tool: DISMISS_TASK_TOOL, task_id: id, reason: `remplacée par un départ ${target === 'cloud' ? 'en cloud' : 'en local'} (#465)` }
 }
+
+/** Le plus court contexte qu'accepte l'app pour une carte `context: "fresh"` (refus : « needs a background of at least 80 characters »). */
+export const FRESH_BACKGROUND_MIN = 80
+
+/**
+ * Une carte que le plugin met en contexte neuf garde le contexte de Claude s'il est assez long, sinon prend `fallback`
+ * (#510, cas AAFES #653 : la carte de mission posée par Claude sans contexte, refusée par l'app).
+ */
+export function withFreshBackground(card: Record<string, unknown>, fallback: string): Record<string, unknown> {
+  const own = typeof card.background === 'string' ? card.background.trim() : ''
+  return own.length >= FRESH_BACKGROUND_MIN ? card : { ...card, background: fallback }
+}
