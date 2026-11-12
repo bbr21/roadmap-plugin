@@ -566,6 +566,9 @@ import {
   cloudDepotRefusal,
   cloudStartRefusal,
   takeCloudLine,
+  takeMissionLine,
+  missionCardPrompt,
+  MISSION_QUI,
   judgedReco,
   parseRecoCache,
   parseRecoVerdicts,
@@ -5459,7 +5462,11 @@ const recoReading = new Set<string>()
 const launchTargets = new Map<string, Sessions>()
 
 /** Le cloud est ouvert au projet (`sessions: "cloud"` de roadmap.json, #408) : sans lui, ni reco ni interrupteur. */
-const cloudOpen = (source: Source): boolean => projectSettings(source).sessions === 'cloud'
+const cloudOpen = (source: Source): boolean => {
+  const settings = projectSettings(source)
+  // #476 : un projet en missions a son Cloud ouvert sans `sessions: "cloud"`.
+  return settings.sessions === 'cloud' || settings.cloud === 'missions'
+}
 
 const recoSig = (task: Task) => `${task.label}|${task.spec ?? ''}|${task.fiche ?? ''}`
 
@@ -5645,9 +5652,35 @@ async function launchCloud($: EngineInterface, source: Source, task: Task, short
     })
     if (startRefused !== undefined) return void (await fail(startRefused))
     const { open } = files(source)
-    const branch = cloudBranchOf(task)
-    const taken = takeCloudLine(await $.fs.read(open), task.id, branch, todayOf(await $.clock.now()))
+    // #476 : un projet `cloud: missions` lance une mission : ni branche, ni PR, ni brief de dépôt.
+    const mission = projectSettings(source).cloud === 'missions'
+    const branch = mission ? MISSION_QUI : cloudBranchOf(task)
+    const take = (text: string, today: string) => (mission ? takeMissionLine(text, task.id!, today) : takeCloudLine(text, task.id!, branch, today))
+    const taken = take(await $.fs.read(open), todayOf(await $.clock.now()))
     if ('error' in taken) return void (await fail(taken.error))
+    if (mission) {
+      const missionCard = {
+        tool: START_SESSION_TOOL,
+        initiation: 'own_initiative',
+        context: 'fresh',
+        target: 'cloud',
+        title: brief.title,
+        prompt: missionCardPrompt({ project: source.name, id: task.id, label: task.label }),
+        background: `Mission #${task.id} du projet ${source.name}, lancée en cloud depuis le panneau roadmap (#476) : sans branche ni PR ; Maestro la suit par mission_cloud.py retour puis fin (skill roadmap:maestro, § 2 ter).`,
+      }
+      await dismissPendingCard($, source, task.id, 'cloud')
+      const sent = await withinMs($, proposeCard($, missionCard, []), CARD_DEADLINE_MS)
+      if (sent === 'late') return void (await fail(CARD_LATE_WHY))
+      if (sent.ran.deny !== undefined || sent.ran.isError) return void (await fail(cardReason(sent.ran)))
+      if (cardNotProposed(sent.ran)) return void (await fail(remoteCardWhy()))
+      const done = await writeRoadmapFiles($, source, ['ROADMAP.md'], `roadmap: take mission (#${task.id}, cloud)`, async () => {
+        const again = take(await $.fs.read(open), todayOf(await $.clock.now()))
+        return 'error' in again ? again : { 'ROADMAP.md': again.text }
+      })
+      const missionNote = 'error' in done ? `Carte de mission posée, mais la ligne n'est pas prise : ${done.error}` : done.note ? `Carte de mission posée ; ${done.note}` : MISSION_PROPOSED
+      await setView($, () => ({ launchNote: missionNote }))
+      return
+    }
     // #449 : les réglages de session de la personne partent avec le brief ; une panne de lecture n'empêche pas le lancement.
     const read = await readSessionPrefs($).catch(() => undefined)
     const prefs = read ? { prefs: read.prefs, ...(read.error !== undefined ? { prefsError: read.error } : {}) } : {}
@@ -5685,6 +5718,9 @@ async function launchCloud($: EngineInterface, source: Source, task: Task, short
 
 /** La note d'un lancement en cloud réussi : la carte attend Start, la ligne est prise et poussée. */
 const CLOUD_PROPOSED = 'Carte cloud posée : clique Start. La ligne est prise (lieu:cloud).'
+
+/** La note d'une mission cloud posée (#476) : la carte attend Start, la ligne est prise sans branche. */
+const MISSION_PROPOSED = 'Carte de mission posée : clique Start. La ligne est prise (qui:mission).'
 
 /** Le « Message additionnel » tapé dans le détail, ajouté au brief ; vidé à chaque changement de tâche. */
 let launchExtra = ''

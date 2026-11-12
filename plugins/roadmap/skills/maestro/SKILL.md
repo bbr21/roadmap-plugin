@@ -290,6 +290,9 @@ the launching session, which must be open in that repository (its GitHub origin 
 Maestro in its code clone); elsewhere, launch from a session opened there. `brief_cloud.py` points the session to that repository's own `docs/session-cloud.md` for its tests,
 and `suivi_cloud.py` reads the PRs there (`gh -R`).
 
+A project without code whose git only launches missions says `"cloud": "missions"` instead (#476): this section does
+not apply to it, § 2 ter does.
+
 When the project's `.claude/roadmap.json` says `"sessions": "cloud"`, the cloud is open to the project: a task
 session may run in a claude.ai cloud VM instead of the Mac (step 3 of `docs/plans/spike-decharger-mac/plan-cloud.md`
 in the Roadmap repository). The plugin does not load there: the session gets its rules from the repository
@@ -421,6 +424,12 @@ otherwise they see an empty worktree.
   what never to touch, and that nobody watches the run. A write a person did not ask for in words is never in it:
   their request names the change.
 - **Launch**: the card, titled `#<id> · <nom> · cloud`, with that brief; the person clicks Start, as for any card.
+- **The project's setting** (#476): such a folder declares `"cloud": "missions"` and `"depot": "<owner>/<porte>"` in
+  `.claude/roadmap.json`. Its work is then `projet` whatever `mode` says, so every Mac card goes with
+  `use_worktree: false`; the doctor asks neither `docs/session-cloud.md` nor a branch. The panel's Cloud switch is open
+  and its ▶ Cloud posts the mission card itself (the task's line as the instruction) and takes the line
+  `qui:mission | lieu:cloud`, with no `branche:`: a line held by `qui:mission` is a mission in flight, followed below.
+  When Maestro posts the card, it takes the line the same way.
 - **Follow**: the card answers only « started », with no session number. `RemoteTrigger list` then
   `python3 "<skill folder>/scripts/mission_cloud.py" retour <id>` (the list on stdin) gives the reminder and the
   session that posted it; `RemoteTrigger get_run_log` with that session, piped to `mission_cloud.py fin`, gives

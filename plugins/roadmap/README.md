@@ -763,6 +763,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.281.0 (2026-11-11)** : panneau, doctor, maestro : réglage de projet « cloud : missions » pour un dossier sans code, le bouton Cloud pose une carte de mission sans branche ni PR (#476)
 - **0.280.0 (2026-11-11)** : maestro : les missions cloud des projets sans code partent par carte de l'app, leur « Fait » remonte par le rappel « #N · retour » (mission_cloud.py carte et retour, #473)
 - **0.279.0 (2026-11-11)** : maestro : un départ suit toujours la reco, carte refusée sinon, la reco reconnaît une tâche au Mac (#465) ; panneau : la pastille dit « Tape go dans Maestro : #N … attend » (#472) ; doctor : contrôle le réglage cloud de chaque projet (#453)
 - **0.278.0 (2026-11-11)** : panneau : bloc En session, pastille Remote Control seulement quand une tâche attend en file (#464) ; tests : roadmap.test.tsx découpé en 11 fichiers par thème (#433) ; maestro : missions cloud sans dépôt par RemoteTrigger, mission_cloud.py (#467)

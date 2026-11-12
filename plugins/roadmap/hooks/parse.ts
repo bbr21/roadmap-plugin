@@ -131,6 +131,8 @@ export type Source = {
   sessions?: Sessions
   /** `depot` (#444) : le dépôt GitHub du code (`owner/repo`) quand la roadmap vit hors de lui ; sans, l'origine git du dossier. */
   depot?: string
+  /** `cloud` (#476) : `missions` fait du ▶ Cloud du panneau une carte de mission, sans branche ni PR. */
+  cloud?: CloudMode
   /** `a_preuve` (#277) : les `ref:` des coquilles dont les étapes de semaine attendent la preuve, sans report. */
   aPreuve?: string[]
   /** `axes` (#286) : la couleur et le libellé choisis pour un axe, par son slug ; sans, le rang et `axisLabel`. */
@@ -177,6 +179,9 @@ export type Travail = 'code' | 'projet'
 /** Où tourne une session de tâche (#408) : sur le Mac, ou en cloud. */
 export type Sessions = 'mac' | 'cloud'
 const SESSIONS: readonly Sessions[] = ['mac', 'cloud']
+/** Le réglage `cloud` (#476) : la seule valeur connue, `missions` ; toute autre s'ignore. */
+export type CloudMode = 'missions'
+
 /** Les valeurs de `mode` qui forcent le travail (#76, #176). */
 export type Mode = Travail
 const MODES: readonly Mode[] = ['code', 'projet']
@@ -204,6 +209,8 @@ export type ProjectSettings = {
   sessions: Sessions
   /** `depot` (#444) : le dépôt GitHub du code quand la roadmap vit hors de lui ; absent : l'origine git du dossier. */
   depot?: string
+  /** `cloud` (#476) : `missions` pour un projet dont le Cloud lance des missions (sans code) ; absent sinon. */
+  cloud?: CloudMode
   /** `a_preuve` (#277) : les coquilles dont les étapes ne passent pas seules à la semaine suivante ; aucune par défaut. */
   aPreuve: string[]
 }
@@ -228,7 +235,8 @@ export function projectSettings(source: Source): ProjectSettings {
   // les siens, le reste se déclare. Plus de `vue` (#238) : le panneau s'ouvre par sujet partout.
   const ancienProjet = source.mode === 'projet'
   return {
-    travail: source.mode ?? source.travail ?? 'code',
+    // #476 : un dossier en missions n'a pas de code, quel que soit `mode`.
+    travail: source.cloud === 'missions' ? 'projet' : source.mode ?? source.travail ?? 'code',
     requis: source.requis ?? [...(ancienProjet ? PROJECT_REQUIRED : CODE_REQUIRED)],
     // #80 : une idée du Prochain n'a ni échéance ni personne qui la tient.
     requiredOn: source.requisSur ?? (ancienProjet ? 'open' : 'launched'),
@@ -244,6 +252,7 @@ export function projectSettings(source: Source): ProjectSettings {
     sessions: source.sessions ?? 'mac', // #408
     // #444 : relu ici aussi, car une entrée de roadmap-perso.json arrive brute.
     ...(depotOf(source.depot) ? { depot: depotOf(source.depot) } : {}),
+    ...(source.cloud === 'missions' ? { cloud: 'missions' as const } : {}),
     aPreuve: source.aPreuve ?? [],
   }
 }
@@ -7285,7 +7294,7 @@ export function routineBrief(
 export function parseProjectConfig(text: string, base: string, defaults: { name: string; me: string[] }): Source | undefined {
   const data: unknown = JSON.parse(text)
   if (typeof data !== 'object' || data === null) return undefined
-  const c = data as { name?: unknown; dir?: unknown; me?: unknown; subjects?: unknown; mode?: unknown; requis?: unknown; requis_sur?: unknown; cles?: unknown; rangement?: unknown; relance?: unknown; design?: unknown; cles_visibles?: unknown; ranger_par?: unknown; regles?: unknown; ecriture?: unknown; preuves?: unknown; publier?: unknown; mission?: unknown; a_preuve?: unknown; sessions?: unknown; depot?: unknown }
+  const c = data as { name?: unknown; dir?: unknown; me?: unknown; subjects?: unknown; mode?: unknown; requis?: unknown; requis_sur?: unknown; cles?: unknown; rangement?: unknown; relance?: unknown; design?: unknown; cles_visibles?: unknown; ranger_par?: unknown; regles?: unknown; ecriture?: unknown; preuves?: unknown; publier?: unknown; mission?: unknown; a_preuve?: unknown; sessions?: unknown; depot?: unknown; cloud?: unknown }
   const dir = typeof c.dir === 'string' && c.dir !== '' ? (c.dir.startsWith('/') ? c.dir : `${base}/${c.dir}`) : base
   const strings = (v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : undefined)
   // Une valeur inconnue ou d'un mauvais type prend le défaut : le panneau s'ouvre quand même. `auto`
@@ -7352,6 +7361,7 @@ export function parseProjectConfig(text: string, base: string, defaults: { name:
     ...(c.sessions === 'cloud' && SESSIONS.includes(c.sessions) ? { sessions: c.sessions as Sessions } : {}),
     // #444 : un `owner/repo` GitHub, ou son adresse ; toute autre valeur s'ignore et le doctor la signale.
     ...(depotOf(c.depot) ? { depot: depotOf(c.depot) } : {}),
+    ...(c.cloud === 'missions' ? { cloud: 'missions' as const } : {}),
   }
 }
 
@@ -10214,18 +10224,48 @@ export function cloudBranchOf(task: Task): string {
  * absente est refusée. Rend le texte réécrit et la ligne prise.
  */
 export function takeCloudLine(text: string, id: string, branch: string, today: string): { text: string; line: string } | { error: string } {
+  return takeLine(text, id, today, fields => {
+    const held = fields.find(f => f.startsWith('branche:'))
+    if (held) return { error: `#${id} est déjà tenue par ${held.slice(8)}` }
+    return [`qui:${branch}`, `branche:${branch}`, 'lieu:cloud']
+  })
+}
+
+/** Le `qui:` d'une ligne partie en mission cloud (#476) : sans branche ni PR, Maestro la suit par `mission_cloud.py`. */
+export const MISSION_QUI = 'mission'
+
+/**
+ * La prise d'une ligne pour une mission cloud (#476), par le ▶ Cloud d'un projet `cloud: missions` : `qui:mission` et
+ * `lieu:cloud`, jamais de `branche:`, `après:-` si rien n'est dit, et la ligne monte au bas de « En cours ». Une ligne
+ * déjà tenue (`branche:`), déjà en mission, close ou absente est refusée.
+ */
+export function takeMissionLine(text: string, id: string, today: string): { text: string; line: string } | { error: string } {
+  return takeLine(text, id, today, fields => {
+    const held = fields.find(f => f.startsWith('branche:'))
+    if (held) return { error: `#${id} est déjà tenue par ${held.slice(8)}` }
+    if (fields.includes(`qui:${MISSION_QUI}`)) return { error: `#${id} est déjà partie en mission` }
+    return [`qui:${MISSION_QUI}`, 'lieu:cloud']
+  })
+}
+
+/**
+ * Le déplacement commun des prises cloud : trouve la ligne ouverte `id`, laisse `claim` la refuser ou rendre les champs
+ * `qui:`, `branche:`, `lieu:` à poser (les anciens `qui:` et `lieu:` partent), ajoute `ouvert:` et `après:-` s'ils
+ * manquent, et monte la ligne au bas de « En cours ».
+ */
+function takeLine(text: string, id: string, today: string, claim: (fields: string[]) => string[] | { error: string }): { text: string; line: string } | { error: string } {
   const lines = text.split('\n')
   const at = lines.findIndex(l => /^- \[ \] /.test(l) && new RegExp(`\\| id:${id}( |\\|)`).test(l.slice(l.lastIndexOf('`[')) + ' '))
   if (at < 0) return { error: `#${id} introuvable dans la roadmap` }
   const raw = lines[at]!
   const cut = raw.lastIndexOf('`[')
   const fields = raw.slice(cut + 2, raw.endsWith(']`') ? -2 : undefined).split('|').map(f => f.trim())
-  const held = fields.find(f => f.startsWith('branche:'))
-  if (held) return { error: `#${id} est déjà tenue par ${held.slice(8)}` }
+  const claimed = claim(fields)
+  if (!Array.isArray(claimed)) return claimed
   const kept = fields.filter(f => !/^(qui|lieu):/.test(f))
   if (!kept.some(f => f.startsWith('ouvert:'))) kept.push(`ouvert:${today}`)
   if (!kept.some(f => f.startsWith('après:'))) kept.push('après:-')
-  kept.push(`qui:${branch}`, `branche:${branch}`, 'lieu:cloud')
+  kept.push(...claimed)
   const line = `${raw.slice(0, cut)}\`[${kept.join(' | ')}]\``
   lines.splice(at, 1)
   const head = lines.findIndex(l => /^## En cours\s*$/.test(l))
@@ -10239,6 +10279,23 @@ export function takeCloudLine(text: string, id: string, branch: string, today: s
   while (last > head && lines[last]!.trim() === '') last--
   lines.splice(last + 1, 0, ...(last === head ? ['', line] : [line]))
   return { text: lines.join('\n'), line }
+}
+
+/** Le délai du rappel « #N · retour » d'une mission (#476), en minutes : le même que `RAPPEL_MINUTES` de `mission_cloud.py`. */
+const MISSION_REMINDER_MINUTES = 1440
+
+/** La phrase de fin d'une consigne de mission (#476), celle de `FIN_CONSIGNE` de `mission_cloud.py`. */
+const MISSION_END = '\n\nCe run n\'est pas surveillé : ne pose aucune question. Ta dernière ligne, seule, est exactement « Fait : … » (ce qui est fait, en une phrase) ou « Échec : … » (pourquoi, et ce qui n\'a pas été écrit).'
+
+/**
+ * La consigne d'une carte de mission cloud (#476), port de `consigne_carte` de `mission_cloud.py` : le rappel
+ * « #N · retour » qui porte le numéro de session, la consigne tirée de la ligne (libellé aplati : accents graves en
+ * apostrophes, blancs en un espace), puis la phrase de fin.
+ */
+export function missionCardPrompt(o: { project: string; id: string; label: string }): string {
+  const reminder = `Avant tout, pose ton rappel de retour : appelle l'outil \`send_later\` du serveur claude-code-remote (charge-le par ToolSearch s'il est différé) avec name « #${o.id} · retour », delay_minutes ${MISSION_REMINDER_MINUTES} et message « Retour de la mission #${o.id} : rien à faire, termine. ». Il porte le numéro de ta session : c'est par lui que Maestro relit ta fin. Le dépôt cloné ne sert pas : ne lis aucun de ses fichiers, n'y écris rien.`
+  const label = o.label.replace(/`/g, "'").replace(/\s+/g, ' ').trim()
+  return `${reminder}\n\nMission #${o.id} du projet ${o.project} : ${label}. Fais exactement ce que dit cette ligne, rien d'autre : une écriture qu'elle ne nomme pas ne se fait pas.${MISSION_END}`
 }
 
 /**
