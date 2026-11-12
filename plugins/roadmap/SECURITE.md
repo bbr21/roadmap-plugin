@@ -1,6 +1,6 @@
 # Est-il sûr de l'installer ?
 
-Version décrite : roadmap 0.287.0
+Version décrite : roadmap 0.288.0
 Un plugin de Claude Code fait tourner du code sur ta machine, donc la question se pose. Certains plugins
 malveillants ont l'air inoffensifs quand on les installe, puis téléchargent et lancent autre chose plus
 tard. Cette page dit tout ce que fait roadmap. Un test vérifie à chaque version qu'elle dit vrai, et tu
@@ -66,7 +66,7 @@ réserve (`session.*`, `turn.*`, `skill.prompt`) ; le plugin a alors un secours 
 | `plutil` | `hooks/register.tsx` | quand le thème du panneau est « auto », et seulement quand la date ou la taille du fichier a changé : `plutil -extract userThemeMode raw -o - ~/Library/Application Support/Claude/config.json`, en lecture seule, pour savoir si l'app de bureau est en clair, en sombre ou suit le Mac, et choisir la palette du panneau (#417). Le fichier porte aussi le cache de jetons de l'app : il n'est jamais lu en entier ; `plutil -extract userThemeMode raw -o - <fichier>` n'en rend que la clé `userThemeMode`, la seule lue. |
 | `defaults` | `hooks/register.tsx` | seulement quand l'app de bureau suit l'apparence du Mac et que le thème du panneau est « auto », au plus toutes les 30 s : `defaults read -g AppleInterfaceStyle`, en lecture seule, pour savoir si le Mac est en clair ou en sombre (#417) |
 | `sysctl`, `memory_pressure`, `pgrep` | `hooks/register.tsx` | dans le panneau de Maestro, quand une tâche attend sa place ou va partir, au plus toutes les 30 s : lire la charge du Mac et ses cœurs (`vm.loadavg`, `hw.ncpu`), son swap (`vm.swapusage`), sa mémoire libre (`memory_pressure -Q`, en lecture seule) et le nombre de sessions `claude` vivantes (`pgrep -x claude`, des numéros de processus seulement), pour différer un lancement quand la charge dépasse 2 × cœurs, que la mémoire est tendue ou que le Mac porte trop de sessions (#324, #403) |
-| `awk`, `basename`, `cp`, `date`, `dirname`, `getconf`, `head`, `kill`, `ls`, `memory_pressure`, `mkdir`, `mv`, `perl`, `ps`, `sed`, `seq`, `sleep`, `sort`, `stat`, `sysctl`, `tr`, `wc` | `scripts/one-at-a-time.sh` | tenir la file des tests lourds, une seule pour le Mac (#323) : ses places, l'âge et le PID de qui les tient, le projet de chaque suite, la charge et la mémoire du Mac (#403 ; `perl` ne sert qu'à lire l'heure à la microseconde) ; `kill` n'arrête que le shell d'une attente dont la session est morte (son parent est devenu launchd, ppid 1, #403) |
+| `awk`, `basename`, `date`, `dirname`, `getconf`, `head`, `kill`, `ls`, `memory_pressure`, `mkdir`, `mv`, `perl`, `ps`, `sed`, `seq`, `sleep`, `sort`, `stat`, `sysctl`, `tr`, `wc` | `scripts/one-at-a-time.sh` | tenir la file des tests lourds, une seule pour le Mac (#323) : ses places, l'âge et le PID de qui les tient, le projet de chaque suite, la charge et la mémoire du Mac (#403 ; `perl` ne sert qu'à lire l'heure à la microseconde) ; `kill` n'arrête que le shell d'une attente dont la session est morte (son parent est devenu launchd, ppid 1, #403) |
 | `renice` | `scripts/one-at-a-time.sh` | baisser la priorité de la suite de tests qui prend sa place (nice 10, ses propres processus seulement), pour qu'elle cède le processeur aux sessions qui travaillent (#323) |
 
 ## Les outils de l'app

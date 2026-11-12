@@ -9,28 +9,37 @@
 # <pid> est le shell de l'outil Bash ($$) : il vit tant que la commande tourne. Un verrou dont le PID
 # n'existe plus, ou tenu depuis plus de 30 min, se lève seul. Détail : docs/plans/feat-tests-un-par-un/.
 #
-# Sa place prise, la suite attend encore que la charge du Mac retombe sous le seuil, 5 min au plus (#249) :
+# Sa place prise, la suite attend encore que la charge du Mac retombe sous le seuil, 3 min au plus (#249, #521) :
 # la file ne sérialise que les suites d'un projet, et le délai de 5000 ms par test du kit tombe sous charge.
 # Détail : docs/plans/fix-tests-sous-charge/.
 # Elle attend de même que la mémoire se détende (#403) : moins de 5 % libres (memory_pressure -Q), ou swap
 # à 90 % et plus avec moins de 10 % libres (le swap seul, qui reste haut des heures, ne retient rien) ; la
 # raison dite et écrite (`why=` de <place>/load) est la vraie, jamais « charge » pour la mémoire.
-# Une attente dont le shell n'a plus de session (ppid 1, #403) quitte la file et arrête ce shell.
+# Une attente dont le shell n'a plus de session (ppid 1, #403) quitte la file et arrête ce shell ; un shell
+# mort (PID absent) quitte la file de même, et rend sa place s'il l'a déjà prise (#521).
+# Plafond de 180 s ; et si la charge est trop haute mais ne baisse plus (1 min >= 5 min), la suite part tout
+# de suite en le disant. Charge sur 5 min illisible : attente jusqu'au plafond, comme avant.
 #
 # Une file pour le Mac (#323) : dossier heavy-tests/<ROADMAP_QUEUE_KEY>, `mac` par défaut. Places `lock`,
 # `lock-2`… `lock-N` (ROADMAP_QUEUE_SLOTS, 1 par défaut). Voies : 0 prioritaire (branche `main` du dossier du
 # shell), 1, 2 ordinaire ; ROADMAP_QUEUE_LANE force la voie. Un ticket s'appelle <voie>-<horodatage>-<pid> : la
-# tête de la liste triée prend la première place libre, sans jamais en chasser un qui tourne. La suite prend
+# tête de la liste triée prend la première place libre, sans jamais en chasser un qui tourne. Place rapide
+# `lock-0` (#521) : réservée à la voie 1 (tests ciblés), que prend le premier ticket de voie 1 même s'il n'est
+# pas en tête, pour qu'il parte pendant une suite entière ; ROADMAP_QUEUE_FAST=0 la coupe. La suite prend
 # un nice (ROADMAP_QUEUE_NICE, 10 par défaut, 0 le saute) dès que sa place est prise.
 # Branche testée : ROADMAP_QUEUE_FOR, sinon la branche de ROADMAP_QUEUE_DIR, sinon celle du dossier du shell ;
 # ROADMAP_QUEUE_BY=maestro marque la suite lancée par Maestro.
 # Réglages (tests) : ROADMAP_QUEUE=off, ROADMAP_QUEUE_KEY, ROADMAP_LOCKS_DIR, ROADMAP_QUEUE_POLL (s),
 # ROADMAP_QUEUE_SAY (s), ROADMAP_QUEUE_MAX_AGE (s), ROADMAP_QUEUE_MAX_LOAD (défaut 2 × cœurs),
-# ROADMAP_QUEUE_LOAD_WAIT (s, défaut 300, 0 coupe l'attente, mémoire comprise), ROADMAP_QUEUE_LOAD_FILE (la charge lue
+# ROADMAP_QUEUE_IDLE_POLL (s, défaut 5 : sondage d'un ticket qui ne peut prendre aucune place),
+# ROADMAP_QUEUE_LOAD_WAIT (s, défaut 180, 0 coupe l'attente, mémoire comprise), ROADMAP_QUEUE_LOAD_FILE (la charge lue
 # dans un fichier, pour les tests), ROADMAP_QUEUE_MIN_FREE (%, défaut 5), ROADMAP_QUEUE_MEM_FILE (`free=` et `swap=`,
 # en %, lus dans un fichier, pour les tests).
 # Ce que le panneau lit (#321, #323) : <place>/owner (pid, since, branch, label, project, lane, by, run une fois
-# la suite partie), <place>/load pendant l'attente de charge, queue/<voie>-<horodatage>-<pid>. Détail : docs/plans/feat-file-tests-visible/.
+# la suite partie), <place>/load pendant l'attente de charge (avec `cap=`, le plafond), queue/<voie>-<horodatage>-<pid>. Détail : docs/plans/feat-file-tests-visible/.
+# Historique (#521) : give ajoute une ligne par suite à <file>/history.tsv (en-tête écrit à la création, 4000
+# dernières lignes gardées au-delà de 5000) ; owner porte wait= et calm= avec run=. Au take, les dossiers de
+# file d'avant #323 sans suite vivante ni history.tsv sont ôtés. Détail : docs/plans/feat-perf-voie-rapide-des-tests/.
 set -u
 
 usage() {
@@ -46,6 +55,7 @@ label="${3:-}"
 [[ "$pid" =~ ^[0-9]+$ ]] || usage
 
 poll="${ROADMAP_QUEUE_POLL:-2}"
+idle_poll="${ROADMAP_QUEUE_IDLE_POLL:-5}"
 say_every="${ROADMAP_QUEUE_SAY:-30}"
 max_age="${ROADMAP_QUEUE_MAX_AGE:-1800}"
 
@@ -53,6 +63,9 @@ max_age="${ROADMAP_QUEUE_MAX_AGE:-1800}"
 key="$(printf '%s' "${ROADMAP_QUEUE_KEY:-mac}" | tr -c 'A-Za-z0-9._-' '_')"
 dir="${ROADMAP_LOCKS_DIR:-$HOME/.claude/locks}/heavy-tests/$key"
 queue="$dir/queue"
+fast_place="$dir/lock-0"
+fast=1
+[[ "${ROADMAP_QUEUE_FAST:-}" == 0 ]] && fast=0
 slots="${ROADMAP_QUEUE_SLOTS:-1}"
 [[ "$slots" =~ ^[0-9]+$ ]] && (( slots >= 1 )) || slots=1
 mkdir -p "$queue" || exit 0
@@ -76,9 +89,37 @@ span() {
 # Toutes les places présentes, quel que soit le nombre réglé : un réglage changé entre take et give ne perd pas la sienne.
 all_places() { for p in "$dir"/lock "$dir"/lock-*; do [[ -d "$p" ]] && echo "$p"; done; }
 
+# Un champ de l'historique tient sur une ligne et sans tabulation.
+clean() { local v="$1"; v="${v//$'\t'/ }"; v="${v//$'\r'/ }"; v="${v//$'\n'/ }"; printf '%s' "$v"; }
+
+# Une ligne par suite dans history.tsv (#521) : fin attente calme duree voie place branche projet commande.
+history_add() {
+  local p="$1" hist="$dir/history.tsv" n t run since wait calm lane_h dur
+  t="$(now)"
+  run="$(field "$p/owner" run)"; since="$(field "$p/owner" since)"
+  wait="$(field "$p/owner" wait)"; calm="$(field "$p/owner" calm)"; lane_h="$(field "$p/owner" lane)"
+  [[ "$wait" =~ ^[0-9]+$ ]] || wait=0
+  [[ "$calm" =~ ^[0-9]+$ ]] || calm=0
+  [[ "$run" =~ ^[0-9]+$ ]] || run="$since"
+  [[ "$run" =~ ^[0-9]+$ ]] || run="$t"
+  dur=$(( t - run )); (( dur < 0 )) && dur=0
+  [[ -f "$hist" ]] || printf 'fin\tattente\tcalme\tduree\tvoie\tplace\tbranche\tprojet\tcommande\n' > "$hist" 2>/dev/null || return 0
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$t" "$wait" "$calm" "$dur" "$(clean "$lane_h")" "$(basename "$p")" \
+    "$(clean "$(field "$p/owner" branch)")" "$(clean "$(field "$p/owner" project)")" "$(clean "$(field "$p/owner" label)")" >> "$hist" 2>/dev/null
+  n="$(wc -l < "$hist" 2>/dev/null | tr -d ' ')"
+  if [[ "$n" =~ ^[0-9]+$ ]] && (( n > 5001 )); then
+    awk -v keep=4000 'NR == 1 { h = $0; next } { buf[NR] = $0 } END { print h; s = NR - keep + 1; if (s < 2) s = 2; for (i = s; i <= NR; i++) print buf[i] }' "$hist" > "$hist.tmp" 2>/dev/null \
+      && mv -f "$hist.tmp" "$hist" 2>/dev/null
+  fi
+  return 0
+}
+
 if [[ "$action" == give ]]; then
   for p in $(all_places); do
-    [[ "$(field "$p/owner" pid)" == "$pid" ]] && rm -rf "$p"
+    if [[ "$(field "$p/owner" pid)" == "$pid" ]]; then
+      history_add "$p"
+      rm -rf "$p"
+    fi
   done
   rm -f "$queue"/*-"$pid"
   exit 0
@@ -112,6 +153,29 @@ if [[ ! "$lane" =~ ^[012]$ ]]; then
   [[ "$shell_branch" == main ]] && lane=0 || lane=2
 fi
 
+# Le ménage d'avant #323 (#521) : un dossier frère sans history.tsv, sans place ni ticket d'un PID vivant, s'ôte.
+sweep_old_queues() {
+  local d p t o keep
+  for d in "$(dirname "$dir")"/*/; do
+    d="${d%/}"
+    [[ -d "$d" && "$d" != "$dir" && ! -f "$d/history.tsv" ]] || continue
+    keep=0
+    for p in "$d"/lock "$d"/lock-*; do
+      [[ -f "$p/owner" ]] || continue
+      o="$(field "$p/owner" pid)"
+      [[ -n "$o" ]] && alive "$o" && keep=1
+    done
+    for t in "$d"/queue/*; do
+      [[ -f "$t" ]] || continue
+      o="$(field "$t" pid)"
+      [[ -n "$o" ]] && alive "$o" && keep=1
+    done
+    (( keep )) || rm -rf "$d"
+  done
+  return 0
+}
+sweep_old_queues
+
 ticket_name="$lane-$(perl -MTime::HiRes=time -e 'printf "%017.6f", time')-$pid"
 ticket="$queue/$ticket_name"
 {
@@ -144,17 +208,27 @@ lift_stale() {
   echo "roadmap : verrou des tests lourds levé ($reason)."
 }
 
-# La charge du Mac sur 1 min, arrondie ; vide si illisible.
-load_now() {
-  local raw=""
+# La charge du Mac (#521) : pose `load` (1 min, arrondie ; vide si illisible) et `falling` (1 si la charge sur
+# 5 min est lisible et la 1 min en dessous, 0 si lisible et 1 min >= 5 min, vide si illisible), en un awk.
+load=""
+falling=""
+read_load() {
+  local raw="" out=""
   if [[ -n "${ROADMAP_QUEUE_LOAD_FILE:-}" ]]; then
-    raw="$(awk '{ print $1; exit }' "$ROADMAP_QUEUE_LOAD_FILE" 2>/dev/null)"
+    raw="$(awk 'NR == 1 { print $1, $2; exit }' "$ROADMAP_QUEUE_LOAD_FILE" 2>/dev/null)"
   elif raw="$(sysctl -n vm.loadavg 2>/dev/null)" && [[ -n "$raw" ]]; then
-    raw="$(printf '%s' "$raw" | tr -d '{}' | awk '{ print $1 }')"
+    raw="$(printf '%s' "$raw" | tr -d '{}' | awk '{ print $1, $2 }')"
   elif [[ -r /proc/loadavg ]]; then
-    raw="$(awk '{ print $1 }' /proc/loadavg)"
+    raw="$(awk '{ print $1, $2 }' /proc/loadavg)"
   fi
-  [[ "$raw" =~ ^[0-9]+([.][0-9]+)?$ ]] && awk -v l="$raw" 'BEGIN { printf "%d", l + 0.5 }'
+  out="$(printf '%s\n' "$raw" | awk '{
+    if ($1 !~ /^[0-9]+([.][0-9]+)?$/) exit
+    printf "%d ", $1 + 0.5
+    if ($2 ~ /^[0-9]+([.][0-9]+)?$/) printf "%d", ($1 + 0 < $2 + 0) ? 1 : 0
+  }')"
+  load="${out%% *}"
+  falling="${out#* }"
+  [[ "$out" == *" "* ]] || falling=""
 }
 
 cores() {
@@ -192,6 +266,7 @@ mem_tense() {
 put_load() {
   { printf 'load=%s\ncores=%s\nmax=%s\nsince=%s\nwhy=%s\n' "$1" "$2" "$3" "$4" "$5"
     if [[ "$5" == memory ]]; then printf 'free=%s\nswap=%s\n' "$6" "$7"; fi
+    printf 'cap=%s\n' "$8"
   } > "$lock/load.tmp" 2>/dev/null && mv -f "$lock/load.tmp" "$lock/load" 2>/dev/null
 }
 
@@ -203,23 +278,24 @@ mark_run() {
   rm -f "$lock/load"
   local owner
   owner="$(< "$lock/owner")" 2>/dev/null || return 0
-  printf '%s\nrun=%s\n' "$owner" "$(now)" > "$lock/owner.tmp" 2>/dev/null && mv -f "$lock/owner.tmp" "$lock/owner" 2>/dev/null
+  printf '%s\nrun=%s\nwait=%s\ncalm=%s\n' "$owner" "$(now)" "$(( taken_at - start ))" "$calm_secs" > "$lock/owner.tmp" 2>/dev/null && mv -f "$lock/owner.tmp" "$lock/owner" 2>/dev/null
   return 0
 }
 
 # Place prise : attendre que la mémoire se détende (#403) et que la charge passe sous le seuil (#249), au plus
 # load_wait secondes en tout, en disant la vraie raison ; la mémoire passe devant la charge.
 wait_for_calm() {
-  local ncpu max wait_max load mem free swap why began polls=0 said=""
+  local ncpu max wait_max mem free swap why began polls=0 said=""
+  calm_secs=0
   ncpu="$(cores)"
   max="${ROADMAP_QUEUE_MAX_LOAD:-}"
   [[ "$max" =~ ^[0-9]+$ ]] || max=$(( 2 * ncpu ))
-  wait_max="${ROADMAP_QUEUE_LOAD_WAIT:-300}"
-  [[ "$wait_max" =~ ^[0-9]+$ ]] || wait_max=300
+  wait_max="${ROADMAP_QUEUE_LOAD_WAIT:-180}"
+  [[ "$wait_max" =~ ^[0-9]+$ ]] || wait_max=180
   (( wait_max > 0 )) || return 0
   began="$(now)"
   while :; do
-    load="$(load_now)"
+    read_load
     mem="$(mem_now)"
     free="${mem%% *}" swap="${mem##* }"
     why=""
@@ -227,13 +303,19 @@ wait_for_calm() {
     elif [[ -n "$load" ]] && (( load > max )); then why=load
     fi
     [[ -n "$why" ]] || break
-    put_load "${load:-0}" "$ncpu" "$max" "$began" "$why" "$free" "$swap"
+    put_load "${load:-0}" "$ncpu" "$max" "$began" "$why" "$free" "$swap" "$wait_max"
+    if [[ "$why" == load && "$falling" == 0 ]]; then
+      echo "roadmap : la charge du Mac ne baisse plus (charge $load) : tests lourds lancés sans attendre davantage."
+      calm_secs=$(( $(now) - began ))
+      return 0
+    fi
     if (( $(now) - began >= wait_max )); then
       if [[ "$why" == memory ]]; then
         echo "roadmap : la mémoire du Mac reste tendue ($free % libres, swap $swap %) après $(span $(( $(now) - began ))) : tests lourds lancés quand même."
       else
         echo "roadmap : le Mac reste chargé (charge $load) après $(span $(( $(now) - began ))) : tests lourds lancés quand même ; un « timed out after 5000 ms » vient sans doute de la charge, le test se rejoue seul."
       fi
+      calm_secs=$(( $(now) - began ))
       return 0
     fi
     if (( polls % say_polls == 0 )) || [[ "$why" != "$said" ]]; then
@@ -245,8 +327,14 @@ wait_for_calm() {
       said="$why"
     fi
     polls=$(( polls + 1 ))
+    # Le shell est mort pendant l'attente : sa place est rendue, sans ligne d'historique (#521).
+    if ! alive "$pid"; then
+      rm -rf "$lock"
+      exit 0
+    fi
     sleep "$poll"
   done
+  calm_secs=$(( $(now) - began ))
   if [[ "$said" == memory ]]; then
     echo "roadmap : la mémoire s'est détendue (${free:-?} % libres), tests lourds lancés après $(span $(( $(now) - began )))."
   elif [[ "$said" == load ]]; then
@@ -255,11 +343,37 @@ wait_for_calm() {
   return 0
 }
 
-lock=""  # la place prise, posée dans la boucle
+lock=""  # la place prise, posée dans take_place
+calm_secs=0
+taken_at=0
 start="$(now)"
 say_polls="$(awk -v s="$say_every" -v p="$poll" 'BEGIN { n = int(s / p + 0.999); print (n < 1 ? 1 : n) }')"
-polls=0
+# Le sondage et la ligne « en file depuis… » se comptent en temps dormi (ms entières), plus en tours.
+read -r poll_ms idle_ms say_ms <<< "$(awk -v p="$poll" -v i="$idle_poll" -v s="$say_every" 'BEGIN { printf "%d %d %d", p * 1000 + 0.5, i * 1000 + 0.5, s * 1000 + 0.5 }')"
+slept_ms=0
+next_say_ms=0
 said=0
+
+# Prendre la place <chemin> si elle est libre : le propriétaire est posé, le ticket ôté, la suite attend le calme et part.
+take_place() {
+  lock="$1"
+  lift_stale "$lock"
+  mkdir "$lock" 2>/dev/null || { lock=""; return 1; }
+  sed "s/^since=.*/since=$(now)/" "$ticket" > "$lock/owner.tmp"
+  mv "$lock/owner.tmp" "$lock/owner"
+  rm -f "$ticket"
+  trap - EXIT
+  taken_at="$(now)"
+  (( said )) && echo "roadmap : tests lourds, à ton tour après $(span $(( taken_at - start )))."
+  # Le nice de la suite (#323) : elle cède le processeur aux sessions qui travaillent.
+  nice="${ROADMAP_QUEUE_NICE:-10}"
+  [[ "$nice" =~ ^[0-9]+$ ]] || nice=10
+  (( nice > 0 )) && renice -n "$nice" -p "$pid" >/dev/null 2>&1
+  wait_for_calm
+  mark_run
+  exit 0
+}
+
 while :; do
   # Plus de session derrière ce shell (#403) : son attente quitte la file, et le shell s'arrête avant de lancer la suite.
   if orphaned; then
@@ -273,34 +387,29 @@ while :; do
     [[ -f "$t" && "$t" != "$ticket" ]] || continue
     alive "$(field "$t" pid)" || rm -f "$t"
   done
-  head_name="$(ls "$queue" 2>/dev/null | sort | head -1)"
+  # En un passage : la tête de la liste triée, et (voie 1, place rapide) son premier ticket de voie 1.
+  want_fast=0
+  (( fast && lane == 1 )) && want_fast=1
+  { IFS= read -r head_name; IFS= read -r first_fast; } <<< "$(ls "$queue" 2>/dev/null | sort | awk -v w="$want_fast" 'NR == 1 { h = $0 } w == 1 && f == "" && $0 ~ /^1-/ { f = $0 } END { print h; print f }')"
+  candidate=0
   if [[ "$head_name" == "$ticket_name" ]]; then
+    candidate=1
     for i in $(seq 1 "$slots"); do
-      lock="$(place_path "$i")"
-      lift_stale "$lock"
-      if mkdir "$lock" 2>/dev/null; then
-        cp "$ticket" "$lock/owner.tmp" && sed -i '' "s/^since=.*/since=$(now)/" "$lock/owner.tmp" 2>/dev/null
-        mv "$lock/owner.tmp" "$lock/owner"
-        rm -f "$ticket"
-        trap - EXIT
-        (( said )) && echo "roadmap : tests lourds, à ton tour après $(span $(( $(now) - start )))."
-        # Le nice de la suite (#323) : elle cède le processeur aux sessions qui travaillent.
-        nice="${ROADMAP_QUEUE_NICE:-10}"
-        [[ "$nice" =~ ^[0-9]+$ ]] || nice=10
-        (( nice > 0 )) && renice -n "$nice" -p "$pid" >/dev/null 2>&1
-        wait_for_calm
-        mark_run
-        exit 0
-      fi
+      take_place "$(place_path "$i")"
     done
+    (( want_fast )) && take_place "$fast_place"
+    lock=""
+  elif (( want_fast )) && [[ "$first_fast" == "$ticket_name" ]]; then
+    candidate=1
+    take_place "$fast_place"
     lock=""
   fi
-  if (( polls % say_polls == 0 )); then
+  if (( slept_ms >= next_say_ms )); then
     ahead="$(ls "$queue" 2>/dev/null | sort | awk -v me="$ticket_name" '$0 < me' | wc -l | tr -d ' ')"
-    # Le titulaire à nommer : la première place occupée.
+    # Le titulaire à nommer : la première place occupée, la place rapide d'abord pour un test ciblé (#521).
     obranch="" olabel="" osince="" oproject=""
-    for i in $(seq 1 "$slots"); do
-      op="$(place_path "$i")/owner"
+    for op in $( (( want_fast )) && echo "$fast_place"; for i in $(seq 1 "$slots"); do place_path "$i"; done ); do
+      op="$op/owner"
       [[ -f "$op" ]] || continue
       obranch="$(field "$op" branch)"; olabel="$(field "$op" label)"
       osince="$(field "$op" since)"; oproject="$(field "$op" project)"
@@ -314,7 +423,15 @@ while :; do
     fi
     echo "roadmap : tests lourds en file depuis $(span $(( $(now) - start ))), $behind, $ahead devant."
     said=1
+    next_say_ms=$(( slept_ms + say_ms ))
   fi
-  polls=$(( polls + 1 ))
-  sleep "$poll"
+  # Un shell mort quitte la file, le piège EXIT ôte le ticket (#521) ; après l'essai de place, pour qu'un
+  # shell déjà mort au premier tour prenne encore une place libre, comme avant.
+  alive "$pid" || exit 0
+  # Un candidat sonde vite ; qui ne peut prendre aucune place dort plus longtemps.
+  if (( candidate )); then
+    sleep "$poll"; slept_ms=$(( slept_ms + poll_ms ))
+  else
+    sleep "$idle_poll"; slept_ms=$(( slept_ms + idle_ms ))
+  fi
 done
