@@ -629,6 +629,7 @@ import {
   openListRefusal,
   wakeTurn,
   prefsChangedLead,
+  contextAfterCompact,
   contextShrank,
   contextUseOf,
   contextView,
@@ -6864,10 +6865,27 @@ async function compactFromBand($: EngineInterface): Promise<void> {
   compactAsked = true
   try {
     await $.command.run({ command: 'compact' })
+    // Parti d'un bouton, l'appel saute les hooks du plugin, `command.run` compris : le % se relit ici (#491).
+    await rereadBandContext($)
   } catch (err) {
     $.ui.toast(`Compaction impossible : ${err instanceof Error ? err.message : String(err)}`)
   } finally {
     compactAsked = false
+  }
+}
+
+/**
+ * Après une compaction (#491) : la bande ne lit que la mesure de fin de tour, et un /compact ne finit aucun tour ; elle
+ * disait 86 % pour 14 % réels jusqu'au message suivant. Le contexte relu remplace la mesure (`contextAfterCompact`),
+ * ou la vide : la bande relit alors le contexte à son dessin. Par `session.compact`, sauté sous sec-default, par
+ * `command.run` sur `compact` (/compact tapé, son secours) et au retour de « Compacter » (`compactFromBand`).
+ */
+async function rereadBandContext($: EngineInterface): Promise<void> {
+  try {
+    const measured = (await $.session.usage().catch(() => undefined))?.context
+    await update($, bandContextAtom, before => contextAfterCompact(before, measured))
+  } catch {
+    // état illisible : la fin du tour suivant récrit la mesure
   }
 }
 
@@ -8883,6 +8901,10 @@ export const register: Register = (on, options) => {
       if (e.trigger !== 'precompute' && e.agentId === undefined) {
         await update($, prefsGivenAtom, () => '')
         await update($, contextSeenAtom, () => 0)
+        // #491 : la conversation compactée, le % de la bande se relit, sans attendre la fin d'un tour.
+        const result = await next(e)
+        await rereadBandContext($)
+        return result
       }
       return next(e)
     })
@@ -9436,6 +9458,14 @@ export const register: Register = (on, options) => {
     if (await inCloud($)) return next(e)
     noteSkill(e.command)
     return next(e)
+  })
+
+  // #491 : /compact tapé, le % de la bande se relit à son retour ; le secours de `session.compact` sous sec-default.
+  on('command.run', { command: 'compact' }, async ($, e, next) => {
+    if (await inCloud($)) return next(e)
+    const result = await next(e)
+    await rereadBandContext($)
+    return result
   })
 
   if (settings.account !== 'team') {

@@ -5664,6 +5664,19 @@ export function contextUseOf(value: unknown): ContextUse | undefined {
   return typeof tokens === 'number' && Number.isFinite(tokens) && typeof window === 'number' && Number.isFinite(window) ? { tokens, window } : undefined
 }
 
+/**
+ * Le contexte que la bande de Maestro garde après une compaction (#491) : la bande lit la mesure de fin de tour, et un
+ * /compact ne finit aucun tour (86 % affichés pour 14 % réels, jusqu'au message suivant). `measured` : le contexte de
+ * `$.session.usage()` relu après la compaction. Fondu sous `before`, il remplace la mesure ; pas encore fondu (la
+ * compaction pas finie) ou plus mesuré (le moteur ne compte rien jusqu'à la réponse suivante) : `null`, et la bande
+ * relit le contexte à son dessin, jamais l'ancienne mesure.
+ */
+export function contextAfterCompact(before: ContextUse | null, measured: unknown): ContextUse | null {
+  const now = contextUseOf(measured)
+  if (!now) return null
+  return before !== null && now.tokens >= before.tokens ? null : now
+}
+
 /** Des jetons comme la carte Context de l'app, en virgule décimale : 850, 9,4k, 132,5k, 1M, 1,5M (#157). */
 export function formatTokens(n: number): string {
   const one = (x: number) => (Math.round(x * 10) / 10).toString().replace('.', ',')

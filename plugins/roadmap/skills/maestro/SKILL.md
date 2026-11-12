@@ -409,7 +409,10 @@ with « Cible : le Mac, … » and the recommendation. What changes for Maestro 
   keeps `qui:` and `branche:`, so the pushed work is not lost, and prints the instruction for the Mac session (fetch
   and switch to that branch). Commit and push `main`, then post the Mac card with that instruction as an extra
   message. A question from a cloud session is not a stall: answer it by PR comment.
-- **Close** as usual (§ 6), the PR link in the bilan; the cloud session needs no archiving gesture from Maestro: the band's archive icon hides its row and archives the cloud session by the id its PR carries, or tells BBR to archive it from the app's left list when the app refuses (#435).
+- **Close** as usual (§ 6), the PR link in the bilan; once the line is closed and pushed, post on its PR
+  `gh pr comment <n> --body "ligne close par Maestro le AAAA-MM-JJ, version X.Y.Z"` (`date +%F`; no version: « sans
+  version »): it wakes the cloud session, which writes its conclusion and offers to archive itself (#483,
+  `docs/session-cloud.md`, « La fin d'une tâche »). The cloud session needs no archiving gesture from Maestro: the band's archive icon hides its row and archives the cloud session by the id its PR carries, or tells BBR to archive it from the app's left list when the app refuses (#435).
 - **A task with a render** can go to the cloud too (#409), when the person chooses it: its recommendation (#416)
   still says « Mac », which keeps the browser pane and the capture at hand. In the cloud, the session publishes its mockups as an Artifact and
   asks the person by the question form; coded and green, its comment says « prête à fusionner (tests : … ;
