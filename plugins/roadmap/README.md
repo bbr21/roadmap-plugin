@@ -763,6 +763,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.285.1 (2026-11-11)** : panneau : la date de publication d'une livraison collée au bord droit de sa rangée (#504)
 - **0.285.0 (2026-11-11)** : panneau et cloud : contexte de la bande remis à jour après /compact, conclusion de fin d'une session cloud comme au Mac (#491, #483)
 - **0.284.0 (2026-11-11)** : panneau : pastilles des livraisons successives d'une tâche dans la fiche, la bande et le bloc En session (#480)
 - **0.283.0 (2026-11-11)** : panneau et maestro : En session compté par lieu, ligne cloud prise au départ, modèle et effort selon la charge jugée, cartes depuis le cloud, Fille de sans gras, croix ronde (#468, #474, #486, #488, #489, #490, #492, #493)

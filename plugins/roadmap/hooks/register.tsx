@@ -11969,7 +11969,8 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
       )
     }
     // Un champ : son nom sur 10 unités, la valeur à côté, un filet au-dessus ; absent, rien.
-    const field = (name: string, value: RenderElement | undefined | false, key = name) =>
+    // `grow` : la valeur prend le reste de la rangée, pour un texte au bord droit (#480, rangées « Livraison N »).
+    const field = (name: string, value: RenderElement | undefined | false, key = name, grow = false) =>
       value ? (
         <Box key={`field:${key}`} flexDirection="column">
           {ruleAbove}
@@ -11978,7 +11979,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
               {strut(SIZE.strut.field)}
               <Text color={palette.text2}>{name}</Text>
             </Box>
-            <Box flexDirection="row" alignItems="center" gap={SPACE.row} flexShrink={1} minWidth={0}>
+            <Box key={`field-value:${key}`} flexDirection="row" alignItems="center" gap={SPACE.row} {...(grow ? { flexGrow: 1 } : {})} flexShrink={1} minWidth={0}>
               {value}
             </Box>
           </Box>
@@ -13638,6 +13639,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
               </Box>
             </Box>,
             `livraison:${i}`,
+            true,
           )
         })}
       </Box>
