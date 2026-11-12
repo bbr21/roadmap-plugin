@@ -4,6 +4,7 @@
 // dessiné en image ne connaît pas `currentColor`, d'où la couleur passée à chaque dessin.
 
 import { activityCount, type ActivityMode } from './parse'
+import type { Pass } from './parse'
 import type { BandGlyph, ContextView, DurationKind, GaugeKind, SisterState, StepSegment, TodoIcon } from './parse'
 import { FONT, MIX, PALETTES, RADIUS, SIZE, STROKE, TEXT, type Palette, type ThemeName } from './tokens'
 
@@ -1280,6 +1281,44 @@ export function stepRailIcon(
     width,
     height,
   }
+}
+
+/** La couleur d'une passe de livraison (#480) : les tons des jauges, violet publiée, turquoise fusionnée, bleu au travail. */
+const passInk = (tone: Pass['tone'], palette: Palette) => ({ pub: palette.finished, merge: palette.wait, live: palette.live, next: palette.text3 })[tone]
+
+/** Le point d'une passe, centré en (`cx`, `cy`), 8 px : plein à son ton, cercle creux text3 de 1,5 px pour une passe à venir. */
+const passDot = (tone: Pass['tone'], cx: number, cy: number, palette: Palette) =>
+  tone === 'next'
+    ? `<circle cx="${cx}" cy="${cy}" r="3.25" fill="none" stroke="${palette.text3}" stroke-width="1.5"/>`
+    : `<circle cx="${cx}" cy="${cy}" r="4" fill="${passInk(tone, palette)}"/>`
+
+/**
+ * Les points des livraisons d'une tâche (#480, option A) : une rangée, un point de 8 px par passe, 3 px d'écart,
+ * dans un seul dessin ; le nom de chaque passe se lit dans l'`alt` que pose l'appelant.
+ */
+export function deliveryDotsIcon(passes: readonly Pass[], palette: Palette): { source: string; width: number; height: number } {
+  const n = Math.max(1, passes.length)
+  const width = n * 8 + (n - 1) * 3
+  const body = passes.map((p, i) => passDot(p.tone, i * 11 + 4, 4, palette)).join('')
+  return { source: `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="8" viewBox="0 0 ${width} 8">${body}</svg>`, width, height: 8 }
+}
+
+/**
+ * Le fil d'une rangée « Livraison N » de la fiche (#480, maquette V2 « le fil »), 16 × 28 px, la hauteur d'une rangée
+ * de champ (`SIZE.strut.field`), le filet de 1 px de la carte s'insérant entre deux : le point centré, un trait
+ * de 1,5 px vers le haut (sauf `first`) et vers le bas (sauf `last`), à 70 % de text3, qui touche le bord de la rangée
+ * pour rejoindre celui de la voisine à travers le filet de la carte ; pointillé vers une passe à venir (le trait du haut
+ * d'une passe `next`, celui du bas quand `nextDashed`).
+ */
+export function deliveryRailIcon(tone: Pass['tone'], link: 'first' | 'mid' | 'last', nextDashed: boolean, palette: Palette): { source: string; width: number; height: number } {
+  const width = 16
+  const height = SIZE.strut.field
+  const mid = height / 2
+  const rail = (y1: number, y2: number, dashed: boolean) =>
+    `<line x1="8" y1="${y1}" x2="8" y2="${y2}" stroke="${palette.text3}" stroke-width="1.5" stroke-opacity="0.7"${dashed ? ' stroke-dasharray="2 2"' : ''}/>`
+  const up = link === 'first' ? '' : rail(0, mid - 4, tone === 'next')
+  const down = link === 'last' ? '' : rail(mid + 4, height, nextDashed)
+  return { source: `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">${up}${down}${passDot(tone, 8, mid, palette)}</svg>`, width, height }
 }
 
 /** La marque d'une étape dans la carte (#143) : disque vert coché, roue bleue immobile, cercle à faire. */

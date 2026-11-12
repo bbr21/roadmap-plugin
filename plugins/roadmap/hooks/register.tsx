@@ -89,6 +89,8 @@ import {
   stepIcon,
   stepRailIcon,
   stepsBarIcon,
+  deliveryDotsIcon,
+  deliveryRailIcon,
   contextBarIcon,
   squareIcon,
   STROKE,
@@ -561,6 +563,11 @@ import {
   blockRowFit,
   bandRowFit,
   mergedLocalIds,
+  deliveryPasses,
+  passesShown,
+  passLabel,
+  passRow,
+  type Pass,
   BAND_INFO_MAX,
   blockWord,
   cloudFiche,
@@ -7082,6 +7089,23 @@ async function mergedIdsOf($: EngineInterface, source: Source, tasks: readonly T
 }
 
 /**
+ * La PR de la branche de chaque tâche qui a des livraisons (#480), pour dire quelle passe est en cours : la même lecture
+ * des PR que `mergedIdsOf` (`readCloudPrs`, gardée 60 s : aucun appel de plus dans la minuterie), et rien à lire tant
+ * qu'aucune de ces tâches n'a de `branche:`.
+ */
+async function prsOfDelivered($: EngineInterface, source: Source, tasks: readonly Task[]): Promise<unknown> {
+  if (!tasks.some(t => (t.livre?.length ?? 0) > 0 && t.branche)) return undefined
+  return readCloudPrs($, source.root ?? source.dir, projectSettings(source).depot).catch(() => undefined)
+}
+
+/** La PR courante d'une tâche d'après les PR lues : rien quand elle n'a pas de branche, ni de PR, ni de lecture. */
+function currentPr(prs: unknown, t: Task): { number?: number; state: CloudPr['state'] } | undefined {
+  if (!t.branche || prs === undefined) return undefined
+  const pr = cloudPrOf(prs, t.branche)
+  return pr.state === 'none' || pr.state === 'unknown' ? undefined : { ...(pr.number !== undefined ? { number: pr.number } : {}), state: pr.state }
+}
+
+/**
  * L'archive d'une ligne cloud fusionnée (#435) : la ligne se cache (`hideCloudRow`), puis sa vraie session cloud
  * s'archive par l'identifiant que porte sa PR (`gh pr view`, lien `claude.ai/code/session_…`). L'app refuse (son outil
  * ne connaît que les sessions locales) ou la PR ne le dit pas : la note dit à BBR d'archiver dans la liste de gauche.
@@ -9679,9 +9703,14 @@ export const register: Register = (on, options) => {
       // la case de l'axe du panneau, cochée quand la tâche est close.
       const { tasks: all, source: src, palette: pal } = found.data
       const ranks = axisPalette(axisOrder(all.filter(x => !x.done), all.filter(x => x.done)), src.axes)
+      // #480 : les passes de ses livraisons, les PR de la lecture déjà gardée (60 s) , une ligne de la bande a sa session.
+      const bandPrs = await prsOfDelivered($, src, all.filter(x => band.tasks.some(t => t.id === x.id)))
       const infos = band.tasks.map((t, i) => {
         const task = all.find(x => x.id === t.id)
+        const pr = t.cloud ?? (task ? currentPr(bandPrs, task) : undefined)
+        const working = t.cloud ? t.cloud.state !== 'delivered' : t.state !== 'done' // #480 : dans la bande, la ligne a sa session
         return {
+          ...(task ? { passes: deliveryPasses(task, { working, ...(pr ? { pr } : {}) }) } : {}),
           since: sinceLabel(t.since, now),
           // #440 (maquette B6) : une ligne cloud a son compte d'étapes, tiré de sa PR ; #468 (bande v2) : et le numéro de sa PR.
           text: t.cloud ? `${cloudSteps(t.cloud.state).count}${t.cloud.number !== undefined ? ` · PR ${t.cloud.number}` : ''}` : bandInfo({ view: views[i], finished: t.finished === true }),
@@ -10410,7 +10439,7 @@ function maestroBandTree(
   band: MaestroBand,
   palette: Palette,
   views: readonly (StepsView | undefined)[],
-  infos: readonly { since: string; text: string; square?: { hex: string; axis: string; done: boolean } }[],
+  infos: readonly { since: string; text: string; square?: { hex: string; axis: string; done: boolean }; passes?: readonly Pass[] }[],
   act: { open: (t: BrandTask) => void; archive: (t: BrandTask) => void; compact: () => void; openStuck?: (s: StuckEntry) => void },
   now: number,
   contexts: { mine?: ContextView; rows: readonly (ContextView | undefined)[] } = { rows: [] },
@@ -10623,7 +10652,9 @@ function maestroBandTree(
   const bandNumberCells = Math.max(0, ...band.tasks.map(t => `#${t.id}`.length))
   const bandWordCells = Math.max(0, ...band.tasks.map(t => [...rowWord(t)].length))
   const bandDetailCells = Math.min(BAND_INFO_MAX, Math.max(0, ...infos.map(x => [...x.text].length)))
-  const bandFixedCells = 2 + pxCells(MARK_SQUARE_PX) + 2 + bandNumberCells + 2 + pxCells(BAND_GAUGE.row) + 2 + cols.since + 7
+  // #480 (option A) : les points des livraisons avant la jauge, la même colonne sur chaque ligne, aucune sans pastille.
+  const bandPassCells = Svg ? Math.max(0, ...infos.map(x => (x.passes && passesShown(x.passes) ? pxCells(deliveryDotsIcon(x.passes, palette).width) : 0))) : 0
+  const bandFixedCells = 2 + pxCells(MARK_SQUARE_PX) + 2 + bandNumberCells + 2 + pxCells(BAND_GAUGE.row) + 2 + cols.since + 7 + (bandPassCells > 0 ? bandPassCells + 1 : 0)
   const bandFit = bandRowFit({ columns: bodyColumns, fixed: bandFixedCells, word: bandWordCells, detail: bandDetailCells })
   return (
     <Box flexDirection="column" gap={SPACE.tight} backgroundColor={palette.bg} padding="sm">
@@ -10698,6 +10729,15 @@ function maestroBandTree(
                 </Box>
                 {(bandFit.word || !Svg) && <Text key={`band-word:${keyPart(t.id)}`} size="caption" color={ink} wrap="truncate-end">{rowWord(t)}</Text>}
               </Box>
+              {/* #480 : les points de ses livraisons, juste avant la jauge, une colonne de même largeur sur chaque ligne. */}
+              {Svg && bandPassCells > 0 && (
+                <Box key={`band-liv:${keyPart(t.id)}`} width={bandPassCells} flexShrink={0} flexDirection="row" alignItems="center" justifyContent="flex-start">
+                  {info?.passes && passesShown(info.passes) && (() => {
+                    const dots = deliveryDotsIcon(info.passes, palette)
+                    return <Svg key={`band-liv-dots:${keyPart(t.id)}`} source={dots.source} alt={`Livraisons : ${info.passes.map(passLabel).join(', ')}`} width={dots.width} height={dots.height} />
+                  })()}
+                </Box>
+              )}
               {/* La jauge, d'étapes ou de PR, et sous elle la jauge de contexte (#157, #217), à la même place sur chaque ligne. */}
               {Svg && (
                 <Box key={`band-gauge:${keyPart(t.id)}`} flexShrink={0} flexDirection="column" gap={0}>
@@ -12443,20 +12483,6 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
       fichePath ?? srcPath,
       current.ouvert,
     ].filter(Boolean).length
-    const layout = ficheCards({
-      context: inSession ? 'session' : 'roadmap',
-      done: current.done,
-      live: live !== undefined,
-      blocked: holder !== undefined,
-      kept: kept !== undefined,
-      attend: current.attend !== undefined,
-      docs: docs.length,
-      branch: facts?.branch.length ?? 0,
-      links,
-      details: detailCount,
-      attachments: attachments.length,
-      deliverables: deliverables.length,
-    })
     // L'état en pastille : celui que Maestro voit dans sa session, celui de la session qui y travaille ailleurs.
     const ownRunning = focusBrand && ownBrand?.data.own.id !== undefined ? runningBySession.get(ownBrand.data.own.id) : undefined
     // #191 : à l'arrêt, sans question, sa branche en avance sur sa base : « à fusionner », pas « t'attend ».
@@ -12490,6 +12516,27 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
         ? (await cloudTasksOf($, source, allTasks, t => t.label, now).catch(() => [] as BrandTask[])).find(c => c.id === current.id)?.cloud
         : undefined
     const cloudState = cloudNow ? cloudFiche(cloudNow.state) : undefined
+    // #480 : les passes de ses livraisons, dès la deuxième ; la PR de la lecture déjà gardée (60 s), rien à lire sans `livré:`.
+    const fichePr = cloudNow ?? currentPr(await prsOfDelivered($, source, [current]), current)
+    const fichePasses = (current.livre?.length ?? 0) > 0
+      ? deliveryPasses(current, { working: cloudNow ? cloudNow.state !== 'delivered' : headState !== undefined && headState !== 'done', ...(fichePr ? { pr: fichePr } : {}) })
+      : []
+    const ficheLivraisons = passesShown(fichePasses) ? fichePasses : []
+    const layout = ficheCards({
+      context: inSession ? 'session' : 'roadmap',
+      done: current.done,
+      live: live !== undefined,
+      blocked: holder !== undefined,
+      kept: kept !== undefined,
+      attend: current.attend !== undefined,
+      docs: docs.length,
+      branch: facts?.branch.length ?? 0,
+      links,
+      details: detailCount,
+      attachments: attachments.length,
+      deliverables: deliverables.length,
+      ...(ficheLivraisons.length > 0 ? { deliveries: ficheLivraisons.length } : {}),
+    })
     const fullBrand = focusBrand ?? taskBrandOf(current, source, allTasks, { label: s.titre, prereqs: prereqsFor })
     // #291 : la voie (stations d'avant et d'après) quitte l'en-tête ; la jauge de chaîne, au pied, la remplace.
     // En édition (#342), l'en-tête reste celui de la fiche : rien ne bouge.
@@ -12499,6 +12546,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
       avancement: cardSummary('avancement', {
         ...(facts ? { branch: facts.branch } : {}),
         ...(current.attend !== undefined ? { attend: attendWho(current.attend) } : {}),
+        ...(ficheLivraisons.length > 0 ? { deliveries: ficheLivraisons.length } : {}),
       }),
       lancer: '',
       chaine: cardSummary('chaine', {
@@ -13543,12 +13591,36 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
         </Box>
       )
     }
+    // #480 (maquette V2, « le fil ») : la carte Avancement ne revient que pour les livraisons, dès la deuxième passe : une
+    // rangée par livraison, de la hauteur des autres champs, le fil reliant leurs points à travers le filet.
+    const livraisonRows = (
+      <Box key="livraisons" flexDirection="column">
+        {ficheLivraisons.map((p, i) => {
+          const words = passRow(p, i)
+          const rail = Svg ? deliveryRailIcon(p.tone, i === 0 ? 'first' : i === ficheLivraisons.length - 1 ? 'last' : 'mid', ficheLivraisons[i + 1]?.tone === 'next', palette) : undefined
+          return field(
+            `Livraison ${i + 1}`,
+            <Box key={`livraison-row:${i}`} flexGrow={1} flexShrink={1} minWidth={0} flexDirection="row" alignItems="center" gap={SPACE.row}>
+              {rail && Svg ? <Svg source={rail.source} alt={passLabel(p)} width={rail.width} height={rail.height} /> : <Text color={palette.text3}>•</Text>}
+              <Text tabular wrap="truncate-end">{words.name}</Text>
+              <Box flexGrow={1} flexShrink={1} minWidth={0} flexDirection="row" justifyContent="flex-end">
+                <Text size="caption" color={palette.text3} wrap="truncate-end">{words.words}</Text>
+              </Box>
+            </Box>,
+            `livraison:${i}`,
+          )
+        })}
+      </Box>
+    )
     const cards: Record<FicheCard, () => RenderElement> = {
       avancement: () =>
         card(
           'avancement',
           'Avancement',
           summaries.avancement,
+          ficheLivraisons.length > 0 ? (
+            livraisonRows
+          ) : (
           <Box flexDirection="column" gap={SPACE.block}>
             <Box flexDirection="column">
               {docs.length > 0 &&
@@ -13736,7 +13808,8 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
                 )}
               </Box>
             )}
-          </Box>,
+          </Box>
+          ),
         ),
       lancer: () =>
         card(
@@ -14311,6 +14384,8 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   const queuedIds = new Set(maestroBrand && doseView ? doseView.queue.map(q => q.id) : [])
   const inBlock = (t: Task) => blockKeys.has(taskKey(t)) || (t.id !== undefined && queuedIds.has(String(t.id)))
   const blockTasks = blockRows.map(r => r.task)
+  // #480 : les PR des tâches du bloc qui ont des livraisons, de la lecture déjà gardée (60 s), pour dire leur passe en cours.
+  const blockPrs = await prsOfDelivered($, source, blockTasks)
   // La file des tests lourds (#321, maquette C) : la pastille de chaque branche prend la place de la barre
   // d'étapes sur la ligne de sa session ; les suites d'une branche sans ligne (main, Maestro) ont la leur.
   queueWanted = maestroBrand !== undefined
@@ -14817,8 +14892,18 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   }
   const blockWordCells = Math.max(0, ...blockTasks.map(t => pxCells(6.5 * [...blockWordOf(t, blockOf.get(t.id as string))].length)))
   const blockEndCells = ROW_STEPS.clock + stepsCells.count
+  // #480 (maquette A) : les points des livraisons, une colonne juste avant la jauge, dès qu'une ligne a deux passes ; la même
+  // largeur sur chaque ligne (celle du plus long dessin), aucune sans pastille. Une ligne du bloc a sa session : jamais « à lancer ».
+  const blockPassesOf = (t: Task, block?: BrandTask): Pass[] => {
+    const cloud = block?.cloud
+    const pr = cloud ?? currentPr(blockPrs, t)
+    const working = cloud ? cloud.state !== 'delivered' : blockState(t, block) !== 'done' // #480 : dans le bloc, la ligne a sa session
+    return deliveryPasses(t, { working, ...(pr ? { pr } : {}) })
+  }
+  const blockPassMap = new Map(blockTasks.map(t => [taskKey(t), blockPassesOf(t, blockOf.get(t.id as string))] as const))
+  const livCells = Svg ? Math.max(0, ...[...blockPassMap.values()].filter(passesShown).map(ps => pxCells(deliveryDotsIcon(ps, palette).width))) : 0
   // Ce qui reste toujours : marges du panneau et du cadre, case (32 px), lieu, numéro, icône, jauge, durée, et leurs écarts.
-  const blockFixedCells = 6 + pxCells(32) + 2 + treeNumCells + ROW_STEPS.icon + pxCells(ROW_STEPS.bar) + blockEndCells + 6
+  const blockFixedCells = 6 + pxCells(32) + 2 + treeNumCells + ROW_STEPS.icon + pxCells(ROW_STEPS.bar) + blockEndCells + 6 + (livCells > 0 ? livCells + 1 : 0)
   const blockFit = blockRowFit({ columns: (e.props as { bodyColumns?: number }).bodyColumns ?? 56, fixed: blockFixedCells, word: blockWordCells })
   const blockColumns = (t: Task, block?: BrandTask) => {
     const status = blockStatus(t, block)
@@ -14884,6 +14969,19 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
             <Text key={`word:${t.key}`} size="caption" color={ink} wrap="truncate-end">{word}</Text>
           ))}
       </Box>,
+      // #480 : les points de ses livraisons avant la jauge, dans une colonne de la même largeur sur chaque ligne.
+      ...(livCells > 0
+        ? [
+            <Box key={`liv:${t.key}`} width={livCells} flexShrink={0} flexDirection="row" alignItems="center" justifyContent="flex-start">
+              {(() => {
+                const ps = blockPassMap.get(taskKey(t))
+                if (!Svg || !ps || !passesShown(ps)) return null
+                const dots = deliveryDotsIcon(ps, palette)
+                return <Svg key={`liv-dots:${t.key}`} source={dots.source} alt={`Livraisons : ${ps.map(passLabel).join(', ')}`} width={dots.width} height={dots.height} />
+              })()}
+            </Box>,
+          ]
+        : []),
       // La jauge, ou la pastille de sa suite dans la file des tests lourds (#321), à la même place.
       <Box key={`gauge:${t.key}`} flexShrink={0} flexDirection="row" alignItems="center" justifyContent="flex-start" {...(Svg ? { width: pxCells(ROW_STEPS.bar) } : {})}>
         {queued ? queuePill(queued) : Svg && (bar ? <Svg source={bar.source} alt={bar.alt} width={bar.width} height={bar.height} /> : <Svg source={`<svg xmlns="http://www.w3.org/2000/svg" width="${ROW_STEPS.bar}" height="4"/>`} alt="espace" width={ROW_STEPS.bar} height={4} />)}
@@ -15087,7 +15185,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
             fitRowPills({
               columns: (e.props as { bodyColumns?: number }).bodyColumns ?? 56,
               inset: 6,
-              steps: (inLiveBlock ? ROW_STEPS.icon + (blockFit.word ? 1 + blockWordCells : 0) + pxCells(ROW_STEPS.bar) + blockEndCells + 3 : stepsColumns) + priorityCells,
+              steps: (inLiveBlock ? ROW_STEPS.icon + (blockFit.word ? 1 + blockWordCells : 0) + pxCells(ROW_STEPS.bar) + blockEndCells + 3 + (livCells > 0 ? livCells + 1 : 0) : stepsColumns) + priorityCells,
               pills: parts.tags.map(spec => pxCells(pillIcon(spec).width)),
               mark: grouped ? 0 : markWidth,
               number: grouped ? treeNumCells + TREE_LEAD_CELLS : treeNumCells,

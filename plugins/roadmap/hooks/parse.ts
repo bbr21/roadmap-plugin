@@ -39,6 +39,8 @@ export type Task = {
   pj?: string[]
   /** `livrable:` : les sorties de la tâche (email rédigé, deck, export), au format de `pj:` (#234). */
   livrable?: string[]
+  /** `livré:` : les versions publiées de la tâche, `<version>@<AAAA-MM-JJ>[#<PR>]` séparées par des virgules (#480). */
+  livre?: Published[]
   /** `resp:` : la personne qui porte la tâche, collègue compris (mode Projet, #76) ; `resp:` vide ou `resp:-` la laisse absente. */
   resp?: string
   /** `parent:` : le numéro de la tâche mère (`parent:12` ou `parent:#12`) ; `parent:-` (racine) le laisse absent. */
@@ -634,7 +636,10 @@ export function parseRoadmap(text: string, file: string): Task[] {
       else if (k === 'lieu' && v === 'cloud') task.lieu = v // #408
       else if (k === 'relance' && DATE_RE.test(v)) task.relance = v
       else if (k === 'feedback' && FEEDBACK_RE.test(v)) task.feedback = v.split(',')
-      else if (k === 'pj' || k === 'livrable') {
+      else if (k === 'livré') {
+        const delivered = parseDelivered(v)
+        if (delivered) task.livre = delivered
+      } else if (k === 'pj' || k === 'livrable') {
         const paths = attachmentPaths(v)
         if (paths.length > 0) task[k] = paths
       } else if (k !== '' && !KEYS.includes(k)) {
@@ -647,10 +652,83 @@ export function parseRoadmap(text: string, file: string): Task[] {
   return tasks
 }
 
+/** Une livraison de `livré:` (#480) : la version publiée, sa date, et la PR qui l'a portée si elle est connue. */
+// Nommé Published : `Delivery` désigne déjà une fusion ou une publication repérée dans une commande (`deliveries`).
+export type Published = { version: string; date: string; pr?: number }
+const DELIVERY_RE = /^(\d+\.\d+\.\d+)@(\d{4}-\d{2}-\d{2})(?:#(\d+))?$/
+
+/** Lit `0.281.0@2026-11-11#73,0.281.1@2026-11-12` ; `null` dès qu'une entrée est mal formée (ou la valeur vide). */
+export function parseDelivered(v: string): Published[] | null {
+  const out: Published[] = []
+  for (const part of v.split(',')) {
+    const m = DELIVERY_RE.exec(part.trim())
+    if (!m) return null
+    out.push(m[3] === undefined ? { version: m[1]!, date: m[2]! } : { version: m[1]!, date: m[2]!, pr: Number(m[3]) })
+  }
+  return out
+}
+
+/** Une passe de livraison (#480) : `pub` publiée (violette), `merge` fusionnée non publiée, `live` au travail, `next` à venir. */
+export type Pass = { tone: 'pub' | 'merge' | 'live' | 'next'; name: string; date?: string }
+
+/**
+ * Les passes d'une tâche (#480, tableau de la spec) : une par version de `livré:`, puis au plus une passe courante.
+ * Courante : la PR connue (Mac ou cloud) dont le numéro n'est pas déjà publié, ouverte (`live`) ou fusionnée (`merge`) ;
+ * sans PR, une session au travail (`live`, « en session ») ; une ligne ouverte déjà livrée, sans session ni PR
+ * (`next`, « à lancer »). Une PR déjà publiée (son numéro est dans `livré:`) ou livrée ne compte pas deux fois : aucune
+ * passe courante.
+ */
+export function deliveryPasses(task: Task, current: { working: boolean; pr?: { number?: number; state: CloudPr['state'] } }): Pass[] {
+  const out: Pass[] = (task.livre ?? []).map(d => ({ tone: 'pub' as const, name: d.version, date: d.date }))
+  const { working } = current
+  if (current.pr?.state === 'delivered') return out
+  // Une PR déjà dans livré: est une passe publiée : la session qui reprend la tâche (#476) n'en a pas encore d'autre.
+  const pr = current.pr?.number !== undefined && (task.livre ?? []).some(d => d.pr === current.pr?.number) ? undefined : current.pr
+  const label = pr?.number !== undefined ? `PR ${pr.number}` : 'PR'
+  if (pr && (pr.state === 'open' || pr.state === 'red' || pr.state === 'ready')) out.push({ tone: 'live', name: label })
+  else if (pr?.state === 'merged') out.push({ tone: 'merge', name: label })
+  else if (working) out.push({ tone: 'live', name: 'en session' })
+  else if (!task.done && (task.livre?.length ?? 0) > 0) out.push({ tone: 'next', name: 'à lancer' })
+  return out
+}
+
+/** Le nom d'une passe et son état, tel que le lit l'`alt` d'une rangée de points : « 0.281.0 · publiée le 11/11 ». */
+export function passLabel(p: Pass): string {
+  switch (p.tone) {
+    case 'pub':
+      return `${p.name} · publiée${p.date ? ` le ${shortDate(p.date)}` : ''}`
+    case 'merge':
+      return `${p.name} · fusionnée, suite de main`
+    case 'live':
+      return `${p.name} · au travail`
+    case 'next':
+      return p.name
+  }
+}
+
+/** Une rangée « Livraison N » de la fiche (#480) : le nom de la passe (la version, la PR, « passe 2 » à venir) et l'état en mots, à droite. */
+export function passRow(p: Pass, index: number): { name: string; words: string } {
+  switch (p.tone) {
+    case 'pub':
+      return { name: p.name, words: `publiée${p.date ? ` le ${shortDate(p.date)}` : ''}` }
+    case 'merge':
+      return { name: p.name, words: 'fusionnée · suite de main' }
+    case 'live':
+      return { name: p.name, words: 'au travail' }
+    case 'next':
+      return { name: `passe ${index + 1}`, words: 'à lancer' }
+  }
+}
+
+/** Rien ne s'affiche avant la deuxième passe (#480) : une tâche livrée en une fois n'a ni point ni rangée. */
+export function passesShown(p: readonly Pass[]): boolean {
+  return p.length >= 2
+}
+
 // Le contrôle de la grammaire, plus strict que la lecture : la lecture ignore une ligne qu'elle ne
 // comprend pas, le contrôle la signale. Clés admises : celles que la lecture garde, plus `verrou`
 // (Splitmybill).
-const KEYS: readonly string[] = [...FIELDS, 'après', 'parent', 'id', 'nom', 'prio', 'feedback', 'pj', 'livrable', 'verrou', 'tous', 'relance', 'skill', 'lieu' /* #408 */]
+const KEYS: readonly string[] = [...FIELDS, 'après', 'parent', 'id', 'nom', 'prio', 'feedback', 'pj', 'livrable', 'livré', 'verrou', 'tous', 'relance', 'skill', 'lieu' /* #408 */]
 /** Les clés de la grammaire : une clé déclarée dans `cles` ne peut en reprendre aucune. */
 export const GRAMMAR_KEYS: readonly string[] = KEYS
 const DECLARED_KEY_RE = /^[a-zà-ÿ][a-zà-ÿ0-9-]*$/
@@ -767,6 +845,7 @@ export function lintRoadmap(text: string, done: boolean, rules: Partial<LintRule
       else if (k === 'lieu' && v !== 'cloud') say(`lieu:${v} : cloud attendu`) // #408
       else if (k === 'feedback' && !FEEDBACK_RE.test(v)) say(`feedback: des numéros de retours séparés par des virgules (« ${v} »)`)
       else if ((k === 'pj' || k === 'livrable') && (v === '' || v.split(',').some(x => x.trim() === ''))) say(`${k}: des chemins de fichiers séparés par des virgules (« ${v} »)`)
+      else if (k === 'livré' && parseDelivered(v) === null) say(`livré: <version>@<AAAA-MM-JJ>[#<PR>] séparés par des virgules (« ${v} »)`) // #480
       else if (k === 'nom' && (v === '' || v.length > NAME_MAX)) say(`nom: 40 caractères au plus, et pas vide (« ${clip(v, 50)} »)`)
       keys.set(k, v)
     }
@@ -8059,7 +8138,7 @@ function fieldOfProblem(why: string, cles: Readonly<Record<string, readonly stri
  * L'ordre de la grammaire, où se place un champ que la ligne n'avait pas (#161) ; `*` : les clés
  * déclarées par le projet, et toute clé inconnue.
  */
-const EDIT_ORDER = ['id', 'nom', 'resp', 'qui', 'attend', 'branche', 'verrou', 'ouvert', 'due', 'parent', 'après', 'prio', 'tous', 'relance', 'feedback', '*', 'spec', 'fiche', 'pj', 'livrable', 'src']
+const EDIT_ORDER = ['id', 'nom', 'resp', 'qui', 'attend', 'branche', 'verrou', 'ouvert', 'due', 'parent', 'après', 'prio', 'tous', 'relance', 'feedback', '*', 'spec', 'fiche', 'pj', 'livrable', 'livré', 'src']
 function editRank(field: string): number {
   const k = field.slice(0, Math.max(0, field.indexOf(':')))
   const at = EDIT_ORDER.indexOf(k)
@@ -11298,6 +11377,8 @@ export function ficheCards(o: {
   attachments?: number
   /** Les livrables de la ligne (`livrable:`, #234) : leur carte vient avant les pièces jointes. */
   deliverables?: number
+  /** Les passes de ses livraisons (#480), dès la deuxième : la carte Avancement revient, pour elles seules. */
+  deliveries?: number
   /** En édition (#161, #342) : les cartes du pied qui portent un champ, Sa chaîne et Détails. */
   editing?: boolean
 }): { cards: FicheCard[] } {
@@ -11305,6 +11386,7 @@ export function ficheCards(o: {
   // #291 (fiche finale) : le geste (Lancer, Ouvrir la session) monte en tête de fiche, la chaîne descend en
   // jauge au pied, et ce que disait Avancement (dossier, branche, attente) rejoint la carte Détails.
   const cards: FicheCard[] = []
+  if ((o.deliveries ?? 0) > 0) cards.push('avancement')
   if (o.details > 0 || o.docs > 0 || o.attend || (o.context === 'session' && o.branch > 0)) cards.push('details')
   if ((o.deliverables ?? 0) > 0) cards.push('livrables')
   if ((o.attachments ?? 0) > 0) cards.push('pj')
@@ -11520,12 +11602,15 @@ export function cardSummary(
     when?: string
     attachments?: number
     deliverables?: number
+    /** Les passes de ses livraisons (#480), dès la deuxième : « 2 livraisons » à la place du reste. */
+    deliveries?: number
   },
 ): string {
   const files = (n?: number) => (n ? `${n} fichier${n > 1 ? 's' : ''}` : '')
   if (card === 'pj') return files(o.attachments)
   if (card === 'livrables') return files(o.deliverables)
   if (card === 'etapes') return o.steps ? `${o.steps.count} · ${o.steps.age}` : ''
+  if (card === 'avancement' && o.deliveries) return `${o.deliveries} livraisons`
   if (card === 'avancement') return o.branch?.[0] ?? (o.attend ? `attend ${o.attend}` : '')
   if (card === 'chaine') {
     const ids = (list: string[]) => list.map(n => `#${n}`).join(', ')
