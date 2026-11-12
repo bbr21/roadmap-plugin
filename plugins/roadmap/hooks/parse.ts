@@ -14042,21 +14042,36 @@ function shellQuote(text: string): string {
  * ne l'empêche pas. Depuis #323 `take` reçoit, en affectations de son seul appel, les places réglées
  * (`slots`), la voie, `maestro` (la session qui fusionne), le dossier testé et la branche fusionnée ;
  * le libellé est la commande courte de la file. Sous Maestro une suite sans voie propre prend la voie 0.
+ * `prio` (#536, la session porte une tâche prioritaire) : la suite se marque `ROADMAP_QUEUE_PRIO=1` et prend
+ * la voie 0, même un `un_test.sh` qui irait sinon en voie 1.
  */
-export function queuedCommand(command: string, root: string, opts: { maestro?: boolean; slots?: number } = {}): string | undefined {
+export function queuedCommand(command: string, root: string, opts: { maestro?: boolean; slots?: number; prio?: boolean } = {}): string | undefined {
   if (command.includes('one-at-a-time.sh') || !heavyTest(command) || queueOff(command)) return undefined
   const label = queueCommand(command.trim().replace(/\s+/g, ' ').replace(ENV_PREFIX, ''))
-  const lane = queueLane(command) ?? (opts.maestro ? 0 : undefined)
+  const lane = opts.prio ? 0 : (queueLane(command) ?? (opts.maestro ? 0 : undefined))
   const ctx = queueContext(command)
   const env = [
     opts.slots !== undefined ? `ROADMAP_QUEUE_SLOTS=${opts.slots}` : '',
     lane !== undefined ? `ROADMAP_QUEUE_LANE=${lane}` : '',
     opts.maestro ? 'ROADMAP_QUEUE_BY=maestro' : '',
+    opts.prio ? 'ROADMAP_QUEUE_PRIO=1' : '',
     ctx.dir !== undefined ? `ROADMAP_QUEUE_DIR=${shellQuote(ctx.dir)}` : '',
     ctx.for !== undefined ? `ROADMAP_QUEUE_FOR=${shellQuote(ctx.for)}` : '',
   ].filter(Boolean)
   const script = shellQuote(`${root}/scripts/one-at-a-time.sh`)
   return `${env.length ? `${env.join(' ')} ` : ''}${script} take $$ ${shellQuote(label)}; {\n${command}\n}; __roadmap_rc=$?; ${script} give $$; (exit $__roadmap_rc)`
+}
+
+/**
+ * La session titrée `title` porte-t-elle une tâche prioritaire (#536) ? Oui si la tâche de son numéro est
+ * `isPriority` dans la roadmap lue, ou si le store la marque (`<projet>#<id>`). Titre sans numéro : non.
+ * Roadmap illisible (texte d'erreur) : seule la marque compte.
+ */
+export function ownTaskPrio(title: string, tasks: readonly Task[] | string, marks: ReadonlySet<string>, project: string): boolean {
+  const id = sessionTitleId(title)
+  if (id === undefined) return false
+  if (marks.has(`${project}#${id}`)) return true
+  return typeof tasks !== 'string' && tasks.some(t => t.id === id && isPriority(t))
 }
 
 // ---------------------------------------------------------------- la file des tests lourds vue du panneau (#321)
@@ -14877,6 +14892,24 @@ export function yieldOrder(c: readonly YieldCandidate[]): YieldCandidate[] {
 export function pickYield(c: readonly YieldCandidate[], why: DoseWhy, match: readonly string[]): YieldCandidate | undefined {
   const ordered = yieldOrder(c)
   return why === 'project' ? ordered.find(x => match.some(prefix => x.cwd.startsWith(prefix))) : ordered[0]
+}
+
+/**
+ * Le mode prio (#536) : tant qu'une tâche prioritaire tourne, les autres lui cèdent la place.
+ * `active` : les ids des prioritaires ouvertes et pas en pause (une prio mise en pause ne retient personne).
+ * `yield` : les sessionIds des non prioritaires pas déjà en pause (jamais redemandées) ; vide quand aucune prio n'est active.
+ * `exempt` : les sessions que la personne a relancées à la main pendant la prio (leur pause effacée parce qu'elles
+ * tournent de nouveau) ; elles ne cèdent plus tant que dure la prio : son geste l'emporte.
+ */
+export function prioHold(c: readonly { sessionId: string; id: string; prio: boolean }[], paused: ReadonlySet<string>, exempt: ReadonlySet<string> = new Set()): { active: string[]; yield: string[] } {
+  const active = c.filter(x => x.prio && !paused.has(x.sessionId)).map(x => x.id)
+  if (!active.length) return { active, yield: [] }
+  return { active, yield: c.filter(x => !x.prio && !paused.has(x.sessionId) && !exempt.has(x.sessionId)).map(x => x.sessionId) }
+}
+
+/** Une entrée de la file est retenue (#536) quand elle n'est pas prioritaire et qu'une prioritaire est active : lancement comme reprise. */
+export function prioHolds(entry: { prio?: boolean }, active: boolean): boolean {
+  return active && !entry.prio
 }
 
 /** Le `at` d'une entrée posée entre deux voisines de la file (#367) : le milieu ; en tête un cran avant, en bout un cran après, file vide `now`. */

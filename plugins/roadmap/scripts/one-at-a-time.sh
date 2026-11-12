@@ -35,6 +35,11 @@
 # ROADMAP_QUEUE_LOAD_WAIT (s, défaut 180, 0 coupe l'attente, mémoire comprise), ROADMAP_QUEUE_LOAD_FILE (la charge lue
 # dans un fichier, pour les tests), ROADMAP_QUEUE_MIN_FREE (%, défaut 5), ROADMAP_QUEUE_MEM_FILE (`free=` et `swap=`,
 # en %, lus dans un fichier, pour les tests).
+# Voie prio (#536) : ROADMAP_QUEUE_PRIO=1 met le ticket en voie 0 avec une ligne `prio=1`, et la tête de file
+# prend une place ordinaire ou, à défaut, `lock-0` ; tant qu'un autre ticket vivant porte `prio=1`, aucun ticket
+# non prio ne prend `lock-0`. Plafond dur de charge (#536) : ROADMAP_QUEUE_HARD_LOAD (défaut 2 × le seuil
+# ROADMAP_QUEUE_MAX_LOAD) ; au-dessus, le raccourci « la charge ne baisse plus » ne joue pas et l'attente va
+# jusqu'à ROADMAP_QUEUE_HARD_WAIT (s, défaut 360) au lieu de ROADMAP_QUEUE_LOAD_WAIT, puis la suite part en le disant.
 # Ce que le panneau lit (#321, #323) : <place>/owner (pid, since, branch, label, project, lane, by, run une fois
 # la suite partie), <place>/load pendant l'attente de charge (avec `cap=`, le plafond), queue/<voie>-<horodatage>-<pid>. Détail : docs/plans/feat-file-tests-visible/.
 # Historique (#521) : give ajoute une ligne par suite à <file>/history.tsv (en-tête écrit à la création, 4000
@@ -66,6 +71,8 @@ queue="$dir/queue"
 fast_place="$dir/lock-0"
 fast=1
 [[ "${ROADMAP_QUEUE_FAST:-}" == 0 ]] && fast=0
+prio=0
+[[ "${ROADMAP_QUEUE_PRIO:-}" == 1 ]] && prio=1
 slots="${ROADMAP_QUEUE_SLOTS:-1}"
 [[ "$slots" =~ ^[0-9]+$ ]] && (( slots >= 1 )) || slots=1
 mkdir -p "$queue" || exit 0
@@ -152,6 +159,8 @@ lane="${ROADMAP_QUEUE_LANE:-}"
 if [[ ! "$lane" =~ ^[012]$ ]]; then
   [[ "$shell_branch" == main ]] && lane=0 || lane=2
 fi
+# Voie prio (#536) : toujours la voie 0, quoi qu'on force.
+(( prio )) && lane=0
 
 # Le ménage d'avant #323 (#521) : un dossier frère sans history.tsv, sans place ni ticket d'un PID vivant, s'ôte.
 sweep_old_queues() {
@@ -181,6 +190,7 @@ ticket="$queue/$ticket_name"
 {
   printf 'pid=%s\nsince=%s\nbranch=%s\nlabel=%s\nproject=%s\nlane=%s\n' "$pid" "$(now)" "$branch" "$label" "$project" "$lane"
   [[ "${ROADMAP_QUEUE_BY:-}" == maestro ]] && printf 'by=maestro\n'
+  (( prio )) && printf 'prio=1\n'
 } > "$ticket"
 trap 'rm -f "$ticket"' EXIT
 trap 'exit 143' TERM INT HUP
@@ -285,11 +295,15 @@ mark_run() {
 # Place prise : attendre que la mémoire se détende (#403) et que la charge passe sous le seuil (#249), au plus
 # load_wait secondes en tout, en disant la vraie raison ; la mémoire passe devant la charge.
 wait_for_calm() {
-  local ncpu max wait_max mem free swap why began polls=0 said=""
+  local hard_hit=0 ncpu max hard hard_wait cap wait_max mem free swap why began polls=0 said=""
   calm_secs=0
   ncpu="$(cores)"
   max="${ROADMAP_QUEUE_MAX_LOAD:-}"
   [[ "$max" =~ ^[0-9]+$ ]] || max=$(( 2 * ncpu ))
+  hard="${ROADMAP_QUEUE_HARD_LOAD:-}"
+  [[ "$hard" =~ ^[0-9]+$ ]] || hard=$(( 2 * max ))
+  hard_wait="${ROADMAP_QUEUE_HARD_WAIT:-360}"
+  [[ "$hard_wait" =~ ^[0-9]+$ ]] || hard_wait=360
   wait_max="${ROADMAP_QUEUE_LOAD_WAIT:-180}"
   [[ "$wait_max" =~ ^[0-9]+$ ]] || wait_max=180
   (( wait_max > 0 )) || return 0
@@ -303,14 +317,20 @@ wait_for_calm() {
     elif [[ -n "$load" ]] && (( load > max )); then why=load
     fi
     [[ -n "$why" ]] || break
-    put_load "${load:-0}" "$ncpu" "$max" "$began" "$why" "$free" "$swap" "$wait_max"
-    if [[ "$why" == load && "$falling" == 0 ]]; then
+    # Charge au-delà du plafond dur (#536) : plafond d'attente à elle, et pas de raccourci « ne baisse plus ».
+    cap="$wait_max"
+    hard_hit=0
+    if [[ "$why" == load ]] && (( load > hard )); then hard_hit=1; cap="$hard_wait"; fi
+    put_load "${load:-0}" "$ncpu" "$max" "$began" "$why" "$free" "$swap" "$cap"
+    if [[ "$why" == load && "$falling" == 0 ]] && (( ! hard_hit )); then
       echo "roadmap : la charge du Mac ne baisse plus (charge $load) : tests lourds lancés sans attendre davantage."
       calm_secs=$(( $(now) - began ))
       return 0
     fi
-    if (( $(now) - began >= wait_max )); then
-      if [[ "$why" == memory ]]; then
+    if (( $(now) - began >= cap )); then
+      if (( hard_hit )); then
+        echo "roadmap : le Mac reste très chargé (charge $load, plafond dur $hard) après $(span $(( $(now) - began ))) : tests lourds lancés quand même ; un « timed out after 5000 ms » vient sans doute de la charge, le test se rejoue seul."
+      elif [[ "$why" == memory ]]; then
         echo "roadmap : la mémoire du Mac reste tendue ($free % libres, swap $swap %) après $(span $(( $(now) - began ))) : tests lourds lancés quand même."
       else
         echo "roadmap : le Mac reste chargé (charge $load) après $(span $(( $(now) - began ))) : tests lourds lancés quand même ; un « timed out after 5000 ms » vient sans doute de la charge, le test se rejoue seul."
@@ -389,7 +409,14 @@ while :; do
   done
   # En un passage : la tête de la liste triée, et (voie 1, place rapide) son premier ticket de voie 1.
   want_fast=0
-  (( fast && lane == 1 )) && want_fast=1
+  (( fast && (lane == 1 || prio) )) && want_fast=1
+  # Un ticket non prio laisse lock-0 au ticket prio vivant de la file (#536).
+  if (( want_fast && ! prio )); then
+    for t in "$queue"/*; do
+      [[ -f "$t" && "$t" != "$ticket" ]] || continue
+      [[ "$(field "$t" prio)" == 1 ]] && { want_fast=0; break; }
+    done
+  fi
   { IFS= read -r head_name; IFS= read -r first_fast; } <<< "$(ls "$queue" 2>/dev/null | sort | awk -v w="$want_fast" 'NR == 1 { h = $0 } w == 1 && f == "" && $0 ~ /^1-/ { f = $0 } END { print h; print f }')"
   candidate=0
   if [[ "$head_name" == "$ticket_name" ]]; then

@@ -800,6 +800,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.291.0 (2026-11-12)** : roadmap : le mode prio passe devant tout (pause des autres sessions, file des tests en voie 0), suite de main fichier par fichier (#536)
 - **0.290.0 (2026-11-12)** : un tronc local et cloud, gardien des fusions, findings, bloc fixe du compte rendu, why dans la fiche, tâches mises à jour avant d'en créer ; perf : minuterie, dessins, zones de clic, panneau sans la liste (#510 #528 #531 #537 #535 #538 #522 #519 #520 #516 #539 #530 #527 #498)
 - **0.289.0 (2026-11-12)** : commande why, ▶ Cloud par Claude, réveil de Maestro par le cloud, nature des projets, mots d'état, clôture partielle, fiche sans roue ; perf : store, hooks, scripts (#529 #515 #496 #508 #509 #487 #532 #518 #523 #525 #526 #533)
 - **0.288.0 (2026-11-12)** : file des tests : une seconde place pour les tests ciblés (un_test.sh), plafond de charge à 180 s, départ quand la charge cesse de baisser, place d'un shell mort rendue, historique des attentes (#521)

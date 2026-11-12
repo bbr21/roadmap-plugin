@@ -763,9 +763,11 @@ The merge order, from the first criterion to the last:
    closes once `fidelite.py verifier` is green (each gap `corrige`, `aucun` or `tache` with its number).
    Case that made the rule: #436, published on 2026-11-11 at 05:28 UTC, held #443 back for want of a
    capture.
-2. **Prerequisites first**: what unblocks other tasks (`après:`) goes ahead.
-3. **What frees** a unique resource or a file another task is waiting for.
-4. **When tied**, the smallest, the least exposed to conflicts.
+2. **Priority first** (#536): a ready `prio:oui` branch is merged, and published when it needs publishing, before
+   any other ready branch; several priorities among themselves follow the criteria below.
+3. **Prerequisites first**: what unblocks other tasks (`après:`) goes ahead.
+4. **What frees** a unique resource or a file another task is waiting for.
+5. **When tied**, the smallest, the least exposed to conflicts.
 
 The merge itself:
 
@@ -1056,6 +1058,15 @@ The merge itself:
   With the option « File de lancement » (`launchQueue`) off, there is no queue at all: no cap, no
   load wait, every card and every ▶ goes out at once, and the tasks already queued start; the two
   caps apply only with the queue on.
+- **Priority holds everything** (#536, the person's request of 2026-11-12, after #533 held ten tasks behind four Perf
+  sessions): while a priority task session is open on the Mac and not paused, no other task session of the Mac runs.
+  With the launch queue on, the panel asks every non-priority task session of the Mac to stop (the pause `by: 'prio'`
+  below; never a Maestro, a gardien or a finished session), and no non-priority entry of the queue leaves, launch or
+  resume; several priorities run together. When the last one ends or pauses, the paused sessions resume by
+  themselves, dosed by places and load. A priority session's heavy tests take lane 0 of the Mac's test queue
+  (`ROADMAP_QUEUE_PRIO`). Maestro **sets `prio:oui` itself** (by the `roadmap:tasks` skill, saying so in one line) on a
+  task that blocks a publication or that other open tasks wait on (`après:`), when it opens it or as soon as it sees the
+  block; it lifts it once the block is gone. Cloud sessions are not held (they use none of the Mac).
 - **Priority and pauses** (#367): a `prio:oui` task (or one marked « Prioritaire » in the control
   center) does not wait its turn: it goes to the head of the queue, and when no place is free the
   panel asks the parent Maestro of one session to stop it (the app's Stop, `stop_session`): never a

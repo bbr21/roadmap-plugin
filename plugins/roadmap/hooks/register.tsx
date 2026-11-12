@@ -536,6 +536,8 @@ import {
   rootOfCwd,
   SESSION_PAUSES_KEY,
   pickYield,
+  prioHold,
+  prioHolds,
   prioMarksOf,
   queueAtBetween,
   resumeText,
@@ -792,6 +794,7 @@ import {
   todaySections,
   isDueSoon,
   isPriority,
+  ownTaskPrio,
   isToRelaunch,
   matchesWho,
   peopleOf,
@@ -2419,6 +2422,20 @@ type BashCall = { command: string; timeout?: number; run_in_background?: boolean
 /** L'attente plus la suite tiennent dans les 10 min que l'outil Bash accorde au plus à un appel au premier plan. */
 const QUEUE_TIMEOUT_MS = 600_000
 
+/** Cette session porte-t-elle une tâche prioritaire (#536) ? Toute lecture en échec : non, la suite garde sa voie. */
+async function prioHere($: EngineInterface): Promise<boolean> {
+  try {
+    const own = await readOwnSession($)
+    if (typeof own.title !== 'string' || sessionTitleId(own.title) === undefined) return false
+    const source = await sourceNow($)
+    const tasks = source ? await loadParsed($, files(source).open, 'ROADMAP.md') : []
+    const marks = prioMarksOf(await storeGet($, PRIO_MARKS_KEY).catch(() => undefined))
+    return ownTaskPrio(own.title, tasks, marks, doseProject().project)
+  } catch {
+    return false
+  }
+}
+
 /**
  * La file des tests lourds (#222, BBR, 2026-11-02) : une suite lourde passe par `one-at-a-time.sh` du
  * plugin, une à la fois par projet ; au premier plan, son délai monte à 10 min. Une réécriture en
@@ -2428,7 +2445,7 @@ async function inQueue<E extends BashCall>($: EngineInterface, e: E): Promise<E>
   try {
     if (!heavyTest(e.command)) return e
     const slots = Number(settings.testSlots)
-    const command = queuedCommand(e.command, $.plugin.root, { maestro: await maestroHere($), slots: Number.isInteger(slots) && slots > 0 ? slots : 1 })
+    const command = queuedCommand(e.command, $.plugin.root, { maestro: await maestroHere($), slots: Number.isInteger(slots) && slots > 0 ? slots : 1, prio: await prioHere($) })
     if (command === undefined) return e
     return e.run_in_background === true ? { ...e, command } : { ...e, command, timeout: Math.max(e.timeout ?? 0, QUEUE_TIMEOUT_MS) }
   } catch {
@@ -5441,6 +5458,12 @@ async function releaseBrief($: EngineInterface, head: GlobalQueued, source: Sour
   }
 }
 
+/**
+ * Les sessions non prioritaires relancées à la main pendant une prio (#536) : elles ne lui cèdent plus jusqu'à la fin
+ * de la prio. Gardées par ce panneau seulement ; un autre Maestro ouvert peut encore les redemander (limite admise).
+ */
+const prioExempt = new Set<string>()
+
 /** Une session en pause relancée à la main tourne dès qu'elle a reçu son arrêt : sa pause ne s'efface qu'après ce délai, le temps que la liste le dise (#367). */
 const PAUSE_SETTLE_MS = 15_000
 
@@ -5503,23 +5526,19 @@ function openRowOf(rows: readonly unknown[], sessionId: string): PauseRow | unde
 }
 
 /**
- * Qui cède sa place à la prioritaire `first` (#367) : parmi les sessions de tâche ouvertes du Mac qui tiennent une
- * place et ne sont pas déjà en pause, `pickYield` (jamais une prioritaire, d'abord celle qui ne tourne pas, puis la
- * plus lourde, puis la dernière lancée). La demande revient au Maestro parent de la session (`startedBy`), sinon à
- * celui-ci. Une prioritaire se reconnaît à la marque du centre de contrôle, ou à `prio:` dans la roadmap de ce Maestro.
+ * Les sessions de tâche ouvertes du Mac qui tiennent une place (#367, #536), avec leur Maestro parent (`startedBy`) :
+ * ni les Maestros ni les sessions au repos depuis plus de 15 min (`launchPlaces`), ni celles de `pauses`, ni les
+ * archivées. Une prioritaire se reconnaît à la marque du centre de contrôle, ou à `prio:` dans la roadmap de ce Maestro.
+ * Partagée par `pickVictim` (qui cède) et par le mode prio (qui est retenu).
  */
-async function pickVictim(
+async function openTaskSessions(
   $: EngineInterface,
-  ownId: string,
   state: DoseState,
   queue: readonly GlobalQueued[],
-  first: GlobalQueued,
   pauses: Record<string, SessionPause>,
   tasks: readonly Task[] | string,
   now: number,
-): Promise<{ sessionId: string; maestro: string } | undefined> {
-  const gate = gateFor(state, first.project, first.match, entryIsCloud(first))
-  if (gate.go) return undefined
+): Promise<(YieldCandidate & { parent: string | undefined })[]> {
   const mine = doseProject()
   const marks = prioMarksOf(await storeGet($, PRIO_MARKS_KEY).catch(() => undefined))
   const heavyQueue = await readQueue($)
@@ -5537,7 +5556,7 @@ async function pickVictim(
     found.push({ row, sessionId, id })
   }
   await learnCreated($, found.map(f => f.sessionId), now)
-  const candidates: YieldCandidate[] = found.map(({ row, sessionId, id }) => {
+  const candidates: (YieldCandidate & { parent: string | undefined })[] = found.map(({ row, sessionId, id }) => {
     const cwd = typeof row.cwd === 'string' ? row.cwd : ''
     const root = cwd.split('/.claude/worktrees')[0].replace(/\/+$/, '')
     const owner = known.find(k => k.match.some(prefix => cwd.startsWith(prefix)))
@@ -5545,12 +5564,34 @@ async function pickVictim(
     const prio = marks.has(`${project}#${id}`) || (project === mine.project && open.some(t => t.id === id && isPriority(t)))
     // la rangée de la liste ne porte pas toujours sa branche : celle de la ligne de roadmap (`branche:`) de ce projet
     const branch = typeof row.branch === 'string' ? row.branch : project === mine.project ? (open.find(t => t.id === id)?.branche ?? '') : ''
-    return { sessionId, id, running: row.isRunning === true, prio, weight: sessionWeight(cwd, branch !== '' && heavy.has(branch)), createdAt: createdBySession.get(sessionId) ?? 0, cwd }
+    return { sessionId, id, running: row.isRunning === true, prio, weight: sessionWeight(cwd, branch !== '' && heavy.has(branch)), createdAt: createdBySession.get(sessionId) ?? 0, cwd, parent: typeof row.startedBy === 'string' ? row.startedBy : undefined }
   })
+  return candidates
+}
+
+/**
+ * Qui cède sa place à la prioritaire `first` (#367) : parmi les sessions de tâche ouvertes du Mac qui tiennent une
+ * place et ne sont pas déjà en pause, `pickYield` (jamais une prioritaire, d'abord celle qui ne tourne pas, puis la
+ * plus lourde, puis la dernière lancée). La demande revient au Maestro parent de la session (`startedBy`), sinon à
+ * celui-ci. Une prioritaire se reconnaît à la marque du centre de contrôle, ou à `prio:` dans la roadmap de ce Maestro.
+ */
+async function pickVictim(
+  $: EngineInterface,
+  ownId: string,
+  state: DoseState,
+  queue: readonly GlobalQueued[],
+  first: GlobalQueued,
+  pauses: Record<string, SessionPause>,
+  tasks: readonly Task[] | string,
+  now: number,
+): Promise<{ sessionId: string; maestro: string } | undefined> {
+  const gate = gateFor(state, first.project, first.match, entryIsCloud(first))
+  if (gate.go) return undefined
+  const candidates = await openTaskSessions($, state, queue, pauses, tasks, now)
   const picked = pickYield(candidates, gate.why, first.match)
   if (!picked) return undefined
-  const parent = found.find(f => f.sessionId === picked.sessionId)?.row.startedBy
-  return { sessionId: picked.sessionId, maestro: typeof parent === 'string' && parent !== '' ? parent : ownId }
+  const parent = candidates.find(c => c.sessionId === picked.sessionId)?.parent
+  return { sessionId: picked.sessionId, maestro: parent !== undefined && parent !== '' ? parent : ownId }
 }
 
 /**
@@ -5738,7 +5779,11 @@ async function relieveLaunches($: EngineInterface): Promise<void> {
       for (const [sessionId, p] of Object.entries(pauses)) {
         if (p.state !== 'paused') continue
         const row = openRowOf(state.rows, sessionId)
-        if (!row || (row.isRunning && now - p.at > PAUSE_SETTLE_MS)) await clearPause(sessionId)
+        if (!row || (row.isRunning && now - p.at > PAUSE_SETTLE_MS)) {
+          // #536 : relancée à la main pendant la prio, elle ne lui cède plus (le geste de la personne l'emporte).
+          if (row && p.by === 'prio') prioExempt.add(sessionId)
+          await clearPause(sessionId)
+        }
       }
       // une entrée `resume` de ce Maestro sans pause exécutée (reprise faite ailleurs, pause ôtée) n'a plus de raison d'être
       const orphans = queue.filter(q => q.maestro === ownId && q.kind === 'resume' && pauses[q.sessionId ?? '']?.state !== 'paused')
@@ -5783,9 +5828,29 @@ async function relieveLaunches($: EngineInterface): Promise<void> {
       }
     }
     await runPauses()
+    // #536 mode prio : tant qu'une tâche prioritaire tourne, les autres lui cèdent la place (pause, puis reprise quand elle finit).
+    // Sans la file de lancement, ou sans liste lisible, rien ne se met en pause.
+    let holdActive = false
+    if (fileOn && listed) {
+      const sessions = await openTaskSessions($, state, queue, {}, tasks, now)
+      const hold = prioHold(sessions, new Set(Object.keys(pauses)), prioExempt)
+      holdActive = hold.active.length > 0
+      // la prio finie, l'exemption tombe : la prochaine prio retient tout le monde
+      if (!holdActive) prioExempt.clear()
+      for (const sessionId of hold.yield) {
+        const parent = sessions.find(c => c.sessionId === sessionId)?.parent
+        const ask: SessionPause = { mode: 'stop', state: 'asked', by: 'prio', for: hold.active[0], maestro: parent !== undefined && parent !== '' ? parent : ownId, at: now }
+        await writePause($, sessionId, ask)
+        pauses[sessionId] = ask
+      }
+      if (hold.yield.length > 0) {
+        await runPauses()
+        changed = true
+      }
+    }
     // (c) la tête prioritaire est refusée et personne n'a déjà demandé de pause pour elle : une session cède sa place
     // #374 : une entrée en vol a déjà sa place réservée : elle ne demande pas une autre pause.
-    const first = fileOn && !changed ? counted(queue).filter(q => !launchInFlight(q, now) && !queueRetained(q))[0] : undefined
+    const first = fileOn && !changed ? counted(queue).filter(q => !launchInFlight(q, now) && !queueRetained(q) && !prioHolds(q, holdActive))[0] : undefined
     if (first?.prio && first.kind !== 'resume' && !gateFor(state, first.project, first.match, entryIsCloud(first)).go) {
       const fresh = await readPauses($)
       if (!Object.values(fresh).some(p => p.state === 'asked' && p.for === first.id)) {
@@ -5832,7 +5897,7 @@ async function relieveLaunches($: EngineInterface): Promise<void> {
     }
     // (d) et (e) : la tête, une entrée `resume` à reprendre ou une tâche à lancer ; un pas qui vient de poser ou lever une pause attend le suivant.
     // Une entrée en vol (#374) n'est plus une tête : elle attend sa session ; une entrée reprise à ce pas attend le suivant.
-    const head = changed ? undefined : queueHead(counted(queue).filter(q => !launchInFlight(q, now) && !queueRetained(q) && q.taken?.at !== now), gateOf)
+    const head = changed ? undefined : queueHead(counted(queue).filter(q => !launchInFlight(q, now) && !queueRetained(q) && !prioHolds(q, holdActive) && q.taken?.at !== now), gateOf)
     // #382 : une entrée de ce Maestro retenue par Remote Control n'est relancée que par un mot de la personne (`typedRelease`) ; les reprises (`resume`) partent toujours.
     const remoteHeld = queue.some(q => q.maestro === ownId && q.kind !== 'resume' && q.failed?.remote)
     if (head && head.maestro === ownId && now >= doseRetryAt && (head.kind === 'resume' || !remoteHeld)) {
