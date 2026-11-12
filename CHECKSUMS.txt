@@ -1,8 +1,8 @@
-# roadmap 0.286.0 : SHA-256 de chaque fichier installé du plugin, chemins relatifs à son dossier.
-# Vérifier une copie installée (~/.claude/plugins/cache/roadmap/roadmap/0.286.0) : plugins/roadmap/SECURITE.md, « Vérifier que ta copie est une vraie version ».
-afa4519ac5faa4005edc039ddadde6123ea52d000e8a2970c7081d9fbc852875  .claude-plugin/plugin.json
-9e576f6c69c2af66eb849c61cd2807ac41152fb53ebf764f2b4df6d6b78e144e  README.md
-610d13d70f7617135ee1387a4e846cb15b89382f07d28effb54b02af031b05ef  SECURITE.md
+# roadmap 0.286.1 : SHA-256 de chaque fichier installé du plugin, chemins relatifs à son dossier.
+# Vérifier une copie installée (~/.claude/plugins/cache/roadmap/roadmap/0.286.1) : plugins/roadmap/SECURITE.md, « Vérifier que ta copie est une vraie version ».
+363711246c0f772b8d0b7cf9230d4ee9c4213c2d99ca55ab2afab9f9158c7930  .claude-plugin/plugin.json
+5274c2b97591cb60f66b6602707870fff9b1646cb2d89cf7936a821b27e418a9  README.md
+8970e3c519bd322f6436bd13f990cf862ff9c87b0ce7bc54465e5aa85e412a36  SECURITE.md
 bce019cb7147413a8e5f0687df59a41394fa92545568b5d37b1df8bd6d885e30  hooks/bar-hit.tsx
 1ccf725c322f2fee7ffff1dad04eaa71e7c4554544b9c7a71126a32e7c1bb0fc  hooks/cartes.tsx
 a6c5d8acd046fc7f1ccfff70af3cf99de3188376901b908fc7d2459db3c78706  hooks/controle.tsx
@@ -22,7 +22,7 @@ c14da9a1accd6746a57e5d17e46d345c121156d9b5581968db5734611f210428  skills/audit/s
 6ad1523fe5f176533bbe9f748bdbc94c20a95efa068b204a66f9a47aaa92c79a  skills/audit/scripts/frictions.py
 d24d79073957922057f60b03cc77fc97937f28aaf7386bc6ddd5b84f8a29c53d  skills/doctor/SKILL.md
 44d591f8999b245c9b184ee332336a58415f5c04c37d87411149f3ee6fb816a9  skills/doctor/references/requis.json
-e55fa2c75319aea3d2c6661794c8182bf9ab691e9f09e6a03e26db3d3fd69916  skills/doctor/scripts/doctor.py
+808f66249e33cb07c8025d22f4f0eb05181e74ee5562d3b7feaca29a379f252a  skills/doctor/scripts/doctor.py
 6e80d5202351ec18b5590ac70bb51872289b2d5843226d3cc688fea6290193b0  skills/impact/SKILL.md
 e1a956cec45116d5fe0f6cd2a033b84bd2052f674fc29f0cc0755452dfa83973  skills/impact/scripts/impact.py
 c4e80e337463f1fa674c4fb95659c04cf39a2fbecf34cd1d3e6967a256b46f8d  skills/maestro/SKILL.md

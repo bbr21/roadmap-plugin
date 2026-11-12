@@ -1185,8 +1185,10 @@ def cloud_du_projet(main, home):
                          "docs/session-cloud.md (réglage lu dans %s)" % (porte, ou))
         return ligne(KO, "Cloud", "cloud:missions sans dépôt porte sur GitHub (ni depot, ni origine git) : la carte de "
                      "mission n'a rien d'où partir",
-                     "créer le dépôt porte privé (git init, .gitignore à *, gh repo create <compte>/<nom>-porte "
-                     "--private --source %s --push), puis ajouter \"depot\": \"<compte>/<nom>-porte\" à %s" % (main, ou))
+                     "créer le dépôt porte privé et vide, sans rien y pousser (gh repo create <compte>/<nom>-porte "
+                     "--private ; dans %s : .gitignore à *, git init -b main, git remote add origin "
+                     "https://github.com/<compte>/<nom>-porte.git), puis ajouter \"depot\": \"<compte>/<nom>-porte\" "
+                     "à %s" % (main, ou))
     sessions = eff.get("sessions")
     if sessions is not None and sessions not in ("mac", "cloud"):
         return ligne(VOIR, "Cloud", "sessions « %s » inconnu (mac ou cloud) : le panneau lance sur le Mac" % sessions,
