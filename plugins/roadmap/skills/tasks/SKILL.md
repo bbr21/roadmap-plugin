@@ -227,7 +227,8 @@ Write `<scratchpad>/operations.json`:
     {"op": "done", "id": "12", "date": "2026-10-30", "proof": "email envoyé à Jason le 30/10 (40-deliverables/emails/…)", "bilan": {"fait": "Plan envoyé à Jason", "souci": "", "ressenti": "fluide", "cause": "aucune", "corrections": 0, "note": "Envoyé du premier coup."}},
     {"op": "drop", "id": "7", "reason": "remplacée par le vendor agreement"},
     {"op": "pause", "id": "22", "until": "2026-11-30", "reason": "budget gelé jusqu'à la clôture"},
-    {"op": "handoff", "id": "529", "date": "2026-11-02", "proof": "récap envoyé à DaVinci le 02/11 (40-deliverables/emails/…)", "delivered": "preview contrôlée, récap envoyé à DaVinci", "key": "s1", "label": "Recevoir de DaVinci l'activation du qualifier et la correction du 300x250", "waiting": "Navneet", "src": "40-deliverables/emails/2026-11-02-…-navneet.md", "fields": {"due": "2026-11-06"}}
+    {"op": "handoff", "id": "529", "date": "2026-11-02", "proof": "récap envoyé à DaVinci le 02/11 (40-deliverables/emails/…)", "delivered": "preview contrôlée, récap envoyé à DaVinci", "key": "s1", "label": "Recevoir de DaVinci l'activation du qualifier et la correction du 300x250", "waiting": "Navneet", "src": "40-deliverables/emails/2026-11-02-…-navneet.md", "fields": {"due": "2026-11-06"}},
+    {"op": "handoff", "id": "684", "date": "2026-11-11", "proof": "plan envoyé, interface TTD non ouverte", "delivered": "plan envoyé", "key": "r1", "missing": "ouvrir l'interface TTD (connexion)"}
   ],
   "questions": [
     {"key": "conflict-18", "task": "18", "kind": "conflict",
@@ -286,7 +287,14 @@ Write `<scratchpad>/operations.json`:
   proves it, and where), `bilan` (#262). The line moves to the top of `ROADMAP-fait.md` with
   `fait:AAAA-MM-JJ HH:MM` (the time of the write when the date is today; a past date gets no
   invented time), its bilan row to the bilan journal. A recurring standalone task (`tous:`) is
-  marked done with the panel's « Marquer faite » button, which carries it over. A **routine**
+  marked done with the panel's « Marquer faite » button, which carries it over. **A task whose
+  requested step could not be done is never done (#487)** (no connection, the person absent, a
+  tool or connector unavailable): `done` is refused when the bilan's `manque` says so, or, without
+  `manque`, when the bilan's `souci` or `note`, or the `proof`, match the words of
+  `ETAPE_MANQUEE` (« n'a pas pu », « faute de connexion », « non ouverte », « BBR absent »,
+  « outil indisponible »…). If everything requested is in fact done, set `manque: "aucun"` in the
+  bilan; otherwise close in part with `handoff` and `missing`, or leave the task open. The refusal
+  holds with or without a bilan. A **routine**
   (#280) is a recurring task that carries its instructions: `skill:<name>` (or `plugin:name`), the
   skill its session loads first, and/or `fiche:<path>`, the detail; the panel's blue ▶ ticks the
   occurrence, moves the line to its next date and launches the session. Never write « tick the
@@ -299,7 +307,9 @@ Write `<scratchpad>/operations.json`:
   `conflit-parallèle` (parallel sessions on the same files, merge conflicts), `environnement`
   (what the machine lacks: cloud VM, shim, missing plugin); a closed list, no « autre », #460),
   `corrections` (the number of rework requests from the person, 0 or more), `note` (one sentence),
-  and in a **countable journal** (#460: its header carries `type`, as `ROADMAP-bilans.csv` of
+  `manque` (#487, one line, 140 characters at most, optional: the requested step that could not
+  be done; `aucun`, `rien` or `-` say that nothing is missing; **not a journal column**, it only
+  decides `done` and `handoff`), and in a **countable journal** (#460: its header carries `type`, as `ROADMAP-bilans.csv` of
   Roadmap) `type` (`code`, `doc`, `rendu`, `sans-code`) and optionally `lieu` (`cloud`, `mac`;
   default: `cloud` when the line carries `lieu:cloud`, else `mac`). Written by the journal's own
   columns; `lieu` and `type` are ignored by a journal without those columns. The journal is
@@ -318,7 +328,13 @@ Write `<scratchpad>/operations.json`:
   (what was delivered, added at the end of the closed label: « ; livré : … »), and the follow-up:
   `key`, `label` (only what remains with the third party), `waiting` (the third party: its
   `attend:`), `src` (the message that asked the third party), `fields` (`due`, `nom`…; never
-  `après`, `parent`, `attend`, `src`, `fiche`, which the operation sets). In one write: the task
+  `après`, `parent`, `attend`, `src`, `fiche`, which the operation sets). With **`missing`**
+  (#487, what remains to be redone: the « à relancer » variant, no third party needed), `waiting`,
+  `src` and `label` become optional (`label` defaults to « Relancer : <missing> »; `missing`
+  defaults to the bilan's `manque`); `proof` and `delivered` stay required. A `waiting` that is a
+  third party still puts `attend:` (and `src:`) on the follow-up; absent, or one of our names, the
+  follow-up has no `attend:`. The closed label ends « ; à relancer : <missing> en #B ; livré : … ».
+  In one write: the task
   moves to `ROADMAP-fait.md` with its bilan row (« Faite : <proof> ; suite chez <tiers> en #B »),
   the follow-up opens in its place (same parent, same axis, `après:` the closed task, same
   `fiche:`, the project's inherited keys), and in every other **open** line `après:`, `parent:` and
@@ -413,6 +429,12 @@ what is done and open, in the same turn, a follow-up that carries only the wait 
   writes them itself.
 - **Said in one line**, which the report prints under its title: « #A close, la suite chez
   <tiers> passe en #B ». The plugin's report (#244) prints it too, from the turn's changes.
+- **To relaunch (#487)**: when a requested step could not be done on our side (no connection, the
+  person absent, a tool unavailable), no third party is waiting but the task is not done either.
+  Close in part with `handoff` and `missing`: the done part closes (« ; à relancer : <missing>
+  en #B ; livré : … »), the follow-up « Relancer : <missing> » opens in its place, without
+  `attend:` unless a third party is named. The line printed is « #A close en partie, à relancer
+  en #B : <missing> ».
 
 ## What gets asked, and nothing else
 

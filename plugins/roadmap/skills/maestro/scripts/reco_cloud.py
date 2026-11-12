@@ -7,7 +7,7 @@ elle (#427). Le Mac chargé ou non n'y entre pas. Maestro la lit avant de poser 
   python3 reco_cloud.py DEPOT ID
 
 Lit la ligne #ID de DEPOT/roadmap/ROADMAP.md (ou DEPOT/ROADMAP.md), sa spec (`spec.md` du dossier, ou le fichier)
-et sa fiche, et écrit `#ID · cloud · <raison>` ou `#ID · Mac · <raison>`. Lecture seule. Code de retour 2 pour une
+et sa fiche, et écrit `#ID · cloud · <raison>` ou `#ID · local · <raison>` (le lieu se dit « local », #509 ; la valeur `mac` du cache et de la carte ne change pas). Lecture seule. Code de retour 2 pour une
 ligne absente ou une roadmap introuvable. Les marqueurs sont ceux de `CLOUD_MAC_MARKERS` et `CLOUD_RENDER_MARKERS`
 de hooks/parse.ts, le panneau : `test_reco_cloud.py` vérifie qu'ils restent les mêmes.
 
@@ -19,12 +19,15 @@ modèle indisponible, ligne changée), la règle répond, suivie de « (règle d
 La reco rend un profil de besoins (#461), liste fermée de BESOINS (celle de RECO_NEEDS du panneau) : état du Mac,
 vrai rendu, ressource unique, secrets, maquettes, code seul ; le lieu en découle (`lieu_des_besoins`).
 
-Avec `--carte` (#458), la carte que Maestro pose, en JSON : `target` « cloud » quand la reco dit cloud et que le projet
-a `"sessions": "cloud"` dans DEPOT/.claude/roadmap.json, « mac » sinon ; `titre` « #ID · <nom:> · cloud » (ou
-« · Mac »), coupé à 58 signes comme `targetTitle` du panneau ; `branche`, celle que nommeront le brief
+Avec `--carte` (#458), la carte que Maestro pose, en JSON : `target` « cloud » quand la reco dit cloud, « mac » sinon
+(#482, #508 : le cloud est ouvert à tout projet, sans réglage ; `"sessions": "cloud"` ne règle plus rien) ; `titre` « #ID · <nom:> · cloud » (ou
+« · local »), coupé à 58 signes comme `targetTitle` du panneau ; `branche`, celle que nommeront le brief
 (`brief_cloud.py --branche`) et la prise (`prendre_cloud.py`) pour une carte cloud, sinon null ; `mission`, vrai pour
-une carte cloud d'un projet `"cloud": "missions"` (#476 : le brief vient de `mission_cloud.py carte`, la ligne se prend
-en `qui` « mission » et `lieu:cloud`, sans branche, et `qui` le dit) ; `reco`, `besoins`, `raison` et `par`. Le hook `start_session` du panneau refuse une carte de Maestro dont le lieu contredit cette reco
+une carte cloud dont le travail est « projet » (#476, #508) : la nature que déclare `travail` dans
+DEPOT/.claude/roadmap.json (anciennes formes `cloud: "missions"` puis `mode`, sinon la détection du dossier ; même
+règle que `nature_du_projet` d'onboarding.py), et pour un projet hybride la clé de ligne `travail:projet`. Le brief
+vient alors de `mission_cloud.py carte`, la ligne se prend en `qui` « mission » et `lieu:cloud`, sans branche, et
+`qui` le dit ; `reco`, `besoins`, `raison` et `par`. Le hook `start_session` du panneau refuse une carte de Maestro dont le lieu contredit cette reco
 (#465) : c'est cette carte qui passe.
 
 #490 : la reco rend aussi la charge de la tâche, lue sur son libellé (`charge`) : « retouche » (un gras, une croix,
@@ -48,6 +51,10 @@ import os
 import re
 import sys
 import unicodedata
+
+# La nature du projet (#508) se lit par onboarding.py, la même règle que le doctor et l'audit.
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "onboarding", "scripts"))
+import onboarding  # noqa: E402
 
 import prendre_cloud
 import suivi_cloud
@@ -198,19 +205,22 @@ def _reglages(depot):
         return {}
 
 
-def projet_missions(depot):
-    """Le projet lance-t-il des missions (`"cloud": "missions"` de DEPOT/.claude/roadmap.json, #476) ?"""
-    return _reglages(depot).get("cloud") == "missions"
+def nature_du_depot(depot):
+    """La nature de DEPOT (#508) : `travail` de DEPOT/.claude/roadmap.json, sinon les anciennes formes, sinon la
+    détection (`onboarding.nature_de_reglages`). La table de cas est celle de test_onboarding.py."""
+    return onboarding.nature_de_reglages(_reglages(depot), lambda: onboarding.detecter_travail(depot))[0]
 
 
-def projet_cloud(depot):
-    """Le projet ouvre-t-il le cloud (`"sessions": "cloud"`, ou `"cloud": "missions"` depuis #476) ?"""
-    return _reglages(depot).get("sessions") == "cloud" or projet_missions(depot)
+def mission_de_ligne(depot, ligne):
+    """La ligne part-elle en mission (#508) ? Son travail est « projet » : la nature du projet, ou pour un hybride
+    la clé `travail` de la ligne (`onboarding.travail_de_ligne`, jumelle de `taskWork` du panneau)."""
+    valeur = (ligne["cles"].get("travail") or "").split(",")[0].strip()
+    return onboarding.travail_de_ligne(nature_du_depot(depot), valeur or None) == "projet"
 
 
 def titre_carte(id_, nom, target):
     """Le titre de la carte, la cible au bout, comme `targetTitle` du panneau (#436)."""
-    marque = " · %s" % ("cloud" if target == "cloud" else "Mac")
+    marque = " · %s" % ("cloud" if target == "cloud" else "local")
     base = "#%s · %s" % (id_, nom)
     place = 58 - len(marque)
     if len(base) > place:
@@ -219,13 +229,12 @@ def titre_carte(id_, nom, target):
 
 
 def carte(depot, id_, ligne, r, par):
-    """La carte de Maestro pour la ligne #id_ (#458) : cloud quand la reco le dit et que le projet l'ouvre."""
+    """La carte de Maestro pour la ligne #id_ (#458) : cloud quand la reco le dit (ouvert à tout projet, #508)."""
     nom = ligne["cles"].get("nom") or ligne["libelle"]
-    ouvert = projet_cloud(depot)
-    target = "cloud" if r["lieu"] == "cloud" and ouvert else "mac"
-    raison = r["why"] if ouvert else "%s ; mais le projet n'a pas \"sessions\": \"cloud\"" % r["why"]
-    # #476 : un projet en missions part en mission (mission_cloud.py carte, ligne prise en qui:mission), sans branche.
-    mission = target == "cloud" and projet_missions(depot)
+    target = "cloud" if r["lieu"] == "cloud" else "mac"
+    raison = r["why"]
+    # #476, #508 : une ligne de travail « projet » part en mission (mission_cloud.py carte, prise en qui:mission), sans branche.
+    mission = target == "cloud" and mission_de_ligne(depot, ligne)
     carte_ = {
         "id": id_,
         "target": target,
@@ -249,7 +258,7 @@ def carte(depot, id_, ligne, r, par):
 
 
 def main(argv=None):
-    p = argparse.ArgumentParser(description="La cible recommandée d'une tâche : cloud ou Mac.")
+    p = argparse.ArgumentParser(description="La cible recommandée d'une tâche : cloud ou local.")
     p.add_argument("depot")
     p.add_argument("id")
     p.add_argument("--carte", action="store_true", help="la carte à poser, en JSON (#458)")
@@ -273,7 +282,7 @@ def main(argv=None):
     if a.carte:
         print(json.dumps(carte(a.depot, id_, ligne, r, par), ensure_ascii=False))
         return 0
-    print("#%s · %s · %s (%s)" % (id_, "cloud" if r["lieu"] == "cloud" else "Mac", r["why"], par))
+    print("#%s · %s · %s (%s)" % (id_, "cloud" if r["lieu"] == "cloud" else "local", r["why"], par))
     return 0
 
 

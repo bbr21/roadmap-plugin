@@ -103,7 +103,7 @@ export type WrittenCard = {
   session?: true
   /** #388 : une nouvelle tâche ouverte que personne ne tient : le pied porte « Start » à côté de « Ouvrir la task ». */
   start?: true
-  /** #436 : où tourne la tâche (`lieu:cloud`, sinon le Mac) ; absent pour une tâche introuvable. */
+  /** #436 : où tourne la tâche (`lieu:cloud`, sinon en local) ; absent pour une tâche introuvable. */
   lieu?: Sessions
 }
 
@@ -455,8 +455,8 @@ export function drawWrittenMessage(el: ReturnType<EngineInterface['ui']['resolve
     // #436 : l'icône et le mot du lieu à droite du bandeau ; sur une Nouvelle aussi, le lieu où part son Start (#479).
     const place = c.lieu !== undefined && (() => {
       const cloud = c.lieu === 'cloud'
-      const word = cloud ? 'cloud' : 'Mac'
-      const alt = cloud ? 'Dans le cloud' : 'Sur le Mac'
+      const word = cloud ? 'cloud' : 'local'
+      const alt = cloud ? 'Dans le cloud' : 'En local'
       const iconInk = done ? palette.finishedOn : cloud ? palette.live : palette.text2
       return (
         <Box key={`written-place:${c.id}${suffix}`} flexDirection="row" alignItems="center" gap={SPACE.tight} flexShrink={0}>

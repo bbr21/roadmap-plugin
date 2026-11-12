@@ -14,19 +14,19 @@ export const CARD_DEADLINE_MS = 30_000
 /** La note d'une carte à laquelle l'app n'a pas répondu dans `CARD_DEADLINE_MS`. */
 export const CARD_LATE_WHY = `l'app n'a pas répondu en ${CARD_DEADLINE_MS / 1000} s ; rien n'est parti, relance d'un clic`
 
-/** Le lieu d'une carte `start_session` : `target: "cloud"` en cloud, toute autre carte sur le Mac. */
+/** Le lieu d'une carte `start_session` : `target: "cloud"` en cloud, toute autre carte en local. */
 export function cardTargetOf(card: Record<string, unknown>): Place {
   return card.target === 'cloud' ? 'cloud' : 'mac'
 }
 
 /**
- * #479 : le lieu que la personne a choisi dans le panneau, lu dans le brief de la carte : la ligne « Cible : le Mac,
- * choisi dans le panneau … » (ou « le cloud ») que le panneau écrit (`withTargetNote`) quand le ▶ contredit la reco et
- * passe par Claude. Seule une ligne entière qui commence ainsi compte ; « comme recommandé » ou rien : `undefined`.
+ * #479 : le lieu que la personne a choisi dans le panneau, lu dans le brief de la carte : la ligne « Cible : en local,
+ * choisi dans le panneau … » (ou « le cloud ») ; « le Mac » d'une carte d'avant (#509) se lit encore.
+ * Le panneau l'écrit (`withTargetNote`) quand le ▶ contredit la reco et passe par Claude. Seule une ligne entière qui commence ainsi compte ; « comme recommandé » ou rien : `undefined`.
  */
 export function panelChoiceIn(prompt: unknown): Place | undefined {
   if (typeof prompt !== 'string') return undefined
-  const m = /^Cible : le (Mac|cloud), choisi dans le panneau\b/m.exec(prompt)
+  const m = /^Cible : (?:le (Mac|cloud)|(en local)), choisi dans le panneau\b/m.exec(prompt)
   return m ? (m[1] === 'cloud' ? 'cloud' : 'mac') : undefined
 }
 
@@ -39,11 +39,11 @@ export function panelChoiceIn(prompt: unknown): Place | undefined {
 export function recoTargetRefusal(o: { id: string; cardTarget: Place; reco: Place; why: string; title: string; branch: string; chosen?: Place }): string | undefined {
   if (o.cardTarget === o.reco || o.chosen === o.cardTarget) return undefined
   const why = o.why.trim() ? ` (${o.why.trim()})` : ''
-  const head = `Carte refusée (#465) : la reco de #${o.id} dit ${o.reco === 'cloud' ? 'cloud' : 'Mac'}${why}, et une carte que tu poses de toi-même part au lieu de la reco (seul un choix fait dans le panneau, que son brief dit, l'emporte).`
+  const head = `Carte refusée (#465) : la reco de #${o.id} dit ${o.reco === 'cloud' ? 'cloud' : 'local'}${why}, et une carte que tu poses de toi-même part au lieu de la reco (seul un choix fait dans le panneau, que son brief dit, l'emporte).`
   if (o.reco === 'cloud') {
-    return `${head} Repose-la avec start_session, target: "cloud", le titre « ${o.title} » et pour prompt la sortie de brief_cloud.py <dossier principal> ${o.id} --branche ${o.branch} (reco_cloud.py <dossier principal> ${o.id} --carte donne la même carte). La personne peut encore choisir le Mac au Start de la carte.`
+    return `${head} Repose-la avec start_session, target: "cloud", le titre « ${o.title} » et pour prompt la sortie de brief_cloud.py <dossier principal> ${o.id} --branche ${o.branch} (reco_cloud.py <dossier principal> ${o.id} --carte donne la même carte). La personne peut encore choisir le local au Start de la carte.`
   }
-  return `${head} Repose-la sans target, sur le Mac, avec le titre « ${o.title} » et le brief d'une session du Mac. La personne peut encore choisir le cloud au Start de la carte.`
+  return `${head} Repose-la sans target, en local, avec le titre « ${o.title} » et le brief d'une session du Mac. La personne peut encore choisir le cloud au Start de la carte.`
 }
 
 /**
@@ -58,5 +58,5 @@ export function proposalIdIn(text: string | undefined): string | undefined {
 
 /** L'appel qui retire la carte `id` encore en attente de Start (`dismiss_task`, son `task_id`). */
 export function dismissCall(id: string, target: Place): { tool: string; task_id: string; reason: string } {
-  return { tool: DISMISS_TASK_TOOL, task_id: id, reason: `remplacée par un départ ${target === 'cloud' ? 'en cloud' : 'sur le Mac'} (#465)` }
+  return { tool: DISMISS_TASK_TOOL, task_id: id, reason: `remplacée par un départ ${target === 'cloud' ? 'en cloud' : 'en local'} (#465)` }
 }

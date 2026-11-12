@@ -1,6 +1,6 @@
 # Est-il sûr de l'installer ?
 
-Version décrite : roadmap 0.288.0
+Version décrite : roadmap 0.289.0
 Un plugin de Claude Code fait tourner du code sur ta machine, donc la question se pose. Certains plugins
 malveillants ont l'air inoffensifs quand on les installe, puis téléchargent et lancent autre chose plus
 tard. Cette page dit tout ce que fait roadmap. Un test vérifie à chaque version qu'elle dit vrai, et tu
@@ -127,6 +127,7 @@ le moteur saute les hooks).
 | `fidelite.html` et `capture-panneau.png`, dans le dossier du chantier (`docs/plans/<type>-<slug>/`) | `skills/maestro/scripts/fidelite.py` | quand une session pose la preuve de fidélité d'un rendu à sa maquette (#357) |
 | `ROADMAP.md` du projet, la ligne d'une tâche que tu viens de démarrer en cloud depuis une carte de Maestro (`qui:`, `branche:`, `lieu:cloud`, montée dans « En cours ») | `skills/maestro/scripts/prendre_cloud.py` | quand l'app dit à Maestro que tu as démarré sa carte cloud (#458) |
 | `roadmap-check-vert`, dans le dossier `.git` du projet (la liste des arbres dont les tests ont passé, que `tools/release.py` tient aussi) ; et, dans la VM d'une session cloud, le fichier que nomme `--sortie` (le commentaire du résultat) | `skills/maestro/scripts/suite_cloud.py` | `lire --marquer` : quand Maestro relit une suite de main verte, faite dans une session cloud, sur l'arbre même de ton dossier, pour que la publication ne relance pas ses tests (#450) ; `lancer --sortie` : dans la VM, à la fin de la suite |
+| `roadmap-missions.json`, dans le dossier `.git` du projet (sinon son `.claude`) : l'état de chaque mission cloud (en cours, fait, échec, sans phrase), sa phrase de fin et l'heure, 50 au plus | `skills/maestro/scripts/mission_cloud.py` | `fin --ecrire` : quand Maestro relit la fin d'une mission cloud, pour que le panneau la montre (#509, #469) |
 | `ROADMAP.md` du projet, la ligne d'une tâche partie en cloud, dont seul `lieu:cloud` est retiré | `skills/maestro/scripts/repli_mac.py` | quand Maestro replie sur le Mac une tâche dont la session cloud a calé (#416) |
 
 Le module ne modifie jamais ton code : il n'écrit que la roadmap, ses propres réglages et son état ; la preuve de fidélité ne s'écrit que dans le dossier du chantier.

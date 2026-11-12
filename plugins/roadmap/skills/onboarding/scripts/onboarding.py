@@ -2,7 +2,7 @@
 """Onboarding d'un projet de code : pose la structure commune (modèle : Splitmybill) et sa roadmap,
 reconstitue au besoin la roadmap depuis l'historique du dépôt, et vérifie le format.
 
-  python3 onboarding.py exemple [--sans-code]              réponses d'exemple, en JSON
+  python3 onboarding.py exemple [--sans-code]              réponses d'exemple, en JSON (avec `travail`, #508)
   python3 onboarding.py init DOSSIER --reponses R.json     écrit la structure dans DOSSIER
           [--manquants]                                    n'écrit que les fichiers absents (projet existant)
   python3 onboarding.py verifier DOSSIER                   dit ce qui manque ou s'écarte du format
@@ -96,11 +96,13 @@ EXEMPLE = {
     "secrets": [],
     "fin_en_plus": [],
     "github": "bbr21/clipping",
+    "travail": "code",
     "code": True,
 }
 
 
 EXEMPLE_PROJET = {
+    "travail": "projet",
     "code": False,
     "nom": "Roadmap de Caro",
     "dossier": "~/Documents/Roadmap de Caro",
@@ -235,12 +237,18 @@ def _poser_declarations(cfg, r):
 
 
 def code_du_projet(r):
-    """Le projet aura-t-il du code (#176) ? La réponse `code`, sinon l'ancien `mode`, sinon le dossier
-    s'il a déjà du contenu (`detecter_travail`). Un dossier vide ou absent ne dit rien : la réponse
-    est exigée. Elle choisit les modèles ; rien de tout ça ne s'écrit dans `.claude/roadmap.json`."""
+    """Le projet aura-t-il du code ? La réponse `travail` (#508 : `code`, `projet` ou `hybride`, qui a du code),
+    sinon `code` (true ou false), sinon l'ancien `mode`, sinon le dossier s'il a déjà du contenu
+    (`detecter_travail`). Un dossier vide ou absent ne dit rien : la réponse est exigée. Elle choisit les
+    modèles ; la nature elle-même s'écrit dans `.claude/roadmap.json` (clé `travail`, voir `fichiers`)."""
+    travail = r.get("travail")
+    if travail is not None:
+        if travail not in NATURES:
+            raise Erreur("travail : code, projet ou hybride")
+        return travail != "projet"
     mode = r.get("mode")
     if mode is not None and mode not in ("auto",) + MODES_FORCES:
-        raise Erreur("mode : auto, code ou projet (mieux : code, true ou false)")
+        raise Erreur("mode : auto, code ou projet (mieux : travail : code, projet ou hybride)")
     code = r.get("code")
     if code is None and mode in MODES_FORCES:
         code = mode == "code"
@@ -248,7 +256,7 @@ def code_du_projet(r):
         dossier = os.path.abspath(os.path.expanduser(str(r.get("dossier") or "")))
         contenu = [f for f in os.listdir(dossier) if f not in (".git", ".DS_Store")] if os.path.isdir(dossier) else []
         if not r.get("dossier") or not contenu:
-            raise Erreur("code : true ou false. Le dossier %s est vide : rien ne dit s'il recevra du code" % dossier)
+            raise Erreur("travail : code, projet ou hybride. Le dossier %s est vide : rien ne dit s'il recevra du code" % dossier)
         code = detecter_travail(dossier)[0] == "code"
     if not isinstance(code, bool):
         raise Erreur("code : true ou false")
@@ -259,6 +267,8 @@ def valider(r):
     if not isinstance(r, dict):
         raise Erreur("les réponses sont un objet JSON")
     r["code"] = code_du_projet(r)
+    if r.get("travail") not in NATURES:
+        r["travail"] = "code" if r["code"] else "projet"
     r["design"] = normaliser_design(r.get("design"))
     valider_declarations(r)
     if not r["code"]:
@@ -519,7 +529,7 @@ def fichiers_projet(r, aujourdhui=None):
             continue
         with open(src, encoding="utf-8") as f:
             out[dest] = rendre(f.read(), v)
-    cfg = {"name": v["NOM"], "me": [v["QUI"]]}
+    cfg = {"name": v["NOM"], "me": [v["QUI"]], "travail": "projet"}
     if r.get("roadmap", DOSSIER_ROADMAP) != ".":
         cfg["dir"] = DOSSIER_ROADMAP
     # #176 : pas de `mode` ; les champs exigés se déclarent, sur toute ouverte.
@@ -547,9 +557,13 @@ def fichiers(r, aujourdhui=None):
             out[dest] = rendre(f.read(), v)
     if r.get("env"):
         out.setdefault(".env.example", "# Les noms des variables du .env (jamais leurs valeurs). Le .env n'est pas versionné.\n")
-    cfg = {"name": v["NOM"], "me": [v["QUI"]]}
+    nature = r.get("travail") if r.get("travail") in NATURES else "code"
+    cfg = {"name": v["NOM"], "me": [v["QUI"]], "travail": nature}
     if r.get("roadmap", DOSSIER_ROADMAP) != ".":
         cfg["dir"] = DOSSIER_ROADMAP
+    if nature == "hybride":
+        # #508 : chaque ligne dit sa nature par la clé déclarée `travail` ; les autres clés déclarées restent.
+        cfg["cles"] = dict(r.get("cles") or {}, travail=list(NATURES[:2]))
     if r.get("design"):
         cfg["design"] = r["design"]
     _poser_declarations(cfg, r)
@@ -646,7 +660,8 @@ def mode_force(dossier):
 
 def detecter_travail(dossier):
     """(travail, raison) déduits du dossier (#176) : « code » si c'est un dépôt git qui voit au moins un
-    fichier de code, suivi ou pas encore ajouté (pas ignoré) ; « projet » sinon."""
+    fichier de code, suivi ou pas encore ajouté (pas ignoré) ; « projet » sinon. Depuis #482 la nature se
+    déclare (`travail`) : la détection ne fait plus que proposer, en dernier recours et comme geste du doctor."""
     res = git(dossier, "ls-files", "--cached", "--others", "--exclude-standard")
     if res.returncode != 0:
         return "projet", "pas de dépôt git"
@@ -654,6 +669,58 @@ def detecter_travail(dossier):
     if n == 0:
         return "projet", "dépôt git sans fichier de code"
     return "code", "dépôt git, %d fichier%s de code" % (n, "s" if n > 1 else "")
+
+
+# La nature d'un projet (#482, #508) : `travail` de `.claude/roadmap.json`. Hybride : du code, et des lignes
+# « connecteurs seuls » (clé déclarée `travail:projet`).
+NATURES = ("code", "projet", "hybride")
+
+
+def _reglages_du_dossier(dossier):
+    try:
+        with open(os.path.join(dossier, ".claude", "roadmap.json"), encoding="utf-8") as f:
+            cfg = json.load(f)
+    except (OSError, ValueError):
+        return {}
+    return cfg if isinstance(cfg, dict) else {}
+
+
+def nature_declaree(cfg):
+    """La valeur de `travail` si elle est connue (code, projet, hybride), sinon None."""
+    t = cfg.get("travail") if isinstance(cfg, dict) else None
+    return t if t in NATURES else None
+
+
+def nature_de_reglages(cfg, detection=None):
+    """(nature, raison) d'après des réglages (#508), jumelle de `projectSettings` du panneau : `travail` déclaré ;
+    sinon les anciennes formes, `cloud: "missions"` (projet, #476) puis `mode` (#176) ; sinon `detection()`
+    (un appel : (nature, raison)). `sessions: "cloud"` (#408) ne règle plus rien."""
+    cfg = cfg if isinstance(cfg, dict) else {}
+    t = nature_declaree(cfg)
+    if t:
+        return t, "déclaré par travail"
+    if cfg.get("cloud") == "missions":
+        return "projet", "ancienne forme cloud:missions"
+    if cfg.get("mode") in MODES_FORCES:
+        return cfg["mode"], "ancienne forme mode"
+    return detection() if detection else ("code", "défaut")
+
+
+def nature_du_projet(dossier):
+    """(nature, raison) d'un dossier (#508) : `travail` de son `.claude/roadmap.json`, sinon les anciennes
+    formes, sinon la détection du dossier."""
+    return nature_de_reglages(_reglages_du_dossier(dossier), lambda: detecter_travail(dossier))
+
+
+def travail_de_ligne(nature, valeur_cle):
+    """Le travail d'une ligne (#508), jumelle de `taskWork` du panneau : `code` ou `projet` pour ces natures ;
+    hybride : `projet` si la valeur de la clé `travail` de la ligne (une valeur, ou la liste) est `projet`,
+    sinon `code`."""
+    if nature != "hybride":
+        return "projet" if nature == "projet" else "code"
+    if isinstance(valeur_cle, (list, tuple)):
+        valeur_cle = valeur_cle[0] if valeur_cle else None
+    return "projet" if valeur_cle == "projet" else "code"
 
 
 REQUIS_SUR = ("ouvertes", "lancees")
@@ -681,9 +748,10 @@ def requis_du_dossier(dossier, cfg=None):
 
 
 def travail_du_dossier(dossier):
-    """Le travail d'un dossier (#176) : forcé par `mode`, sinon déduit du dossier. « code » donne
-    worktree, branche et fusion ; « projet », le dossier partagé et la ligne seule."""
-    return mode_force(dossier) or detecter_travail(dossier)[0]
+    """Le travail du DOSSIER (#176, #508) : « projet » si sa nature (`nature_du_projet`) est projet, sinon
+    « code » : un projet hybride a du code. « code » donne worktree, branche et fusion ; « projet », le dossier
+    partagé et la ligne seule."""
+    return "projet" if nature_du_projet(dossier)[0] == "projet" else "code"
 
 
 def _ecart_regles(dossier, en_plus=""):

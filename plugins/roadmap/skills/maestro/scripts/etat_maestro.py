@@ -20,9 +20,11 @@ reste « prête, capture après publication » tant que son `fidelite.html` n'es
 et sa ligne se clôt à la publication, sa preuve partant en tâche à part, « Prouver la fidélité de #N »,
 qui ne retient aucune autre tâche (#396, #455).
 
-Lecture seule sur le dépôt : git log, rev-list, diff et merge-tree (conflits réels, git 2.38 et
+Lecture seule sur le dépôt : git log, merge-base, diff et merge-tree (conflits réels, git 2.38 et
 plus ; plus ancien, ils sont dits inconnus). Rien n'est fusionné, aucun test n'est lancé. Code de
 retour 2 sur un MAESTRO.json illisible, vide ou en double, ou sur un dépôt ou une base introuvables.
+
+Les branches, puis les paires de branches, se lisent en parallèle (fils) : même sortie qu'avant, bien plus vite.
 
 Python 3.9 et plus, bibliothèque standard seulement.
 """
@@ -32,6 +34,7 @@ import json
 import re
 import subprocess
 import sys
+from concurrent.futures import ThreadPoolExecutor
 
 import fidelite
 
@@ -232,12 +235,11 @@ def commits_de(depot, plage, cote, *chemins):
     return [commit_lu(l, cote) for l in (r.stdout.splitlines() if r and r.returncode == 0 else []) if l]
 
 
-def depart_de(depot, base, b):
-    """Le dernier commit commun à la base et à la branche : là où la branche est partie."""
-    mb = lancer_git(depot, "merge-base", base, b)
-    if not mb or mb.returncode != 0 or not mb.stdout.strip():
+def depart_de(depot, mb):
+    """Le dernier commit commun à la base et à la branche (`mb`, son merge-base déjà calculé) : là où la branche est partie."""
+    if not mb:
         return None
-    un = lancer_git(depot, "log", "-1", "--format=" + FORMAT_COMMIT, mb.stdout.strip())
+    un = lancer_git(depot, "log", "-1", "--format=" + FORMAT_COMMIT, mb)
     return commit_lu(un.stdout.strip(), "depart") if un and un.returncode == 0 and un.stdout.strip() else None
 
 
@@ -261,9 +263,45 @@ def fidelite_de(depot, b, fichiers):
     return meilleurs
 
 
+def faits_de(depot, base, b):
+    """Le travail d'une branche face à la base : ses faits git (`vide()` si elle n'existe pas). Le merge-base
+    se calcule une fois ; l'avance et le retard se comptent sur les commits de chaque côté."""
+    r = lancer_git(depot, "rev-parse", "--verify", "--quiet", b + "^{commit}")
+    if r is None or r.returncode != 0:
+        return vide()
+    m = lancer_git(depot, "merge-base", base, b)
+    mb = m.stdout.strip() if m and m.returncode == 0 else ""
+    fichiers, plus, moins = [], 0, 0
+    if mb:
+        stat = lancer_git(depot, "diff", "--numstat", mb, b)
+        for l in (stat.stdout.splitlines() if stat and stat.returncode == 0 else []):
+            p, mo, nom = (l.split("\t", 2) + ["", "", ""])[:3]
+            if not nom:
+                continue
+            fichiers.append(nom)
+            plus += int(p) if p.isdigit() else 0
+            moins += int(mo) if mo.isdigit() else 0
+    cote_base = commits_de(depot, "%s..%s" % (b, base), "base")
+    cote_branche = commits_de(depot, "%s..%s" % (base, b), "branche")
+    avance, retard = len(cote_branche), len(cote_base)
+    conflits_main = conflits_entre(depot, base, b) if avance else []
+    if conflits_main:
+        touchent = {c["hash"] for c in commits_de(depot, "%s..%s" % (b, base), "base", *conflits_main)}
+        for c in cote_base:
+            c["conflit"] = c["hash"] in touchent
+    commits = sorted(cote_base + cote_branche, key=lambda c: -c["date"])
+    faits = {"existe": True, "avance": avance, "retard": retard, "fichiers": sorted(fichiers),
+             "conflits_main": conflits_main, "commits": commits, "plus": plus, "moins": moins,
+             "depart": depart_de(depot, mb)}
+    if fidelite.requise(fichiers):
+        faits["fidelite"] = fidelite_de(depot, b, fichiers)
+    return faits
+
+
 def collecter(depot, entree):
     """Les faits git de chaque branche face à la base (avance, retard, fichiers, lignes, commits de
-    chaque côté depuis le départ commun, conflits avec la base), et les conflits entre deux branches."""
+    chaque côté depuis le départ commun, conflits avec la base), et les conflits entre deux branches.
+    Les branches, puis les paires, se lisent en parallèle (fils), la sortie restant dans l'ordre de l'entrée."""
     base = entree.get("base") or "main"
     r = lancer_git(depot, "rev-parse", "--git-dir")
     if r is None:
@@ -273,43 +311,23 @@ def collecter(depot, entree):
     r = lancer_git(depot, "rev-parse", "--verify", "--quiet", base + "^{commit}")
     if r is None or r.returncode != 0:
         raise ErreurDepot("base %s introuvable dans %s" % (base, depot))
-    faits = {}
+    merge_tree_ok()  # remplit le global avant les fils
+    distinctes = []
     for t in entree["taches"]:
-        b = t["branche"]
-        if b in faits:
-            continue
-        r = lancer_git(depot, "rev-parse", "--verify", "--quiet", b + "^{commit}")
-        if r is None or r.returncode != 0:
-            faits[b] = vide()
-            continue
-        compte = lancer_git(depot, "rev-list", "--left-right", "--count", "%s...%s" % (base, b))
-        retard, avance = (int(x) for x in compte.stdout.split()) if compte and compte.returncode == 0 else (0, 0)
-        stat = lancer_git(depot, "diff", "--numstat", "%s...%s" % (base, b))
-        fichiers, plus, moins = [], 0, 0
-        for l in (stat.stdout.splitlines() if stat and stat.returncode == 0 else []):
-            p, m, nom = (l.split("\t", 2) + ["", "", ""])[:3]
-            if not nom:
-                continue
-            fichiers.append(nom)
-            plus += int(p) if p.isdigit() else 0
-            moins += int(m) if m.isdigit() else 0
-        conflits_main = conflits_entre(depot, base, b) if avance else []
-        cote_base = commits_de(depot, "%s..%s" % (b, base), "base")
-        if conflits_main:
-            touchent = {c["hash"] for c in commits_de(depot, "%s..%s" % (b, base), "base", *conflits_main)}
-            for c in cote_base:
-                c["conflit"] = c["hash"] in touchent
-        commits = sorted(cote_base + commits_de(depot, "%s..%s" % (base, b), "branche"), key=lambda c: -c["date"])
-        faits[b] = {"existe": True, "avance": avance, "retard": retard, "fichiers": sorted(fichiers),
-                    "conflits_main": conflits_main, "commits": commits, "plus": plus, "moins": moins,
-                    "depart": depart_de(depot, base, b)}
-        if fidelite.requise(fichiers):
-            faits[b]["fidelite"] = fidelite_de(depot, b, fichiers)
+        if t["branche"] not in distinctes:
+            distinctes.append(t["branche"])
+    faits = {}
+    if distinctes:
+        with ThreadPoolExecutor(max_workers=min(8, len(distinctes))) as pool:
+            for b, f in zip(distinctes, pool.map(lambda b: faits_de(depot, base, b), distinctes)):
+                faits[b] = f
     vivantes = [b for b, f in faits.items() if f["existe"] and f["avance"]]
+    paires = [(a, b) for i, a in enumerate(vivantes) for b in vivantes[i + 1:]]
     conflits = {}
-    for i, a in enumerate(vivantes):
-        for b in vivantes[i + 1:]:
-            conflits[paire(a, b)] = conflits_entre(depot, a, b)
+    if paires:
+        with ThreadPoolExecutor(max_workers=min(8, len(paires))) as pool:
+            for (a, b), c in zip(paires, pool.map(lambda p: conflits_entre(depot, p[0], p[1]), paires)):
+                conflits[paire(a, b)] = c
     return faits, conflits
 
 

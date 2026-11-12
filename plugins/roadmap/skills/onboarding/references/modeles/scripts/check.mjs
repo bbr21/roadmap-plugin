@@ -233,8 +233,8 @@ check('Grammaire de ROADMAP.md et ROADMAP-fait.md', (err) => {
         }
         // livrable: les sorties de la tâche, au format de pj: (#234) ; un livrable pas encore écrit n'est pas une faute.
         if (key === 'livrable' && value.split(',').some((v) => v.trim() === '')) err(at, `livrable:${value.trim()} : chemins séparés par des virgules attendus`);
-        // livré: les versions publiées de la tâche, <version>@<AAAA-MM-JJ>[#<PR>] séparées par des virgules (#480).
-        if (key === 'livré' && !value.split(',').every((v) => /^\d+\.\d+\.\d+@\d{4}-\d{2}-\d{2}(#\d+)?$/.test(v.trim()))) err(at, `livré:${value.trim()} : <version>@<AAAA-MM-JJ>[#<PR>] séparés par des virgules attendus`);
+        // livré: les versions publiées de la tâche, <version>@<AAAA-MM-JJ>[#<PR>] ou une date seule <AAAA-MM-JJ> (mission de projet, #509), séparées par des virgules (#480).
+        if (key === 'livré' && !value.split(',').every((v) => /^(\d+\.\d+\.\d+@\d{4}-\d{2}-\d{2}(#\d+)?|\d{4}-\d{2}-\d{2})$/.test(v.trim()))) err(at, `livré:${value.trim()} : <version>@<AAAA-MM-JJ>[#<PR>] ou <AAAA-MM-JJ>, séparés par des virgules attendus`);
         if (key === 'id') {
           if (!/^[1-9]\d*$/.test(value)) err(at, `id:${value} : nombre entier attendu`);
           else if (ids.has(value)) err(at, `id:${value} déjà porté par ${ids.get(value)} : une ligne neuve prend id:${nextId}`);

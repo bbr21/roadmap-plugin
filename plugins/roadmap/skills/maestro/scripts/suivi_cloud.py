@@ -10,12 +10,17 @@ de `branche:` (#445) ; la ligne texte le dit « sans ligne prise ».
   python3 suivi_cloud.py DEPOT [--json]
 
 Lit DEPOT/roadmap/ROADMAP.md (ou DEPOT/ROADMAP.md) et lance `gh pr list --head <branche> --state all --json …`
-par ligne, dans DEPOT, avec un délai de 20 s ; si DEPOT/.claude/roadmap.json nomme un dépôt GitHub (`depot`, une
+pour chaque ligne, dans DEPOT, avec un délai de 20 s. Les appels partent en même temps (8 au plus), en deux phases :
+les titres des PR et la PR de chaque ligne cloud, puis la PR de chaque tâche rattachée ; l'ordre du résultat reste
+celui de la roadmap. Si DEPOT/.claude/roadmap.json nomme un dépôt GitHub (`depot`, une
 roadmap qui vit hors de son dépôt de code, #444), `gh` le vise par `-R`. Lecture seule : rien n'est écrit, aucune PR n'est touchée. `gh`
 absent, non connecté, trop lent ou illisible : l'état de la ligne est « inconnu », rien ne lève. Code de retour 2
 quand le dépôt ou sa roadmap sont introuvables. Sortie en texte, une ligne par tâche :
 
-  #413 Purger les vieilles sauvegardes · prête · « Prête à fusionner (tests : verts). » · <url>
+  #413 Purger les vieilles sauvegardes · prête · Maestro fusionne · « Prête à fusionner (tests : verts). » · <url>
+
+Le texte dit le mot du vocabulaire (`mots_etat.mot_pr`, #509) et son détail ; le JSON garde le champ `etat` (le code
+d'avant : aucune, ouverte, en cours, rouges, prête, fusionnée, fermée, inconnu) et ajoute `mot` et `detail`.
 
 L'analyse (`etat_pr`, `lignes_cloud`) est pure : elle se teste sur des sorties de `gh` gardées, la commande est
 injectée (`run=`).
@@ -31,10 +36,14 @@ import re
 import subprocess
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor
+
+from mots_etat import ROUGES, mot_pr
 
 DELAI = 20
+MAX_FILS = 8  # appels `gh` simultanés au plus
 CHAMPS = "number,url,state,isDraft,mergeable,statusCheckRollup,createdAt,comments,author,isCrossRepository"
-ROUGES = {"FAILURE", "ERROR", "CANCELLED", "TIMED_OUT"}
+# ROUGES vient de mots_etat (#509) : une seule liste des contrôles rouges, celle du panneau.
 EN_ATTENTE = {"PENDING", "EXPECTED"}
 LIGNE = re.compile(r"^- \[( |x|X)\] (.*)$")
 # #445 : le « #N » d'un titre de PR, en tête (« #500 · … », « [#500] … ») ou « (#N) » en fin ; même règle que
@@ -287,20 +296,31 @@ def suivre(depot, run=None, maintenant=None):
     cloud = lignes_cloud(texte)
     vues = {l["id"] for l in cloud}
     quand = time.time() if maintenant is None else maintenant
-    rattachees = [l for l in lignes_rattachees(texte, titres_prs(depot, run, repo), quand) if l["id"] not in vues]
-    return [dict(l, **pr_de(depot, l["branche"], run, repo)) for l in cloud + rattachees]
+    # Les appels `gh` partent en même temps (2,9 s à la suite, audit #514), en deux phases : les titres et la
+    # PR de chaque ligne cloud ; puis la PR de chaque rattachée, qui dépend des titres. `map` garde l'ordre des lignes.
+    with ThreadPoolExecutor(max_workers=max(1, min(MAX_FILS, len(cloud) + 1))) as pool:
+        futur_titres = pool.submit(titres_prs, depot, run, repo)
+        etats = list(pool.map(lambda l: pr_de(depot, l["branche"], run, repo), cloud))
+        titres = futur_titres.result()
+    rattachees = [l for l in lignes_rattachees(texte, titres, quand) if l["id"] not in vues]
+    if rattachees:
+        with ThreadPoolExecutor(max_workers=min(MAX_FILS, len(rattachees))) as pool:
+            etats += list(pool.map(lambda l: pr_de(depot, l["branche"], run, repo), rattachees))
+    rendu = []
+    for l, e in zip(cloud + rattachees, etats):
+        t = dict(l, **e)
+        t["mot"], t["detail"] = mot_pr(t["etat"])
+        rendu.append(t)
+    return rendu
 
 
 def ligne_texte(t):
     parts = ["#%d %s" % (t["id"], t["nom"])]
     if t.get("rattachee"):
         parts.append("sans ligne prise (%s)" % t["branche"])
-    if t["etat"] == "inconnu":
-        parts.append("état inconnu")
-    elif t["etat"] == "aucune":
-        parts.append("aucune PR")
-    else:
-        parts.append(t["etat"])
+    mot, detail = mot_pr(t["etat"])
+    parts += [mot, detail]
+    if t["etat"] not in ("aucune", "inconnu"):
         if t["dit"]:
             parts.append("« %s »" % t["dit"])
         if calee(t["dit"]):

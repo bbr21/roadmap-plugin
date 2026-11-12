@@ -289,6 +289,11 @@ def construire(depot, ident, fichier_reglages=None, maison=None, branche=None, a
         "",
         paragraphe_modele(charge),
         "",
+        # #496 : le secours humain du réveil de Maestro ; le panneau du Mac lit aussi la première phrase.
+        "Ton compte rendu « prête », « bloquée » ou « attend une réponse » (dernier commentaire de ta PR et message "
+        "de fin) finit par une ligne à coller dans Maestro : `#%s prête à fusionner, PR <numéro>` (ou « bloquée », "
+        "« attend une réponse ») ; le panneau du Mac la lit aussi." % ident,
+        "",
     ]
     if preuve:
         sortie.append(

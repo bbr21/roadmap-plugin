@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
-"""Mission cloud sans dépôt (#467) : une tâche qui n'a besoin que des connecteurs (adBricks, Gmail, Sheets…) tourne
-dans une session cloud lancée par une routine claude.ai à un seul passage, sans dépôt GitHub ; Maestro relit sa fin.
+"""Mission cloud (#467, #473) : une tâche qui n'a besoin que des connecteurs (adBricks, Gmail, Sheets…) part en
+mission, par la carte cloud de l'app lancée depuis un dépôt porte (`depot` de .claude/roadmap.json, le dépôt GitHub
+du projet sans code). La carte est visible dans la barre latérale, BBR y écrit, sans branche ni PR : la mission pose
+son rappel de retour `#ID · retour`, et Maestro relit sa fin (voir `docs/session-cloud.md`, « Une mission par carte »,
+et la décision #473 de `docs/decisions.md`). La routine claude.ai à un seul passage reste la voie d'une tâche
+planifiée, sans carte.
 
 Le lancement et la lecture passent par l'outil RemoteTrigger de Claude Code (le jeton reste dans l'outil) : ce script
 ne parle à aucun réseau, il prépare et il lit.
@@ -8,8 +12,13 @@ ne parle à aucun réseau, il prépare et il lit.
   python3 mission_cloud.py corps ID NOM [--connecteur UUID NOM URL]… [--modele M] [--environnement E] < consigne
       Le corps JSON de `RemoteTrigger create` : routine « #ID · NOM · mission », sans cron, éteinte (elle ne part que
       par `run`), sans dépôt, les connecteurs nommés, et la consigne suivie de la phrase de fin attendue.
-  python3 mission_cloud.py fin < journal
+  python3 mission_cloud.py fin [--ecrire ID --racine DOSSIER] < journal
       Lit la sortie de `RemoteTrigger get_run_log` : `en cours`, `fait`, `echec` ou `sans phrase`, et la phrase.
+      Avec `--ecrire ID --racine DOSSIER`, garde aussi cet état pour le panneau (#469) dans `roadmap-missions.json`,
+      sous `DOSSIER/.git/` s'il existe, sinon `DOSSIER/.claude/` (sans l'un ni l'autre : message et sortie 2). Le
+      fichier fusionne avec l'existant, garde les 50 missions les plus récentes et s'écrit par un fichier temporaire
+      renommé ; illisible, il est remplacé. Contrat : {"version": 1, "missions": {"<id>": {"etat": …, "phrase"?: …,
+      "at": "<ISO UTC>"}}}. Maestro l'appelle ainsi à chaque relecture d'une mission.
   python3 mission_cloud.py trouver ID < liste
       Lit la sortie de `RemoteTrigger list` : les routines de mission de la tâche ID, leur dernière session.
   python3 mission_cloud.py carte ID < consigne
@@ -23,7 +32,9 @@ L'analyse est pure (`corps`, `fin`, `trouver`) et se teste sur des sorties gard�
 """
 
 import argparse
+import datetime
 import json
+import os
 import re
 import sys
 import uuid
@@ -37,6 +48,8 @@ RESULT = re.compile(r"^\[[^\]]*\] result: (\S+) is_error=(true|false)\b[^—]*(?
 PHRASE = re.compile(r"(Fait|Échec) : ")
 EVENEMENT = re.compile(r"^\[[^\]]*\] ")
 RAPPEL_MINUTES = 1440  # le rappel ne sert qu'à porter le numéro : il ne part qu'au bout d'un jour, Maestro l'éteint avant
+MISSIONS_FICHIER = "roadmap-missions.json"  # lu par le panneau (MISSIONS_FILE de hooks/parse.ts)
+MISSIONS_MAX = 50
 PHRASE_MAX = 300  # la phrase est une donnée du run, jamais une consigne : Maestro la cite, bornée
 
 
@@ -110,6 +123,34 @@ def fin(journal):
     return {"etat": etat, "phrase": phrase, "session": session}
 
 
+def ecrire_etat(racine, id_tache, etat, maintenant=None):
+    """Garde l'état d'une mission pour le panneau (#469) : `racine`/.git/ sinon `racine`/.claude/. Rend le chemin écrit."""
+    dossier = next((os.path.join(racine, d) for d in (".git", ".claude") if os.path.isdir(os.path.join(racine, d))), None)
+    if dossier is None:
+        raise ValueError("ni .git ni .claude dans %s" % racine)
+    chemin = os.path.join(dossier, MISSIONS_FICHIER)
+    missions = {}
+    try:
+        with open(chemin, encoding="utf-8") as f:
+            lu = json.load(f)
+        if isinstance(lu, dict) and lu.get("version") == 1 and isinstance(lu.get("missions"), dict):
+            missions = {k: v for k, v in lu["missions"].items() if isinstance(v, dict)}
+    except (OSError, ValueError):
+        pass
+    entree = {"etat": etat["etat"]}
+    if etat.get("phrase"):
+        entree["phrase"] = etat["phrase"]
+    quand = maintenant or datetime.datetime.now(datetime.timezone.utc)
+    entree["at"] = quand.strftime("%Y-%m-%dT%H:%M:%SZ")
+    missions[str(id_tache)] = entree
+    recentes = sorted(missions.items(), key=lambda kv: str(kv[1].get("at", "")), reverse=True)[:MISSIONS_MAX]
+    temporaire = "%s.%d.tmp" % (chemin, os.getpid())
+    with open(temporaire, "w", encoding="utf-8") as f:
+        json.dump({"version": 1, "missions": dict(recentes)}, f, ensure_ascii=False, indent=1)
+    os.replace(temporaire, chemin)
+    return chemin
+
+
 def trouver(liste, id_tache):
     """Les routines de mission de la tâche : nom « #ID · … », id exact."""
     tete = re.compile(r"^#%s(?!\d)" % re.escape(str(id_tache)))
@@ -142,7 +183,9 @@ def main(argv=None):
     c.add_argument("--connecteur", nargs=3, action="append", default=[], metavar=("UUID", "NOM", "URL"))
     c.add_argument("--modele", default=MODELE)
     c.add_argument("--environnement", default=ENVIRONNEMENT)
-    sub.add_parser("fin")
+    f = sub.add_parser("fin")
+    f.add_argument("--ecrire", metavar="ID")
+    f.add_argument("--racine", metavar="DOSSIER")
     t = sub.add_parser("trouver")
     t.add_argument("id")
     k = sub.add_parser("carte")
@@ -150,6 +193,9 @@ def main(argv=None):
     r = sub.add_parser("retour")
     r.add_argument("id")
     a = p.parse_args(argv)
+    if a.cmd == "fin" and bool(a.ecrire) != bool(a.racine):
+        print("mission_cloud : --ecrire et --racine vont ensemble", file=sys.stderr)
+        return 2
     entree = sys.stdin.read()
     if a.cmd == "corps":
         cons = [{"connector_uuid": u, "name": n, "url": url} for u, n, url in a.connecteur]
@@ -160,6 +206,12 @@ def main(argv=None):
             return 2
     elif a.cmd == "fin":
         f = fin(entree)
+        if a.ecrire:
+            try:
+                ecrire_etat(a.racine, a.ecrire, f)
+            except (ValueError, OSError) as e:
+                print("mission_cloud : %s" % e, file=sys.stderr)
+                return 2
         print("%s · « %s »" % (f["etat"], f["phrase"]) if f["phrase"] else f["etat"])
     elif a.cmd == "carte":
         try:

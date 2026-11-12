@@ -69,13 +69,16 @@ How sessions work and the roadmap's settings (#76, #176), optional too:
 }
 ```
 
-- `mode`: `auto` (default), `code` or `projet`. One mode since #176: the panel looks the same in
-  every project, and how sessions work comes from the session's folder. A git repository that sees
-  at least one code file (`git ls-files --cached --others --exclude-standard`) works with a
-  worktree, a branch and merges by Maestro; any other folder works in place (sessions launched
-  without a worktree, brief without a coding method, no « commit sans test » reminder, a task done
-  when its line is ticked). `code` or `projet` forces it, only to fix a wrong detection; the
-  `doctor` skill says what it saw.
+- `travail` (#508): `code`, `projet` or `hybride`, the nature the project declares; the onboarding writes it
+  and the `doctor` skill says KO without it. One interface since #176: the panel looks the same in every
+  project, the nature decides how sessions work. `code` works with a worktree, a branch and merges by
+  Maestro; `projet` works in place (sessions launched without a worktree, brief without a coding method,
+  no « commit sans test » reminder, a task done when its line is ticked, missions in the cloud from the
+  gateway repo `depot`); `hybride` lets each line say its own work by the declared key `travail:` (a
+  `travail:projet` line works as `projet`, the rest as `code`), which needs `"cles": {"travail": ["code", "projet"]}`.
+  The cloud is open to every project, with no setting. `mode`, `sessions: "cloud"` and `cloud: "missions"` are
+  older forms: still read when `travail` is missing (`cloud: "missions"` as `projet`, then `mode`, then the
+  folder detection, which only proposes), to be removed.
 - `requis`: the required fields; the panel flags a line written without them, without refusing
   it. `requis_sur`: on which tasks, `lancees` (default: those that carry `qui:` or `branche:`) or
   `ouvertes` (every open task). Default: `ouvert`, `due`, `qui`, `après` on launched tasks; an old

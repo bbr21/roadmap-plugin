@@ -11,7 +11,8 @@ AVANT : le dernier commit de main dont la CI est verte (avant la série) ; APRES
 (défaut : origin/main). --echec : les fichiers de test que la CI rouge nomme (`gh run view <id>
 --log-failed`). --cloud (#450) : les prend dans le dernier résultat de la suite de main lancée en session cloud
 (`suite_cloud.py`, commentaire de l'issue « Suite de main »), celui d'APRES ; il s'ajoute à --echec. Le script liste les commits de main entre les deux (premier parent, du plus ancien au plus
-récent), chacun avec sa PR et sa branche quand c'est une fusion de PR, et les fichiers qu'il change. Il
+récent), chacun avec sa PR et sa branche quand c'est une fusion de PR, et les fichiers qu'il change (un seul `git log
+-m --first-parent --name-only`, une fusion étant lue face à son premier parent). Il
 désigne la fautive :
 
 - une seule fusion de PR dans la série : c'est elle, sans bissection ;
@@ -37,6 +38,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 SEP = "\x1f"
+DEBUT = "\x1e"  # début d'un enregistrement du `git log` de collecter
 FUSION_PR = re.compile(r"^Merge pull request #(\d+) from [^/\s]+/(\S+)")
 
 
@@ -87,14 +89,17 @@ def git(depot, *args):
 def collecter(depot, avant, apres):
     for ref in (avant, apres):
         git(depot, "rev-parse", "--verify", "--quiet", ref + "^{commit}")
-    log = git(depot, "log", "--first-parent", "--reverse", "--format=%H" + SEP + "%s", "%s..%s" % (avant, apres))
+    # Un seul `git log` donne les commits et leurs fichiers : `-m --first-parent` compare une fusion à son
+    # premier parent (comme `git diff sha^1 sha`), et DEBUT ouvre chaque enregistrement.
+    log = git(depot, "log", "--first-parent", "-m", "--reverse", "--name-only",
+              "--format=" + DEBUT + "%H" + SEP + "%s", "%s..%s" % (avant, apres))
     commits = []
-    for ligne in log.splitlines():
-        if SEP not in ligne:
+    for bloc in log.split(DEBUT):
+        lignes = bloc.splitlines()
+        if not lignes or SEP not in lignes[0]:
             continue
-        sha, sujet = ligne.split(SEP, 1)
-        noms = git(depot, "diff", "--name-only", sha + "^1", sha)
-        commits.append(lire_commit(sha, sujet, [n for n in noms.splitlines() if n.strip()]))
+        sha, sujet = lignes[0].split(SEP, 1)
+        commits.append(lire_commit(sha, sujet, [n for n in lignes[1:] if n.strip()]))
     return commits
 
 

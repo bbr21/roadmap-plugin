@@ -9,15 +9,17 @@ The person speaks French: talk to them in French, ask the questions in French, a
 roadmap and task labels in French; the files set up keep the language of their templates and of
 the « Langue » answer. Only this skill is in English.
 
-One mode since #176. What the project is comes from its folder, never from a question: a git
-repository that sees code files gets the code structure (everything that follows up to "Without
-code"); any other folder gets the structure of project management without code (section "Without
-code" at the end of the file). `onboarding.py` reads it itself (`code` of the answers, else the
-folder's content). Only an empty or missing folder needs the answer: take it from the request
-(« nouveau projet de code », « initialise ce repo »: `code: true`; « gestion de projet », « sans
-code »: `code: false`), else round 0 of `references/questions.md`. Nothing about it is written to
-`.claude/roadmap.json`: the panel and the other skills read the same folder. `mode` (`code` or
-`projet`) is written by hand only to force a wrong detection.
+One mode since #176, and since #508 the nature is declared, not guessed. The project says which
+work it does by `"travail": "code" | "projet" | "hybride"` in `.claude/roadmap.json`, which this skill
+writes (`onboarding.py` answer `travail`; `code: true|false` is still read). Ask for it: code (a
+repository with code files, the code structure that follows up to "Without code"), projet (project
+management without code, section "Without code" at the end of the file), or hybride (both: each line
+says its own work by the declared key `travail:`, so an `hybride` project also gets
+`"cles": {"travail": ["code", "projet"]}`). The detection of the folder (a git repository that sees
+code files) only proposes the default answer; take the answer from the request when it carries one
+(« nouveau projet de code », « initialise ce repo »: `code`; « gestion de projet », « sans code »:
+`projet`), else round 0 of `references/questions.md`. The old `mode`, `cloud: "missions"` and
+`sessions: "cloud"` settings are older forms: still read when `travail` is missing, never written.
 
 ## What the skill guarantees
 
@@ -183,7 +185,7 @@ itself.
 6. **Templates** (#129): the « Modèles » answer declares the document or deck templates, one per
    task type, in `design`; then `onboarding.py design <dossier> [--poser …]` as with code
    (step 7.3).
-7. **Doctor** (`doctor` skill): it sees a folder without code and runs that checklist; its « Travail » line says what it saw.
+7. **Doctor** (`doctor` skill): it runs the checklist of the declared nature; its « Travail » line says that nature (KO if `travail` is missing).
 8. **Report**: what was set up, then how to use it: open the folder in the Code tab, the panel by
    due date (the button switches to owner and to tree), ▶ on a task, « Maestro » for what can be
    launched; task `id:1` lists the tasks in progress; day to day, the `tasks` skill adds, updates,

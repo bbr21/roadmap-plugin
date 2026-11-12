@@ -200,7 +200,7 @@ une ligne par enfant qui coince depuis 15 min (attend Bertrand, silencieux avec 
 et la liste des enfants à archiver, vérifiés finis (ligne close et commits arrivés, ou branche
 fusionnée et liste d'étapes faite ; rien de non commité, aucune question ni session ouverte ; dans un dossier sans code, la ligne seule) ; rien quand tout avance. Une session épinglée n'est pas proposée à
 l'archivage, une session distante n'est jamais dite finie d'ici, et la branche de base est celle de
-la session (`main` sans elle) ; les notes de plus de 30 jours sortent du store (#90). Il relance une fois un enfant silencieux
+la session (`main` sans elle) ; les notes de plus d'une semaine sortent du store (#90, #518). Il relance une fois un enfant silencieux
 (pas encore s'il a répondu sans changer d'étape), et dit les finis en une ligne, que Bertrand archive
 par leur icône dans la bande, sans question dans la boîte de fin, qui cacherait la bande (#267). Toute session reçoit aussi la consigne de tenir sa liste d'étapes, et un
 rappel en fin de tour quand elle travaille sans (#98, #104) ; le parent tient la sienne, une étape
@@ -263,6 +263,32 @@ task dans la session ; décider seule ce que les fichiers, le code ou un défaut
 tranchent ; ne poser à Bertrand que ce qui est à lui, en une fois ; écrire un blocage sur la ligne
 (`attend:`, `après:`) au lieu de l'attendre.
 
+## Expliquer une tâche : « why N » (#529)
+
+« why 527 », « why #527 » ou « pourquoi 527 », seul dans le message, dans Maestro comme dans toute session d'un
+projet à roadmap : Claude répond par une fiche courte, toujours la même, en mots de tous les jours, pour une tâche
+ouverte comme pour une tâche close.
+
+```
+### #527 · un_test rouge si ça ne compile pas
+
+**Un test cassé ne passera plus pour réussi.**
+
+| | |
+|---|---|
+| Le problème | Un fichier de test qui ne compile pas ne lance aucun test, et le script dit « vert ». |
+| En image | Un correcteur qui met 20/20 à une copie blanche. |
+| La tâche | Compter rouge un rapport en erreur ou vide, et nommer le fichier fautif. |
+| Pour toi | Plus de fichier cassé découvert après la fusion. |
+
+`À lancer` · cloud · petite · ne bloque rien
+```
+
+Le plugin joint au message, sans le montrer, la ligne de la tâche, sa fiche, sa mère, ses sœurs, ce qu'elle attend,
+ce qu'elle débloque et son état (à lancer, en session et où, fusionnée, livrée et en quelle version) ; Claude écrit
+la fiche d'après eux. Un numéro que la roadmap n'a pas se dit en une ligne. Le mot dans une phrase (« why not »,
+« pourquoi 3 sessions ? ») ne déclenche rien.
+
 ## Un seul mode (#176)
 
 Décidé par Bertrand le 01/11/2026 : plus de mode Code ni de mode Projet. Le panneau, l'accueil et
@@ -276,9 +302,11 @@ Ce qui change d'un projet à l'autre, c'est la façon de travailler, et c'est le
 session qui la dit : un dépôt git qui voit au moins un fichier de code travaille en worktree, sur
 une branche que Maestro fusionne, avec le rappel de méthode ; tout autre dossier (Cowork, AAFES, la
 roadmap de Caro) travaille dans le dossier même, et une tâche y est finie quand sa ligne est cochée.
-`"mode"` de `.claude/roadmap.json` reste lu : `auto` (le défaut) laisse le dossier décider, `code`
-ou `projet` le force, pour corriger une détection fausse ; la ligne « Travail » du doctor dit ce
-qu'il a vu. `qui:` désigne la session qui tient une tâche, `resp:` la personne qui la porte, dans
+`"travail"` de `.claude/roadmap.json` (`code`, `projet` ou `hybride`, #508) déclare cette nature : l'onboarding
+l'écrit, le doctor dit KO sans lui, et la détection du dossier ne fait plus que la proposer. Un hybride dit la
+nature de chaque ligne par la clé déclarée `travail:` (`projet` part sans branche ni worktree, en mission en
+cloud). `mode`, `cloud: "missions"` et `sessions: "cloud"` sont d'anciennes formes (les deux premières encore lues
+quand `travail` manque, la troisième sans effet) ; le cloud est ouvert à tout projet, sans réglage. `qui:` désigne la session qui tient une tâche, `resp:` la personne qui la porte, dans
 tout projet ; une tâche qu'une autre personne porte se relance au lieu de se lancer.
 
 ## Tâche lancée tracée
@@ -667,7 +695,7 @@ Dans cet ordre, pour le projet de la session (un worktree remonte à son dossier
 1. `.claude/roadmap.json` dans le projet, tout facultatif :
    `{ "name": "Clipping", "dir": "docs", "me": ["Alex"], "subjects": ["Montage", "Diffusion"] }`
    (`dir` relatif au projet ou absolu ; sans `subjects`, le modèle choisit ses sujets), et les
-   réglages : `mode` (`auto` par défaut, voir « Un seul mode »), `requis`, `requis_sur`, `cles`, `impact`
+   réglages : `travail` (`code`, `projet` ou `hybride`, la nature déclarée, #508 ; les anciens `mode`, `sessions: "cloud"` et `cloud: "missions"` sont des anciennes formes), `requis`, `requis_sur`, `cles`, `impact`
    (#418, les tests que la carte d'impact cite pour un fichier qui ne les nomme pas, voir la skill `impact`), et `rangement`
    (#101) : `{ "skill": "aafes-memory", "ligne": "Rangé dans" }`, la tâche de la session cochée,
    la fin de tour ne propose l'archivage qu'une fois la ligne de rangement (ou « Rien à ranger »)
@@ -763,6 +791,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.289.0 (2026-11-12)** : commande why, ▶ Cloud par Claude, réveil de Maestro par le cloud, nature des projets, mots d'état, clôture partielle, fiche sans roue ; perf : store, hooks, scripts (#529 #515 #496 #508 #509 #487 #532 #518 #523 #525 #526 #533)
 - **0.288.0 (2026-11-12)** : file des tests : une seconde place pour les tests ciblés (un_test.sh), plafond de charge à 180 s, départ quand la charge cesse de baisser, place d'un shell mort rendue, historique des attentes (#521)
 - **0.287.0 (2026-11-12)** : panneau : le ▶ Cloud de mission passe par Claude hors Bypass, sa consigne imposée (#512) ; en-tête En session identique plié ou déplié (#513) ; budgets du panneau qui rougissent à toute dérive d'appels (#524)
 - **0.286.1 (2026-11-12)** : doctor : le geste du dépôt porte ne pousse plus, règle « worktree toujours off » pour AAFES et Sharp Cowork (#475)

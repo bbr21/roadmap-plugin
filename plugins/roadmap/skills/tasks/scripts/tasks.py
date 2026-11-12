@@ -55,12 +55,25 @@ OPS = {
     "done": {"op", "id", "date", "proof", "bilan"},
     "drop": {"op", "id", "reason", "bilan"},
     "pause": {"op", "id", "until", "reason"},
-    "handoff": {"op", "id", "date", "proof", "delivered", "key", "label", "waiting", "src", "fields", "bilan"},
+    "handoff": {"op", "id", "date", "proof", "delivered", "key", "label", "waiting", "src", "fields", "bilan",
+                "missing"},
 }
 # Le bilan d'une clôture (#262), au contrat de `cowork.py roadmap close --bilan-b64` : ses colonnes, les
 # valeurs admises du journal par défaut, la borne d'une ligne de conclusion.
 BILAN_COLS = ("date", "id", "fait", "souci", "ressenti", "cause", "corrections", "note", "tokens", "sonnet")
-BILAN_CLES = {"fait", "souci", "ressenti", "cause", "corrections", "note", "lieu", "type"}
+BILAN_CLES = {"fait", "souci", "ressenti", "cause", "corrections", "note", "lieu", "type", "manque"}
+# Une étape demandée qui n'a pas pu se faire ne fait pas une tâche faite (#487, cas AAFES #684 : l'interface TTD
+# n'a pas pu s'ouvrir faute de connexion, la tâche a été close Done). `manque` du bilan le dit sûrement ; sans lui,
+# ces mots du souci, de la note ou de la preuve (mesurés sur 467 bilans : 3 touchés, 2 à raison). `manque: "aucun"`
+# lève le doute.
+ETAPE_MANQUEE = re.compile(
+    r"(n['’]a pas pu|pas pu (être )?(faire|ouvrir|lancer|tester|envoyer|vérifier|se faire|être fait)"
+    r"|non (faite?s?|ouverte?s?|lancée?s?|testée?s?|envoyée?s?|vérifiée?s?)\b"
+    r"|pas (été )?(faite?s?|ouverte?s?|lancée?s?|testée?s?|vérifiée?s?) faute"
+    r"|faute d['’e] ?(connexion|accès|droits?|connecteur|outil)|sans (connexion|accès)"
+    r"|(étape|geste)s? (sautée?s?|manquée?s?)|sautée?s? faute|BBR absent|outil (absent|indisponible)"
+    r"|connecteur (absent|indisponible|manquant)|reste à (faire|ouvrir|lancer|tester))", re.I)
+SANS_MANQUE = {"aucun", "aucune", "rien", "-"}
 JOURNAL_DEFAUT = "ROADMAP-bilans.csv"
 RESSENTIS = ["fluide", "accroché", "bloqué"]
 # Une liste fermée (#460) : « autre » n'y est plus, ses 59 bilans disaient surtout la charge du Mac, les sessions
@@ -141,6 +154,23 @@ def _sans_parent(t):
 def qui_attend(attend):
     """Qui une tâche attend, sans la précision entre parenthèses : « Jason (devis) » → « Jason »."""
     return re.sub(r"\s*\([^)]*\)?", "", attend or "").strip()
+
+
+def etape_manquee(bilan, preuve):
+    """(raison, texte) si le bilan ou la preuve disent qu'une étape demandée n'a pas pu se faire (#487), sinon
+    None : `manque` du bilan d'abord (« aucun » lève le doute), puis les mots de `ETAPE_MANQUEE` dans le souci,
+    la note, la preuve."""
+    bilan = bilan or {}
+    manque = (bilan.get("manque") or "").strip()
+    if manque.lower() in SANS_MANQUE and manque:
+        return None
+    if manque:
+        return ("manque", manque)
+    for texte in (bilan.get("souci"), bilan.get("note"), preuve):
+        m = ETAPE_MANQUEE.search(texte or "")
+        if m:
+            return ("mots", m.group(0))
+    return None
 
 
 def est_un_tiers(attend, me):
@@ -1374,7 +1404,7 @@ class _Tenue(audit._Preparation):
         fluide = r["ressenti"] == "fluide"
         if fluide != (r["cause"] == "aucune"):
             raise Erreur("%s : bilan, ressenti « fluide » va avec cause « aucune », et seulement lui" % quoi)
-        for k in ("fait", "souci"):
+        for k in ("fait", "souci", "manque"):
             if "\n" in r[k] or "\r" in r[k]:
                 raise Erreur("%s : bilan, %s tient en une ligne" % (quoi, k))
             if len(r[k]) > CONCLUSION_MAX:
@@ -1454,6 +1484,17 @@ class _Tenue(audit._Preparation):
             raise Erreur("%s : la preuve manque (ce qui prouve que c'est fait, et où)" % quoi)
         self.refuser_sans_envoi(t, quoi)
         bilan = self.bilan_de(op, quoi)
+        trouve = etape_manquee(bilan, preuve)
+        if trouve:
+            partie = ("Clos en partie : {\"op\": \"handoff\", \"id\": \"%s\", \"missing\": \"<ce qui manque>\", "
+                      "\"delivered\": \"<ce qui est fait>\", \"key\": \"r1\", \"label\": \"Relancer : <ce qui manque>\", "
+                      "\"date\": ..., \"proof\": ...}" % t.id)
+            if trouve[0] == "manque":
+                raise Erreur("%s : le bilan dit qu'une étape n'a pas pu se faire (« %s ») : ce n'est pas fait. %s, "
+                             "ou laisse la tâche ouverte" % (quoi, trouve[1], partie))
+            raise Erreur("%s : le bilan dit « %s » : si toutes les étapes demandées sont faites, mets manque: \"aucun\" "
+                         "dans le bilan ; sinon %s, ou laisse la tâche ouverte"
+                         % (quoi, trouve[1], partie[0].lower() + partie[1:]))
         ouverts = self.enfants_ouverts(t)
         if ouverts:
             raise Erreur("%s : #%s a un enfant ouvert (#%s)" % (quoi, t.id, ouverts[0].id))
@@ -1486,13 +1527,25 @@ class _Tenue(audit._Preparation):
         quoi = "clôture partielle de #%s" % t.id
         date = _date_fait(op.get("date"), quoi, "date")
         dits = {k: audit._propre(op.get(k)) for k in ("proof", "delivered", "label", "src", "waiting")}
-        for k, ce in (("proof", "la preuve (le message parti au tiers, et où)"), ("delivered", "ce qui a été livré"),
-                      ("label", "le libellé de la suite"), ("src", "src (le message qui a fait la demande au tiers)")):
+        bilan = self.bilan_de(op, quoi)
+        # `missing` (#487) : la clôture « à relancer », sans tiers obligé ; à défaut, le `manque` du bilan.
+        manque = audit._propre(op.get("missing"))
+        if not manque and bilan and bilan.get("manque") and bilan["manque"].lower() not in SANS_MANQUE:
+            manque = bilan["manque"]
+        if manque and not dits["label"]:
+            dits["label"] = "Relancer : %s" % manque
+        exiges = [("proof", "la preuve (le message parti au tiers, et où)"), ("delivered", "ce qui a été livré"),
+                  ("label", "le libellé de la suite")]
+        if not manque:
+            exiges.append(("src", "src (le message qui a fait la demande au tiers)"))
+        for k, ce in exiges:
             if not dits[k]:
                 raise Erreur("%s : %s manque" % (quoi, ce))
         self.refuser_sans_envoi(t, quoi)
         tiers = dits["waiting"]
-        if not est_un_tiers(tiers, self.me):
+        if manque and not est_un_tiers(tiers, self.me):
+            tiers = ""
+        elif not est_un_tiers(tiers, self.me):
             raise Erreur("%s : attend:%s n'est pas un tiers (ni %s, ni une tâche) : coche la tâche (done) ou "
                          "laisse-la ouverte" % (quoi, tiers or "(vide)", ", ".join(self.me) or "toi"))
         ouverts = self.enfants_ouverts(t)
@@ -1501,9 +1554,11 @@ class _Tenue(audit._Preparation):
         if t.get("tous"):
             raise Erreur("%s : tâche récurrente (tous:%s) : le bouton « Marquer faite » du panneau la reconduit"
                          % (quoi, t.get("tous")))
-        bilan = self.bilan_de(op, quoi)
         champs = {k: self.champ_propose(k, v, quoi, INTERDITS_SUITE) for k, v in (op.get("fields") or {}).items()}
-        champs.update({"attend": tiers, "src": dits["src"]})
+        if tiers:
+            champs["attend"] = tiers
+            if dits["src"]:
+                champs["src"] = dits["src"]
         if t.get("fiche"):
             champs["fiche"] = t.get("fiche")
         champs.setdefault("ouvert", self.jour)
@@ -1527,13 +1582,20 @@ class _Tenue(audit._Preparation):
         else:
             self.placer(suite, mere, None, quoi)
         self.bilan["enfants"] += 1
-        chez = qui_attend(tiers)
-        self.fermer_tache(t, date, " ; livré : %s" % dits["delivered"],
-                          "Faite : %s ; suite chez %s en #%s" % (dits["proof"], chez, suite.id), bilan=bilan)
+        chez = qui_attend(tiers) if tiers else None
+        if manque:
+            relance = "à relancer : %s en #%s" % (manque, suite.id)
+            self.fermer_tache(t, date, " ; %s ; livré : %s" % (relance, dits["delivered"]),
+                              "Faite en partie : %s ; %s" % (dits["proof"], relance), bilan=bilan)
+            self.changer(t, "close en partie le %s : %s ; %s" % (_jj_mm(date), dits["proof"], relance))
+        else:
+            self.fermer_tache(t, date, " ; livré : %s" % dits["delivered"],
+                              "Faite : %s ; suite chez %s en #%s" % (dits["proof"], chez, suite.id), bilan=bilan)
+            self.changer(t, "close le %s : %s ; suite chez %s en #%s" % (_jj_mm(date), dits["proof"], chez, suite.id))
         self.tenue["cochees"].append(t.id)
         self.tenue["ajoutees"].append(suite.id)
-        self.tenue["suites"].append({"close": t.id, "suite": suite.id, "tiers": chez})
-        self.changer(t, "close le %s : %s ; suite chez %s en #%s" % (_jj_mm(date), dits["proof"], chez, suite.id))
+        self.tenue["suites"].append(dict({"close": t.id, "suite": suite.id, "tiers": chez},
+                                         **({"manque": manque} if manque else {})))
         self.compte["ajoutees"].append({"id": suite.id, "libelle": _court(suite.libelle),
                                         "parent": p if p != "-" else None, "due": suite.get("due")})
         self.remplacer_renvois(t.id, suite)
@@ -1785,7 +1847,10 @@ def rendre_compte_rendu(cr, etat, jour, outil=None, sauvegarde=None):
     « > **Une question :** … ». Ni titre, ni rubrique, ni « rien ». `jour` reste pour la signature."""
     suites = cr.get("suites") or []
     closes = {s["close"] for s in suites}
-    lignes = ["- Roadmap : #%s close, la suite chez %s passe en #%s" % (s["close"], s["tiers"], s["suite"]) for s in suites]
+    lignes = [("- Roadmap : #%s close en partie, à relancer en #%s : %s" % (s["close"], s["suite"], s["manque"]))
+              if s.get("manque") else
+              ("- Roadmap : #%s close, la suite chez %s passe en #%s" % (s["close"], s["tiers"], s["suite"]))
+              for s in suites]
     for a in cr["ajoutees"]:
         extra = [x for x in ("sous #" + a["parent"] if a["parent"] else "",
                              "due " + _jj_mm(a["due"]) if a["due"] else "") if x]

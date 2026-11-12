@@ -49,7 +49,7 @@ export type Task = {
   tous?: Recurrence
   /** `relance:` : la date de la dernière relance du tiers attendu (#99). */
   relance?: string
-  /** `lieu:cloud` (#408) : la session de la tâche tourne en cloud ; absent, sur le Mac. */
+  /** `lieu:cloud` (#408) : la session de la tâche tourne en cloud ; absent, en local. */
   lieu?: 'cloud'
   /** Les clés hors grammaire (les clés déclarées dans `cles`), valeurs coupées aux virgules. */
   extra?: Record<string, string[]>
@@ -103,8 +103,10 @@ export type Source = {
   subjects: string[]
   /** Les réglages bruts de `.claude/roadmap.json` (#76) ; `projectSettings` les résout. `mode` force le travail (#176). */
   mode?: Mode
-  /** Le travail déduit du dossier de la session (#176, `workOf`), posé par le panneau ; `mode` l'emporte. */
+  /** Le travail déduit du dossier de la session (#176, `workOf`), posé par le panneau ; la nature déclarée l'emporte. */
   travail?: Travail
+  /** La nature déclarée par `travail` de roadmap.json (#482) : `code`, `projet` ou `hybride` ; une autre valeur s'ignore. */
+  nature?: Nature
   requis?: string[]
   /** `requis_sur` (#176) : les champs exigés valent sur toute ouverte, ou sur une tâche lancée. */
   requisSur?: RequiredOn
@@ -172,13 +174,16 @@ const RANGEMENT_LIGNE = 'Rangé dans'
 const RIEN_A_RANGER = 'Rien à ranger'
 
 /**
- * Le travail d'une session (#176) : `code` (worktree, branche, fusion par Maestro, rappel de méthode)
- * ou `projet` (le dossier partagé, la fin jugée sur la ligne). Il se déduit du dossier (`workOf`) ;
- * `mode` de roadmap.json le force (`auto`, absent ou inconnu : le dossier décide). Un seul mode
+ * Le travail d'une tâche (#176, #482) : `code` (worktree, branche, fusion par Maestro, rappel de méthode)
+ * ou `projet` (le dossier partagé, la fin jugée sur la ligne). Il vient de la nature que déclare le
+ * projet (`taskWork`), la détection du dossier (`workOf`) ne faisant que la proposer. Un seul mode
  * d'affichage : l'interface ne lit jamais le travail pour dessiner.
  */
 export type Travail = 'code' | 'projet'
-/** Où tourne une session de tâche (#408) : sur le Mac, ou en cloud. */
+/** La nature d'un projet (#482), déclarée par `travail` de roadmap.json ; `hybride` : la nature se dit sur chaque ligne. */
+export type Nature = 'code' | 'projet' | 'hybride'
+const NATURES: readonly Nature[] = ['code', 'projet', 'hybride']
+/** Où tourne une session de tâche (#408) : en local, ou en cloud. */
 export type Sessions = 'mac' | 'cloud'
 const SESSIONS: readonly Sessions[] = ['mac', 'cloud']
 /** Le réglage `cloud` (#476) : la seule valeur connue, `missions` ; toute autre s'ignore. */
@@ -193,7 +198,12 @@ export type RequiredOn = 'open' | 'launched'
 
 /** Les réglages d'une roadmap, défauts compris ; chaque réglage se change. */
 export type ProjectSettings = {
+  /** Le travail sans tâche (`taskWork(source)`) ; pour une tâche, `taskWork(source, task)`. */
   travail: Travail
+  /** La nature du projet (#482) : déclarée, sinon d'après les anciennes formes, sinon la détection. */
+  nature: Nature
+  /** Vrai quand `travail` est écrit dans roadmap.json (le doctor dit KO sinon). */
+  natureDeclared: boolean
   requis: string[]
   requiredOn: RequiredOn
   cles: Record<string, string[]>
@@ -232,13 +242,38 @@ export function workOf(exitCode: number, files: string): Travail {
   return exitCode === 0 && files.split('\n').some(f => CODE_FILE.test(f.trim())) ? 'code' : 'projet'
 }
 
+/**
+ * La nature d'un projet (#482) : la déclarée, sinon les anciennes formes (`cloud: "missions"` vaut `projet`,
+ * puis `mode`), sinon la détection du dossier, sinon `code`.
+ */
+export function natureOf(source: Source): Nature {
+  return source.nature ?? (source.cloud === 'missions' ? 'projet' : source.mode ?? source.travail ?? 'code')
+}
+
+/**
+ * Le travail d'une tâche (#482), la seule règle : `code` ou `projet` pour ces natures ; `hybride` : la clé de ligne
+ * `travail` (déclarée dans `cles`) dit `projet`, et tout le reste est du code.
+ */
+export function taskWork(source: Source, task?: Pick<Task, 'extra'>): Travail {
+  const nature = natureOf(source)
+  if (nature !== 'hybride') return nature
+  return task?.extra?.travail?.[0] === 'projet' ? 'projet' : 'code'
+}
+
+/** Le travail que le réglage impose à tout le dossier (nature déclarée sauf hybride, `mode`, `cloud: "missions"`) ; rien quand le dossier décide. */
+export function forcedWork(source: Source): Travail | undefined {
+  const forced = source.nature !== undefined || source.mode !== undefined || source.cloud === 'missions'
+  return forced && natureOf(source) !== 'hybride' ? taskWork(source) : undefined
+}
+
 export function projectSettings(source: Source): ProjectSettings {
   // #176 : les champs exigés ne suivent pas le travail détecté ; un ancien `mode: "projet"` garde
   // les siens, le reste se déclare. Plus de `vue` (#238) : le panneau s'ouvre par sujet partout.
   const ancienProjet = source.mode === 'projet'
   return {
-    // #476 : un dossier en missions n'a pas de code, quel que soit `mode`.
-    travail: source.cloud === 'missions' ? 'projet' : source.mode ?? source.travail ?? 'code',
+    travail: taskWork(source),
+    nature: natureOf(source),
+    natureDeclared: source.nature !== undefined,
     requis: source.requis ?? [...(ancienProjet ? PROJECT_REQUIRED : CODE_REQUIRED)],
     // #80 : une idée du Prochain n'a ni échéance ni personne qui la tient.
     requiredOn: source.requisSur ?? (ancienProjet ? 'open' : 'launched'),
@@ -654,13 +689,19 @@ export function parseRoadmap(text: string, file: string): Task[] {
 
 /** Une livraison de `livré:` (#480) : la version publiée, sa date, et la PR qui l'a portée si elle est connue. */
 // Nommé Published : `Delivery` désigne déjà une fusion ou une publication repérée dans une commande (`deliveries`).
-export type Published = { version: string; date: string; pr?: number }
+// #509 : une mission de projet n'a pas de version, son entrée est la date seule (`2026-11-12`) : `version` absente.
+export type Published = { version?: string; date: string; pr?: number }
 const DELIVERY_RE = /^(\d+\.\d+\.\d+)@(\d{4}-\d{2}-\d{2})(?:#(\d+))?$/
+const DELIVERY_DATE_RE = /^\d{4}-\d{2}-\d{2}$/
 
-/** Lit `0.281.0@2026-11-11#73,0.281.1@2026-11-12` ; `null` dès qu'une entrée est mal formée (ou la valeur vide). */
+/** Lit `0.281.0@2026-11-11#73,0.281.1@2026-11-12,2026-11-13` ; `null` dès qu'une entrée est mal formée (ou la valeur vide). */
 export function parseDelivered(v: string): Published[] | null {
   const out: Published[] = []
   for (const part of v.split(',')) {
+    if (DELIVERY_DATE_RE.test(part.trim())) {
+      out.push({ date: part.trim() })
+      continue
+    }
     const m = DELIVERY_RE.exec(part.trim())
     if (!m) return null
     out.push(m[3] === undefined ? { version: m[1]!, date: m[2]! } : { version: m[1]!, date: m[2]!, pr: Number(m[3]) })
@@ -668,8 +709,19 @@ export function parseDelivered(v: string): Published[] | null {
   return out
 }
 
+/**
+ * Le vocabulaire d'état, un mot par état, le même partout (#509, choix de BBR du 2026-11-12) : la liste, la bande, la
+ * fiche, les livraisons. Ce qui dépend du lieu (Mac, cloud) passe dans le détail, jamais dans le mot.
+ */
+export const STATE_WORDS = { todo: 'à lancer', live: 'en session', wait: "t'attend", ready: 'prête', merged: 'fusionnée', test: 'en test', done: 'livrée', cancelled: 'annulée' } as const
+
+/** Un compte de tâches livrées, au singulier ou au pluriel : « 1 livrée », « 466 livrées » (#509, ex-« N Done »). */
+export function deliveredCount(n: number): string {
+  return `${n} ${n > 1 ? 'livrées' : STATE_WORDS.done}`
+}
+
 /** Une passe de livraison (#480) : `pub` publiée (violette), `merge` fusionnée non publiée, `live` au travail, `next` à venir. */
-export type Pass = { tone: 'pub' | 'merge' | 'live' | 'next'; name: string; date?: string }
+export type Pass = { tone: 'pub' | 'merge' | 'live' | 'next'; name: string; date?: string; dated?: true }
 
 /**
  * Les passes d'une tâche (#480, tableau de la spec) : une par version de `livré:`, puis au plus une passe courante.
@@ -679,7 +731,8 @@ export type Pass = { tone: 'pub' | 'merge' | 'live' | 'next'; name: string; date
  * passe courante.
  */
 export function deliveryPasses(task: Task, current: { working: boolean; pr?: { number?: number; state: CloudPr['state'] } }): Pass[] {
-  const out: Pass[] = (task.livre ?? []).map(d => ({ tone: 'pub' as const, name: d.version, date: d.date }))
+  // #509 : sans version, la passe se nomme par sa date dite, et son état n'a pas à la redire.
+  const out: Pass[] = (task.livre ?? []).map(d => (d.version === undefined ? { tone: 'pub' as const, name: spokenDate(d.date), date: d.date, dated: true as const } : { tone: 'pub' as const, name: d.version, date: d.date }))
   const { working } = current
   if (current.pr?.state === 'delivered') return out
   // Une PR déjà dans livré: est une passe publiée : la session qui reprend la tâche (#476) n'en a pas encore d'autre.
@@ -692,15 +745,18 @@ export function deliveryPasses(task: Task, current: { working: boolean; pr?: { n
   return out
 }
 
-/** Le nom d'une passe et son état, tel que le lit l'`alt` d'une rangée de points : « 0.281.0 · publiée le 11/11 ». */
+/** Le nom d'une passe : sa version ou sa PR ; sans version, sa date dite, au format du moment où on la montre (#509). */
+const passName = (p: Pass): string => (p.dated && p.date ? spokenDate(p.date) : p.name)
+
+/** Le nom d'une passe et son état, tel que le lit l'`alt` d'une rangée de points : « 0.281.0 · livrée le 11/11 ». */
 export function passLabel(p: Pass): string {
   switch (p.tone) {
     case 'pub':
-      return `${p.name} · publiée${p.date ? ` le ${shortDate(p.date)}` : ''}`
+      return `${passName(p)} · ${STATE_WORDS.done}${p.date && !p.dated ? ` le ${shortDate(p.date)}` : ''}`
     case 'merge':
-      return `${p.name} · fusionnée, suite de main`
+      return `${p.name} · ${STATE_WORDS.merged}`
     case 'live':
-      return `${p.name} · au travail`
+      return `${p.name} · ${STATE_WORDS.live}`
     case 'next':
       return p.name
   }
@@ -710,13 +766,13 @@ export function passLabel(p: Pass): string {
 export function passRow(p: Pass, index: number): { name: string; words: string } {
   switch (p.tone) {
     case 'pub':
-      return { name: p.name, words: `publiée${p.date ? ` le ${shortDate(p.date)}` : ''}` }
+      return { name: passName(p), words: `${STATE_WORDS.done}${p.date && !p.dated ? ` le ${shortDate(p.date)}` : ''}` }
     case 'merge':
-      return { name: p.name, words: 'fusionnée · suite de main' }
+      return { name: p.name, words: STATE_WORDS.merged }
     case 'live':
-      return { name: p.name, words: 'au travail' }
+      return { name: p.name, words: STATE_WORDS.live }
     case 'next':
-      return { name: `passe ${index + 1}`, words: 'à lancer' }
+      return { name: `passe ${index + 1}`, words: STATE_WORDS.todo }
   }
 }
 
@@ -845,7 +901,7 @@ export function lintRoadmap(text: string, done: boolean, rules: Partial<LintRule
       else if (k === 'lieu' && v !== 'cloud') say(`lieu:${v} : cloud attendu`) // #408
       else if (k === 'feedback' && !FEEDBACK_RE.test(v)) say(`feedback: des numéros de retours séparés par des virgules (« ${v} »)`)
       else if ((k === 'pj' || k === 'livrable') && (v === '' || v.split(',').some(x => x.trim() === ''))) say(`${k}: des chemins de fichiers séparés par des virgules (« ${v} »)`)
-      else if (k === 'livré' && parseDelivered(v) === null) say(`livré: <version>@<AAAA-MM-JJ>[#<PR>] séparés par des virgules (« ${v} »)`) // #480
+      else if (k === 'livré' && parseDelivered(v) === null) say(`livré: <version>@<AAAA-MM-JJ>[#<PR>] ou <AAAA-MM-JJ>, séparés par des virgules (« ${v} »)`) // #480
       else if (k === 'nom' && (v === '' || v.length > NAME_MAX)) say(`nom: 40 caractères au plus, et pas vide (« ${clip(v, 50)} »)`)
       keys.set(k, v)
     }
@@ -2436,9 +2492,12 @@ export function parseSources(text: string): Source[] {
     )
     .map(s => {
       // `axes` (#286) s'écrit en français dans le fichier : relu comme celui de `.claude/roadmap.json`.
-      const { axes: raw, ...rest } = s as Source & { axes?: unknown }
+      const { axes: raw, travail: declared, ...rest } = s as Source & { axes?: unknown; travail?: unknown }
       const axes = axisStylesOf(raw)
-      return axes ? { ...rest, axes } : rest
+      // #508 : `travail` d'une entrée est la nature déclarée, comme dans `.claude/roadmap.json` ; brute, elle prendrait
+      // la place de la détection (`Source.travail`), que le panneau écrase ensuite. Une autre valeur s'ignore.
+      const nature = NATURES.find(n => n === declared)
+      return { ...rest, ...(axes ? { axes } : {}), ...(nature ? { nature } : {}) }
     })
 }
 
@@ -3501,7 +3560,7 @@ export function chainGauge(
     const kind: GaugeKind = state === 'done' ? 'done' : state === 'cancelled' ? 'cancelled' : pres.includes(t) ? 'pre' : unlocks.includes(t) ? 'next' : 'open'
     const blocker = o.prereqsOf(t).find(p => !p.done)
     const sub =
-      state === 'done' ? `faite${when(t.fait)}` : state === 'cancelled' ? 'annulée' : state === 'live' ? 'en session' : state === 'blocked' && blocker ? `après ${blocker.id ? `#${blocker.id}` : o.titleOf(blocker)}` : `à faire${when(t.due)}`
+      state === 'done' ? `${STATE_WORDS.done}${when(t.fait)}` : state === 'cancelled' ? 'annulée' : state === 'live' ? 'en session' : state === 'blocked' && blocker ? `après ${blocker.id ? `#${blocker.id}` : o.titleOf(blocker)}` : `à faire${when(t.due)}`
     return { kind, title: name(t), sub, tone: kind === 'pre' ? 'block' : 'text' }
   }
   // Les faites d'abord, la plus ancienne en tête ; puis celle en session, puis les autres dans l'ordre de la mère.
@@ -3531,7 +3590,7 @@ export function chainGauge(
     }
   }
   if (pres.length === 0 && unlocks.length === 0) return undefined
-  const linkSeg = (t: Task, kind: GaugeKind): GaugeSeg => ({ kind, title: name(t), sub: t.done ? `faite${when(t.fait)}` : `à faire${when(t.due)}`, tone: kind === 'pre' ? 'block' : 'text' })
+  const linkSeg = (t: Task, kind: GaugeKind): GaugeSeg => ({ kind, title: name(t), sub: t.done ? `${STATE_WORDS.done}${when(t.fait)}` : `à faire${when(t.due)}`, tone: kind === 'pre' ? 'block' : 'text' })
   const segs: GaugeSeg[] = [
     ...(pres.length === 0 ? [{ kind: 'none' as const, title: 'Rien avant elle', sub: 'elle n’attend aucune tâche', tone: 'text' as const }] : pres.map(p => linkSeg(p, p.done ? 'done' : 'pre'))),
     { kind: 'here', title: name(task), sub: 'ici', tone: 'text' },
@@ -4225,7 +4284,7 @@ export function sectionFold(sectionIds: readonly string[], isOpen: (id: string) 
 /** Le résumé de la ligne de filtre : « Mcp · attend Martial · 4 tâches », ou le total sans filtre. */
 export function filterSummary(view: { axis: string; attend: string; showDone: boolean; shown: number; doneShown: number; groupBy?: string; who?: string }): string {
   const by = groupingOf(view.groupBy, view.showDone)
-  if (view.showDone) return `${view.doneShown} Done, par ${by === 'subject' ? 'sujet' : 'jour'}`
+  if (view.showDone) return `${deliveredCount(view.doneShown)}, par ${by === 'subject' ? 'sujet' : 'jour'}`
   // Les ouvertes se rangent par sujet d'ordinaire (#168, #189) : seuls les autres rangements se disent.
   // Ma journée suit le rangement choisi, comme Cette semaine ; À relancer est toujours par sujet (#268).
   const byDayNote = by === 'subject' || view.attend === 'relaunch' ? '' : `, ${GROUPING_LABELS[by].toLowerCase()}`
@@ -4594,8 +4653,8 @@ export function sessionTitleFor(task: Task, shortTitle: string): string {
   return clip(task.id ? `#${task.id} · ${shortTitle}` : `Roadmap · ${shortTitle}`, 58)
 }
 
-/** #436 : la marque de cible qui finit le titre d'une carte native (« · cloud », « · Mac »). */
-const TARGET_MARK = /\s*·\s*(?:cloud|mac)\s*$/i
+/** #436 : la marque de cible qui finit le titre d'une carte native (« · cloud », « · local »). « · Mac » d'un titre d'avant (#509) se lit encore. */
+const TARGET_MARK = /\s*·\s*(?:cloud|mac|local)\s*$/i
 
 /**
  * Le titre de la carte native « New session » avec sa cible au bout (#436, maquette A titre 1) :
@@ -4605,7 +4664,7 @@ const TARGET_MARK = /\s*·\s*(?:cloud|mac)\s*$/i
  */
 export function targetTitle(title: string, target: Sessions): string {
   if (sessionTitleId(title) === undefined) return title
-  const mark = ` · ${target === 'cloud' ? 'cloud' : 'Mac'}`
+  const mark = ` · ${target === 'cloud' ? 'cloud' : 'local'}`
   return `${clip(title.replace(TARGET_MARK, ''), 58 - mark.length)}${mark}`
 }
 
@@ -6351,7 +6410,7 @@ function childShortList(children: readonly ChildRow[]): string {
  * son état en mots, une seule en cours comme l'outil l'exige.
  */
 export const MAESTRO_STEP_LIST =
-  "- Ta liste d'étapes (update_plan) suit tes sessions : une étape par tâche lancée, « #<id> <libellé court> · <état> » (en cours : étape 3/7, t'attend, prête à fusionner, en relecture, livrée), dans l'ordre de fusion ; la tâche livrée cochée (completed) ; une seule en cours (in_progress) : celle dont tu t'occupes, sinon la prochaine à fusionner. Renvoie la liste entière (items) dès qu'un état change (skill roadmap:maestro, § 3). Pas de carte show_widget."
+  "- Ta liste d'étapes (update_plan) suit tes sessions : une étape par tâche lancée, « #<id> <libellé court> · <état> » (en session : étape 3/7, t'attend, prête, fusionnée, en test X.Y.Z, livrée X.Y.Z), dans l'ordre de fusion ; la tâche livrée cochée (completed) ; une seule en cours (in_progress) : celle dont tu t'occupes, sinon la prochaine à fusionner. Renvoie la liste entière (items) dès qu'un état change (skill roadmap:maestro, § 3). Pas de carte show_widget."
 
 /**
  * Ce que lit le parent à chaque message de Bertrand (#84) : les enfants à archiver sur une ligne,
@@ -7098,7 +7157,7 @@ export function folderPaths(source: Source): string[] {
 export function folderContext(o: { source: Source; found: BriefFound; entries?: readonly { name: string; kind: string }[] }): string[] {
   const { source, found } = o
   const root = source.root ?? source.dir
-  const code = projectSettings(source).travail === 'code'
+  const code = taskWork(source) === 'code'
   const existing = (names: readonly string[]) => names.map(f => `${root}/${f}`).filter(p => found[p] === 'file').map(p => `\`${p}\``)
   const rules = existing(FOLDER_RULES)
   const maps = existing(FOLDER_MAPS)
@@ -7263,7 +7322,8 @@ export function launchBrief(
   folder: readonly string[] = [],
   codeModel: 'opus' | 'sonnet' = 'sonnet',
 ): { title: string; prompt: string; background: string } {
-  const { travail, requis, requiredOn } = projectSettings(source)
+  const { requis, requiredOn } = projectSettings(source)
+  const travail = taskWork(source, task)
   const { files, notes } = briefFiles(source, task, found)
   // #80 : les champs exigés d'une tâche lancée, posés à la prise de la ligne.
   const taking =
@@ -7317,7 +7377,7 @@ export function checkBrief(
   found: BriefFound = {},
 ): { title: string; prompt: string; background: string } {
   // Sans code (#76, #176) : ni code ni PR ; l'historique git seulement si le dossier est un dépôt.
-  const projet = projectSettings(source).travail === 'projet'
+  const projet = taskWork(source, task) === 'projet'
   const { files, notes } = briefFiles(source, task, found)
   const history = projet
     ? [
@@ -7423,12 +7483,14 @@ export function routineBrief(
 export function parseProjectConfig(text: string, base: string, defaults: { name: string; me: string[] }): Source | undefined {
   const data: unknown = JSON.parse(text)
   if (typeof data !== 'object' || data === null) return undefined
-  const c = data as { name?: unknown; dir?: unknown; me?: unknown; subjects?: unknown; mode?: unknown; requis?: unknown; requis_sur?: unknown; cles?: unknown; rangement?: unknown; relance?: unknown; design?: unknown; cles_visibles?: unknown; ranger_par?: unknown; regles?: unknown; ecriture?: unknown; preuves?: unknown; publier?: unknown; mission?: unknown; a_preuve?: unknown; sessions?: unknown; depot?: unknown; cloud?: unknown }
+  const c = data as { name?: unknown; dir?: unknown; me?: unknown; subjects?: unknown; mode?: unknown; requis?: unknown; requis_sur?: unknown; cles?: unknown; rangement?: unknown; relance?: unknown; design?: unknown; cles_visibles?: unknown; ranger_par?: unknown; regles?: unknown; ecriture?: unknown; preuves?: unknown; publier?: unknown; mission?: unknown; a_preuve?: unknown; sessions?: unknown; depot?: unknown; cloud?: unknown; travail?: unknown }
   const dir = typeof c.dir === 'string' && c.dir !== '' ? (c.dir.startsWith('/') ? c.dir : `${base}/${c.dir}`) : base
   const strings = (v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : undefined)
   // Une valeur inconnue ou d'un mauvais type prend le défaut : le panneau s'ouvre quand même. `auto`
   // (#176) ou un mode inconnu : le dossier décide du travail.
   const mode = MODES.find(m => m === c.mode)
+  // #482 : la nature déclarée ; une autre valeur s'ignore (le doctor la dit KO).
+  const nature = NATURES.find(n => n === c.travail)
   const requisSur = c.requis_sur === 'ouvertes' ? ('open' as const) : c.requis_sur === 'lancees' ? ('launched' as const) : undefined
   const cles: Record<string, string[]> = {}
   if (typeof c.cles === 'object' && c.cles !== null && !Array.isArray(c.cles)) {
@@ -7470,6 +7532,7 @@ export function parseProjectConfig(text: string, base: string, defaults: { name:
     me: strings(c.me) ?? defaults.me,
     subjects: strings(c.subjects) ?? [],
     ...(mode ? { mode } : {}),
+    ...(nature ? { nature } : {}),
     ...(requis ? { requis } : {}),
     ...(requisSur ? { requisSur } : {}),
     ...(Object.keys(cles).length > 0 ? { cles } : {}),
@@ -8717,6 +8780,21 @@ export function utf8Base64(text: string): string {
   return out
 }
 
+/** Le nombre d'octets UTF-8 d'un texte (le module n'a ni Buffer ni TextEncoder) : la taille que dirait un `stat` (#523). */
+export function utf8Length(text: string): number {
+  let bytes = 0
+  for (let i = 0; i < text.length; i++) {
+    const c = text.charCodeAt(i)
+    if (c < 0x80) bytes += 1
+    else if (c < 0x800) bytes += 2
+    else if (c >= 0xd800 && c <= 0xdbff && i + 1 < text.length && text.charCodeAt(i + 1) >= 0xdc00 && text.charCodeAt(i + 1) <= 0xdfff) {
+      bytes += 4
+      i += 1
+    } else bytes += 3
+  }
+  return bytes
+}
+
 /** Un CSV simple (guillemets doublés, virgules et retours dans les guillemets). */
 export function parseCsv(text: string): string[][] {
   const rows: string[][] = []
@@ -9298,7 +9376,7 @@ export function sessionPrefsText(prefs: SessionPrefs, error?: string, project?: 
   }
   if (prefs.adhd) {
     lines.push(
-      "- **Mode ADHD** (#275, parti A : le verdict, puis la preuve) : un message de tâche s'ouvre sur son verdict, une phrase en gras, sans emoji, qui dit l'état et ce qui en sort : `**Tout concorde : les budgets baissés de 15 % sont en place chez Meta et Google.**`, `**C'est en place, il reste ton envoi : l'annonce basculera seule le 28/11.**`. En cours, `**En cours, étape 4/6 : je relis les budgets chez Google.**` ; détour (erreur, retour en arrière), `**Détour : un test casse sur le compte de la mère.**` ; question, `**J'ai besoin de toi : la vue des faites.**`, puis le formulaire ; prête, `**Prête à fusionner : tests verts (…), branche poussée.**`. Un seul verdict par message. Puis la preuve, dans la forme de ce qu'elle est : un fait sûr, une puce de mots, une ligne, sans chiffre ni identifiant, sans glyphe ni gras en tête ; ce qui a été vérifié et chiffré, un petit tableau, une ligne par objet, trois colonnes au plus (l'objet, l'attendu, le vu), seul endroit du message où vont les chiffres (les montants intermédiaires et les conversions ne s'écrivent pas). Ce qui revient à " + person() + " sort du fil, en fin de message, chacun sa citation : `> **À toi :** …` pour une action ou une décision qui lui revient (et seulement elle, avec où et comment), jamais un geste qu'un outil fait à ta place ; `> **Une question :** …` (puis le formulaire) ; `> **Hors de ma tâche :** …` pour un doute ou une idée hors du périmètre (avec sa carte). Un lien se donne par son nom (`[le brouillon à Rong](…)`), jamais par son adresse. Cinq puces au plus, sans sous-puce : ni titre, ni rubrique, ni paragraphe (deux exceptions : le bloc « Ce qui a changé » du compte rendu « prête à fusionner », #269, et la consigne de capture, sa liste numérotée au gabarit, #406). Rien de répété d'un message à l'autre : un fait, une question ou un « À toi » déjà dit ne revient pas. Les étapes restent dans la liste d'étapes de l'app (`update_plan`) : la preuve ne la recopie pas, l'étape se dit dans le verdict, sous le nom de la liste. Une question ou une réponse courte hors tâche : pas de verdict imposé. Une explication que " + person() + " demande prend la place qu'il faut pour être comprise, avec un exemple concret. À la fin de la session, une seule fois, la conclusion, d'une autre mise en page : au dernier tour (ta ligne close, lue dans ROADMAP-fait), ou au tour où la session s'arrête bloquée. Un `---`, puis un titre `### ✅ #<id> · <la tâche> : c'est livré`, puis le bloc `**Ce qu'on a fait.**` suivi de deux ou trois phrases simples, en mots de tous les jours : le problème de départ, ce qu'on a construit, ce que ça change pour " + person() + " (#307) ; puis un tableau de deux colonnes, `| Livré | <version>, close le AAAA-MM-JJ |` (« close par Maestro le » pour une session qu'il a lancée ; sans version, le livrable et où il est), `|---|---|`, `| À essayer | où et quoi |`, et `| En route | le souci rencontré |` s'il y en a eu un ; puis la boîte de fin « Archiver cette session ? » avec le bouton de réponse « Oui, archiver », son recap en quelques mots, sans redire « fini : … » ni la conclusion. Bloquée : `### ⛔ #<id> · <la tâche> : bloquée`, la phrase, puis `| Fait | … |`, `|---|---|`, `| Bloque | ce qui bloque, qui débloque, ce qui suit |`, `| À toi | … |`, sans question d'archivage. Un tour qui attend une réponse de " + person() + " n'est pas bloqué. Ta ligne #<id> encore ouverte, pas de conclusion ni d'archivage. Maestro : son verdict compte sa liste d'étapes (`**Maestro · 2 en cours · 1 t'attend**`, `**Maestro · tout est livré**` quand rien ne reste), et ne s'écrit que quand il a changé depuis son message d'avant ; sa conclusion, `### ✅ Maestro · <le lot> : tout est livré`, une phrase, le tableau `| Tâche | Ce qui change | Version |`, une ligne par tâche lancée (`| #<id> <nom court> | … | X.Y.Z |`), puis `**À essayer :** …` ; à chaque tâche livrée, l'étape de sa liste dit `· livrée <version>` et sa preuve `- #<id> livrée <version> : ce qui change`. Si un rappel ne réclame que le bouton de la boîte, pose la boîte seule, sans réécrire le message.",
+      "- **Mode ADHD** (#275, parti A : le verdict, puis la preuve) : un message de tâche s'ouvre sur son verdict, une phrase en gras, sans emoji, qui dit l'état et ce qui en sort : `**Tout concorde : les budgets baissés de 15 % sont en place chez Meta et Google.**`, `**C'est en place, il reste ton envoi : l'annonce basculera seule le 28/11.**`. En cours, `**En cours, étape 4/6 : je relis les budgets chez Google.**` ; détour (erreur, retour en arrière), `**Détour : un test casse sur le compte de la mère.**` ; question, `**J'ai besoin de toi : la vue des faites.**`, puis le formulaire ; prête, `**Prête à fusionner : tests verts (…), branche poussée.**`. Un seul verdict par message. Puis la preuve, dans la forme de ce qu'elle est : un fait sûr, une puce de mots, une ligne, sans chiffre ni identifiant, sans glyphe ni gras en tête ; ce qui a été vérifié et chiffré, un petit tableau, une ligne par objet, trois colonnes au plus (l'objet, l'attendu, le vu), seul endroit du message où vont les chiffres (les montants intermédiaires et les conversions ne s'écrivent pas). Ce qui revient à " + person() + " sort du fil, en fin de message, chacun sa citation : `> **À toi :** …` pour une action ou une décision qui lui revient (et seulement elle, avec où et comment), jamais un geste qu'un outil fait à ta place ; `> **Une question :** …` (puis le formulaire) ; `> **Hors de ma tâche :** …` pour un doute ou une idée hors du périmètre (avec sa carte). Un lien se donne par son nom (`[le brouillon à Rong](…)`), jamais par son adresse. Cinq puces au plus, sans sous-puce : ni titre, ni rubrique, ni paragraphe (deux exceptions : le bloc « Ce qui a changé » du compte rendu « prête à fusionner », #269, et la consigne de capture, sa liste numérotée au gabarit, #406). Rien de répété d'un message à l'autre : un fait, une question ou un « À toi » déjà dit ne revient pas. Les étapes restent dans la liste d'étapes de l'app (`update_plan`) : la preuve ne la recopie pas, l'étape se dit dans le verdict, sous le nom de la liste. Une question ou une réponse courte hors tâche : pas de verdict imposé. Une explication que " + person() + " demande prend la place qu'il faut pour être comprise, avec un exemple concret. À la fin de la session, une seule fois, la conclusion, d'une autre mise en page : au dernier tour (ta ligne close, lue dans ROADMAP-fait), ou au tour où la session s'arrête bloquée. Un `---`, puis un titre `### ✅ #<id> · <la tâche> : c'est livré`, puis le bloc `**Ce qu'on a fait.**` suivi de deux ou trois phrases simples, en mots de tous les jours : le problème de départ, ce qu'on a construit, ce que ça change pour " + person() + " (#307) ; puis un tableau de deux colonnes, `| Livré | <version>, close le AAAA-MM-JJ |` (« close par Maestro le » pour une session qu'il a lancée ; sans version, le livrable et où il est), `|---|---|`, `| À essayer | où et quoi |`, et `| En route | le souci rencontré |` s'il y en a eu un ; puis la boîte de fin « Archiver cette session ? » avec le bouton de réponse « Oui, archiver », son recap en quelques mots, sans redire « fini : … » ni la conclusion. Bloquée : `### ⛔ #<id> · <la tâche> : bloquée`, la phrase, puis `| Fait | … |`, `|---|---|`, `| Bloque | ce qui bloque, qui débloque, ce qui suit |`, `| À toi | … |`, sans question d'archivage. Un tour qui attend une réponse de " + person() + " n'est pas bloqué. Ta ligne #<id> encore ouverte, pas de conclusion ni d'archivage. Maestro : son verdict compte sa liste d'étapes (`**Maestro · 2 en session · 1 t'attend**`, `**Maestro · tout est livré**` quand rien ne reste), et ne s'écrit que quand il a changé depuis son message d'avant ; sa conclusion, `### ✅ Maestro · <le lot> : tout est livré`, une phrase, le tableau `| Tâche | Ce qui change | Version |`, une ligne par tâche lancée (`| #<id> <nom court> | … | X.Y.Z |`), puis `**À essayer :** …` ; à chaque tâche livrée, l'étape de sa liste dit `· livrée <version>` et sa preuve `- #<id> livrée <version> : ce qui change`. Si un rappel ne réclame que le bouton de la boîte, pose la boîte seule, sans réécrire le message.",
     )
   }
   if (prefs.francais) lines.push('- **Langue** : réponds en français, comptes rendus, récaps et boîte de fin compris.')
@@ -9465,7 +9543,7 @@ export function maestroWakeReminder(pending: readonly string[]): string {
 /** Le rappel du mode ADHD chez Maestro, aux tours que lance la personne : un en-tête stable. */
 export function maestroPrefsReminder(prefs: SessionPrefs): string | undefined {
   if (!prefs.adhd) return undefined
-  return `Mode ADHD, chez Maestro (#275, parti A) : ton verdict en tête, en gras, sans emoji, compté sur ta liste d'étapes, **Maestro · 2 en cours · 1 t'attend · 1 à fusionner** (« t'attend » : une question pour ${person()} ; « à fusionner » : une branche finie qui attend ta fusion ; **Maestro · tout est livré** quand rien ne reste), seulement quand il a changé depuis ton message d'avant, jamais l'étape d'une tâche. Puis la preuve, une puce de mots par fait, sans glyphe, et « > **À toi :** … », en citation à la fin, pour un besoin de ${person()} (${NEEDS}), une seule fois : un besoin déjà dit ne revient pas, même reformulé. Le détail reste chez les sessions enfants ; ni titre, ni tableau, ni bloc de fin. Ta conclusion, au tour où tu proposes ton archivage : \`---\`, \`### ✅ Maestro · <le lot> : tout est livré\`, une phrase, puis \`| Tâche | Ce qui change | Version |\`, une ligne par tâche lancée, et « **À essayer :** ». Pas de boîte de fin sans question tant qu'une étape de ta liste reste ouverte : l'app cocherait toute la liste, le seul repère de ${person()} sur ses sessions ; après une boîte avec question, repose ta liste entière (items) au tour suivant.`
+  return `Mode ADHD, chez Maestro (#275, parti A) : ton verdict en tête, en gras, sans emoji, compté sur ta liste d'étapes, **Maestro · 2 en session · 1 t'attend · 1 prête** (« t'attend » : une question pour ${person()} ; « prête » : une branche finie qui attend ta fusion ; **Maestro · tout est livré** quand rien ne reste), seulement quand il a changé depuis ton message d'avant, jamais l'étape d'une tâche. Puis la preuve, une puce de mots par fait, sans glyphe, et « > **À toi :** … », en citation à la fin, pour un besoin de ${person()} (${NEEDS}), une seule fois : un besoin déjà dit ne revient pas, même reformulé. Le détail reste chez les sessions enfants ; ni titre, ni tableau, ni bloc de fin. Ta conclusion, au tour où tu proposes ton archivage : \`---\`, \`### ✅ Maestro · <le lot> : tout est livré\`, une phrase, puis \`| Tâche | Ce qui change | Version |\`, une ligne par tâche lancée, et « **À essayer :** ». Pas de boîte de fin sans question tant qu'une étape de ta liste reste ouverte : l'app cocherait toute la liste, le seul repère de ${person()} sur ses sessions ; après une boîte avec question, repose ta liste entière (items) au tour suivant.`
 }
 
 /**
@@ -9598,6 +9676,113 @@ export function maestroCall(prompt: string, axes: readonly string[] = []): { go:
   // « Maestro, <une demande> » (#250) : ni un mot-clé ni un mot d'état, le reste est une demande à cadrer.
   const request = !go && !action && rest !== '' && !MAESTRO_STATE.test(rest) ? rest : undefined
   return { go, scan: rest !== '', ...(action ? { action } : {}), ...(request ? { request } : {}) }
+}
+
+/**
+ * « why 527 », « why #527 », « pourquoi 527 » (#529) : seul dans le message, il demande d'expliquer la tâche en mots
+ * simples. Un mot dans une phrase (« why not », « pourquoi 3 sessions ? ») n'est pas un appel : rien après le numéro
+ * qu'une ponctuation de fin.
+ */
+export function whyCall(prompt: string): { id: string } | undefined {
+  const m = /^\s*(?:why|pourquoi)\s+#?(\d+)\s*[?.!]?\s*$/i.exec(withoutReminders(prompt))
+  return m ? { id: m[1] as string } : undefined
+}
+
+/** Le plus de voisines nommées par lien dans le contexte de « why N » (#529) : au-delà, leur compte. */
+const WHY_NEIGHBOURS = 12
+
+/**
+ * Ce que Claude reçoit pour « why N » (#529) : la ligne (ouverte ou close), sa fiche, sa mère, ses sœurs, ses
+ * filles, ce qu'elle attend, ce qu'elle débloque, son état, puis la consigne du gabarit « La fiche » choisi par BBR
+ * le 2026-11-12. Le contexte ne se montre pas : c'est Claude qui écrit la fiche. `tasks` absent : pas de roadmap ;
+ * numéro inconnu : une ligne à dire. `cloud`, l'état de la PR d'une ligne cloud ; `merged`, la PR d'une branche du
+ * Mac fusionnée (#468) ; `fiche`, le texte du fichier `fiche:` de la ligne.
+ */
+export function whyContext(o: {
+  id: string
+  tasks: readonly Task[] | undefined
+  titleOf: (t: Task) => string
+  isLive: (t: Task) => boolean
+  cloud?: CloudPr['state']
+  merged?: boolean
+  fiche?: string
+}): string {
+  const asked = `${Person()} demande d'expliquer la tâche #${o.id} (« why ${o.id} »)`
+  if (!o.tasks) return `${asked}, mais ce dossier n'a pas de roadmap lue par le plugin : dis-le en une ligne, sans rien inventer.`
+  const tasks = o.tasks
+  const task = tasks.find(t => t.id === o.id)
+  if (!task) return `${asked}, mais la roadmap de ce projet n'a pas de tâche #${o.id}, ni ouverte ni close : dis-le en une ligne, sans rien inventer ni chercher ailleurs.`
+  const place = (t: Task) => (t.lieu === 'cloud' ? 'cloud' : 'Mac')
+  const brief = (t: Task) => (t.done ? (isAbandoned(t) ? STATE_WORDS.cancelled : STATE_WORDS.done) : t.branche || o.isLive(t) ? `${STATE_WORDS.live}, ${place(t)}` : STATE_WORDS.todo)
+  const name = (t: Task) => `${t.id ? `#${t.id} ` : ''}${o.titleOf(t)}`
+  const list = (ts: readonly Task[], none: string, more: readonly string[] = []) => {
+    const shown = [...ts.slice(0, WHY_NEIGHBOURS).map(t => `${name(t)} (${brief(t)})`), ...more]
+    if (ts.length > WHY_NEIGHBOURS) shown.push(`et ${ts.length - WHY_NEIGHBOURS} autres`)
+    return shown.length === 0 ? none : shown.join(' ; ')
+  }
+  const mother = task.parent ? tasks.find(t => t.id === task.parent) : undefined
+  const sisters = task.parent ? tasks.filter(t => t !== task && t.parent === task.parent) : []
+  const daughters = tasks.filter(t => t.parent === task.id)
+  const prereqs = prereqsOf(task, tasks, o.titleOf)
+  const unlocks = unlocksOf(task, tasks, t => prereqsOf(t, tasks, o.titleOf))
+  // L'état : le mot du vocabulaire (#509) d'abord, puis où, puis le détail.
+  const version = [...(task.livre ?? [])].reverse().find(p => p.version)?.version
+  const where = `${task.lieu === 'cloud' ? 'en cloud' : 'sur le Mac'}${task.branche ? `, branche ${task.branche}` : ''}`
+  let word: string
+  let state: string
+  if (task.done) {
+    word = isAbandoned(task) ? STATE_WORDS.cancelled : STATE_WORDS.done
+    state = `${word}${task.fait ? ` le ${task.fait}` : ''}${version && !isAbandoned(task) ? `, version ${version}` : ''}`
+  } else if (task.lieu === 'cloud' && o.cloud !== undefined) {
+    const words = cloudWords(o.cloud)
+    word = words.short
+    state = `${word}, ${where} (${words.long})`
+  } else if (o.merged) {
+    word = STATE_WORDS.merged
+    state = `${word}, ${where} (${cloudWords('merged').long})`
+  } else if (task.branche || o.isLive(task)) {
+    word = STATE_WORDS.live
+    state = `${word}, ${where}`
+  } else {
+    word = STATE_WORDS.todo
+    state = word
+  }
+  if (!task.done && version) state += ` ; déjà publiée en version ${version}`
+  const shown = `${word.charAt(0).toUpperCase()}${word.slice(1)}`
+  const title = `#${o.id} · ${o.titleOf(task)}`
+  const facts = [
+    `Titre : ${title}`,
+    `Sa ligne : ${task.label}${task.note ? ` (${task.note})` : ''}`,
+    `Axe : ${task.axis}${isPriority(task) ? ' ; prioritaire' : ''}${task.ouvert ? ` ; ouverte le ${task.ouvert}` : ''}${task.due && !task.done ? ` ; échéance ${task.due}` : ''}`,
+    `État : ${state}`,
+    `Mère : ${mother ? name(mother) : task.parent ? `#${task.parent}` : 'aucune'}`,
+    `Sœurs : ${list(sisters, 'aucune')}`,
+    ...(daughters.length > 0 ? [`Filles : ${list(daughters, 'aucune')}`] : []),
+    `Attend : ${list(prereqs, 'rien', task.attend ? [task.attend] : [])}`,
+    `Débloque : ${list(unlocks, 'rien')}`,
+    ...(o.fiche?.trim() ? [`Sa fiche :\n${o.fiche.trim()}`] : []),
+  ]
+  return [
+    `${asked} : réponds par la fiche ci-dessous, au gabarit fixe, et rien d'autre (ni introduction, ni question, ni outil : tout ce qu'il faut est ici).`,
+    facts.join('\n'),
+    [
+      'Le gabarit « La fiche », à remplir tel quel :',
+      '',
+      `### ${title}`,
+      '',
+      "**<l'accroche : une phrase qui dit ce que la tâche change>**",
+      '',
+      '| | |',
+      '|---|---|',
+      '| Le problème | <ce qui ne va pas aujourd’hui> |',
+      '| En image | <une comparaison concrète de la vie courante> |',
+      '| La tâche | <ce qu’on va faire, ou ce qu’on a fait> |',
+      `| Pour toi | <ce que ça change pour ${person()}> |`,
+      '',
+      `\`${shown}\` · <le lieu : cloud ou Mac> · <la taille : petite, moyenne ou grosse> · <ce qu'elle attend ou bloque, ou « ne bloque rien »>`,
+    ].join('\n'),
+    "Les règles du gabarit : des mots de tous les jours ; aucun nom de fichier ni de fonction, aucun jargon ; une ou deux phrases par case ; « En image » est une comparaison concrète ; la dernière ligne dit l'état en premier, entre accents graves, tel qu'il est écrit ci-dessus (une tâche livrée y dit sa version, une tâche en session où elle tourne), puis le lieu, la taille que tu juges d'après la ligne, et ce qu'elle attend ou bloque d'après « Attend » et « Débloque », par numéro. Garde le titre, les quatre étiquettes du tableau et leur ordre.",
+  ].join('\n\n')
 }
 
 /** Les mots d'état après « Maestro » (#250) : un scan, pas une demande de travail. */
@@ -9916,7 +10101,7 @@ export function welcomeText(f: WelcomeFacts, o: { person: string; now: Date }): 
     hello: `${greet} ${o.person}, on est ${FR_WEEKDAYS[o.now.getDay()]}.`,
     sub: 'Maestro est là : je lance tes tâches, je suis tes sessions.',
     // Le compte de la tête de la liste, « 1 Done sur 4 » (#254).
-    counts: `${f.done} Done sur ${f.total}`,
+    counts: `${deliveredCount(f.done)} sur ${f.total}`,
     progress: { done: f.done, total: f.total, pct: f.pct },
     ...(week ? { week } : {}),
     pills: pills.length > 0 ? pills : [{ tone: 'none', text: "Rien d'urgent aujourd'hui" }],
@@ -10050,7 +10235,7 @@ export function maestroRelaunchContext(o: { source: Source; tasks: readonly Task
  * plus (finie ou archivée), la tâche est toute finie (#145).
  */
 /** Une tâche de la bande et du bloc « En cours » de Maestro ; `since` : la création de sa session, pour la durée live (#385). */
-export type BrandTask = { id: string; label: string; state: 'wait' | 'live' | 'merge' | 'done'; merged?: true; sessionId?: string; closed?: true; finished?: true; archivable?: true; launchedAt?: number; since?: number; cloud?: CloudPr }
+export type BrandTask = { id: string; label: string; state: 'wait' | 'live' | 'merge' | 'done'; merged?: true; sessionId?: string; closed?: true; finished?: true; archivable?: true; launchedAt?: number; since?: number; cloud?: CloudPr; mission?: { state: MissionState; phrase?: string } }
 
 // --- La cible recommandée d'une tâche (#416) ---------------------------------------------------------
 // Pour alléger le Mac, une tâche part en cloud ; seule une ressource du Mac (simulateur iOS, volet navigateur
@@ -10130,7 +10315,7 @@ export const CLOUD_RENDER_MARKERS: { words: readonly string[]; why: string } = {
 /** La raison d'une reco cloud. */
 export const CLOUD_LOGIC_WHY = 'tâche de logique : ni simulateur, ni volet navigateur pour un vrai site, ni ressource du Mac'
 /** La raison d'un projet sans code : son dossier n'est pas un dépôt que le cloud clone. */
-export const CLOUD_PROJECT_WHY = 'projet sans code : son dossier vit sur le Mac'
+export const CLOUD_PROJECT_WHY = 'projet sans code : son dossier est en local'
 
 const foldText = (text: string): string => text.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
 const hasMarker = (text: string, words: readonly string[]): boolean => words.some(w => new RegExp(`\\b${w}`).test(text))
@@ -10361,10 +10546,10 @@ export function recosToJudge(tasks: readonly Task[], cache: RecoCache, docsOf: (
   return out
 }
 
-/** La fin d'un brief de carte sur le Mac : la cible choisie par BBR et la reco, en une ligne (#416). */
+/** La fin d'un brief de carte lancée en local : la cible choisie par BBR et la reco, en une ligne (#416). */
 export function withTargetNote(prompt: string, chosen: Sessions, reco: CloudReco): string {
-  const where = chosen === 'cloud' ? 'le cloud' : 'le Mac'
-  const said = reco.lieu === chosen ? `comme recommandé (${reco.why})` : `choisi dans le panneau (recommandé : ${reco.lieu === 'cloud' ? 'cloud' : 'Mac'}, ${reco.why})`
+  const where = chosen === 'cloud' ? 'le cloud' : 'en local'
+  const said = reco.lieu === chosen ? `comme recommandé (${reco.why})` : `choisi dans le panneau (recommandé : ${reco.lieu === 'cloud' ? 'cloud' : 'local'}, ${reco.why})`
   return `${prompt}\n\nCible : ${where}, ${said}.`
 }
 
@@ -10496,6 +10681,41 @@ export function missionTakenText(id: string, error?: string): string {
 }
 
 /**
+ * #515 : le refus d'une carte posée par le panneau que seule une carte de Claude contourne : hors Bypass, l'app la
+ * refuse au mod (« …wasn't run: this call needs a person's approval, and a mod's own call can't ask for it », constaté
+ * sur #487 le 2026-11-12), ou le contrôle du mode auto la refuse (#248). Un autre refus (pas d'environnement cloud,
+ * Remote Control) refuserait aussi la carte de Claude : il reste une erreur.
+ */
+export function isPanelOnlyRefusal(text: string): boolean {
+  return /needs a person['’]s approval|mod['’]s own call can['’]t ask/i.test(text) || isAutoModeRefusal(text)
+}
+
+/**
+ * #515 : le ▶ Cloud d'une tâche que l'app refuse au panneau passe par Claude, comme le ▶ Mac (#248) et la mission
+ * (#512). Le texte impose la carte cloud et son brief exact (`cloudBriefText`, celui de `brief_cloud.py`) comme
+ * `prompt`, sans brief rédigé ; la ligne se prend au départ de la session, quand sa branche paraît sur origin (#474).
+ * Sa première ligne seule se montre (`launchPrompt`, #140).
+ */
+export function cloudAskText(o: { title: string; id: string; branch: string; prompt: string; background: string }): string {
+  return launchPrompt(
+    o.title,
+    [
+      `Propose cette session sous forme de carte (outil start_session, initiation own_initiative, contexte fresh, target cloud), titre « ${o.title} ». Son prompt est le brief ci-dessous, mot pour mot, de sa première ligne à sa dernière : n'écris aucun brief à toi (ni « Background », ni « Task »), et ne pose ni model ni effort (la carte cloud ne les porte pas, le brief les dit). Pose la carte sans essayer de la lancer, puis réponds en une phrase au plus.`,
+      `La ligne #${o.id} se prend au départ de la session : le plugin roadmap guette la branche ${o.branch} sur origin et y écrit qui:, branche: et lieu:cloud (#474). Ne touche pas à la roadmap toi-même.`,
+      '',
+      o.prompt,
+      '',
+      `Contexte : ${o.background}`,
+    ].join('\n'),
+  )
+}
+
+/** #515 : la note du panneau quand le ▶ Cloud d'une tâche passe par Claude, après le refus de l'app au panneau. */
+export function cloudViaClaudeNote(): string {
+  return "Carte cloud demandée à Claude dans la conversation (l'app l'a refusée au panneau) : la ligne se prend au départ de la session, sa branche poussée."
+}
+
+/**
  * Le refus d'une carte cloud (#416) : la VM démarre sur la branche de la session qui pose la carte, qui doit donc être
  * sur GitHub et sans commit en retard (le 2026-11-10, #426 est morte sur « branch or commit not found »). Hors git : rien.
  */
@@ -10594,6 +10814,9 @@ export function cloudBriefText(o: { project: string; id: string; label: string; 
     ...(o.prefs ? ['', cloudPrefsLine(o.prefs, o.prefsError)] : []),
     ...(modelLines ? ['', modelLines.para] : []),
     '',
+    // #496 : le secours humain du réveil de Maestro, mot pour mot comme brief_cloud.py.
+    `Ton compte rendu « prête », « bloquée » ou « attend une réponse » (dernier commentaire de ta PR et message de fin) finit par une ligne à coller dans Maestro : \`#${o.id} prête à fusionner, PR <numéro>\` (ou « bloquée », « attend une réponse ») ; le panneau du Mac la lit aussi.`,
+    '',
     proved
       ? `Ta tâche est une preuve de fidélité (#455) : #${proved} est close et publiée, rien d'autre ne t'attend. Le chantier : \`${chantier}\`. Si la capture n'est pas encore dans ta session, écris la consigne de capture au gabarit (docs/session-cloud.md, « Une preuve de fidélité à part ») et attends-la ; un écart trouvé ouvre sa tâche de correctif, il ne rouvre pas #${proved}.`
       : CLOUD_RENDER_RULE,
@@ -10606,8 +10829,8 @@ export function cloudBriefText(o: { project: string; id: string; label: string; 
 // ligne de roadmap (`lieu:cloud`, `branche:`) et sa PR GitHub, lue par `gh`. La ligne entre dans le bloc « En cours »
 // et dans la bande comme les autres, le nuage à la place de l'icône d'état, l'état de la PR en mots.
 
-/** La largeur, en cellules, des mots d'état d'une ligne cloud du panneau (« contrôles en cours », « prête à fusionner »), maquette A. */
-export const CLOUD_WORDS_CELLS = 14
+/** La largeur, en cellules, des mots d'état d'une ligne cloud du panneau (« en session », « fusionnée »), maquette A ; le plus long est « en session » (#509). */
+export const CLOUD_WORDS_CELLS = 10
 
 /**
  * L'état de la PR d'une session cloud ; `unknown` : `gh` absent, non connecté ou en panne. `merged` : la PR est
@@ -10664,56 +10887,59 @@ export function cloudPrOf(prs: unknown, branche: string): CloudPr {
   return { state: pr.mergeable === 'MERGEABLE' ? 'ready' : 'open', ...base }
 }
 
-/** Les mots de l'état d'une PR : le court du panneau (à la place de la barre d'étapes), le long de la bande. */
+/**
+ * Les mots de l'état d'une PR (#509) : `short`, le mot du vocabulaire (`STATE_WORDS`), celui du panneau à la place de
+ * la barre d'étapes ; `long`, le détail qui dit où en est la PR, pour la bande et la fiche.
+ */
 export function cloudWords(state: CloudPr['state']): { short: string; long: string } {
   switch (state) {
     case 'none':
-      return { short: 'pas encore de PR', long: 'pas encore de PR' }
+      return { short: STATE_WORDS.live, long: 'pas encore de PR' }
     case 'open':
-      return { short: 'contrôles en cours', long: 'PR ouverte · contrôles en cours' }
+      return { short: STATE_WORDS.live, long: 'contrôles en cours' }
     case 'red':
-      return { short: 'contrôles rouges', long: 'contrôles rouges' }
+      return { short: STATE_WORDS.wait, long: 'contrôles rouges' }
     case 'ready':
-      return { short: 'prête à fusionner', long: 'prête à fusionner' }
+      return { short: STATE_WORDS.ready, long: 'Maestro fusionne' }
     case 'merged':
-      // #468 : fusionnée n'est pas faite ; Maestro rejoue la suite de main, puis publie et clôt la ligne.
-      return { short: 'fusionnée · suite de main', long: 'fusionnée · suite de main, puis publication' }
+      // #468 : fusionnée n'est pas livrée ; Maestro rejoue la suite de main, puis publie et clôt la ligne.
+      return { short: STATE_WORDS.merged, long: 'suite de main, puis publication' }
     case 'delivered':
-      return { short: 'livrée', long: 'livrée' }
+      return { short: STATE_WORDS.done, long: 'publiée' }
     case 'closed':
-      return { short: 'PR fermée', long: 'PR fermée sans fusion' }
+      return { short: STATE_WORDS.wait, long: 'PR fermée sans fusion' }
     default:
-      return { short: 'état inconnu', long: 'état de la PR inconnu' }
+      return { short: STATE_WORDS.live, long: 'état de la PR inconnu' }
   }
 }
 
 /**
  * L'état d'une ligne cloud dans sa fiche (#440) : celui de sa PR, le même que la bande, au lieu de « À lancer »
  * (la fiche n'a ni session locale ni liste d'étapes à lire). `state` est celui de la bande (`cloudBrandTasks`), sauf
- * prête, qui passe « à fusionner » ; `band`, la bande d'état sous l'en-tête, son mot celui de la bande (`cloudWords`).
+ * prête, qui passe `merge` ; `band`, la bande d'état sous l'en-tête : le mot du vocabulaire (`cloudWords().short`) et son détail (`long`).
  */
 export function cloudFiche(state: CloudPr['state']): {
   state: 'wait' | 'live' | 'merge' | 'done'
   band: { word: string; why: string; mark: 'person' | 'spinner' | 'merge' | 'check'; tone: 'wait' | 'live' | 'merge' | 'done' }
 } {
+  const { short: word, long: why } = cloudWords(state)
   switch (state) {
     case 'none':
-      return { state: 'live', band: { word: 'en session', why: 'pas encore de PR', mark: 'spinner', tone: 'live' } }
     case 'open':
-      return { state: 'live', band: { word: 'PR ouverte', why: 'contrôles en cours', mark: 'spinner', tone: 'live' } }
+      return { state: 'live', band: { word, why, mark: 'spinner', tone: 'live' } }
     case 'red':
-      return { state: 'wait', band: { word: cloudWords('red').short, why: 'PR ouverte', mark: 'person', tone: 'wait' } }
+      return { state: 'wait', band: { word, why, mark: 'person', tone: 'wait' } }
     case 'ready':
-      return { state: 'merge', band: { word: cloudWords('ready').short, why: 'Maestro fusionne', mark: 'merge', tone: 'merge' } }
+      return { state: 'merge', band: { word, why, mark: 'merge', tone: 'merge' } }
     case 'merged':
       // #468 : la roue turquoise, ni coche ni archive : la suite de main et la publication sont à faire.
-      return { state: 'live', band: { word: cloudWords('merged').short, why: 'Maestro rejoue la suite et publie', mark: 'spinner', tone: 'merge' } }
+      return { state: 'live', band: { word, why, mark: 'spinner', tone: 'merge' } }
     case 'delivered':
-      return { state: 'done', band: { word: cloudWords('delivered').short, why: 'publiée', mark: 'check', tone: 'done' } }
+      return { state: 'done', band: { word, why, mark: 'check', tone: 'done' } }
     case 'closed':
-      return { state: 'wait', band: { word: cloudWords('closed').short, why: 'sans fusion', mark: 'person', tone: 'wait' } }
+      return { state: 'wait', band: { word, why, mark: 'person', tone: 'wait' } }
     default:
-      return { state: 'live', band: { word: 'en session', why: 'état de la PR inconnu', mark: 'spinner', tone: 'live' } }
+      return { state: 'live', band: { word, why, mark: 'spinner', tone: 'live' } }
   }
 }
 
@@ -10721,10 +10947,11 @@ export function cloudFiche(state: CloudPr['state']): {
  * Le mot de l'état d'une ligne du bloc « En session » (#468, maquette A) : locale ou cloud, juste après son icône.
  * Une ligne cloud dit l'état de sa PR (`cloudWords`) ; une locale, ce que fait sa session.
  */
-export function blockWord(t: { state: 'wait' | 'live' | 'merge' | 'done'; cloud?: Pick<CloudPr, 'state'>; merged?: boolean }): string {
+export function blockWord(t: { state: 'wait' | 'live' | 'merge' | 'done'; cloud?: Pick<CloudPr, 'state'>; mission?: { state: MissionState; phrase?: string }; merged?: boolean }): string {
+  if (t.mission) return missionWords(t.mission.state, t.mission.phrase).short // #469
   if (t.cloud) return cloudWords(t.cloud.state).short
   if (t.merged && t.state !== 'done') return cloudWords('merged').short
-  return { live: 'au travail', wait: "t'attend", merge: 'à fusionner', done: 'livrée' }[t.state]
+  return { live: STATE_WORDS.live, wait: STATE_WORDS.wait, merge: STATE_WORDS.ready, done: STATE_WORDS.done }[t.state]
 }
 
 /** La place la plus petite, en cellules, où un titre du bloc « En session » se lit encore (#468). */
@@ -10753,18 +10980,148 @@ export function bandRowFit(o: { columns: number; fixed: number; word: number; de
 }
 
 /** Les six étapes de la jauge d'une ligne cloud (#440, maquette B6), tirées de sa PR faute de liste d'étapes lisible. */
-export const CLOUD_STEPS = ['Branche poussée', 'PR ouverte', 'Contrôles légers', 'Suite lourde', 'Prête', 'Livrée'] as const
+export const CLOUD_STEPS = ['Branche poussée', 'PR ouverte', 'Contrôles', 'Prête', 'Fusionnée', 'Livrée'] as const
 
 /**
- * La jauge d'une ligne cloud (#440) : ses six segments et son compte d'étapes faites, comme une ligne locale (« 3/7 »).
- * Sans PR, la branche est poussée ; ouverte ou rouge, les contrôles légers sont en cours (rouge : la teinte d'attente,
- * posée au dessin) ; prête, « Prête » ; fusionnée, cinq faites, « Livrée » en cours (#468 : la suite de main et la
- * publication restent) ; livrée, toutes faites ; fermée sans fusion, la PR s'est arrêtée ; inconnue, rien de fait.
+ * La jauge d'une ligne cloud (#440, #509) : ses six segments et son compte d'étapes faites, comme une ligne locale (« 3/7 »).
+ * L'étape en cours est celle de l'état de la PR : sans PR, la branche est poussée, « PR ouverte » est la suivante ;
+ * ouverte ou rouge, « Contrôles » (rouge : la teinte d'attente, posée au dessin) ; prête, « Prête » ; fusionnée,
+ * « Fusionnée » (la suite de main et la publication restent) ; livrée, toutes faites ; fermée sans fusion, la PR
+ * s'est arrêtée ; inconnue, rien de fait.
  */
 export function cloudSteps(state: CloudPr['state']): { segments: StepSegment[]; count: string } {
-  const now = { none: 1, open: 2, red: 2, ready: 4, merged: 5, delivered: 6, closed: 1, unknown: -1 }[state]
+  const now = { none: 1, open: 2, red: 2, ready: 3, merged: 4, delivered: 6, closed: 1, unknown: -1 }[state]
   const segments = CLOUD_STEPS.map((_, i): StepSegment => (now < 0 ? 'todo' : i < now ? 'done' : i === now ? 'now' : 'todo'))
   return { segments, count: `${Math.max(0, now)}/${CLOUD_STEPS.length}` }
+}
+
+// --- Les missions cloud dans le panneau (#469, C6) -----------------------------------------------------
+// Une mission n'a ni branche ni PR : Maestro lit sa fin (`mission_cloud.py fin --ecrire`) et la garde dans
+// `roadmap-missions.json`, à côté du cache de reco. Le panneau relit le fichier seulement quand sa date ou sa taille change.
+
+/** Le fichier des missions, dans `.git/` du projet, sinon dans son `.claude/` (comme `RECO_CACHE_FILE`). */
+export const MISSIONS_FILE = 'roadmap-missions.json'
+
+/** Une mission du fichier : `etat` est celui de `mission_cloud.py fin`, `lance` (facultatif) le début du run. */
+export type MissionEntry = { etat: 'en cours' | 'fait' | 'echec' | 'sans phrase'; phrase?: string; at: string; lance?: string }
+
+/** L'état d'une mission dans le panneau : le fichier n'a rien (`launched`), le run tourne, a fini, a échoué, a fini sans phrase. */
+export type MissionState = 'launched' | 'working' | 'done' | 'failed' | 'silent'
+
+const MISSION_ETATS: readonly string[] = ['en cours', 'fait', 'echec', 'sans phrase']
+const MISSION_PHRASE_MAX = 300
+
+/** Le fichier des missions : illisible, d'une autre version ou d'une autre forme, il vaut vide ; une entrée sans état connu est écartée. */
+export function parseMissions(text: string): Record<string, MissionEntry> {
+  let value: unknown
+  try {
+    value = JSON.parse(text)
+  } catch {
+    return {}
+  }
+  if (typeof value !== 'object' || value === null || (value as { version?: unknown }).version !== 1) return {}
+  const raw = (value as { missions?: unknown }).missions
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return {}
+  const out: Record<string, MissionEntry> = {}
+  for (const [id, e] of Object.entries(raw)) {
+    if (typeof e !== 'object' || e === null) continue
+    const { etat, phrase, at, lance } = e as Record<string, unknown>
+    if (typeof etat !== 'string' || !MISSION_ETATS.includes(etat)) continue
+    out[id] = {
+      etat: etat as MissionEntry['etat'],
+      ...(typeof phrase === 'string' && phrase !== '' ? { phrase: phrase.slice(0, MISSION_PHRASE_MAX) } : {}),
+      at: typeof at === 'string' ? at : '',
+      ...(typeof lance === 'string' ? { lance } : {}),
+    }
+  }
+  return out
+}
+
+/** L'état d'une mission d'après son entrée du fichier ; pas d'entrée, elle vient de partir. */
+export function missionStateOf(entry: Pick<MissionEntry, 'etat'> | undefined): MissionState {
+  if (!entry) return 'launched'
+  return { 'en cours': 'working', fait: 'done', echec: 'failed', 'sans phrase': 'silent' }[entry.etat] as MissionState
+}
+
+/** Les trois étapes de la jauge d'une mission (maquette A de #469). */
+export const MISSION_STEPS = ['Lancée', 'Au travail', 'Finie'] as const
+
+/** La jauge d'une mission, comme `cloudSteps` : échec et fin sans phrase s'arrêtent à « Finie », que le dessin teinte en attente. */
+export function missionSteps(state: MissionState): { segments: StepSegment[]; count: string } {
+  const now = { launched: 0, working: 1, done: 3, failed: 2, silent: 2 }[state]
+  const segments = MISSION_STEPS.map((_, i): StepSegment => (i < now ? 'done' : i === now ? 'now' : 'todo'))
+  return { segments, count: `${now}/${MISSION_STEPS.length}` }
+}
+
+/** Les mots d'une mission : `short`, le mot du vocabulaire (`STATE_WORDS`) ; `long`, ce qu'elle dit (sa phrase de fin, bornée). */
+export function missionWords(state: MissionState, phrase?: string): { short: string; long: string } {
+  switch (state) {
+    case 'launched':
+      return { short: STATE_WORDS.live, long: 'lancée' }
+    case 'working':
+      return { short: STATE_WORDS.live, long: 'au travail' }
+    case 'done':
+      return { short: STATE_WORDS.done, long: phrase || 'fait' }
+    case 'failed':
+      return { short: STATE_WORDS.wait, long: phrase || 'échec' }
+    default:
+      return { short: STATE_WORDS.wait, long: 'finie sans phrase' }
+  }
+}
+
+/** La bande d'état de la fiche d'une mission, comme `cloudFiche` : la roue tant qu'elle tourne, la coche finie, la main sinon. */
+export function missionFiche(state: MissionState, phrase?: string): ReturnType<typeof cloudFiche> {
+  const { short: word, long: why } = missionWords(state, phrase)
+  switch (state) {
+    case 'launched':
+    case 'working':
+      return { state: 'live', band: { word, why, mark: 'spinner', tone: 'live' } }
+    case 'done':
+      return { state: 'done', band: { word, why, mark: 'check', tone: 'done' } }
+    default:
+      return { state: 'wait', band: { word, why, mark: 'person', tone: 'wait' } }
+  }
+}
+
+/** Une ligne de roadmap qui est (ou fut) une mission cloud : `qui:mission` et `lieu:cloud`. */
+export function isMissionTask(t: Pick<Task, 'qui' | 'lieu'>): boolean {
+  return t.qui === MISSION_QUI && t.lieu === 'cloud'
+}
+
+/**
+ * Les lignes de mission du bloc « En session » et de la bande (#469) : une par tâche ouverte `qui:mission` + `lieu:cloud`
+ * et numérotée, avec l'état du fichier (`missions`) ; attente si elle a échoué ou fini sans phrase, vivante sinon, et « fait » sur
+ * une ligne encore ouverte (clôture partielle) est livrée. `closed` : les lignes closes depuis moins de 7 jours qui
+ * étaient des missions (l'appelant les rend avec `qui` et `lieu`), livrées, finies et archivables. Le lancement n'est
+ * connu que si l'entrée porte `lance` : pas de durée plutôt qu'une durée fausse. `cloud` y est posé sans PR pour
+ * les sites qui ne lisent que le lieu (le nuage, l'archive, la teinte) : attente si échec, violette si livrée.
+ */
+export function missionBrandTasks(open: readonly Task[], closed: readonly Task[], missions: Record<string, MissionEntry>, now: number): BrandTask[] {
+  const cloudOf = (state: MissionState): CloudPr => ({ state: state === 'done' ? 'delivered' : state === 'failed' || state === 'silent' ? 'red' : 'open' })
+  const launchedOf = (e: MissionEntry | undefined): { launchedAt: number; since: number } | undefined => {
+    const at = e?.lance ? Date.parse(e.lance) : Number.NaN
+    return Number.isFinite(at) && at <= now ? { launchedAt: at, since: at } : undefined
+  }
+  const rows: BrandTask[] = []
+  const seen = new Set<string>()
+  for (const t of open) {
+    if (t.done || !isMissionTask(t) || !t.id || seen.has(t.id)) continue
+    seen.add(t.id)
+    const entry = missions[t.id]
+    const state = missionStateOf(entry)
+    const mission = { state, ...(entry?.phrase ? { phrase: entry.phrase } : {}) }
+    rows.push({ id: t.id, label: t.label, state: state === 'failed' || state === 'silent' ? 'wait' : state === 'done' ? 'done' : 'live', ...(state === 'done' ? { finished: true as const } : {}), ...launchedOf(entry), cloud: cloudOf(state), mission })
+  }
+  for (const t of closed) {
+    if (!t.done || !isMissionTask(t) || !t.id || seen.has(t.id)) continue
+    const at = t.fait ? Date.parse(t.fait.slice(0, 10)) : Number.NaN
+    if (!Number.isFinite(at) || now - at > CLOUD_ADOPT_MS) continue
+    seen.add(t.id)
+    const entry = missions[t.id]
+    rows.push({ id: t.id, label: t.label, state: 'done', closed: true, finished: true, archivable: true, ...launchedOf(entry), cloud: cloudOf('done'), mission: { state: 'done', ...(entry?.phrase ? { phrase: entry.phrase } : {}) } })
+  }
+  const at = (t: BrandTask) => t.launchedAt ?? Number.POSITIVE_INFINITY
+  return rows.sort((a, b) => (at(a) === at(b) ? 0 : at(a) < at(b) ? -1 : 1))
 }
 
 const CLOUD_SESSION_LINK = /https:\/\/claude\.ai\/code\/(session_[A-Za-z0-9]+)/
@@ -11164,12 +11521,12 @@ export function bandTone(t: Pick<BrandTask, 'state' | 'finished'> & { merged?: b
 
 /**
  * L'état d'une ligne de la bande de Maestro, une icône et son mot, comme le bloc « En cours » du panneau
- * (#211) : la roue « en session », la main « t'attend », la branche « à fusionner », la coche « Done » (#425).
+ * (#211) : la roue « en session », la main « t'attend », la branche « prête », la coche « livrée » (#425, #509).
  */
 export function bandState(t: Pick<BrandTask, 'state' | 'finished'> & { merged?: boolean }): { icon: 'spinner' | 'hand' | 'merge' | 'check'; word: string } {
   if (t.merged && t.state !== 'done') return { icon: 'spinner', word: cloudWords('merged').short }
   // #425 : les mots de `BRAND_STATE_WORD`, ceux de l'en-tête de la bande et du centre de contrôle (« le même
-  // langage partout ») ; « en cours » et « Completed » (#254) s'alignent sur « en session » et « Done ».
+  // langage partout ») ; « en cours » et « Completed » (#254) s'alignent sur « en session » et « livrée » (#509).
   if (t.state === 'live') return { icon: 'spinner', word: BRAND_STATE_WORD.live }
   if (t.state === 'wait') return { icon: 'hand', word: BRAND_STATE_WORD.wait }
   if (t.state === 'merge') return { icon: 'merge', word: BRAND_STATE_WORD.merge }
@@ -11226,8 +11583,9 @@ export function maestroBrandTasks(
     }))
 }
 
-// « Completed » et « Done » (#174, Bertrand) : les mots d'état affichés dans le panneau ; les textes pour Claude restent en français.
-const BRAND_STATE_WORD: Record<BrandTask['state'], string> = { wait: "t'attend", live: 'en session', merge: 'à fusionner', done: 'Done' }
+// Les mots d'état affichés dans le panneau, ceux de `STATE_WORDS` ; les textes pour Claude restent en français. #509 a
+// remplacé « Done » (#174) par « livrée » (choix de BBR du 2026-11-12).
+export const BRAND_STATE_WORD: Record<BrandTask['state'], string> = { wait: STATE_WORDS.wait, live: STATE_WORDS.live, merge: STATE_WORDS.ready, done: STATE_WORDS.done }
 
 const FR_MONTHS = ['janv.', 'févr.', 'mars', 'avr.', 'mai', 'juin', 'juil.', 'août', 'sept.', 'oct.', 'nov.', 'déc.']
 
@@ -11268,7 +11626,7 @@ export function brandText(
     const waiting = brand.tasks.filter(t => t.state === 'wait').length
     const sessions = `${n} session${n > 1 ? 's' : ''}`
     const merging = brand.tasks.filter(t => t.state === 'merge').length
-    const wait = (waiting > 0 ? `, ${waiting} t'attend${waiting > 1 ? 'ent' : ''}` : '') + (merging > 0 ? `, ${merging} à fusionner` : '')
+    const wait = (waiting > 0 ? `, ${waiting} t'attend${waiting > 1 ? 'ent' : ''}` : '') + (merging > 0 ? `, ${merging} ${merging > 1 ? 'prêtes' : STATE_WORDS.ready}` : '')
     // L'accueil (#141) remplace le titre et la phrase de la carte ; sans session, rien d'administratif.
     const sub = brand.welcome
       ? brand.welcome.sub
@@ -11290,7 +11648,7 @@ export function brandText(
     ...(brand.before || brand.next
       ? {
           stations: {
-            ...(brand.before ? { before: { text: brand.before.done ? `${hashIds(brand.before.ids)} Done` : `après ${hashIds(brand.before.ids)}`, done: brand.before.done } } : {}),
+            ...(brand.before ? { before: { text: brand.before.done ? `${hashIds(brand.before.ids)} ${brand.before.ids.length > 1 ? 'livrées' : STATE_WORDS.done}` : `après ${hashIds(brand.before.ids)}`, done: brand.before.done } } : {}),
             here: `#${brand.id}, ici`,
             ...(brand.next ? { next: `débloque ${hashIds(brand.next)}` } : {}),
           },
@@ -11480,27 +11838,44 @@ export function ficheCards(o: {
 }
 
 /**
- * La bande d'état de la fiche (#199, sous l'en-tête, hors de la ligne « Tâche lancée par Maestro ») : le
- * mot de la pastille de Maestro, pourquoi, l'icône devant et sa teinte. Une close dit « Completed », une annulée « annulée », sans icône.
+ * Ce qui manque à une close « à relancer » (#487) : le texte après « à relancer : » dans le libellé, puis dans la
+ * note, jusqu'au « ; » suivant ou la fin, sans le « en #N » final que `tasks.py handoff` ajoute. Insensible à la
+ * casse ; `undefined` pour une ouverte et pour une close sans cette marque.
  */
-export function stateBand(o: { state: 'wait' | 'live' | 'merge' | 'done'; question?: string; current?: string; ahead?: number; fait?: string; abandoned?: boolean; test?: string; merged?: boolean }): {
+export function relaunchOf(t: Pick<Task, 'label' | 'note' | 'done'>): string | undefined {
+  if (!t.done) return undefined
+  for (const text of [t.label, t.note]) {
+    const m = /à relancer\s*:\s*([^;]*)/i.exec(text ?? '')
+    const what = m?.[1]?.replace(/\s+en\s+#\d+\s*$/i, '').trim()
+    if (what) return what
+  }
+  return undefined
+}
+
+/**
+ * La bande d'état de la fiche (#199, sous l'en-tête, hors de la ligne « Tâche lancée par Maestro ») : le
+ * mot de la pastille de Maestro, pourquoi, l'icône devant et sa teinte. Une close dit « livrée », une annulée « annulée », sans icône.
+ */
+export function stateBand(o: { state: 'wait' | 'live' | 'merge' | 'done'; question?: string; current?: string; ahead?: number; fait?: string; abandoned?: boolean; test?: string; merged?: boolean; relaunch?: string }): {
   word: string
   why: string
-  mark?: 'person' | 'spinner' | 'merge' | 'check' | 'flask'
+  mark?: 'person' | 'spinner' | 'merge' | 'check' | 'flask' | 'bell'
   tone: 'wait' | 'live' | 'merge' | 'done' | 'cancel' | 'test'
 } {
   // #375 (maquette A) : publiée, une session « Tester #N · X.Y.Z » ouverte ; la close l'emporte.
-  if (o.test && o.state !== 'done') return { word: 'en test', why: `version ${o.test}`, mark: 'flask', tone: 'test' }
+  if (o.test && o.state !== 'done') return { word: STATE_WORDS.test, why: `version ${o.test}`, mark: 'flask', tone: 'test' }
   // #468 (BBR) : sa PR fusionnée, sa ligne ouverte : le mot de la ligne cloud, jamais « t'attend ».
-  if (o.merged && o.state !== 'done') return { word: cloudWords('merged').short, why: 'Maestro rejoue la suite et publie', mark: 'spinner', tone: 'merge' }
-  if (o.state === 'done' && o.abandoned) return { word: 'annulée', why: o.fait ? `annulée le ${shortDate(o.fait)}` : '', tone: 'cancel' }
-  if (o.state === 'wait') return { word: "t'attend", why: o.question ?? "la session s'est arrêtée", mark: 'person', tone: 'wait' }
-  if (o.state === 'live') return { word: 'en session', why: o.current ?? '', mark: 'spinner', tone: 'live' }
+  if (o.merged && o.state !== 'done') return { word: STATE_WORDS.merged, why: 'suite de main, puis publication', mark: 'spinner', tone: 'merge' }
+  if (o.state === 'done' && o.abandoned) return { word: STATE_WORDS.cancelled, why: o.fait ? `annulée le ${shortDate(o.fait)}` : '', tone: 'cancel' }
+  // #487 : close en partie, ce qui manque reste à faire : la teinte de « t'attend », une cloche.
+  if (o.state === 'done' && o.relaunch) return { word: 'à relancer', why: o.relaunch, mark: 'bell', tone: 'wait' }
+  if (o.state === 'wait') return { word: STATE_WORDS.wait, why: o.question ?? "la session s'est arrêtée", mark: 'person', tone: 'wait' }
+  if (o.state === 'live') return { word: STATE_WORDS.live, why: o.current ?? '', mark: 'spinner', tone: 'live' }
   if (o.state === 'merge') {
     const commits = o.ahead ? `${o.ahead} commit${o.ahead > 1 ? 's' : ''}, ` : ''
-    return { word: 'à fusionner', why: `${commits}Maestro fusionne`, mark: 'merge', tone: 'merge' }
+    return { word: STATE_WORDS.ready, why: `${commits}Maestro fusionne`, mark: 'merge', tone: 'merge' }
   }
-  return { word: 'Done', why: o.fait ? `close le ${shortDate(o.fait)}` : '', mark: 'check', tone: 'done' }
+  return { word: STATE_WORDS.done, why: o.fait ? `close le ${shortDate(o.fait)}` : '', mark: 'check', tone: 'done' }
 }
 
 /**
@@ -11519,12 +11894,15 @@ export function cartonOf(o: {
   today: string
   /** L'état de la PR d'une ligne cloud (#440) : fusionnée et pas encore close, « Fusionnée, en publication ». */
   cloud?: CloudPr['state']
+  /** Ce qui manque à une close en partie (#487, `relaunchOf`) : « Livrée en partie », orange. */
+  relaunch?: string
 }): { tone: 'plan' | 'live' | 'wait' | 'merge' | 'done' | 'cancel'; title: string; meta: string } {
   // #468 : fusionnée n'est pas faite ; la suite de main et la publication restent, le turquoise de la fusion.
   if (!o.done && o.cloud === 'merged') return { tone: 'merge', title: 'Fusionnée, suite de main', meta: o.ouvert ? `demandée ${shortDate(o.ouvert)}` : '' }
   if (o.done) {
     const meta = o.fait ? doneLabel(o.fait) : ''
     if (o.abandoned) return { tone: 'cancel', title: 'Annulée', meta }
+    if (o.relaunch) return { tone: 'wait', title: 'Livrée en partie', meta }
     return { tone: 'done', title: o.version ? `Livré en ${o.version}` : 'Livrée', meta }
   }
   if (o.state === 'live' || o.state === 'wait' || o.state === 'merge')
@@ -12897,7 +13275,7 @@ export function maestroContext(o: {
   const lines: string[] = [
     header,
     // Une demande neuve passe avant l'état (#250) : cadrer puis déléguer.
-    ...(o.request === undefined ? [] : maestroRequestLines(o.request, cardTool(o.launchEffort, projectSettings(o.source).travail, o.launchModel))),
+    ...(o.request === undefined ? [] : maestroRequestLines(o.request, cardTool(o.launchEffort, taskWork(o.source), o.launchModel))),
     // Une action de l'accueil (#141) ne montre que sa part : les sessions, ou ce qu'on peut lancer.
     ...(o.only === 'launch' ? [] : sessionLines),
     ...(o.only === 'sessions' ? [] : launchLines),
@@ -12911,7 +13289,7 @@ export function maestroContext(o: {
   )
   // Maestro suit ses sessions par sa liste d'étapes (#104), dans les deux modes.
   lines.push(MAESTRO_STEP_LIST)
-  const card = `pose sa carte de session (${cardTool(o.launchEffort, projectSettings(o.source).travail, o.launchModel)}) avec le titre et le brief donnés ci-dessous, sans la lancer toi-même`
+  const card = `pose sa carte de session (${cardTool(o.launchEffort, taskWork(o.source), o.launchModel)}) avec le titre et le brief donnés ci-dessous, sans la lancer toi-même`
   if (o.request !== undefined) {
     lines.push(`- Pas de menu de lancement ni de carte des tâches à lancer dans ce tour : la demande d'abord ; elles restent au panneau (▶ devant chaque tâche).`)
   } else if (o.only === 'sessions') {
@@ -12938,7 +13316,7 @@ export function maestroContext(o: {
           '- Réglage autonome allumé : fusionne seul, sans attendre le clic de ' + person() + ', la branche prête d\'une de tes sessions (tests verts sur la branche à jour de main, ou dernière CI de PR verte sans conflit avec main, sans la rejouer, #431 ; diff relu par toi), une à la fois, par la règle de fusion du projet, la CI de main lue après la fusion ou la série (skill roadmap:maestro, § 5). Tu publies seul aussi (release d\'un plugin, déploiement), et tu donnes seul la main sur une ressource unique à une session à la fois (§ 4), sans lui demander. Lancer et archiver restent à son clic.',
           "- Une session qui attend une réponse : lis son dernier compte rendu. Si ce n'est ni une question d'architecture (un choix qui s'écrirait dans docs/decisions.md) ni un geste qui revient à " + person() + " (lancer, archiver, un secret, un accès), réponds-lui toi-même par message avec ta recommandation, et dis-le en une ligne.",
         ]
-      : projectSettings(o.source).travail === 'projet'
+      : taskWork(o.source) === 'projet'
         ? []
         : ['- La fusion de la branche prête d\'une de tes sessions attend le clic de ' + person() + ' : propose-la-lui, une branche à la fois (skill roadmap:maestro, § 5).']),
     "- Les nouvelles de tes sessions enfants (celles qui coincent ou sont à archiver) t'arrivent à chaque message de " + person() + ", sous « Roadmap — nouvelles de tes sessions enfants » : suis leurs consignes. Sans ce bloc, toutes avancent.",
@@ -13390,8 +13768,11 @@ export type ReportData = {
   ajoutees: { id: string; libelle: string; parent: string | null; due: string | null }[]
   mises_a_jour: { id: string; libelle: string; change: string }[]
   t_attendent: Waiting[]
-  /** Les clôtures partielles du tour (#245) : « #A close, la suite chez <tiers> passe en #B », sous le titre. */
-  suites?: { close: string; suite: string; tiers: string }[]
+  /**
+   * Les clôtures partielles du tour (#245) : « #A close, la suite chez <tiers> passe en #B », sous le titre ; une
+   * close « à relancer » (#487) porte `manque` : « #A close en partie, à relancer en #B : <manque> », tiers ou non.
+   */
+  suites?: { close: string; suite: string; tiers: string | null; manque?: string }[]
 }
 /** Une question qui attend la personne, au format du compte rendu. */
 export type Waiting = { id: string | null; question: string; raison: string; recommande: string }
@@ -13422,7 +13803,9 @@ export function renderReport(data: ReportData, etat: 'ecrit' | 'essai' | 'outil'
   void day
   const closes = new Set((data.suites ?? []).map(s => s.close))
   const lines = [
-    ...(data.suites ?? []).map(s => `- Roadmap : #${s.close} close, la suite chez ${s.tiers} passe en #${s.suite}`),
+    ...(data.suites ?? []).map(s =>
+      s.manque ? `- Roadmap : #${s.close} close en partie, à relancer en #${s.suite} : ${s.manque}` : `- Roadmap : #${s.close} close, la suite chez ${s.tiers} passe en #${s.suite}`,
+    ),
     ...data.ajoutees.map(a => {
       const extra = [a.parent ? `sous #${a.parent}` : '', a.due ? `due ${ddmm(a.due)}` : ''].filter(x => x !== '')
       return `- Roadmap : #${a.id} ajoutée — ${flat(a.libelle)}${extra.length > 0 ? ` (${extra.join(', ')})` : ''}`
@@ -13508,11 +13891,18 @@ export function changeText(before?: Task, after?: Task): string | undefined {
  */
 export function reportOf(changes: TaskChange[], waiting: Waiting[], me: readonly string[] = []): ReportData {
   const data: ReportData = { ajoutees: [], mises_a_jour: [], t_attendent: [...waiting] }
-  const closed = new Set(changes.flatMap(c => (c.before && !c.before.done && c.after?.done && c.after.id ? [c.after.id] : [])))
+  const closedNow = new Map(changes.flatMap(c => (c.before && !c.before.done && c.after?.done && c.after.id ? [[c.after.id, c.after] as const] : [])))
+  // #487 : la suite d'une close « à relancer » est une clôture partielle, qu'elle attende un tiers ou non.
   const suites = changes.flatMap(c => {
     const t = c.after
-    if (c.before !== undefined || !t || t.done || !t.id || !isThirdParty(t.attend, me)) return []
-    return (t.apres ?? '').split(',').map(n => n.trim().replace(/^#/, '')).filter(n => closed.has(n)).map(n => ({ close: n, suite: t.id as string, tiers: attendWho(t.attend ?? '') }))
+    if (c.before !== undefined || !t || t.done || !t.id) return []
+    const third = isThirdParty(t.attend, me)
+    return (t.apres ?? '').split(',').map(n => n.trim().replace(/^#/, '')).flatMap(n => {
+      const closed = closedNow.get(n)
+      const manque = closed ? relaunchOf(closed) : undefined
+      if (!closed || (!manque && !third)) return []
+      return [{ close: n, suite: t.id as string, tiers: third ? attendWho(t.attend ?? '') : null, ...(manque ? { manque } : {}) }]
+    })
   })
   if (suites.length > 0) data.suites = suites
   for (const c of changes) {
@@ -14627,21 +15017,134 @@ export function isStoreLocked(err: unknown): boolean {
   return /lock file is already being held/i.test(text)
 }
 
-/** Les attentes entre deux essais d'une écriture refusée par le verrou : 1,5 s en tout au plus (#350). */
+/** Les attentes entre deux essais d'une écriture refusée par le verrou : 1,5 s en tout, ±50 % (#350, #518). */
 export const STORE_LOCK_WAITS_MS = [50, 100, 200, 400, 750]
 
 /**
  * Lance `op` et la réessaie, après chaque attente de `STORE_LOCK_WAITS_MS`, tant que le store est verrouillé
  * par une autre session (#350) ; une autre panne, ou le verrou encore tenu après la dernière attente, rend
- * son erreur. `wait` est l'attente du moteur, injectée pour le test.
+ * son erreur. Chaque attente prend un aléa de ±50 % (#518) : deux sessions refusées ensemble ne réessaient
+ * plus ensemble. `wait` est l'attente du moteur, `random` le tirage dans [0, 1), injectés pour le test.
  */
-export async function retryOnLock<T>(op: () => Promise<T>, wait: (ms: number) => Promise<void>): Promise<T> {
+export async function retryOnLock<T>(op: () => Promise<T>, wait: (ms: number) => Promise<void>, random: () => number = Math.random): Promise<T> {
   for (let i = 0; ; i++) {
     try {
       return await op()
     } catch (err) {
       if (i >= STORE_LOCK_WAITS_MS.length || !isStoreLocked(err)) throw err
-      await wait(STORE_LOCK_WAITS_MS[i])
+      await wait((STORE_LOCK_WAITS_MS[i] as number) * (0.5 + random()))
     }
   }
+}
+
+/**
+ * Ce qu'un module a vu de chaque clé du store, lue ou écrite (#526) : sa valeur en JSON (`undefined` : la clé est
+ * absente) et l'heure où il l'a vue. Le moteur relit et réécrit le fichier entier, sous verrou, à chaque
+ * `store.set`, sans comparer à la valeur gardée : c'est au plugin de ne pas écrire ce qui ne change rien.
+ */
+export type StoreSeen = Map<string, { json: string | undefined; at: number }>
+
+/**
+ * Une valeur vue il y a moins d'une seconde fait foi (#526) : la lecture juste avant l'écriture d'un même pas.
+ * Plus vieille, une autre session a pu écrire la clé depuis : on la relit avant de comparer.
+ */
+export const STORE_SEEN_MS = 1_000
+
+/** Au-delà de ce nombre de clés vues, celles qui ne font plus foi sortent : la mémoire ne garde pas tout le store. */
+const STORE_SEEN_MAX = 64
+
+/** La valeur en JSON, comme le moteur la garde ; `undefined` pour une clé absente. */
+export function storeJson(value: unknown): string | undefined {
+  return value === undefined ? undefined : JSON.stringify(value)
+}
+
+/** Note la valeur vue d'une clé ; passé `STORE_SEEN_MAX` clés, les vues qui ne font plus foi sortent. */
+export function noteSeen(seen: StoreSeen, key: string, value: unknown, now: number): void {
+  seen.delete(key)
+  seen.set(key, { json: storeJson(value), at: now })
+  if (seen.size <= STORE_SEEN_MAX) return
+  for (const [k, v] of seen) if (now - v.at >= STORE_SEEN_MS || v.at > now) seen.delete(k)
+}
+
+/** La valeur vue d'une clé si elle fait encore foi (moins de `STORE_SEEN_MS`), sinon rien : il faut la relire. */
+export function freshSeen(seen: StoreSeen, key: string, now: number): { json: string | undefined } | undefined {
+  const v = seen.get(key)
+  if (!v || v.at > now || now - v.at >= STORE_SEEN_MS) return undefined
+  return { json: v.json }
+}
+
+/**
+ * Une note d'enfant (`child-status:`) ou des relances (`child-alerted:`) sans nouvelle depuis une semaine sortent
+ * du store (#90) : 30 jours gardaient 130 notes et 116 Ko (#518). Une semaine, pas trois jours : un enfant fini qui
+ * attend Bertrand un week-end garde sa note, « prête » et pas « état inconnu ».
+ */
+export const CHILD_NOTE_MAX_MS = 7 * 86_400_000
+
+/** Une note d'enfant à retirer : sans heure lisible, ou plus vieille que `CHILD_NOTE_MAX_MS`. */
+export function childNoteStale(at: unknown, now: number): boolean {
+  return !(typeof at === 'number' && now - at <= CHILD_NOTE_MAX_MS)
+}
+
+/** Les champs de `gh pr list` que lisent `cloudPrOf`, `cloudAdopted` et `mergedLocalIds` (#408, #445, #468). */
+const CLOUD_PR_KEPT = ['headRefName', 'title', 'number', 'url', 'state', 'isDraft', 'mergeable', 'createdAt', 'isCrossRepository'] as const
+
+/**
+ * La sortie de `gh pr list` réduite aux champs lus (#518) : chaque contrôle de `statusCheckRollup` ne garde que
+ * `state`, `conclusion` et `status` (ce que lit `cloudCheck`), et les contrôles pareils n'en font plus qu'un. La
+ * sortie entière pesait 105 Ko au store, réécrite avec lui. Une sortie illisible passe telle quelle.
+ */
+export function slimCloudPrs(prs: unknown): unknown {
+  if (!Array.isArray(prs)) return prs
+  return prs.map(p => {
+    if (typeof p !== 'object' || p === null) return p
+    const pr = p as Record<string, unknown>
+    const out: Record<string, unknown> = {}
+    for (const k of CLOUD_PR_KEPT) if (k in pr) out[k] = pr[k]
+    if (Array.isArray(pr.statusCheckRollup)) {
+      const seen = new Set<string>()
+      const checks: Record<string, unknown>[] = []
+      for (const c of pr.statusCheckRollup) {
+        if (typeof c !== 'object' || c === null) continue
+        const { state, conclusion, status } = c as Record<string, unknown>
+        const slim = {
+          ...(state !== undefined ? { state } : {}),
+          ...(status !== undefined ? { status } : {}),
+          ...(conclusion !== undefined ? { conclusion } : {}),
+        }
+        const sig = JSON.stringify(slim)
+        if (seen.has(sig)) continue
+        seen.add(sig)
+        checks.push(slim)
+      }
+      out.statusCheckRollup = checks
+    }
+    return out
+  })
+}
+
+/** Les jours qu'une close garde au store son relevé des temps et « Ce qui a changé » : la fenêtre de la vue Faites (#497). */
+const TASK_NOTES_DONE_DAYS = 14
+
+/**
+ * Les clés `timing:` et `changes:` du projet `project` à retirer (#518) : celles d'une tâche ni ouverte ni close
+ * depuis moins de 14 jours (la fiche d'une close récente montre encore ses temps et ce qui a changé), ou d'un
+ * numéro qu'aucune tâche ne porte plus. Les autres projets ne se jugent pas ici ; sans aucune tâche lue (roadmap
+ * illisible), rien ne sort.
+ */
+export function staleTaskKeys(keys: readonly string[], project: string, tasks: readonly Task[], now: number): string[] {
+  if (tasks.length === 0) return []
+  const keep = new Set<string>()
+  for (const t of tasks) {
+    if (t.id === undefined) continue
+    if (!t.done) keep.add(t.id)
+    else if (t.fait !== undefined) {
+      const day = Date.parse(t.fait.slice(0, 10))
+      if (Number.isFinite(day) && now - day <= TASK_NOTES_DONE_DAYS * 86_400_000) keep.add(t.id)
+    }
+  }
+  const prefixes = [`timing:${project}#`, `changes:${project}#`]
+  return keys.filter(k => {
+    const prefix = prefixes.find(p => k.startsWith(p))
+    return prefix !== undefined && !keep.has(k.slice(prefix.length))
+  })
 }

@@ -13,6 +13,7 @@ import {
   releaseHandPauses,
   withoutQueueEntry,
   queueCardKey,
+  STATE_WORDS,
   queuedLine,
   queueRank,
   type ChildStatus,
@@ -505,7 +506,7 @@ export async function drawControl($: EngineInterface, e: RenderInput<'Pane'>, pa
     const node = controlNodeIcon(palette, { kind: nodeKind, n: rank })
     const border = done ? palette.finished : c.state === 'paused' || c.state === 'pausing' ? palette.block : c.prio ? palette.late : palette.border
     const pills: RenderElement[] = []
-    if (done) pills.push(pill(c.test ? `en test ${c.test}` : 'Done', palette.finishedTint, palette.finishedOn))
+    if (done) pills.push(pill(c.test ? `en test ${c.test}` : STATE_WORDS.done, palette.finishedTint, palette.finishedOn))
     else if (c.state === 'pausing') pills.push(pill(pausingPill(c.pause?.mode ?? 'soft'), palette.blockTint, palette.blockOn))
     else if (c.prio) pills.push(pill('prioritaire', palette.lateTint, palette.lateOn))
     else if (c.state === 'wait') pills.push(pill("t'attend", palette.waitTint, palette.waitOn))

@@ -1,6 +1,6 @@
 ---
 name: doctor
-description: "Read-only checklist of a project wired to the roadmap system; says first if the folder has code (#176). With code: tools (git, node, python3, gh logged in), repo on main and pushed to GitHub, roadmap found and valid, node scripts/check.mjs, roadmap plugin enabled and matching its fingerprints, Superpowers and every method skill the launched sessions cite, its updates, swiftui-pro on an iOS project. Without code: python3, roadmap, settings of .claude/roadmap.json, required fields of open tasks, roadmap plugin, and Superpowers as « À voir » if missing: it is optional there. One OK, KO or « À voir » line per item, with the command that fixes it. Run at the end of onboarding. Triggers on « doctor », « lance le doctor sur ce projet », « tout est branché ? », « checklist du projet », « le projet est prêt pour Maestro ? », « Superpowers est bien installé ? », « pourquoi Maestro ne voit rien ». Not for a Cowork folder (its own doctor), nor for fixing: it says what to do, nor for the content of tasks (audit)."
+description: "Read-only checklist of a project wired to the roadmap system; says first the nature the project declares, `travail`. With code: tools (git, node, python3, gh logged in), repo on main and pushed to GitHub, roadmap found and valid, node scripts/check.mjs, roadmap plugin enabled and matching its fingerprints, Superpowers and every method skill the launched sessions cite, swiftui-pro on an iOS project. Without code: python3, roadmap, settings of .claude/roadmap.json, required fields of open tasks, roadmap plugin, and Superpowers (optional there, « À voir » if missing). One OK, KO or « À voir » line per item, with the fix command. Run at the end of onboarding. Triggers on « doctor », « lance le doctor sur ce projet », « tout est branché ? », « checklist du projet », « le projet est prêt pour Maestro ? », « Superpowers est bien installé ? », « pourquoi Maestro ne voit rien ». Not for a Cowork folder (its own doctor), nor for fixing: it says what to do, nor for the content of tasks (audit)."
 ---
 
 # Doctor of a project
@@ -26,8 +26,8 @@ published fingerprints (`CHECKSUMS.txt` of the public repo `bbr21/roadmap-plugin
 | Rules of the roadmap | `ROADMAP-REGLES.md` next to `ROADMAP.md` (or the file `regles` declares) is there (#167); missing: KO, with the `onboarding.py regles` command that sets it from the template. Also lists `ecriture` and `preuves` when declared; an unreadable `ecriture` is KO, a missing place « À voir » |
 | Rules of the tool | the « Règles de l'outil » section of that rules file matches the template of the folder's mode, Code or Projet (#290), trailing blanks aside: « à jour », OK; absent or different: « À voir », with `onboarding.py regles --outil <dossier>`, which replaces that section only and keeps the project's own rules. No line when the rules file is missing (« Rules of the roadmap » is KO) |
 | Axes | the chosen colour and name of axes (`axes` of `.claude/roadmap.json`, or of the project's entry in `roadmap-perso.json`, #286), which the panel otherwise ignores silently: a key that is not an axis slug, a `couleur` other than `bleu`, `orange`, `vert`, `jaune`, `violet`, `turquoise`, `rose`, `gris`, an empty `nom` or one over 40 characters (cut), an axis no line of the roadmap carries: « À voir ». No line without `axes` |
-| Work | first line: « Code (dépôt git, N fichiers de code) », « Projet (pas de dépôt git) », « Projet (dépôt git sans fichier de code) », or « … (forcé par mode dans .claude/roadmap.json) » (#176). A wrong detection is fixed with `mode` |
-| Settings | an unknown `mode` (other than `auto`, `code`, `projet`) or `requis_sur` (other than `ouvertes`, `lancees`), or `mission` (other than `phrase`, `puces`), or an `a_preuve` that is not a list of `ref:` (#277): « À voir » |
+| Work | first line, the nature declared by `travail` in `.claude/roadmap.json` (`code`, `projet` or `hybride`, #508): OK « X (déclaré) », with the note « sessions:cloud, ancienne forme sans effet, à retirer » when `sessions` is still there. KO without `travail`, the gesture being the value the folder suggests (git repository with code files: `code`; otherwise `projet`; the old `mode` and `cloud: "missions"` forms are quoted and still read meanwhile); KO for an unknown value; KO for an `hybride` whose `cles.travail` does not admit `code` and `projet` (each line then says its own work by the declared key `travail:`). The folder detection only proposes |
+| Settings | a `requis_sur` (other than `ouvertes`, `lancees`), or `mission` (other than `phrase`, `puces`), or an `a_preuve` that is not a list of `ref:` (#277): « À voir » |
 | Required fields | every launched task (`qui:` or `branche:`) carries `ouvert`, `due`, `qui` and `après`, or the fields of `requis` in `.claude/roadmap.json` (`[]`: no line), on every open task when `requis_sur` is `ouvertes`; otherwise « À voir », with the count |
 | Roadmap plugin | installed and enabled, in the version the app loads |
 | Roadmap plugin twice | one enabled copy only; two (the account's store and the local catalog `roadmap@roadmap`), « À voir » (#229): keep the account's copy, which the app updates, otherwise the most recent, with the exact gesture that removes the other |
@@ -38,14 +38,13 @@ published fingerprints (`CHECKSUMS.txt` of the public repo `bbr21/roadmap-plugin
 | swiftui-pro skill | only in a Swift project: installed |
 | Plugin hooks | no `cc-plugin-sec-default`, or the plugin set by the admin in `appendPlugins`; on a Team or Enterprise account, or with managed settings, « À voir » (the plugin goes through its fallbacks) |
 | User name | `me` in `~/.claude/roadmap-perso.json` holds a name (otherwise « À voir »: Claude says « l'utilisateur ») |
-| Cloud | the settings a session opened in the project reads, in the panel's order (`.claude/roadmap.json`, otherwise the longest-prefix entry of `roadmap-perso.json`): `sessions: "cloud"` without a reachable GitHub repo (no GitHub `origin`, no `depot`), KO; a repo without `docs/session-cloud.md`, KO (the `depot` repo is looked for as a local clone among the project and its entry's folders, otherwise « À voir », not checked); a project on GitHub without `sessions: "cloud"`, « À voir », cloud possible; neither, OK, task sessions on the Mac, while a connectors-only mission still runs in the cloud without a repo, through Maestro (#467) (#453). Each line gives the gesture, written where the session reads its settings |
+| Cloud | the cloud is open to every project (#508): the Cloud \| Mac switch of the task card, the model's recommendation and Maestro's card work everywhere, with no setting. The line follows the declared nature. `projet`: the gateway repo (`depot`, otherwise the GitHub `origin`) is there, OK (missions start from it, with no branch and no PR, #467, #476); without it, « À voir » (the ▶ Cloud will refuse). `code` or `hybride`: without a GitHub repo, « local seulement », OK; with one, a missing `docs/session-cloud.md` or a missing local clone of the `depot` repo, « À voir »; otherwise OK. The settings are read in the panel's order (`.claude/roadmap.json`, otherwise the longest-prefix entry of `roadmap-perso.json`). `sessions: "cloud"` and `cloud: "missions"` are older forms with no effect when `travail` is declared. Each line gives the gesture, written where the session reads its settings |
 | Masked settings | a key of `.claude/roadmap.json` that the entry of the same project in `roadmap-perso.json` masks: sessions opened in one of that entry's folders outside the project read the entry, not the file (adBricks, 2026-11-11: `sessions` set in the folder, no effect): « À voir », naming the keys and the values to copy into the entry. No line when the entry carries them or covers only the project |
 | Design system | `design` in `.claude/roadmap.json` declares the one every mockup relies on (#129), each local path present, or `"aucun"`; not declared: « À voir », with what is already there (a `design/`, a deck template) or the proposal to set one up, and the `onboarding.py design` command that declares it |
 
 ### Without code
 
-In a folder without code (#76, #176: no git repository, a repository without code files, or
-`"mode": "projet"`), the checklist changes: no git repo, no GitHub, no `check.mjs`, no `swiftui-pro`.
+In a project that declares `"travail": "projet"` (#76, #176, #508; no code, git optional), the checklist changes: no git repo, no GitHub, no `check.mjs`, no `swiftui-pro`.
 
 | Item | OK when |
 |---|---|
@@ -57,8 +56,8 @@ In a folder without code (#76, #176: no git repository, a repository without cod
 | Rules of the roadmap | `ROADMAP-REGLES.md` next to `ROADMAP.md` (or the file `regles` declares) is there (#167); missing: KO, with the `onboarding.py regles` command that sets it from the template. Also lists `ecriture` and `preuves` when declared; an unreadable `ecriture` is KO, a missing place « À voir » |
 | Rules of the tool | the « Règles de l'outil » section of that rules file matches the template of the folder's mode, Code or Projet (#290), trailing blanks aside: « à jour », OK; absent or different: « À voir », with `onboarding.py regles --outil <dossier>`, which replaces that section only and keeps the project's own rules. No line when the rules file is missing (« Rules of the roadmap » is KO) |
 | Axes | as with code |
-| Settings | `mode`, `requis_sur`, `cles`, `requis`, `cles_visibles`, `ranger_par`, `mission` and `a_preuve` in `.claude/roadmap.json` understood by the panel; a leftover `vue` (ignored since #238) or anything else: « À voir » |
-| Required fields | the fields of `requis` on every open task (`requis_sur: "ouvertes"`, written by the onboarding; an old `mode: "projet"` too), else on every launched task; otherwise « À voir », with the count (a line written outside Claude Code is flagged only here) |
+| Settings | `travail`, `requis_sur`, `cles`, `requis`, `cles_visibles`, `ranger_par`, `mission` and `a_preuve` in `.claude/roadmap.json` understood by the panel; a leftover `vue` (ignored since #238) or anything else: « À voir » |
+| Required fields | the fields of `requis` on every open task (`requis_sur: "ouvertes"`, written by the onboarding; an old `mode: "projet"` form too), else on every launched task; otherwise « À voir », with the count (a line written outside Claude Code is flagged only here) |
 | Roadmap plugin | as with code |
 | Roadmap plugin twice | as with code |
 | Plugin fingerprints | as with code |
@@ -66,7 +65,7 @@ In a folder without code (#76, #176: no git repository, a repository without cod
 | Plugin hooks | as with code |
 | User name | as with code |
 | Design system | as with code: its document or deck templates, one per task type |
-| Cloud, masked settings | as with code: a folder without git reaches the cloud only through `depot` |
+| Cloud, masked settings | the Cloud line above (a mission starts from the gateway repo, not from a project without one); masked settings as with code |
 | Method skills | those the Projet brief suggests without requiring them: `brainstorming`, `writing-plans`; a missing one is « À voir » |
 
 The list of what is required is in `references/requis.json` (`projet` for a folder without code). The method
@@ -121,8 +120,9 @@ command that fixes it, as the script gives it. Then the verdict in one sentence.
   or tampered with). Name the files, and give the reinstall gesture, which the user does
   themselves; never edit or delete the copy. « À voir » for an old version: updating the plugin
   is enough.
-- Cloud KO or « À voir »: the gesture is a line of settings or a copy of `docs/session-cloud.md`, which
-  the user approves; a project without any GitHub repo has no cloud task session, but Maestro's connectors-only missions (#467) need none: say so.
+- Cloud KO or « À voir »: the gesture is a line of settings (`depot`) or a copy of `docs/session-cloud.md`, which
+  the user approves; a code project without any GitHub repo stays local, but Maestro's connectors-only missions (#467) need none: say so.
+  A code project without `docs/session-cloud.md` is not closed to the cloud: the ▶ follows the recommendation and may start there (#508), hence the « À voir ».
 - Everything green: say so in one sentence, and that « Maestro » works in this project.
 - The doctor does not read the content of tasks. Tasks bundled together, duplicated or without a
   deadline: offer the `audit` skill, which splits, merges and completes after validation.

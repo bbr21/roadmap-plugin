@@ -805,10 +805,11 @@ def roadmap_projet(main):
 
 
 def soucis_de_mode(cfg):
-    """`mode` et `requis_sur` que le panneau ne connaît pas (« Projet », « toutes ») : il les ignore sans rien dire."""
+    """`mode` et `requis_sur` que le panneau ne connaît pas (« Projet », « toutes ») : il les ignore sans rien dire.
+    `mode` est une ancienne forme (#508) : sans `travail`, la ligne Travail le dit déjà, pas de double message."""
     soucis = []
     mode = cfg.get("mode")
-    if mode is not None and mode not in ("auto",) + ob.MODES_FORCES:
+    if mode is not None and ob.nature_declaree(cfg) and mode not in ("auto",) + ob.MODES_FORCES:
         soucis.append("mode « %s » inconnu (auto, code ou projet) : le travail se déduit du dossier" % mode)
     sur = cfg.get("requis_sur")
     if sur is not None and sur not in ob.REQUIS_SUR:
@@ -829,14 +830,39 @@ def reglages_inconnus(main):
     return ligne(VOIR, "Réglages", " ; ".join(soucis), "corriger .claude/roadmap.json")
 
 
-def travail(main):
-    """Le travail du dossier (#176), et ce qui le dit : `mode`, sinon ce que le doctor a vu. Une
-    détection fausse se voit ici et se corrige par `mode`."""
-    force = ob.mode_force(main)
-    if force:
-        return ligne(OK, "Travail", "%s (forcé par mode dans .claude/roadmap.json)" % force.capitalize())
-    t, raison = ob.detecter_travail(main)
-    return ligne(OK, "Travail", "%s (%s)" % (t.capitalize(), raison))
+def travail(main, home=None):
+    """La nature du projet (#482, #508) : `travail` (code, projet ou hybride) des réglages qu'une session ouverte
+    dans le projet lirait (`reglages_effectifs` : .claude/roadmap.json, sinon l'entrée de roadmap-perso.json). KO
+    s'il manque (le geste donne la valeur que le dossier propose, les anciennes formes `mode` et `cloud` citées),
+    s'il est inconnu, ou pour un projet hybride sans `cles.travail` qui admette code et projet."""
+    eff, ou, _ = reglages_effectifs(main, home) if home else (None, None, None)
+    cfg = eff if isinstance(eff, dict) else ob._reglages_du_dossier(main)
+    ou = ou or ".claude/roadmap.json"
+    brut = cfg.get("travail")
+    if "travail" in cfg and ob.nature_declaree(cfg) is None:
+        return ligne(KO, "Travail", "travail « %s » inconnu (code, projet ou hybride) : la nature n'est pas déclarée" % brut,
+                     "corriger \"travail\" dans %s : code, projet ou hybride" % ou)
+    if ob.nature_declaree(cfg) is None:
+        t, raison = ob.nature_de_reglages(cfg, lambda: ob.detecter_travail(main))
+        anciennes = ["%s: %s" % (k, json.dumps(cfg[k], ensure_ascii=False)) for k in ("mode", "cloud") if k in cfg]
+        if anciennes:
+            vu = "lu pour l'instant comme %s d'après l'ancienne forme %s" % (t, ", ".join(anciennes))
+        else:
+            vu = "le dossier propose %s (%s)" % (t, raison)
+        return ligne(KO, "Travail", "travail absent de %s : %s" % (ou, vu),
+                     "ajouter \"travail\": \"%s\" à %s" % (t, ou))
+    nature = ob.nature_declaree(cfg)
+    if nature == "hybride":
+        cles = cfg.get("cles") if isinstance(cfg.get("cles"), dict) else {}
+        valeurs = cles.get("travail")
+        if not (isinstance(valeurs, list) and (not valeurs or {"code", "projet"} <= set(valeurs))):
+            return ligne(KO, "Travail", "Hybride (déclaré), mais cles.travail n'admet pas code et projet : "
+                         "une ligne ne peut pas dire sa nature",
+                         "ajouter \"cles\": {\"travail\": [\"code\", \"projet\"]} à %s" % ou)
+    detail = "%s (déclaré)" % nature.capitalize()
+    if "sessions" in cfg:
+        detail += " ; sessions:cloud, ancienne forme sans effet, à retirer"
+    return ligne(OK, "Travail", detail)
 
 
 # ---------------------------------------------------------------- ensemble
@@ -1168,63 +1194,46 @@ def _cle(k, v):
 
 
 def cloud_du_projet(main, home):
-    """Le réglage cloud du projet (#453) : `sessions:cloud` sans dépôt GitHub (ni origine git ni `depot`), KO ;
-    un dépôt sans docs/session-cloud.md, KO ; un projet sur GitHub sans `sessions:cloud`, « À voir » (cloud
-    possible). Une ligne, avec le geste, écrit là où la session lit ses réglages."""
+    """Le cloud du projet (#453, #482, #508) : ouvert à tout projet, sans réglage ; la ligne dit ce qu'il y faut selon
+    la nature (`travail`). Projet : le dépôt porte (`depot` ou origine git), sans lui « À voir » (le ▶ Cloud
+    refusera). Code ou hybride : sans dépôt GitHub, local seulement ; avec lui, docs/session-cloud.md (« À voir »
+    avec le geste de copie s'il manque ou si aucun clone local ne le montre). Une ligne, avec le geste, écrit là
+    où la session lit ses réglages."""
     eff, ou, entree = reglages_effectifs(main, home)
     if eff is None:
         return None  # .claude/roadmap.json illisible : la ligne Réglages le dit déjà.
-    cloud = eff.get("cloud")
-    if cloud is not None:
-        if cloud != "missions":
-            return ligne(VOIR, "Cloud", "cloud « %s » inconnu (missions) : ignoré" % cloud,
-                         "écrire \"cloud\": \"missions\" dans %s, ou retirer la clé" % ou)
-        porte = depot_de(eff.get("depot")) or _origine(main)
-        if porte:
-            return ligne(OK, "Cloud", "missions cloud par carte depuis le dépôt porte %s : ni branche, ni PR, ni "
-                         "docs/session-cloud.md (réglage lu dans %s)" % (porte, ou))
-        return ligne(KO, "Cloud", "cloud:missions sans dépôt porte sur GitHub (ni depot, ni origine git) : la carte de "
-                     "mission n'a rien d'où partir",
+    nature, _ = ob.nature_de_reglages(eff, lambda: ob.detecter_travail(main))
+    depot_declare = depot_de(eff.get("depot"))
+    depot = depot_declare or _origine(main)
+    if nature == "projet":
+        if depot:
+            return ligne(OK, "Cloud", "missions cloud depuis le dépôt porte %s : ni branche, ni PR, ni "
+                         "docs/session-cloud.md (réglage lu dans %s)" % (depot, ou))
+        return ligne(VOIR, "Cloud", "projet sans dépôt porte sur GitHub (ni depot, ni origine git) : le ▶ Cloud refusera, "
+                     "la carte de mission n'a rien d'où partir",
                      "créer le dépôt porte privé et vide, sans rien y pousser (gh repo create <compte>/<nom>-porte "
                      "--private ; dans %s : .gitignore à *, git init -b main, git remote add origin "
                      "https://github.com/<compte>/<nom>-porte.git), puis ajouter \"depot\": \"<compte>/<nom>-porte\" "
                      "à %s" % (main, ou))
-    sessions = eff.get("sessions")
-    if sessions is not None and sessions not in ("mac", "cloud"):
-        return ligne(VOIR, "Cloud", "sessions « %s » inconnu (mac ou cloud) : le panneau lance sur le Mac" % sessions,
-                     "écrire \"sessions\": \"cloud\" ou \"mac\" dans %s" % ou)
-    depot_declare = depot_de(eff.get("depot"))
-    depot = depot_declare or _origine(main)
+    # Code ou hybride : un hybride a du code, et ses lignes travail:projet partent d'un dépôt, le même.
+    mission = " ; ses lignes travail:projet partent en mission depuis ce même dépôt" if nature == "hybride" else ""
+    if not depot:
+        return ligne(OK, "Cloud", "local seulement : pas de dépôt GitHub, rien à cloner%s" % (
+            " (une ligne travail:projet a besoin d'un dépôt pour partir en mission)" if nature == "hybride" else ""))
     candidats = [main] + [m for e in ([entree] if entree else entrees_du_projet(main, home)) for m in _matchs(e)]
     if depot_declare:
         clone = clone_local(depot, candidats)
     else:
-        clone = main if depot else None
+        clone = main
     doc = clone and os.path.isfile(os.path.join(clone, "docs", "session-cloud.md"))
-    copier = ("copier docs/session-cloud.md de bbr21/roadmap dans %s/docs/, l'adapter au projet, committer et pousser"
-              % (clone or depot))
-    if sessions != "cloud":
-        if not depot:
-            return ligne(OK, "Cloud", "sessions de tâche sur le Mac (pas de dépôt GitHub : rien à cloner) ; une mission qui "
-                         "n'a besoin que des connecteurs part en cloud sans dépôt, par Maestro (#467)")
-        geste = "ajouter \"sessions\": \"cloud\" à %s" % ou
-        if clone and not doc:
-            geste += ", puis " + copier
-        return ligne(VOIR, "Cloud", "cloud possible : dépôt GitHub %s, sans sessions:cloud ; les tâches partent sur le Mac" % depot,
-                     geste)
-    if not depot:
-        return ligne(KO, "Cloud", "sessions:cloud sans dépôt GitHub joignable (ni origine git sur GitHub, ni depot) : "
-                     "le ▶ Cloud n'a rien à cloner",
-                     "ajouter \"depot\": \"<owner>/<repo>\" (le dépôt GitHub du code) à %s, ou pousser le dossier sur "
-                     "GitHub (gh repo create <compte>/<nom> --private --source %s --push), ou retirer sessions (une mission par "
-                     "connecteurs part sans dépôt, par Maestro, #467)" % (ou, main))
     if not clone:
-        return ligne(VOIR, "Cloud", "sessions:cloud sur %s : aucun clone local, docs/session-cloud.md non vérifié" % depot,
+        return ligne(VOIR, "Cloud", "cloud ouvert sur %s : aucun clone local, docs/session-cloud.md non vérifié%s" % (depot, mission),
                      "vérifier que %s a docs/session-cloud.md à sa racine (copie de celui de bbr21/roadmap)" % depot)
     if not doc:
-        return ligne(KO, "Cloud", "sessions:cloud sur %s, sans docs/session-cloud.md : une session cloud n'y trouve pas ses "
-                     "règles" % depot, copier)
-    return ligne(OK, "Cloud", "sessions:cloud sur %s, docs/session-cloud.md présent (réglage lu dans %s)" % (depot, ou))
+        return ligne(VOIR, "Cloud", "cloud ouvert sur %s, sans docs/session-cloud.md : une session cloud n'y trouve pas ses "
+                     "règles%s" % (depot, mission),
+                     "copier docs/session-cloud.md de bbr21/roadmap dans %s/docs/, l'adapter au projet, committer et pousser" % clone)
+    return ligne(OK, "Cloud", "cloud ouvert sur %s, docs/session-cloud.md présent%s (réglage lu dans %s)" % (depot, mission, ou))
 
 
 def reglages_masques(main, home):
@@ -1266,7 +1275,7 @@ def diagnostiquer(dossier, plugins="lire", home=None, avec_outils=True, gere=Non
         est_git = git(principal, "rev-parse", "--git-dir").returncode == 0
         if avec_outils:
             lignes += outils(requis, "projet", est_git)
-        lignes.append(travail(principal))
+        lignes.append(travail(principal, home))
         lignes += roadmap_projet(principal)
         lignes += [l for l in [regles_du_projet(principal), regles_de_l_outil(principal), axes_du_projet(principal, home),
                                cloud_du_projet(principal, home), reglages_masques(principal, home)] if l]
@@ -1280,7 +1289,7 @@ def diagnostiquer(dossier, plugins="lire", home=None, avec_outils=True, gere=Non
                 "ko": sum(1 for l in lignes if l["statut"] == KO), "a_voir": sum(1 for l in lignes if l["statut"] == VOIR)}
     if avec_outils:
         lignes += outils(requis)
-    lignes.append(travail(principal))
+    lignes.append(travail(principal, home))
     inconnu = reglages_inconnus(principal)
     if inconnu:
         lignes.append(inconnu)

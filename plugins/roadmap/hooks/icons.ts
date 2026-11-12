@@ -382,7 +382,7 @@ export function cloudIcon(hex: string, size = 14, title?: string): string {
   return line(hex, size, 2, '<path d="M17.5 19H7a5 5 0 1 1 1.3-9.84A6 6 0 0 1 19.8 11.4 3.8 3.8 0 0 1 17.5 19z"/>', title)
 }
 
-/** Ordinateur : une session qui tourne sur le Mac, en face du nuage d'une session cloud (#440, maquette B6). Trait 2, bouts ronds. */
+/** Ordinateur : une session qui tourne en local, en face du nuage d'une session cloud (#440, maquette B6). Trait 2, bouts ronds. */
 export function computerIcon(hex: string, size = 14, title?: string): string {
   return line(hex, size, 2, '<rect x="3.5" y="4.5" width="17" height="11" rx="1.5"/><path d="M2 19.5h20"/>', title)
 }
@@ -392,7 +392,7 @@ export function flaskIcon(hex: string, size = 14, title?: string): string {
   return line(hex, size, 2, '<path d="M9 3h6"/><path d="M10 3v6.5L4.6 18.8A1.5 1.5 0 0 0 5.9 21h12.2a1.5 1.5 0 0 0 1.3-2.2L14 9.5V3"/><path d="M7.2 15h9.6"/>', title)
 }
 
-/** Portable : une tâche qui tourne sur le Mac (#436), le pendant du nuage ; même trait 2, bouts ronds. */
+/** Portable : une tâche qui tourne en local (#436), le pendant du nuage ; même trait 2, bouts ronds. */
 export function laptopIcon(hex: string, size = 14, title?: string): string {
   return line(hex, size, 2, '<rect x="4" y="5" width="16" height="11" rx="1.5"/><path d="M2.5 19h19"/>', title)
 }
@@ -644,7 +644,7 @@ export function herePillIcon(o: { cloud: number; mac: number; bg: string; fg: st
     }
   })
   const width = Math.ceil(x + padX)
-  const where = [o.cloud > 0 ? `${o.cloud} dans le cloud` : '', o.mac > 0 ? `${o.mac} sur le Mac` : ''].filter(Boolean).join(', ')
+  const where = [o.cloud > 0 ? `${o.cloud} dans le cloud` : '', o.mac > 0 ? `${o.mac} en local` : ''].filter(Boolean).join(', ')
   return {
     source: `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}"><rect width="${width}" height="${height}" rx="${mid}" fill="${o.bg}"/>${drawn.join('')}</svg>`,
     width,

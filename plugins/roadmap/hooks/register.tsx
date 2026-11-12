@@ -67,6 +67,7 @@ import {
   cloudIcon,
   computerIcon,
   flaskIcon,
+  bellIcon,
   cloudTints,
   unarchiveIcon,
   pencilIcon,
@@ -111,11 +112,18 @@ import { MIX, PX, RADIUS, SIZE, SPACE, TEXT } from './tokens'
 import { BEFORE_KEY, CLOSED_KEY, NATIVE_KEY, beforeMap, closedKeys, drawWrittenMessage, keepBefore, keepClosed, keepNative, nativeKeys, splitWritten, testSessions, withoutClosed, withoutNative, writtenCards, type WrittenLine, type WrittenStart, type WrittenWho } from './cartes'
 import { CARD_DEADLINE_MS, CARD_LATE_WHY, cardTargetOf, dismissCall, panelChoiceIn, proposalIdIn, recoTargetRefusal, type Place } from './depart'
 import { CLOUD_WATCH_EVERY_MS, CLOUD_WATCH_KEY, addWatch, briefBranchOf, dueWatches, lineVerdict, pushedSince, remoteHeads, watchList, type CloudWatch } from './prise-cloud'
+import { CLOUD_WAKE_EVERY_MS, CLOUD_WAKE_KEY, CLOUD_WAKE_PR_FIELDS, cloudWakes, wakePrompt, wakeStateOf } from './reveil-cloud'
 import { CONTROL_PANE, drawControl, openControl, redrawControl, type ControlDeps } from './controle'
 import { SETTINGS_PANE, drawSettings, openSettings, prefsFile, redrawSettings, rememberLoadedOptions, sessionProject, watchSettings, type SettingsProject } from './reglages'
 import {
   CLASSIC_SKIPS_OFF,
+  childNoteStale,
   retryOnLock,
+  noteSeen,
+  freshSeen,
+  storeJson,
+  slimCloudPrs,
+  staleTaskKeys,
   squareHitWidth,
   TREE_LEAD_CELLS,
   declaredAccount,
@@ -317,6 +325,8 @@ import {
   fitRowPills,
   pxCells,
   CLOUD_WORDS_CELLS,
+  STATE_WORDS,
+  deliveredCount,
   ROW_STEPS,
   rowStepsCells,
   filterSummary,
@@ -348,10 +358,15 @@ import {
   type Travail,
   groupingData,
   heldByOther,
+  forcedWork,
+  natureOf,
+  taskWork,
   workOf,
   unlockedBy,
   launchable,
   maestroCall,
+  whyCall,
+  whyContext,
   maestroAxisNote,
   maestroContext,
   maestroExecAction,
@@ -594,6 +609,17 @@ import {
   missionViaClaudeNote,
   missionTakenText,
   MISSION_QUI,
+  isPanelOnlyRefusal,
+  cloudAskText,
+  cloudViaClaudeNote,
+  MISSIONS_FILE,
+  isMissionTask,
+  missionBrandTasks,
+  missionFiche,
+  missionSteps,
+  missionWords,
+  parseMissions,
+  type MissionEntry,
   judgedReco,
   parseRecoCache,
   parseRecoVerdicts,
@@ -709,6 +735,7 @@ import {
   childAlerts,
   stepsStamp,
   stateBand,
+  relaunchOf,
   filRows,
   resumedAfterClose,
   stepsClosed,
@@ -794,9 +821,10 @@ import {
   withAxisStyle,
   withPersoAxisStyle,
   isCloudSession,
+  utf8Length,
   type AxisStyle,
 } from './parse'
-import type { HeavyQueue, QueueMark } from './parse'
+import type { HeavyQueue, QueueMark, StoreSeen } from './parse'
 
 /**
  * L'attente du moteur entre deux essais d'une écriture du store (#350) : son horloge, sinon `setTimeout` ;
@@ -817,19 +845,49 @@ function engineWait($: EngineInterface, ms: number): Promise<void> {
 
 type StoreValue = Parameters<EngineInterface['store']['set']>[1]
 
+/** Ce que ce module a lu ou écrit de chaque clé du store, et quand (#526). */
+const storeSeen: StoreSeen = new Map()
+
+/** Toute lecture du store passe par ici (#526) : la valeur lue fait foi une seconde pour l'écriture qui suit. */
+async function storeGet($: EngineInterface, key: string): Promise<unknown> {
+  const value: unknown = await $.store.get(key)
+  noteSeen(storeSeen, key, value, Date.now())
+  return value
+}
+
+/**
+ * La clé est déjà à cette valeur (#526) : la valeur vue dans la seconde, sinon relue. Une relecture en panne ne
+ * tranche pas : l'écriture part.
+ */
+async function storeHolds($: EngineInterface, key: string, json: string | undefined): Promise<boolean> {
+  try {
+    const fresh = freshSeen(storeSeen, key, Date.now())
+    return (fresh ? fresh.json : storeJson(await storeGet($, key))) === json
+  } catch {
+    return false
+  }
+}
+
 /**
  * Toute écriture du store passe par ici (#350) : le store est un fichier partagé par les sessions ouvertes,
- * et une écriture refusée parce qu'une autre session tient son verrou se réessaie au lieu d'échouer.
+ * et une écriture refusée parce qu'une autre session tient son verrou se réessaie au lieu d'échouer. Une valeur
+ * égale à celle que garde le store ne s'écrit pas (#526) : le moteur réécrirait le fichier entier, sous verrou.
  */
 function storeSet($: EngineInterface, key: string, value: StoreValue): Promise<void> {
+  const json = storeJson(value)
   return retryOnLock(async () => {
+    if (await storeHolds($, key, json)) return
     await $.store.set(key, value)
+    noteSeen(storeSeen, key, value, Date.now())
   }, ms => engineWait($, ms))
 }
 
+/** Une clé déjà absente ne se supprime pas (#526) : le moteur prendrait le verrou pour rien. */
 function storeDelete($: EngineInterface, key: string): Promise<void> {
   return retryOnLock(async () => {
+    if (await storeHolds($, key, undefined)) return
     await $.store.delete(key)
+    noteSeen(storeSeen, key, undefined, Date.now())
   }, ms => engineWait($, ms))
 }
 
@@ -935,11 +993,6 @@ const DURATION_DONUT = 44
 const CHILD_STATUS_PREFIX = 'child-status:'
 /** Les relances faites par un parent : enfant → `lastActivityAt` de l'attente relancée. */
 const CHILD_ALERTED_PREFIX = 'child-alerted:'
-/**
- * Une note d'enfant, ou des relances, sans nouvelle depuis 30 jours sortent du store, comme
- * `maestro-sessions` (#90) : un enfant fini qui attend Bertrand une semaine garde sa note.
- */
-const CHILD_NOTE_MAX_MS = 30 * 86_400_000
 /** Les sessions où Bertrand a dit « Maestro » : elles coordonnent ce qu'elles lancent (#71). */
 const MAESTROS_KEY = 'maestro-sessions'
 /** Ce que le hook de la carte d'accueil a vu sur cette machine (#153) : `WelcomeCardSeen`. */
@@ -1232,9 +1285,41 @@ async function readOr($: EngineInterface, path: string): Promise<string | undefi
   }
 }
 
+/** Le texte gardé de chaque roadmap, avec l'empreinte (date:taille) du `stat` qui l'a précédé (#523). */
+const roadmapTexts = new Map<string, { stamp: string; text: string }>()
+
+/**
+ * Lit un fichier de roadmap, sans le relire tant que sa date et sa taille n'ont pas bougé (#523). `$.fs.stat`
+ * direct, jamais `statOnce` : le `stat` d'un pas de minuterie peut précéder l'écriture de l'outil. Un stat qui
+ * ne dit pas la taille lue (fichier changé entre les deux, monde d'essai à taille fixe) fait relire à chaque fois.
+ */
+async function readKept($: EngineInterface, path: string): Promise<string | undefined> {
+  let stamp: string
+  let size: number
+  try {
+    const st = await $.fs.stat(path)
+    stamp = `${st.mtimeMs}:${st.size}`
+    size = st.size
+  } catch {
+    roadmapTexts.delete(path)
+    return readOr($, path)
+  }
+  const kept = roadmapTexts.get(path)
+  if (kept?.stamp === stamp) return kept.text
+  const text = await readOr($, path)
+  if (text === undefined) {
+    roadmapTexts.delete(path)
+    return undefined
+  }
+  if (utf8Length(text) === size) roadmapTexts.set(path, { stamp, text })
+  else roadmapTexts.delete(path)
+  return text
+}
+
 async function roadmapNow($: EngineInterface, source: Source): Promise<{ open?: string; done?: string }> {
   const { open, done } = files(source)
-  return { open: await readOr($, open), done: await readOr($, done) }
+  const [openText, doneText] = await Promise.all([readKept($, open), readKept($, done)])
+  return { open: openText, done: doneText }
 }
 
 const joined = (r: { open?: string; done?: string }) => `${r.open ?? ''}\u0000${r.done ?? ''}`
@@ -1266,13 +1351,36 @@ async function startCapture($: EngineInterface, source: Source): Promise<void> {
 
 const inProject = (c: Capture, path: string) => c.roots.some(r => path === r || path.startsWith(`${r}/`))
 
+/** Les commandes git du dépôt de la session déjà lancées, gardées jusqu'au prochain outil ou à la fin du tour (#523). */
+const gitRuns = new Map<string, { at: number; ran: Promise<{ exitCode: number; stdout: string }> }>()
+const GIT_KEEP_MS = 30_000
+
+function forgetGit(): void {
+  gitRuns.clear()
+}
+
+/** Une commande git, rendue sans la relancer si la même a tourné depuis moins de 30 s sans outil entre deux ; un échec ne se garde pas. */
+function gitOnce($: EngineInterface, args: string[], opts?: { timeoutMs: number }): Promise<{ exitCode: number; stdout: string }> {
+  const key = args.join('\u0000')
+  const kept = gitRuns.get(key)
+  if (kept && Date.now() - kept.at < GIT_KEEP_MS) return kept.ran
+  const ran = opts ? $.process.run(['git', ...args], opts) : $.process.run(['git', ...args])
+  const entry = { at: Date.now(), ran }
+  gitRuns.set(key, entry)
+  const drop = () => {
+    if (gitRuns.get(key) === entry) gitRuns.delete(key)
+  }
+  ran.then(r => (r.exitCode !== 0 ? drop() : undefined)).catch(drop)
+  return ran
+}
+
 /** HEAD et fichiers modifiés du dépôt de la session ; hors dépôt git, rien. */
 async function gitState($: EngineInterface): Promise<string | undefined> {
   try {
     const root = await $.session.root()
-    const head = await $.process.run(['git', '-C', root, 'rev-parse', 'HEAD'])
+    const head = await gitOnce($, ['-C', root, 'rev-parse', 'HEAD'])
     if (head.exitCode !== 0) return undefined
-    const status = await $.process.run(['git', '-C', root, 'status', '--porcelain'])
+    const status = await gitOnce($, ['-C', root, 'status', '--porcelain'])
     return status.exitCode === 0 ? `${head.stdout}${status.stdout}` : undefined
   } catch {
     return undefined
@@ -1291,7 +1399,7 @@ async function isGitDir($: EngineInterface, dir: string): Promise<boolean> {
 /** HEAD du dépôt de la session ; hors dépôt git, rien. */
 async function gitHead($: EngineInterface): Promise<string | undefined> {
   try {
-    const head = await $.process.run(['git', '-C', await $.session.root(), 'rev-parse', 'HEAD'])
+    const head = await gitOnce($, ['-C', await $.session.root(), 'rev-parse', 'HEAD'])
     return head.exitCode === 0 ? head.stdout.trim() : undefined
   } catch {
     return undefined
@@ -1306,12 +1414,12 @@ async function gitHead($: EngineInterface): Promise<string | undefined> {
  */
 async function methodNote($: EngineInterface, c: Capture): Promise<string | undefined> {
   // Sans code (#76, #176) : pas de rappel de méthode de code.
-  if (projectSettings(c.source).travail === 'projet') return undefined
+  if (taskWork(c.source) === 'projet') return undefined
   const before = c.headAtTurn
   if (before === undefined) return undefined
   const now = await gitHead($)
   if (now === undefined || now === before || c.methodAsked.has(now)) return undefined
-  const log = await $.process.run(['git', '-C', await $.session.root(), 'log', '--first-parent', '--no-merges', '--format=', '--name-only', `${before}..${now}`])
+  const log = await gitOnce($, ['-C', await $.session.root(), 'log', '--first-parent', '--no-merges', '--format=', '--name-only', `${before}..${now}`])
   if (log.exitCode !== 0) return undefined
   const files = [...new Set(log.stdout.split('\n').map(l => l.trim()).filter(l => l !== ''))]
   const code = files.some(f => codeWithoutTests([f]) !== undefined)
@@ -1387,7 +1495,7 @@ function yesNote(e: { agentId?: unknown; file_path?: unknown }, ran: ToolCallRes
 
 /** Les fichiers d'interface créés ou très modifiés par les commits du tour (#96). */
 async function uiToMock($: EngineInterface, before: string, now: string): Promise<string[] | undefined> {
-  const stat = await $.process.run(['git', '-C', await $.session.root(), 'log', '--first-parent', '--no-merges', '--numstat', '--summary', '--format=', `${before}..${now}`])
+  const stat = await gitOnce($, ['-C', await $.session.root(), 'log', '--first-parent', '--no-merges', '--numstat', '--summary', '--format=', `${before}..${now}`])
   return stat.exitCode === 0 ? uiFilesToMock(stat.stdout) : undefined
 }
 
@@ -1480,7 +1588,7 @@ async function keepWrittenBefore($: EngineInterface): Promise<void> {
   const sig = JSON.stringify(fresh)
   if (fresh.length === 0 || sig === writtenBeforeSig) return
   try {
-    const kept = keepBefore(await $.store.get(BEFORE_KEY), fresh)
+    const kept = keepBefore(await storeGet($, BEFORE_KEY), fresh)
     await storeSet($, BEFORE_KEY, kept as StoreValue)
     writtenBeforeSig = sig
   } catch {
@@ -1661,9 +1769,9 @@ async function branchZones($: EngineInterface): Promise<{ id: string; key: strin
   if (id === undefined) return undefined
   const root = await $.session.root()
   const base = own.id ? (await childFiche($, own.id)).base : 'main'
-  const names = await gitIn($, root, 'diff', '--name-only', `${base}...HEAD`)
+  const names = await gitInOnce($, root, 'diff', '--name-only', `${base}...HEAD`)
   if (names.code !== 0) return undefined
-  const count = await gitIn($, root, 'rev-list', '--count', `${base}..HEAD`)
+  const count = await gitInOnce($, root, 'rev-list', '--count', `${base}..HEAD`)
   return { id, key: changesKey(c.source.name, id), zones: changeZones(names.out.split('\n')), commits: count.code === 0 ? Number(count.out.trim()) || 0 : 0 }
 }
 
@@ -1677,9 +1785,11 @@ async function saveChanges($: EngineInterface, answer: string | undefined): Prom
     if (!branch) return
     const said = parseChangeBlock(answer ?? '')
     if (branch.zones.length === 0 && !said) return
-    const prev = changesOf(await $.store.get(branch.key).catch(() => undefined))
+    const prev = changesOf(await storeGet($, branch.key).catch(() => undefined))
     const zones = mergeZones(branch.zones, said, prev?.zones)
     if (zones.length === 0) return
+    // Mêmes zones et mêmes commits que le relevé gardé : rien à écrire (#523).
+    if (prev && prev.commits === branch.commits && JSON.stringify(prev.zones) === JSON.stringify(zones)) return
     await storeSet($, branch.key, { zones, commits: branch.commits, at: await $.clock.now() })
   } catch {
     // store ou git illisibles : la fiche garde le relevé d'avant
@@ -1715,7 +1825,7 @@ async function noteTiming($: EngineInterface, step: (t: StoredTiming | undefined
   try {
     const key = await timingKeyHere($)
     if (key === undefined) return
-    const next = step(timingOf(await $.store.get(key).catch(() => undefined)), await $.clock.now())
+    const next = step(timingOf(await storeGet($, key).catch(() => undefined)), await $.clock.now())
     if (next !== undefined) await storeSet($, key, next)
   } catch {
     // le relevé garde son état d'avant
@@ -1727,7 +1837,7 @@ async function changesNote($: EngineInterface, last: string | undefined): Promis
   if (closingTurn.wake) return undefined
   const branch = await branchZones($)
   if (!branch || branch.zones.length === 0) return undefined
-  const prev = changesOf(await $.store.get(branch.key).catch(() => undefined))
+  const prev = changesOf(await storeGet($, branch.key).catch(() => undefined))
   const missing = mergeZones(branch.zones, undefined, prev?.zones).filter(z => !z.why)
   return changesMissingNote({ zones: missing, ...(wakeBox.recap !== undefined ? { recap: wakeBox.recap } : {}), ...(last !== undefined ? { answer: last } : {}) })
 }
@@ -1738,13 +1848,13 @@ async function changesNote($: EngineInterface, last: string | undefined): Promis
  */
 async function fidelityNote($: EngineInterface, last: string | undefined): Promise<string | undefined> {
   const c = capture
-  if (closingTurn.wake || !settings.capture || !c || projectSettings(c.source).travail === 'projet') return undefined
+  if (closingTurn.wake || !settings.capture || !c || taskWork(c.source) === 'projet') return undefined
   const said = { ...(wakeBox.recap !== undefined ? { recap: wakeBox.recap } : {}), ...(last !== undefined ? { answer: last } : {}) }
   if (childWake(said).kind !== 'ready') return undefined
   const root = await $.session.root()
-  const names = await gitIn($, root, 'diff', '--name-only', 'main...HEAD')
+  const names = await gitInOnce($, root, 'diff', '--name-only', 'main...HEAD')
   if (names.code !== 0) return undefined
-  const pending = await gitIn($, root, 'status', '--porcelain', '--untracked-files=all')
+  const pending = await gitInOnce($, root, 'status', '--porcelain', '--untracked-files=all')
   const files = [...new Set([
     ...names.out.split('\n'),
     ...(pending.code === 0 ? pending.out.split('\n').map(l => l.slice(3).replace(/^.* -> /, '')) : []),
@@ -1920,7 +2030,7 @@ async function testAfterRelease($: EngineInterface, command: string, stdout: str
   const tasks = await Promise.all(kept.map(async t => {
     const id = t.id as string
     const origin = originSession(rows, id)
-    const changes = changesOf(await $.store.get(changesKey(source.name, id)).catch(() => undefined))?.zones ?? []
+    const changes = changesOf(await storeGet($, changesKey(source.name, id)).catch(() => undefined))?.zones ?? []
     return {
       id,
       name: t.nom ?? cachedTitle(t, titles) ?? fallbackTitle(t.label),
@@ -2011,7 +2121,7 @@ const ACCOUNT_SWITCH_KEY = 'account-switch'
  */
 async function noteAccountSwitch($: EngineInterface, part: Record<string, unknown>): Promise<void> {
   try {
-    const stored = await $.store.get(ACCOUNT_SWITCH_KEY)
+    const stored = await storeGet($, ACCOUNT_SWITCH_KEY)
     const seen = typeof stored === 'object' && stored !== null && !Array.isArray(stored) ? stored : {}
     await storeSet($, ACCOUNT_SWITCH_KEY, { ...seen, ...part, at: await $.clock.now(), version: sessionVersion ?? '?' })
   } catch {
@@ -2049,7 +2159,7 @@ async function endOfTurnBlock($: EngineInterface, last: string | undefined, acti
     }
     try {
       // #327 : mode Code seulement ; git illisible, pas de note.
-      if (projectSettings(c.source).travail !== 'projet') notes.push(await delegationReminder($))
+      if (taskWork(c.source) !== 'projet') notes.push(await delegationReminder($))
     } catch {
       // git illisible : pas de rappel de délégation
     }
@@ -2076,7 +2186,7 @@ async function endOfTurnBlock($: EngineInterface, last: string | undefined, acti
     // git illisible : pas de rappel de fidélité
   }
   // La consigne de capture (#406) : relue au gabarit, hors mode Projet (pas de preuve de fidélité).
-  if (settings.capture && c && projectSettings(c.source).travail !== 'projet') {
+  if (settings.capture && c && taskWork(c.source) !== 'projet') {
     notes.push(captureConsigneNoteText(captureConsigneGaps(last), captureTemplatePath(`${$.plugin.root}/skills/maestro/scripts/fidelite.py`)))
   }
   // La clôture partielle (#245) : finie, sa ligne attend encore un tiers.
@@ -2134,6 +2244,8 @@ async function bilanNote($: EngineInterface, source: Source, before: string | un
  */
 async function checkRoadmap($: EngineInterface, c: Capture, before?: { open?: string }): Promise<string[]> {
   const now = await roadmapNow($, c.source)
+  // Rien n'a bougé depuis la dernière vue : aucun contrôle à refaire (#523).
+  if (now.open === c.seen.open && now.done === c.seen.done) return []
   const ids = idProblems(now.open, now.done)
   const notes: string[] = []
   for (const [key, file, done] of [['open', 'ROADMAP.md', false], ['done', 'ROADMAP-fait.md', true]] as const) {
@@ -2210,7 +2322,7 @@ async function written(
   // #244 : ce que cette écriture-ci a changé, ajouté au compte rendu du tour ; `seen` vient d'être relu.
   if (own && before !== undefined && capture && ran.deny === undefined && ran.isError !== true) {
     try {
-      reportTurn.changes = mergeChanges(reportTurn.changes, roadmapChanges(before, capture.seen))
+      if (before.open !== capture.seen.open || before.done !== capture.seen.done) reportTurn.changes = mergeChanges(reportTurn.changes, roadmapChanges(before, capture.seen))
       if (path === undefined || /roadmap-questions\.json$/i.test(path)) reportTurn.touched = true
       // #261 : le journal du tour, cumulé, vient avec l'écriture.
       const note = await reportNote($)
@@ -2326,6 +2438,11 @@ async function repoOf($: EngineInterface, dir: string): Promise<{ main: string; 
  * Rien de tout ça : pas de panneau.
  */
 async function localSource($: EngineInterface): Promise<Source | undefined> {
+  // Dans la fenêtre d'un tour, la source se garde 15 s (#523) ; un réglage changé au volet l'oublie.
+  return keptInTurn('localSource', 15_000, () => readLocalSource($))
+}
+
+async function readLocalSource($: EngineInterface): Promise<Source | undefined> {
   try {
     const cwd = await $.session.cwd()
     const root = await $.session.root()
@@ -2362,7 +2479,10 @@ async function settingsProject($: EngineInterface): Promise<SettingsProject | un
   if (!source?.root) return undefined
   const path = `${source.root}/.claude/roadmap.json`
   if (!(await $.fs.exists(path).catch(() => false))) return undefined
-  return { name: source.name, path, mission: projectSettings(source).mission, changed: () => update($, stampAtom, v => v + 1) }
+  return { name: source.name, path, mission: projectSettings(source).mission, changed: () => {
+    turnKeep.delete('localSource')
+    return update($, stampAtom, v => v + 1)
+  } }
 }
 
 /**
@@ -2473,7 +2593,7 @@ function parseProjectConfigSafe(text: string | undefined, base: string, defaults
  * roadmap (adBricks : la roadmap dans Adbricks Cowork, le code dans Work/Adbricks). `mode` l'emporte.
  */
 async function withWork($: EngineInterface, source: Source, dir: string): Promise<Source> {
-  return source.mode ? source : { ...source, travail: await detectWork($, dir) }
+  return source.mode || source.nature ? source : { ...source, travail: await detectWork($, dir) }
 }
 
 function files(source: Source): { open: string; done: string } {
@@ -2560,7 +2680,7 @@ async function loadParsed($: EngineInterface, path: string, file: string): Promi
 }
 
 async function loadTitles($: EngineInterface): Promise<Record<string, ShortTitle>> {
-  const stored = await $.store.get(STORE_KEY)
+  const stored = await storeGet($, STORE_KEY)
   return typeof stored === 'object' && stored !== null ? (stored as Record<string, ShortTitle>) : {}
 }
 
@@ -2596,7 +2716,10 @@ async function summarize($: EngineInterface, source: Source): Promise<void> {
         await update($, titleNoteAtom, () => `Titres courts indisponibles (${reply.reason}).`)
         return
       }
-      Object.assign(titles, parseTitles(reply.text, source.subjects))
+      // #526 : une réponse sans titre neuf ne réécrit pas les titres (160 Ko au vrai store), à chaque changement de la roadmap et dans chaque session.
+      const found = parseTitles(reply.text, source.subjects)
+      if (Object.keys(found).length === 0) continue
+      Object.assign(titles, found)
       await storeSet($, STORE_KEY, titles)
       await update($, titlesVersionAtom, v => v + 1)
     }
@@ -2613,7 +2736,7 @@ async function summarize($: EngineInterface, source: Source): Promise<void> {
 type LiveState = 'open' | 'closed' | 'unknown'
 
 async function loadLive($: EngineInterface): Promise<Record<string, LiveEntry>> {
-  const stored = await $.store.get(LIVE_KEY)
+  const stored = await storeGet($, LIVE_KEY)
   if (typeof stored !== 'object' || stored === null) return {}
   // Seules les entrées bien formées comptent : une valeur abîmée ne met aucune tâche en session.
   const out: Record<string, LiveEntry> = {}
@@ -2727,6 +2850,68 @@ async function probeLive($: EngineInterface): Promise<void> {
 }
 
 /**
+ * La fenêtre de tour (#523) : ouverte à `prompt.submit` (ou à `turn.start` sans message avant lui), fermée à la
+ * fin de `turn.complete`. Dedans, les faits de session lus par les hooks de tour (fiches, liste, source, personne)
+ * se gardent ; hors fenêtre, rien ne se garde et tout se lit comme avant.
+ */
+let turnWindow = false
+/** Un `prompt.submit` vient d'ouvrir la fenêtre : le `turn.start` qui suit ne la rouvre pas. */
+let submitOpened = false
+const sessionReads = new Map<string, { at: number; ran: Promise<ToolCallResult> }>()
+const SESSION_KEEP_MS = 30_000
+/** Source et personne gardées pour le tour, avec le moment de leur lecture. */
+const turnKeep = new Map<string, { at: number; value: Promise<unknown> }>()
+
+function forgetSessionReads(): void {
+  sessionReads.clear()
+}
+
+function openTurnWindow(): void {
+  sessionReads.clear()
+  turnKeep.clear()
+  turnWindow = true
+}
+
+function closeTurnWindow(): void {
+  sessionReads.clear()
+  turnKeep.clear()
+  turnWindow = false
+}
+
+/**
+ * Un appel de lecture de session (`get_session`, `list_sessions`), gardé 30 s dans la fenêtre de tour. Une
+ * fiche refusée, en erreur ou rejetée ne se garde pas (#185). Hors fenêtre : l'appel tel quel.
+ */
+function sessionRead($: EngineInterface, call: { tool: string } & Record<string, unknown>): Promise<ToolCallResult> {
+  if (!turnWindow) return $.tool.call(call as never)
+  const key = JSON.stringify(call)
+  const kept = sessionReads.get(key)
+  if (kept && Date.now() - kept.at < SESSION_KEEP_MS) return kept.ran
+  const ran = $.tool.call(call as never)
+  const entry = { at: Date.now(), ran }
+  sessionReads.set(key, entry)
+  const drop = () => {
+    if (sessionReads.get(key) === entry) sessionReads.delete(key)
+  }
+  ran.then(r => (r.deny !== undefined || r.isError ? drop() : undefined)).catch(drop)
+  return ran
+}
+
+/** Une lecture gardée `ms` ms dans la fenêtre de tour ; hors fenêtre, lue à chaque fois. Un rejet ne se garde pas. */
+function keptInTurn<T>(key: string, ms: number, read: () => Promise<T>): Promise<T> {
+  if (!turnWindow) return read()
+  const kept = turnKeep.get(key)
+  if (kept && Date.now() - kept.at < ms) return kept.value as Promise<T>
+  const value = read()
+  const entry = { at: Date.now(), value }
+  turnKeep.set(key, entry)
+  value.catch(() => {
+    if (turnKeep.get(key) === entry) turnKeep.delete(key)
+  })
+  return value
+}
+
+/**
  * Cette session dans l'app : son identifiant (`local_…`) et son titre, lus sur sa fiche. `fresh` la
  * relit : Bertrand peut la nommer après le chargement du panneau (« Maestro »).
  */
@@ -2735,7 +2920,7 @@ let ownSession: { id: string | undefined; title: string; parent?: string | null 
 async function readOwnSession($: EngineInterface, fresh = false): Promise<{ id: string | undefined; title: string; parent?: string | null }> {
   if (ownSession !== null && !fresh) return ownSession
   try {
-    const ran = await $.tool.call({ tool: GET_SESSION_TOOL, session_id: 'self' })
+    const ran = await sessionRead($, { tool: GET_SESSION_TOOL, session_id: 'self' })
     const text = ran.deny === undefined && !ran.isError ? (ran.text ?? '') : ''
     ownSession = { id: sessionIdIn(text), title: sessionTitleIn(text), parent: sessionParentIn(text) }
   } catch {
@@ -2806,7 +2991,7 @@ async function proposeCard($: EngineInterface, raw: Record<string, unknown>, opt
   return { ran, refusals }
 }
 
-/** #436 : la carte native avec sa cible au bout du titre (« · cloud » pour `target: 'cloud'`, « · Mac » sinon). */
+/** #436 : la carte native avec sa cible au bout du titre (« · cloud » pour `target: 'cloud'`, « · local » sinon). */
 function withTargetTitle(card: Record<string, unknown>): Record<string, unknown> {
   return typeof card.title === 'string' ? { ...card, title: targetTitle(card.title, card.target === 'cloud' ? 'cloud' : 'mac') } : card
 }
@@ -2825,7 +3010,34 @@ const pendingKey = (source: Source, id: string) => `${source.root ?? source.dir}
 const pendingMissions = new Map<string, string>()
 
 /**
- * #512 (cas AAFES #694) : la carte cloud que pose Claude dans un projet `cloud: missions` est une mission. Elle part
+ * #515 : les briefs cloud que le panneau a demandé à Claude de poser, après le refus de sa carte, par tâche
+ * (`<projet>|<id>`) : la carte que Claude pose pour cette tâche part en cloud avec ce brief, mot pour mot.
+ */
+const pendingClouds = new Map<string, string>()
+
+/**
+ * #515 : la carte que pose Claude pour un ▶ Cloud refusé au panneau : cible cloud, contexte neuf, et le brief que le
+ * panneau a écrit (`cloudBriefText`) à la place du sien. Rien en attente pour ce #N : `undefined`, la carte suit le
+ * chemin de toute carte du modèle.
+ */
+async function cloudCardOf($: EngineInterface, e: unknown): Promise<{ card: Record<string, unknown>; key: string } | undefined> {
+  const card = e as Record<string, unknown>
+  if (pendingClouds.size === 0 || typeof card.title !== 'string' || card.proposal_id !== undefined) return undefined
+  const id = sessionTitleId(card.title)
+  if (id === undefined) return undefined
+  try {
+    const source = await sourceNow($)
+    if (!source) return undefined
+    const key = pendingKey(source, id)
+    const prompt = pendingClouds.get(key)
+    return prompt === undefined ? undefined : { card: { ...card, target: 'cloud', context: 'fresh', prompt }, key }
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * #512 (cas AAFES #694) : la carte cloud que pose Claude pour une tâche de travail `projet` (#508) est une mission. Elle part
  * avec la consigne que le panneau a demandée, sinon avec la sienne si elle porte le rappel « #N · retour » (Maestro,
  * `mission_cloud.py carte`), sinon avec celle de la ligne (`missionCardPrompt`) : jamais un brief rédigé par Claude,
  * ni bloc de réglages, ni `permission_mode`. Pas une mission (projet, cible Mac, ligne absente) : `undefined`.
@@ -2837,13 +3049,14 @@ async function missionCardOf($: EngineInterface, e: unknown): Promise<{ card: Re
   if (id === undefined) return undefined
   try {
     const source = await sourceNow($)
-    if (!source || projectSettings(source).cloud !== 'missions') return undefined
+    // #508 : la nature dit la mission (projet, ou ligne `travail:projet` d'un hybride), plus `cloud: missions` seul.
+    if (!source || natureOf(source) === 'code') return undefined
     const pending = pendingMissions.get(pendingKey(source, id))
     if (pending === undefined && cardTargetOf(card) !== 'cloud') return undefined
     const open = await load($, files(source).open, 'ROADMAP.md')
     if (typeof open === 'string') return undefined
     const task = open.find(t => t.id === id && !t.done)
-    if (!task || isRoutine(task)) return undefined
+    if (!task || isRoutine(task) || taskWork(source, task) !== 'projet') return undefined
     const prompt = pending ?? (isMissionPrompt(card.prompt, id) ? card.prompt : missionCardPrompt({ project: source.name, id, label: task.label }))
     const { permission_mode: _, ...rest } = card
     return { card: { ...rest, target: 'cloud', context: 'fresh', prompt }, source, id }
@@ -2902,17 +3115,18 @@ async function recoCardRefusal($: EngineInterface, e: unknown): Promise<string |
   if (id === undefined) return undefined
   try {
     const source = await sourceNow($)
-    if (!source || !cloudOpen(source) || projectSettings(source).cloud === 'missions') return undefined
+    if (!source) return undefined
     const open = await load($, files(source).open, 'ROADMAP.md')
     if (typeof open === 'string') return undefined
     const task = open.find(t => t.id === id && !t.done)
-    if (!task || isRoutine(task)) return undefined
+    // Une mission (tâche de projet) n'a pas de reco de lieu à contredire.
+    if (!task || isRoutine(task) || taskWork(source, task) === 'projet') return undefined
     await loadRecoCache($, source)
     const found = await briefFound($, source, task)
     const docs: string[] = []
     for (const doc of briefDocs(source, task, found)) docs.push((await readOr($, doc)) ?? '')
-    const reco = judgedReco(task, recoCache.cache, task.spec || task.fiche ? docs : undefined, { projet: projectSettings(source).travail === 'projet' })
-    const title = card.title.replace(/ · (?:cloud|Mac)$/, '')
+    const reco = judgedReco(task, recoCache.cache, task.spec || task.fiche ? docs : undefined, { projet: false })
+    const title = card.title.replace(/ · (?:cloud|local|Mac)$/, '')
     // #479 : le lieu choisi dans le panneau, que dit le brief du ▶ passé par Claude, l'emporte sur la reco.
     const chosen = panelChoiceIn(card.prompt)
     return recoTargetRefusal({ id, cardTarget: cardTargetOf(card), reco: reco.lieu, why: reco.why, title, branch: cloudBranchOf(task), ...(chosen ? { chosen } : {}) })
@@ -2933,7 +3147,7 @@ async function noteNativeCard($: EngineInterface, title: unknown, posted?: { tar
     if (!source) return
     // #465 : la carte en attente de Start, son lieu et son identifiant, pour qu'un départ ailleurs la retire.
     if (posted) pendingCards.set(pendingKey(source, id), { target: posted.target, ...(proposalIdIn(posted.text) ? { proposal: proposalIdIn(posted.text)! } : {}) })
-    const stored = await $.store.get(NATIVE_KEY).catch(() => undefined)
+    const stored = await storeGet($, NATIVE_KEY).catch(() => undefined)
     await storeSet($, NATIVE_KEY, keepNative(stored, `${source.root ?? source.dir}|${id}`) as StoreValue)
     await update($, retryAtom, v => v + 1)
   } catch {
@@ -2986,7 +3200,7 @@ async function ownIsMaestro($: EngineInterface, own: { id: string | undefined; t
   if (!own.id || listDenied) return named
   try {
     toolCalls++
-    const ran = await $.tool.call({ tool: LIST_SESSIONS_TOOL, limit: LIST_LIMIT })
+    const ran = await sessionRead($, { tool: LIST_SESSIONS_TOOL, limit: LIST_LIMIT })
     if (ran.deny !== undefined || ran.isError) return named
     const listedRows: unknown = JSON.parse(ran.text ?? '[]')
     if (!Array.isArray(listedRows)) return named
@@ -3001,7 +3215,7 @@ async function ownIsMaestro($: EngineInterface, own: { id: string | undefined; t
 /** Les marques Maestro (identifiant → dernier « Maestro ») ; store illisible : aucune. */
 async function loadMaestros($: EngineInterface): Promise<Record<string, number>> {
   try {
-    const stored = await $.store.get(MAESTROS_KEY)
+    const stored = await storeGet($, MAESTROS_KEY)
     if (typeof stored !== 'object' || stored === null || Array.isArray(stored)) return {}
     return Object.fromEntries(Object.entries(stored).filter((e): e is [string, number] => typeof e[1] === 'number'))
   } catch {
@@ -3052,7 +3266,7 @@ async function nameMaestro($: EngineInterface): Promise<string | undefined> {
 
 /** Les propositions gardées pour les Maestros ; seules les entrées bien formées comptent. */
 async function loadProposals($: EngineInterface): Promise<MaestroProposal[]> {
-  const stored = await $.store.get(PROPOSALS_KEY)
+  const stored = await storeGet($, PROPOSALS_KEY)
   if (!Array.isArray(stored)) return []
   return stored.filter((p): p is MaestroProposal => {
     const v = p as Partial<MaestroProposal> | null
@@ -3067,11 +3281,11 @@ async function loadProposals($: EngineInterface): Promise<MaestroProposal[]> {
  */
 async function rootMaestroAndSelf($: EngineInterface): Promise<{ maestro: { id: string; title: string }; self: { sessionId?: unknown; title?: unknown } } | undefined> {
   try {
-    const selfRan = await $.tool.call({ tool: GET_SESSION_TOOL, session_id: 'self' })
+    const selfRan = await sessionRead($, { tool: GET_SESSION_TOOL, session_id: 'self' })
     if (selfRan.deny !== undefined || selfRan.isError) return undefined
     const self = JSON.parse(selfRan.text ?? '') as { sessionId?: unknown; title?: unknown; parentSessionId?: unknown } | undefined
     if (typeof self?.parentSessionId !== 'string') return undefined
-    const listRan = await $.tool.call({ tool: LIST_SESSIONS_TOOL, linked: true, include_archived: true, limit: LIST_LIMIT })
+    const listRan = await sessionRead($, { tool: LIST_SESSIONS_TOOL, linked: true, include_archived: true, limit: LIST_LIMIT })
     if (listRan.deny !== undefined || listRan.isError) return undefined
     const rows: unknown = JSON.parse(listRan.text ?? '[]')
     const maestro = maestroParentOf(self, Array.isArray(rows) ? rows : [], new Set(Object.keys(await loadMaestros($))))
@@ -3106,7 +3320,7 @@ async function startFromCard($: EngineInterface, source: Source, id: string, sho
     const task = tasks.find(t => t.id === id && !t.done)
     if (!task) return
     // #479 : Start part au lieu que dit la carte ; le cloud ne prend pas de place au Mac, donc pas de file de Maestro.
-    if (cloudOpen(source) && !isRoutine(task) && launchTargetOf(source, task) === 'cloud') {
+    if (!isRoutine(task) && launchTargetOf(source, task) === 'cloud') {
       await launchCloud($, source, task, shortTitle)
       if (!(await read($, viewAtom)).launchNote.startsWith('Lancement en cloud impossible')) cardStarts.set(key, { state: 'proposed' })
       return
@@ -3258,7 +3472,7 @@ let noParent = false
  */
 async function ownParent($: EngineInterface): Promise<{ id: string; parent: string } | undefined> {
   if (noParent) return undefined
-  const ran = await $.tool.call({ tool: GET_SESSION_TOOL, session_id: 'self' })
+  const ran = await sessionRead($, { tool: GET_SESSION_TOOL, session_id: 'self' })
   if (ran.deny !== undefined || ran.isError) return undefined
   const me = JSON.parse(ran.text ?? '') as { sessionId?: unknown; parentSessionId?: unknown; detached?: unknown }
   if (typeof me.sessionId !== 'string') return undefined
@@ -3285,7 +3499,7 @@ async function parentIsMaestro($: EngineInterface): Promise<boolean> {
   try {
     const me = await ownParent($)
     if (!me) return false
-    const ran = await $.tool.call({ tool: GET_SESSION_TOOL, session_id: me.parent })
+    const ran = await sessionRead($, { tool: GET_SESSION_TOOL, session_id: me.parent })
     const title = ran.deny === undefined && !ran.isError ? sessionTitleIn(ran.text ?? '') : ''
     parentMaestro = await ownIsMaestro($, { id: me.parent, title })
   } catch {
@@ -3347,7 +3561,7 @@ async function tellMaestro($: EngineInterface, said: ChildWake | (() => Promise<
     if (wake.key === toldMaestro) return
     const me = await ownParent($)
     if (!me) return
-    const ran = await $.tool.call({ tool: GET_SESSION_TOOL, session_id: 'self' })
+    const ran = await sessionRead($, { tool: GET_SESSION_TOOL, session_id: 'self' })
     const fiche = ran.deny === undefined && !ran.isError ? (JSON.parse(ran.text ?? '{}') as { title?: unknown; branch?: unknown }) : {}
     const child = {
       id: me.id,
@@ -3412,7 +3626,7 @@ function noteChild($: EngineInterface, change: (s: ChildStatus, now: number) => 
       const me = await ownParent($)
       if (!me) return
       const key = `${CHILD_STATUS_PREFIX}${me.id}`
-      const prev = childStatusOf(await $.store.get(key)) ?? { steps: [], at: 0 }
+      const prev = childStatusOf(await storeGet($, key)) ?? { steps: [], at: 0 }
       const now = await $.clock.now()
       const changed = change(prev, now)
       if (changed === prev) return
@@ -3444,13 +3658,19 @@ async function gitIn($: EngineInterface, cwd: string, ...args: string[]): Promis
   return { code: ran.exitCode, out: ran.stdout }
 }
 
+/** Comme `gitIn`, mais gardé entre deux outils (`gitOnce`, #523) : pour le dépôt de la session, pas pour les dossiers des enfants. */
+async function gitInOnce($: EngineInterface, cwd: string, ...args: string[]): Promise<{ code: number; out: string }> {
+  const ran = await gitOnce($, ['--no-optional-locks', '-C', cwd, ...args], { timeoutMs: GIT_TIMEOUT_MS })
+  return { code: ran.exitCode, out: ran.stdout }
+}
+
 /**
  * Ce que dit la fiche d'un enfant pour juger son dossier : distante ou locale (`undefined` : fiche
  * illisible), et sa branche de base, celle d'où l'app a tiré son worktree (`main` sans elle).
  */
 async function childFiche($: EngineInterface, id: string): Promise<{ remote?: boolean; base: string }> {
   try {
-    const ran = await $.tool.call({ tool: GET_SESSION_TOOL, session_id: id })
+    const ran = await sessionRead($, { tool: GET_SESSION_TOOL, session_id: id })
     if (ran.deny !== undefined || ran.isError) return { base: 'main' }
     const fiche = JSON.parse(ran.text ?? '') as { isRemote?: unknown; sourceBranch?: unknown }
     return {
@@ -3550,7 +3770,7 @@ async function finishedFacts(
  */
 async function childAlertContext($: EngineInterface): Promise<string | undefined> {
   // Les archivées comprises : le filet de #124 voit un enfant archivé avant la clôture de sa ligne.
-  const listed = await $.tool.call({ tool: LIST_SESSIONS_TOOL, linked: true, include_archived: true, limit: LIST_LIMIT })
+  const listed = await sessionRead($, { tool: LIST_SESSIONS_TOOL, linked: true, include_archived: true, limit: LIST_LIMIT })
   if (listed.deny !== undefined || listed.isError) return undefined
   const rows: unknown = JSON.parse(listed.text ?? '[]')
   if (!Array.isArray(rows)) return undefined
@@ -3580,7 +3800,7 @@ async function childAlertContext($: EngineInterface): Promise<string | undefined
       const done = await load($, files(source).done, 'ROADMAP-fait.md')
       // #395 : le `fait:` de chaque ligne close, pour voir une session qui reprend après la clôture.
       const fait = new Map(typeof done === 'string' ? [] : done.flatMap(t => (t.id ? [[t.id, t.fait] as const] : [])))
-      return { open: ids(open), done: ids(done), fait, ...(source.mode ? { mode: source.mode } : {}), match: source.match, attend, me: [...source.me] }
+      return { open: ids(open), done: ids(done), fait, ...(forcedWork(source) ? { mode: forcedWork(source) } : {}), match: source.match, attend, me: [...source.me] }
     })()
     return known
   }
@@ -3591,7 +3811,7 @@ async function childAlertContext($: EngineInterface): Promise<string | undefined
   await Promise.all(
     children.map(async child => {
       try {
-        statuses[child.id] = childStatusOf(await $.store.get(`${CHILD_STATUS_PREFIX}${child.id}`))
+        statuses[child.id] = childStatusOf(await storeGet($, `${CHILD_STATUS_PREFIX}${child.id}`))
       } catch {
         statuses[child.id] = undefined
       }
@@ -3604,7 +3824,7 @@ async function childAlertContext($: EngineInterface): Promise<string | undefined
     }),
   )
   const alertedKey = `${CHILD_ALERTED_PREFIX}${id}`
-  const stored = await $.store.get(alertedKey)
+  const stored = await storeGet($, alertedKey)
   const alerted: Record<string, ChildRelaunch> = {}
   if (typeof stored === 'object' && stored !== null) {
     for (const [k, v] of Object.entries(stored as Record<string, unknown>)) {
@@ -3705,23 +3925,34 @@ let childNotesPurged = false
 
 /**
  * Les notes `child-status:` et `child-alerted:` d'une session archivée resteraient pour toujours (#90) :
- * une note sans écriture depuis 30 jours sort, illisible aussi ; des relances sortent quand la plus
- * récente attente relancée a plus de 30 jours.
+ * une note sans écriture depuis une semaine (`CHILD_NOTE_MAX_MS`, #518) sort, illisible aussi ; des relances
+ * sortent quand la plus récente attente relancée a plus d'une semaine. Le même passage retire ce que le store
+ * n'a plus à porter (#518) : le journal de la sonde coupée (`surface-log`), et les relevés `timing:` et
+ * `changes:` du projet de cette session dont la tâche n'est plus ouverte ni close depuis moins de 14 jours.
  */
 async function purgeChildNotes($: EngineInterface): Promise<void> {
   if (childNotesPurged) return
   childNotesPurged = true
   const now = await $.clock.now()
-  const fresh = (at: unknown) => typeof at === 'number' && now - at <= CHILD_NOTE_MAX_MS
-  for (const key of await $.store.keys()) {
+  const fresh = (at: unknown) => !childNoteStale(at, now)
+  const keys = await $.store.keys()
+  for (const key of keys) {
     if (key.startsWith(CHILD_STATUS_PREFIX)) {
-      if (!fresh(childStatusOf(await $.store.get(key))?.at)) await storeDelete($, key)
+      if (!fresh(childStatusOf(await storeGet($, key))?.at)) await storeDelete($, key)
     } else if (key.startsWith(CHILD_ALERTED_PREFIX)) {
-      const value = await $.store.get(key)
+      const value = await storeGet($, key)
       const ats = typeof value === 'object' && value !== null ? Object.values(value).map(v => (v as { at?: unknown } | null)?.at) : []
       if (!ats.some(fresh)) await storeDelete($, key)
+    } else if (key === SURFACE_LOG_KEY) {
+      await storeDelete($, key)
     }
   }
+  const source = capture?.source
+  if (!source) return
+  const [open, done] = await Promise.all([loadParsed($, files(source).open, 'ROADMAP.md'), loadParsed($, files(source).done, 'ROADMAP-fait.md')])
+  // Une roadmap illisible ne juge rien : sans elle, toutes les clés passeraient pour périmées.
+  if (typeof open === 'string' || typeof done === 'string') return
+  for (const key of staleTaskKeys(keys, source.name, [...open, ...done], now)) await storeDelete($, key)
 }
 
 /**
@@ -3820,7 +4051,7 @@ async function addedLinesNote($: EngineInterface, added: Task[]): Promise<string
 const IGNORED_KEY = 'live-ignored'
 
 async function loadIgnored($: EngineInterface): Promise<Record<string, string[]>> {
-  const stored = await $.store.get(IGNORED_KEY)
+  const stored = await storeGet($, IGNORED_KEY)
   if (typeof stored !== 'object' || stored === null) return {}
   const out: Record<string, string[]> = {}
   for (const [k, v] of Object.entries(stored as Record<string, unknown>)) {
@@ -4116,30 +4347,14 @@ async function refreshSessions($: EngineInterface, source: Source, fast: boolean
   noteRefresh({ fast, totalMs: t2 - t0, listMs: t1 - t0, probeMs: t2 - t1, calls: toolCalls })
 }
 
-// ── La sonde de visibilité (#337, préalable d'O12) ─────────────────────────────
+// ── La sonde de visibilité (#337, préalable d'O12) : coupée (#518) ────────────────
 
 /**
- * Le journal des surfaces de l'app vues par chaque session (`surface-log`, toutes sessions confondues, les
- * `SURFACE_LOG_ROWS` dernières lignes) : une arrivée (`session.attach`), un départ (`session.detach`), et au
- * pas complet de 15 s les surfaces que dit `$.session.surfaces()` quand elles ont changé. Il dira, dans
- * l'app, si une session prévient le plugin quand elle quitte l'écran : la condition d'O12.
+ * Le journal des surfaces de l'app (`surface-log`) a dit ce qu'il devait (#348 : le repos d'une session cachée
+ * s'appuie dessus) ; il réécrivait le store entier à chaque arrivée, départ et changement de surface. Coupé
+ * (#518) : sa clé sort du store au premier message (`purgeChildNotes`).
  */
 const SURFACE_LOG_KEY = 'surface-log'
-const SURFACE_LOG_ROWS = 60
-type SurfaceRow = { at: number; session?: string; event: 'attach' | 'detach' | 'tick'; surface?: string; reason?: string; surfaces?: string[] }
-let surfacesSeen: string | undefined
-
-async function noteSurface($: EngineInterface, row: Omit<SurfaceRow, 'at' | 'session'>): Promise<void> {
-  try {
-    const own = await readOwnSession($)
-    const stored = await $.store.get(SURFACE_LOG_KEY)
-    const rows = Array.isArray(stored) ? (stored as SurfaceRow[]) : []
-    const next = [...rows, { at: await $.clock.now(), ...(own.id ? { session: own.id } : {}), ...row }]
-    await storeSet($, SURFACE_LOG_KEY, next.slice(-SURFACE_LOG_ROWS))
-  } catch {
-    // store ou fiche illisible : la sonde se tait, rien d'autre ne change
-  }
-}
 
 // ── Le repos d'une session cachée (#348, O12 de l'audit #337) ─────────────────
 
@@ -4180,14 +4395,9 @@ function wake($: EngineInterface): void {
   else void poll($)
 }
 
-/** Les surfaces de cette session, notées au journal quand elles ont changé depuis le dernier pas complet. */
+/** Les surfaces de cette session, relues au pas complet : elles mettent la session au repos ou l'en sortent (#348). */
 async function noteSurfacesSeen($: EngineInterface): Promise<void> {
-  const surfaces = await readVisibility($)
-  if (!surfaces) return
-  const seen = JSON.stringify(surfaces)
-  if (seen === surfacesSeen) return
-  surfacesSeen = seen
-  await noteSurface($, { event: 'tick', surfaces })
+  await readVisibility($)
 }
 
 async function refresh($: EngineInterface): Promise<void> {
@@ -4487,7 +4697,7 @@ function globalQueueOf(value: unknown): GlobalQueued[] {
 }
 
 async function readGlobalQueue($: EngineInterface): Promise<GlobalQueued[]> {
-  return globalQueueOf(await $.store.get(LAUNCH_QUEUE_KEY).catch(() => undefined))
+  return globalQueueOf(await storeGet($, LAUNCH_QUEUE_KEY).catch(() => undefined))
 }
 
 /** Les sessions que la liste donne pour archivées : leurs entrées de la file n'ont plus de Maestro pour les lancer. */
@@ -4565,7 +4775,7 @@ function doseProject(): { project: string; match: string[]; name: string } {
 /** La file de #324 de ce Maestro, versée une fois dans la file commune, puis effacée. */
 async function migrateOldQueue($: EngineInterface, ownId: string): Promise<void> {
   const oldKey = `${LAUNCH_QUEUE_PREFIX}${ownId}`
-  const old = queuedOf(await $.store.get(oldKey).catch(() => undefined))
+  const old = queuedOf(await storeGet($, oldKey).catch(() => undefined))
   if (old.length === 0 || !knownSource) return
   const tasks = await load($, files(knownSource).open, 'ROADMAP.md')
   const after = prereqsIn(typeof tasks === 'string' ? [] : tasks)
@@ -4585,7 +4795,7 @@ function queuedOf(value: unknown): QueuedLaunch[] {
 type DoseCard = { title: string; at: number; project: string }
 
 async function doseCards($: EngineInterface, now: number): Promise<DoseCard[]> {
-  const stored: unknown = await $.store.get(LAUNCH_CARDS_KEY).catch(() => undefined)
+  const stored: unknown = await storeGet($, LAUNCH_CARDS_KEY).catch(() => undefined)
   if (!Array.isArray(stored)) return []
   return stored.filter((c): c is DoseCard => !!c && typeof c.title === 'string' && typeof c.at === 'number' && now - c.at < doseIdleMs()).map(c => ({ ...c, project: typeof c.project === 'string' ? c.project : '' }))
 }
@@ -4655,7 +4865,7 @@ function failedEntry(q: GlobalQueued, at: number, reason: string, remote = false
 
 /** Les pauses du store (#367) : `session-pauses`, les valeurs mal formées ignorées. */
 export async function readPauses($: EngineInterface): Promise<Record<string, SessionPause>> {
-  return sessionPausesOf(await $.store.get(SESSION_PAUSES_KEY).catch(() => undefined))
+  return sessionPausesOf(await storeGet($, SESSION_PAUSES_KEY).catch(() => undefined))
 }
 
 /** Pose (ou, sans `p`, ôte) la pause d'une session (#367) : la clé relue juste avant, écrite par `storeSet`, effacée quand elle se vide. */
@@ -4680,7 +4890,7 @@ async function doseState($: EngineInterface, now: number, read?: Record<string, 
   for (const raw of rows) {
     const r = raw as { sessionId?: unknown; title?: unknown; isRunning?: unknown }
     if (typeof r.sessionId === 'string' && typeof r.title === 'string' && r.isRunning !== true && sessionTitleId(r.title) !== undefined) {
-      statuses.set(r.sessionId, childStatusOf(await $.store.get(`${CHILD_STATUS_PREFIX}${r.sessionId}`).catch(() => undefined)))
+      statuses.set(r.sessionId, childStatusOf(await storeGet($, `${CHILD_STATUS_PREFIX}${r.sessionId}`).catch(() => undefined)))
     }
   }
   const marks = new Set(Object.keys(await loadMaestros($)))
@@ -4776,7 +4986,7 @@ async function releaseBrief($: EngineInterface, head: GlobalQueued, source: Sour
     background: brief.background,
     ...(effort ? { effort } : {}),
     ...(model ? { model } : {}),
-    travail: projectSettings(source).travail,
+    travail: taskWork(source, task),
     bypass,
   }
 }
@@ -4861,7 +5071,7 @@ async function pickVictim(
   const gate = gateFor(state, first.project, first.match)
   if (gate.go) return undefined
   const mine = doseProject()
-  const marks = prioMarksOf(await $.store.get(PRIO_MARKS_KEY).catch(() => undefined))
+  const marks = prioMarksOf(await storeGet($, PRIO_MARKS_KEY).catch(() => undefined))
   const heavyQueue = await readQueue($)
   const heavy = new Set([...(heavyQueue?.owners.map(o => o.branch) ?? []), ...(heavyQueue?.waiting.map(w => w.branch) ?? [])])
   const known = [{ project: mine.project, match: mine.match }, ...queue.map(e => ({ project: e.project, match: e.match }))]
@@ -4905,7 +5115,7 @@ function controlDeps($: EngineInterface): ControlDeps {
     writePause: (sessionId, p) => writePause($, sessionId, p),
     queue: () => readGlobalQueue($),
     writeQueue: next => storeSet($, LAUNCH_QUEUE_KEY, next as unknown as StoreValue),
-    marks: async () => prioMarksOf(await $.store.get(PRIO_MARKS_KEY).catch(() => undefined)),
+    marks: async () => prioMarksOf(await storeGet($, PRIO_MARKS_KEY).catch(() => undefined)),
     writeMarks: next => (next.length === 0 ? storeDelete($, PRIO_MARKS_KEY) : storeSet($, PRIO_MARKS_KEY, next)),
     ownPrio: async () => {
       const source = await ownSource()
@@ -5438,7 +5648,7 @@ async function turnOffChildRemote($: EngineInterface): Promise<void> {
     const now = await $.clock.now()
     if (!remoteOffAllowed((await readRemoteFacts($, now)).mode)) return
     if (remoteOffMemo === undefined) {
-      const stored: unknown = await $.store.get(key).catch(() => undefined)
+      const stored: unknown = await storeGet($, key).catch(() => undefined)
       remoteOffMemo = stored && typeof stored === 'object' ? (stored as RemoteOffMemo) : {}
     }
     const targets = remoteControlOffTargets(lastListRows, ownId, remoteOffMemo, now)
@@ -5480,6 +5690,8 @@ async function poll($: EngineInterface): Promise<void> {
     pollTick++
     // #474 : la garde des cartes cloud, qui ne dépend d'aucune autre étape du pas (elle ne lève jamais).
     await checkCloudWatches($)
+    // #496 : le réveil de Maestro par le dernier commentaire d'une PR cloud (il ne lève jamais).
+    await checkCloudWake($)
     if (resting) {
       // Au repos (#348) : la file de lancement de Maestro avance quand même ; le reste attend sa minute.
       await checkZones($)
@@ -5526,7 +5738,7 @@ async function poll($: EngineInterface): Promise<void> {
  */
 /** Le brief d'un lancement : la vérification, la routine ou le travail, avec le « Message additionnel » (#324 : la relève le rejoue). */
 async function briefOf($: EngineInterface, source: Source, task: Task, shortTitle: string, extra = '', kind = '', routineClosed = false): Promise<{ title: string; prompt: string; background: string }> {
-  const projet = projectSettings(source).travail === 'projet'
+  const projet = taskWork(source, task) === 'projet'
   const base =
     kind === 'check'
       ? checkBrief(source, task, shortTitle, !projet || (await isGitDir($, source.dir)), await briefFound($, source, task))
@@ -5534,7 +5746,7 @@ async function briefOf($: EngineInterface, source: Source, task: Task, shortTitl
         ? routineBrief(source, task, shortTitle, { today: todayOf(await $.clock.now()), closed: routineClosed, found: await briefFound($, source, task) })
         : await workBrief($, source, task, shortTitle)
   // #416 : la carte d'une session du Mac dit la cible et la reco.
-  const noted = kind === '' && cloudOpen(source) ? { ...base, prompt: withTargetNote(base.prompt, 'mac', recoOf(source, task)) } : base
+  const noted = kind === '' ? { ...base, prompt: withTargetNote(base.prompt, 'mac', recoOf(source, task)) } : base
   return extra.trim() === '' ? noted : { ...noted, prompt: `${noted.prompt}\n\nMessage additionnel :\n${extra.trim()}` }
 }
 
@@ -5548,20 +5760,13 @@ const recoReading = new Set<string>()
 /** La cible que BBR a posée sur l'interrupteur, par tâche ; absente, la reco. */
 const launchTargets = new Map<string, Sessions>()
 
-/** Le cloud est ouvert au projet (`sessions: "cloud"` de roadmap.json, #408) : sans lui, ni reco ni interrupteur. */
-const cloudOpen = (source: Source): boolean => {
-  const settings = projectSettings(source)
-  // #476 : un projet en missions a son Cloud ouvert sans `sessions: "cloud"`.
-  return settings.sessions === 'cloud' || settings.cloud === 'missions'
-}
-
 const recoSig = (task: Task) => `${task.label}|${task.spec ?? ''}|${task.fiche ?? ''}`
 
 /** La reco d'une tâche : le verdict du modèle s'il est à jour (#430), sinon la règle, avec ses documents s'ils sont lus. */
 function recoOf(source: Source, task: Task): JudgedReco {
   const kept = recoDocs.get(taskKey(task))
   const docs = kept && kept.sig === recoSig(task) ? kept.docs : undefined
-  return judgedReco(task, recoCache.cache, docs, { projet: projectSettings(source).travail === 'projet' })
+  return judgedReco(task, recoCache.cache, docs, { projet: taskWork(source, task) === 'projet' })
 }
 
 // --- La reco jugée par le modèle (#430) ---------------------------------------------------------------
@@ -5620,7 +5825,7 @@ const judgeAsked = new Set<string>()
 function askJudge($: EngineInterface, source: Source, task: Task): void {
   const asked = `${recoKeyOf(task)}|${task.label}`
   // #492 : un projet sans code n'a jamais de lieu jugé ; sa charge jugée suffit.
-  const judged = projectSettings(source).travail === 'projet' ? judgedCharge(task, recoCache.cache).by === 'model' : recoOf(source, task).by === 'model'
+  const judged = taskWork(source, task) === 'projet' ? judgedCharge(task, recoCache.cache).by === 'model' : recoOf(source, task).by === 'model'
   if (judgeAsked.has(asked) || judged) return
   judgeAsked.add(asked)
   void judgeRecos($, source)
@@ -5632,7 +5837,6 @@ function askJudge($: EngineInterface, source: Source, task: Task): void {
  * la charge (son lieu reste le Mac) ; un appel en cours en reprend un second après lui.
  */
 async function judgeRecos($: EngineInterface, source: Source): Promise<void> {
-  if (!cloudOpen(source) && projectSettings(source).travail !== 'projet') return
   if (judging) {
     judgeAgain = true
     return
@@ -5704,7 +5908,6 @@ function loadRecoDocs($: EngineInterface, source: Source, task: Task): void {
 
 /** La cible posée sur l'interrupteur d'une tâche, sinon sa reco. */
 function launchTargetOf(source: Source, task: Task): Sessions {
-  if (!cloudOpen(source)) return 'mac'
   return launchTargets.get(taskKey(task)) ?? recoOf(source, task).lieu
 }
 
@@ -5751,7 +5954,7 @@ async function launchCloud($: EngineInterface, source: Source, task: Task, short
     if (startRefused !== undefined) return void (await fail(startRefused))
     const { open } = files(source)
     // #476 : un projet `cloud: missions` lance une mission : ni branche, ni PR, ni brief de dépôt.
-    const mission = projectSettings(source).cloud === 'missions'
+    const mission = taskWork(source, task) === 'projet'
     const branch = mission ? MISSION_QUI : cloudBranchOf(task)
     const take = (text: string, today: string) => (mission ? takeMissionLine(text, task.id!, today) : takeCloudLine(text, task.id!, branch, today))
     const taken = take(await $.fs.read(open), todayOf(await $.clock.now()))
@@ -5811,6 +6014,15 @@ async function launchCloud($: EngineInterface, source: Source, task: Task, short
     // #465 : l'app qui ne répond pas ne laisse pas la fiche sur « Lancement… » : rien n'est parti, elle le dit.
     const posted = await withinMs($, proposeCard($, card, []), CARD_DEADLINE_MS)
     if (posted === 'late') return void (await fail(CARD_LATE_WHY))
+    // #515 (constat sur #487, 0.286.1) : hors Bypass, l'app refuse la carte d'un mod (« needs a person's approval ») ;
+    // comme le ▶ Mac (#248) et la mission (#512), la carte passe alors par Claude, son brief imposé mot pour mot, avec
+    // la cible choisie (la reco ne la retient pas, #479), et la ligne se prend au départ de la session (#474).
+    if ((posted.ran.deny !== undefined || posted.ran.isError) && isPanelOnlyRefusal(cardReason(posted.ran))) {
+      const asked = withTargetNote(prompt, 'cloud', recoOf(source, task))
+      pendingClouds.set(pendingKey(source, task.id), asked)
+      queueSubmit($, cloudAskText({ title: targetTitle(brief.title, 'cloud'), id: task.id, branch, prompt: asked, background: card.background }))
+      return void (await setView($, () => ({ launchNote: cloudViaClaudeNote() })))
+    }
     if (posted.ran.deny !== undefined || posted.ran.isError) return void (await fail(cardReason(posted.ran)))
     // #452 : « Nothing was proposed » sous Remote Control n'est ni deny ni isError : aucune carte, la ligne reste libre.
     if (cardNotProposed(posted.ran)) return void (await fail(remoteCardWhy()))
@@ -5857,7 +6069,7 @@ async function watchCloudCard($: EngineInterface, id: string, prompt: unknown): 
     const heads = await remoteHeadsOf($, repo, [branch])
     const now = await $.clock.now()
     const entry: CloudWatch = { key: `${root}|${id}`, root, id, branch, repo, base: heads?.[branch] ?? '', at: now, checkedAt: now }
-    await storeSet($, CLOUD_WATCH_KEY, addWatch(watchList(await $.store.get(CLOUD_WATCH_KEY).catch(() => undefined)), entry) as unknown as StoreValue)
+    await storeSet($, CLOUD_WATCH_KEY, addWatch(watchList(await storeGet($, CLOUD_WATCH_KEY).catch(() => undefined)), entry) as unknown as StoreValue)
     cloudWatchArmed = true
     cloudWatchLoaded = true
     cloudWatchNextAt = now + CLOUD_WATCH_EVERY_MS
@@ -5880,7 +6092,7 @@ async function checkCloudWatches($: EngineInterface): Promise<void> {
     cloudWatchNextAt = now + CLOUD_WATCH_EVERY_MS
     cloudWatchLoaded = true
     const root = source.root ?? source.dir
-    const { due, kept } = dueWatches(watchList(await $.store.get(CLOUD_WATCH_KEY).catch(() => undefined)), now)
+    const { due, kept } = dueWatches(watchList(await storeGet($, CLOUD_WATCH_KEY).catch(() => undefined)), now)
     cloudWatchArmed = kept.length > 0
     const mine = due.filter(w => w.root === root)
     if (mine.length === 0) return
@@ -5898,7 +6110,7 @@ async function checkCloudWatches($: EngineInterface): Promise<void> {
       }
     }
     if (done.size === 0) return
-    const left = watchList(await $.store.get(CLOUD_WATCH_KEY).catch(() => undefined)).filter(w => !done.has(w.key))
+    const left = watchList(await storeGet($, CLOUD_WATCH_KEY).catch(() => undefined)).filter(w => !done.has(w.key))
     await storeSet($, CLOUD_WATCH_KEY, left as unknown as StoreValue)
     cloudWatchArmed = left.length > 0
     await update($, liveVersionAtom, v => v + 1)
@@ -5923,6 +6135,88 @@ async function takeWatchedLine($: EngineInterface, source: Source, w: CloudWatch
   return !('error' in wrote)
 }
 
+// --- Maestro réveillé par le cloud (#496) ---------------------------------------------------------------------------
+// L'app réveille Maestro quand une session du Mac finit un tour, jamais pour une session cloud, qui ne lui parle que par
+// les commentaires de sa PR (essai #503). Le panneau de la session Maestro lit, une fois par minute au plus et toutes
+// sessions confondues (store `cloud-wake`, par projet), les PR ouvertes des lignes `lieu:cloud`, par un seul `gh` ;
+// le dernier commentaire de l'auteur qui dit « prête à fusionner », « bloquée » ou « attend une réponse » dépose un
+// message dans la boîte d'envoi, que le dessin du panneau vide (un hook, comme `launchOutbox`, #140). Le message vient
+// du plugin, pas d'un clic : il part sans `asUser`, et le moteur l'encadre comme tel.
+
+let cloudWakeNextAt = 0
+let cloudWaking = false
+/** Les marques Maestro, relues au plus une fois par minute (temps réel) : la minuterie de 3 s ne lit pas le store. */
+let cloudWakeMarks: { at: number; ids: Record<string, number> } | undefined
+/** Le message de réveil en attente d'envoi. */
+let wakeOutbox: string | undefined
+
+/** Envoie le réveil en attente, une seule fois : depuis le dessin du panneau, ou le secours. */
+function sendWake($: EngineInterface, text?: string): void {
+  if (wakeOutbox === undefined || (text !== undefined && wakeOutbox !== text)) return
+  const out = wakeOutbox
+  wakeOutbox = undefined
+  void $.prompt.submit({ text: out }).catch(() => undefined)
+}
+
+function queueWake($: EngineInterface, text: string): void {
+  wakeOutbox = text
+  try {
+    $.clock.after(LAUNCH_FALLBACK_MS, () => sendWake($, text))
+  } catch {
+    // horloge refusée : le prochain dessin du panneau l'envoie seul
+  }
+}
+
+/** Cette session est Maestro : par son titre, sinon par sa marque (relue au plus une fois par minute). */
+async function isMaestroHere($: EngineInterface): Promise<boolean> {
+  const own = ownSession
+  if (!own) return false
+  if (isMaestroSession(own.title)) return true
+  if (own.id === undefined) return false
+  if (!cloudWakeMarks || tick() - cloudWakeMarks.at >= CLOUD_WAKE_EVERY_MS) cloudWakeMarks = { at: tick(), ids: await loadMaestros($) }
+  return cloudWakeMarks.ids[own.id] !== undefined
+}
+
+/** Un pas de la minuterie : dans une session Maestro, une fois par minute au plus, les PR des lignes cloud. */
+async function checkCloudWake($: EngineInterface): Promise<void> {
+  if (cloudWaking || !knownSource || !ownSession) return
+  cloudWaking = true
+  try {
+    if (!(await isMaestroHere($))) return
+    const now = await $.clock.now()
+    // Une horloge revenue en arrière (veille, réglage) ne fige pas la garde.
+    if (now < cloudWakeNextAt && cloudWakeNextAt - now <= CLOUD_WAKE_EVERY_MS) return
+    cloudWakeNextAt = now + CLOUD_WAKE_EVERY_MS
+    // Un envoi attend déjà : rien n'est lu ni marqué vu, la minute suivante réessaie.
+    if (wakeOutbox !== undefined || launchOutbox !== undefined) return
+    const source = knownSource
+    const tasks = await loadParsed($, files(source).open, 'ROADMAP.md')
+    if (typeof tasks === 'string' || !tasks.some(t => !t.done && t.lieu === 'cloud' && t.branche)) return
+    const root = source.root ?? source.dir
+    const stored = await storeGet($, CLOUD_WAKE_KEY).catch(() => undefined)
+    const state = wakeStateOf(stored, root)
+    // Une autre session Maestro du projet a pris cette minute.
+    if (now >= state.at && now - state.at < CLOUD_WAKE_EVERY_MS) return
+    const all = (o: unknown) => (typeof o === 'object' && o !== null && !Array.isArray(o) ? { ...(o as Record<string, unknown>) } : {})
+    await storeSet($, CLOUD_WAKE_KEY, { ...all(stored), [root]: { at: now, seen: state.seen } } as unknown as StoreValue)
+    const repo = await cloudRepoOf($, root, projectSettings(source).depot)
+    if (!repo) return
+    const prs = await runGh($, ['pr', 'list', '-R', repo, '--state', 'open', '--limit', '100', '--json', CLOUD_WAKE_PR_FIELDS])
+    if (prs === undefined) return
+    const { events, seen } = cloudWakes(tasks, prs, state.seen, now)
+    const again = await storeGet($, CLOUD_WAKE_KEY).catch(() => undefined)
+    await storeSet($, CLOUD_WAKE_KEY, { ...all(again), [root]: { at: now, seen } } as unknown as StoreValue)
+    if (events.length === 0) return
+    queueWake($, wakePrompt(events))
+    // Le panneau se redessine et envoie le réveil.
+    await update($, liveVersionAtom, v => v + 1)
+  } catch {
+    // un regard raté : la minute suivante réessaie
+  } finally {
+    cloudWaking = false
+  }
+}
+
 /** La note d'un lancement en cloud réussi : la carte attend Start, la ligne est prise et poussée. */
 const CLOUD_PROPOSED = 'Carte cloud posée : clique Start. La ligne est prise (lieu:cloud).'
 
@@ -5938,10 +6232,10 @@ async function launchSession($: EngineInterface, source: Source, task: Task, sho
   const key = taskKey(task)
   // Le bouton se grise et dit « Lancement… » : une seule écriture.
   await setView($, v => ({ launched: v.launched.includes(key) ? v.launched : [...v.launched, key], launchNote: LAUNCHING }))
-  const projet = projectSettings(source).travail === 'projet'
+  const projet = taskWork(source, task) === 'projet'
   // #490 : le modèle et l'effort de la tâche partent avec le brief, jusqu'à la carte que pose Claude en repli.
   const launch = await taskLaunch($, source, task)
-  const brief = { ...(await briefOf($, source, task, shortTitle, extra, kind, routineClosed)), launch }
+  const brief = { ...(await briefOf($, source, task, shortTitle, extra, kind, routineClosed)), launch, travail: taskWork(source, task) }
   // Un refus net de l'app ou une panne : rien n'est parti, le bouton redevient cliquable.
   const release = () => setView($, v => ({ launched: v.launched.filter(k => k !== key) }))
   // #263 : le titre vient de la ligne, mais une session ouverte (endormie, le ▶ revenu) peut déjà porter son #N.
@@ -6231,11 +6525,11 @@ async function maestroText($: EngineInterface, go: boolean, only?: 'launch' | 's
     })
   }
   const statuses: Record<string, ChildStatus | undefined> = {}
-  for (const f of followed) if (f.id) statuses[f.id] = childStatusOf(await $.store.get(`${CHILD_STATUS_PREFIX}${f.id}`).catch(() => undefined))
+  for (const f of followed) if (f.id) statuses[f.id] = childStatusOf(await storeGet($, `${CHILD_STATUS_PREFIX}${f.id}`).catch(() => undefined))
   const me = ownSession?.id
   const { waiting, running, others } = maestroSplit({ tracked: followed, ...(me ? { me } : {}), openSessions: openSessionIds, statuses, now })
   // #76, #176 : une tâche qu'une autre personne porte (`resp:`) ne se lance pas, elle se relance.
-  const projet = projectSettings(source).travail === 'projet'
+  const projet = taskWork(source) === 'projet'
   // Les candidates de l'axe de la session (#239) ; les sessions, elles, se disent toutes.
   const axis = await sessionAxis($)
   const ready = launchable(open, { prereqOf: prereq, isLive: t => tracked(t) !== undefined, me: source.me }).filter(
@@ -6334,6 +6628,32 @@ async function sessionAxis($: EngineInterface): Promise<string | undefined> {
   return (await read($, maestroAxisAtom).catch(() => '')) || undefined
 }
 
+/** Le plus de caractères de la fiche d'une tâche joints à « why N » (#529). */
+const WHY_FICHE_MAX = 6000
+
+/**
+ * Le contexte de « why N » (#529) : la roadmap que lit le panneau, la fiche de la ligne (un document du projet,
+ * `srcFile`), et pour une ligne ouverte qui a sa branche l'état de sa PR (`readCloudPrs`, gardée 60 s). Une lecture
+ * qui échoue laisse sa part de côté : la tâche s'explique d'après sa ligne.
+ */
+async function whyText($: EngineInterface, id: string): Promise<string> {
+  const data = await brandData($)
+  const base = { id, titleOf: (t: Task) => data?.short(t) ?? t.nom ?? t.label, isLive: (t: Task) => data !== undefined && data.live[liveKeyOf(data.source, t)] !== undefined }
+  const task = data?.tasks.find(t => t.id === id)
+  if (!data || !task) return whyContext({ ...base, tasks: data?.tasks })
+  const { source } = data
+  const fiche = srcFile(task.fiche) ? await $.fs.read(`${source.dir}/${task.fiche!.trim()}`).catch(() => undefined) : undefined
+  const prs = !task.done && task.branche ? await readCloudPrs($, source.root ?? source.dir, projectSettings(source).depot).catch(() => undefined) : undefined
+  const pr = prs !== undefined && task.branche ? cloudPrOf(prs, task.branche).state : undefined
+  return whyContext({
+    ...base,
+    tasks: data.tasks,
+    ...(typeof fiche === 'string' && fiche.trim() !== '' ? { fiche: fiche.length > WHY_FICHE_MAX ? `${fiche.slice(0, WHY_FICHE_MAX)}…` : fiche } : {}),
+    ...(task.lieu === 'cloud' && pr !== undefined && pr !== 'unknown' ? { cloud: pr } : {}),
+    ...(task.lieu !== 'cloud' && prs !== undefined && mergedLocalIds([task], prs).has(id) ? { merged: true } : {}),
+  })
+}
+
 /** Les axes de la roadmap, pour reconnaître « Maestro <axe> » (#239) ; roadmap illisible : aucun. */
 async function knownAxes($: EngineInterface): Promise<string[]> {
   try {
@@ -6347,7 +6667,7 @@ async function knownAxes($: EngineInterface): Promise<string[]> {
 /** Ce que la carte d'accueil a vu sur cette machine ; store illisible : la carte compte pour vue. */
 async function loadWelcomeCard($: EngineInterface): Promise<WelcomeCardSeen | undefined> {
   try {
-    const stored = await $.store.get(WELCOME_CARD_KEY)
+    const stored = await storeGet($, WELCOME_CARD_KEY)
     return typeof stored === 'object' && stored !== null && !Array.isArray(stored) ? (stored as WelcomeCardSeen) : undefined
   } catch {
     return { reachedAt: 0 }
@@ -6423,7 +6743,7 @@ function notePaneDraw($: EngineInterface, kind: 'reachedAt' | 'drawnAt' | 'faile
   paneDrawWrites = withinMs($, paneDrawWrites, PANE_FAILURE_WAIT_MS * 4).then(async () => {
     try {
       const at = await $.clock.now()
-      const stored = await $.store.get(PANE_DRAW_KEY)
+      const stored = await storeGet($, PANE_DRAW_KEY)
       const seen = typeof stored === 'object' && stored !== null && !Array.isArray(stored) ? stored : {}
       const why = failure ? { error: failure.message, kind: failure.kind, stack: (failure.stack ?? '').split('\n').slice(0, 8).join('\n') } : {}
       // Par session (#414) : le sort global vient de la dernière session venue, quelle qu'elle soit.
@@ -6516,12 +6836,11 @@ async function submitWelcome($: EngineInterface, text: string): Promise<void> {
 }
 
 /** Sans outil de lancement utilisable, la demande part à Claude dans la conversation en cours. */
-type LaunchBrief = { title: string; prompt: string; background: string; launch?: { modelId?: string; effort?: string } }
+type LaunchBrief = { title: string; prompt: string; background: string; travail?: Travail; launch?: { modelId?: string; effort?: string } }
 
 async function askClaude($: EngineInterface, brief: LaunchBrief, refusals: readonly string[] = [], note = viaClaudeNote(refusals)): Promise<void> {
   try {
-    const source = await sourceNow($)
-    await submitLaunch($, brief, note, source ? projectSettings(source).travail : 'code')
+    await submitLaunch($, brief, note, brief.travail ?? 'code')
   } catch (err) {
     await setView($, () => ({ launchNote: `Lancement impossible : ${err instanceof Error ? err.message : String(err)}` }))
   }
@@ -6701,7 +7020,7 @@ const TASK_SESSION_LIMIT = 2000
 const TASK_SESSION_IDS_KEY = 'task-session-ids'
 
 async function loadTaskSessionIds($: EngineInterface): Promise<Record<string, string>> {
-  const stored = await $.store.get(TASK_SESSION_IDS_KEY).catch(() => undefined)
+  const stored = await storeGet($, TASK_SESSION_IDS_KEY).catch(() => undefined)
   return typeof stored === 'object' && stored !== null ? (stored as Record<string, string>) : {}
 }
 
@@ -6804,12 +7123,12 @@ let sweeping = false
  * ligne qui le dit, vide quand rien n'est parti.
  */
 async function sweepBranches($: EngineInterface, source: Source, why: 'start' | 'archive'): Promise<string> {
-  if (!settings.pruneBranches || sweeping || projectSettings(source).travail !== 'code') return ''
+  if (!settings.pruneBranches || sweeping || taskWork(source) !== 'code') return ''
   sweeping = true
   try {
     const now = await $.clock.now()
     if (why === 'start') {
-      const last = (await $.store.get(BRANCH_SWEEP_KEY).catch(() => undefined)) as { at?: number } | undefined
+      const last = (await storeGet($, BRANCH_SWEEP_KEY).catch(() => undefined)) as { at?: number } | undefined
       if (typeof last?.at === 'number' && now - last.at < BRANCH_SWEEP_EVERY_MS) return ''
     }
     const run = (dir: string, ...args: string[]) => $.process.run(['git', '-C', dir, ...args], { timeoutMs: 60_000 })
@@ -6861,7 +7180,7 @@ async function sweepBranches($: EngineInterface, source: Source, why: 'start' | 
 
 /** Le ménage qui suit un archivage (#313) : après la libération du worktree, puis une seconde fois plus tard. */
 function sweepAfterArchive($: EngineInterface, source: Source | undefined): void {
-  if (!source || !settings.pruneBranches || projectSettings(source).travail !== 'code') return
+  if (!source || !settings.pruneBranches || taskWork(source) !== 'code') return
   for (const ms of BRANCH_SWEEP_DELAYS_MS) {
     try {
       $.clock.after(ms, () => {
@@ -7040,13 +7359,14 @@ async function readCloudPrs($: EngineInterface, root: string, depot?: string): P
     if (cloudPrsMem && cloudPrsMem.root === root && now - cloudPrsMem.at < CLOUD_PRS_MS) return cloudPrsMem.value
     if (cloudPrsFlight && cloudPrsFlight.root === root) return await cloudPrsFlight.run
     const run = (async () => {
-      const stored = await $.store.get(CLOUD_PRS_KEY).catch(() => undefined)
+      const stored = await storeGet($, CLOUD_PRS_KEY).catch(() => undefined)
       const kept = typeof stored === 'object' && stored !== null ? ((stored as Record<string, unknown>)[root] as { at?: unknown; value?: unknown } | undefined) : undefined
       if (kept && typeof kept.at === 'number' && now - kept.at >= 0 && now - kept.at < CLOUD_PRS_MS) {
         cloudPrsMem = { root, at: kept.at, value: kept.value }
         return kept.value
       }
-      const value = await runCloudGh($, root, depot)
+      // #518 : seuls les champs lus se gardent, en mémoire et au store (la sortie entière pesait 105 Ko).
+      const value = slimCloudPrs(await runCloudGh($, root, depot))
       cloudPrsMem = { root, at: now, value }
       if (value !== undefined) {
         const all = typeof stored === 'object' && stored !== null ? { ...(stored as Record<string, unknown>) } : {}
@@ -7105,7 +7425,7 @@ async function cloudTakes($: EngineInterface, dir: string, branches: readonly st
  */
 async function cloudSeen($: EngineInterface, root: string, open: readonly Task[], now: number): Promise<Record<string, string>> {
   if (!cloudSeenMem || now - cloudSeenMem.at >= CLOUD_PRS_MS) {
-    const stored = await $.store.get(CLOUD_SEEN_KEY).catch(() => undefined)
+    const stored = await storeGet($, CLOUD_SEEN_KEY).catch(() => undefined)
     const map: Record<string, string> = {}
     if (stored && typeof stored === 'object' && !Array.isArray(stored)) for (const [k, v] of Object.entries(stored)) if (typeof v === 'string') map[k] = v
     cloudSeenMem = { at: now, map }
@@ -7128,29 +7448,103 @@ async function cloudSeen($: EngineInterface, root: string, open: readonly Task[]
 /** Les lignes cloud fusionnées dont Bertrand a « archivé » la ligne (`<dossier>|#<id>`) ; relues au plus toutes les 60 s. */
 async function cloudHidden($: EngineInterface, now: number): Promise<Set<string>> {
   if (cloudHiddenMem && now - cloudHiddenMem.at < CLOUD_PRS_MS) return cloudHiddenMem.keys
-  const stored = await $.store.get(CLOUD_HIDDEN_KEY).catch(() => undefined)
+  const stored = await storeGet($, CLOUD_HIDDEN_KEY).catch(() => undefined)
   cloudHiddenMem = { at: now, keys: new Set(Array.isArray(stored) ? stored.filter((x): x is string => typeof x === 'string') : []) }
   return cloudHiddenMem.keys
 }
 
 /**
- * Les lignes cloud du projet pour le bloc « En cours » et la bande (`cloudBrandTasks`) : rien, sans lire quoi que ce
- * soit, tant qu'aucune ligne ouverte n'est `lieu:cloud` et prise et que le projet n'est pas ouvert au cloud. Ouvert
- * (`sessions: "cloud"`), les PR se lisent même sans ligne cloud : une session lancée par la carte native, sans ligne
+ * Les lignes cloud du projet pour le bloc « En cours » et la bande (`cloudBrandTasks`). Depuis #482 le cloud est ouvert
+ * à tout projet : les PR se lisent même sans ligne cloud, une session lancée par la carte native, sans ligne
  * prise, s'y reconnaît au « #N » du titre de sa PR (#445). Le titre court de la tâche remplace son libellé ; une
  * fusionnée déjà archivée n'y est plus.
  */
 async function cloudTasksOf($: EngineInterface, source: Source, tasks: readonly Task[], short: (t: Task) => string, now: number): Promise<BrandTask[]> {
+  const missions = await missionTasksOf($, source, tasks, short, now)
+  const cloud = await prCloudTasksOf($, source, tasks, short, now)
+  return missions.length === 0 ? cloud : [...cloud.filter(c => !missions.some(m => m.id === c.id)), ...missions]
+}
+
+/** La jauge d'une ligne cloud : celle de sa PR, ou les trois étapes d'une mission (#469). */
+const cloudRowSteps = (t: { cloud: CloudPr; mission?: BrandTask['mission'] }) => (t.mission ? missionSteps(t.mission.state) : cloudSteps(t.cloud.state))
+/** La bande d'état de la fiche d'une ligne cloud : celle de sa PR, ou celle de sa mission (#469). */
+const cloudRowFiche = (t: { cloud: CloudPr; mission?: BrandTask['mission'] }) => (t.mission ? missionFiche(t.mission.state, t.mission.phrase) : cloudFiche(t.cloud.state))
+
+/** Le fichier des missions d'un projet, relu seulement quand sa date ou sa taille change (#337), comme `loadParsed`. */
+const missionsKept = new Map<string, { path?: string; stamp?: string; missions: Record<string, MissionEntry> }>()
+
+/**
+ * Les missions du fichier de Maestro (#469) : `.git/roadmap-missions.json`, sinon `.claude/` (le dossier de cache de la
+ * reco). Un projet qui n'a ni l'un ni l'autre, un fichier absent ou illisible : aucune mission connue, jamais d'exception.
+ */
+async function loadMissions($: EngineInterface, source: Source): Promise<Record<string, MissionEntry>> {
+  const root = source.root ?? source.dir
+  let kept = missionsKept.get(root)
+  if (kept?.path === undefined) {
+    const isDir = async (path: string): Promise<boolean> => {
+      try {
+        return (await $.fs.stat(path)).kind === 'dir'
+      } catch {
+        return false
+      }
+    }
+    const dir = (await isDir(`${root}/.git`)) ? '.git' : (await isDir(`${root}/.claude`)) ? '.claude' : undefined
+    kept = { ...(dir ? { path: `${root}/${dir}/${MISSIONS_FILE}` } : {}), missions: {} }
+    missionsKept.set(root, kept)
+  }
+  if (kept.path === undefined) return {}
+  let stamp: string | undefined
+  try {
+    const st = await statOnce($, kept.path)
+    stamp = `${st.mtimeMs}:${st.size}`
+  } catch {
+    stamp = undefined
+  }
+  if (stamp === undefined) {
+    kept.stamp = undefined
+    kept.missions = {}
+  } else if (kept.stamp !== stamp) {
+    kept.stamp = stamp
+    kept.missions = parseMissions((await readOr($, kept.path)) ?? '')
+  }
+  return kept.missions
+}
+
+/**
+ * Les lignes de mission cloud du projet (#469) : rien, sans lire quoi que ce soit, tant qu'aucune ligne ouverte n'est
+ * `qui:mission` + `lieu:cloud`. Une ligne close depuis moins de 7 jours compte si elle l'est restée, ou si le fichier
+ * de Maestro connaît son numéro (une ligne close perd son `qui:` à la clôture) ; le fichier ne se lit alors que dans
+ * un projet qui lance des missions (nature `projet`, ou ligne `travail:projet` d'un hybride, #508).
+ */
+async function missionTasksOf($: EngineInterface, source: Source, tasks: readonly Task[], short: (t: Task) => string, now: number): Promise<BrandTask[]> {
+  const recent = (t: Task) => t.done && t.fait !== undefined && now - Date.parse(t.fait.slice(0, 10)) <= CLOUD_ADOPT_MS
+  const openMissions = tasks.some(t => !t.done && isMissionTask(t) && t.id !== undefined)
+  const keptClosed = tasks.some(t => recent(t) && isMissionTask(t) && t.id !== undefined)
+  // #508 : un projet qui lance des missions est un projet de nature `projet` ou hybride (ses lignes `travail:projet`).
+  const maybeClosed = natureOf(source) !== 'code' && tasks.some(t => recent(t) && t.id !== undefined && taskWork(source, t) === 'projet')
+  if (!openMissions && !keptClosed && !maybeClosed) return []
+  const known = await loadMissions($, source).catch(() => ({}) as Record<string, MissionEntry>)
+  const closed = tasks.flatMap(t => (recent(t) && t.id !== undefined && (isMissionTask(t) || known[t.id] !== undefined) ? [{ ...t, qui: MISSION_QUI, lieu: 'cloud' as const }] : []))
+  const byId = new Map(tasks.flatMap(t => (t.id !== undefined ? [[t.id, t] as const] : [])))
+  const root = source.root ?? source.dir
+  const hidden = await cloudHidden($, now).catch(() => new Set<string>())
+  return missionBrandTasks(tasks.filter(t => !t.done), closed, known, now)
+    .filter(bt => !(bt.cloud?.state === 'delivered' && hidden.has(`${root}|#${bt.id}`)))
+    .map(bt => {
+      const task = byId.get(bt.id)
+      return task ? { ...bt, label: short(task) } : bt
+    })
+}
+
+async function prCloudTasksOf($: EngineInterface, source: Source, tasks: readonly Task[], short: (t: Task) => string, now: number): Promise<BrandTask[]> {
   const wanted = tasks.filter(t => !t.done && t.lieu === 'cloud' && t.branche !== undefined && t.id !== undefined)
   const root = source.root ?? source.dir
   // #468 : une ligne close dans ROADMAP-fait (à la publication) retrouve sa branche par ce que le panneau a vu.
-  const recent = tasks.some(t => t.done && t.fait !== undefined && now - Date.parse(t.fait.slice(0, 10)) <= CLOUD_ADOPT_MS)
-  const seen = wanted.length > 0 || cloudOpen(source) || recent ? await cloudSeen($, root, wanted, now).catch(() => ({}) as Record<string, string>) : {}
+  const seen = await cloudSeen($, root, wanted, now).catch(() => ({}) as Record<string, string>)
   const closed = tasks.flatMap(t => {
     const branche = t.done && t.id !== undefined ? seen[`${root}|#${t.id}`] : undefined
     return branche ? [{ ...t, lieu: 'cloud' as const, branche }] : []
   })
-  if (wanted.length === 0 && closed.length === 0 && !cloudOpen(source)) return []
   const [prs, hidden, taken] = await Promise.all([
     readCloudPrs($, root, projectSettings(source).depot),
     cloudHidden($, now).catch(() => new Set<string>()),
@@ -7201,6 +7595,7 @@ async function archiveCloudRow($: EngineInterface, t: BrandTask): Promise<void> 
   const source = await sourceNow($).catch(() => undefined)
   if (!source) return
   await hideCloudRow($, t, source)
+  if (t.mission) return // #469 : une mission n'a ni PR ni session à retrouver, sa ligne se cache seule
   const root = source.root ?? source.dir
   const number = t.cloud?.number
   const repo = number === undefined ? undefined : await cloudRepoOf($, root, projectSettings(source).depot)
@@ -7222,7 +7617,7 @@ async function archiveCloudRow($: EngineInterface, t: BrandTask): Promise<void> 
 /** Cache une ligne cloud livrée du bloc et de la bande (`cloud-hidden`) : aucune session locale à archiver (#408). */
 async function hideCloudRow($: EngineInterface, t: BrandTask, source: Source): Promise<void> {
   const key = `${source.root ?? source.dir}|#${t.id}`
-  const stored = await $.store.get(CLOUD_HIDDEN_KEY).catch(() => undefined)
+  const stored = await storeGet($, CLOUD_HIDDEN_KEY).catch(() => undefined)
   const keys = new Set(Array.isArray(stored) ? stored.filter((x): x is string => typeof x === 'string') : [])
   keys.add(key)
   cloudHiddenMem = { at: await $.clock.now(), keys }
@@ -8086,7 +8481,7 @@ function dayStepsKey(source: Source): string {
 async function rollDayStepsOnStart($: EngineInterface, source: Source): Promise<void> {
   const today = todayOf(await $.clock.now())
   const key = dayStepsKey(source)
-  if ((await $.store.get(key).catch(() => undefined)) === today) return
+  if ((await storeGet($, key).catch(() => undefined)) === today) return
   const { open } = files(source)
   const aPreuve = projectSettings(source).aPreuve
   const first = rollDaySteps((await readOr($, open)) ?? '', today, aPreuve)
@@ -8386,6 +8781,10 @@ function pressDone($: EngineInterface, shown: boolean): void {
 // Chaque dessin du panneau note sa durée, son poids et, s'il suit un clic, le délai depuis ce clic ;
 // les derniers relevés vont dans le store (clé `perf`), pour les lire pendant qu'on clique.
 const PERF_KEY = 'perf'
+/** Au banc (`true` au store), les relevés partent après chaque dessin, pour que les budgets lisent le leur (#518). */
+const PERF_BENCH_KEY = 'perf-banc'
+/** Hors banc, les relevés partent au store au plus une fois par minute (#518) : 8 écritures en 20 s avant. */
+const PERF_FLUSH_MS = 60_000
 const PERF_ROWS = 40
 /**
  * Les déplacements de la fenêtre et du focus gardés en plus, à part (#111) : chaque cran redemande un
@@ -8494,6 +8893,10 @@ let lastPress: { id: string; at: number } | undefined
 let perfLoaded = 0
 let perfCached = false
 let perfFlush: (() => unknown) | undefined
+/** Au banc (`perf-banc` au store), les relevés partent après chaque dessin (#518). */
+let perfBench = false
+/** Les relevés au store tout de suite, sans attendre la minute (#518) : la session se ferme. */
+let perfFlushNow: (() => unknown) | undefined
 // L'horloge du module : `$.clock.now()` est un aller-retour par appel, et le banc de test la fige.
 const tick = () => Date.now()
 
@@ -8561,7 +8964,9 @@ function noteRefresh(row: Omit<RefreshRow, 'mod' | 'at' | 'kind'>): void {
   pushPerf({ mod: PERF_MOD, at, kind: 'refresh', ...row })
   const refreshes = perfRows.filter(r => r.kind === 'refresh')
   if (refreshes.length > REFRESH_ROWS) perfRows.splice(perfRows.indexOf(refreshes[0] as PerfRow), 1)
-  if (row.fast || at - refreshFlushed >= REFRESH_FLUSH_MS) {
+  // #518 : hors banc, chaque relecture passe à `perfFlush`, qui ne vide qu'une fois par minute à l'horloge du
+  // moteur : elle porte ainsi ce qu'il a retenu. Au banc, une relecture des 15 s part une fois par minute, comme avant.
+  if (!perfBench || row.fast || at - refreshFlushed >= REFRESH_FLUSH_MS) {
     refreshFlushed = at
     perfFlush?.()
   }
@@ -8621,7 +9026,7 @@ function writePerf($: EngineInterface): void {
   if (!last || last.at === perfWritten) return
   perfWritten = last.at
   void (async () => {
-    const stored = await $.store.get(PERF_KEY)
+    const stored = await storeGet($, PERF_KEY)
     const others = Array.isArray(stored) ? (stored as PerfRow[]).filter(r => r && r.mod !== PERF_MOD) : []
     const rows = [...others, ...perfRows].sort((a, b) => a.at - b.at).slice(-PERF_KEPT)
     await storeSet($, PERF_KEY, rows)
@@ -8633,18 +9038,22 @@ function writePerf($: EngineInterface): void {
  * personne des textes : le réglage `me` du plugin d'abord, sinon les noms du fichier.
  */
 async function readPerso($: EngineInterface): Promise<{ me: string[]; sources: Source[] }> {
-  let perso: { me: string[]; sources: Source[] } = { me: [], sources: [] }
-  let home = ''
-  try {
-    home = ((await $.env.get('HOME')) ?? '').replace(/\/+$/, '')
-  } catch {
-    // sans HOME, le chemin part de la racine et la lecture échoue sans bruit
-  }
-  try {
-    perso = parsePerso(await $.fs.read(`${home}/.claude/roadmap-perso.json`))
-  } catch {
-    // absent ou illisible : pas de nom, aucune source
-  }
+  // La lecture du fichier se garde 15 s dans la fenêtre d'un tour (#523) ; la personne se repose toujours.
+  const perso = await keptInTurn('perso', 15_000, async () => {
+    let read: { me: string[]; sources: Source[] } = { me: [], sources: [] }
+    let home = ''
+    try {
+      home = ((await $.env.get('HOME')) ?? '').replace(/\/+$/, '')
+    } catch {
+      // sans HOME, le chemin part de la racine et la lecture échoue sans bruit
+    }
+    try {
+      read = parsePerso(await $.fs.read(`${home}/.claude/roadmap-perso.json`))
+    } catch {
+      // absent ou illisible : pas de nom, aucune source
+    }
+    return read
+  })
   setPerson(settings.me.length > 0 ? settings.me : perso.me)
   return perso
 }
@@ -8846,34 +9255,50 @@ export const register: Register = (on, options) => {
     return result
   })
 
-  // La sonde de visibilité (#337) : chaque arrivée et chaque départ d'une surface de l'app, au journal.
   // Le repos (#348) : une arrivée réveille la session ; un départ qui ne laisse aucune surface la met au repos.
+  // La sonde de visibilité (#337), qui les notait au store, est coupée (#518).
   on('session.attach', async ($, e, next) => {
     if (await inCloud($)) return next(e)
-    void noteSurface($, { event: 'attach', surface: e.surface })
     wake($)
     return next(e)
   })
   on('session.detach', async ($, e, next) => {
     if (await inCloud($)) return next(e)
-    void noteSurface($, { event: 'detach', surface: e.surface, reason: e.reason })
     if (e.reason !== 'end') void readVisibility($)
+    else perfFlushNow?.()
     return next(e)
   })
 
   on('session.start', async ($, e, next) => {
     if (await inCloud($)) return next(e)
     // Les relevés de mesure partent au store une demi-seconde après un dessin, jamais pendant un
-    // clic : l'écriture relit d'abord le store, pour garder les relevés des autres sessions.
-    let flushing = false
+    // clic : l'écriture relit d'abord le store, pour garder les relevés des autres sessions. #518 : ils
+    // restent en mémoire et partent au plus une fois par minute (`PERF_FLUSH_MS`), le store entier se
+    // réécrivant à chaque fois ; au banc (`perf-banc` au store), après chaque dessin, comme avant. Une
+    // seule minuterie à la fois, d'une demi-seconde : aucune minuterie longue ne s'arme (une par dessin
+    // s'armait, PR 112) ; un relevé retenu part avec la relecture suivante (`noteRefresh`, toutes les
+    // 15 s) ou à la fin de la session.
+    const bench = await storeGet($, PERF_BENCH_KEY).then(v => v === true, () => false)
+    perfBench = bench
+    let armed = false
+    let lastFlush = Number.NEGATIVE_INFINITY
     perfFlush = () => {
-      if (flushing) return
-      flushing = true
-      $.clock.after(500, () => {
-        flushing = false
-        writePerf($)
-      })
+      if (armed) return
+      armed = true
+      void (async () => {
+        const now = bench ? undefined : await $.clock.now().catch(() => undefined)
+        if (now !== undefined && now - lastFlush < PERF_FLUSH_MS) {
+          armed = false
+          return
+        }
+        if (now !== undefined) lastFlush = now
+        $.clock.after(500, () => {
+          armed = false
+          writePerf($)
+        })
+      })()
     }
+    perfFlushNow = () => writePerf($)
     // La version de ce module, avant qu'une synchro de l'app ne réécrive son plugin.json (#138).
     void loadSessionVersion($).catch(() => undefined)
     await $.command.register({
@@ -9006,6 +9431,9 @@ export const register: Register = (on, options) => {
   // Par prompt.submit, que sec-default laisse aux plugins installés (#116), le contexte joint à la descente.
   on('prompt.submit', async ($, e, next) => {
     if (await inCloud($)) return next(e)
+    // La fenêtre de tour s'ouvre avec le message (#523) ; le turn.start qui suit ne la rouvre pas.
+    openTurnWindow()
+    submitOpened = true
     // Le panneau toujours ouvert (#117) : le message de la personne rouvre le panneau qui manque ou attend.
     // Un seul hook prompt.submit par module (le moteur refuse le second) : l'appel vit ici.
     await ensurePane($)
@@ -9119,6 +9547,8 @@ export const register: Register = (on, options) => {
       } catch {
         // fiche illisible : le titre reste, le prochain « Maestro » réessaie
       }
+      // Le titre ou la marque vient de changer : les fiches et la liste gardées pour le tour s'oublient (#523).
+      forgetSessionReads()
       // L'appel nu ou d'axe pose l'axe de la session, et le panneau ouvert bascule tout de suite.
       if (!call.scan) {
         try {
@@ -9133,6 +9563,15 @@ export const register: Register = (on, options) => {
         texts.push(call.action ? await maestroActionText($, call.action) : call.scan ? await maestroText($, call.go, undefined, call.request) : await maestroIntroText($, call.axis))
       } catch (err) {
         texts.push(`${Person()} a dit « Maestro », mais l'état de la roadmap n'a pas pu être lu (${err instanceof Error ? err.message : String(err)}) : dis-le en une phrase.`)
+      }
+    }
+    // « why 527 », « pourquoi #527 », seul dans le message (#529) : la tâche et ses voisines, à expliquer au gabarit « La fiche ».
+    const why = whyCall(e.text)
+    if (why) {
+      try {
+        texts.push(await whyText($, why.id))
+      } catch (err) {
+        texts.push(`${Person()} demande d'expliquer la tâche #${why.id}, mais la roadmap n'a pas pu être lue (${err instanceof Error ? err.message : String(err)}) : dis-le en une phrase.`)
       }
     }
     const text = launch ? launch.line : e.text
@@ -9172,8 +9611,10 @@ export const register: Register = (on, options) => {
     const byModel = next.origin.plugin === 'engine' && !fromAgent(raw)
     // #512 : la carte de mission part avec sa consigne seule : ni arbre, ni dossier, ni bypass, ni file du Mac.
     const mission = byModel ? await missionCardOf($, raw) : undefined
+    // #515 : la carte d'un ▶ Cloud refusé au panneau part avec le brief que le panneau a écrit.
+    const cloudAsked = byModel && !mission ? await cloudCardOf($, raw) : undefined
     // Une carte du modèle reçoit la section de l'arbre, comme le ▶ (#237).
-    const e = mission ? (mission.card as typeof raw) : byModel ? ((await withTree($, raw)) as typeof raw) : raw
+    const e = mission ? (mission.card as typeof raw) : byModel ? ((await withTree($, cloudAsked ? cloudAsked.card : raw)) as typeof raw) : raw
     // #263 : la carte qui se pose ici (pas remontée à Maestro) part seulement si son titre vient de la ligne écrite.
     let titleRefused = false
     const ran = await forwardProposal($, e, next.origin.plugin, async () => {
@@ -9226,6 +9667,8 @@ export const register: Register = (on, options) => {
     const id = !ran.isError && !fromAgent(e) && typeof title === 'string' ? sessionTitleId(title) : undefined
     if (id !== undefined) launchTurn.cards.push(`#${id}`)
     if (id !== undefined && next.origin.plugin === 'engine' && ran.deny === undefined) await noteNativeCard($, title, { target: cardTargetOf(e as Record<string, unknown>), text: ran.text })
+    // #515 : la carte du ▶ Cloud demandée à Claude est posée : la demande est servie.
+    if (cloudAsked && ran.deny === undefined && !ran.isError && !cardNotProposed(ran)) pendingClouds.delete(cloudAsked.key)
     // #474 : la carte cloud de Maestro posée, le panneau guette sa branche sur origin pour prendre la ligne au départ.
     if (id !== undefined && next.origin.plugin === 'engine' && ran.deny === undefined && cardTargetOf(e as Record<string, unknown>) === 'cloud') {
       await watchCloudCard($, id, (e as { prompt?: unknown }).prompt)
@@ -9363,7 +9806,17 @@ export const register: Register = (on, options) => {
       const done = maestroExecAction(tool, e, capture ? [questionsPath(capture.source)] : [])
       if (done !== undefined && !maestroExec.includes(done)) maestroExec.push(done)
     }
-    return next(e)
+    // Git se relit avant et après chaque outil, qui peut le changer (#523) ; une session lancée, archivée ou
+    // renommée change la liste des sessions : les lectures gardées de la fenêtre de tour s'oublient.
+    // Seuls les outils du modèle (origine « engine ») changent le dépôt : les appels de ce plugin (fiches, liste) passent aussi par ce hook.
+    const byEngine = next.origin.plugin === 'engine'
+    if (byEngine) forgetGit()
+    try {
+      return await next(e)
+    } finally {
+      if (byEngine) forgetGit()
+      if (typeof tool === 'string' && tool.startsWith('mcp__ccd_session_mgmt__') && tool !== GET_SESSION_TOOL && tool !== LIST_SESSIONS_TOOL) forgetSessionReads()
+    }
   })
   // Garde-fou du dossier principal (#87) : une commande git interdite n'est pas lancée.
   on('tool.call', { tool: 'Bash' }, async ($, e, next) => {
@@ -9412,6 +9865,10 @@ export const register: Register = (on, options) => {
   on('turn.start', async ($, e, next) => {
     if (await inCloud($)) return next(e)
     if (e.agentId === undefined) {
+      // La fenêtre de tour (#523) : ouverte par le message, ou ici quand aucun message ne l'a précédée ; git se relit.
+      forgetGit()
+      if (!submitOpened) openTurnWindow()
+      submitOpened = false
       stopTurn = { id: e.turnId, stopRan: false, fromReminder: reminderCarried }
       reminderCarried = false
       // Le même retour, quand le message ne passe pas par prompt.submit (#347).
@@ -9478,6 +9935,8 @@ export const register: Register = (on, options) => {
     if (await inCloud($)) return next(e)
     const result = await next(e)
     if (e.agentId !== undefined) return result
+    // La fin du tour relit git une fois (#523) : un commit fait hors des outils (un terminal) se voit.
+    forgetGit()
     await markOwnRunning($, false)
     // #383 : la relève finie sans lancement : l'entrée est retenue, au lieu de revenir à chaque pas.
     if (releaseTurn && !releaseTurn.tried) await holdUnlaunched($, releaseTurn.id).catch(() => undefined)
@@ -9508,6 +9967,9 @@ export const register: Register = (on, options) => {
     }
     // Stop sauté deux tours de suite, jamais vu tourner : sec-default, l'option s'éteint (#219).
     if (e.turnId === stopTurn.id && e.reason === 'answer') await noteClassicSkip($, stopTurn.stopRan)
+    // Le tour est fini : ni git ni les faits de session gardés ne passent au suivant (#523).
+    forgetGit()
+    closeTurnWindow()
     return result
   })
 
@@ -9554,6 +10016,8 @@ export const register: Register = (on, options) => {
       await saveEndFiche($, e.last_assistant_message)
       await savePitches($, e.last_assistant_message)
       const result = await next(e)
+      // La fin du tour relit git une fois (#523), comme turn.complete.
+      forgetGit()
       const block = await endOfTurnBlock($, e.last_assistant_message, e.stop_hook_active === true, result.block !== undefined)
       return block === undefined ? result : { ...result, block }
     })
@@ -9743,7 +10207,7 @@ export const register: Register = (on, options) => {
       const now = await $.clock.now()
       // L'avant : une seule lecture du store par message, et seulement si une ligne dit une mise à jour.
       // Les cartes fermées par la croix se lisent avec lui, dans la même passe : la lecture abonne le dessin, qui reprend à l'écriture.
-      const [storedBefore, storedClosed, storedNative] = await Promise.all([$.store.get(BEFORE_KEY), $.store.get(CLOSED_KEY), $.store.get(NATIVE_KEY)].map(r => r.catch(() => undefined)))
+      const [storedBefore, storedClosed, storedNative] = await Promise.all([storeGet($, BEFORE_KEY), storeGet($, CLOSED_KEY), storeGet($, NATIVE_KEY)].map(r => r.catch(() => undefined)))
       const fingerprint = hashLabel(e.props.text)
       // #436 : une Nouvelle dont la carte native est posée (par Claude, ou par Start : « proposée ») ne se dessine plus.
       const project = `${source.root ?? source.dir}|`
@@ -9768,12 +10232,12 @@ export const register: Register = (on, options) => {
         return found.entry.sessionId !== undefined && runningBySession.get(found.entry.sessionId) === false ? { text: "t'attend", tone: 'soon', session: true } : { text: 'en session', tone: 'live', session: true }
       }
       // Les bilans : ce que le panneau a déjà en mémoire (`paneData`), jamais une nouvelle lecture.
-      const cards = (lines: WrittenLine[]) => writtenCards(lines, tasks, { short: t => shownTitle(t, data.titles), today: todayOf(now), me: source.me, who, bilans: data.bilan.bilans, ...(before ? { before } : {}), ...(cloudOpen(source) ? { reco: (t: Task) => (isRoutine(t) ? 'mac' : launchTargetOf(source, t)) } : {}) })
+      const cards = (lines: WrittenLine[]) => writtenCards(lines, tasks, { short: t => shownTitle(t, data.titles), today: todayOf(now), me: source.me, who, bilans: data.bilan.bilans, ...(before ? { before } : {}), reco: (t: Task) => (isRoutine(t) ? 'mac' : launchTargetOf(source, t)) })
       const openSessionOf = (id: string) => {
         const entry = sessions.get(id)
         void (entry ? openSession($, entry) : openTaskFiche($, source, id))
       }
-      return drawWrittenMessage($.ui.resolve(e), parts, cards, data.palette, { open: id => void openTaskFiche($, source, id), openSession: openSessionOf, start: id => { const t = tasks.find(x => x.id === id); if (t) void startFromCard($, source, id, shownTitle(t, data.titles)) }, started: id => cardStarts.get(`${source.root ?? source.dir}|${id}`), close: id => void $.store.get(CLOSED_KEY).catch(() => undefined).then(stored => storeSet($, CLOSED_KEY, keepClosed(stored, `${fingerprint}:${id}`) as StoreValue)).then(() => update($, retryAtom, v => v + 1)) })
+      return drawWrittenMessage($.ui.resolve(e), parts, cards, data.palette, { open: id => void openTaskFiche($, source, id), openSession: openSessionOf, start: id => { const t = tasks.find(x => x.id === id); if (t) void startFromCard($, source, id, shownTitle(t, data.titles)) }, started: id => cardStarts.get(`${source.root ?? source.dir}|${id}`), close: id => void storeGet($, CLOSED_KEY).catch(() => undefined).then(stored => storeSet($, CLOSED_KEY, keepClosed(stored, `${fingerprint}:${id}`) as StoreValue)).then(() => update($, retryAtom, v => v + 1)) })
     } catch (err) {
       $.ui.log(`roadmap : cartes des tâches écrites non dessinées (${err instanceof Error ? err.message : String(err)})`, { to: 'debug' })
       return next(e)
@@ -9814,13 +10278,13 @@ export const register: Register = (on, options) => {
       const bandPrs = await prsOfDelivered($, src, all.filter(x => band.tasks.some(t => t.id === x.id)))
       const infos = band.tasks.map((t, i) => {
         const task = all.find(x => x.id === t.id)
-        const pr = t.cloud ?? (task ? currentPr(bandPrs, task) : undefined)
+        const pr = t.mission ? undefined : t.cloud ?? (task ? currentPr(bandPrs, task) : undefined) // #469 : une mission n'a pas de PR
         const working = t.cloud ? t.cloud.state !== 'delivered' : t.state !== 'done' // #480 : dans la bande, la ligne a sa session
         return {
           ...(task ? { passes: deliveryPasses(task, { working, ...(pr ? { pr } : {}) }) } : {}),
           since: sinceLabel(t.since, now),
           // #440 (maquette B6) : une ligne cloud a son compte d'étapes, tiré de sa PR ; #468 (bande v2) : et le numéro de sa PR.
-          text: t.cloud ? `${cloudSteps(t.cloud.state).count}${t.cloud.number !== undefined ? ` · PR ${t.cloud.number}` : ''}` : bandInfo({ view: views[i], finished: t.finished === true }),
+          text: t.cloud ? `${cloudRowSteps({ cloud: t.cloud, ...(t.mission ? { mission: t.mission } : {}) }).count}${t.cloud.number !== undefined ? ` · PR ${t.cloud.number}` : ''}` : bandInfo({ view: views[i], finished: t.finished === true }),
           ...(task ? { square: { hex: axisColor(pal, ranks.get(task.axis) ?? 0), axis: task.axis, done: task.done === true || t.closed === true } } : {}),
         }
       })
@@ -9840,6 +10304,8 @@ export const register: Register = (on, options) => {
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     // Un lancement déposé par un bouton part d'ici, où le hook prompt.submit du plugin tourne (#140).
     sendLaunch($)
+    // #496 : le réveil de Maestro par une PR cloud part d'ici aussi, pour la même raison.
+    sendWake($)
     void notePaneDraw($, 'reachedAt')
     const t0 = tick()
     perfLoaded = t0
@@ -10607,7 +11073,7 @@ function maestroBandTree(
   // #425 (maquette A) : le mot d'état en tête de la case de l'info ; une ligne cloud garde ses mots à elle.
   // #468 (maquette A v2 de la bande, BBR) : la grille du bloc « En session » : l'icône d'état collée à son mot, le même
   // pour une ligne du Mac et du cloud (`blockWord`), puis la jauge, le détail et la durée, à la couleur du mot.
-  const rowWord = (t: BrandTask) => blockWord({ state: t.finished ? 'done' : t.state, ...(t.cloud ? { cloud: t.cloud } : {}), ...(t.merged ? { merged: true } : {}) })
+  const rowWord = (t: BrandTask) => blockWord({ state: t.finished ? 'done' : t.state, ...(t.cloud ? { cloud: t.cloud } : {}), ...(t.mission ? { mission: t.mission } : {}), ...(t.merged ? { merged: true } : {}) })
   const rowInk = (t: BrandTask) => (t.cloud ? cloudTints(palette, t.cloud.state).word : hue(t)[1])
   const labels: string[] = []
   const cols = bandColumns({
@@ -10624,23 +11090,25 @@ function maestroBandTree(
   const placeMark = (cloud: boolean, key: string) =>
     Svg ? (
       <Box key={key} flexShrink={0} flexDirection="row" alignItems="center">
-        <Svg source={cloud ? cloudIcon(palette.text3, 14, 'Dans le cloud') : computerIcon(palette.text3, 14, 'Sur le Mac')} alt={cloud ? 'Dans le cloud' : 'Sur le Mac'} width={SIZE.icon.sm} height={SIZE.icon.sm} />
+        <Svg source={cloud ? cloudIcon(palette.text3, 14, 'Dans le cloud') : computerIcon(palette.text3, 14, 'En local')} alt={cloud ? 'Dans le cloud' : 'En local'} width={SIZE.icon.sm} height={SIZE.icon.sm} />
       </Box>
     ) : null
   // #440 (maquette B6) : la jauge d'une ligne cloud, ses six étapes tirées de sa PR, aux couleurs d'une locale.
-  const cloudBar = (cloud: CloudPr, width: number, key: string) => {
+  const cloudBar = (row: { cloud: CloudPr; mission?: BrandTask['mission'] }, width: number, key: string) => {
     if (!Svg) return null
-    const steps = cloudSteps(cloud.state)
+    const cloud = row.cloud
+    const steps = cloudRowSteps(row)
     const bar = stepsBarIcon(palette, steps.segments, { width, height: 4, waiting: cloud.state === 'red' || cloud.state === 'closed', merging: cloud.state === 'ready' || cloud.state === 'merged', finished: cloud.state === 'delivered' })
     return <Svg key={key} source={bar.source} alt={`étapes ${steps.count}`} width={bar.width} height={bar.height} />
   }
-  const stateIcon = (icon: ReturnType<typeof bandState>['icon'], word: string, hex: string, cloud?: CloudPr, merged = false) => {
+  const stateIcon = (icon: ReturnType<typeof bandState>['icon'], word: string, hex: string, row?: BrandTask, merged = false) => {
+    const cloud = row?.cloud
     // #440 (maquette B6) : une session cloud a l'icône d'état d'une locale, tirée de sa PR (prête : la fusion) ;
     // le nuage, gris, dit seulement où elle tourne, devant son numéro (`placeMark`).
-    if (cloud) {
-      const m = cloudFiche(cloud.state).band.mark
+    if (cloud && row) {
+      const m = cloudRowFiche({ cloud, ...(row.mission ? { mission: row.mission } : {}) }).band.mark
       icon = m === 'person' ? 'hand' : m
-      word = cloudFiche(cloud.state).band.word
+      word = cloudRowFiche({ cloud, ...(row.mission ? { mission: row.mission } : {}) }).band.word
       hex = m === 'check' ? palette.finished : hex
     }
     if (!Svg) return <Text size="caption" color={hex}>{{ spinner: '◌', hand: '✋', merge: '⑂', check: '✓' }[icon]}</Text>
@@ -10775,7 +11243,7 @@ function maestroBandTree(
           bandPlaces.map(p => (
             <Box key={`band-place-count:${p.where}`} flexDirection="row" alignItems="center" gap={SPACE.tight} flexShrink={0}>
               <Text size="caption" color={palette.text3}>·</Text>
-              <Svg source={p.where === 'cloud' ? cloudIcon(palette.text3, 12, 'Dans le cloud') : computerIcon(palette.text3, 12, 'Sur le Mac')} alt={p.where === 'cloud' ? `${p.n} dans le cloud` : `${p.n} sur le Mac`} width={12} height={12} />
+              <Svg source={p.where === 'cloud' ? cloudIcon(palette.text3, 12, 'Dans le cloud') : computerIcon(palette.text3, 12, 'En local')} alt={p.where === 'cloud' ? `${p.n} dans le cloud` : `${p.n} en local`} width={12} height={12} />
               {p.n > 0 && <Text size="caption" tabular color={palette.text3}>{String(p.n)}</Text>}
             </Box>
           ))}
@@ -10809,7 +11277,7 @@ function maestroBandTree(
           const ink = rowInk(t)
           const detail = info?.text ?? ''
           const archivable = t.archivable === true && Boolean(t.sessionId || t.cloud)
-          return (
+          const rowEl = (
             <Box key={`band-row:${keyPart(t.id)}`} flexDirection="row" alignItems="center" gap={SPACE.row} hover={{ backgroundColor: palette.hover }}>
               {strut}
               {/* La case de la liste du panneau (retour de test de #385) : la couleur de l'axe, cochée quand la
@@ -10832,7 +11300,7 @@ function maestroBandTree(
               {/* L'icône d'état collée au début de son mot (#468), dans une colonne à la largeur du plus long mot. */}
               <Box key={`band-state:${keyPart(t.id)}`} flexShrink={0} flexDirection="row" alignItems="center" gap={SPACE.row} {...(Svg ? { width: 2 + (bandFit.word ? 1 + bandWordCells : 0) } : {})}>
                 <Box key={`band-mark:${keyPart(t.id)}`} width={2} flexShrink={0} flexDirection="row" justifyContent="center">
-                  {stateIcon(mark.icon, mark.word, dot, t.cloud, t.merged === true)}
+                  {stateIcon(mark.icon, mark.word, dot, t, t.merged === true)}
                 </Box>
                 {(bandFit.word || !Svg) && <Text key={`band-word:${keyPart(t.id)}`} size="caption" color={ink} wrap="truncate-end">{rowWord(t)}</Text>}
               </Box>
@@ -10848,7 +11316,7 @@ function maestroBandTree(
               {/* La jauge, d'étapes ou de PR, et sous elle la jauge de contexte (#157, #217), à la même place sur chaque ligne. */}
               {Svg && (
                 <Box key={`band-gauge:${keyPart(t.id)}`} flexShrink={0} flexDirection="column" gap={0}>
-                  {t.cloud ? cloudBar(t.cloud, BAND_GAUGE.row, `band-cloud-bar:${keyPart(t.id)}`) : bar ? <Svg source={bar.source} alt={`étapes ${view?.count ?? ''}`} width={bar.width} height={bar.height} /> : <Svg source={`<svg xmlns="http://www.w3.org/2000/svg" width="${BAND_GAUGE.row}" height="4"/>`} alt="espace" width={BAND_GAUGE.row} height={4} />}
+                  {t.cloud ? cloudBar({ cloud: t.cloud, ...(t.mission ? { mission: t.mission } : {}) }, BAND_GAUGE.row, `band-cloud-bar:${keyPart(t.id)}`) : bar ? <Svg source={bar.source} alt={`étapes ${view?.count ?? ''}`} width={bar.width} height={bar.height} /> : <Svg source={`<svg xmlns="http://www.w3.org/2000/svg" width="${BAND_GAUGE.row}" height="4"/>`} alt="espace" width={BAND_GAUGE.row} height={4} />}
                   {!t.cloud && ctxBar && ctx && <Svg source={ctxBar.source} alt={`contexte ${ctx.text}`} width={ctxBar.width} height={ctxBar.height} />}
                 </Box>
               )}
@@ -10871,6 +11339,18 @@ function maestroBandTree(
                       ]}
                 </Box>
               )}
+            </Box>
+          )
+          // #469 (maquette A) : la phrase de fin d'une mission, sur la ligne d'info sous sa ligne ; « lancée » et « au travail » n'ont rien à dire de plus.
+          const phrase = t.mission && t.mission.state !== 'launched' && t.mission.state !== 'working' && (t.mission.phrase || t.mission.state === 'silent') ? missionWords(t.mission.state, t.mission.phrase).long : undefined
+          if (phrase === undefined) return rowEl
+          return (
+            <Box key={`band-line:${keyPart(t.id)}`} flexDirection="column" gap={0}>
+              {rowEl}
+              <Box key={`band-phrase:${keyPart(t.id)}`} flexDirection="row" alignItems="center" gap={SPACE.row}>
+                {strut}
+                <Text size="caption" color={ink} wrap="truncate-end">{phrase}</Text>
+              </Box>
             </Box>
           )
         })}
@@ -10932,7 +11412,7 @@ async function readFocusFacts($: EngineInterface, source: Source, task: Task, ow
     if (gap) branch = branchText(gap, base)
     // #191 : l'avance de sa propre branche coche « Fusionner » dans sa fiche.
     const settings = projectSettings(source)
-    mergeProject = { git: settings.travail === 'code', ...(settings.publier ? { publish: settings.publier } : {}) }
+    mergeProject = { git: taskWork(source) === 'code', ...(settings.publier ? { publish: settings.publier } : {}) }
     if (ownId && mergeProject.git) aheadBySession.set(ownId, { at: now, ahead: gap?.ahead })
   } catch {
     // pas de git (mode Projet, dossier hors dépôt) : pas de ligne Branche
@@ -10945,7 +11425,7 @@ async function readFocusFacts($: EngineInterface, source: Source, task: Task, ow
 async function readSteps($: EngineInterface, sessionId: string | undefined): Promise<ChildStatus | undefined> {
   if (!sessionId) return undefined
   try {
-    return childStatusOf(await $.store.get(`${CHILD_STATUS_PREFIX}${sessionId}`))
+    return childStatusOf(await storeGet($, `${CHILD_STATUS_PREFIX}${sessionId}`))
   } catch {
     return undefined
   }
@@ -10965,7 +11445,7 @@ const aheadBySession = new Map<string, { at: number; ahead: number | undefined }
  */
 async function refreshAhead($: EngineInterface, source: Source, sessionIds: readonly (string | undefined)[], now: number): Promise<void> {
   const settings = projectSettings(source)
-  mergeProject = { git: settings.travail === 'code', ...(settings.publier ? { publish: settings.publier } : {}) }
+  mergeProject = { git: taskWork(source) === 'code', ...(settings.publier ? { publish: settings.publier } : {}) }
   if (!mergeProject.git) return
   const root = await $.session.root()
   await Promise.all(
@@ -11268,8 +11748,8 @@ function ficheSteps(
     question !== undefined
       ? { line: palette.block, tint: palette.blockTint, on: palette.blockOn, word: "t'attend" }
       : state === 'merge'
-        ? { line: palette.wait, tint: palette.waitTint, on: palette.waitOn, word: 'à fusionner' }
-        : { line: palette.live, tint: palette.liveTint, on: palette.liveOn, word: 'en cours' }
+        ? { line: palette.wait, tint: palette.waitTint, on: palette.waitOn, word: STATE_WORDS.ready }
+        : { line: palette.live, tint: palette.liveTint, on: palette.liveOn, word: STATE_WORDS.live }
   const rail = (o: Parameters<typeof stepRailIcon>[1], alt: string) => {
     if (!Svg) return null
     const icon = stepRailIcon(palette, { ...o, tone: tone.line })
@@ -11383,7 +11863,7 @@ function stepsCard(
 const STEP_WORDS: Record<StepSegment, string> = { done: 'faite', now: 'en cours', todo: 'à faire' }
 const STEP_MARKS: Record<StepSegment, string> = { done: '✓', now: '›', todo: '○' }
 /** Ce que dit l'icône de la bande d'état de la fiche (#199). */
-const BAND_MARK_WORDS: Record<NonNullable<ReturnType<typeof stateBand>['mark']>, string> = { person: 'attend ta réponse', spinner: 'en cours', merge: 'fusion', check: 'faite', flask: 'en test' }
+const BAND_MARK_WORDS: Record<NonNullable<ReturnType<typeof stateBand>['mark']>, string> = { person: 'attend ta réponse', spinner: 'en cours', merge: 'fusion', check: 'faite', flask: 'en test', bell: 'à relancer' }
 
 async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<RenderElement> {
   // Les gestionnaires de clic ne se vident pas ici : un rendu attend ses lectures, et un clic
@@ -11825,7 +12305,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     // Son dossier (Spec, Plan, Maquettes) et le récap de fin de sa session (#144), dans les deux contextes.
     const ficheSource = inSession && ownBrand ? ownBrand.data.source : source
     const noteForLinks = current.done ? livreOfNote(current.note).rest : current.note
-    const stored = (key: string) => $.store.get(key).catch(() => undefined)
+    const stored = (key: string) => storeGet($, key).catch(() => undefined)
     // #387 : toutes les lectures de la fiche partent ensemble. L'une après l'autre, chacune un aller-retour, le
     // dessin d'une close dépassait son temps sur un Mac chargé (« Le dessin attendait encore : la fiche de la tâche »).
     const [facts, docs, mockupPage, attachments, deliverables, unsentNow, fileHits, recapRaw, changesRaw, timingRaw, pitchRaw] = await Promise.all([
@@ -11911,6 +12391,9 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     const donePill = (x: Task) =>
       isAbandoned(x)
         ? drawnPill({ text: 'annulée', bg: palette.sel, fg: palette.text2, mark: 'cancel', height: SIZE.pill.detail })
+        : relaunchOf(x)
+          ? // #487 : close en partie, « à relancer » en orange (la pastille n'a pas de cloche).
+            drawnPill({ text: stateBand({ state: 'done', relaunch: relaunchOf(x)! }).word, bg: palette.blockTint, fg: palette.blockOn, height: SIZE.pill.detail })
         : drawnPill({ text: stateBand({ state: 'done' }).word, bg: palette.finishedTint, fg: palette.finishedOn, mark: 'check', height: SIZE.pill.detail })
     // Un lien vers une tâche enchaînée : carré d'axe, titre (cliquable), et son état. Le titre rétrécit et
     // se coupe, l'état garde sa largeur : un titre long poussait la carte hors du panneau (#173).
@@ -12622,13 +13105,15 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     const headState: BrandTask['state'] | undefined =
       waitState === 'wait' ? brandStateOf(taskSessionState({ asking: stepsNote?.question !== undefined, ahead: aheadNow ?? 0, ...(stepsNote ? { status: stepsNote } : {}), ...(ficheMerged ? { merged: true } : {}) })) : waitState
     // #440 : une ligne cloud n'a ni session locale ni étapes à lire ; sa fiche dit l'état de sa PR, celui de la bande.
-    const cloudNow =
+    const cloudRow =
       !current.done && !headState && current.id !== undefined && !ficheTest
-        ? (await cloudTasksOf($, source, allTasks, t => t.label, now).catch(() => [] as BrandTask[])).find(c => c.id === current.id)?.cloud
+        ? (await cloudTasksOf($, source, allTasks, t => t.label, now).catch(() => [] as BrandTask[])).find(c => c.id === current.id)
         : undefined
-    const cloudState = cloudNow ? cloudFiche(cloudNow.state) : undefined
+    const cloudNow = cloudRow?.cloud
+    // #469 : une mission dit son état à elle (lancée, au travail, la phrase de fin), pas celui d'une PR.
+    const cloudState = cloudNow ? cloudRowFiche({ cloud: cloudNow, ...(cloudRow?.mission ? { mission: cloudRow.mission } : {}) }) : undefined
     // #480 : les passes de ses livraisons, dès la deuxième ; la PR de la lecture déjà gardée (60 s), rien à lire sans `livré:`.
-    const fichePr = cloudNow ?? currentPr(await prsOfDelivered($, source, [current]), current)
+    const fichePr = cloudRow?.mission ? undefined : cloudNow ?? currentPr(await prsOfDelivered($, source, [current]), current)
     const fichePasses = (current.livre?.length ?? 0) > 0
       ? deliveryPasses(current, { working: cloudNow ? cloudNow.state !== 'delivered' : headState !== undefined && headState !== 'done', ...(fichePr ? { pr: fichePr } : {}) })
       : []
@@ -12686,6 +13171,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
           ...(aheadNow ? { ahead: aheadNow } : {}),
           ...(current.fait ? { fait: current.fait } : {}),
           ...(ficheMerged ? { merged: true } : {}),
+          ...(relaunchOf(current) ? { relaunch: relaunchOf(current)! } : {}),
         })
       : undefined
     const stateBox = () => {
@@ -12709,7 +13195,9 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
                 ? spinnerIcon(fg, SIZE.icon.sm, undefined, false, now)
                 : band.mark === 'flask'
                   ? flaskIcon(fg, SIZE.icon.sm)
-                  : undefined
+                  : band.mark === 'bell'
+                    ? bellIcon(fg, SIZE.icon.sm)
+                    : undefined
       const row = (
         <Box key="state-band-row" paddingX={SPACE.indent}>
           <Box key="state-band" flexDirection="row" alignItems="center" gap={SPACE.row} paddingX={SPACE.indent} flexGrow={1} backgroundColor={bg}>
@@ -12847,12 +13335,9 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     // Une mère (#447) : ni « Lancer » ni l'interrupteur Cloud | Mac ; ses étapes se lancent une à une.
     const launchable = !current.done && !live && !launched.includes(taskKey(current)) && !isMother(current, allTasks)
     // #416 (maquette B) : une routine n'a pas de cible ; une autre tâche lance vers la cible de l'interrupteur.
-    const targeted = !isRoutine(current) && cloudOpen(source)
+    const targeted = !isRoutine(current)
     if (targeted && launchable) {
       loadRecoDocs($, source, current)
-      askJudge($, source, current)
-    } else if (launchable && !isRoutine(current) && projectSettings(source).travail === 'projet') {
-      // #492 : dans un projet sans code, le verdict ne dit que la charge de la tâche, que le ▶ prend.
       askJudge($, source, current)
     }
     const reco = recoOf(source, current)
@@ -12863,11 +13348,11 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
         : targeted && target === 'cloud'
           ? launchCloud($, source, current, s.titre)
           : launchSession($, source, current, s.titre, launchExtra))
-    // L'interrupteur Cloud | Mac, posé sur la reco (« conseillé ») ; au terminal, deux boutons.
+    // L'interrupteur Local | Cloud, posé sur la reco (« conseillé ») ; au terminal, deux boutons.
     const targetSwitch = (): RenderElement => {
       const seg = (t: Sessions) => {
         const on = t === target
-        const word = t === 'cloud' ? 'Cloud' : 'Mac'
+        const word = t === 'cloud' ? 'Cloud' : 'Local'
         const ink = on ? palette.text : palette.text2
         return pressable(
           `launch-target:${t}`,
@@ -12895,10 +13380,10 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     // La raison de la reco, en une ligne sous « Lancer ».
     const recoLine = (): RenderElement => (
       <Box key="launch-reco" flexDirection="row" gap={SPACE.tight} alignItems="flex-start" minWidth={0}>
-        {Svg && <Svg source={reco.lieu === 'cloud' ? cloudIcon(palette.live, SIZE.icon.sm) : playIcon(palette.text3, SIZE.icon.sm)} alt={reco.lieu === 'cloud' ? 'cloud' : 'Mac'} width={SIZE.icon.sm} height={SIZE.icon.sm} />}
+        {Svg && <Svg source={reco.lieu === 'cloud' ? cloudIcon(palette.live, SIZE.icon.sm) : playIcon(palette.text3, SIZE.icon.sm)} alt={reco.lieu === 'cloud' ? 'cloud' : 'local'} width={SIZE.icon.sm} height={SIZE.icon.sm} />}
         {/* Le mot ne se coupe pas (capture de BBR, 0.259.0) : seule la raison passe à la ligne. */}
         <Box flexShrink={0}>
-          <Text size="caption" weight="semibold" color={palette.text} wrap="truncate-end">{`Recommandé : ${reco.lieu === 'cloud' ? 'cloud' : 'Mac'}`}</Text>
+          <Text size="caption" weight="semibold" color={palette.text} wrap="truncate-end">{`Recommandé : ${reco.lieu === 'cloud' ? 'cloud' : 'local'}`}</Text>
         </Box>
         <Box flexGrow={1} flexShrink={1} minWidth={0}>
           <Text size="caption" color={palette.text2} wrap="wrap">{`· ${reco.why}`}</Text>
@@ -13091,6 +13576,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
       ...(current.ouvert ? { ouvert: current.ouvert } : {}),
       ...(current.fait ? { fait: current.fait } : {}),
       ...(cloudNow ? { cloud: cloudNow.state } : ficheMerged ? { cloud: 'merged' as const } : {}),
+      ...(relaunchOf(current) ? { relaunch: relaunchOf(current)! } : {}),
       today,
     })
     const cartonLook = {
@@ -13152,13 +13638,11 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
           </Box>
         )
       }
+      // #532 : la durée seule, sans roue à sa droite : elle sortait coupée par le bord du volet.
       if (liveTop && live) {
-        const waiting = live.state === 'open' && live.entry.sessionId !== undefined && runningBySession.get(live.entry.sessionId) === false
-        const spinning = live.state === 'open' && !waiting
         return (
           <Box key="carton-time" flexDirection="row" alignItems="center" gap={SPACE.row} flexShrink={0}>
             {timeSide(liveTop.total, 'tourne depuis')}
-            {Svg && spinning && <Svg source={spinnerIcon(cartonLook.on, 14, undefined, false, now)} alt="en cours" width={SIZE.icon.sm} height={SIZE.icon.sm} isInteractive />}
           </Box>
         )
       }
@@ -14870,15 +15354,17 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   // #440 (maquette B6) : une ligne cloud porte ses mots et sa jauge ; la colonne s'élargit des mots.
   const stepsColumns = wordsCells > 0 ? Math.max(stepsCells.columns, ROW_STEPS.icon + 1 + wordsCells + 1 + (cloudColumn ? pxCells(ROW_STEPS.bar) + 1 : 0) + ROW_STEPS.clock + stepsCells.count) : stepsCells.columns
   // L'icône d'état d'une ligne cloud, tirée de sa PR, et sa jauge (#440, maquette B6).
-  const cloudStateMark = (cloud: CloudPr) => {
-    const m = cloudFiche(cloud.state).band.mark
-    const word = cloudFiche(cloud.state).band.word
+  const rowOf = (block: BrandTask): { cloud: CloudPr; mission?: BrandTask['mission'] } => ({ cloud: block.cloud as CloudPr, ...(block.mission ? { mission: block.mission } : {}) })
+  const cloudStateMark = (row: { cloud: CloudPr; mission?: BrandTask['mission'] }) => {
+    const m = cloudRowFiche(row).band.mark
+    const word = cloudRowFiche(row).band.word
     if (!Svg) return <Text size="caption" color={palette.text2}>{{ spinner: '◌', person: '✋', merge: '⑂', check: '✓' }[m]}</Text>
     const source = m === 'spinner' ? spinnerIcon(palette.live, 14, word, false, now) : m === 'person' ? handIcon(palette.block, 14, STROKE.pill, word) : m === 'merge' ? mergeIcon(palette.wait, 14, STROKE.pill, word) : checkIcon(palette.finished, 14, STROKE.pill)
     return <Svg source={source} alt={word} width={SIZE.icon.sm} height={SIZE.icon.sm} {...(m === 'spinner' ? { isInteractive: true } : {})} />
   }
-  const cloudRowBar = (cloud: CloudPr, key: string) => {
-    const steps = cloudSteps(cloud.state)
+  const cloudRowBar = (row: { cloud: CloudPr; mission?: BrandTask['mission'] }, key: string) => {
+    const cloud = row.cloud
+    const steps = cloudRowSteps(row)
     const bar = stepsBarIcon(palette, steps.segments, { width: ROW_STEPS.bar, height: 4, waiting: cloud.state === 'red' || cloud.state === 'closed', merging: cloud.state === 'ready' || cloud.state === 'merged', finished: cloud.state === 'delivered' })
     return <Svg key={key} source={bar.source} alt={`étapes ${steps.count}`} width={bar.width} height={bar.height} />
   }
@@ -14925,15 +15411,15 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
       // finit au bord, sous l'icône du centre de contrôle.
       <Box key={`steps:${t.key}`} flexDirection="row" alignItems="center" justifyContent="flex-end" gap={SPACE.row} flexShrink={0} {...(Svg ? { width: stepsColumns } : {})}>
         <Box width={ROW_STEPS.icon} flexShrink={0} flexDirection="row" justifyContent="center">
-          {cloud && tint ? cloudStateMark(cloud) : test ? (Svg ? <Svg source={flaskIcon(palette.waitOn, 14, 'En test')} alt="En test" width={SIZE.icon.sm} height={SIZE.icon.sm} /> : <Text size="caption" color={palette.waitOn}>⚗</Text>) : completed ? (Svg ? <Svg source={checkIcon(checkHex, 14, STROKE.pill)} alt={completedWord} width={SIZE.icon.sm} height={SIZE.icon.sm} /> : <Text size="caption" color={checkHex}>✓</Text>) : merging ? mergeMark() : waiting ? hand() : spinner()}
+          {cloud && tint && block ? cloudStateMark(rowOf(block)) : test ? (Svg ? <Svg source={flaskIcon(palette.waitOn, 14, 'En test')} alt="En test" width={SIZE.icon.sm} height={SIZE.icon.sm} /> : <Text size="caption" color={palette.waitOn}>⚗</Text>) : completed ? (Svg ? <Svg source={checkIcon(checkHex, 14, STROKE.pill)} alt={completedWord} width={SIZE.icon.sm} height={SIZE.icon.sm} /> : <Text size="caption" color={checkHex}>✓</Text>) : merging ? mergeMark() : waiting ? hand() : spinner()}
         </Box>
         {cloud && tint ? (
           // #440 (maquette B6) : le mot court de sa PR, calé à droite devant sa jauge de six étapes ; la durée garde sa place.
           [
             <Box key={`cloud-words:${t.key}`} {...(Svg ? { width: CLOUD_WORDS_CELLS } : {})} flexShrink={0} minWidth={0} flexDirection="row" alignItems="center" justifyContent="flex-end">
-              <Text size="caption" color={tint.word} wrap="truncate-end">{cloudWords(cloud.state).short}</Text>
+              <Text size="caption" color={tint.word} wrap="truncate-end">{block ? blockWord({ state: block.state, cloud, ...(block.mission ? { mission: block.mission } : {}) }) : cloudWords(cloud.state).short}</Text>
             </Box>,
-            ...(Svg ? [cloudRowBar(cloud, `cloud-bar:${t.key}`)] : []),
+            ...(Svg && block ? [cloudRowBar(rowOf(block), `cloud-bar:${t.key}`)] : []),
           ]
         ) : test && openTest ? (
           // #375 (maquette A) : « en test 0.268.0 » en sarcelle, à la place de la barre ; le texte ouvre la session de test.
@@ -15000,7 +15486,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   }
   const blockWordOf = (t: Task, block?: BrandTask) => {
     const test = block?.cloud ? undefined : testOf(t)
-    return test ? testWords(test.version) : blockWord({ state: blockState(t, block), ...(block?.cloud ? { cloud: block.cloud } : {}), ...(blockMerged(t, block) ? { merged: true } : {}) })
+    return test ? testWords(test.version) : blockWord({ state: blockState(t, block), ...(block?.cloud ? { cloud: block.cloud } : {}), ...(block?.mission ? { mission: block.mission } : {}), ...(blockMerged(t, block) ? { merged: true } : {}) })
   }
   const blockWordCells = Math.max(0, ...blockTasks.map(t => pxCells(6.5 * [...blockWordOf(t, blockOf.get(t.id as string))].length)))
   const blockEndCells = ROW_STEPS.clock + stepsCells.count
@@ -15008,7 +15494,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   // largeur sur chaque ligne (celle du plus long dessin), aucune sans pastille. Une ligne du bloc a sa session : jamais « à lancer ».
   const blockPassesOf = (t: Task, block?: BrandTask): Pass[] => {
     const cloud = block?.cloud
-    const pr = cloud ?? currentPr(blockPrs, t)
+    const pr = block?.mission ? undefined : cloud ?? currentPr(blockPrs, t) // #469 : une mission n'a pas de PR
     const working = cloud ? cloud.state !== 'delivered' : blockState(t, block) !== 'done' // #480 : dans le bloc, la ligne a sa session
     return deliveryPasses(t, { working, ...(pr ? { pr } : {}) })
   }
@@ -15027,8 +15513,8 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     const merged = !cloud && blockMerged(t, block)
     const ink = cloud ? cloudTints(palette, cloud.state).word : test || merged ? palette.waitOn : { live: palette.liveOn, wait: palette.blockOn, merge: palette.waitOn, done: palette.finishedOn }[state]
     const checkHex = block?.finished ? palette.finished : palette.done
-    const icon = cloud
-      ? cloudStateMark(cloud)
+    const icon = cloud && block
+      ? cloudStateMark(rowOf(block))
       : test
         ? Svg ? <Svg source={flaskIcon(palette.waitOn, 14, 'En test')} alt="En test" width={SIZE.icon.sm} height={SIZE.icon.sm} /> : <Text size="caption" color={palette.waitOn}>⚗</Text>
         : state === 'done'
@@ -15040,7 +15526,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     const queued = t.branche !== undefined ? heavyMarks.get(t.branche) : undefined
     const bar = cloud
       ? (() => {
-          const steps = cloudSteps(cloud.state)
+          const steps = cloudRowSteps(rowOf(block as BrandTask))
           const drawn = stepsBarIcon(palette, steps.segments, { width: ROW_STEPS.bar, height: 4, waiting: cloud.state === 'red' || cloud.state === 'closed', merging: cloud.state === 'ready' || cloud.state === 'merged', finished: cloud.state === 'delivered' })
           return { source: drawn.source, width: drawn.width, height: drawn.height, alt: `étapes ${steps.count}` }
         })()
@@ -15376,7 +15862,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
         {/* #440 (maquette B6) : au bloc « En cours », où tourne la session, en gris, devant son numéro. */}
         {inLiveBlock && Svg && (
           <Box key={`place:${t.key}`} flexShrink={0} flexDirection="row" alignItems="center">
-            <Svg source={block?.cloud ? cloudIcon(palette.text3, 14, 'Dans le cloud') : computerIcon(palette.text3, 14, 'Sur le Mac')} alt={block?.cloud ? 'Dans le cloud' : 'Sur le Mac'} width={SIZE.icon.sm} height={SIZE.icon.sm} />
+            <Svg source={block?.cloud ? cloudIcon(palette.text3, 14, 'Dans le cloud') : computerIcon(palette.text3, 14, 'En local')} alt={block?.cloud ? 'Dans le cloud' : 'En local'} width={SIZE.icon.sm} height={SIZE.icon.sm} />
           </Box>
         )}
         {!grouped && number}
@@ -16348,16 +16834,16 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
           <Text size="title" weight="semibold" tabular>{`${pct(doneTasks.length, total)} %`}</Text>
         )}
         {/* Toujours sur une ligne, sans l'heure de lecture (retirée, 2026-10-22) ; forme courte si très étroit. */}
-        {/* « N Done » (#174) est le lien vers les faites (#152, maquette C) : souligné, en gras et en vert une fois choisi (#180). */}
+        {/* « N livrées » (#174, #509) est le lien vers les faites (#152, maquette C) : souligné, en gras et en vert une fois choisi (#180). */}
         <Box key="hit:done-count" flexDirection="row" flexShrink={1} minWidth={0} marginLeft={1} hover={{ backgroundColor: palette.hover }}>
           {graphic && (
             <Text size="caption" tabular underline color={showDone ? palette.done : palette.text2} weight={showDone ? 'semibold' : undefined} wrap="truncate-end">
-              {tight ? `${doneTasks.length}` : `${doneTasks.length} Done`}
+              {tight ? `${doneTasks.length}` : deliveredCount(doneTasks.length)}
             </Text>
           )}
           {graphic && <Text size="caption" tabular color={palette.text2} wrap="truncate-end">{tight ? `/${total}` : ` sur ${total}`}</Text>}
           {!graphic && (
-            <Button key="done-count" plain dimColor={!showDone} label={tight ? `${doneTasks.length}/${total}` : `${doneTasks.length} Done sur ${total}`} onPress={toggleDone} />
+            <Button key="done-count" plain dimColor={!showDone} label={tight ? `${doneTasks.length}/${total}` : `${deliveredCount(doneTasks.length)} sur ${total}`} onPress={toggleDone} />
           )}
           {hit('done-count', toggleDone)}
         </Box>
