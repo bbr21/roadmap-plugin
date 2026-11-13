@@ -115,6 +115,7 @@ import { BEFORE_KEY, CLOSED_KEY, NATIVE_KEY, beforeMap, closedKeys, drawWrittenM
 import { CARD_DEADLINE_MS, CARD_LATE_WHY, cardTargetOf, dismissCall, panelChoiceIn, proposalIdIn, recoTargetRefusal, withFreshBackground, type Place } from './depart'
 import { CLOUD_WATCH_EVERY_MS, CLOUD_WATCH_KEY, MISSION_START_KEY, addMissionStart, addWatch, startedAtCall, briefBranchOf, dueWatches, lineVerdict, missionStartList, pushedSince, remoteHeads, startedCardTitles, watchList, type CloudWatch } from './prise-cloud'
 import { CLOUD_WAKE_EVERY_MS, CLOUD_WAKE_KEY, CLOUD_WAKE_PR_FIELDS, cloudWakeAdopts, cloudWakeDue, cloudWakes, wakePrompt, wakeStateOf, type WakeRole } from './reveil-cloud'
+import { MISSION_WAKE_EVERY_MS, MISSION_WAKE_KEY, missionDeparted, missionWakeDue, missionWakePrompt, missionWakeStateOf, missionWakes } from './reveil-mission'
 import { gardienBandRow, gardienCardRefusal, gardienDeliveryNote, gardienOf, gardienReminder, goesToGardien, isGardienSession, withoutGardien } from './gardien'
 import { CONTROL_PANE, drawControl, openControl, redrawControl, type ControlDeps } from './controle'
 import { SETTINGS_PANE, drawSettings, openSettings, prefsFile, redrawSettings, rememberLoadedOptions, sessionProject, watchSettings, type SettingsProject } from './reglages'
@@ -332,6 +333,8 @@ import {
   declaredAxes,
   withParentDates,
   parentRowTask,
+  motherLaunchable,
+  motherLaunchText,
   bandsOf,
   keyPills,
   axisPillText,
@@ -3234,6 +3237,7 @@ async function takeMissionOnCard($: EngineInterface, m: { source: Source; id: st
   pendingMissions.delete(pendingKey(m.source, m.id))
   if (started) {
     const error = await takeMissionNow($, m.source, m.id)
+    if (error === undefined) await markMissionDeparture($, m.source, m.id)
     await setView($, () => ({ launchNote: error === undefined ? 'Mission lancée : la ligne est prise (qui:mission).' : `Mission lancée, mais la ligne n'est pas prise : ${error}` }))
     return missionTakenText(m.id, error, true)
   }
@@ -3287,6 +3291,7 @@ async function takeStartedLines($: EngineInterface, text: unknown): Promise<void
     const stored = missionStartList(await storeGet($, MISSION_START_KEY).catch(() => undefined))
     if (missionStarts.has(key) || stored.some(m => m.key === key)) {
       if ((await takeMissionNow($, source, id)) !== undefined) continue
+      await markMissionDeparture($, source, id)
       missionStarts.delete(key)
       await storeSet($, MISSION_START_KEY, stored.filter(m => m.key !== key) as unknown as StoreValue).catch(() => undefined)
       await update($, liveVersionAtom, v => v + 1)
@@ -6329,6 +6334,8 @@ async function poll($: EngineInterface): Promise<void> {
     await checkCloudWatches($)
     // #496 : le réveil de Maestro par le dernier commentaire d'une PR cloud (il ne lève jamais).
     await checkCloudWake($)
+    // #581 : le rappel de Maestro tant qu'une mission cloud n'a pas de fin lue (il ne lève jamais).
+    await checkMissionWake($)
     if (resting) {
       // Au repos (#348) : la file de lancement de Maestro avance quand même ; le reste attend sa minute.
       await checkZones($)
@@ -6868,6 +6875,63 @@ async function checkCloudWake($: EngineInterface): Promise<void> {
     // un regard raté : la minute suivante réessaie
   } finally {
     cloudWaking = false
+  }
+}
+
+// --- Maestro rappelé pendant une mission cloud (#581) -----------------------------------------------------------------
+// Rien ne dit à Maestro qu'une mission a fini : le panneau ne peut pas appeler `RemoteTrigger` (#509) et `list_sessions`
+// ne voit pas les sessions cloud. Tant qu'une ligne `qui:mission | lieu:cloud` ouverte n'a pas d'état final dans
+// `roadmap-missions.json`, le panneau de la session Maestro la lui rappelle à 2, 5, 15, 30 puis 60 min de son départ
+// (store `mission-wake`, par projet). Même boîte d'envoi que le réveil cloud : `queueWake`.
+
+let missionWakeNextAt = 0
+let missionWaking = false
+
+/** Le départ d'une mission est connu (sa ligne vient d'être prise) : ses paliers de rappel partent de maintenant. */
+async function markMissionDeparture($: EngineInterface, source: Source, id: string): Promise<void> {
+  try {
+    const root = source.root ?? source.dir
+    const stored = await storeGet($, MISSION_WAKE_KEY).catch(() => undefined)
+    const state = missionDeparted(missionWakeStateOf(stored, root), id, await $.clock.now())
+    const others = typeof stored === 'object' && stored !== null && !Array.isArray(stored) ? { ...(stored as Record<string, unknown>) } : {}
+    await storeSet($, MISSION_WAKE_KEY, { ...others, [root]: state } as unknown as StoreValue)
+  } catch {
+    // store en panne : la première garde verra la mission et prendra cet instant pour son départ
+  }
+}
+
+/** Un pas de la minuterie : dans une session Maestro, une fois par minute au plus, le rappel des missions sans fin lue. */
+async function checkMissionWake($: EngineInterface): Promise<void> {
+  if (missionWaking || !knownSource || !ownSession) return
+  missionWaking = true
+  try {
+    if (!(await isMaestroHere($))) return
+    const now = await $.clock.now()
+    // Une horloge revenue en arrière (veille, réglage) ne fige pas la garde.
+    if (now < missionWakeNextAt && missionWakeNextAt - now <= MISSION_WAKE_EVERY_MS) return
+    missionWakeNextAt = now + MISSION_WAKE_EVERY_MS
+    const source = knownSource
+    const tasks = await loadParsed($, files(source).open, 'ROADMAP.md')
+    // Aucune lecture du store sans mission ouverte et numérotée : le budget de l'ouverture de Maestro tient.
+    if (typeof tasks === 'string' || !tasks.some(t => !t.done && t.id && isMissionTask(t))) return
+    // Un envoi attend déjà : rien n'est lu ni marqué, la minute suivante réessaie.
+    if (wakeOutbox !== undefined || launchOutbox !== undefined) return
+    const root = source.root ?? source.dir
+    const stored = await storeGet($, MISSION_WAKE_KEY).catch(() => undefined)
+    const state = missionWakeStateOf(stored, root)
+    if (!missionWakeDue(state, now)) return
+    const missions = await loadMissions($, source)
+    const next = missionWakes(tasks, missions, state, now)
+    const others = typeof stored === 'object' && stored !== null && !Array.isArray(stored) ? { ...(stored as Record<string, unknown>) } : {}
+    await storeSet($, MISSION_WAKE_KEY, { ...others, [root]: { at: now, missions: next.missions } } as unknown as StoreValue)
+    if (next.ids.length === 0) return
+    queueWake($, missionWakePrompt(next.ids, next.minutes))
+    // Le panneau se redessine et envoie le rappel.
+    await update($, liveVersionAtom, v => v + 1)
+  } catch {
+    // un regard raté : la minute suivante réessaie
+  } finally {
+    missionWaking = false
   }
 }
 
@@ -16513,10 +16577,12 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   // La section de chaque ligne dessinée (#265) : rempli avec les groupes, lu par `rowParts`.
   const sectionOf = new Map<Task, string>()
   const dayQuiet = (t: Task) => !searching && !showDone && dayFilterQuiet(attend, today, t)
-  // Une mère dépliée (`open`, #319) dit sa date finale, ses filles disant déjà leurs échéances : la ligne
-  // se lit sur `parentRowTask`, sa section sur la tâche elle-même.
-  const rowParts = (row: Task, o: { tree: boolean; ghost: boolean; inSession: boolean; locked: boolean; open?: boolean; parent?: Parameters<typeof keyPills>[3] }) => {
+  // Une mère ne montre aucune échéance (#552, choix de BBR) : ni la prochaine de ses filles, ni sa date finale
+  // (#319), ni « en retard » ; ses filles disent les leurs. Son `due:` reste écrit sur sa ligne. La ligne se
+  // lit sur `parentRowTask`, sa section sur la tâche elle-même.
+  const rowParts = (row: Task, o: { tree: boolean; ghost: boolean; inSession: boolean; locked: boolean; open?: boolean; head?: boolean; parent?: Parameters<typeof keyPills>[3] }) => {
     if (o.ghost || row.done) return { feedback: false, keys: [] as PillSpec[], tags: [] as PillSpec[], due: undefined as PillSpec | undefined }
+    const mother = o.head === true || row.isParent === true || isMother(row, allTasks)
     const t = parentRowTask(row, o.open === true)
     const feedback = t.feedback !== undefined
     // Une ligne ne redit pas sa tête (#265) : ni le jour de sa section, ni la personne de sa section.
@@ -16535,7 +16601,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
         : keyPills(t, clesVisibles, cles, o.parent).map(p => ({ text: p.text, bg: palette.sel, fg: palette.text2, weight: 600 as const }))
     const tags: PillSpec[] = [...(feedback ? [{ text: 'Retour', bg: palette.waitTint, fg: palette.waitOn, weight: TEXT.weight.soft }] : []), ...listed.tags.map(rowPillSpec), ...keys]
     // Comme dans l'arbre (#258, vue de référence), dans toute vue (#259) : un retard se dit seul, « 1 j de retard ».
-    const due = listed.due !== undefined && t.due !== undefined ? duePill(t.due, today, { short: true }) : listed.due
+    const due = mother ? undefined : listed.due !== undefined && t.due !== undefined ? duePill(t.due, today, { short: true }) : listed.due
     return { feedback, keys, tags, due }
   }
 
@@ -16938,9 +17004,12 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     // « Lancer ». Un bouton de l'app, sans zone de clic : il tient sur toutes les lignes sous
     // ZONE_LIMIT. Ni sur une tâche en session, bloquée ou déjà demandée ; sa colonne reste, vide,
     // pour garder les carrés alignés.
-    // Ni sur une mère (#447) : elle n'a rien à livrer seule, dans l'arbre comme hors de lui (recherche).
-    const playable = !t.done && !held && !ghost && !head && !inSession && !locked && !launched.includes(taskKey(t)) && !isMother(t, allTasks)
-    const parts = rowParts(t, { tree: tree !== undefined, ghost, inSession, locked, open: head?.open === true, ...(child?.parent ? { parent: child.parent } : {}) })
+    // Une mère (#447) n'a rien à livrer seule : son ▶ (#552) ne lance pas de session, il envoie à Maestro la
+    // consigne de lancer ses filles ; il n'y en a que s'il en reste à lancer (ni en session, ni tenues).
+    const motherDaughters = !t.done && !ghost && (head !== undefined || isMother(t, allTasks)) ? motherLaunchable(t, allTasks, isLive) : []
+    const motherRow = head !== undefined || isMother(t, allTasks)
+    const playable = !t.done && !held && !ghost && !inSession && !locked && !launched.includes(taskKey(t)) && (motherRow ? motherDaughters.length > 0 : true)
+    const parts = rowParts(t, { tree: tree !== undefined, ghost, inSession, locked, open: head?.open === true, head: head !== undefined, ...(child?.parent ? { parent: child.parent } : {}) })
     // En session, la ligne tient dans la largeur (#177, #248 de Splitmybill) : une pastille qui ne laisse
     // pas sa place au titre part, avant que la colonne de session ne soit poussée hors du panneau. Ses
     // pastilles sont la Feedback et les clés (sans `listPills`), dans cet ordre. Le retrait compte les
@@ -17156,7 +17225,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
         {!inLiveBlock && (
           <Box key={`p:${t.key}`} width={3} flexShrink={0} flexDirection="row" justifyContent="center">
             {playable && (
-              <Button key={`play:${t.key}`} plain dimColor onPress={() => void (isRoutine(t, head !== undefined) ? launchRoutine($, source, t, s.titre) : launchSession($, source, t, s.titre))}>
+              <Button key={`play:${t.key}`} plain dimColor onPress={() => void (motherRow ? submitWelcome($, motherLaunchText(t, motherDaughters, x => taskTitle(x, titles))) : isRoutine(t, head !== undefined) ? launchRoutine($, source, t, s.titre) : launchSession($, source, t, s.titre))}>
                 {/* Une routine due (#280, maquette A) : le ▶ bleu, son clic la coche et la redate. */}
                 {!head && routineDue(t, today) ? <Text color={palette.live}>▶</Text> : '▶'}
               </Button>

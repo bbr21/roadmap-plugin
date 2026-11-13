@@ -112,7 +112,7 @@ the five nearest tasks and judge the meaning, then put each action in **exactly 
 | Case | What happens |
 |---|---|
 | Already covered | nothing, except a more precise date (`reschedule`) |
-| To expand | one more child under the existing parent; a standalone task that gets a step becomes a parent |
+| To expand | one more child under the existing parent; a standalone task never becomes a parent: an empty parent is created and both go under it (#552) |
 | Already done | nothing |
 | New | a task, with its date (and `prio:oui` when it is said to be a priority) |
 | Contrary to an open task, with no reason given | a question |
@@ -141,6 +141,23 @@ write the `add` with `distinct`.
 **A closed task on the same subject (#538).** With no open task on the subject, a closed one (by
 words or by marks) gives a `followup` question: « Suite de #N (recommandé) », « Déjà fait par #N :
 ne rien ajouter », « Tâche à part ». Nothing is reopened or re-created silently.
+
+**A parent is an empty shell (#552).** A standalone task (no parent, no open child, it carries an
+action) never becomes the parent of a linked task. An `add` whose `parent` is a standalone task, or
+an `update` whose `fields.parent` is one (several such operations on the same task make one
+question), is not written: `write` returns one `group` question, key `group-<id of the standalone
+task>`: « Regrouper #N et « … » sous une mère nouvelle « … » (recommandé) » (an `add` of an empty
+parent, key `mere-<id>`, with the latest `due:` of its children and an `après:` outside the group,
+then the standalone task and the new task under it, the `update`s keeping what else they change),
+« Tâche à part » (the `add`s without `parent`, the `update`s without the `parent` field), « Ne rien
+ajouter ». A standalone task taken by a session (`qui:` and `branche:`) does not move: the parent is
+created with the new task only and the question says #N goes under it at its closing. The same
+holds in the same-subject case of #288 (an `add` of the same subject as a standalone task that has
+children of its own in the batch): the option is « Regrouper #N et l'ajout sous une mère nouvelle »,
+the `add`'s children go under the new parent, two levels at most. An existing parent still takes
+its new children without a question. Before asking, replace the proposed parent name with a subject
+name of 2 to 5 words, as for #438. Case of #546 and #550: #550 added under #546 made #546 the
+parent although it had its own work; now both go under a new empty parent.
 
 **One theme, one parent (#438).** `write` first looks for a **theme**: the open tasks and the other
 `add`s of the batch that share a rare place (a file, function, command or area carried by 8 open
@@ -495,7 +512,7 @@ round, the recommendation first, each question readable on its own (the task's l
   `tous:mois`…);
 - **reopening** a closed task;
 - **the same subject** (`subject`, #288, set by `write`): an action an open task covers;
-- **the same theme** (`group`, #438, set by `write` and `groupes`): siblings to put under one parent;
+- **the same theme** (`group`, #438, set by `write` and `groupes`): siblings to put under one parent; and, #552, a task linked to a standalone task, to put with it under a new empty parent;
 - **a mother's short title** (`name`, #288, set by `write`): a task without `nom:` that gets its
   first child. `write` proposes its first five words; before asking, replace that proposal (the
   option's label and its `nom`) with a short title of 2 to 5 words in the label's language, which

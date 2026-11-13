@@ -112,17 +112,26 @@ def _json_tete(sortie):
 
 
 def fin(journal):
-    """L'état d'une mission d'après son journal : sa ligne `result:` et la dernière phrase « Fait : » ou « Échec : »."""
+    """L'état d'une mission d'après son journal : sa dernière ligne `result:` et la dernière phrase « Fait : » ou
+    « Échec : » de la session, cherchée dans les fins de tour de Claude (#581 : une question posée après la phrase,
+    et sa réponse, ne la font pas lire « sans phrase » ; cas de la mission AAFES #644)."""
     session = _json_tete(journal).get("session_id")
-    # Seule la dernière ligne d'événement compte : une ligne « result: » citée plus haut (par un outil, une page lue)
-    # ne finit pas la mission.
+    # Seule la dernière ligne d'événement dit si la mission tourne encore : une ligne « result: » plus haut finit un
+    # tour, pas la session (la personne a pu relancer la mission).
     evenements = [l.strip() for l in journal.splitlines() if EVENEMENT.match(l.strip())]
     resultat = RESULT.match(evenements[-1]) if evenements else None
     if resultat is None:
         return {"etat": "en cours", "phrase": None, "session": session}
-    texte = resultat.group(3) or ""
-    debuts = [m.start() for m in PHRASE.finditer(texte)]
-    phrase = texte[debuts[-1]:].strip()[:PHRASE_MAX] if debuts else None
+    phrase = None
+    # Du tour le plus récent au plus ancien : seules les fins de tour (`result:`) parlent pour Claude, jamais un
+    # message de la personne ni une sortie d'outil.
+    for ligne in reversed(evenements):
+        tour = RESULT.match(ligne)
+        texte = (tour.group(3) or "") if tour else ""
+        debuts = [m.start() for m in PHRASE.finditer(texte)]
+        if debuts:
+            phrase = texte[debuts[-1]:].strip()[:PHRASE_MAX]
+            break
     if resultat.group(2) == "true":
         etat = "echec"
     elif phrase is None:

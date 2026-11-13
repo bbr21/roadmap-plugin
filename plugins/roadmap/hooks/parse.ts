@@ -12840,6 +12840,40 @@ export function isMother(task: Task, tasks: readonly Task[]): boolean {
 }
 
 /**
+ * Les filles qu'une mère peut faire lancer (#552) : ses filles directes ouvertes, ni en session ni tenues
+ * (`qui:` et `branche:` posés), dans l'ordre du fichier. Vide : la mère n'a pas de ▶.
+ */
+export function motherLaunchable(mother: Task, tasks: readonly Task[], isLive: (t: Task) => boolean): Task[] {
+  if (mother.done || mother.id === undefined) return []
+  return tasks.filter(k => k !== mother && k.id !== mother.id && k.parent === mother.id && !k.done && !isLive(k) && !(k.qui !== undefined && k.branche !== undefined))
+}
+
+/** Les numéros que cite l'`après:` d'une fille (`#559`), ou son texte tel quel quand il n'en cite aucun. */
+function afterText(t: Task): string | undefined {
+  if (t.apres === undefined || t.apres === '' || t.apres === '-') return undefined
+  const ids = t.apres.match(/\d+/g)
+  return ids ? ids.map(n => `#${n}`).join(', ') : t.apres
+}
+
+/**
+ * Le message que le ▶ d'une mère envoie dans la conversation (#552) : la consigne de lancer ses filles dans
+ * l'ordre le plus rapide. Il ne commence pas par « Maestro » : ce mot en tête déclenche l'accueil de Maestro.
+ */
+export function motherLaunchText(mother: Task, daughters: readonly Task[], titleOf: (t: Task) => string): string {
+  const id = mother.id ?? ''
+  const list = daughters
+    .map(d => {
+      const after = afterText(d)
+      return `#${d.id} « ${titleOf(d)} »${after ? ` (après ${after})` : ''}`
+    })
+    .join(', ')
+  return [
+    `Lance les filles de la mère #${id} « ${titleOf(mother)} » (▶ de la mère, #552) : ${list}.`,
+    `Range-les par \`python3 "<dossier de la skill maestro>/scripts/ordre_filles.py" <dossier principal> ${id}\` : en parallèle celles qui ne dépendent de rien d'ouvert et ne touchent pas les mêmes fichiers, en séquence les autres ; pose les \`après:\` qu'il donne, lance la première vague, puis chaque suivante quand ce qu'elle attend est fusionné. Une fille déjà en session ne se relance pas.`,
+  ].join('\n')
+}
+
+/**
  * Les tâches qu'on peut lancer maintenant : ouvertes, ni mères (#447), ni bloquées par leur prérequise, ni déjà en
  * session. Rangées pour avancer : celles qui ne dorment pas chez un tiers, puis celles qui
  * débloquent le plus de tâches, puis l'échéance la plus proche, puis la plus ancienne (une tâche ne

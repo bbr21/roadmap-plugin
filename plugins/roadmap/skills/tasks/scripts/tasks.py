@@ -1034,6 +1034,31 @@ def un_sujet(ctx, operations, deja=frozenset()):
             # Quelque chose du lot vise cet ajout (#288) : jamais d'office. Deux niveaux au plus : la cible est la mère.
             cible = m["parent"] if m["role"] == "enfant" and m["parent"] else m["id"]
             enfants = [op for op in groupe if op is not a and str(op.get("parent") or "").lstrip("#") == k]
+            if m["role"] == "seule":
+                # #552 : une tâche seule ne devient pas la mère. Une mère vide nouvelle reçoit la tâche (sauf si une
+                # session la tient), l'ajout et ses filles (deux niveaux au plus).
+                t = par_id[m["id"]]
+                cle_mere = "mere-%s" % k
+                noeuds = {t["id"]: dict(_noeud_tache(ctx, t, {t["id"]: contexte_tache(ctx["dossier"], t)}), parent=None),
+                          k: dict(_noeud_ajout(a), ref=k)}
+                rangement = _options_de_groupe(ctx_ouvert, noeuds, [t["id"], k], cle_mere, [a], minimum=1)
+                if rangement is not None:
+                    nom = rangement[2][0]["fields"]["nom"]
+                    prise = noeuds[t["id"]]["prise"]
+                    sous = rangement[2] + [dict(op, parent=cle_mere) if op in enfants else op for op in groupe[1:]]
+                    questions.append({
+                        "key": "subject-%s" % k, "about": libelle, "kind": "subject",
+                        "question": "« %s » : même sujet que #%s « %s », une tâche seule%s ; la regrouper avec #%s sous "
+                                    "une mère nouvelle « %s », ou en tâche à part ?"
+                                    % (_court(libelle), m["id"], _court(m["libelle"]), _tenues([noeuds[t["id"]]]),
+                                       m["id"], nom),
+                        "options": [{"label": ("Créer une mère nouvelle « %s » pour l'ajout (recommandé)" % nom if prise
+                                               else "Regrouper #%s et l'ajout sous une mère nouvelle « %s » (recommandé)"
+                                                    % (m["id"], nom)), "operations": sous},
+                                    {"label": "Tâche à part", "operations": [dict(a, distinct=A_PART)] + groupe[1:]},
+                                    {"label": "Ne rien ajouter : #%s couvre déjà l'action" % m["id"],
+                                     "operations": []}]})
+                    continue
             if enfants:
                 # Ses enfants passent sous la cible, la mère proposée s'efface.
                 sous = [dict(_sans_cle_apres(op, k), parent=cible) if op in enfants else _sans_cle_apres(op, k)
@@ -1307,11 +1332,12 @@ def _nom_de_mere(membres):
     return titre_court(membres[0]["libelle"])
 
 
-def _options_de_groupe(ctx, par_ref, refs, cle_mere, ajouts_du_lot):
+def _options_de_groupe(ctx, par_ref, refs, cle_mere, ajouts_du_lot, minimum=2):
     """Les opérations d'un regroupement : « Ranger sous #P » quand une fille de la grappe a déjà une mère, sinon une
     mère nouvelle (son axe, son échéance finale, les clés exigées que ses filles partagent). Seules bougent les tâches
     libres sans parent (une tâche prise ne se touche pas) ; un `après:` hors de la grappe passe à la mère. Rend
-    (cible, libellé de l'option, opérations, réfs rangées) ou None quand rien ne se range."""
+    (cible, libellé de l'option, opérations, réfs rangées) ou None quand rien ne se range. `minimum` : le nombre de
+    nœuds qui bougent sous une mère nouvelle (2 ; 1 quand la tâche seule d'une mère vide est tenue, #552)."""
     membres = [par_ref[r] for r in sorted(refs, key=_rang_ref)]
     meres = {}
     for n in membres:
@@ -1334,7 +1360,7 @@ def _options_de_groupe(ctx, par_ref, refs, cle_mere, ajouts_du_lot):
         quoi = "sous #%s" % cible if ajouts and not libres else "%s sous #%s" % (", ".join("#%s" % n["id"] for n in libres)
                                                                                  + (" et l'ajout" if ajouts else ""), cible)
         return cible, "Ranger %s" % quoi, ops, ranges
-    if len(ajouts) + len(libres) < 2:
+    if len(ajouts) + len(libres) < minimum:
         return None
     ranges_n = ajouts + libres
     axe = next((n["axe"] for n in ranges_n if n["axe"]), None)
@@ -1435,6 +1461,97 @@ def un_groupe(ctx, operations, retenues):
             "options": options})
         cles |= set(les_ajouts)
     return cles, questions
+
+
+def _a_part_sans_parent(op):
+    """L'opération rendue à une tâche à part (#552) : un ajout sans `parent` et `A_PART`, un `update` sans le champ
+    `parent` (rien, s'il ne changeait que lui)."""
+    if op["op"] == "add":
+        return dict({c: v for c, v in op.items() if c != "parent"}, distinct=A_PART)
+    champs = {c: v for c, v in (op.get("fields") or {}).items() if c != "parent"}
+    reste = {c: v for c, v in op.items() if c not in ("op", "id", "fields")}
+    return dict(op, fields=champs) if champs or reste else None
+
+
+def sous_une_feuille(ctx, operations, retenues):
+    """#552 : une mère est vide, une tâche seule (sans mère ni fille ouvertes) ne le devient jamais. Un `add` dont
+    `parent` vise une tâche seule, ou un `update` dont `fields.parent` la vise, devient une question (kind `group`,
+    clé `group-<id de la tâche seule>`, une seule pour tout ce que le lot lui range) : « Regrouper #N et « … » sous
+    une mère nouvelle « … » » (recommandé : une mère vide, `_options_de_groupe`, qui reçoit la tâche seule et ce qu'on
+    lui rangeait), « Tâche à part », « Ne rien ajouter ». Une tâche seule tenue par une session ne bouge pas : la mère
+    se crée avec l'ajout seul, la tâche s'y range à sa clôture. Une mère ou une fille existante ne change rien.
+    Rend (clés retenues, questions, opérations retenues) : un `update` n'a pas de clé, la boucle d'écriture saute les
+    opérations par identité."""
+    fermees = {str(op.get("id")) for op in operations if op.get("op") in ("drop", "done", "handoff")}
+    par_id = {t["id"]: t for t in ctx["taches"] if t["id"] not in fermees}
+    visees = {}
+    for op in operations:
+        if op.get("op") not in ("add", "update") or (op.get("key") is not None and op["key"] in retenues):
+            continue
+        ref = op.get("parent") if op["op"] == "add" else (op.get("fields") or {}).get("parent")
+        i = str(ref).lstrip("#")
+        seule = par_id.get(i)
+        if _sans_ref(ref) or seule is None or seule.get("parent") or seule.get("enfants"):
+            continue
+        if op["op"] == "update":
+            cible = par_id.get(str(op.get("id")).lstrip("#"))
+            if cible is None or cible["id"] == i or cible.get("enfants"):
+                continue
+        visees.setdefault(i, []).append(op)
+    cles, questions, ecartees = set(), [], []
+    for i in sorted(visees, key=_rang_ref):
+        ops_visees = visees[i]
+        ajouts = [op for op in ops_visees if op["op"] == "add"]
+        majs = [op for op in ops_visees if op["op"] == "update"]
+        t = par_id[i]
+        taches = [t] + [par_id[str(op["id"]).lstrip("#")] for op in majs]
+        contextes = {x["id"]: contexte_tache(ctx["dossier"], x) for x in taches}
+        par_ref = {x["id"]: dict(_noeud_tache(ctx, x, contextes), parent=None) for x in taches}
+        noeuds_ajouts = []
+        for j, a in enumerate(ajouts):
+            n = _noeud_ajout(a)
+            n["ref"] = a.get("key") or "~%d" % j
+            par_ref[n["ref"]] = n
+            noeuds_ajouts.append(n)
+        cle_mere = "mere-%s" % i
+        rangement = _options_de_groupe(ctx, par_ref, [n["ref"] for n in par_ref.values()], cle_mere, ajouts, minimum=1)
+        if rangement is None:
+            continue
+        _, _, ops, _ = rangement
+        nom = ops[0]["fields"]["nom"]
+        # Les `update` du lot gardent ce qu'ils changeaient en plus : le rangement leur ajoute le parent.
+        for j, o in enumerate(ops):
+            origine = next((m for m in majs if o["op"] == "update" and str(m["id"]).lstrip("#") == o["id"]), None)
+            if origine is not None:
+                champs = dict(o.get("fields") or {}, **(origine.get("fields") or {}))
+                champs["parent"] = cle_mere
+                ops[j] = dict(origine, fields=champs)
+        # Ce qui dépend d'un ajout retenu (ses filles, par `parent`) le suit tel quel.
+        cles_ajouts = {a["key"] for a in ajouts if a.get("key")}
+        dependants = [op for op in operations if all(op is not x for x in ops_visees)
+                      and str(op.get("parent") or "").lstrip("#") in cles_ajouts]
+        prise = par_ref[i]["prise"]
+        court = ["« %s »" % _court(n["libelle"]) for n in noeuds_ajouts] \
+            + ["#%s « %s »" % (x["id"], _court(x["libelle"])) for x in taches[1:]]
+        items = ([] if prise else ["#%s" % i]) + court
+        if len(items) > 1:
+            quoi = ", ".join(items[:-1]) + " et " + items[-1]
+            libelle = "Regrouper %s sous une mère nouvelle « %s » (recommandé)" % (quoi, nom)
+        else:
+            libelle = "Créer une mère nouvelle « %s » pour %s (recommandé)" % (nom, court[0])
+        a_part = [o for o in (_a_part_sans_parent(x) for x in ops_visees) if o is not None]
+        questions.append({
+            "key": "group-%s" % i, "about": (noeuds_ajouts or [par_ref[taches[1]["id"]]])[0]["libelle"], "kind": "group",
+            "question": "%s : à ranger sous #%s « %s », une tâche seule qui a son propre travail%s ; une mère reste vide : "
+                        "regrouper sous une mère nouvelle « %s », ou en tâche à part ?"
+                        % (" et ".join(court), i, _court(t["libelle"]), _tenues([par_ref[i]]), nom),
+            "options": [{"label": libelle, "operations": ops + dependants},
+                        {"label": "Tâche à part" if len(ops_visees) == 1 else "Tâches à part",
+                         "operations": a_part + dependants},
+                        {"label": "Ne rien ajouter", "operations": []}]})
+        cles |= {op["key"] for op in ops_visees + dependants if op.get("key") is not None}
+        ecartees += ops_visees + dependants
+    return cles, questions, ecartees
 
 
 def groupes(ctx):
@@ -2120,6 +2237,10 @@ def preparer(ctx, props, maintenant=None):
     sujet_cles, sujet_questions, a_la_place, versees = un_sujet(ctx, operations, retenues)
     retenues |= sujet_cles
     du_lot += sujet_questions
+    # #552 : une tâche seule ne devient pas la mère d'une tâche liée ; une mère vide la rassemble.
+    feuille_cles, feuille_questions, feuille_ops = sous_une_feuille(ctx, operations, retenues)
+    retenues |= feuille_cles
+    du_lot += feuille_questions
     # #538 : ce qui se verse d'office s'écrit à la place de l'ajout, au même rang.
     prep.versees_maj = {v["id"]: v["pourquoi"] for v in versees if v["comment"] == "versee"}
     prep.versees_sous = {v["key"]: v["pourquoi"] for v in versees if v["comment"] == "sous"}
@@ -2130,7 +2251,7 @@ def preparer(ctx, props, maintenant=None):
     for op in operations:
         if op.get("op") == "add" and op.get("key") in a_la_place:
             a_ecrire += a_la_place[op["key"]]
-        elif op.get("key") not in retenues:
+        elif op.get("key") not in retenues and all(op is not x for x in feuille_ops):
             a_ecrire.append(op)
     for op in a_ecrire:
         {"add": prep.ajouter, "update": prep.completer_tache, "reschedule": prep.redater,
