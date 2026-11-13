@@ -1,6 +1,6 @@
 ---
 name: reglages-session
-description: "Reads and changes the session settings the roadmap plugin injects at each session start: questions through the AskUserQuestion form, ADHD mode (an italic state line and a short glyph journal, then a separate conclusion at the end), answers in French, and autonomous mode (off by default, both modes: after the starting framing, Claude follows its own recommendation until the merge, merges and publishes alone). Turns them on or off for the session's project, each project its own, in ~/.claude/reglages-session.json, and repairs that file when unreadable. Also opens the Réglages pane (/reglages). Triggers on « mes réglages de session », « coupe le mode ADHD », « arrête les questions en formulaire », « réponds en anglais », « mets Maestro en autonome », « coupe l'autonomie », « quels réglages sont allumés », « mes réglages sont illisibles ». Not for the panel options (me, autoOpen, theme, launchBypass…), changed in that pane or the plugin menu, nor for a project's rules, which live in its CLAUDE.md."
+description: "Reads and changes the session settings the roadmap plugin injects at each session start: questions through the AskUserQuestion form, ADHD mode (an italic state line and a short glyph journal, then a separate conclusion at the end), answers in French, and autonomous mode (off by default, both modes: after the starting framing, Claude follows its own recommendation until the merge, merges and publishes alone). Turns them on or off for the session's project, each project its own, in ~/.claude/reglages-session.json, and repairs that file when unreadable. Also opens the Réglages pane (/roadmap settings). Triggers on « mes réglages de session », « coupe le mode ADHD », « arrête les questions en formulaire », « réponds en anglais », « mets Maestro en autonome », « coupe l'autonomie », « quels réglages sont allumés », « mes réglages sont illisibles ». Not for the panel options (me, autoOpen, theme, launchBypass…), changed in that pane or the plugin menu, nor for a project's rules, which live in its CLAUDE.md."
 ---
 
 # Session settings
@@ -52,7 +52,7 @@ text to paste. It is not a setting: it cannot be turned off. Only its confirmati
 
 ## The Réglages pane
 
-`/reglages`, the « Réglages » button of the Roadmap panel, and this skill when it is launched open
+`/roadmap settings` (old name `/reglages`), the « Réglages » button of the Roadmap panel, and this skill when it is launched open
 the plugin's pane: the « Claude et toi » section holds the session settings of the current
 project (its scope names it: « ce projet (Roadmap) · au prochain message »), On and Off side by
 side; then the plugin's options, in three sections (« Sessions lancées », « Roadmap »,

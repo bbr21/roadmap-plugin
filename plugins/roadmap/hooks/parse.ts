@@ -1213,8 +1213,51 @@ export function panelSkillNote(name: string): string {
 
 // Le panneau toujours ouvert (#117) : sa fermeture à la main est refusée, et ce toast dit comment la permettre.
 export function pinnedPaneToast(): string {
-  return 'Panneau toujours ouvert : coupe ce réglage dans /reglages pour pouvoir le fermer.'
+  return 'Panneau toujours ouvert : coupe ce réglage dans /roadmap settings pour pouvoir le fermer.'
 }
+
+// #378 : toutes les commandes passent par le nom Roadmap, en argument de /roadmap, en anglais (choix de BBR du
+// 2026-11-12). Les anciens noms (/reglages, /controle, /maestro-bar) restent enregistrés, marqués anciens.
+export type RoadmapSubcommand =
+  | { kind: 'pane' }
+  | { kind: 'settings' }
+  | { kind: 'control' }
+  | { kind: 'bar' }
+  | { kind: 'help' }
+  | { kind: 'unknown'; word: string }
+
+/** Les sous-commandes de /roadmap, leur nom anglais, les mots tolérés (anciens noms, français) et ce qu'elles font. */
+export const ROADMAP_SUBCOMMANDS: readonly { name: string; kind: Exclude<RoadmapSubcommand['kind'], 'pane' | 'unknown'>; also: readonly string[]; does: string }[] = [
+  { name: 'settings', kind: 'settings', also: ['reglages', 'réglages'], does: 'le volet des réglages' },
+  { name: 'control', kind: 'control', also: ['controle', 'contrôle'], does: 'le centre de contrôle des sessions' },
+  { name: 'bar', kind: 'bar', also: ['maestro-bar'], does: 'la bande de Maestro au-dessus de la saisie' },
+  { name: 'help', kind: 'help', also: ['aide', '?'], does: 'cette liste' },
+]
+
+/** L'argument de /roadmap : vide (ou `panel`) ouvre le panneau ; un seul mot, sans casse, choisit la sous-commande. */
+export function roadmapSubcommand(args: string): RoadmapSubcommand {
+  const word = args.trim().toLowerCase()
+  if (word === '' || word === 'panel') return { kind: 'pane' }
+  const sub = ROADMAP_SUBCOMMANDS.find(s => s.name === word || s.also.includes(word))
+  return sub ? { kind: sub.kind } : { kind: 'unknown', word: args.trim() }
+}
+
+/** La réponse de `/roadmap help`, et d'un mot inconnu, dit en tête. */
+export function roadmapHelpText(unknown?: string): string {
+  const lines = ['/roadmap : le panneau de la roadmap du projet', ...ROADMAP_SUBCOMMANDS.map(s => `/roadmap ${s.name} : ${s.does}`)]
+  const head = unknown === undefined ? '' : `« ${unknown} » : sous-commande inconnue. `
+  return `${head}${lines.join(' · ')}`
+}
+
+/** La description de /roadmap dans le menu « / » : ce qu'elle ouvre, puis ses sous-commandes. */
+export const ROADMAP_COMMAND_DESCRIPTION = `Ouvrir le panneau de la roadmap du projet ; ${ROADMAP_SUBCOMMANDS.map(s => s.name).join(', ')} en argument`
+
+/** Les anciens noms, gardés pour l'habitude ; leur description renvoie à la forme sous /roadmap. */
+export const LEGACY_COMMANDS: readonly { name: string; to: string; description: string }[] = [
+  { name: 'reglages', to: 'settings', description: "Ancien nom de /roadmap settings : ouvrir le volet des réglages, chacun changé d'un clic" },
+  { name: 'controle', to: 'control', description: 'Ancien nom de /roadmap control : ouvrir le centre de contrôle des sessions de tâche du Mac' },
+  { name: 'maestro-bar', to: 'bar', description: 'Ancien nom de /roadmap bar : faire paraître la bande de Maestro, ou dire pourquoi elle ne paraît pas' },
+]
 
 /** L'id du volet du panneau, que `register.tsx` ouvre et dessine. */
 export const PANE_ID = 'roadmap'
@@ -8966,17 +9009,48 @@ export function closeCaption(kind: CloseKind, o: { ecriture?: Ecriture; cowork: 
 
 /** « Enregistrer » de la fiche (#164) : « Modifie #N par la skill tasks : due:…, sans attend », les seuls champs changés. */
 export function editRoute(o: { ecriture?: Ecriture; cowork: boolean; task: { id?: string; label: string }; edit: TaskEdit }): WriteRoute {
-  return writeRoute(o, () => {
-    const changes = (Object.entries(o.edit) as [EditField, string | undefined][])
-      .filter((c): c is [EditField, string] => c[1] !== undefined)
-      .map(([field, given]) => {
-        const v = given.replace(/\s+/g, ' ').trim()
-        if (field === 'label') return `libellé « ${v} »`
-        if (field === 'axis') return `axe ${v}`
-        return v === '' ? `sans ${editKey(field)}` : `${editKey(field)}:${v}`
-      })
-    return `Modifie ${taskRef(o.task)} par la skill tasks : ${changes.join(', ')}`
-  })
+  return writeRoute(o, () => `Modifie ${taskRef(o.task)} par la skill tasks : ${editChanges(o.edit)}`)
+}
+
+/** Les champs changés d'une édition, tels que la demande à Claude les dit (#164) : « due:…, sans attend ». */
+function editChanges(edit: TaskEdit): string {
+  return (Object.entries(edit) as [EditField, string | undefined][])
+    .filter((c): c is [EditField, string] => c[1] !== undefined)
+    .map(([field, given]) => {
+      const v = given.replace(/\s+/g, ' ').trim()
+      if (field === 'label') return `libellé « ${v} »`
+      if (field === 'axis') return `axe ${v}`
+      return v === '' ? `sans ${editKey(field)}` : `${editKey(field)}:${v}`
+    })
+    .join(', ')
+}
+
+/** Ce qu'un pas d'un lot demande à Claude (#555) : cocher sa tâche, la rouvrir, ou réécrire ses champs. */
+export type BatchAsk = { kind: 'done' | 'reopen'; task: { id?: string; label: string } } | { kind: 'edit'; task: { id?: string; label: string }; edit: TaskEdit }
+
+/**
+ * La demande d'un lot à Claude (#555), en un seul message : la boîte d'envoi n'a qu'une place, et une
+ * demande par tâche ne laissait partir que la dernière (Blur, 2026-11-12). Les tâches d'un même geste
+ * se nomment ensemble, dans l'ordre du lot (les étapes avant leur mère) ; une tâche seule garde la
+ * demande de `checkRoute` et d'`editRoute`. Rien à demander : `undefined`.
+ */
+export function batchAskText(asks: readonly BatchAsk[]): string | undefined {
+  const names = (tasks: readonly { id?: string; label: string }[]) => {
+    const refs = tasks.map(taskRef)
+    return refs.length > 1 ? `${refs.slice(0, -1).join(', ')} et ${refs[refs.length - 1]}` : (refs[0] ?? '')
+  }
+  const order = (n: number) => (n > 1 ? ', dans cet ordre' : '')
+  const edits = new Map<string, { id?: string; label: string }[]>()
+  for (const a of asks) if (a.kind === 'edit') edits.set(editChanges(a.edit), [...(edits.get(editChanges(a.edit)) ?? []), a.task])
+  const done = asks.filter(a => a.kind === 'done').map(a => a.task)
+  const reopen = asks.filter(a => a.kind === 'reopen').map(a => a.task)
+  const parts = [
+    ...[...edits].map(([changes, tasks]) => `Modifie ${names(tasks)} par la skill tasks : ${changes}`),
+    ...(done.length > 0 ? [`Coche ${names(done)} par la skill tasks${order(done.length)}`] : []),
+    ...(reopen.length > 0 ? [`Rouvre ${names(reopen)} par la skill tasks${order(reopen.length)}`] : []),
+  ]
+  if (parts.length === 0) return undefined
+  return parts.map((p, i) => (i === 0 ? p : p.charAt(0).toLowerCase() + p.slice(1))).join(' ; puis ')
 }
 
 /**
@@ -12666,10 +12740,12 @@ export function withBypassClause(prompt: string): string {
 /**
  * La carte de session que pose Claude, quand l'option « Lancer en bypass » est allumée : la consigne
  * au brief et le bypass demandé, sauf si Claude a choisi un mode. Rien à changer (`undefined`) pour
- * une carte sans brief (`offer`) ou qui démarre une proposition telle quelle (`proposal_id`).
+ * une carte sans brief (`offer`) ou qui démarre une proposition telle quelle (`proposal_id`), ni pour une
+ * carte cloud (`target: "cloud"`, #494) : `set_session_permission_mode` n'existe pas dans la VM (essai #485),
+ * la consigne n'y servait à rien et chaque session cloud la relevait en finding.
  */
 export function bypassCard(card: Record<string, unknown>): { card: Record<string, unknown>; addedMode: boolean } | undefined {
-  if (typeof card.prompt !== 'string' || card.proposal_id !== undefined) return undefined
+  if (typeof card.prompt !== 'string' || card.proposal_id !== undefined || card.target === 'cloud') return undefined
   const addedMode = card.permission_mode === undefined
   return { card: { ...card, prompt: withBypassClause(card.prompt), ...(addedMode ? { permission_mode: BYPASS_MODE } : {}) }, addedMode }
 }

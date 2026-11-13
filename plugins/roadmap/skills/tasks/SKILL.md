@@ -334,7 +334,11 @@ Write `<scratchpad>/operations.json`:
   `ETAPE_MANQUEE` (« n'a pas pu », « faute de connexion », « non ouverte », « BBR absent »,
   « outil indisponible »…). If everything requested is in fact done, set `manque: "aucun"` in the
   bilan; otherwise close in part with `handoff` and `missing`, or leave the task open. The refusal
-  holds with or without a bilan. A **routine**
+  holds with or without a bilan. **A line with a cloud PR closes only once its PR's findings are
+  collected (#558)**: on a line that carries `lieu:cloud` and `branche:`, `done` and `handoff` are
+  refused until the findings ledger (`ROADMAP-findings.json`, next to the roadmap) holds the trace
+  that `findings.py relever <folder> --pr <n°>` of the `maestro` skill leaves, written with the PR
+  merged or closed; zero finding found counts as collected, and the refusal gives the command. A **routine**
   (#280) is a recurring task that carries its instructions: `skill:<name>` (or `plugin:name`), the
   skill its session loads first, and/or `fiche:<path>`, the detail; the panel's blue ▶ ticks the
   occurrence, moves the line to its next date and launches the session. Never write « tick the

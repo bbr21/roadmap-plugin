@@ -20,7 +20,10 @@ quand le dépôt ou sa roadmap sont introuvables. Sortie en texte, une ligne par
   #413 Purger les vieilles sauvegardes · prête · Maestro fusionne · « Prête à fusionner (tests : verts). » · <url>
 
 Une PR dont les comptes rendus portent des findings (#531, `findings.py`) le dit : « 2 findings : findings.py
-relever --pr 107 » ; le JSON en donne le nombre (`findings`).
+relever --pr 107 » ; le JSON en donne le nombre (`findings`). Une PR fusionnée ou fermée que le registre ne dit pas
+relevée depuis (#558, la trace de `findings.py relever --pr`) le dit aussi, findings ou non : « à relever avant la
+clôture : findings.py relever --pr 147 », la clôture de sa ligne étant refusée d'ici là (`tasks.py`) ; le JSON le
+donne par `releve`.
 
 Le texte dit le mot du vocabulaire (`mots_etat.mot_pr`, #509) et son détail ; le JSON garde le champ `etat` (le code
 d'avant : aucune, ouverte, en cours, rouges, prête, fusionnée, fermée, inconnu) et ajoute `mot` et `detail`.
@@ -269,6 +272,22 @@ def depot_github(depot):
     return "%s/%s" % (m.group(1), m.group(2)) if m else None
 
 
+def prs_relevees(depot):
+    """Les numéros des PR relevées une fois fusionnées ou fermées (#558) : les traces du registre des findings.
+    Registre absent ou illisible : aucune."""
+    from findings import FINIE, REGISTRE, est_trace
+
+    for rel in ("roadmap", ""):
+        try:
+            with open(os.path.join(depot, rel, REGISTRE), encoding="utf-8") as f:
+                registre = json.load(f)
+        except (OSError, ValueError):
+            continue
+        return {e["pr"] for e in registre if isinstance(e, dict) and est_trace(e) and e.get("etat") in FINIE} \
+            if isinstance(registre, list) else set()
+    return set()
+
+
 def pr_de(depot, branche, run, repo=None):
     cmd = ["gh", "pr", "list", "--head", branche, "--state", "all", "--limit", "20", "--json", CHAMPS]
     if repo:
@@ -313,9 +332,10 @@ def suivre(depot, run=None, maintenant=None):
     if rattachees:
         with ThreadPoolExecutor(max_workers=min(MAX_FILS, len(rattachees))) as pool:
             etats += list(pool.map(lambda l: pr_de(depot, l["branche"], run, repo), rattachees))
-    rendu = []
+    rendu, relevees = [], prs_relevees(depot)
     for l, e in zip(cloud + rattachees, etats):
         t = dict(l, **e)
+        t["releve"] = t["numero"] in relevees
         t["mot"], t["detail"] = mot_pr(t["etat"])
         rendu.append(t)
     return rendu
@@ -335,6 +355,8 @@ def ligne_texte(t):
         if t.get("findings"):
             parts.append("%d finding%s : findings.py relever --pr %s" % (
                 t["findings"], "s" if t["findings"] > 1 else "", t["numero"]))
+        elif t["etat"] in ("fusionnée", "fermée") and t.get("releve") is False:
+            parts.append("à relever avant la clôture : findings.py relever --pr %s" % t["numero"])
         if t["url"]:
             parts.append(t["url"])
     return " · ".join(parts)

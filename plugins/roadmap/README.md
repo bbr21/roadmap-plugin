@@ -11,6 +11,19 @@ machine), vérifié à chaque version : [SECURITE.md](SECURITE.md).
 
 ## Contenu
 
+**Une commande, `/roadmap`** (#378) : seule, elle ouvre le panneau ; son argument, en anglais, mène au reste.
+
+| Commande | Ouvre | Ancien nom, encore accepté |
+|---|---|---|
+| `/roadmap` | le panneau de la roadmap du projet | |
+| `/roadmap settings` | le volet Réglages, dans tout projet | `/reglages` |
+| `/roadmap control` | le centre de contrôle des sessions de tâche du Mac | `/controle` |
+| `/roadmap bar` | la bande de Maestro au-dessus de la saisie, ou pourquoi elle ne paraît pas | `/maestro-bar` |
+| `/roadmap help` | la liste des sous-commandes | |
+
+L'argument se lit sans casse, et le mot français passe aussi (`/roadmap reglages`) ; un mot inconnu répond
+par la liste. Les anciens noms restent dans le menu « / », leur description dit « Ancien nom de /roadmap … ».
+
 **9 skills**
 
 | Skill | Rôle |
@@ -20,7 +33,7 @@ machine), vérifié à chaque version : [SECURITE.md](SECURITE.md).
 | `doctor` | Checklist en lecture seule d'un projet (d'abord la ligne « Travail », ce que le dossier est ; sans code : python3, roadmap, réglages, champs exigés, sans GitHub, Superpowers facultatif) ; d'un projet de code : outils, GitHub, roadmap, structure, `check.mjs`, plugin roadmap, Superpowers et chacune de ses skills de méthode, sa mise à jour automatique, `swiftui-pro` sur un projet iOS ; une ligne OK, KO ou À voir avec la commande qui corrige. |
 | `audit` | Le seul audit de la roadmap (#159) : la structure (paquets découpés en parent et enfants datés, dépendances, fusions de doublons, regroupements, trous), puis une question par tâche en retard ou sans date et par `prio:` posée sur un enfant, la recommandation en premier (redater, faite, en pause, abandonner), et les clôtures sur preuve là où le projet le dit (`preuves`). `scripts/audit.py` (`survey`, `apply`, `pending`) écrit la structure tout ou rien, sauvegardée, avec un bilan qui retrouve chaque fragment ; les réponses s'écrivent par la skill `tasks`, qui suit `ecriture`. En tâche planifiée, seule une clôture sur preuve nette s'écrit : le reste attend dans `ROADMAP-questions.json`, compté par priorité. Lancée en fin d'onboarding. |
 | `tasks` | Tient la roadmap au quotidien, avec ou sans code (#158) : rapproche chaque action des tâches du même sujet (jamais de tâche neuve sur un sujet qui en a une), puis ajoute, complète, redate, coche sur preuve (`fait:` à la date de la preuve, ligne de bilan), abandonne ou met en pause (#159), par `scripts/tasks.py` (`context`, `match`, `write`) : essai à blanc, puis écriture tout ou rien après sauvegarde, sur le moteur de l'audit. Lit `regles`, `ecriture` et `preuves` de `.claude/roadmap.json` ; avec `ecriture`, passe les lignes à l'outil du projet au lieu d'écrire. |
-| `reglages-session` | Lit et change les réglages de session (questions par formulaire, mode ADHD, français, mode autonome) de `~/.claude/reglages-session.json`, pour le projet de la session (#102). Lancée, elle ouvre aussi le volet Réglages ; tapée seule, `/roadmap:reglages-session` l'ouvre comme `/reglages`, d'une ligne. |
+| `reglages-session` | Lit et change les réglages de session (questions par formulaire, mode ADHD, français, mode autonome) de `~/.claude/reglages-session.json`, pour le projet de la session (#102). Lancée, elle ouvre aussi le volet Réglages ; tapée seule, `/roadmap:reglages-session` l'ouvre comme `/roadmap settings`, d'une ligne. |
 | `mockups` | Dessine les maquettes d'un choix visuel à partir du design system que déclare le projet (`design` de `.claude/roadmap.json`) : inventaire de ses tokens, composants et motifs, deux ou trois partis qui réutilisent un motif avant d'en créer un, les ajouts nommés comme des propositions au design system, puis la critique (hiérarchie, cohérence, accessibilité) et la relecture par `web-design-guidelines`. Le réglage des maquettes la fait lancer quand le projet a un design system, `frontend-design` quand il n'en a pas (#294). |
 | `maestro` | Tient une session Maestro (`/maestro`), la session mère qui lance et suit des tâches menées en parallèle, même une seule : lignes et découpage, une session par tâche, lecture de leurs comptes rendus, main donnée sur le simulateur iOS et les autres ressources uniques, ordre des fusions calculé depuis git (`scripts/etat_maestro.py`), chaque tâche suivie dans la liste d'étapes de Maestro (une étape par tâche, son état en mots), une fusion à la fois. |
 | `impact` | La carte de ce que touche une modification (#305), avant de coder et sur le diff avant de dire fini : pour chaque fichier changé, ce qui le cite par son nom ou l'importe ; pour chaque symbole changé (fonction, type, constante, clé, cas d'enum Swift), ce qui le nomme ; les tests d'abord, rangés par le nombre de changements qui les touchent. `scripts/impact.py`, lecture seule, sans dépendance ni réseau. Le brief d'une session de code la demande. |
@@ -225,7 +238,7 @@ contexte de sa session, noté à la fin de chacun de ses tours, orange à 70 %, 
 ligne à l'autre (#174, #211, #385). Dans la ligne « En cours » dépliée du panneau, chaque session dit
 de même depuis quand elle tourne, l'horloge devant, à la place du compte « 6/8 », la main, la barre et
 la durée au bord droit de la carte, sans « Done » ni ▶ (#385).
-`/maestro-bar` force la bande (#225, demande de Bertrand du 02/11/2026) : la commande relit la fiche
+`/roadmap bar` (ancien nom `/maestro-bar`, #378) force la bande (#225, demande de Bertrand du 02/11/2026) : la commande relit la fiche
 de la session, pose la marque Maestro (comme dire « Maestro »), relit les sessions, redessine la bande
 et dit en une ligne ce qu'elle montre, ou pourquoi rien : session de tâche ou lancée par un Maestro
 (son Maestro porte la bande), aucune session en cours dans le projet (#385), roadmap absente ou illisible, question de la
@@ -669,7 +682,7 @@ réglages.
 
 Demande de Bertrand du 28/10/2026 (#81) : voir chaque réglage et le changer d'un clic, sans
 retenir de phrase. Refait le 29/10/2026 sur la maquette qu'il a choisie (#91, « juste On / Off »).
-`/reglages` ouvre le volet « Réglages » dans tout projet, roadmap ou non ; la roue en haut à droite
+`/roadmap settings` (ancien nom `/reglages`, #378) ouvre le volet « Réglages » dans tout projet, roadmap ou non ; la roue en haut à droite
 du panneau (le bouton « Réglages » au terminal) et la skill `reglages-session` l'ouvrent aussi.
 
 Rangé en sections par sujet depuis #118 (29/10/2026, maquette A1) : un titre, sa portée en
@@ -719,7 +732,7 @@ Rien de tout ça : pas de panneau, et `/roadmap` dit quoi ajouter (la skill `onb
 
 ## Réglages
 
-Dans le volet `/reglages` (voir plus haut) ou dans les réglages du plugin (menu de configuration de Claude Code) : `me` (tes noms : le premier est celui que Claude emploie avec toi, tous comptent « À moi » ;
+Dans le volet `/roadmap settings` (voir plus haut) ou dans les réglages du plugin (menu de configuration de Claude Code) : `me` (tes noms : le premier est celui que Claude emploie avec toi, tous comptent « À moi » ;
 vide par défaut, et alors ceux de `me` dans `~/.claude/roadmap-perso.json`, que pose l'onboarding ;
 sans nom, Claude dit « l'utilisateur »), `autoOpen` (« Panneau toujours ouvert », défaut oui : le panneau
 s'ouvre au démarrage, se rouvre au message suivant s'il n'est pas dessiné ou a disparu, et sa croix ne le
@@ -737,7 +750,8 @@ que pose Claude, Maestro compris, demandent le mode bypass ; l'app ne l'accorde 
 la carte est reposée sans lui et la session lancée demande elle-même le bypass à son démarrage, par
 la carte d'approbation de l'app ; il faut d'abord activer le bypass dans Réglages → Claude Code).
 Depuis une session en mode auto, l'option ne vaut pas (#248) : le contrôle du mode auto refuse un agent
-qui doit se relever en bypass, la carte part donc sans le mode ni la consigne.
+qui doit se relever en bypass, la carte part donc sans le mode ni la consigne. Une carte cloud ne les porte
+jamais (#494) : l'outil qui relève une session n'existe pas dans la VM.
 `pruneBranches` (« Branches nettoyées », défaut oui, #313) : dans un projet de code, les branches fusionnées sur main que rien ne tient (ni un worktree, ni une ligne ouverte, ni la pointe de main) partent, sur le Mac par `git branch -d` et sur GitHub par un seul `git push origin :refs/heads/…`, après l'archivage d'une session et au démarrage d'une session (au plus toutes les 10 minutes) ; « Rouvrir la session » recrée la branche depuis main.
 `launchQueue` (« File de lancement », défaut oui, #372) : chez Maestro, les lancements passent par la file commune au Mac de #345 (plafonds `projectSessions` et `macSessions`, sessions vivantes du Mac au plafond `macSessions`, mémoire tendue et charge, #403) ; éteint, plus de plafond ni d'attente, chaque carte et chaque ▶ partent tout de suite et les tâches déjà en file démarrent. Allumée, une entrée d'un autre Maestro qui peut partir et ne part pas en deux minutes ne retient plus la file, et le premier Maestro qui tourne la reprend et la lance (#374) ; une tâche en file part seule à son tour, qu'elle vienne d'un ▶ ou d'une carte de Maestro, et un départ refusé reste en file, avec son motif et son heure au centre de contrôle.
 
@@ -800,6 +814,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.292.0 (2026-11-12)** : roadmap : un lot confié à Claude part en une seule demande (#555), commandes sous /roadmap settings, control, bar, help (#378), brief cloud sans consigne bypass (#494), clôture gardée par les findings (#558)
 - **0.291.2 (2026-11-12)** : roadmap : la bande Finies au gabarit des lignes (#544), la carte posée par Claude reçoit un contexte pour la mission et le cloud (#510)
 - **0.291.1 (2026-11-12)** : roadmap : une mission lancée en direct prend sa ligne à l'appel (#510)
 - **0.291.0 (2026-11-12)** : roadmap : le mode prio passe devant tout (pause des autres sessions, file des tests en voie 0), suite de main fichier par fichier (#536)

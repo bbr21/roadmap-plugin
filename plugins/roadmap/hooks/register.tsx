@@ -143,6 +143,10 @@ import {
   bandTone,
   maestroBand,
   maestroBarText,
+  LEGACY_COMMANDS,
+  ROADMAP_COMMAND_DESCRIPTION,
+  roadmapHelpText,
+  roadmapSubcommand,
   type MaestroBand,
   type StepsView,
   maestroBrandTasks,
@@ -262,8 +266,10 @@ import {
   type EditPlace,
   type LintRules,
   type BatchChange,
+  type BatchAsk,
   type BatchStep,
   batchDays,
+  batchAskText,
   batchPlan,
   batchSummary,
   monthGrid,
@@ -8564,11 +8570,17 @@ let checking = false
 /**
  * Un projet qui écrit sa roadmap par son propre outil (`ecriture`, #164) : la case ne l'écrit pas,
  * elle le demande à Claude par la boîte d'envoi, comme « Marquer faite ». Rend `true` si c'est fait.
+ * Dans un lot (`asks`, #555), la demande ne part pas : elle rejoint celles du lot, envoyées ensemble
+ * par `applyBatch` (la boîte d'envoi n'a qu'une place).
  */
-async function checkByClaude($: EngineInterface, source: Source, task: Task, action: 'done' | 'reopen' | 'family', open = 0): Promise<boolean> {
+async function checkByClaude($: EngineInterface, source: Source, task: Task, action: 'done' | 'reopen' | 'family', open = 0, asks?: BatchAsk[]): Promise<boolean> {
   const cowork = await coworkPyFor($, source)
   const route = checkRoute({ ecriture: source.ecriture, cowork, task, action, open })
   if (route.via !== 'claude') return false
+  if (asks !== undefined && action !== 'family') {
+    asks.push({ kind: action, task })
+    return true
+  }
   queueSubmit($, route.text)
   try {
     $.ui.toast(`Demandé à Claude : ${route.text}`)
@@ -8643,7 +8655,8 @@ async function batchTasks($: EngineInterface, source: Source): Promise<Task[]> {
  * Une édition en lot (#316) : le plan de `batchPlan`, puis chaque tâche relue et écrite par les voies
  * existantes, une à la fois : `saveEdit` pour sa date et sa récurrence, `closeTask` ou `reopenTask`
  * (ou Claude, avec `ecriture`) pour son statut. Un refus ne bloque pas les autres ; le bilan se pose
- * sous la barre, et la sélection ne garde que les tâches refusées.
+ * sous la barre, et la sélection ne garde que les tâches refusées. Avec `ecriture`, tout le lot part
+ * à Claude en une demande (`batchAskText`, #555), et le bilan dit « demandé à Claude ».
  */
 async function applyBatch($: EngineInterface, source: Source, change: BatchChange, what: string, keys?: readonly string[]): Promise<void> {
   if (batching || checking) {
@@ -8664,15 +8677,26 @@ async function applyBatch($: EngineInterface, source: Source, change: BatchChang
     const steps = batchPlan(await batchTasks($, source), keys ?? picked, change)
     const at = await $.clock.now()
     const outcomes: { task: Task; ok: boolean; why?: string }[] = []
+    // Ce que le lot demande à Claude (`ecriture`, #555) : réuni ici, envoyé en un seul message.
+    const asks: BatchAsk[] = []
     for (const step of steps) {
-      const whys = await runBatchStep($, source, step, at)
+      const whys = await runBatchStep($, source, step, at, asks)
       outcomes.push({ task: step.task, ok: whys.length === 0, ...(whys.length > 0 ? { why: whys.join(' ; ') } : {}) })
+    }
+    const asked = batchAskText(asks)
+    if (asked !== undefined) {
+      queueSubmit($, asked)
+      try {
+        $.ui.toast(`Demandé à Claude : ${asked}`)
+      } catch {
+        // pas de toast sur cette surface
+      }
     }
     const keep = outcomes.filter(o => !o.ok).map(o => taskKey(o.task))
     await update($, retryAtom, v => v + 1)
     // Une coche seule (#355) n'ouvre pas de sélection : ses refus se lisent au bilan.
     const kept = picked.length === 0 ? [] : keep
-    await setView($, () => ({ picked: kept, batchNote: batchSummary(outcomes, what), ...(kept.length === 0 ? { batchMenu: '' } : {}) }))
+    await setView($, () => ({ picked: kept, batchNote: batchSummary(outcomes, asked !== undefined ? `demandé à Claude (${what})` : what), ...(kept.length === 0 ? { batchMenu: '' } : {}) }))
   } finally {
     batching = false
     checking = false
@@ -8682,21 +8706,22 @@ async function applyBatch($: EngineInterface, source: Source, change: BatchChang
 /**
  * Un pas d'un lot (#316), ou d'un clic sur une case (#355) : la tâche relue, ses champs réécrits par
  * `saveEdit`, puis sa clôture (`closeTask`) ou sa réouverture (`reopenTask`), ou Claude avec `ecriture` ;
- * la case joue son mouvement (#182). Rend ce qui ne s'est pas fait, vide quand tout a pris.
+ * la case joue son mouvement (#182). Rend ce qui ne s'est pas fait, vide quand tout a pris. Dans un lot,
+ * ce qui part à Claude se range dans `asks` au lieu de partir (#555).
  */
-async function runBatchStep($: EngineInterface, source: Source, step: BatchStep, at: number): Promise<string[]> {
+async function runBatchStep($: EngineInterface, source: Source, step: BatchStep, at: number, asks?: BatchAsk[]): Promise<string[]> {
   const key = taskKey(step.task)
   const fresh = async () => (await batchTasks($, source)).find(t => taskKey(t) === key)
   const whys: string[] = step.refused ? [step.refused] : []
   if (Object.keys(step.edit).length > 0) {
     const task = await fresh()
-    const out = task === undefined ? { error: 'a quitté la roadmap' } : await saveEdit($, source, task, step.edit).catch((err: unknown) => ({ error: err instanceof Error ? err.message : String(err) }))
+    const out = task === undefined ? { error: 'a quitté la roadmap' } : await saveEdit($, source, task, step.edit, asks).catch((err: unknown) => ({ error: err instanceof Error ? err.message : String(err) }))
     if ('error' in out) whys.push(out.error)
   }
   if (step.close || step.reopen) {
     const task = await fresh()
     if (task === undefined) whys.push('a quitté la roadmap')
-    else if (!(await checkByClaude($, source, task, step.close ? 'done' : 'reopen'))) {
+    else if (!(await checkByClaude($, source, task, step.close ? 'done' : 'reopen', 0, asks))) {
       checkMoves.set(key, { done: step.close, at })
       const out = step.close
         ? await closeTask($, source, task, 'done', '').catch((err: unknown) => ({ error: `Clôture impossible : ${err instanceof Error ? err.message : String(err)}` }))
@@ -8708,7 +8733,11 @@ async function runBatchStep($: EngineInterface, source: Source, step: BatchStep,
     }
   }
   // Une mère qui attend sa dernière étape : fermée avec elle, ou encore ouverte si une étape a refusé.
-  if (step.motherWaits && (await fresh())?.done === false) whys.push('se cochera avec sa dernière étape')
+  // Avec `ecriture` (#555), rien ne la ferme ici : elle part dans la demande à Claude, après ses étapes.
+  if (step.motherWaits) {
+    const task = await fresh()
+    if (task?.done === false && !(await checkByClaude($, source, task, 'done', 0, asks))) whys.push('se cochera avec sa dernière étape')
+  }
   return whys
 }
 
@@ -8909,6 +8938,7 @@ async function saveEdit(
   source: Source,
   task: Task,
   edit: TaskEdit,
+  asks?: BatchAsk[],
 ): Promise<{ id?: string; warnings: string[]; note?: string; asked?: string } | { error: string; field?: EditField }> {
   const { open } = files(source)
   const rules = await editRules($, source)
@@ -8919,7 +8949,9 @@ async function saveEdit(
     const out = editInTexts(await $.fs.read(open), task, edit, rules)
     if ('error' in out) return out
     if (!out.changed) return { ...(task.id ? { id: task.id } : {}), warnings: [] }
-    queueSubmit($, route.text)
+    // Dans un lot (#555), la demande rejoint celles du lot : `applyBatch` les envoie ensemble.
+    if (asks !== undefined) asks.push({ kind: 'edit', task, edit })
+    else queueSubmit($, route.text)
     return { ...(task.id ? { id: task.id } : {}), warnings: out.warnings, asked: route.text }
   }
   if (route.via === 'cowork') {
@@ -9849,6 +9881,17 @@ async function refreshForCommand($: EngineInterface): Promise<void> {
 }
 
 /** La réponse de /roadmap (et de /roadmap:roadmap-panel tapée seule) : le panneau ouvert, ou ce qui manque. */
+/** /roadmap et son argument (#378) : le panneau, ou la sous-commande que dit `roadmapSubcommand`. */
+async function roadmapCommand($: EngineInterface, args: string): Promise<{ text: string }> {
+  const sub = roadmapSubcommand(args)
+  if (sub.kind === 'settings') return openSettings($)
+  if (sub.kind === 'control') return openControl($)
+  if (sub.kind === 'bar') return forceBar($)
+  if (sub.kind === 'help') return { text: roadmapHelpText() }
+  if (sub.kind === 'unknown') return { text: roadmapHelpText(sub.word) }
+  return openCommand($)
+}
+
 async function openCommand($: EngineInterface): Promise<{ text: string }> {
   const source = await sourceNow($)
   if (!source) {
@@ -9995,24 +10038,10 @@ export const register: Register = (on, options) => {
     perfFlushNow = () => writePerf($)
     // La version de ce module, avant qu'une synchro de l'app ne réécrive son plugin.json (#138).
     void loadSessionVersion($).catch(() => undefined)
-    await $.command.register({
-      name: 'roadmap',
-      description: 'Ouvrir le panneau de la roadmap du projet',
-    })
-    await $.command.register({
-      name: BAR_COMMAND,
-      description: 'Faire paraître la bande de Maestro au-dessus de la saisie, ou dire pourquoi elle ne paraît pas',
-    })
-    // Le volet Réglages vaut dans tout projet, roadmap ou non : les réglages de session valent partout.
-    await $.command.register({
-      name: 'reglages',
-      description: 'Ouvrir le volet des réglages : chaque réglage, son état, changé d\'un clic',
-    })
-    // Le centre de contrôle (#367) vaut dans toute session : il lit la liste des sessions du Mac et la file commune.
-    await $.command.register({
-      name: 'controle',
-      description: 'Ouvrir le centre de contrôle : toutes les sessions de tâche du Mac, leur file, pause et priorité',
-    })
+    // #378 : tout passe par /roadmap et son argument (settings, control, bar, help) ; les anciens noms restent,
+    // marqués anciens. Réglages et centre de contrôle valent dans tout projet, roadmap ou non.
+    await $.command.register({ name: 'roadmap', description: ROADMAP_COMMAND_DESCRIPTION })
+    for (const c of LEGACY_COMMANDS) await $.command.register({ name: c.name, description: c.description })
     // Un rechargement (une option changée dans le volet, une mise à jour) garde le volet dessiné avec
     // les boutons de l'ancien module : il se redessine, comme le panneau plus bas.
     let settingsOpen = false
@@ -10817,7 +10846,7 @@ export const register: Register = (on, options) => {
     return result
   })
 
-  on('command.run', { command: 'roadmap' }, async $ => openCommand($))
+  on('command.run', { command: 'roadmap' }, async ($, e) => roadmapCommand($, e.args ?? ''))
 
   // Sa fermeture à la main est refusée tant que le réglage est allumé ; un toast dit comment la permettre.
   on('ui.close', { id: PANE }, async ($, e, next) => {
@@ -10826,11 +10855,12 @@ export const register: Register = (on, options) => {
     $.ui.toast(pinnedPaneToast())
   })
 
+  // Les anciens noms (#378) : le même geste que leur sous-commande de /roadmap.
   on('command.run', { command: 'reglages' }, async $ => openSettings($))
 
   on('command.run', { command: 'controle' }, async $ => openControl($))
 
-  on('command.run', { command: BAR_COMMAND }, async $ => forceBar($))
+  on('command.run', { command: 'maestro-bar' }, async $ => forceBar($))
 
   // La skill des réglages tapée seule ouvre le volet sans passer par le modèle ; suivie d'une demande
   // (« coupe le mode ADHD »), la skill la traite. Lancée par le modèle, le volet s'ouvre aussi.
@@ -11671,7 +11701,6 @@ function brandTree(
 }
 
 /** La commande qui force la bande de Maestro (#225). */
-const BAR_COMMAND = 'maestro-bar'
 
 /** Le dernier dessin de la bande demandé par l'app depuis le chargement du module, et s'il cédait à une question (#225). */
 let bandAsked: { survey: boolean } | undefined

@@ -87,6 +87,10 @@ BILAN_COMPTE = ("lieu", "type")
 LIEUX = ["cloud", "mac"]
 TYPES = ["code", "doc", "rendu", "sans-code"]
 CONCLUSION_MAX = 140
+# #558 : le registre des findings (`findings.py` de la skill maestro), à côté de la roadmap, et l'état d'une PR
+# relevée une fois finie ; le contrat de sa trace est dans docs/decisions.md.
+REGISTRE_FINDINGS = "ROADMAP-findings.json"
+PR_FINIE = ("MERGED", "CLOSED")
 # Un dossier Cowork dont `cowork.json` confie la roadmap au plugin (`"roadmap": "plugin-roadmap"`, #262).
 COWORK_PLUGIN = "plugin-roadmap"
 # La section où part une tâche en pause (#159) : sa date de reprise la range, aucune clé nouvelle.
@@ -1502,6 +1506,7 @@ class _Tenue(audit._Preparation):
         super().__init__(ctx, {})
         self.maintenant = maintenant
         self.dossier_projet = ctx.get("dossier")
+        self.dossier_roadmap = os.path.dirname(ctx["roadmap"])
         self.journal = journal_de_bilan(ctx["dossier"], os.path.dirname(ctx["roadmap"]))
         self.cles_valeurs = ctx.get("cles_valeurs") or {}
         self.axes = ctx.get("axes") or []
@@ -1799,6 +1804,36 @@ class _Tenue(audit._Preparation):
         csv.writer(sortie, lineterminator="\n").writerows([[r.get(c, "") for c in entete] for r in self.bilans])
         return texte + ("" if texte.endswith("\n") or not texte else "\n") + sortie.getvalue()
 
+    def refuser_sans_releve(self, t, quoi, preuve):
+        """#558 : une ligne à PR cloud (`lieu:cloud` et `branche:`) ne se clôt qu'une fois sa PR relevée au registre
+        des findings, fusionnée ou fermée : la trace `{"pr", "de", "etat"}` qu'y laisse `findings.py relever --pr`
+        (skill maestro), zéro finding compris. Sans elle, les findings de la session se perdent (#549, PR 147)."""
+        if t.get("lieu") != "cloud" or not t.get("branche"):
+            return
+        chemin = os.path.join(self.dossier_roadmap, REGISTRE_FINDINGS)
+        try:
+            registre = json.loads(audit._lire_fichier(chemin) or "[]")
+            traces = [e for e in registre if isinstance(e, dict) and "n" not in e and isinstance(e.get("pr"), int)
+                      and str(e.get("de")) == t.id]
+        except (ValueError, TypeError):
+            raise Erreur("%s : %s est illisible, rien ne dit que la PR de cette ligne cloud a été relevée : "
+                         "répare-le d'abord" % (quoi, chemin))
+        if any(e.get("etat") in PR_FINIE for e in traces):
+            return
+        dite = re.search(r"\bPR\s*(?:n°\s*)?#?(\d+)", preuve or "")
+        numero = str(traces[-1]["pr"]) if traces else dite.group(1) if dite else "<n>"
+        commande = "python3 %s relever %s --pr %s" % (
+            os.path.normpath(os.path.join(ICI, "..", "..", "maestro", "scripts", "findings.py")),
+            self.dossier_projet, numero)
+        ou = "" if numero != "<n>" else " (son numéro : gh pr list --head %s --state all)" % t.get("branche")
+        if traces:
+            raise Erreur("%s : la PR %s de cette ligne cloud a été relevée avant sa fusion, un compte rendu a pu "
+                         "suivre : relance `%s` maintenant qu'elle est fusionnée, puis refais la clôture"
+                         % (quoi, numero, commande))
+        raise Erreur("%s : la PR de cette ligne cloud n'a pas été relevée, ses findings se perdraient (#558) : lance "
+                     "`%s`%s, committe le registre, puis refais la clôture ; zéro finding trouvé vaut relevé"
+                     % (quoi, commande, ou))
+
     def cocher(self, op):
         t = self.tache(op.get("id"), "clôture")
         quoi = "clôture de #%s" % t.id
@@ -1807,6 +1842,7 @@ class _Tenue(audit._Preparation):
         if not preuve:
             raise Erreur("%s : la preuve manque (ce qui prouve que c'est fait, et où)" % quoi)
         self.refuser_sans_envoi(t, quoi)
+        self.refuser_sans_releve(t, quoi, preuve)
         bilan = self.bilan_de(op, quoi)
         trouve = etape_manquee(bilan, preuve)
         if trouve:
@@ -1866,6 +1902,7 @@ class _Tenue(audit._Preparation):
             if not dits[k]:
                 raise Erreur("%s : %s manque" % (quoi, ce))
         self.refuser_sans_envoi(t, quoi)
+        self.refuser_sans_releve(t, quoi, dits["proof"])
         tiers = dits["waiting"]
         if manque and not est_un_tiers(tiers, self.me):
             tiers = ""

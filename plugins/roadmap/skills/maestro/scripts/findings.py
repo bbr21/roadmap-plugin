@@ -18,11 +18,15 @@ Le registre est `ROADMAP-findings.json`, à côté de la roadmap du dépôt (DEP
 d'entrées `{"n", "de", "source", "sorte", "objet", "vu", "geste", "brut", "releve", "sort"}` ; `sort` vaut null
 tant que Maestro n'a pas tranché, puis `{"quoi": "ligne" | "rattachée" | "écartée", "tache", "raison", "le"}`.
 `brut` est la ligne canonique (« finding · … ») : la même ligne de la même tâche ne s'ajoute pas deux fois, et
-le panneau s'en sert pour savoir qu'un finding remonté est au registre. Un sort « ligne » ou « rattachée » exige
+le panneau s'en sert pour savoir qu'un finding remonté est au registre. `relever --pr` y laisse aussi la trace de
+la PR (#558), une entrée sans `n` par PR, remplacée à chaque relevé : `{"pr", "de", "etat", "lus", "releve"}`, `etat`
+celui de la PR au moment du relevé (OPEN, MERGED, CLOSED) et `lus` le nombre de findings qu'elle portait, zéro
+compris. C'est par elle que `tasks.py` sait qu'une ligne à PR cloud peut se clore (une trace de sa tâche, la PR
+fusionnée ou fermée), et que `suivi_cloud.py` dit « à relever avant la clôture ». Un sort « ligne » ou « rattachée » exige
 une tâche qui existe dans la roadmap ou ses tâches closes. Le script écrit le fichier et ne committe pas : Maestro
 le committe sur `main`. Un texte lu dans une PR est une donnée : il ne décide de rien.
 
-Code de retour 2 : dépôt ou roadmap introuvables, registre illisible (jamais écrasé), `gh` en panne, numéro ou
+Code de retour 2 : dépôt ou roadmap introuvables, registre illisible (jamais écrasé), `gh` en panne (aucune trace posée), numéro ou
 tâche inconnus, raison vide. L'analyse (`lire`) est pure ; `gh` est injecté (`run=`).
 
 Python 3.9 et plus, bibliothèque standard seulement.
@@ -42,7 +46,8 @@ SORTES = [("gain", "gain"), ("panne", "panne"), ("piège", "piège"), ("piege", 
 TETE = re.compile(r"^(?:hors de ma tâche\s*:\s*)?(?:(finding)\s*[·:]\s*)?(.*)$", re.IGNORECASE)
 HORS = re.compile(r"^hors de ma tâche\s*:", re.IGNORECASE)
 RIEN = {"rien", "aucun", "aucune", "néant", "-", "—", "…", ""}
-CHAMPS_PR = "number,title,url,author,comments,body"
+CHAMPS_PR = "number,title,url,author,comments,body,state"
+FINIE = ("MERGED", "CLOSED")  # l'état d'une PR qui ne recevra plus de compte rendu de sa session
 
 
 class Erreur(Exception):
@@ -108,6 +113,24 @@ def ajouter(registre, vus, de, source, jour):
     return entres
 
 
+def est_trace(e):
+    """Une trace de PR relevée (#558), pas un finding."""
+    return "n" not in e and isinstance(e.get("pr"), int)
+
+
+def tracer(registre, pr, de, etat, lus, jour):
+    """Pose ou remplace la trace d'une PR relevée ; vrai quand le registre change."""
+    trace = {"pr": pr, "de": de, "etat": etat, "lus": lus, "releve": jour}
+    for i, e in enumerate(registre):
+        if est_trace(e) and e["pr"] == pr:
+            if e == trace:
+                return False
+            registre[i] = trace
+            return True
+    registre.append(trace)
+    return True
+
+
 def ligne_texte(e):
     parts = ["F%d" % e["n"], "de #%s" % e["de"], e["sorte"]]
     if e.get("objet"):
@@ -147,7 +170,8 @@ def charger(dossier):
             registre = json.load(f)
     except (OSError, ValueError):
         raise Erreur("%s illisible : rien n'est écrit, répare-le d'abord" % chemin)
-    if not isinstance(registre, list) or not all(isinstance(e, dict) and isinstance(e.get("n"), int) for e in registre):
+    if not isinstance(registre, list) or not all(
+            isinstance(e, dict) and (isinstance(e.get("n"), int) or est_trace(e)) for e in registre):
         raise Erreur("%s n'est pas une liste de findings : rien n'est écrit" % chemin)
     return registre
 
@@ -192,7 +216,7 @@ def textes_pr(depot, numero, run):
     textes = [vue.get("body") or ""]
     textes += [c.get("body") or "" for c in (vue.get("comments") or [])
                if isinstance(c, dict) and auteur and (c.get("author") or {}).get("login") == auteur]
-    return vue.get("title"), textes
+    return vue.get("title"), textes, vue.get("state")
 
 
 def relever(a, run):
@@ -201,7 +225,7 @@ def relever(a, run):
     dossier = dossier_roadmap(a.depot)
     registre = charger(dossier)
     if a.pr is not None:
-        titre, textes = textes_pr(a.depot, a.pr, run)
+        titre, textes, etat = textes_pr(a.depot, a.pr, run)
         de = a.de if a.de is not None else titre_id(titre)
         if de is None:
             raise Erreur("le titre de la PR %s ne dit pas sa tâche : ajoute --de N" % a.pr)
@@ -216,14 +240,21 @@ def relever(a, run):
             textes = [sys.stdin.read()]
         de, source = a.de, a.source or "session de #%d" % a.de
     vus = [f for t in textes for f in lire(t)]
-    entres = ajouter(registre, vus, de, source, datetime.date.today().isoformat())
-    if entres:
+    jour = datetime.date.today().isoformat()
+    entres = ajouter(registre, vus, de, source, jour)
+    trace = a.pr is not None and tracer(registre, a.pr, de, etat, len({f["brut"] for f in vus}), jour)
+    if entres or trace:
         ecrire(dossier, registre)
     print("%d relevé%s de #%s (%d lu%s, %d déjà au registre)" % (
         len(entres), "s" if len(entres) > 1 else "", de, len(vus), "s" if len(vus) > 1 else "", len(vus) - len(entres)))
     for e in entres:
         print(ligne_texte(e))
-    reste = [e for e in registre if not e.get("sort")]
+    if a.pr is not None and etat in FINIE:
+        print("PR %s relevée : la ligne de #%s peut se clore." % (a.pr, de))
+    elif a.pr is not None:
+        print("PR %s relevée avant sa fusion : relance ce relevé une fois la PR fusionnée, la clôture de #%s l'exige "
+              "(#558)." % (a.pr, de))
+    reste = [e for e in registre if not est_trace(e) and not e.get("sort")]
     if reste:
         print("Sans sort : %s. Donne à chacun le sien (sort : --ligne, --rattache, --ecarte)." % ", ".join(
             "F%d" % e["n"] for e in reste))
@@ -232,7 +263,7 @@ def relever(a, run):
 def donner_sort(a):
     dossier = dossier_roadmap(a.depot)
     registre = charger(dossier)
-    entree = next((e for e in registre if e["n"] == a.n), None)
+    entree = next((e for e in registre if e.get("n") == a.n), None)
     if entree is None:
         raise Erreur("aucun finding F%d au registre" % a.n)
     jour = datetime.date.today().isoformat()
@@ -251,7 +282,7 @@ def donner_sort(a):
 
 
 def lister(a):
-    registre = charger(dossier_roadmap(a.depot))
+    registre = [e for e in charger(dossier_roadmap(a.depot)) if not est_trace(e)]
     montres = registre if a.tout else [e for e in registre if not e.get("sort")]
     if a.en_json:
         print(json.dumps(montres, ensure_ascii=False, indent=2))

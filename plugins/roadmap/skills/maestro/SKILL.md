@@ -687,6 +687,11 @@ otherwise they see an empty worktree.
     `python3 "<skill folder>/scripts/findings.py" relever <main folder> --de <task id> <file>` ;
     `relever <main folder> --pr <n°>` for a cloud PR (the PR author's description and comments
     only, read by the script itself). The same line of the same task is never added twice.
+    **The closure is guarded by it (#558)**: `relever --pr` leaves the PR's trace in the ledger, zero
+    finding included, and the `tasks` skill refuses `done` and `handoff` on a line with a cloud PR
+    (`lieu:cloud` and `branche:`) until that trace says the PR was collected once merged or closed;
+    so run it after the merge, before closing the line, whoever closes (gardien included), and
+    `suivi_cloud.py` says « à relever avant la clôture : findings.py relever --pr <n°> » until then.
     An old « Hors de ma tâche : … » line without the format is recorded too, kind « autre ».
   - **Give each one its fate**, after matching it against the open and closed tasks (never two lines
     for one subject): `findings.py sort <main folder> F<n> --ligne <id>` once its line is opened
