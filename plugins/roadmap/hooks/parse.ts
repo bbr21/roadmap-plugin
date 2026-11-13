@@ -10246,6 +10246,162 @@ export function whyContext(o: {
   ].join('\n\n')
 }
 
+// #560 (BBR, 2026-11-12) : « quoi archiver », seul dans le message, fait répondre un tableau tout fait au gabarit A
+// choisi sur maquette : une ligne par session du projet, un verdict (oui, pas encore, non) tiré des faits, et le geste.
+
+/** « quoi archiver », « Quoi archiver ? » (#560) : seul dans le message, rien après qu'une ponctuation de fin. */
+export function archiveCall(prompt: string): boolean {
+  return /^\s*quoi\s+archiver\s*[?.!]?\s*$/i.test(withoutReminders(prompt))
+}
+
+/**
+ * Une session du projet, telle que l'appelant l'a relevée ; `findings` : ceux qu'elle a écrits et que le registre n'a
+ * pas encore ; `traced` (cloud) : le registre a la trace du relevé de sa PR fusionnée ou fermée (#558, `ledgerTraces`).
+ */
+export type ArchiveSession = { title: string; running: boolean; cloud: boolean; role: boolean; branch?: string; findings?: number; traced?: boolean }
+
+/** Une ligne du tableau : le verdict, la session, la raison tirée de faits, le geste ; `id` : la tâche, pour le tri. */
+export type ArchiveRow = { verdict: 'oui' | 'pas encore' | 'non'; session: string; why: string; geste: string; id?: string }
+
+/** Une date `AAAA-MM-JJ[ HH:MM]` (heure locale) en millisecondes ; `undefined` si elle est mal écrite. */
+function localTime(s: string | undefined): number | undefined {
+  const m = /^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{2}):(\d{2}))?/.exec((s ?? '').trim())
+  if (!m) return undefined
+  return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]), Number(m[4] ?? 0), Number(m[5] ?? 0)).getTime()
+}
+
+/** `AAAA-MM-JJ…` en `JJ/MM`. */
+function dayMonth(s: string | undefined): string | undefined {
+  const m = /^\d{4}-(\d{2})-(\d{2})/.exec((s ?? '').trim())
+  return m ? `${m[2]}/${m[1]}` : undefined
+}
+
+/**
+ * Les sessions cloud du projet (#560) : elles ne sont pas dans `list_sessions`, on les lit dans la roadmap. Une par
+ * ligne `lieu:cloud` ouverte qui a sa branche, et une par ligne `lieu:cloud` close depuis moins de 48 h (la session
+ * est peut-être encore ouverte sur claude.ai).
+ */
+export function cloudArchiveSessions(tasks: readonly Task[], now: number): ArchiveSession[] {
+  const out: ArchiveSession[] = []
+  for (const t of tasks) {
+    if (t.lieu !== 'cloud') continue
+    if (t.done) {
+      const at = localTime(t.fait)
+      if (at === undefined || now - at >= 48 * 3600 * 1000) continue
+    } else if (!t.branche) continue
+    out.push({ title: `#${t.id ?? '?'} · ${t.nom ?? t.label}`, running: false, cloud: true, role: false, ...(t.branche ? { branch: t.branche } : {}) })
+  }
+  return out
+}
+
+/** Un texte venu d'une session ou d'une ligne, pour une cellule du tableau : sur une ligne, coupé, sans `|`. */
+const archiveCell = (s: string, max = 60) => clip(s.replace(/\|/g, '/').replace(/\s+/g, ' ').trim(), max)
+
+const ARCHIVE_ORDER = { oui: 0, 'pas encore': 1, non: 2 } as const
+
+/**
+ * Le verdict de chaque session (#560), dans l'ordre : rôle, sans tâche, qui tourne, ligne ouverte (`attend:`, état de
+ * sa PR), ligne close (PR encore ouverte, findings pas relevés, sinon `oui`). Une session se rattache à sa tâche par
+ * le `#N` en tête de son titre, sinon par sa branche. `prs` : la sortie de `gh pr list`, `undefined` si inconnue.
+ */
+export function archiveVerdicts(sessions: readonly ArchiveSession[], tasks: readonly Task[], prs: unknown): ArchiveRow[] {
+  const rows: { row: ArchiveRow; n: number }[] = []
+  for (const s of sessions) {
+    const place = s.cloud ? 'cloud' : 'Mac'
+    const num = /^\s*#(\d+)\b/.exec(s.title)?.[1]
+    const task = (num !== undefined ? tasks.find(t => t.id === num) : undefined) ?? (s.branch ? tasks.find(t => t.branche === s.branch) : undefined)
+    const name = task ? `#${task.id ?? '?'} ${archiveCell(task.nom ?? task.label)}` : archiveCell(s.title)
+    const base = { session: `${name} · ${place}`, ...(task?.id ? { id: task.id } : {}) }
+    const make = (verdict: ArchiveRow['verdict'], why: string, geste = '—'): ArchiveRow => ({ verdict, ...base, why, geste })
+    let row: ArchiveRow
+    if (s.role) row = make('non', 'session de rôle')
+    else if (!task) row = make('non', 'aucune tâche reconnue (titre, branche)', 'à toi de juger')
+    else if (s.running) row = make('non', 'tourne encore')
+    else {
+      const branche = task.branche ?? s.branch
+      const pr = branche ? cloudPrOf(prs, branche) : ({ state: 'none' } as CloudPr)
+      const pn = pr.number !== undefined ? `PR ${pr.number}` : 'PR'
+      if (!task.done) {
+        if (task.attend) row = make('non', `attend : ${archiveCell(task.attend)}`)
+        else if (pr.state === 'ready') row = make('pas encore', `${pn} prête, le gardien fusionne`, 'attendre la fusion')
+        else if (pr.state === 'merged') row = make('pas encore', `${pn} fusionnée, pas encore publiée`, 'attendre la publication')
+        else if (pr.state === 'open') row = make('non', `${pn} ouverte`)
+        else if (pr.state === 'red') row = make('non', `${pn} : contrôles rouges`)
+        else if (pr.state === 'closed') row = make('non', `${pn} fermée sans fusion`)
+        else if (pr.state === 'unknown') row = make('non', 'état de la PR inconnu')
+        else row = make('non', 'ligne encore ouverte')
+      } else if (pr.state === 'open' || pr.state === 'red' || pr.state === 'ready') {
+        row = make('non', `close, mais ${pn} encore ouverte`)
+      } else if ((s.findings ?? 0) > 0) {
+        const k = s.findings as number
+        const why = `${k} finding${k > 1 ? 's' : ''} pas relevé${k > 1 ? 's' : ''}`
+        row = make('pas encore', why, s.cloud ? `Maestro : findings.py relever${pr.number !== undefined ? ` --pr ${pr.number}` : ''}` : 'Maestro les relève')
+      } else if (s.cloud && s.traced === false) {
+        row = make('pas encore', `findings de la ${pn} pas relevés`, `Maestro : findings.py relever${pr.number !== undefined ? ` --pr ${pr.number}` : ''}`)
+      } else {
+        const day = dayMonth(task.fait)
+        let why: string
+        if (isAbandoned(task)) why = `abandonnée${day ? ` le ${day}` : ''}`
+        else {
+          const version = [...(task.livre ?? [])].reverse().find(p => p.version)?.version
+          why = `close${day ? ` le ${day}` : ''}${version ? `, publiée en ${version}` : pr.state === 'merged' ? ', sans version' : ''}`
+        }
+        row = make('oui', why, s.cloud ? 'sur claude.ai/code : ⋯ puis Archive' : 'bouton Archiver de la bande')
+      }
+    }
+    rows.push({ row, n: task?.id && /^\d+$/.test(task.id) ? Number(task.id) : Number.POSITIVE_INFINITY })
+  }
+  rows.sort((a, b) => ARCHIVE_ORDER[a.row.verdict] - ARCHIVE_ORDER[b.row.verdict] || (a.n === b.n ? 0 : a.n < b.n ? -1 : 1) || (a.row.session < b.row.session ? -1 : a.row.session > b.row.session ? 1 : 0))
+  return rows.map(r => r.row)
+}
+
+/**
+ * Ce que Claude reçoit pour « quoi archiver » (#560) : le tableau tout fait, à rendre tel quel (le verdict vient des
+ * faits relevés par le plugin). `rows` absent : la liste des sessions n'a pas pu être lue, `note` dit pourquoi.
+ */
+export function archiveContext(rows: readonly ArchiveRow[] | undefined, note?: string): string {
+  if (!rows) return `${Person()} demande quelles sessions archiver (« quoi archiver »), mais la liste des sessions n'a pas pu être lue${note ? ` (${note})` : ''} : dis-le en une phrase, sans tableau.`
+  const ask = `${Person()} demande quelles sessions archiver (« quoi archiver ») : réponds par le bloc ci-dessous, tel quel, et rien d'autre (ni introduction, ni outil, ni verdict refait : il vient des faits relevés par le plugin).`
+  const title = `### Quoi archiver · ${rows.length} session${rows.length > 1 ? 's' : ''}`
+  if (rows.length === 0) return `${ask}\n\n${title}\n\nAucune session ouverte dans ce projet.`
+  const count = (v: ArchiveRow['verdict']) => rows.filter(r => r.verdict === v).length
+  const stay = count('non')
+  return [
+    ask,
+    [
+      title,
+      '',
+      `**${count('oui')} à archiver, ${count('pas encore')} bientôt, ${stay} ${stay === 1 ? 'reste' : 'restent'}.**`,
+      '',
+      '| Session | Verdict | Pourquoi | Geste |',
+      '|---|---|---|---|',
+      ...rows.map(r => `| ${r.session} | \`${r.verdict}\` | ${r.why} | ${r.geste} |`),
+    ].join('\n'),
+  ].join('\n\n')
+}
+
+/**
+ * Les tâches dont le registre des findings a la trace d'une PR relevée une fois fusionnée ou fermée (#558 :
+ * `{"pr", "de", "etat", "lus", "releve"}`, posée par `findings.py relever --pr`) : le même fait que lit `tasks.py`
+ * avant de clore une ligne cloud. Une trace d'une PR encore ouverte ne compte pas. Illisible : aucune.
+ */
+export function ledgerTraces(text: string | undefined): Set<string> {
+  const out = new Set<string>()
+  let rows: unknown
+  try {
+    rows = JSON.parse(text ?? '[]')
+  } catch {
+    return out
+  }
+  for (const row of Array.isArray(rows) ? rows : []) {
+    if (typeof row !== 'object' || row === null) continue
+    const r = row as Record<string, unknown>
+    if ('n' in r || typeof r.pr !== 'number' || (r.etat !== 'MERGED' && r.etat !== 'CLOSED')) continue
+    if (/^\d{1,9}$/.test(String(r.de))) out.add(String(r.de))
+  }
+  return out
+}
+
 /** Les mots d'état après « Maestro » (#250) : un scan, pas une demande de travail. */
 const MAESTRO_STATE = /^(?:tout\s+)?scan(?:ne|ner)?\b|^[ée]tat\b|^statut\b|^status\b|^(?:le\s+)?point\b|^o[uù]\s+en\b|^on\s+en\s+est\b|^quoi\s+de\s+neuf\b/i
 

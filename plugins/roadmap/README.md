@@ -311,6 +311,32 @@ ce qu'elle débloque et son état (à lancer, en session et où, fusionnée, liv
 la fiche d'après eux. Un numéro que la roadmap n'a pas se dit en une ligne. Le mot dans une phrase (« why not »,
 « pourquoi 3 sessions ? ») ne déclenche rien.
 
+## Quelles sessions archiver : « quoi archiver » (#560)
+
+« quoi archiver » (ou « quoi archiver ? »), seul dans le message, dans Maestro comme dans toute session d'un projet à
+roadmap : Claude répond par un tableau toujours le même (gabarit A, choisi par Bertrand le 2026-11-12), une ligne par
+session ouverte du projet, quel que soit le Maestro qui l'a lancée, plus les sessions cloud.
+
+```
+### Quoi archiver · 3 sessions
+
+**1 à archiver, 1 bientôt, 1 reste.**
+
+| Session | Verdict | Pourquoi | Geste |
+|---|---|---|---|
+| #548 Règle publication · Mac | `oui` | close le 12/11, publiée en 0.291.0 | bouton Archiver de la bande |
+| #510 Un seul tronc · Mac | `pas encore` | PR 122 fusionnée, pas encore publiée | attendre la publication |
+| #558 Clôture gardée · cloud | `non` | PR 150 ouverte | — |
+```
+
+Le verdict ne vient pas du mot « livrée » mais des faits que relève le plugin : la ligne close dans les faites, la
+PR de sa branche (fusionnée, encore ouverte), la version publiée (`livré:`, ou « sans version »), les findings pas
+encore au registre (ceux qu'une session du Mac a écrits ; pour une session cloud, la trace du relevé de sa PR, #558), ce
+que la ligne attend (`attend:`), et si la session tourne encore. Une session de rôle (Maestro, son gardien) dit
+`non`. Une session cloud n'est pas dans la liste de l'app : elle vient des lignes `lieu:cloud`, ouvertes avec leur
+branche ou closes depuis moins de 48 h, et son geste se fait sur claude.ai/code. Dans un projet sans code, la ligne
+close et rien en attente suffisent. Une phrase qui parle d'archiver (« quoi archiver demain ? ») ne déclenche rien.
+
 ## Un seul mode (#176)
 
 Décidé par Bertrand le 01/11/2026 : plus de mode Code ni de mode Projet. Le panneau, l'accueil et
@@ -814,6 +840,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.293.0 (2026-11-12)** : roadmap : la commande « quoi archiver » dit quelles sessions archiver au gabarit fixe (#560)
 - **0.292.0 (2026-11-12)** : roadmap : un lot confié à Claude part en une seule demande (#555), commandes sous /roadmap settings, control, bar, help (#378), brief cloud sans consigne bypass (#494), clôture gardée par les findings (#558)
 - **0.291.2 (2026-11-12)** : roadmap : la bande Finies au gabarit des lignes (#544), la carte posée par Claude reçoit un contexte pour la mission et le cloud (#510)
 - **0.291.1 (2026-11-12)** : roadmap : une mission lancée en direct prend sa ligne à l'appel (#510)

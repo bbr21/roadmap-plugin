@@ -373,6 +373,12 @@ import {
   launchable,
   maestroCall,
   whyCall,
+  archiveCall,
+  archiveContext,
+  archiveVerdicts,
+  cloudArchiveSessions,
+  ledgerTraces,
+  type ArchiveSession,
   whyFiches,
   whyFresh,
   whyKey,
@@ -7296,6 +7302,57 @@ async function whyText($: EngineInterface, id: string): Promise<string> {
   })
 }
 
+/** Le titre d'une session de rôle (#560) : Maestro, son gardien, ou un ancien « Lot ». */
+const ROLE_TITLE = /^\s*(?:maestro|gardien|lot)\b/i
+
+/**
+ * Le contexte de « quoi archiver » (#560) : les sessions ouvertes du projet (toutes, quel que soit le Maestro qui
+ * les a lancées : #548 avait été fusionnée par un autre), sauf celle qui demande, puis les sessions cloud, que
+ * `list_sessions` ne rend pas, tirées des lignes `lieu:cloud` ; leurs verdicts viennent des faits (ligne, PR,
+ * version, findings), pas de Claude. Les findings d'une session du Mac sont ceux qu'elle a écrits et que le registre
+ * n'a pas encore ; une session cloud close attend la trace du relevé de sa PR au registre (#558, `ledgerTraces`).
+ */
+async function archiveText($: EngineInterface): Promise<string> {
+  const data = await brandData($)
+  if (!data) return `${Person()} demande quelles sessions archiver (« quoi archiver »), mais ce dossier n'a pas de roadmap lue par le plugin : dis-le en une ligne, sans rien inventer.`
+  const { source, tasks } = data
+  const root = source.root ?? source.dir
+  const depot = projectSettings(source).depot
+  const [list, prs, own, kept, ledgerText, now] = await Promise.all([
+    readListRows($),
+    readCloudPrs($, root, depot).catch(() => undefined),
+    readOwnSession($),
+    loadFindings($).catch((): KeptFinding[] => []),
+    readKept($, findingsPath(source)).catch(() => undefined),
+    clockOrDate($),
+  ])
+  if (list.rows.length === 0 && list.note !== '') return archiveContext(undefined, list.note)
+  const ledger = ledgerFindings(ledgerText)
+  type Row = { sessionId: string; title: string; cwd: string; branch?: unknown; isArchived?: unknown; isRunning?: unknown; startedBy?: unknown }
+  const rows = list.rows.filter((r): r is Row => {
+    const o = r as Partial<Row> | null
+    return !!o && typeof o.sessionId === 'string' && typeof o.title === 'string' && typeof o.cwd === 'string'
+      && o.isArchived !== true && o.sessionId !== own.id && source.match.some(p => (o.cwd as string).startsWith(p))
+  })
+  const starters = new Set(list.rows.map(r => (r as { startedBy?: unknown } | null)?.startedBy).filter((x): x is string => typeof x === 'string'))
+  const local: ArchiveSession[] = rows.map(r => ({
+    title: r.title,
+    running: r.isRunning === true,
+    cloud: false,
+    role: ROLE_TITLE.test(r.title) || starters.has(r.sessionId),
+    ...(typeof r.branch === 'string' && r.branch !== '' ? { branch: r.branch } : {}),
+    findings: kept.filter(k => k.from === r.sessionId && !ledger.lines.has(k.line)).length,
+  }))
+  // #558 : une session cloud close garde la main tant que le registre n'a pas la trace du relevé de sa PR.
+  const traces = ledgerTraces(ledgerText)
+  const cloud = cloudArchiveSessions(tasks, now).map(s => {
+    const id = /^#(\d+)/.exec(s.title)?.[1]
+    const task = id !== undefined ? tasks.find(t => t.id === id) : undefined
+    return task?.done ? { ...s, traced: traces.has(id as string) } : s
+  })
+  return archiveContext(archiveVerdicts([...local, ...cloud], tasks, prs))
+}
+
 /** Les axes de la roadmap, pour reconnaître « Maestro <axe> » (#239) ; roadmap illisible : aucun. */
 async function knownAxes($: EngineInterface): Promise<string[]> {
   try {
@@ -10309,6 +10366,14 @@ export const register: Register = (on, options) => {
         texts.push(await whyText($, why.id))
       } catch (err) {
         texts.push(`${Person()} demande d'expliquer la tâche #${why.id}, mais la roadmap n'a pas pu être lue (${err instanceof Error ? err.message : String(err)}) : dis-le en une phrase.`)
+      }
+    }
+    // « quoi archiver », seul dans le message (#560) : chaque session du projet, son verdict tiré des faits, au gabarit A.
+    if (archiveCall(e.text)) {
+      try {
+        texts.push(await archiveText($))
+      } catch (err) {
+        texts.push(`${Person()} demande quelles sessions archiver, mais les faits n'ont pas pu être lus (${err instanceof Error ? err.message : String(err)}) : dis-le en une phrase.`)
       }
     }
     const text = launch ? launch.line : e.text
