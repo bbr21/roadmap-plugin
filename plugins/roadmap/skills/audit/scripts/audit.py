@@ -7,6 +7,7 @@ retrouve chaque fragment du texte d'origine.
 python3 audit.py survey FOLDER [--day YYYY-MM-DD] > survey.json
 python3 audit.py apply FOLDER --proposals proposals.json [--day YYYY-MM-DD]
 python3 audit.py pending FOLDER [--add questions.json] [--resolve KEY ...]
+python3 audit.py report --survey survey.json --verdicts verdicts.json
 
 Python 3.9 et plus, bibliothèque standard seulement. Lit la grammaire avec `importer.py` de la skill
 onboarding, pour que les deux skills lisent une ligne de la même façon.
@@ -277,13 +278,195 @@ def regroupements(taches, noms=frozenset()):
     return sortie
 
 
+# ---------------------------------------------------------------- #567 : l'audit selon les règles du projet
+
+# Le grain du tronc (#566 branchera ici le réglage du projet, source « projet »).
+GRAIN_TRONC = {"source": "tronc", "decouper_des": 2, "filles_min": 2, "filles_max": 8,
+               "message": "aucun réglage de grain dans ce projet : le grain du tronc s'applique"}
+NOM_MAX = 40
+# Les contrôles de conformité, dans l'ordre : (clé, niveau, la règle qu'il voit).
+CONTROLES = (
+    ("champ_requis", "ecart", "une tâche porte les champs que le projet exige"),
+    ("prise_hors_en_cours", "ecart", "une ligne prise (branche:) est dans « En cours »"),
+    ("axe_inconnu", "ecart", "l'axe est l'un de ceux que déclare l'en-tête"),
+    ("nom_trop_long", "ecart", "nom: tient en %d caractères" % NOM_MAX),
+    ("parent_introuvable", "ecart", "parent: mène à une tâche qui existe"),
+    ("mere_close", "ecart", "parent: mène à une tâche ouverte"),
+    ("trois_niveaux", "ecart", "deux niveaux au plus : la mère n'a pas de parent"),
+    ("axe_autre_que_mere", "ecart", "une fille a l'axe de sa mère"),
+    ("apres_introuvable", "ecart", "après: mène à une tâche qui existe"),
+    ("apres_boucle", "ecart", "une chaîne d'après: ne revient pas sur elle-même"),
+    ("apres_hors_famille", "ecart", "après: relie deux sœurs, ou deux tâches sans mère"),
+    ("grain_paquet", "ecart", "un libellé ne lie pas plusieurs actions par « ; »"),
+    ("grain_trop_de_filles", "ecart", "une mère n'a pas trop de filles ouvertes"),
+    ("grain_fille_unique", "piste", "une mère a assez de filles pour exister"),
+    ("mere_sans_nom", "piste", "une mère porte un nom:"),
+    ("sans_source", "piste", "une tâche dit d'où elle vient"),
+)
+# Ce qui dit d'où vient une tâche : une attribution, un nom et une date entre parenthèses, une date,
+# une tâche citée.
+SOURCE_TEXTE = re.compile(
+    r"demande\s+de\b|demandé\s+par\b|retour\s+de\b|retour\s+d['’]un|vu\s+par\b|validé\s+par\b"
+    r"|\([^()]*,\s*\d{1,2}/\d{1,2}(?:/\d{4})?\s*\)|\d{4}-\d{2}-\d{2}|\b\d{1,2}/\d{1,2}\b|#\d+|\bid:\d+",
+    re.I)
+VERDICTS = ("tenue", "ecarts", "sans_objet", "non_verifiee")
+VERDICTS_A_NOTE = ("ecarts", "non_verifiee")
+
+
+def lire_regles(dossier, cfg):
+    """Les règles du projet, une par puce de premier niveau (hors bloc de code), numérotées R1…Rn."""
+    lieu = ob.chemin_regles(dossier, cfg)
+    sortie = {"chemin": lieu["chemin"] if lieu else "", "existe": False, "total": 0, "liste": []}
+    texte = _lire_fichier(lieu["absolu"]) if lieu else None
+    if texte is None:
+        return sortie
+    sortie["existe"] = True
+    section = sous = ""
+    courante, en_code = None, False
+    for ligne in texte.split("\n"):
+        ligne = ligne.rstrip("\r")
+        if ligne.lstrip().startswith(("```", "~~~")):
+            en_code, courante = not en_code, None
+            continue
+        if en_code:
+            continue
+        if ligne.startswith("## "):
+            section, sous, courante = ligne[3:].strip(), "", None
+        elif ligne.startswith("### "):
+            sous, courante = ligne[4:].strip(), None
+        elif ligne.startswith("- "):
+            courante = {"n": "R%d" % (len(sortie["liste"]) + 1), "section": section, "sous_section": sous,
+                        "texte": ligne[2:].strip()}
+            sortie["liste"].append(courante)
+        elif courante and ligne[:1] in (" ", "\t") and ligne.strip():
+            courante["texte"] += " " + ligne.strip()
+        else:
+            courante = None
+    sortie["total"] = len(sortie["liste"])
+    return sortie
+
+
+def grain_du_projet(dossier, cfg):
+    """Les seuils de découpage et de regroupement que les contrôles appliquent, et d'où ils viennent.
+    Aucun réglage de grain n'existe encore dans un projet : le grain du tronc (`cfg` n'est pas lu)."""
+    return dict(GRAIN_TRONC)
+
+
+def _num(valeur):
+    """Un numéro de tâche d'un `parent:` ou d'un `après:`, « # » de tête toléré ; None pour « - » ou vide."""
+    v = (valeur or "").strip().lstrip("#").strip()
+    return None if v in ("", "-") else v
+
+
+def _numeros(valeur):
+    return [n for n in (_num(x) for x in (valeur or "").split(",")) if n]
+
+
+def _chemin_boucle(depart, apres):
+    """Le chemin d'après: qui part de `depart` et y revient, ou None."""
+    pile, vus = [(depart, [depart])], set()
+    while pile:
+        n, chemin = pile.pop()
+        for m in apres.get(n, []):
+            if m == depart:
+                return chemin + [m]
+            if m not in vus:
+                vus.add(m)
+                pile.append((m, chemin + [m]))
+    return None
+
+
+def conformite(ouvertes, closes, requis, sur, axes_declares, grain):
+    """La conformité de chaque tâche ouverte (#567) : `ouvertes` et `closes` sont les tâches lues par
+    `im.lire_checklist`. Fonction pure ; rend l'objet `conformite` du relevé."""
+    champs = {im.champ(t, "id"): _dico(t) for t in ouvertes + closes if im.champ(t, "id")}
+    ouv = [t for t in ouvertes if im.champ(t, "id")]
+    ids = [im.champ(t, "id") for t in ouv]
+    ids_ouverts, ids_clos = set(ids), {im.champ(t, "id") for t in closes if im.champ(t, "id")}
+    parent = {i: _num(c.get("parent")) for i, c in champs.items()}
+    filles_ouv, filles_tot = {}, {}
+    for i in champs:
+        if parent[i]:
+            filles_tot[parent[i]] = filles_tot.get(parent[i], 0) + 1
+            if i in ids_ouverts:
+                filles_ouv.setdefault(parent[i], []).append(i)
+    apres = {i: _numeros(champs[i].get("après")) for i in ids}
+    entre_ouvertes = {i: [n for n in apres[i] if n in ids_ouverts] for i in ids}
+    # Pas de source : la tâche, avant d'excuser la fille dont la mère ouverte a la sienne.
+    sans = {i for t, i in zip(ouv, ids) if not (champs[i].get("src") or champs[i].get("feedback")
+                                                 or SOURCE_TEXTE.search(t["libelle"] + " " + t["note"]))}
+    axe = {i: t["axe"] for t, i in zip(ouv, ids)}
+    manques = {}
+
+    def ajouter(i, cle, dit):
+        manques.setdefault(i, []).append((cle, dit))
+
+    for t, i in zip(ouv, ids):
+        c, p = champs[i], parent[i]
+        if sur != "lancees" or "qui" in c or "branche" in c:
+            mere = bool(filles_ouv.get(i)) and "tous" not in c
+            absents = [k for k in requis if not c.get(k) and not (k == "due" and mere)]
+            if absents:
+                ajouter(i, "champ_requis", "champ exigé absent : " + ", ".join(absents))
+        if c.get("branche") and t["section"] != "En cours":
+            ajouter(i, "prise_hors_en_cours", "ligne prise (branche:%s) hors de « En cours » (section « %s »)"
+                    % (c["branche"], t["section"]))
+        if axes_declares and t["axe"] and t["axe"] not in axes_declares:
+            ajouter(i, "axe_inconnu", "axe « %s » absent de ceux de l'en-tête (%s)" % (t["axe"], ", ".join(axes_declares)))
+        if len(c.get("nom") or "") > NOM_MAX:
+            ajouter(i, "nom_trop_long", "nom: de %d caractères (%d au plus)" % (len(c["nom"]), NOM_MAX))
+        if p:
+            if p in ids_clos:
+                ajouter(i, "mere_close", "parent:%s est close" % p)
+            elif p not in ids_ouverts:
+                ajouter(i, "parent_introuvable", "parent:%s introuvable" % p)
+            if p in champs and parent[p]:
+                ajouter(i, "trois_niveaux", "parent:%s a lui-même un parent (#%s) : trois niveaux" % (p, parent[p]))
+            if p in ids_ouverts and t["axe"] and axe[p] and t["axe"] != axe[p]:
+                ajouter(i, "axe_autre_que_mere", "axe « %s » autre que celui de sa mère #%s (« %s »)" % (t["axe"], p, axe[p]))
+        for n in apres[i]:
+            if n not in ids_ouverts and n not in ids_clos:
+                ajouter(i, "apres_introuvable", "après:%s introuvable" % n)
+            elif n in ids_ouverts and parent[n] != p:
+                ajouter(i, "apres_hors_famille", "après:%s pointe hors de sa famille (#%s est %s)" % (
+                    n, n, "sous #%s" % parent[n] if parent[n] else "sans mère"))
+        boucle = _chemin_boucle(i, entre_ouvertes)
+        if boucle:
+            ajouter(i, "apres_boucle", "après: revient sur lui-même (%s)" % " → ".join("#" + n for n in boucle))
+        if len(fragments(t["libelle"])) >= grain["decouper_des"]:
+            ajouter(i, "grain_paquet", "%d actions liées par « ; » dans le libellé" % len(fragments(t["libelle"])))
+        if len(filles_ouv.get(i, [])) > grain["filles_max"]:
+            ajouter(i, "grain_trop_de_filles", "%d filles ouvertes (%d au plus)" % (len(filles_ouv[i]), grain["filles_max"]))
+        if filles_tot.get(i) and filles_tot[i] < grain["filles_min"]:
+            ajouter(i, "grain_fille_unique", "%d fille seulement (%d au moins pour une mère)" % (filles_tot[i], grain["filles_min"]))
+        if filles_ouv.get(i) and not c.get("nom"):
+            ajouter(i, "mere_sans_nom", "mère sans nom:")
+        if i in sans and not (p in ids_ouverts and p not in sans):
+            ajouter(i, "sans_source", "aucune source")
+    niveau = {cle: n for cle, n, _ in CONTROLES}
+    rang = {cle: k for k, (cle, _, _) in enumerate(CONTROLES)}
+    taches, par_controle = {}, {}
+    for i in ids:
+        if i in manques:
+            taches[i] = [{"controle": cle, "niveau": niveau[cle], "dit": dit}
+                         for cle, dit in sorted(manques[i], key=lambda m: rang[m[0]])]
+            for cle in dict.fromkeys(m["controle"] for m in taches[i]):
+                par_controle.setdefault(cle, []).append(i)
+    par_controle = {cle: par_controle[cle] for cle, _, _ in CONTROLES if cle in par_controle}
+    avec_ecart = sum(1 for m in taches.values() if any(x["niveau"] == "ecart" for x in m))
+    return {"controles": [{"cle": cle, "niveau": n, "regle": regle} for cle, n, regle in CONTROLES],
+            "taches": taches, "par_controle": par_controle, "total": len(ids),
+            "conformes": len(ids) - len(taches), "avec_ecart": avec_ecart,
+            "avec_piste_seule": len(taches) - avec_ecart}
+
+
 def releve(dossier, jour=None, perso="~/.claude/roadmap-perso.json"):
     """Le relevé du contenu de la roadmap (le JSON de la spec). Lecture seule."""
     jour = jour or datetime.date.today().isoformat()
     dossier, rdir, mode = situer(dossier)
     cfg = _cfg(dossier)
     # Les champs exigés se déclarent (#176) ; un ancien `mode: "projet"` garde ceux du mode Projet.
-    requis = ob.requis_du_dossier(dossier, cfg)[0]
+    requis, requis_sur = ob.requis_du_dossier(dossier, cfg)
     relance = cfg.get("relance") if isinstance(cfg.get("relance"), int) else RELANCE_JOURS
     me = _me(perso)
     texte_o = _lire_fichier(os.path.join(rdir, FICHIER_OUVERT)) or ""
@@ -293,6 +476,7 @@ def releve(dossier, jour=None, perso="~/.claude/roadmap-perso.json"):
         raise Erreur("numérotation incomplète (%s) : lance d'abord l'import (skill onboarding)" % " ; ".join(ecarts))
     ouvertes = [t for t in im.lire_checklist(texte_o)[0] if not t["fait"]]
     closes = [t for t in im.lire_checklist(texte_o)[0] if t["fait"]] + im.lire_checklist(texte_f)[0]
+    grain = grain_du_projet(dossier, cfg)
     tous_ids = {im.champ(t, "id") for t in ouvertes + closes}
     enfants = {}
     for t in ouvertes + closes:
@@ -370,7 +554,95 @@ def releve(dossier, jour=None, perso="~/.claude/roadmap-perso.json"):
         "questions": questions_par_tache(taches, trous, pistes, jour),
         "en_attente": _en_attente(_lire_questions(rdir), taches)[0],
         "frictions": _frictions(dossier, jour),
+        "regles": lire_regles(dossier, cfg), "grain": grain,
+        "conformite": conformite(ouvertes, closes, requis, requis_sur, ob._axes_declares(texte_o), grain),
     })
+
+
+def _nom_court(tache):
+    """Le nom d'une tâche pour le compte rendu : son `nom:`, sinon son libellé coupé à 60 caractères."""
+    nom = (tache["champs"].get("nom") or "").strip()
+    if nom:
+        return nom
+    lib = re.sub(r"\s+", " ", tache["libelle"]).strip()
+    return lib if len(lib) <= 60 else lib[:59].rstrip() + "…"
+
+
+def _accord(n, singulier, pluriel):
+    return "%d %s" % (n, singulier if n == 1 else pluriel)
+
+
+def _tri_regles(ns):
+    return sorted(ns, key=lambda n: (int(n[1:]) if re.fullmatch(r"R\d+", n) else 10 ** 9, n))
+
+
+def compte_rendu(releve, verdicts):
+    """Le compte rendu de l'audit selon les règles (#567), en Markdown ; `Erreur` si une règle n'a pas
+    son verdict, si un numéro est inconnu, un verdict hors liste ou une note exigée absente."""
+    regles, conf = releve.get("regles"), releve.get("conformite")
+    if not isinstance(regles, dict) or not isinstance(conf, dict) or not isinstance(releve.get("grain"), dict):
+        raise Erreur("le relevé ne porte ni regles, ni grain, ni conformite : relance audit.py survey")
+    if not isinstance(verdicts, dict):
+        raise Erreur("les verdicts : un objet JSON {\"R1\": {\"verdict\": …, \"note\": …}} attendu")
+    liste = regles["liste"]
+    connues = {r["n"] for r in liste}
+    sans = [r["n"] for r in liste if r["n"] not in verdicts]
+    inconnues = [n for n in verdicts if n not in connues]
+    lus = {n: v for n, v in verdicts.items() if n in connues}
+    hors_liste = [n for n, v in lus.items() if not isinstance(v, dict) or v.get("verdict") not in VERDICTS]
+    sans_note = [n for n, v in lus.items() if n not in hors_liste and v["verdict"] in VERDICTS_A_NOTE
+                 and not str(v.get("note") or "").strip()]
+    refus = [(txt, _tri_regles(ns)) for txt, ns in (
+        ("sans verdict", sans), ("inconnue", inconnues),
+        ("verdict hors liste (%s)" % ", ".join(VERDICTS), hors_liste),
+        ("note exigée (%s)" % ", ".join(VERDICTS_A_NOTE), sans_note)) if ns]
+    if refus:
+        raise Erreur("verdicts de l'audit : " + " ; ".join("%s : %s" % (txt, ", ".join(ns)) for txt, ns in refus))
+
+    nom = {t["id"]: _nom_court(t) for t in releve["taches"]}
+    cmp = {k: sum(1 for v in lus.values() if v["verdict"] == k) for k in VERDICTS}
+    morceaux = [m for n, m in (
+        (cmp["tenue"], _accord(cmp["tenue"], "tenue", "tenues")),
+        (cmp["ecarts"], _accord(cmp["ecarts"], "avec écart", "avec écarts")),
+        (cmp["sans_objet"], "%d sans objet" % cmp["sans_objet"]),
+        (cmp["non_verifiee"], _accord(cmp["non_verifiee"], "non vérifiée", "non vérifiées"))) if n]
+    if regles["existe"]:
+        lues = "Règles lues : %d sur %d (%s)%s." % (len(lus), regles["total"], regles["chemin"],
+                                                    " : " + ", ".join(morceaux) if morceaux else "")
+    else:
+        lues = "Règles lues : aucun fichier de règles (%s)." % (regles["chemin"] or "pas de roadmap")
+    n, c = conf["total"], conf["conformes"]
+    sortie = ["# Audit selon les règles (%s)" % releve["jour"], "", lues, "Grain : %s." % releve["grain"]["message"],
+              "%s : %d, dont %s, %d avec un écart, %d avec une piste seulement." % (
+                  "Tâche ouverte" if n == 1 else "Tâches ouvertes", n, _accord(c, "conforme", "conformes"),
+                  conf["avec_ecart"], conf["avec_piste_seule"])]
+    for titre, niveau in (("Ce qui manque, par tâche", "ecart"), ("Pistes à lire", "piste")):
+        sortie += ["", "## " + titre, ""]
+        lignes = []
+        for t in releve["taches"]:
+            dits = [m["dit"] for m in conf["taches"].get(t["id"], []) if m["niveau"] == niveau]
+            if dits:
+                lignes.append("- #%s %s : %s" % (t["id"], nom[t["id"]], " ; ".join(dits)))
+        sortie += lignes or ["Rien."]
+    sortie += ["", "## Règles", ""]
+    if liste:
+        sortie += ["| Règle | Section | Verdict | Note |", "|---|---|---|---|"]
+        for r in liste:
+            v = lus[r["n"]]
+            lieu = " · ".join(x for x in (r["section"], r["sous_section"]) if x)
+            note = re.sub(r"\s+", " ", str(v.get("note") or "")).strip().replace("|", "\\|")
+            sortie.append(("| %s | %s | %s | %s |" % (r["n"], lieu.replace("|", "\\|"), v["verdict"], note)).replace("|  |", "| |"))
+    else:
+        sortie.append("Rien.")
+    return "\n".join(sortie) + "\n"
+
+
+def _lire_json(chemin, quoi):
+    try:
+        with open(os.path.expanduser(chemin), encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, ValueError) as e:
+        raise Erreur("%s illisible (%s) : %s" % (quoi, chemin, e))
 
 
 def _frictions(dossier, jour):
@@ -619,7 +891,6 @@ ORDRE = ["id", "nom", "ouvert", "due", "resp", "parent", "après", "attend", "re
 CHAMPS_INTERDITS = {"id", "qui", "branche", "verrou", "fait", "parent", "après"}
 CLES_PANNEAU = set(im.CLES_GRAMMAIRE) | {"tous", "relance"}
 # Le nom court choisi à la main (#235) : 40 caractères au plus, comme le contrôle du panneau.
-NOM_MAX = 40
 NON_HERITES = {"id", "ouvert", "parent", "après", "qui", "branche", "verrou", "fait", "ref"}
 # Les clés permises dans proposals.json, par niveau : une faute de frappe perdrait un choix validé.
 # Le contrat est en anglais, comme la skill (#159) ; le code garde le vocabulaire de l'audit.
@@ -1345,6 +1616,9 @@ def main(argv=None):
     q.add_argument("dossier")
     q.add_argument("--add", dest="ajouter", help="a JSON file: a list of questions (the survey's format)")
     q.add_argument("--resolve", dest="resoudre", nargs="+", default=[], help="keys of answered questions")
+    c = sous.add_parser("report", help="the report of the audit by the project's rules, from the survey and the verdicts")
+    c.add_argument("--survey", required=True, help="the survey JSON (audit.py survey)")
+    c.add_argument("--verdicts", required=True, help="a JSON file: {\"R1\": {\"verdict\": …, \"note\": …}}")
     for s in (r, a, q):
         s.add_argument("--day", dest="jour", help="YYYY-MM-DD (today by default)")
         s.add_argument("--perso", default="~/.claude/roadmap-perso.json", help=argparse.SUPPRESS)
@@ -1352,6 +1626,8 @@ def main(argv=None):
     try:
         if args.commande == "survey":
             print(json.dumps(releve(args.dossier, args.jour, args.perso), ensure_ascii=False, indent=2))
+        elif args.commande == "report":
+            sys.stdout.write(compte_rendu(_lire_json(args.survey, "le relevé"), _lire_json(args.verdicts, "les verdicts")))
         elif args.commande == "pending":
             attente(args.dossier, args.ajouter, args.resoudre, args.jour, args.perso)
         else:

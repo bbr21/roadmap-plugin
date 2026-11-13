@@ -1,8 +1,8 @@
-# roadmap 0.294.0 : SHA-256 de chaque fichier installé du plugin, chemins relatifs à son dossier.
-# Vérifier une copie installée (~/.claude/plugins/cache/roadmap/roadmap/0.294.0) : plugins/roadmap/SECURITE.md, « Vérifier que ta copie est une vraie version ».
-e221c1d3884b1d5be107fd006a40db525cded0351f9992997046066e9d013d53  .claude-plugin/plugin.json
-ee98c55c46061e4a73cfb471a1ebe7ab7e9e75ada255cef679819c4d0a45bbee  README.md
-ba2fe94f42fd56fc3982d6b54bf5467f888124a396035bfbce7b6b79c7b1e8d5  SECURITE.md
+# roadmap 0.295.0 : SHA-256 de chaque fichier installé du plugin, chemins relatifs à son dossier.
+# Vérifier une copie installée (~/.claude/plugins/cache/roadmap/roadmap/0.295.0) : plugins/roadmap/SECURITE.md, « Vérifier que ta copie est une vraie version ».
+d4165297e1744a1077941d59abe45ce786c07e587b8d3306ea71e021575e6740  .claude-plugin/plugin.json
+da2d142b0da501056f6bb8402ba2c9e8fea69fa57b8bf0ec91f884dd13ffc536  README.md
+765825d8ad97d087084c491b2514b3e335a804ccea78813829fe8ab2b1d0cddf  SECURITE.md
 bce019cb7147413a8e5f0687df59a41394fa92545568b5d37b1df8bd6d885e30  hooks/bar-hit.tsx
 602f5c595b5c755998f7901664565dacd0641c657bb1e61bbf69ac98372137b1  hooks/cartes.tsx
 4fd9ff51c99cb0c5ed33925a549448e862d372217a69bbe3fba7777f2453680d  hooks/controle.tsx
@@ -19,8 +19,8 @@ a8a631e0910964acdf1df99cf471db9ec2f79ca627d505420a07f8127732bb6b  hooks/register
 39b4ed0bbd4df9f3d1415f5fa3a0ca18d62088ac26f5a27cbd9759266e5e2b46  hooks/reveil-cloud.ts
 ee3e0d04f7d05c2d22300d69accad8bfedf06ecc1f86452e4537fc20ffe68905  hooks/tokens.ts
 be1055c33675b146c70cc84464c3c5cf8c10c97df8927492629b021919d5a3a5  scripts/one-at-a-time.sh
-ab761458dcde1f9d83cc46e96882542dcaf292331d09ab145eb4b14e9469f524  skills/audit/SKILL.md
-c14da9a1accd6746a57e5d17e46d345c121156d9b5581968db5734611f210428  skills/audit/scripts/audit.py
+8b5aea61b575de5bea31f12c39fafda56bf3970f9fdf63905279c3d443f8427e  skills/audit/SKILL.md
+cc270a5dea5e5129771f34564e1321bb4637c4ef237a10200c693d4957a4f500  skills/audit/scripts/audit.py
 6ad1523fe5f176533bbe9f748bdbc94c20a95efa068b204a66f9a47aaa92c79a  skills/audit/scripts/frictions.py
 dfa421db944cdfb0f34a254f46745b3f6d95c439413f094a8b1d814365fad596  skills/doctor/SKILL.md
 44d591f8999b245c9b184ee332336a58415f5c04c37d87411149f3ee6fb816a9  skills/doctor/references/requis.json

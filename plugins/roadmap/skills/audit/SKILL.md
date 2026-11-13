@@ -1,6 +1,6 @@
 ---
 name: audit
-description: "The single audit of a roadmap-plugin project's roadmap, with or without code (#176: the folder says which): structure (split bundles into a parent and dated children, two levels, après: dependencies, groupings, duplicates, gaps), then one question per late or undated task and per misplaced priority, the recommendation first (reschedule, done, pause, drop), and closing on proof where the project says (preuves). Writes through the tasks skill, which follows ecriture. Runs as a scheduled task too: only what is clear gets written, the rest waits in ROADMAP-questions.json, counted by priority. Triggers on « audite ma roadmap », « fais le ménage dans ma roadmap », « nettoie ma roadmap », « fais le doctor de ma roadmap », « découpe mes tâches », « cherche les doublons dans ma roadmap », « regroupe mes tâches par sujet », « qu'est-ce qui est en retard », and at the end of onboarding. Not for the project's structure (doctor), importing a roadmap (onboarding), nor adding or marking done one named task (tasks)."
+description: "The single audit of a roadmap-plugin project's roadmap, with or without code: structure (split bundles into a parent and dated children, après: dependencies, groupings, duplicates, gaps), every project rule read, every open task checked (fields, source, parent, dependencies, grain), then one question per late or undated task and per misplaced priority, (reschedule, done, pause, drop), and closing on proof where the project says (preuves). Writes through the tasks skill. Also runs unattended: only what is clear is written, the rest waits in ROADMAP-questions.json. Triggers on « audite ma roadmap », « fais le ménage dans ma roadmap », « nettoie ma roadmap », « fais le doctor de ma roadmap », « découpe mes tâches », « cherche les doublons », « regroupe mes tâches par sujet », « qu'est-ce qui est en retard », « vérifie mes tâches selon les règles », and at the end of onboarding. Not for the project's structure (doctor), importing a roadmap (onboarding), nor adding or marking done one named task (tasks)."
 ---
 
 # Audit the roadmap
@@ -28,6 +28,9 @@ subject, every delay settled by a question, every task done on proof marked done
   `requis`, `cles`) are read on every pass, never copied here. Read the rules file **in full**
   before proposing anything: a task it says should never exist is proposed for dropping. Its
   « Règles de l'outil » section (#276) is the plugin's own: no project rule overrides it.
+- **No rule skipped, no task skipped** (#567). The survey numbers every rule of the rules file
+  (`regles`, `R1`…`Rn`) and checks every open task (`conformite`); the final report (`report`) is
+  refused while one rule has no verdict, and lists what each task lacks.
 
 **The model** (#125): a task is **standalone**, **parent** (a subject: other tasks name it in
 `parent:`) or **child** (it carries `parent:`), two levels at most. A parent carries a subject
@@ -61,8 +64,44 @@ at « ; » outside parentheses), `paquets` (two fragments or more), `trous` by t
 an open child is never `sans_due`), `doublons_possibles` (pairs with close words or subject,
 threshold 0.3: a lead, not a verdict; each says which one to keep, `garder`, and the other's words
 it lacks, `a_reprendre`), `axes_a_plat`, `regroupements` and `seules` (#284, below), `heritage`
-(the keys a child takes from its parent), `pistes_preuve`, `questions`, `en_attente` (below) and
-`frictions` (#462, below).
+(the keys a child takes from its parent), `pistes_preuve`, `questions`, `en_attente` (below),
+`frictions` (#462, below), and `regles`, `grain` and `conformite` (#567, below).
+
+**Rules and conformity** (#567):
+
+- `regles` is the rules file cut into its rules: `liste` holds one entry per bullet, numbered `R1`…`Rn`
+  in file order, with its `section`, `sous_section` and `texte`; `total` counts them. This list is the
+  reading: go through it rule by rule, none skipped.
+- `grain` is the project's grain, the thresholds the checks apply: `decouper_des` (a label of that many
+  actions linked by « ; » is a bundle to split), `filles_min` and `filles_max` (children per parent), and
+  `source`: « tronc » while the project sets none (its `message` says so; say it in the report), « projet »
+  once it does. Never apply another grain than the one the survey gives: one project wants more split,
+  another fewer, better grouped tasks.
+- `conformite` is the check of **every** open task: `taches` maps an id to what it lacks, each lack with
+  its `controle`, its `niveau` and what it says (`dit`); `par_controle` gives the ids per check, `controles`
+  what each check looks at; `total`, `conformes`, `avec_ecart`, `avec_piste_seule` count the tasks. An
+  **`ecart`** breaks a rule as written (a required field missing, a taken line outside « En cours », an
+  unknown axis, a `nom:` over 40 characters, a `parent:` unknown, closed or three levels deep, a child on
+  another axis than its parent, an `après:` unknown, looping or between two families, a bundle, a parent
+  with too many children). A **`piste`** is a lead to read before calling it a lack (a parent with a single
+  child or without `nom:`, a task whose source is said nowhere: no `src:`, `feedback:` nor attribution in
+  its label).
+
+For each rule of `regles.liste`, write its verdict in `<scratchpad>/verdicts.json`
+(`{"R1": {"verdict": "tenue", "note": ""}, …}`):
+
+| `verdict` | When | `note` |
+|---|---|---|
+| `tenue` | no open task breaks it: no `ecart` of the checks that cover it, and none found by reading | free |
+| `ecarts` | open tasks break it | required: the task ids, and what each lacks |
+| `sans_objet` | the rule is not about open tasks (how to close, how to number a new line) | free |
+| `non_verifiee` | it could not be checked here (a missing connector, a file out of reach) | required: why |
+
+The checks cover the rules a script can read; a rule in the project's own words (« une tâche prise porte
+sa spec ») is checked by reading every open task against it. A `piste` you confirm becomes an `ecarts`
+note; one you dismiss is not reported as a lack. Each `ecart` then feeds the next steps: a bundle is a
+split, a parent with too many children a group to rethink, a missing value a `values` entry or a per-task
+question, a misplaced `après:` an `after` entry.
 
 ## 2. Pending questions first
 
@@ -226,7 +265,8 @@ answer in writing, and their answer corrects the proposal:
 3. **One bundle per question**: the preview shows the parent and its children, one line each with
    `due:`, `resp:`, `attend:` and its `après:`. « Découper ainsi (recommandé) », « Laisser tel quel ».
 4. **One question per merge and per group**, both labels in the preview.
-5. **Dependencies** outside bundles, by group; the **other gaps**, one question per type.
+5. **Dependencies** outside bundles, by group; the **other gaps** and the **conformity lacks** (step 1)
+   that no earlier question settled, one question per type.
 6. **The per-task questions** (step 4), in the survey's order.
 7. **The frictions** (step 4), each question's `soucis` in its preview.
 
@@ -264,7 +304,18 @@ lines another way.
 2. In a repository: a commit of the roadmap files only (`ROADMAP.md`, `ROADMAP-fait.md`,
    `ROADMAP-bilans.csv`, `ROADMAP-questions.json`), on `main` in the main checkout with code,
    then push. Backups are not committed; offer to delete them once the roadmap is read in the panel.
-3. A short report, in French: what was written (the bilans), what was refused and stays a gap,
+3. The report of what is missing (#567). Run the survey again (the roadmap changed), update the verdicts,
+   then:
+
+   ```bash
+   python3 "<skill folder>/scripts/audit.py" report --survey <scratchpad>/survey.json --verdicts <scratchpad>/verdicts.json
+   ```
+
+   It is refused (« Refusé : … ») while a rule has no verdict, a verdict is unknown or a required note is
+   missing: fix `verdicts.json`, never drop a rule. It prints, in French: the rules read out of the total,
+   the grain applied, the open tasks counted (conforming, with a gap, with a lead only), what each task
+   lacks, the leads, and the table of rules with their verdicts. Give it to the person as is.
+4. A short report, in French: what was written (the bilans), what was refused and stays a gap,
    and the pending questions' summary line (« Questions en attente : 3 (prioritaires : 1, sans
    priorité : 2) »).
 
@@ -285,7 +336,9 @@ When a scheduled task runs the audit (the prompt says so) or nobody can answer, 
    A key already waiting is replaced, so the next run asks the latest version. When the `regles`
    file names another place for pending questions (at Blur, the `_inbox/` sas), put them there,
    as it says, instead.
-3. The report ends with the `resume` line `pending` prints: how many questions wait, by priority.
+3. The verdicts are written all the same, and `report` run (step 7): its output opens the report. A rule
+   that needs the person to be checked is `non_verifiee`, with why.
+4. The report ends with the `resume` line `pending` prints: how many questions wait, by priority.
    The next attended audit asks them first (step 2).
 
 ## What the skill does not do
