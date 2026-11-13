@@ -11502,8 +11502,8 @@ export function cloudBriefText(o: { project: string; id: string; label: string; 
     // #537 : le bloc fixe du compte rendu, mot pour mot comme brief_cloud.py.
     CLOUD_REPORT_BLOCK_RULE,
     '',
-    // #496 : le secours humain du réveil de Maestro, mot pour mot comme brief_cloud.py.
-    `Ton compte rendu « prête », « bloquée » ou « attend une réponse » (dernier commentaire de ta PR et message de fin) finit par une ligne à coller dans Maestro : \`#${o.id} prête à fusionner, PR <numéro>\` (ou « bloquée », « attend une réponse ») ; le panneau du Mac la lit aussi.`,
+    // #496, #559 : le bloc de fin que la personne colle dans Maestro, mot pour mot comme brief_cloud.py.
+    cloudEndBlockRule(o.id),
     '',
     proved
       ? `Ta tâche est une preuve de fidélité (#455) : #${proved} est close et publiée, rien d'autre ne t'attend. Le chantier : \`${chantier}\`. Si la capture n'est pas encore dans ta session, écris la consigne de capture au gabarit (docs/session-cloud.md, « Une preuve de fidélité à part ») et attends-la ; un écart trouvé ouvre sa tâche de correctif, il ne rouvre pas #${proved}.`
@@ -14821,18 +14821,30 @@ export function chargeLaunch(charge: TaskCharge, launch: 'opus' | 'sonnet' | 'h�
 
 export const MODEL_NAMES: Readonly<Record<'opus' | 'sonnet', string>> = { opus: 'Opus 5.5', sonnet: 'Sonnet 5.5' }
 const CHARGE_NAMES: Readonly<Record<TaskCharge, string>> = { retouche: 'une retouche', normale: 'une tâche normale', lourde: 'une tâche lourde' }
-/** Mêmes textes que OPTIONS_SUITE, SE_METTRE_AU_MODELE et CONSIGNE_327 de brief_cloud.py. */
+/** Mêmes textes que OPTIONS_SUITE et CONSIGNE_327 de brief_cloud.py. */
 export const CLOUD_OPTIONS_TAIL = ', à choisir dans Options avant Start : la carte cloud ne les porte pas.'
-export const CLOUD_SELF_MODEL = 'Si tu tournes sur un autre modèle, mets-toi à celui-ci toi-même : `set_session_model` puis `set_session_effort`, `session_id: "self"`, chargés par ToolSearch ; absents ou refusés, dis-le en une ligne et continue (`/model` ne se tape que par la personne).'
 export const CLOUD_ECONOMY = 'Économie (#327) : le cadrage, la spec et le plan se font ici ; chaque étape du plan part chez un sous-agent avec `model: "sonnet"` passé à l\'outil Agent. Tu relis le diff de chaque étape et reprends la main sur un test rouge qui résiste à deux essais.'
 
-/** La ligne des Options d'une carte cloud et le paragraphe « Ton modèle » de son brief (#490). */
+/**
+ * Le bloc de fin d'un compte rendu cloud (#496, #559), même texte que `regle_bloc_de_fin` de brief_cloud.py : trois
+ * lignes que la personne colle dans Maestro. La première reste celle de #496, la seule que lit le panneau ; les
+ * findings n'y sont qu'en compte et en commande, la PR reste leur seule source.
+ */
+export function cloudEndBlockRule(id: string): string {
+  return `Ton compte rendu « prête », « bloquée » ou « attend une réponse » (dernier commentaire de ta PR et message de fin) finit par un bloc de trois lignes à coller dans Maestro, rien après lui : \`#${id} prête à fusionner, PR <numéro>\` (ou « bloquée », « attend une réponse »), que le panneau du Mac lit aussi ; puis \`Findings : <n> à relever (findings.py relever --pr <numéro>)\` ou \`Findings : aucun\` ; puis \`Pour Maestro : <ce qui lui revient>\` ou \`Pour Maestro : rien\`. Tes findings n'y sont qu'en compte et en commande, jamais recopiés : ta PR reste leur seule source.`
+}
+
+/**
+ * La ligne des Options d'une carte cloud et le paragraphe « Ton modèle » de son brief (#490). Le paragraphe ne demande
+ * plus à la session de changer de modèle elle-même (#559) : `set_session_model` et `set_session_effort` manquent dans
+ * la VM, six sessions l'ont remonté ; seule la personne les choisit, dans les Options de la carte.
+ */
 export function cloudModelLines(l: { charge: TaskCharge; model?: 'opus' | 'sonnet'; effort?: string }): { options: string; para: string } {
   const name = l.model ? MODEL_NAMES[l.model] : 'le modèle de la session qui lance'
   const effort = l.effort ?? CHARGE_MODELS[l.charge].effort
   return {
     options: `Options de la carte (#490) : Model ${name}, Effort ${effort}${CLOUD_OPTIONS_TAIL}`,
-    para: `Ton modèle (#490) : cette tâche est ${CHARGE_NAMES[l.charge]}, prévue en ${name}, effort ${effort}. ${CLOUD_SELF_MODEL} ${CLOUD_ECONOMY}`,
+    para: `Ton modèle (#490) : cette tâche est ${CHARGE_NAMES[l.charge]}, prévue en ${name}, effort ${effort}. ${CLOUD_ECONOMY}`,
   }
 }
 

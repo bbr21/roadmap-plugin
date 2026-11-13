@@ -29,8 +29,12 @@ close, non prise sans `--branche` (le message propose la branche du panneau), pr
 
 #490 : la carte cloud ne porte ni `model` ni `effort` (start_session les ignore en cloud) : la ligne qui suit « Fini quand »
 dit ce que BBR choisit dans les Options de la carte (la charge et le modèle de `reco_cloud.py`), et un paragraphe
-« Ton modèle » dit à la session de s'y mettre elle-même si elle en a l'outil, puis la consigne #327 : chaque étape
-du plan chez un sous-agent Sonnet. Mêmes textes que `cloudBriefText` du panneau.
+« Ton modèle » redit la charge, puis la consigne #327 : chaque étape du plan chez un sous-agent Sonnet. Il ne demande
+plus à la session de changer de modèle elle-même (#559 : `set_session_model` et `set_session_effort` manquent dans la
+VM). Mêmes textes que `cloudBriefText` du panneau.
+
+#559 : le compte rendu finit par un bloc de trois lignes que la personne colle dans Maestro (`REGLE_BLOC_DE_FIN`) :
+l'état et la PR, le compte des findings avec la commande qui les relève, ce qui revient à Maestro.
 
 Python 3.9 et plus, bibliothèque standard seulement.
 """
@@ -91,11 +95,6 @@ REGLE_DEPART = (
 
 # #490 : le modèle de la tâche, dit dans le brief (la carte cloud ne le porte pas).
 OPTIONS_SUITE = ", à choisir dans Options avant Start : la carte cloud ne les porte pas."
-SE_METTRE_AU_MODELE = (
-    "Si tu tournes sur un autre modèle, mets-toi à celui-ci toi-même : `set_session_model` puis `set_session_effort`, "
-    "`session_id: \"self\"`, chargés par ToolSearch ; absents ou refusés, dis-le en une ligne et continue (`/model` ne "
-    "se tape que par la personne)."
-)
 CONSIGNE_327 = (
     "Économie (#327) : le cadrage, la spec et le plan se font ici ; chaque étape du plan part chez un sous-agent avec "
     "`model: \"sonnet\"` passé à l'outil Agent. Tu relis le diff de chaque étape et reprends la main sur un test rouge "
@@ -110,8 +109,24 @@ def ligne_options(mots):
 
 def paragraphe_modele(charge):
     m, e = reco_cloud.modele(charge)
-    return "Ton modèle (#490) : cette tâche est %s, prévue en %s, effort %s. %s %s" % (
-        NOMS_CHARGES[charge], reco_cloud.NOMS_MODELES[m], e, SE_METTRE_AU_MODELE, CONSIGNE_327)
+    return "Ton modèle (#490) : cette tâche est %s, prévue en %s, effort %s. %s" % (
+        NOMS_CHARGES[charge], reco_cloud.NOMS_MODELES[m], e, CONSIGNE_327)
+
+
+# #496, #559 : le bloc de fin que la personne colle dans Maestro, même texte que `cloudEndBlockRule` du panneau. Sa
+# première ligne reste celle de #496, la seule que lit le panneau ; les findings n'y sont qu'en compte et en commande.
+REGLE_BLOC_DE_FIN = (
+    "Ton compte rendu « prête », « bloquée » ou « attend une réponse » (dernier commentaire de ta PR et message "
+    "de fin) finit par un bloc de trois lignes à coller dans Maestro, rien après lui : `#%s prête à fusionner, PR "
+    "<numéro>` (ou « bloquée », « attend une réponse »), que le panneau du Mac lit aussi ; puis `Findings : <n> à "
+    "relever (findings.py relever --pr <numéro>)` ou `Findings : aucun` ; puis `Pour Maestro : <ce qui lui revient>` "
+    "ou `Pour Maestro : rien`. Tes findings n'y sont qu'en compte et en commande, jamais recopiés : ta PR reste leur "
+    "seule source."
+)
+
+
+def regle_bloc_de_fin(ident):
+    return REGLE_BLOC_DE_FIN % ident
 
 
 class ErreurLigne(Exception):
@@ -361,15 +376,13 @@ def texte_brief(e):
         "",
         ligne_reglages(e["prefs"], e["prefsError"]),
         "",
-        "Ton modèle (#490) : cette tâche est %s, prévue en %s, effort %s. %s %s" % (
-            NOMS_CHARGES[l["charge"]], nom, l["effort"], SE_METTRE_AU_MODELE, CONSIGNE_327),
+        "Ton modèle (#490) : cette tâche est %s, prévue en %s, effort %s. %s" % (
+            NOMS_CHARGES[l["charge"]], nom, l["effort"], CONSIGNE_327),
         "",
         REGLE_BLOC,
         "",
-        # #496 : le secours humain du réveil de Maestro ; le panneau du Mac lit aussi la première phrase.
-        "Ton compte rendu « prête », « bloquée » ou « attend une réponse » (dernier commentaire de ta PR et message "
-        "de fin) finit par une ligne à coller dans Maestro : `#%s prête à fusionner, PR <numéro>` (ou « bloquée », "
-        "« attend une réponse ») ; le panneau du Mac la lit aussi." % ident,
+        # #496, #559 : le bloc de fin que la personne colle dans Maestro.
+        regle_bloc_de_fin(ident),
         "",
     ]
     if preuve:
