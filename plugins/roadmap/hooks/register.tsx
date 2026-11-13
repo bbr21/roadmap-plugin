@@ -642,6 +642,7 @@ import {
   MISSION_QUI,
   isPanelOnlyRefusal,
   cloudAskText,
+  withCloudLaunch,
   cloudViaClaudeNote,
   MISSIONS_FILE,
   isMissionTask,
@@ -3114,7 +3115,8 @@ function cardReason(r: ToolCallResult): string {
 /**
  * Pose une carte « New session » depuis le panneau (#87) : ses champs facultatifs tombent un par refus, dans leur ordre
  * (#327 : le modèle d'abord quand le refus le nomme) ; un champ tombé hérite de la session qui lance. Un refus du mode
- * auto (#248) ou de Remote Control (#390) ne tient à aucun champ : la carte ne se repose pas. Sert au ▶ et à la relève (#393).
+ * auto (#248), de Remote Control (#390) ou qui veut l'accord d'une personne (#515, #575) ne tient à aucun champ : la
+ * carte ne se repose pas. Sert au ▶ et à la relève (#393).
  */
 async function proposeCard($: EngineInterface, raw: Record<string, unknown>, optional: [field: string, value: unknown, note: string][]): Promise<{ ran: ToolCallResult; refusals: string[] }> {
   const refusals: string[] = []
@@ -3122,7 +3124,9 @@ async function proposeCard($: EngineInterface, raw: Record<string, unknown>, opt
   // #436 : la cible (cloud ou Mac) finit le titre de la carte native.
   const card = withTargetTitle(raw)
   const withFields = () => ({ ...card, ...Object.fromEntries(fields.map(([field, value]) => [field, value])) }) as Parameters<EngineInterface['tool']['call']>[0]
-  const refused = (r: ToolCallResult) => (r.deny !== undefined || r.isError === true) && !isAutoModeRefusal(cardReason(r)) && !isRemoteControlRefusal(cardReason(r))
+  // #575 : le refus « needs a person's approval » (`isPanelOnlyRefusal`) ne tient à aucun champ non plus : la carte ne
+  // retombe pas champ par champ, elle passe par Claude avec tous ses champs (le modèle et l'effort d'une carte cloud).
+  const refused = (r: ToolCallResult) => (r.deny !== undefined || r.isError === true) && !isPanelOnlyRefusal(cardReason(r)) && !isRemoteControlRefusal(cardReason(r))
   let ran = await $.tool.call(withFields())
   while (fields.length > 0 && refused(ran)) {
     const modelAt = fields.findIndex(([field]) => field === 'model')
@@ -3321,6 +3325,28 @@ async function dismissPendingCard($: EngineInterface, source: Source, id: string
  * `cloud: missions` (#476) non plus : la reco d'un projet sans code dit toujours Mac, et Maestro y choisit la mission
  * ou le Mac par le § 2 ter de sa skill.
  */
+/**
+ * #575 : la carte cloud de la tâche #N (titre « #N · … ») reçoit le modèle et l'effort de sa charge (`taskLaunch`) ; une
+ * carte du Mac, sans numéro, d'une tâche absente ou close, ou une panne de lecture : la carte telle quelle.
+ */
+async function withTaskCloudLaunch($: EngineInterface, e: unknown): Promise<unknown> {
+  const card = e as Record<string, unknown>
+  if (card.target !== 'cloud' || typeof card.title !== 'string' || card.proposal_id !== undefined) return e
+  const id = sessionTitleId(card.title)
+  if (id === undefined) return e
+  try {
+    const source = await sourceNow($)
+    if (!source) return e
+    const open = await load($, files(source).open, 'ROADMAP.md')
+    if (typeof open === 'string') return e
+    const task = open.find(t => t.id === id && !t.done)
+    if (!task) return e
+    return withCloudLaunch(card, await taskLaunch($, source, task))
+  } catch {
+    return e
+  }
+}
+
 async function recoCardRefusal($: EngineInterface, e: unknown): Promise<string | undefined> {
   const card = e as Record<string, unknown>
   if (typeof card.title !== 'string' || card.proposal_id !== undefined) return undefined
@@ -6567,6 +6593,7 @@ function cloudLayer($: EngineInterface, source: Source, task: Task, title: strin
   const branch = mission ? MISSION_QUI : cloudBranchOf(task)
   const take = (text: string, today: string) => (mission ? takeMissionLine(text, id, today) : takeCloudLine(text, id, branch, today))
   let card: Record<string, unknown> = {}
+  let launch: { modelId?: string; effort?: string } = {}
   return {
     prepare: async () => {
       const depot = projectSettings(source).depot
@@ -6602,8 +6629,9 @@ function cloudLayer($: EngineInterface, source: Source, task: Task, title: strin
       // #455 : une preuve de fidélité nomme le chantier de la tâche qu'elle prouve, lu à son `spec:` (ouverte ou close).
       const proved = proofOf(task.label)
       const proofSpec = proved ? specOfLine([taken.text, await $.fs.read(files(source).done).catch(() => undefined)], proved) : undefined
-      // #490 : la carte cloud ne porte ni modèle ni effort ; le brief les dit, avec la consigne #327.
+      // #490, #575 : la carte cloud porte le modèle et l'effort de la tâche ; le brief les redit, avec la consigne #327.
       const tl = await taskLaunch($, source, task)
+      launch = { ...(tl.modelId ? { modelId: tl.modelId } : {}), ...(tl.effort ? { effort: tl.effort } : {}) }
       // #510 : le brief est la jumelle de `brief_cloud.py` : le chemin de la roadmap et les fichiers que cite le plan.
       const root = source.root ?? source.dir
       const rel = open.startsWith(`${root}/`) ? open.slice(root.length + 1) : 'ROADMAP.md'
@@ -6618,7 +6646,11 @@ function cloudLayer($: EngineInterface, source: Source, task: Task, title: strin
         prompt,
         background: cloudCardBackground(source, id),
       }
-      return { card, optional: [] }
+      // #575 : refusés par l'app, le modèle et l'effort tombent un par un, comme sur la carte du Mac (`macLayer`).
+      const optional: [field: string, value: unknown, note: string][] = []
+      if (launch.effort) optional.push(['effort', launch.effort, `avec effort ${launch.effort}`])
+      if (launch.modelId) optional.push(['model', launch.modelId, `avec le modèle ${launch.modelId}`])
+      return { card, optional }
     },
     // #512 : hors Bypass, l'app refuse la carte d'une mission posée par un mod ; le mode auto refuse tout clic du panneau (#248).
     skipCard: mode => mode === 'auto' || (mission && mode !== undefined && mode !== BYPASS_MODE),
@@ -6636,7 +6668,7 @@ function cloudLayer($: EngineInterface, source: Source, task: Task, title: strin
       // Le brief imposé mot pour mot, avec la cible choisie (la reco ne la retient pas, #479).
       const asked = withTargetNote(prompt, 'cloud', recoOf(source, task))
       pendingClouds.set(pendingKey(source, id), asked)
-      queueSubmit($, cloudAskText({ title: targetTitle(title, 'cloud'), id, branch, prompt: asked, background }))
+      queueSubmit($, cloudAskText({ title: targetTitle(title, 'cloud'), id, branch, prompt: asked, background, ...launch }))
       await setView($, () => ({ launchNote: cloudViaClaudeNote() }))
     },
     // #510 (C4) : la carte posée ne prend rien ; la ligne se prend au départ de la session : sa branche poussée (#474)
@@ -10600,7 +10632,9 @@ export const register: Register = (on, options) => {
     // #515 : la carte d'un ▶ Cloud refusé au panneau part avec le brief que le panneau a écrit.
     const cloudAsked = byModel && !mission ? await cloudCardOf($, raw) : undefined
     // Une carte du modèle reçoit la section de l'arbre, comme le ▶ (#237).
-    const e = mission ? (mission.card as typeof raw) : byModel ? ((await withTree($, cloudAsked ? cloudAsked.card : raw)) as typeof raw) : raw
+    const treed = mission ? (mission.card as typeof raw) : byModel ? ((await withTree($, cloudAsked ? cloudAsked.card : raw)) as typeof raw) : raw
+    // #575 : une carte cloud du modèle porte le modèle et l'effort de sa tâche, sans quoi elle prend ceux de cette session.
+    const e = byModel ? ((await withTaskCloudLaunch($, treed)) as typeof raw) : treed
     // #263 : la carte qui se pose ici (pas remontée à Maestro) part seulement si son titre vient de la ligne écrite.
     let titleRefused = false
     const ran = await forwardProposal($, e, next.origin.plugin, async () => {

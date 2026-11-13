@@ -179,12 +179,14 @@ to it.
   | `lourde` | architecture, refonte, migration, a contract, security (it wins over `retouche`); for the model, also a decision to weigh, a strategy, a document to build, several connectors (MCP, accounts, sources) to cross | « Modèle qui cadre » (Opus 5.5), high |
 
   A Mac card carries `model` and `effort` as `--carte` gives them; if you judge the label misleads (a « retouche »
-  that rewrites a hook), take the row that fits and say so in one line. A cloud card carries neither (`start_session`
-  ignores them in the cloud): the brief of `brief_cloud.py` says them right after « Fini quand » (« Options de la carte :
-  Model …, Effort … », the `options` of `--carte`), which the person sets in the card's Options before Start, and its
-  « Ton modèle » paragraph has the session delegate each plan step to a Sonnet sub-agent. It no longer asks the session
-  to switch itself (#559): `set_session_model` and `set_session_effort` do not exist in the VM, only the person sets them. When you post a cloud card, tell the person in one line
-  which Model and Effort to pick in its Options.
+  that rewrites a hook), take the row that fits and say so in one line. A cloud card carries them too (#575): pass
+  `model` and `effort` from `--carte` with `target: "cloud"`, whatever the tool's description says (test C of
+  2026-11-13: a cloud card asking Sonnet 5.5 low, posted by an Opus session, started in claude-sonnet-5-5, Low; without
+  them it takes your own model, as #561 left in Fable). The plugin adds them to a cloud card « #N · … » that lacks them.
+  The person picks nothing in Options. The brief of `brief_cloud.py` repeats them right after « Fini quand » (« Options
+  de la carte : Model …, Effort … »), and its « Ton modèle » paragraph has the session delegate each plan step to a
+  Sonnet sub-agent. It never asks the session to switch itself (#559): `set_session_model` and `set_session_effort` do
+  not exist in the VM. The app still caps the card's model at your family or cheaper, and its effort at yours.
 
   The session keeps framing, spec, plan, diff review and stubborn debugging for itself and has each
   plan step coded by a sub-agent of « Modèle qui code »: its brief says so, Maestro adds nothing.

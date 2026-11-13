@@ -11352,11 +11352,14 @@ export function isPanelOnlyRefusal(text: string): boolean {
  * `prompt`, sans brief rédigé ; la ligne se prend au départ de la session, quand sa branche paraît sur origin (#474).
  * Sa première ligne seule se montre (`launchPrompt`, #140).
  */
-export function cloudAskText(o: { title: string; id: string; branch: string; prompt: string; background: string }): string {
+export function cloudAskText(o: { title: string; id: string; branch: string; prompt: string; background: string; modelId?: string; effort?: string }): string {
+  // #575 : la carte cloud porte le modèle et l'effort de la tâche (sans eux, elle prend ceux de la session qui la pose).
+  const launch = [...(o.modelId ? [`model ${o.modelId}`] : []), ...(o.effort ? [`effort ${o.effort}`] : [])]
+  const options = launch.length > 0 ? `, ${launch.join(', ')}` : ''
   return launchPrompt(
     o.title,
     [
-      `Propose cette session sous forme de carte (outil start_session, initiation own_initiative, contexte fresh, target cloud), titre « ${o.title} ». Son prompt est le brief ci-dessous, mot pour mot, de sa première ligne à sa dernière : n'écris aucun brief à toi (ni « Background », ni « Task »), et ne pose ni model ni effort (la carte cloud ne les porte pas, le brief les dit). Pose la carte sans essayer de la lancer, puis réponds en une phrase au plus.`,
+      `Propose cette session sous forme de carte (outil start_session, initiation own_initiative, contexte fresh, target cloud${options}), titre « ${o.title} ». Son prompt est le brief ci-dessous, mot pour mot, de sa première ligne à sa dernière : n'écris aucun brief à toi (ni « Background », ni « Task »). Pose la carte sans essayer de la lancer, puis réponds en une phrase au plus.`,
       `La ligne #${o.id} se prend au départ de la session : le plugin roadmap guette la branche ${o.branch} sur origin et y écrit qui:, branche: et lieu:cloud (#474). Ne touche pas à la roadmap toi-même.`,
       '',
       o.prompt,
@@ -11463,7 +11466,7 @@ export function cloudDepartRule(branch: string): string {
  * la session, #474) ; `files` : les fichiers que cite le plan de la spec (#194).
  */
 export function cloudBriefText(o: { project: string; id: string; label: string; line: string; branch: string; rel?: string; taken?: boolean; files?: readonly string[]; spec?: string; depot?: string; prefs?: SessionPrefs; prefsError?: string; proofSpec?: string; launch?: { charge: TaskCharge; model?: 'opus' | 'sonnet'; effort?: string } }): string {
-  // #490 : la carte cloud ne porte ni modèle ni effort : le brief dit ceux de la tâche, et comment s'y tenir.
+  // #490, #575 : la carte porte le modèle et l'effort de la tâche ; le brief les redit, et comment s'y tenir.
   const modelLines = o.launch ? cloudModelLines(o.launch) : undefined
   // #444 : la roadmap vit hors du dépôt (`depot`) : les tests sont ceux que nomme `docs/session-cloud.md` du dépôt,
   // et la ligne n'existe que sur le Mac.
@@ -14822,7 +14825,23 @@ export function chargeLaunch(charge: TaskCharge, launch: 'opus' | 'sonnet' | 'h�
 export const MODEL_NAMES: Readonly<Record<'opus' | 'sonnet', string>> = { opus: 'Opus 5.5', sonnet: 'Sonnet 5.5' }
 const CHARGE_NAMES: Readonly<Record<TaskCharge, string>> = { retouche: 'une retouche', normale: 'une tâche normale', lourde: 'une tâche lourde' }
 /** Mêmes textes que OPTIONS_SUITE et CONSIGNE_327 de brief_cloud.py. */
-export const CLOUD_OPTIONS_TAIL = ', à choisir dans Options avant Start : la carte cloud ne les porte pas.'
+export const CLOUD_OPTIONS_TAIL = ', portés par la carte (#575) : rien à choisir dans Options.'
+
+/**
+ * #575 : la carte cloud porte le modèle et l'effort de la tâche. L'outil les dit ignorés en cloud, mais l'essai C du
+ * 2026-11-13 (carte en Sonnet 5.5 low posée par une session Opus) est parti en claude-sonnet-5-5, Low : sans eux, la
+ * session prenait le modèle de celle qui pose la carte (#561, partie en Fable). Une carte du Mac ne change pas (elle a
+ * sa couche, `macLayer`) ; un champ déjà posé l'emporte. L'app borne encore le modèle à la famille de la session qui
+ * pose la carte ou moins chère, et l'effort au sien.
+ */
+export function withCloudLaunch<T extends Record<string, unknown>>(card: T, launch: { modelId?: string; effort?: string }): T {
+  if (card.target !== 'cloud') return card
+  const add = {
+    ...(launch.modelId && card.model === undefined ? { model: launch.modelId } : {}),
+    ...(launch.effort && card.effort === undefined ? { effort: launch.effort } : {}),
+  }
+  return Object.keys(add).length === 0 ? card : { ...card, ...add }
+}
 export const CLOUD_ECONOMY = 'Économie (#327) : le cadrage, la spec et le plan se font ici ; chaque étape du plan part chez un sous-agent avec `model: "sonnet"` passé à l\'outil Agent. Tu relis le diff de chaque étape et reprends la main sur un test rouge qui résiste à deux essais.'
 
 /**

@@ -27,8 +27,8 @@ Lit DEPOT/roadmap/ROADMAP.md (ou DEPOT/ROADMAP.md) et, pour le nom du projet, DE
 close, non prise sans `--branche` (le message propose la branche du panneau), prise par une autre branche ou sans
 `lieu:cloud`, ou une roadmap introuvable.
 
-#490 : la carte cloud ne porte ni `model` ni `effort` (start_session les ignore en cloud) : la ligne qui suit « Fini quand »
-dit ce que BBR choisit dans les Options de la carte (la charge et le modèle de `reco_cloud.py`), et un paragraphe
+#490, #575 : la carte cloud porte `model` et `effort` (essai C du 2026-11-13, malgré la doc de start_session) : la ligne qui suit « Fini quand »
+dit ce que porte la carte (la charge et le modèle de `reco_cloud.py`), et un paragraphe
 « Ton modèle » redit la charge, puis la consigne #327 : chaque étape du plan chez un sous-agent Sonnet. Il ne demande
 plus à la session de changer de modèle elle-même (#559 : `set_session_model` et `set_session_effort` manquent dans la
 VM). Mêmes textes que `cloudBriefText` du panneau.
@@ -94,7 +94,7 @@ REGLE_DEPART = (
 
 
 # #490 : le modèle de la tâche, dit dans le brief (la carte cloud ne le porte pas).
-OPTIONS_SUITE = ", à choisir dans Options avant Start : la carte cloud ne les porte pas."
+OPTIONS_SUITE = ", portés par la carte (#575) : rien à choisir dans Options."
 CONSIGNE_327 = (
     "Économie (#327) : le cadrage, la spec et le plan se font ici ; chaque étape du plan part chez un sous-agent avec "
     "`model: \"sonnet\"` passé à l'outil Agent. Tu relis le diff de chaque étape et reprends la main sur un test rouge "
@@ -297,7 +297,7 @@ def entree_brief(depot, ident, fichier_reglages=None, maison=None, branche=None,
     `cloudBriefText` du panneau (#510, jumelles : `tests/jumelles-cas.ts`)."""
     rel, ligne, prise = trouver_ligne(depot, ident, branche, aujourdhui)
     c = ligne["cles"]
-    charge = reco_cloud.charge(ligne["libelle"])
+    charge = reco_cloud.charge_de_ligne(depot, ident, ligne["libelle"])
     modele, effort = reco_cloud.modele(charge)
     prefs, illisible = reglages(depot, fichier_reglages, maison)
     entree = {

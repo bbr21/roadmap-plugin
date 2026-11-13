@@ -107,6 +107,13 @@ def charge(libelle):
     return "normale"
 
 
+def charge_de_ligne(depot, id_, libelle):
+    """La charge de la ligne #id_ (#575) : celle que le modèle a jugée (#492, verdict gardé sur ce libellé), sinon les
+    mots du libellé. La carte (`carte`) et le brief cloud (`brief_cloud.py`) la lisent ainsi tous deux."""
+    v = verdict(depot, str(id_), libelle)
+    return (v or {}).get("charge") or charge(libelle)
+
+
 def modele(charge_):
     """(identifiant du modèle, effort) d'une charge (#490)."""
     return MODELES.get(charge_, MODELES["normale"])

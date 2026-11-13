@@ -1,8 +1,8 @@
-# roadmap 0.297.0 : SHA-256 de chaque fichier installé du plugin, chemins relatifs à son dossier.
-# Vérifier une copie installée (~/.claude/plugins/cache/roadmap/roadmap/0.297.0) : plugins/roadmap/SECURITE.md, « Vérifier que ta copie est une vraie version ».
-7a646d0c46984f899053cc383e7aef50760d5b94f8b3507bc2293d4e4eaf81ba  .claude-plugin/plugin.json
-023b97e54f6a7f6284f14206ab24c217a87f344e1642f10bbf2a992d1db1f718  README.md
-220da6c19f6a3d10fb70da08d0c7bee291bddf21b2c891818572adffac5c2429  SECURITE.md
+# roadmap 0.297.1 : SHA-256 de chaque fichier installé du plugin, chemins relatifs à son dossier.
+# Vérifier une copie installée (~/.claude/plugins/cache/roadmap/roadmap/0.297.1) : plugins/roadmap/SECURITE.md, « Vérifier que ta copie est une vraie version ».
+e7155397aa49dd7026ea821a3cadfae32ed8db1b280cb13555309dd48d1a4518  .claude-plugin/plugin.json
+f675a93ecfd91c8d6bcd857659bb2bae6999eee6764f045c11f9632465eebe65  README.md
+042877310ec6528004f0cf31a2e8fb6a61fe2ee7a5ed9d8d06ddb0fe3adcee21  SECURITE.md
 bce019cb7147413a8e5f0687df59a41394fa92545568b5d37b1df8bd6d885e30  hooks/bar-hit.tsx
 602f5c595b5c755998f7901664565dacd0641c657bb1e61bbf69ac98372137b1  hooks/cartes.tsx
 4fd9ff51c99cb0c5ed33925a549448e862d372217a69bbe3fba7777f2453680d  hooks/controle.tsx
@@ -11,10 +11,10 @@ bce019cb7147413a8e5f0687df59a41394fa92545568b5d37b1df8bd6d885e30  hooks/bar-hit.
 c34105e717104789fe3e5b6f7cfe3080ec6637e9d1008efb45c5661acb559084  hooks/gardien.ts
 d842d789476d67282d0f04b7e5fdc68a3d981ccec65dd79cfa2d11eed13fb828  hooks/hooks.json
 fbb4360b52e53d24de2e65b8f4eed503dd2c23c51857ca92c7498339dc195739  hooks/icons.ts
-2a2f17fbdc891ebc0d05499e271275c2bae7d49fccccd64173ece520c470ef1c  hooks/parse.ts
+70033666dba7e494c0adb07230e1bf562ab7eb037f49a24069cdb7fa4371007a  hooks/parse.ts
 9b52feecfcd53efd0c1ff4db4c52ef43cd298ceec725b1f153b67e4c016c6105  hooks/press-hit.tsx
 52b6b80acb84e20fe38bc8a9116af5078aaf7a925b8a58d9a4061c01e53e9d84  hooks/prise-cloud.ts
-ed794becf0e4b34b453307b47f52ca3cc5f0b0fae9acac637f3989d82707ae46  hooks/register.tsx
+821798e9c543ff6c0e1efc7ca692709ca474cf15231f40964453b2a988705402  hooks/register.tsx
 7f7438f1d283cf6311c781daee5c3e60d28d40d5e6641e2abbd6ad35b1ef97d9  hooks/reglages.tsx
 39b4ed0bbd4df9f3d1415f5fa3a0ca18d62088ac26f5a27cbd9759266e5e2b46  hooks/reveil-cloud.ts
 ee3e0d04f7d05c2d22300d69accad8bfedf06ecc1f86452e4537fc20ffe68905  hooks/tokens.ts
@@ -27,9 +27,9 @@ dfa421db944cdfb0f34a254f46745b3f6d95c439413f094a8b1d814365fad596  skills/doctor/
 08959bbd48409cf4eab51bdb7b7eedaa4fc6c2622440bde2989a0f731bf3dd6b  skills/doctor/scripts/doctor.py
 6e80d5202351ec18b5590ac70bb51872289b2d5843226d3cc688fea6290193b0  skills/impact/SKILL.md
 e1a956cec45116d5fe0f6cd2a033b84bd2052f674fc29f0cc0755452dfa83973  skills/impact/scripts/impact.py
-3c52b497e49d8a0943cf253d643ee8173f683945df0f16514c42ed9746d6ac4f  skills/maestro/SKILL.md
+3391e4b90f36e0bf3fa1e7b89d93c448cc1810d31bb414ccfaddd8d2a0679111  skills/maestro/SKILL.md
 525466e64c2194b8845c348757ff2097385e5297260c7eb2a559653f9c47fa90  skills/maestro/references/consigne-capture.md
-1db5791708b0557ed43732daf0f74ad84cbe67496160c885d0628f67fbe7f031  skills/maestro/scripts/brief_cloud.py
+c69a8d972b70e20e74d8b221249ad4ac8ad60042ad667fe8b65556f25a866eb0  skills/maestro/scripts/brief_cloud.py
 b39412d7bc1868f45b5690e7c0d239fe50456cb9ef63b626a704742c188d1b1b  skills/maestro/scripts/etat_maestro.py
 a30bf92116a06db299a94b55dde32f6d41efe756f4b1a8d3e4944489ac4178d9  skills/maestro/scripts/fidelite.py
 a2ec99377723f353b3414748e0d70992f1aabb0ed6afa95ce80462c6c442ee2e  skills/maestro/scripts/findings.py
@@ -37,7 +37,7 @@ febdb2fbc47c9b5c624ea3bbac8dd009037a0fb8c1dae1004165de8edbdd7ecf  skills/maestro
 db1ba195523f44d976c5ae103a358e5d50b3d841d260d1029beccb4b8fd633b9  skills/maestro/scripts/mission_cloud.py
 fbfb42b29372f7997a062fd43aa1a99bb9a134aaf4d7f760d3e3580b7d13b33b  skills/maestro/scripts/mots_etat.py
 3bf60f1f868ec504ac4be79ca946e2f5e53fef27255f6e0384e6328f84ad52d5  skills/maestro/scripts/prendre_cloud.py
-d0ac0270eb23f43718c136f3a663cb7f4cfc3d01cc22a178f97c4795d77c8d31  skills/maestro/scripts/reco_cloud.py
+878e1ff2fd8e0763d4119ef88d60ec3fcb3d29166f172490f5651785a46781d1  skills/maestro/scripts/reco_cloud.py
 5a2577f15a450457d62f755a96d0fd4538a8bdd87ff105a89394bce6552bc4e2  skills/maestro/scripts/repli_mac.py
 74d834a993b9ed2e1ff01c63caa36d991c14f54615cb10d1a97883a180116025  skills/maestro/scripts/serie_main.py
 7dcbe00a43fdb866040f370378f40ff6641e4b03378f940a9c7fdccc1c08b25a  skills/maestro/scripts/suite_cloud.py
