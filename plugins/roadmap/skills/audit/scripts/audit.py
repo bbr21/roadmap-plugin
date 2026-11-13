@@ -115,22 +115,30 @@ def _me(perso):
     return [me] if isinstance(me, str) else [x for x in me if isinstance(x, str)]
 
 
-def situer(dossier):
+def situer(dossier, lecture=False):
     """(dossier du projet, dossier de la roadmap, travail). Un projet de code (#176) se lit dans son
-    dossier principal, sur `main` ; un dossier sans code, tel quel."""
+    dossier principal, sur `main` ; un dossier sans code, tel quel. `lecture` : qui ne fait que lire
+    (le relevé) passe aussi hors de main (#570, une session cloud vit sur sa branche)."""
     dossier = os.path.abspath(os.path.expanduser(dossier))
     mode = ob.travail_du_dossier(dossier)
     if mode == "code":
         dossier = ob.principal(dossier)
         mode = ob.travail_du_dossier(dossier)
-        res = ob.git(dossier, "rev-parse", "--abbrev-ref", "HEAD")
-        if mode == "code" and res.returncode == 0 and res.stdout.strip() != "main":
+        branche = hors_main(dossier) if mode == "code" else None
+        if branche and not lecture:
             raise Erreur("le dossier principal %s n'est pas sur main (%s) : la roadmap ne s'écrit que sur main"
-                         % (dossier, res.stdout.strip()))
+                         % (dossier, branche))
     rdir = ob.trouver_roadmap(dossier)
     if not rdir or not os.path.isfile(os.path.join(rdir, FICHIER_OUVERT)):
         raise Erreur("pas de ROADMAP.md dans %s : lance d'abord l'onboarding" % dossier)
     return dossier, rdir, mode
+
+
+def hors_main(dossier):
+    """La branche d'un dossier de code qui n'est pas sur main, sinon None (sans git aussi)."""
+    res = ob.git(dossier, "rev-parse", "--abbrev-ref", "HEAD")
+    branche = res.stdout.strip() if res.returncode == 0 else ""
+    return branche if branche and branche != "main" else None
 
 
 def _dico(t):
@@ -463,7 +471,7 @@ def conformite(ouvertes, closes, requis, sur, axes_declares, grain):
 def releve(dossier, jour=None, perso="~/.claude/roadmap-perso.json"):
     """Le relevé du contenu de la roadmap (le JSON de la spec). Lecture seule."""
     jour = jour or datetime.date.today().isoformat()
-    dossier, rdir, mode = situer(dossier)
+    dossier, rdir, mode = situer(dossier, lecture=True)
     cfg = _cfg(dossier)
     # Les champs exigés se déclarent (#176) ; un ancien `mode: "projet"` garde ceux du mode Projet.
     requis, requis_sur = ob.requis_du_dossier(dossier, cfg)
@@ -543,7 +551,9 @@ def releve(dossier, jour=None, perso="~/.claude/roadmap-perso.json"):
             heritage.add(k)
 
     pistes = pistes_preuve(taches, ob.declarations(dossier, cfg), dossier, jour, noms)
-    return dict(regroupements(taches, noms), **{
+    # Hors de main (#570) : le relevé dit la branche lue, celle où rien ne s'écrira.
+    branche = hors_main(dossier) if mode == "code" else None
+    return dict(regroupements(taches, noms), **({"lu_sur": branche} if branche else {}), **{
         "roadmap": os.path.join(rdir, FICHIER_OUVERT), "fait": os.path.join(rdir, FICHIER_FAIT),
         "dossier": dossier, "jour": jour, "mode": mode, "requis": requis, "me": me, "relance": relance,
         "empreinte": empreinte(rdir), "taches": taches,

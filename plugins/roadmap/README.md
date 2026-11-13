@@ -840,6 +840,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.296.0 (2026-11-13)** : roadmap : l'audit se lit hors de main (#570), la bande de Maestro ne rattache plus une session du Mac comme cloud (#571), release.py dit qui prend la version publiée (#572)
 - **0.295.0 (2026-11-12)** : roadmap : l'audit relit toutes les règles du projet et vérifie chaque tâche ouverte (#567)
 - **0.294.0 (2026-11-12)** : roadmap : annuler le dernier « Marquer faite » pendant 10 s, sur une tâche ou un lot (#556)
 - **0.293.0 (2026-11-12)** : roadmap : la commande « quoi archiver » dit quelles sessions archiver au gabarit fixe (#560)

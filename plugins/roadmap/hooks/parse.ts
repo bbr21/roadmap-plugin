@@ -4977,6 +4977,20 @@ export function taskSessionIndex(rows: readonly unknown[], prefixes: readonly st
   return out
 }
 
+/**
+ * Les tâches du projet qu'une session du Mac porte (#571) : celles de l'index du store (`task-session-ids`, clés
+ * `<projet>:<id>`, archivées comprises, que la liste courante ne rend pas), et celles d'une session de la liste dont
+ * le titre porte « #N · ». Une session cloud n'est jamais dans `list_sessions` : tout ce qui s'y trouve est du Mac.
+ * Illisible : rien, jamais d'exception.
+ */
+export function macHeldIds(index: Readonly<Record<string, string>>, project: string, rows: readonly unknown[], prefixes: readonly string[]): Set<string> {
+  const out = new Set<string>()
+  const head = `${project}:`
+  for (const k of Object.keys(index ?? {})) if (k.startsWith(head) && k.length > head.length) out.add(k.slice(head.length))
+  if (Array.isArray(rows)) for (const id of Object.keys(taskSessionIndex(rows, prefixes))) out.add(id)
+  return out
+}
+
 /** Le titre d'une session qui vérifie une tâche : « #47 · Vérifier · <titre court> », 58 caractères au plus. */
 export function checkTitleFor(task: Task, shortTitle: string): string {
   return sessionTitleFor(task, `Vérifier · ${shortTitle}`)
@@ -11892,9 +11906,11 @@ export const CLOUD_ADOPT_MS = 7 * 24 * 3600_000
  * « #N » de son titre (#445) : la session cloud lancée par la carte native, sans ligne prise d'avance. Rend, par id,
  * la branche de cette PR. Une PR d'un fork ne compte pas, ni celle d'une branche qu'une autre ligne porte déjà ; une
  * ouverte l'emporte, sinon la plus récente, et une PR close de plus de 7 jours ne rattache plus rien (une vieille PR
- * « #N » d'une tâche rouverte ne la ferait pas passer pour lancée). Illisible : rien, jamais d'exception.
+ * « #N » d'une tâche rouverte ne la ferait pas passer pour lancée). `held` : les tâches qu'une session du Mac porte
+ * (`macHeldIds`), qu'aucune PR ne rattache (#571 : les correctifs de #510, ouverts par sa session du Mac archivée,
+ * la montraient en session cloud « fusionnée »). Illisible : rien, jamais d'exception.
  */
-export function cloudAdopted(tasks: readonly Task[], prs: unknown, now: number): Map<string, string> {
+export function cloudAdopted(tasks: readonly Task[], prs: unknown, now: number, held: ReadonlySet<string> = new Set()): Map<string, string> {
   const out = new Map<string, string>()
   let list: unknown = prs
   if (typeof list === 'string') {
@@ -11906,7 +11922,8 @@ export function cloudAdopted(tasks: readonly Task[], prs: unknown, now: number):
   }
   if (!Array.isArray(list)) return out
   const taken = new Set(tasks.flatMap(t => (t.branche ? [t.branche] : [])))
-  const free = new Set(tasks.filter(t => !t.done && t.id !== undefined && !t.branche).map(t => t.id as string))
+  // #571 : une tâche qu'une session du Mac porte (archivée comprise) n'est pas une session cloud : ses PR sont les siennes.
+  const free = new Set(tasks.filter(t => !t.done && t.id !== undefined && !t.branche && !held.has(t.id)).map(t => t.id as string))
   const at = (p: Record<string, unknown>) => (typeof p.createdAt === 'string' ? Date.parse(p.createdAt) : Number.NaN)
   const best = new Map<string, Record<string, unknown>>()
   for (const p of list) {
@@ -11940,11 +11957,11 @@ export function cloudAdopted(tasks: readonly Task[], prs: unknown, now: number):
  * jamais `ouvert:` (la ligne peut dormir des jours avant d'être prise : #319 disait « 6 j » prise à l'instant) ; rien
  * plutôt qu'une durée fausse. Rangées par lancement, les sans-date à la fin.
  */
-export function cloudBrandTasks(open: readonly Task[], prs: unknown, now: number, takenAt: (branche: string) => number | undefined = () => undefined, closed: readonly Task[] = []): BrandTask[] {
+export function cloudBrandTasks(open: readonly Task[], prs: unknown, now: number, takenAt: (branche: string) => number | undefined = () => undefined, closed: readonly Task[] = [], held: ReadonlySet<string> = new Set()): BrandTask[] {
   const past = (at: number | undefined): number | undefined => (at !== undefined && Number.isFinite(at) && at <= now ? at : undefined)
   // #445 : une session cloud lancée hors du ▶ (carte native, Options puis cloud) n'a pas de ligne prise ; sa PR la
   // rattache à sa tâche par le « #N » de son titre, et sa branche tient lieu de `branche:`.
-  const adopted = cloudAdopted(open, prs, now)
+  const adopted = cloudAdopted(open, prs, now, held)
   const tasks = open.map(t => (t.id !== undefined && adopted.has(t.id) ? { ...t, lieu: 'cloud' as const, branche: adopted.get(t.id) } : t))
   const rows = tasks.flatMap(t => {
     if (t.done || t.lieu !== 'cloud' || !t.branche || !t.id) return []

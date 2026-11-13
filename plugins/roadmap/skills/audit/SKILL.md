@@ -43,7 +43,10 @@ there is none (#130).
 The script is `scripts/audit.py`, run from this skill's folder (the path given when the skill
 loads). It reads the grammar through the `onboarding` skill's importer; answers are written by
 the `tasks` skill's `tasks.py`. With code both read and write the roadmap of the main
-checkout, on `main`.
+checkout, on `main`. The survey alone, which only reads, also runs off `main` (#570, a cloud
+session lives on its branch): it then carries `lu_sur`, the branch it read. Say so before the
+first finding (« Relevé lu sur la branche `<lu_sur>`, pas sur main : rien ne s'écrira d'ici »),
+and write nothing from there: `apply`, `pending` and `tasks.py` still refuse off `main`.
 
 ## 1. Survey
 

@@ -503,6 +503,7 @@ import {
   taskSessionRow,
   sessionRowsOf,
   taskSessionIndex,
+  macHeldIds,
   taskTitle,
   reopenOutcome,
   branchesToPrune,
@@ -601,6 +602,7 @@ import {
   unlocksOf,
   cloudArchiveNote,
   cloudBrandTasks,
+  cloudAdopted,
   CLOUD_ADOPT_MS,
   blockRowFit,
   bandRowFit,
@@ -8297,6 +8299,30 @@ async function missionTasksOf($: EngineInterface, source: Source, tasks: readonl
     })
 }
 
+/** L'index `task-session-ids` du store, relu au plus toutes les 60 s (#571). */
+let taskIdsMem: { at: number; map: Record<string, string> } | undefined
+
+/**
+ * Les tâches du projet qu'une session du Mac porte, archivée comprise (#571, `macHeldIds`) : l'index du store et la
+ * dernière liste lue. Une session « #N · » de la liste qui manque à l'index s'y ajoute, une écriture par nouveauté :
+ * archivée plus tard, elle n'est plus dans la liste, mais l'index la garde, et sa tâche reste du Mac.
+ */
+async function macHeld($: EngineInterface, source: Source, now: number): Promise<Set<string>> {
+  const justRead = !taskIdsMem || now - taskIdsMem.at >= CLOUD_PRS_MS
+  if (justRead) taskIdsMem = { at: now, map: await loadTaskSessionIds($) }
+  const index = (taskIdsMem as { map: Record<string, string> }).map
+  const seen = taskSessionIndex(lastListRows, source.match)
+  const fresh = Object.entries(seen).filter(([n, sid]) => index[`${source.name}:${n}`] !== sid)
+  if (fresh.length > 0) {
+    // Relu juste avant d'écrire, sauf s'il vient de l'être : une autre session a pu y ajouter les siennes.
+    const next = { ...(justRead ? index : await loadTaskSessionIds($)) }
+    for (const [n, sid] of fresh) next[`${source.name}:${n}`] = sid
+    await storeSet($, TASK_SESSION_IDS_KEY, next).catch(() => undefined)
+    taskIdsMem = { at: now, map: next }
+  }
+  return macHeldIds((taskIdsMem as { map: Record<string, string> }).map, source.name, lastListRows, source.match)
+}
+
 async function prCloudTasksOf($: EngineInterface, source: Source, tasks: readonly Task[], short: (t: Task) => string, now: number): Promise<BrandTask[]> {
   const wanted = tasks.filter(t => !t.done && t.lieu === 'cloud' && t.branche !== undefined && t.id !== undefined)
   const root = source.root ?? source.dir
@@ -8311,8 +8337,12 @@ async function prCloudTasksOf($: EngineInterface, source: Source, tasks: readonl
     cloudHidden($, now).catch(() => new Set<string>()),
     cloudTakes($, source.dir, wanted.map(t => t.branche as string), now).catch(() => new Map<string, number>()),
   ])
+  // #571 : l'index des sessions du Mac ne se lit que si une PR « #N » rattacherait une tâche (pas à chaque pas). Une PR
+  // de session du Mac paraît pendant que la session vit : elle est alors dans la liste et entre dans l'index.
+  const open = tasks.filter(t => !t.done)
+  const held = cloudAdopted(open, prs, now).size > 0 ? await macHeld($, source, now).catch(() => new Set<string>()) : new Set<string>()
   const byId = new Map(tasks.flatMap(t => (t.id !== undefined ? [[t.id, t] as const] : [])))
-  return cloudBrandTasks(tasks.filter(t => !t.done), prs, now, b => taken.get(b), closed)
+  return cloudBrandTasks(open, prs, now, b => taken.get(b), closed, held)
     .filter(bt => !((bt.cloud?.state === 'merged' || bt.cloud?.state === 'delivered') && hidden.has(`${root}|#${bt.id}`)))
     .map(bt => {
       const task = byId.get(bt.id)

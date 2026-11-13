@@ -199,7 +199,7 @@ def _proposition(f, jour, lignes, reco):
 def lire(dossier, jour=None, jours=JOURS, seuil=SEUIL, maxi=MAXI, etat=None):
     """La lecture des frictions, sans rien écrire (le relevé du module)."""
     jour = jour or datetime.date.today().isoformat()
-    dossier, rdir, _mode = audit.situer(dossier)
+    dossier, rdir, _mode = audit.situer(dossier, lecture=True)
     etat = etat or etat_par_defaut(dossier)
     ecartees = _du_dossier(_lire_etat(etat), dossier).get("ecartees") or {}
     j, entete, rangs = _journal(dossier, rdir)
