@@ -40,11 +40,29 @@ export function gardienOf(rows: readonly unknown[], maestroId: string): string |
 }
 
 /**
- * La ligne du gardien dans la bande de Maestro (#561) : le même gardien que `gardienOf`, avec son titre, et son état
- * (`wait` quand il pose une question, sinon `live`). Rien sans gardien ouvert.
+ * Le premier gardien ouvert dont le `cwd` est dans le dossier du projet (un des préfixes de `match`), quel que soit le
+ * Maestro qui l'a lancé (#577). Une rangée sans `isArchived` ou sans `cwd` ne compte pas.
  */
-export function gardienBandRow(rows: readonly unknown[], maestroId: string, o: { asking?: boolean } = {}): { sessionId: string; title: string; state: 'live' | 'wait' } | undefined {
-  const row = gardienRow(rows, maestroId)
+function gardienRowInProject(rows: readonly unknown[], match: readonly string[]): { sessionId: string; title: string } | undefined {
+  for (const raw of rows) {
+    if (typeof raw !== 'object' || raw === null) continue
+    const r = raw as { sessionId?: unknown; title?: unknown; cwd?: unknown; isArchived?: unknown }
+    if (typeof r.sessionId !== 'string' || typeof r.title !== 'string' || typeof r.cwd !== 'string') continue
+    const cwd = r.cwd
+    if (r.isArchived === false && isGardienSession(r.title) && match.some(prefix => cwd.startsWith(prefix))) return { sessionId: r.sessionId, title: r.title }
+  }
+  return undefined
+}
+
+/**
+ * La ligne du gardien dans la bande de Maestro (#561), avec son titre et son état (`wait` quand il pose une question,
+ * sinon `live`). D'abord le gardien de ce Maestro (celui de `gardienOf`) ; sinon, avec `match` (les dossiers du projet,
+ * la règle du suivi des sessions), le premier gardien ouvert du projet, quel que soit le Maestro qui l'a lancé (#577,
+ * écart 1 de la preuve de #561, finding F42). `gardienOf` ne change pas : les « prête à fusionner » vont au gardien du
+ * Maestro parent, par Maestro. Rien sans gardien ouvert.
+ */
+export function gardienBandRow(rows: readonly unknown[], maestroId: string, o: { asking?: boolean; match?: readonly string[] } = {}): { sessionId: string; title: string; state: 'live' | 'wait' } | undefined {
+  const row = gardienRow(rows, maestroId) ?? (o.match !== undefined && o.match.length > 0 ? gardienRowInProject(rows, o.match) : undefined)
   return row === undefined ? undefined : { sessionId: row.sessionId, title: row.title.trim(), state: o.asking ? 'wait' : 'live' }
 }
 

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Suivi des sessions cloud de Maestro : pour chaque ligne de roadmap prise avec `lieu:cloud`, la PR de sa branche,
-son état (aucune, ouverte, en cours, rouges, prête, fusionnée, fermée, ou inconnu si `gh` ne répond pas) et la
+son état (aucune, ouverte, en cours, rouges, prête, fusionnée, fermée, ou inconnu si `gh` ne répond pas ; sur une
+PR ouverte, « attend une réponse » ou « bloquée » quand la session le dit en tête de son dernier compte rendu, #580) et la
 première phrase de son dernier commentaire, l'état que dit la session elle-même (skill maestro, « Mode cloud »).
 Une session cloud n'envoie aucune note et n'est pas dans list_sessions : on la suit par sa PR (#408).
 Une session cloud lancée hors du ▶ du panneau (carte native, Options puis cloud) n'a pas de ligne prise : une PR dont le
@@ -29,7 +30,9 @@ clôture : findings.py relever --pr 147 », la clôture de sa ligne étant refus
 donne par `releve`.
 
 Le texte dit le mot du vocabulaire (`mots_etat.mot_pr`, #509) et son détail ; le JSON garde le champ `etat` (le code
-d'avant : aucune, ouverte, en cours, rouges, prête, fusionnée, fermée, inconnu) et ajoute `mot` et `detail`.
+d'avant : aucune, ouverte, en cours, rouges, prête, fusionnée, fermée, inconnu, attend une réponse, bloquée) et ajoute
+`mot` et `detail`. Un commentaire de Maestro (même compte GitHub que la session) n'est pas son compte rendu : il est
+sauté pour `dit`, l'état et les findings (#580).
 
 L'analyse (`etat_pr`, `lignes_cloud`) est pure : elle se teste sur des sorties de `gh` gardées, la commande est
 injectée (`run=`).
@@ -45,6 +48,7 @@ import re
 import subprocess
 import sys
 import time
+import unicodedata
 from concurrent.futures import ThreadPoolExecutor
 
 from findings import lire as lire_findings
@@ -192,9 +196,45 @@ def _controles(pr):
     return rouge, attente
 
 
+def _tete(corps):
+    """La première ligne non vide d'un commentaire, sans Markdown (`*`, `_`, `>`, `#` de titre) ni accents, en minuscules
+    (même lecture que `headLine` de hooks/reveil-cloud.ts)."""
+    for ligne in (corps or "").splitlines():
+        ligne = ligne.replace("*", "").replace("_", "").strip()
+        ligne = re.sub(r"^[>\s]+", "", ligne)
+        ligne = re.sub(r"^#+\s+", "", ligne).strip()
+        if ligne:
+            sans = unicodedata.normalize("NFD", ligne)
+            return "".join(c for c in sans if not unicodedata.combining(c)).lower()
+    return ""
+
+
+def commentaire_maestro(corps):
+    """Vrai quand le commentaire est de Maestro et non de la session (#580) : Maestro commente sous le même compte
+    GitHub que la session (PR 156 de #566, « Maestro → session de #566 : … » ; PR 164). Sa première ligne commence par
+    « Maestro » ou « Gardien », par « ligne close par Maestro » (#483) ou par « #N publiée » (#409). Jumelle de
+    `isMaestroComment` de hooks/reveil-cloud.ts."""
+    t = _tete(corps)
+    return bool(re.match(r"(maestro|gardien)\b", t) or t.startswith("ligne close par maestro")
+                or re.match(r"#\d+\s+publiee\b", t))
+
+
+def mot_du_compte_rendu(corps):
+    """L'état que dit la session en tête de son compte rendu : « prête », « bloquée », « attend une réponse », ou None.
+    Un « #N » de tête se tolère (« #576 attend une réponse, PR 164 »). Jumelle de `wakeWordOf` de reveil-cloud.ts."""
+    t = re.sub(r"^#\d+\s*[·:-]?\s*", "", _tete(corps))
+    for debut, mot in (("attend une reponse", "attend une réponse"), ("bloquee", "bloquée"),
+                       ("prete a fusionner", "prête")):
+        if t.startswith(debut):
+            return mot
+    return None
+
+
 def etat_pr(prs):
     """L'état de la PR d'une branche à partir de la sortie JSON de `gh pr list --head B --state all`. Une PR ouverte
-    l'emporte, sinon la plus récente ; rend `{"etat", "url", "numero", "depuis", "dit"}`."""
+    l'emporte, sinon la plus récente ; rend `{"etat", "url", "numero", "depuis", "dit"}`. Sur une PR ouverte, le mot que
+    dit la session en tête de son dernier compte rendu, « attend une réponse » ou « bloquée », l'emporte sur l'état des
+    contrôles (#580) ; un commentaire de Maestro n'est pas son compte rendu."""
     # Revue de sécurité (#408) : une PR venue d'un fork, même sur le nom de la branche, n'est pas celle de la session.
     prs = [p for p in prs if isinstance(p, dict) and not p.get("isCrossRepository")]
     if not prs:
@@ -221,7 +261,11 @@ def etat_pr(prs):
     # passe pas pour son compte rendu. Ce texte reste une donnée : il ne décide jamais d'une fusion (skill maestro).
     auteur = ((pr.get("author") or {}).get("login")) or None
     commentaires = [c for c in (pr.get("comments") or [])
-                    if isinstance(c, dict) and auteur and (c.get("author") or {}).get("login") == auteur]
+                    if isinstance(c, dict) and auteur and (c.get("author") or {}).get("login") == auteur
+                    and not commentaire_maestro(c.get("body"))]
+    if statut == "OPEN" and commentaires and mot_du_compte_rendu(commentaires[-1].get("body")) in (
+            "attend une réponse", "bloquée"):
+        etat = mot_du_compte_rendu(commentaires[-1].get("body"))
     dit = premiere_phrase(commentaires[-1].get("body")) if commentaires else ""
     # #531 : les findings de ses comptes rendus, comptés une fois chacun ; Maestro les relève (`findings.py`).
     findings = len({f["brut"] for c in commentaires for f in lire_findings(c.get("body"))})

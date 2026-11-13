@@ -33,6 +33,8 @@ _PR = {
     "fusionnée": ("merged", "suite de main, puis publication"),
     "fermée": ("wait", "PR fermée sans fusion"),
     "inconnu": ("live", "état de la PR inconnu"),
+    "attend une réponse": ("wait", "attend une réponse"),  # #580 : le mot de la session sur une PR ouverte
+    "bloquée": ("wait", "bloquée"),
 }
 
 

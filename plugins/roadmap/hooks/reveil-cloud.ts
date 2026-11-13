@@ -2,7 +2,7 @@
 // « prête à fusionner », « bloquée » ou « attend une réponse », la session Maestro reçoit un message, une fois par
 // commentaire. Fonctions pures : `register.tsx` lit les PR (`gh pr list`) et envoie le message.
 
-import type { Task } from './parse'
+import { cloudAdopted, type Task } from './parse'
 
 /** La clé du store où vit l'état du réveil, par racine de projet. */
 export const CLOUD_WAKE_KEY = 'cloud-wake'
@@ -20,7 +20,7 @@ export type WakeRole = 'maestro' | 'gardien'
 export const CLOUD_WAKE_FRESH_MS = 12 * 3_600_000
 
 /** Les champs de `gh pr list --json` dont l'analyse a besoin. */
-export const CLOUD_WAKE_PR_FIELDS = 'headRefName,number,url,state,author,comments,isCrossRepository'
+export const CLOUD_WAKE_PR_FIELDS = 'headRefName,number,url,state,author,comments,isCrossRepository,title,createdAt'
 
 export type WakeWord = 'ready' | 'blocked' | 'waiting'
 
@@ -44,6 +44,20 @@ function headLine(body: unknown): string {
     if (line) return line
   }
   return ''
+}
+
+/**
+ * Ce commentaire est-il de Maestro (ou de son gardien) et non le compte rendu de la session ? Maestro commente sous le
+ * même compte GitHub que la session (#580 : PR 156 de #566, « Maestro → session de #566 : … » prise pour son compte
+ * rendu ; PR 164 de #576). Sa première ligne, sans Markdown ni accents, commence par « Maestro » ou « Gardien », par
+ * « ligne close par Maestro » (#483) ou par « #N publiée » (#409). Jumelle de `commentaire_maestro` de suivi_cloud.py.
+ */
+export function isMaestroComment(body: unknown): boolean {
+  const line = headLine(body)
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+  return /^(?:maestro|gardien)\b/.test(line) || /^ligne close par maestro\b/.test(line) || /^#\d+\s+publiee\b/.test(line)
 }
 
 /** Le mot d'état que dit un commentaire en tête de texte, sinon `undefined`. */
@@ -108,9 +122,17 @@ type RawPr = {
 
 type WakeTask = Pick<Task, 'id' | 'done' | 'lieu' | 'branche' | 'nom' | 'label'>
 
+/** Une PR « #N » rattacherait-elle une tâche ouverte non prise ? `register.tsx` ne lit alors l'index des sessions du Mac (`held`) que dans ce cas. */
+export function cloudWakeAdopts(tasks: readonly WakeTask[], prs: unknown, now: number): boolean {
+  return cloudAdopted(tasks.filter(t => !t.done) as Task[], prs, now).size > 0
+}
+
 /**
  * Les réveils d'une lecture des PR ouvertes. `seen` : numéro de PR → `createdAt` du dernier commentaire de l'auteur déjà
- * vu. Seul l'auteur de la PR parle pour elle, une PR d'un fork ne compte pas. Le `seen` rendu ne garde que les PR des
+ * vu. Seul l'auteur de la PR parle pour elle, une PR d'un fork ne compte pas, ni un commentaire de Maestro (même compte,
+ * `isMaestroComment`). #580 : une tâche ouverte et non prise se rattache à la PR par le « #N » de son titre
+ * (`cloudAdopted`, même règle que `lignes_rattachees` de suivi_cloud.py), sauf celle qu'une session du Mac porte
+ * (`held`). Le `seen` rendu ne garde que les PR des
  * lignes cloud ouvertes de cette lecture ; une sortie illisible rend `seen` tel quel.
  */
 export function cloudWakes(
@@ -118,6 +140,7 @@ export function cloudWakes(
   prs: unknown,
   seen: Record<string, string>,
   now: number,
+  held: ReadonlySet<string> = new Set(),
 ): { events: WakeEvent[]; seen: Record<string, string> } {
   let list: unknown = prs
   if (typeof prs === 'string') {
@@ -130,7 +153,9 @@ export function cloudWakes(
   if (!Array.isArray(list)) return { events: [], seen }
   const events: WakeEvent[] = []
   const nextSeen: Record<string, string> = {}
-  for (const t of tasks) {
+  const adopted = cloudAdopted(tasks.filter(t => !t.done) as Task[], list, now, held)
+  const rattachees = tasks.map(t => (t.id !== undefined && adopted.has(t.id) ? { ...t, lieu: 'cloud' as const, branche: adopted.get(t.id) } : t))
+  for (const t of rattachees) {
     if (t.done || t.lieu !== 'cloud' || !t.branche || !t.id) continue
     const mine = (list as RawPr[]).filter(
       p => p && typeof p === 'object' && p.headRefName === t.branche && p.state === 'OPEN' && !p.isCrossRepository && typeof p.number === 'number',
@@ -141,7 +166,7 @@ export function cloudWakes(
     const author = pr.author?.login
     if (typeof author !== 'string' || !author || !Array.isArray(pr.comments)) continue
     const own = (pr.comments as { author?: { login?: unknown }; body?: unknown; createdAt?: unknown }[]).filter(
-      c => c && c.author?.login === author && typeof c.createdAt === 'string',
+      c => c && c.author?.login === author && typeof c.createdAt === 'string' && !isMaestroComment(c.body),
     )
     if (!own.length) continue
     const last = own.reduce((a, b) => (String(b.createdAt) >= String(a.createdAt) ? b : a))

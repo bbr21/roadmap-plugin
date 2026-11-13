@@ -114,7 +114,7 @@ import { MIX, PX, RADIUS, SIZE, SPACE, TEXT } from './tokens'
 import { BEFORE_KEY, CLOSED_KEY, NATIVE_KEY, beforeMap, closedKeys, drawWrittenMessage, keepBefore, keepClosed, keepNative, nativeKeys, splitWritten, testSessions, withoutClosed, withoutNative, writtenCards, type WrittenLine, type WrittenStart, type WrittenWho } from './cartes'
 import { CARD_DEADLINE_MS, CARD_LATE_WHY, cardTargetOf, dismissCall, panelChoiceIn, proposalIdIn, recoTargetRefusal, withFreshBackground, type Place } from './depart'
 import { CLOUD_WATCH_EVERY_MS, CLOUD_WATCH_KEY, MISSION_START_KEY, addMissionStart, addWatch, startedAtCall, briefBranchOf, dueWatches, lineVerdict, missionStartList, pushedSince, remoteHeads, startedCardTitles, watchList, type CloudWatch } from './prise-cloud'
-import { CLOUD_WAKE_EVERY_MS, CLOUD_WAKE_KEY, CLOUD_WAKE_PR_FIELDS, cloudWakeDue, cloudWakes, wakePrompt, wakeStateOf, type WakeRole } from './reveil-cloud'
+import { CLOUD_WAKE_EVERY_MS, CLOUD_WAKE_KEY, CLOUD_WAKE_PR_FIELDS, cloudWakeAdopts, cloudWakeDue, cloudWakes, wakePrompt, wakeStateOf, type WakeRole } from './reveil-cloud'
 import { gardienBandRow, gardienCardRefusal, gardienDeliveryNote, gardienOf, gardienReminder, goesToGardien, isGardienSession, withoutGardien } from './gardien'
 import { CONTROL_PANE, drawControl, openControl, redrawControl, type ControlDeps } from './controle'
 import { SETTINGS_PANE, drawSettings, openSettings, prefsFile, redrawSettings, rememberLoadedOptions, sessionProject, watchSettings, type SettingsProject } from './reglages'
@@ -782,6 +782,7 @@ import {
   filRows,
   resumedAfterClose,
   stepsClosed,
+  bandSquareDone,
   stepsView,
   childAlertText,
   childrenOf,
@@ -6838,8 +6839,13 @@ async function checkCloudWake($: EngineInterface): Promise<void> {
     if (wakeOutbox !== undefined || launchOutbox !== undefined) return
     const source = knownSource
     const tasks = await loadParsed($, files(source).open, 'ROADMAP.md')
-    if (typeof tasks === 'string' || !tasks.some(t => !t.done && t.lieu === 'cloud' && t.branche)) return
+    if (typeof tasks === 'string') return
     const root = source.root ?? source.dir
+    // #580 : une tâche ouverte sans `branche:` peut se rattacher à une PR par le « #N » de son titre. Sans ligne cloud
+    // prise, on ne lit le store que si les PR déjà en mémoire (`cloudPrsMem`, lues pour la bande, sans store) en
+    // rattachent une : le budget de lectures de l'ouverture de Maestro tient (budget-fond, 94).
+    const mem = cloudPrsMem && cloudPrsMem.root === root ? cloudPrsMem.value : undefined
+    if (!tasks.some(t => !t.done && t.lieu === 'cloud' && t.branche) && !cloudWakeAdopts(tasks, mem, now)) return
     const stored = await storeGet($, CLOUD_WAKE_KEY).catch(() => undefined)
     const state = wakeStateOf(stored, root)
     // Une autre session du projet a pris cette minute ; derrière un gardien qui lit, Maestro attend (#528).
@@ -6850,7 +6856,8 @@ async function checkCloudWake($: EngineInterface): Promise<void> {
     if (!repo) return
     const prs = await runGh($, ['pr', 'list', '-R', repo, '--state', 'open', '--limit', '100', '--json', CLOUD_WAKE_PR_FIELDS])
     if (prs === undefined) return
-    const { events, seen } = cloudWakes(tasks, prs, state.seen, now)
+    const held = cloudWakeAdopts(tasks, prs, now) ? await macHeld($, source, now).catch(() => new Set<string>()) : new Set<string>()
+    const { events, seen } = cloudWakes(tasks, prs, state.seen, now, held)
     const again = await storeGet($, CLOUD_WAKE_KEY).catch(() => undefined)
     await storeSet($, CLOUD_WAKE_KEY, { ...all(again), [root]: { at: now, seen, by: role } } as unknown as StoreValue)
     if (events.length === 0) return
@@ -11295,10 +11302,11 @@ export const register: Register = (on, options) => {
       const others = found?.brand.kind === 'maestro' ? await projectBandOthers($, found.data) : []
       // #400 : les entrées de la file bloquées, que la relève a posées dans l'atome (aucune lecture du store ici).
       const stuck = found?.brand.kind === 'maestro' ? ((await read($, queueAlertAtom)) ?? []) : []
-      // #561 : le gardien ouvert de CE Maestro, d'après la liste des sessions que le dessin vient de lire ; sa note dit s'il
-      // pose une question. Aucune lecture de plus sans gardien.
+      // #561 : le gardien ouvert, d'après la liste des sessions que le dessin vient de lire ; sa note dit s'il pose une
+      // question. Celui de CE Maestro d'abord, sinon (#577) le premier gardien ouvert du dossier du projet, quel que soit
+      // le Maestro qui l'a lancé (même règle de dossier que le suivi des sessions). Aucune lecture de plus sans gardien.
       const ownId = found?.brand.kind === 'maestro' ? found.data.own.id : undefined
-      const guardRow = ownId !== undefined ? gardienBandRow(sessionRows, ownId) : undefined
+      const guardRow = ownId !== undefined ? gardienBandRow(sessionRows, ownId, { match: found?.data.source.match }) : undefined
       const guardAsking = guardRow !== undefined ? (await readSteps($, guardRow.sessionId))?.question !== undefined : false
       const gardien = guardRow !== undefined ? { ...guardRow, state: guardAsking ? ('wait' as const) : guardRow.state } : undefined
       const band = maestroBand({ brand: found?.brand, hasSurvey: e.props.hasSurvey, shown: BRAND_TASKS_SHOWN, others, alerts: stuck.length, guard: gardien !== undefined })
@@ -11331,7 +11339,7 @@ export const register: Register = (on, options) => {
           since: sinceLabel(t.since, now),
           // #440 (maquette B6) : une ligne cloud a son compte d'étapes, tiré de sa PR ; #468 (bande v2) : et le numéro de sa PR.
           text: t.cloud ? `${cloudRowSteps({ cloud: t.cloud, ...(t.mission ? { mission: t.mission } : {}) }).count}${t.cloud.number !== undefined ? ` · PR ${t.cloud.number}` : ''}` : bandInfo({ view: views[i], finished: t.finished === true }),
-          ...(task ? { square: { hex: axisColor(pal, ranks.get(task.axis) ?? 0), axis: task.axis, done: task.done === true || t.closed === true } } : {}),
+          ...(task ? { square: { hex: axisColor(pal, ranks.get(task.axis) ?? 0), axis: task.axis, done: bandSquareDone(task.done === true, t) } } : {}),
         }
       })
       return maestroBandTree($, e, band, found.data.palette, views, infos, {
@@ -12288,7 +12296,12 @@ function maestroBandTree(
   const bandPassCells = Svg ? Math.max(0, ...infos.map(x => (x.passes && passesShown(x.passes) ? pxCells(deliveryDotsIcon(x.passes, palette).width) : 0))) : 0
   // #561 : ce qui reste toujours ; le mot, les points, la jauge et le détail sont des colonnes facultatives que `sessionRowFit` retire.
   const bandFixedCells = 2 + pxCells(MARK_SQUARE_PX) + 2 + bandNumberCells + 2 + 2 + cols.since + 6
-  const bandFit = sessionRowFit({ columns: bodyColumns, fixed: bandFixedCells, word: bandWordCells, gauge: pxCells(BAND_GAUGE.row), detail: bandDetailCells, dots: bandPassCells })
+  // #578 (F43) : sur le bureau, `bodyColumns` est plus court que la place réelle de la bande, et le détail n'y paraissait jamais.
+  // Il ne compte plus dans le retrait : il se dessine tant que rien d'autre n'est retiré. Sa colonne garde sa largeur (#326 :
+  // rétrécie, elle décalerait la jauge d'une ligne à l'autre) ; c'est le titre qui cède. Au terminal, la règle reste celle de #561.
+  const bandStrict = sessionRowFit({ columns: bodyColumns, fixed: bandFixedCells, word: bandWordCells, gauge: pxCells(BAND_GAUGE.row), detail: bandDetailCells, dots: bandPassCells })
+  const bandLoose = sessionRowFit({ columns: bodyColumns, fixed: bandFixedCells, word: bandWordCells, gauge: pxCells(BAND_GAUGE.row), dots: bandPassCells })
+  const bandFit = Svg ? { ...bandLoose, detail: bandDetailCells > 0 && bandLoose.word && bandLoose.gauge && (bandLoose.dots || bandPassCells === 0) } : bandStrict
   // #561 (G1, BBR) : la ligne du Gardien, même grille que les tâches : le bouclier gris à la place de la case, le lieu, le titre
   // à la place du numéro (il ouvre sa session), l'icône d'état et son mot, les colonnes vides des points, de la jauge et du
   // détail pour que la durée reste alignée, puis la durée depuis sa création.

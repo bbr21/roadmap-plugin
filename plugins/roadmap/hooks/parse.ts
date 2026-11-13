@@ -10890,7 +10890,7 @@ export function maestroRelaunchContext(o: { source: Source; tasks: readonly Task
  * plus (finie ou archivée), la tâche est toute finie (#145).
  */
 /** Une tâche de la bande et du bloc « En cours » de Maestro ; `since` : la création de sa session, pour la durée live (#385). */
-export type BrandTask = { id: string; label: string; state: 'wait' | 'live' | 'merge' | 'done'; merged?: true; sessionId?: string; closed?: true; finished?: true; archivable?: true; launchedAt?: number; since?: number; cloud?: CloudPr; mission?: { state: MissionState; phrase?: string; session?: string } }
+export type BrandTask = { id: string; label: string; state: 'wait' | 'live' | 'merge' | 'done'; merged?: true; sessionId?: string; closed?: true; /** Sa ligne est close, mais sa session a repris du travail depuis (#395, #582) : elle se montre au travail. */ resumed?: true; finished?: true; archivable?: true; launchedAt?: number; since?: number; cloud?: CloudPr; mission?: { state: MissionState; phrase?: string; session?: string } }
 
 // --- La cible recommandée d'une tâche (#416) ---------------------------------------------------------
 // Pour alléger le Mac, une tâche part en cloud ; seule une ressource du Mac (simulateur iOS, volet navigateur
@@ -12021,7 +12021,7 @@ export function liveBlockIds(tasks: readonly BrandTask[]): string[] {
  * Une session de Maestro close et pas archivée trouve sa tâche parmi les faites (`done`, #218).
  * Avec `launchedAt`, toutes rangées ensemble par premier lancement, les sans-date à la fin (#195).
  */
-export function liveBlockRows<T extends { id?: string }>(
+export function liveBlockRows<T extends { id?: string; done?: boolean }>(
   own: readonly BrandTask[],
   open: readonly T[],
   isLive: (t: T) => boolean,
@@ -12030,8 +12030,10 @@ export function liveBlockRows<T extends { id?: string }>(
 ): { task: T; brand?: BrandTask }[] {
   const ids = liveBlockIds(own)
   const mine = ids.flatMap(id => {
-    const task = open.find(t => t.id === id) ?? (own.find(bt => bt.id === id)?.closed ? done.find(t => t.id === id) : undefined)
     const brand = own.find(bt => bt.id === id)
+    // #582 : close mais reprise, sa ligne vient des faites et se montre ouverte (ni coche ni barré), sans toucher l'originale.
+    const fromDone = brand?.closed || brand?.resumed ? done.find(t => t.id === id) : undefined
+    const task = open.find(t => t.id === id) ?? (fromDone && brand?.resumed ? { ...fromDone, done: false } : fromDone)
     return task ? [{ task, brand }] : []
   })
   const others = open.filter(t => isLive(t) && !(t.id !== undefined && ids.includes(t.id))).map(task => ({ task }))
@@ -12040,6 +12042,14 @@ export function liveBlockRows<T extends { id?: string }>(
   const key = (r: { task: T; brand?: BrandTask }) => r.brand?.launchedAt ?? launchedAt(r.task) ?? Number.POSITIVE_INFINITY
   // Le tri est stable : à date égale, ou sans date, l'ordre d'avant.
   return rows.sort((a, b) => (key(a) === key(b) ? 0 : key(a) < key(b) ? -1 : 1))
+}
+
+/**
+ * La case d'une ligne de la bande de Maestro (#385, #582) : cochée pour une tâche close, jamais pour une close que sa
+ * session a reprise (elle se montre au travail, « en session », maquette C choisie par BBR le 2026-11-13).
+ */
+export function bandSquareDone(taskDone: boolean, row: { closed?: true; resumed?: true }): boolean {
+  return row.closed === true || (taskDone && row.resumed !== true)
 }
 
 export type Brand =
@@ -12271,10 +12281,12 @@ export function maestroBrandTasks(
   return [...entries]
     .sort((a, b) => (at(a) === at(b) ? byNumber(a, b) : at(a) < at(b) ? -1 : 1))
     // #395 : close, mais sa session a repris du travail depuis : elle se suit comme une tâche ouverte.
-    .map(e => ({ ...e, done: stepsClosed(e.done, e.status?.steps, e.fait) }))
+    .map(e => ({ ...e, resumed: e.done && !stepsClosed(e.done, e.status?.steps, e.fait), done: stepsClosed(e.done, e.status?.steps, e.fait) }))
     .map(e => ({
       id: e.id,
       label: e.label,
+      // #582 : la ligne close reprise le dit, pour que la bande et le bloc ne la cochent ni ne la barrent.
+      ...(e.resumed ? { resumed: true as const } : {}),
       // À l'arrêt : prête, c'est Maestro qui fusionne (#191) ; sinon elle attend ou travaille encore (#384).
       // #383 : l'état unique (`taskSessionState`) ; l'avance de la branche décide de « prête », comme #384.
       state: (e.done || !e.open ? 'done' : brandStateOf(taskSessionState({ running: e.running === true, asking: e.asking === true, ahead: e.ahead ?? 0, ...(e.status ? { status: e.status } : {}), ...(e.merged ? { merged: true } : {}) }))) as BrandTask['state'],
