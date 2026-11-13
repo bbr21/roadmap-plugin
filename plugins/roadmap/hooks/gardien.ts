@@ -20,18 +20,32 @@ export function gardienTitle(folder: string): string {
   return name === '' ? 'Gardien' : `Gardien · ${name}`
 }
 
+/** La rangée du gardien ouvert d'un Maestro (la recherche que `gardienOf` et `gardienBandRow` partagent, #561). */
+function gardienRow(rows: readonly unknown[], maestroId: string): { sessionId: string; title: string } | undefined {
+  for (const raw of rows) {
+    if (typeof raw !== 'object' || raw === null) continue
+    const r = raw as { sessionId?: unknown; title?: unknown; startedBy?: unknown; isArchived?: unknown }
+    if (typeof r.sessionId !== 'string' || typeof r.title !== 'string') continue
+    if (r.startedBy === maestroId && r.isArchived === false && isGardienSession(r.title)) return { sessionId: r.sessionId, title: r.title }
+  }
+  return undefined
+}
+
 /**
  * Le gardien ouvert d'un Maestro, d'après les rangées de `list_sessions` : lancé par lui (`startedBy`), pas archivé,
  * titré Gardien. Une rangée sans `isArchived` ne compte pas : on ne sait pas si elle est ouverte.
  */
 export function gardienOf(rows: readonly unknown[], maestroId: string): string | undefined {
-  for (const raw of rows) {
-    if (typeof raw !== 'object' || raw === null) continue
-    const r = raw as { sessionId?: unknown; title?: unknown; startedBy?: unknown; isArchived?: unknown }
-    if (typeof r.sessionId !== 'string' || typeof r.title !== 'string') continue
-    if (r.startedBy === maestroId && r.isArchived === false && isGardienSession(r.title)) return r.sessionId
-  }
-  return undefined
+  return gardienRow(rows, maestroId)?.sessionId
+}
+
+/**
+ * La ligne du gardien dans la bande de Maestro (#561) : le même gardien que `gardienOf`, avec son titre, et son état
+ * (`wait` quand il pose une question, sinon `live`). Rien sans gardien ouvert.
+ */
+export function gardienBandRow(rows: readonly unknown[], maestroId: string, o: { asking?: boolean } = {}): { sessionId: string; title: string; state: 'live' | 'wait' } | undefined {
+  const row = gardienRow(rows, maestroId)
+  return row === undefined ? undefined : { sessionId: row.sessionId, title: row.title.trim(), state: o.asking ? 'wait' : 'live' }
 }
 
 /** Les états d'une fin de tour qui vont au gardien : une livraison à faire. Le reste est la conversation de Maestro. */

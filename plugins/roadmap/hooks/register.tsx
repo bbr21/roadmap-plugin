@@ -48,6 +48,7 @@ import {
   cornerIcon,
   memo,
   rowMark,
+  shieldIcon,
   type Corner,
   chevronIcon,
   controlIcon,
@@ -114,7 +115,7 @@ import { BEFORE_KEY, CLOSED_KEY, NATIVE_KEY, beforeMap, closedKeys, drawWrittenM
 import { CARD_DEADLINE_MS, CARD_LATE_WHY, cardTargetOf, dismissCall, panelChoiceIn, proposalIdIn, recoTargetRefusal, withFreshBackground, type Place } from './depart'
 import { CLOUD_WATCH_EVERY_MS, CLOUD_WATCH_KEY, MISSION_START_KEY, addMissionStart, addWatch, startedAtCall, briefBranchOf, dueWatches, lineVerdict, missionStartList, pushedSince, remoteHeads, startedCardTitles, watchList, type CloudWatch } from './prise-cloud'
 import { CLOUD_WAKE_EVERY_MS, CLOUD_WAKE_KEY, CLOUD_WAKE_PR_FIELDS, cloudWakeDue, cloudWakes, wakePrompt, wakeStateOf, type WakeRole } from './reveil-cloud'
-import { gardienCardRefusal, gardienDeliveryNote, gardienOf, gardienReminder, goesToGardien, isGardienSession, withoutGardien } from './gardien'
+import { gardienBandRow, gardienCardRefusal, gardienDeliveryNote, gardienOf, gardienReminder, goesToGardien, isGardienSession, withoutGardien } from './gardien'
 import { CONTROL_PANE, drawControl, openControl, redrawControl, type ControlDeps } from './controle'
 import { SETTINGS_PANE, drawSettings, openSettings, prefsFile, redrawSettings, rememberLoadedOptions, sessionProject, watchSettings, type SettingsProject } from './reglages'
 import {
@@ -604,8 +605,7 @@ import {
   cloudBrandTasks,
   cloudAdopted,
   CLOUD_ADOPT_MS,
-  blockRowFit,
-  bandRowFit,
+  sessionRowFit,
   mergedLocalIds,
   deliveryPasses,
   passesShown,
@@ -11261,9 +11261,17 @@ export const register: Register = (on, options) => {
       const others = found?.brand.kind === 'maestro' ? await projectBandOthers($, found.data) : []
       // #400 : les entrées de la file bloquées, que la relève a posées dans l'atome (aucune lecture du store ici).
       const stuck = found?.brand.kind === 'maestro' ? ((await read($, queueAlertAtom)) ?? []) : []
-      const band = maestroBand({ brand: found?.brand, hasSurvey: e.props.hasSurvey, shown: BRAND_TASKS_SHOWN, others, alerts: stuck.length })
+      // #561 : le gardien ouvert de CE Maestro, d'après la liste des sessions que le dessin vient de lire ; sa note dit s'il
+      // pose une question. Aucune lecture de plus sans gardien.
+      const ownId = found?.brand.kind === 'maestro' ? found.data.own.id : undefined
+      const guardRow = ownId !== undefined ? gardienBandRow(sessionRows, ownId) : undefined
+      const guardAsking = guardRow !== undefined ? (await readSteps($, guardRow.sessionId))?.question !== undefined : false
+      const gardien = guardRow !== undefined ? { ...guardRow, state: guardAsking ? ('wait' as const) : guardRow.state } : undefined
+      const band = maestroBand({ brand: found?.brand, hasSurvey: e.props.hasSurvey, shown: BRAND_TASKS_SHOWN, others, alerts: stuck.length, guard: gardien !== undefined })
       if (!found || !band) return next(e)
       const now = await $.clock.now()
+      // Sa durée : depuis sa création, apprise comme celle des filles, sans retenir le dessin (#539).
+      if (gardien) await behindDraw($, learnCreated($, [gardien.sessionId], now))
       const statuses = await Promise.all(band.tasks.map(t => readSteps($, t.sessionId)))
       const views = statuses.map((status, i) => {
         const t = band.tasks[i]
@@ -11297,7 +11305,7 @@ export const register: Register = (on, options) => {
         archive: t => void archiveTaskRow($, t, now),
         compact: () => void compactFromBand($),
         openStuck: s => void (s.open ? openSession($, { sessionId: s.open, startedAt: now, title: `Maestro ${s.project}` }) : undefined),
-      }, now, contexts, await read($, zoneGenAtom), stuck)
+      }, now, contexts, await read($, zoneGenAtom), stuck, gardien ? { sessionId: gardien.sessionId, title: gardien.title, state: gardien.state, since: sinceLabel(createdBySession.get(gardien.sessionId), now) } : undefined)
     } catch {
       return next(e)
     }
@@ -12029,12 +12037,16 @@ function maestroBandTree(
   contexts: { mine?: ContextView; rows: readonly (ContextView | undefined)[] } = { rows: [] },
   zoneGen = 0,
   stuck: readonly StuckEntry[] = [],
+  // #561 : la ligne du Gardien de Maestro, dessinée après les lignes de tâches, hors du compte de l'en-tête.
+  guard?: { sessionId: string; title: string; state: 'live' | 'wait'; since: string },
 ): RenderElement {
   const resolved = $.ui.resolve(e)
   const { Box, Text, Button } = resolved
   const Svg = 'Svg' in resolved && e.surface !== 'terminal' ? resolved.Svg : undefined
   const Client = 'Client' in resolved && Svg ? resolved.Client : undefined
   const words = brandText(band.brand)
+  // #561 : le gardien se dessine comme une tâche (titre, état, mot, durée) : une tâche fabriquée, sans numéro.
+  const guardTask: BrandTask | undefined = guard ? { id: 'gardien', label: guard.title, state: guard.state, sessionId: guard.sessionId } : undefined
   const mine = contexts.mine
   // Les couleurs de #145 : t'attend en orange, toute finie en violet ; à fusionner en bleu-vert (#191) ;
   // #425 : une tâche faite en violet, même sa session encore au travail. La couleur pleine pour l'icône, sa
@@ -12091,11 +12103,11 @@ function maestroBandTree(
     labels,
     infos: infos.map(x => x.text),
     // #400 : la durée en file d'une entrée bloquée partage la colonne de la durée des sessions.
-    sinces: [...infos.map(x => x.since), ...stuck.map(s => s.since)],
+    sinces: [...infos.map(x => x.since), ...stuck.map(s => s.since), ...(guard ? [guard.since] : [])],
     archive: band.tasks.some(t => t.archivable && (t.sessionId || t.cloud)),
   })
   // L'horloge devant la durée, centrée sur le texte (#385) : sa case de 2 cellules sur chaque ligne dès qu'une en a.
-  const clocked = infos.some(x => x.since !== '') || stuck.length > 0
+  const clocked = infos.some(x => x.since !== '') || stuck.length > 0 || (guard?.since ?? '') !== ''
   // L'icône de l'état, celles du bloc « En cours » (#211) ; au terminal, son signe.
   // #440 (maquette B6) : où tourne la session, en gris, devant son numéro : le nuage ou l'ordinateur.
   const placeMark = (cloud: boolean, key: string) =>
@@ -12236,12 +12248,55 @@ function maestroBandTree(
     bandCloud > 0 && bandMac > 0 ? [{ where: 'cloud', n: bandCloud }, { where: 'mac', n: bandMac }] : bandCloud > 0 ? [{ where: 'cloud', n: 0 }] : bandMac > 0 ? [{ where: 'mac', n: 0 }] : []
   // #468 : les colonnes de la grille, à la largeur du plus long texte montré ; ce qui part quand la place manque.
   const bandNumberCells = Math.max(0, ...band.tasks.map(t => `#${t.id}`.length))
-  const bandWordCells = Math.max(0, ...band.tasks.map(t => [...rowWord(t)].length))
+  const bandWordCells = Math.max(0, ...[...band.tasks, ...(guardTask ? [guardTask] : [])].map(t => [...rowWord(t)].length))
   const bandDetailCells = Math.min(BAND_INFO_MAX, Math.max(0, ...infos.map(x => [...x.text].length)))
   // #480 (option A) : les points des livraisons avant la jauge, la même colonne sur chaque ligne, aucune sans pastille.
   const bandPassCells = Svg ? Math.max(0, ...infos.map(x => (x.passes && passesShown(x.passes) ? pxCells(deliveryDotsIcon(x.passes, palette).width) : 0))) : 0
-  const bandFixedCells = 2 + pxCells(MARK_SQUARE_PX) + 2 + bandNumberCells + 2 + pxCells(BAND_GAUGE.row) + 2 + cols.since + 7 + (bandPassCells > 0 ? bandPassCells + 1 : 0)
-  const bandFit = bandRowFit({ columns: bodyColumns, fixed: bandFixedCells, word: bandWordCells, detail: bandDetailCells })
+  // #561 : ce qui reste toujours ; le mot, les points, la jauge et le détail sont des colonnes facultatives que `sessionRowFit` retire.
+  const bandFixedCells = 2 + pxCells(MARK_SQUARE_PX) + 2 + bandNumberCells + 2 + 2 + cols.since + 6
+  const bandFit = sessionRowFit({ columns: bodyColumns, fixed: bandFixedCells, word: bandWordCells, gauge: pxCells(BAND_GAUGE.row), detail: bandDetailCells, dots: bandPassCells })
+  // #561 (G1, BBR) : la ligne du Gardien, même grille que les tâches : le bouclier gris à la place de la case, le lieu, le titre
+  // à la place du numéro (il ouvre sa session), l'icône d'état et son mot, les colonnes vides des points, de la jauge et du
+  // détail pour que la durée reste alignée, puis la durée depuis sa création.
+  const guardRow = (g: { title: string; since: string }, t: BrandTask) => {
+    const mark = bandState(t)
+    const [dot] = hue(t)
+    const ink = rowInk(t)
+    const shield = Svg ? `<svg xmlns="http://www.w3.org/2000/svg" width="${MARK_SQUARE_PX}" height="${SIZE.strut.row}" viewBox="0 0 ${MARK_SQUARE_PX} ${SIZE.strut.row}">${shieldIcon(palette.text3, 14, 'Gardien de Maestro').replace(/^<svg /, `<svg x="${(MARK_SQUARE_PX - 14) / 2}" y="${(SIZE.strut.row - 14) / 2}" `)}</svg>` : undefined
+    return (
+      <Box key="band-row:gardien" flexDirection="row" alignItems="center" gap={SPACE.row} hover={{ backgroundColor: palette.hover }}>
+        {strut}
+        {Svg && shield && <Svg source={shield} alt="Gardien de Maestro" width={MARK_SQUARE_PX} height={SIZE.strut.row} />}
+        {placeMark(false, 'band-place:gardien')}
+        <Box flexGrow={1} flexShrink={1} minWidth={0}>
+          {(bandFit.title || !Svg) && titleOf(t)}
+        </Box>
+        <Box key="band-state:gardien" flexShrink={0} flexDirection="row" alignItems="center" gap={SPACE.row} {...(Svg ? { width: 2 + (bandFit.word ? 1 + bandWordCells : 0) } : {})}>
+          <Box key="band-mark:gardien" width={2} flexShrink={0} flexDirection="row" justifyContent="center">
+            {stateIcon(mark.icon, mark.word, dot, t)}
+          </Box>
+          {(bandFit.word || !Svg) && <Text key="band-word:gardien" size="caption" color={ink} wrap="truncate-end">{rowWord(t)}</Text>}
+        </Box>
+        {Svg && bandFit.dots && bandPassCells > 0 && <Box key="band-liv:gardien" width={bandPassCells} flexShrink={0} />}
+        {Svg && bandFit.gauge && (
+          <Box key="band-gauge:gardien" flexShrink={0} flexDirection="column" gap={0}>
+            <Svg source={`<svg xmlns="http://www.w3.org/2000/svg" width="${BAND_GAUGE.row}" height="4"/>`} alt="espace" width={BAND_GAUGE.row} height={4} />
+          </Box>
+        )}
+        {bandFit.detail && <Box key="band-info:gardien" width={bandDetailCells} flexShrink={0} minWidth={0} />}
+        {clocked && (
+          <Box key="band-since:gardien" width={2 + cols.since} flexShrink={0} flexDirection="row" alignItems="center" justifyContent="flex-end" gap={0}>
+            {g.since !== '' && [
+              <Box key="band-clock:gardien" width={2} flexShrink={0} flexDirection="row" alignItems="center">
+                {Svg ? <Svg source={clockIcon(ink, 12)} alt="lancée depuis" width={12} height={12} /> : <Text size="caption" color={ink}>◷</Text>}
+              </Box>,
+              <Text key="band-since-text:gardien" size="caption" tabular color={ink} wrap="truncate-end">{g.since}</Text>,
+            ]}
+          </Box>
+        )}
+      </Box>
+    )
+  }
   return (
     <Box flexDirection="column" gap={SPACE.tight} backgroundColor={palette.bg} padding="sm">
       {/* L'en-tête commence comme une ligne, par le même trait d'espace : « Maestro » au droit des pastilles (#326). */}
@@ -12316,7 +12371,7 @@ function maestroBandTree(
                 {(bandFit.word || !Svg) && <Text key={`band-word:${keyPart(t.id)}`} size="caption" color={ink} wrap="truncate-end">{rowWord(t)}</Text>}
               </Box>
               {/* #480 : les points de ses livraisons, juste avant la jauge, une colonne de même largeur sur chaque ligne. */}
-              {Svg && bandPassCells > 0 && (
+              {Svg && bandFit.dots && bandPassCells > 0 && (
                 <Box key={`band-liv:${keyPart(t.id)}`} width={bandPassCells} flexShrink={0} flexDirection="row" alignItems="center" justifyContent="flex-start">
                   {info?.passes && passesShown(info.passes) && (() => {
                     const dots = deliveryDotsIcon(info.passes, palette)
@@ -12325,7 +12380,7 @@ function maestroBandTree(
                 </Box>
               )}
               {/* La jauge, d'étapes ou de PR, et sous elle la jauge de contexte (#157, #217), à la même place sur chaque ligne. */}
-              {Svg && (
+              {Svg && bandFit.gauge && (
                 <Box key={`band-gauge:${keyPart(t.id)}`} flexShrink={0} flexDirection="column" gap={0}>
                   {t.cloud ? cloudBar({ cloud: t.cloud, ...(t.mission ? { mission: t.mission } : {}) }, BAND_GAUGE.row, `band-cloud-bar:${keyPart(t.id)}`) : bar ? <Svg source={bar.source} alt={`étapes ${view?.count ?? ''}`} width={bar.width} height={bar.height} /> : <Svg source={`<svg xmlns="http://www.w3.org/2000/svg" width="${BAND_GAUGE.row}" height="4"/>`} alt="espace" width={BAND_GAUGE.row} height={4} />}
                   {!t.cloud && ctxBar && ctx && <Svg source={ctxBar.source} alt={`contexte ${ctx.text}`} width={ctxBar.width} height={ctxBar.height} />}
@@ -12346,7 +12401,7 @@ function maestroBandTree(
                         <Box key={`band-clock:${keyPart(t.id)}`} width={2} flexShrink={0} flexDirection="row" alignItems="center">
                           {Svg ? <Svg source={clockIcon(ink, 12)} alt="lancée depuis" width={12} height={12} /> : <Text size="caption" color={ink}>◷</Text>}
                         </Box>,
-                        <Text key={`band-since-text:${keyPart(t.id)}`} size="caption" tabular color={ink}>{info.since}</Text>,
+                        <Text key={`band-since-text:${keyPart(t.id)}`} size="caption" tabular color={ink} wrap="truncate-end">{info.since}</Text>,
                       ]}
                 </Box>
               )}
@@ -12365,6 +12420,7 @@ function maestroBandTree(
             </Box>
           )
         })}
+        {guard && guardTask && guardRow(guard, guardTask)}
         {band.more > 0 && <Text size="caption" color={palette.text3}>{`et ${band.more} de plus`}</Text>}
       </Box>
     </Box>
@@ -16087,8 +16143,6 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   const queuedIds = new Set(maestroBrand && doseView ? doseView.queue.map(q => q.id) : [])
   const inBlock = (t: Task) => blockKeys.has(taskKey(t)) || (t.id !== undefined && queuedIds.has(String(t.id)))
   const blockTasks = blockRows.map(r => r.task)
-  // #480 : les PR des tâches du bloc qui ont des livraisons, de la lecture déjà gardée (60 s), pour dire leur passe en cours.
-  const blockPrs = await prsOfDelivered($, source, blockTasks)
   // La file des tests lourds (#321, maquette C) : la pastille de chaque branche prend la place de la barre
   // d'étapes sur la ligne de sa session ; les suites d'une branche sans ligne (main, Maestro) ont la leur.
   queueWanted = maestroBrand !== undefined
@@ -16597,19 +16651,11 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   }
   const blockWordCells = Math.max(0, ...blockTasks.map(t => pxCells(6.5 * [...blockWordOf(t, blockOf.get(t.id as string))].length)))
   const blockEndCells = ROW_STEPS.clock + stepsCells.count
-  // #480 (maquette A) : les points des livraisons, une colonne juste avant la jauge, dès qu'une ligne a deux passes ; la même
-  // largeur sur chaque ligne (celle du plus long dessin), aucune sans pastille. Une ligne du bloc a sa session : jamais « à lancer ».
-  const blockPassesOf = (t: Task, block?: BrandTask): Pass[] => {
-    const cloud = block?.cloud
-    const pr = block?.mission ? undefined : cloud ?? currentPr(blockPrs, t) // #469 : une mission n'a pas de PR
-    const working = cloud ? cloud.state !== 'delivered' : blockState(t, block) !== 'done' // #480 : dans le bloc, la ligne a sa session
-    return deliveryPasses(t, { working, ...(pr ? { pr } : {}) })
-  }
-  const blockPassMap = new Map(blockTasks.map(t => [taskKey(t), blockPassesOf(t, blockOf.get(t.id as string))] as const))
-  const livCells = Svg ? Math.max(0, ...[...blockPassMap.values()].filter(passesShown).map(ps => pxCells(deliveryDotsIcon(ps, palette).width))) : 0
-  // Ce qui reste toujours : marges du panneau et du cadre, case (32 px), lieu, numéro, icône, jauge, durée, et leurs écarts.
-  const blockFixedCells = 6 + pxCells(32) + 2 + treeNumCells + ROW_STEPS.icon + pxCells(ROW_STEPS.bar) + blockEndCells + 6 + (livCells > 0 ? livCells + 1 : 0)
-  const blockFit = blockRowFit({ columns: (e.props as { bodyColumns?: number }).bodyColumns ?? 56, fixed: blockFixedCells, word: blockWordCells })
+  // #561 : les points des livraisons ne se dessinent plus au bloc (BBR les veut dans la bande seule) ; la case y fait
+  // `MARK_SQUARE_PX`, comme dans la bande, et la jauge est une colonne facultative, qui part après le mot d'état.
+  // Ce qui reste toujours : marges du panneau et du cadre, case, lieu, numéro, icône d'état, durée, et leurs écarts.
+  const blockFixedCells = 6 + pxCells(MARK_SQUARE_PX) + 2 + treeNumCells + ROW_STEPS.icon + blockEndCells + 5
+  const blockFit = sessionRowFit({ columns: (e.props as { bodyColumns?: number }).bodyColumns ?? 56, fixed: blockFixedCells, word: blockWordCells, gauge: pxCells(ROW_STEPS.bar) })
   const blockColumns = (t: Task, block?: BrandTask) => {
     const status = blockStatus(t, block)
     const state = blockState(t, block)
@@ -16674,23 +16720,15 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
             <Text key={`word:${t.key}`} size="caption" color={ink} wrap="truncate-end">{word}</Text>
           ))}
       </Box>,
-      // #480 : les points de ses livraisons avant la jauge, dans une colonne de la même largeur sur chaque ligne.
-      ...(livCells > 0
+      // La jauge, ou la pastille de sa suite dans la file des tests lourds (#321), à la même place.
+      // #561 : elle part avant le titre, après le mot ; la pastille qui prend sa place part avec elle.
+      ...(blockFit.gauge || !Svg
         ? [
-            <Box key={`liv:${t.key}`} width={livCells} flexShrink={0} flexDirection="row" alignItems="center" justifyContent="flex-start">
-              {(() => {
-                const ps = blockPassMap.get(taskKey(t))
-                if (!Svg || !ps || !passesShown(ps)) return null
-                const dots = deliveryDotsIcon(ps, palette)
-                return <Svg key={`liv-dots:${t.key}`} source={dots.source} alt={`Livraisons : ${ps.map(passLabel).join(', ')}`} width={dots.width} height={dots.height} />
-              })()}
+            <Box key={`gauge:${t.key}`} flexShrink={0} flexDirection="row" alignItems="center" justifyContent="flex-start" {...(Svg ? { width: pxCells(ROW_STEPS.bar) } : {})}>
+              {queued ? queuePill(queued) : Svg && (bar ? <Svg source={bar.source} alt={bar.alt} width={bar.width} height={bar.height} /> : <Svg source={`<svg xmlns="http://www.w3.org/2000/svg" width="${ROW_STEPS.bar}" height="4"/>`} alt="espace" width={ROW_STEPS.bar} height={4} />)}
             </Box>,
           ]
         : []),
-      // La jauge, ou la pastille de sa suite dans la file des tests lourds (#321), à la même place.
-      <Box key={`gauge:${t.key}`} flexShrink={0} flexDirection="row" alignItems="center" justifyContent="flex-start" {...(Svg ? { width: pxCells(ROW_STEPS.bar) } : {})}>
-        {queued ? queuePill(queued) : Svg && (bar ? <Svg source={bar.source} alt={bar.alt} width={bar.width} height={bar.height} /> : <Svg source={`<svg xmlns="http://www.w3.org/2000/svg" width="${ROW_STEPS.bar}" height="4"/>`} alt="espace" width={ROW_STEPS.bar} height={4} />)}
-      </Box>,
       // La durée au bord droit ; une livrée y met son archive (#468), qui n'a plus de durée à dire.
       <Box key={`end:${t.key}`} width={blockEndCells} flexShrink={0} flexDirection="row" alignItems="center" justifyContent="flex-end" gap={0}>
         {archivable && block ? (
@@ -16709,7 +16747,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
             <Box key={`clock:${t.key}`} width={ROW_STEPS.clock} flexShrink={0} flexDirection="row" alignItems="center">
               {Svg ? <Svg source={clockIcon(ink, 12)} alt="lancée depuis" width={12} height={12} /> : <Text size="caption" color={ink}>◷</Text>}
             </Box>,
-            <Text key={`since:${t.key}`} size="caption" tabular color={ink}>{since}</Text>,
+            <Text key={`since:${t.key}`} size="caption" tabular color={ink} wrap="truncate-end">{since}</Text>,
           ]
         )}
       </Box>,
@@ -16771,7 +16809,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     // Dans l'arbre, la mère et la tâche seule (#282) : la marque n'est que le carré (16 px) ; la flèche a son
     // dessin, centré dans la place qui va de la marque au #, dans un groupe sans écart (`grouped`).
     const grouped = tree !== undefined && !child && !chain && Svg !== undefined
-    const markWidth = child ? TREE_CHILD_PX : grouped ? MARK_SQUARE_PX : tree ? TREE_MARK_PX : 32
+    const markWidth = child ? TREE_CHILD_PX : grouped ? MARK_SQUARE_PX : inLiveBlock ? MARK_SQUARE_PX : tree ? TREE_MARK_PX : 32 // #561 : au bloc, la case de la bande
     const drawn = head
       ? grouped
         ? asked || chosen
@@ -16892,7 +16930,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
             fitRowPills({
               columns: (e.props as { bodyColumns?: number }).bodyColumns ?? 56,
               inset: 6,
-              steps: (inLiveBlock ? ROW_STEPS.icon + (blockFit.word ? 1 + blockWordCells : 0) + pxCells(ROW_STEPS.bar) + blockEndCells + 3 + (livCells > 0 ? livCells + 1 : 0) : stepsColumns) + priorityCells,
+              steps: (inLiveBlock ? ROW_STEPS.icon + (blockFit.word ? 1 + blockWordCells : 0) + (blockFit.gauge ? pxCells(ROW_STEPS.bar) + 1 : 0) + blockEndCells + 3 : stepsColumns) + priorityCells,
               pills: parts.tags.map(spec => pxCells(pillIcon(spec).width)),
               mark: grouped ? 0 : markWidth,
               number: grouped ? treeNumCells + TREE_LEAD_CELLS : treeNumCells,

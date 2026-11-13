@@ -387,6 +387,11 @@ export function computerIcon(hex: string, size = 14, title?: string): string {
   return line(hex, size, 2, '<rect x="3.5" y="4.5" width="17" height="11" rx="1.5"/><path d="M2 19.5h20"/>', title)
 }
 
+/** Bouclier : la ligne du Gardien dans la bande de Maestro (#561), à la place de l'icône de lieu. Trait 2, bouts ronds. */
+export function shieldIcon(hex: string, size: number = 14, alt?: string): string {
+  return line(hex, size, 2, '<path d="M12 3l7.2 2.7v5.8c0 4.3-2.9 7.4-7.2 9.3-4.3-1.9-7.2-5-7.2-9.3V5.7z"/>', alt)
+}
+
 /** Fiole : une tâche publiée en test (#375, maquette A) ; une session « Tester #N · X.Y.Z » est ouverte. Trait 2, bouts ronds. */
 export function flaskIcon(hex: string, size = 14, title?: string): string {
   return line(hex, size, 2, '<path d="M9 3h6"/><path d="M10 3v6.5L4.6 18.8A1.5 1.5 0 0 0 5.9 21h12.2a1.5 1.5 0 0 0 1.3-2.2L14 9.5V3"/><path d="M7.2 15h9.6"/>', title)

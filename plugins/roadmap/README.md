@@ -840,6 +840,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.297.0 (2026-11-13)** : roadmap : la ligne de session du bloc En session et de la bande tient à toute largeur (#561)
 - **0.296.2 (2026-11-13)** : roadmap : le bloc de fin d'une session cloud en trois lignes, sans demande de changer de modèle (#559)
 - **0.296.1 (2026-11-13)** : roadmap : le suivi cloud de Maestro ne rattache plus une tâche portée par une session du Mac (#573)
 - **0.296.0 (2026-11-13)** : roadmap : l'audit se lit hors de main (#570), la bande de Maestro ne rattache plus une session du Mac comme cloud (#571), release.py dit qui prend la version publiée (#572)

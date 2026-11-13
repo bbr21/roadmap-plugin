@@ -11645,26 +11645,26 @@ export function blockWord(t: { state: 'wait' | 'live' | 'merge' | 'done'; cloud?
 /** La place la plus petite, en cellules, où un titre du bloc « En session » se lit encore (#468). */
 export const BLOCK_TITLE_MIN = 12
 
-/**
- * Ce que montre une ligne du bloc « En session » selon la place (#468, maquette A v3, retour de BBR) : `columns`, la
- * largeur de la ligne ; `fixed`, ce qui reste toujours (case, lieu, numéro, icône d'état, jauge, durée, leurs
- * écarts) ; `word`, la colonne du mot. Le mot part d'abord, puis le titre ; le numéro et la durée restent toujours.
- */
-export function blockRowFit(o: { columns: number; fixed: number; word: number }): { word: boolean; title: boolean } {
-  const word = o.word > 0 && o.fixed + o.word + 1 + BLOCK_TITLE_MIN <= o.columns
-  return { word, title: o.fixed + (word ? o.word + 1 : 0) + BLOCK_TITLE_MIN <= o.columns }
-}
+/** La place, en cellules, sous laquelle le titre d'une ligne de session disparaît tout à fait (#561). */
+export const SESSION_TITLE_GONE = 4
 
 /**
- * Ce que montre une ligne de la bande de Maestro selon la place (#468, maquette A v2 de la bande) : la grille du bloc
- * « En session » (`blockRowFit`), plus la colonne `detail` après la jauge (« 4/8 · Coder le réglage », « 2/6 · PR 72 »).
- * Le détail part d'abord, puis le mot, puis le titre ; le numéro, la jauge et la durée restent toujours.
+ * Ce que montre une ligne de session (bloc « En session » du panneau, bande de Maestro) selon la place (#561) :
+ * `columns`, la largeur de la ligne ; `fixed`, ce qui reste toujours (sans le titre ni aucune colonne facultative) ;
+ * `word`, `gauge`, `detail`, `dots`, la largeur de chaque colonne facultative (0 ou absente : jamais montrée).
+ * Chaque colonne montrée coûte sa largeur plus son écart (1). Le titre prend le reste ; tant qu'il a moins de
+ * `BLOCK_TITLE_MIN` cellules, on retire une colonne, dans l'ordre : détail, points, mot, jauge. Le titre se montre
+ * dès `SESSION_TITLE_GONE` cellules.
  */
-export function bandRowFit(o: { columns: number; fixed: number; word: number; detail: number }): { detail: boolean; word: boolean; title: boolean } {
-  const need = (word: boolean, detail: boolean) => o.fixed + (word ? o.word + 1 : 0) + (detail ? o.detail + 1 : 0) + BLOCK_TITLE_MIN
-  const detail = o.detail > 0 && o.word >= 0 && need(o.word > 0, true) <= o.columns
-  const word = o.word > 0 && need(true, detail) <= o.columns
-  return { detail, word, title: need(word, detail) <= o.columns }
+export function sessionRowFit(o: { columns: number; fixed: number; word: number; gauge: number; detail?: number; dots?: number }): { detail: boolean; dots: boolean; word: boolean; gauge: boolean; title: boolean } {
+  const shown = { detail: (o.detail ?? 0) > 0, dots: (o.dots ?? 0) > 0, word: o.word > 0, gauge: o.gauge > 0 }
+  const width = { detail: o.detail ?? 0, dots: o.dots ?? 0, word: o.word, gauge: o.gauge }
+  const room = () => o.columns - o.fixed - (Object.keys(shown) as (keyof typeof shown)[]).reduce((n, k) => n + (shown[k] ? width[k] + 1 : 0), 0)
+  for (const k of ['detail', 'dots', 'word', 'gauge'] as const) {
+    if (room() >= BLOCK_TITLE_MIN) break
+    shown[k] = false
+  }
+  return { ...shown, title: room() >= SESSION_TITLE_GONE }
 }
 
 /** Les six étapes de la jauge d'une ligne cloud (#440, maquette B6), tirées de sa PR faute de liste d'étapes lisible. */
@@ -12110,10 +12110,10 @@ export type MaestroBand = { brand: Extract<Brand, { kind: 'maestro' }>; tasks: B
  * projet travaille (`others`, un autre Maestro du même dossier), chacune une fois (la sienne l'emporte),
  * rangées par premier lancement, les sans-date à la fin. Son en-tête compte ce qu'elle montre.
  */
-export function maestroBand(o: { brand: Brand | undefined; hasSurvey: boolean; shown: number; others?: readonly BrandTask[]; alerts?: number }): MaestroBand | undefined {
+export function maestroBand(o: { brand: Brand | undefined; hasSurvey: boolean; shown: number; others?: readonly BrandTask[]; alerts?: number; guard?: boolean }): MaestroBand | undefined {
   if (o.hasSurvey || o.brand?.kind !== 'maestro') return undefined
-  // #400 : sans session mais avec une entrée de la file bloquée, la bande paraît pour la dire.
-  if (o.brand.tasks.length === 0 && (o.others ?? []).length === 0 && (o.alerts ?? 0) > 0) return { brand: o.brand, tasks: [], more: 0 }
+  // #400 : sans session mais avec une entrée de la file bloquée, la bande paraît pour la dire ; #561 : et pour la ligne du Gardien.
+  if (o.brand.tasks.length === 0 && (o.others ?? []).length === 0 && ((o.alerts ?? 0) > 0 || o.guard === true)) return { brand: o.brand, tasks: [], more: 0 }
   const own = new Set(o.brand.tasks.map(t => t.id))
   const at = (t: BrandTask) => (typeof t.launchedAt === 'number' && Number.isFinite(t.launchedAt) ? t.launchedAt : Number.POSITIVE_INFINITY)
   const others = (o.others ?? []).filter((t, i, all) => !own.has(t.id) && all.findIndex(x => x.id === t.id) === i)
