@@ -421,7 +421,9 @@ with « Cible : en local, … » and the recommendation. What changes for Maestr
   PR whose title starts with « #N » (or ends with « (#N) ») ties it to open task N without `branche:`, its branch
   standing for `branche:`; `suivi_cloud.py` lists it « sans ligne prise (<branch>) » and the panel shows it too (in a
   project open to the cloud). Take its line then (`qui:`, `branche:` the PR's branch, `lieu:cloud`) so the merge and
-  the close follow the usual path.
+  the close follow the usual path. A task held by a Mac session, archived or not, is never tied this way (#573): the
+  script reads the panel's index of Mac sessions (`task-session-ids` in the plugin store), so the « #N » PR of a fix
+  opened by that Mac session does not come back as a cloud session.
 - **Talk by PR comment**: `gh pr comment <n> --body "…"` (a question, « fusionne main dans ta branche » on a conflict, a test
   feedback); the session is subscribed to its PR and wakes on it. Its answer is its next comment.
 - **Merge** by the project's rule, on the Mac: `git -C <main folder> fetch origin <branche>`, review the diff

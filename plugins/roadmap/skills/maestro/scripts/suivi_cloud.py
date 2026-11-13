@@ -5,7 +5,10 @@ première phrase de son dernier commentaire, l'état que dit la session elle-mê
 Une session cloud n'envoie aucune note et n'est pas dans list_sessions : on la suit par sa PR (#408).
 Une session cloud lancée hors du ▶ du panneau (carte native, Options puis cloud) n'a pas de ligne prise : une PR dont le
 titre porte « #N » en tête (ou « (#N) » en fin) la rattache à la tâche N ouverte et non prise, sa branche tenant lieu
-de `branche:` (#445) ; la ligne texte le dit « sans ligne prise ».
+de `branche:` (#445) ; la ligne texte le dit « sans ligne prise ». Une tâche que porte une session du Mac ne se
+rattache pas (#573) : la PR « #N » d'un correctif, ouverte par sa session du Mac, n'en fait pas une session cloud. Ces
+tâches se lisent dans l'index `task-session-ids` du store du plugin (`~/.claude/plugins/store/roadmap_*.json`, clés
+`<projet>:<id>`, archivées comprises), que le panneau tient et applique à sa bande (`macHeldIds`, #571).
 
   python3 suivi_cloud.py DEPOT [--json]
 
@@ -59,6 +62,9 @@ TITRE_TETE = re.compile(r"^\s*\[?#([1-9]\d*)(?![\d\w])")
 TITRE_FIN = re.compile(r"\(#([1-9]\d*)\)\s*$")
 CHAMPS_TITRES = "headRefName,title,state,createdAt,isCrossRepository"
 ADOPTION_S = 7 * 24 * 3600
+# #573 : le store du plugin, un fichier par copie (`roadmap_<source>.json`), et la clé de son index des sessions du Mac.
+STORE = os.path.expanduser("~/.claude/plugins/store")
+INDEX_SESSIONS = "task-session-ids"
 
 
 class ErreurDepot(Exception):
@@ -122,10 +128,12 @@ def _date(texte):
         return None
 
 
-def lignes_rattachees(texte_roadmap, prs, maintenant):
+def lignes_rattachees(texte_roadmap, prs, maintenant, tenues=frozenset()):
     """Les tâches ouvertes non prises (sans `branche:`) qu'une PR rattache par le « #N » de son titre (#445) : id, nom,
     branche de la PR. Pas une PR d'un fork, ni celle d'une branche qu'une ligne porte déjà ; l'ouverte l'emporte, sinon
-    la plus récente ; une close de plus de 7 jours ne rattache plus. Même règle que `cloudAdopted` du panneau."""
+    la plus récente ; une close de plus de 7 jours ne rattache plus. `tenues` : les numéros des tâches qu'une session
+    du Mac porte (`tenues_mac`), qu'aucune PR ne rattache (#573 : les correctifs de #510, ouverts par sa session du Mac
+    archivée, la listaient en session cloud). Même règle que `cloudAdopted` du panneau."""
     libres, prises = {}, set()
     for brut in texte_roadmap.splitlines():
         ligne = lire_ligne(brut)
@@ -141,7 +149,8 @@ def lignes_rattachees(texte_roadmap, prs, maintenant):
             ident = int(c.get("id", ""))
         except ValueError:
             continue
-        libres[ident] = c.get("nom") or ligne["libelle"]
+        if ident not in tenues:
+            libres[ident] = c.get("nom") or ligne["libelle"]
     meilleure = {}
     for p in prs if isinstance(prs, list) else []:
         if not isinstance(p, dict) or p.get("isCrossRepository"):
@@ -272,6 +281,44 @@ def depot_github(depot):
     return "%s/%s" % (m.group(1), m.group(2)) if m else None
 
 
+def nom_projet(depot):
+    """Le nom du projet, celui des clés de l'index du store : `name` de DEPOT/.claude/roadmap.json, sinon le nom du
+    dossier (même règle que le panneau, `parseProjectConfig`)."""
+    try:
+        with open(os.path.join(depot, ".claude", "roadmap.json"), encoding="utf-8") as f:
+            v = json.load(f).get("name")
+    except (OSError, ValueError, AttributeError):
+        v = None
+    return v if isinstance(v, str) and v else os.path.basename(os.path.abspath(depot))
+
+
+def tenues_mac(depot, store=None):
+    """Les numéros des tâches du projet qu'une session du Mac porte, archivées comprises (#573) : les clés
+    `<projet>:<id>` de l'index `task-session-ids`, dans chaque copie du store du plugin (`roadmap_*.json`). Une session
+    cloud n'y entre jamais : le panneau ne le remplit que de `list_sessions`. Store absent ou illisible (une VM, un
+    Mac sans le plugin) : aucune, rien ne lève."""
+    store = STORE if store is None else store
+    tete, rendu = nom_projet(depot) + ":", set()
+    try:
+        noms = sorted(os.listdir(store))
+    except OSError:
+        return rendu
+    for nom in noms:
+        if not (nom.startswith("roadmap_") and nom.endswith(".json")):
+            continue
+        try:
+            with open(os.path.join(store, nom), encoding="utf-8") as f:
+                index = json.load(f).get(INDEX_SESSIONS)
+        except (OSError, ValueError, AttributeError):
+            continue
+        if isinstance(index, dict) and isinstance(index.get("value"), dict):
+            index = index["value"]
+        for cle in index if isinstance(index, dict) else ():
+            if isinstance(cle, str) and cle.startswith(tete) and cle[len(tete):].isdigit():
+                rendu.add(int(cle[len(tete):]))
+    return rendu
+
+
 def prs_relevees(depot):
     """Les numéros des PR relevées une fois fusionnées ou fermées (#558) : les traces du registre des findings.
     Registre absent ou illisible : aucune."""
@@ -313,9 +360,9 @@ def titres_prs(depot, run, repo=None):
     return prs if isinstance(prs, list) else []
 
 
-def suivre(depot, run=None, maintenant=None):
-    """Une entrée par ligne `lieu:cloud` prise, puis par tâche non prise qu'une PR « #N » rattache (#445) : id, nom,
-    branche et l'état de sa PR."""
+def suivre(depot, run=None, maintenant=None, store=None):
+    """Une entrée par ligne `lieu:cloud` prise, puis par tâche non prise qu'une PR « #N » rattache (#445), sauf celle
+    qu'une session du Mac porte (#573, `tenues_mac`, lu dans `store`) : id, nom, branche et l'état de sa PR."""
     run = run or run_gh
     repo = depot_github(depot)
     texte = lire_roadmap(depot)
@@ -329,6 +376,9 @@ def suivre(depot, run=None, maintenant=None):
         etats = list(pool.map(lambda l: pr_de(depot, l["branche"], run, repo), cloud))
         titres = futur_titres.result()
     rattachees = [l for l in lignes_rattachees(texte, titres, quand) if l["id"] not in vues]
+    if rattachees:  # #573 : le store ne se lit que si une PR rattacherait une tâche.
+        tenues = tenues_mac(depot, store)
+        rattachees = [l for l in rattachees if l["id"] not in tenues]
     if rattachees:
         with ThreadPoolExecutor(max_workers=min(MAX_FILS, len(rattachees))) as pool:
             etats += list(pool.map(lambda l: pr_de(depot, l["branche"], run, repo), rattachees))
