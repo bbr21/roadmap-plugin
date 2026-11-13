@@ -140,6 +140,8 @@ export type View = {
   picked?: string[]
   /** La question d'une coche (#355), clés `taskKey` des tâches à marquer faites : le bandeau la pose en haut ; vide ou absente : aucune. */
   confirmDone?: string[]
+  /** Le sursis du dernier « Marquer faite » (#556) : rien n'est écrit avant son échéance ; absent : aucun. */
+  undo?: { keys: string[]; via: 'lot' | 'fiche' | 'famille'; mother?: string; until: number; picked: string[] }
   /** La barre de sélection éditée (#316) : `edit` montre Date ▾ et Statut ▾, `date` ouvre l'encart du calendrier ; vide ou absent : Faites et Éditer. */
   batchMenu?: string
   /** Le mois montré par le calendrier du lot (#316), `AAAA-MM` ; absent : celui d'aujourd'hui. */

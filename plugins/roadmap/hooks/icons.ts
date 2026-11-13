@@ -1179,6 +1179,17 @@ export function foldArrowIcon(o: { fg: string; bg: string; up: boolean }): strin
   return `<svg xmlns="http://www.w3.org/2000/svg" width="40" height="20" viewBox="0 0 40 20"><defs><linearGradient id="a" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="${o.bg}" stop-opacity="0"/><stop offset="1" stop-color="${o.bg}" stop-opacity="1"/></linearGradient></defs><rect width="16" height="20" fill="url(#a)"/><rect x="16" width="24" height="20" fill="${o.bg}"/><g transform="translate(22 2)" fill="none" stroke="${o.fg}" stroke-width="${STROKE.base}" stroke-linecap="round" stroke-linejoin="round"><path d="${chevron}" transform="scale(0.667)"/></g></svg>`
 }
 
+/**
+ * Le filet du temps restant de l'encart « Annuler » (#556) : 2 px, pleine largeur (l'app le ramène à celle du
+ * panneau), qui se vide de `remainingMs` à 0 par SMIL ; un redessin le reprend où il en est. Sans SMIL (image
+ * fixe), il montre ce qui reste au dernier dessin.
+ */
+export function undoTimerIcon(okHex: string, remainingMs: number, totalMs: number, width = BAR_WIDTH): string {
+  const from = Math.round(width * Math.min(1, Math.max(0, remainingMs / totalMs)) * 10) / 10
+  const anim = from > 0 ? `<animate attributeName="width" from="${from}" to="0" dur="${(remainingMs / 1000).toFixed(3)}s" begin="0s" fill="freeze"/>` : ''
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="2" viewBox="0 0 ${width} 2" preserveAspectRatio="none"><rect width="${from}" height="2" fill="${okHex}">${anim}</rect></svg>`
+}
+
 /** Le filet au-dessus de la ligne de filtre : 1 px, pleine largeur. */
 export function ruleIcon(hex: string, width = BAR_WIDTH): string {
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="1" viewBox="0 0 ${width} 1" preserveAspectRatio="none"><rect width="${width}" height="1" fill="${hex}"/></svg>`

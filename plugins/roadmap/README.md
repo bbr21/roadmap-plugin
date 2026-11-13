@@ -840,6 +840,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.294.0 (2026-11-12)** : roadmap : annuler le dernier « Marquer faite » pendant 10 s, sur une tâche ou un lot (#556)
 - **0.293.0 (2026-11-12)** : roadmap : la commande « quoi archiver » dit quelles sessions archiver au gabarit fixe (#560)
 - **0.292.0 (2026-11-12)** : roadmap : un lot confié à Claude part en une seule demande (#555), commandes sous /roadmap settings, control, bar, help (#378), brief cloud sans consigne bypass (#494), clôture gardée par les findings (#558)
 - **0.291.2 (2026-11-12)** : roadmap : la bande Finies au gabarit des lignes (#544), la carte posée par Claude reçoit un contexte pour la mission et le cloud (#510)

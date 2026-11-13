@@ -85,6 +85,7 @@ import {
   appAppearance,
   ringIcon,
   ruleIcon,
+  undoTimerIcon,
   fullWidth,
   spinnerIcon,
   stepIcon,
@@ -277,6 +278,10 @@ import {
   pickToggle,
   caseGesture,
   caseConfirmKeys,
+  undoSay,
+  undoDue,
+  UNDO_MS,
+  type DoneUndo,
   numberPickHover,
   numberLabel,
   shiftMonth,
@@ -720,6 +725,7 @@ import {
   checkMoveAt,
   checkLingers,
   CHECK_HOLD_MS,
+  CHECK_WAIT_MS,
   treeNumberCells,
   AGE_CELLS,
   splitRowPills,
@@ -8521,7 +8527,7 @@ async function launchRoutine($: EngineInterface, source: Source, task: Task, sho
 }
 
 /** Le clic sur « Confirmer » de l'encart : une écriture à la fois, puis le détail montre la tâche faite ou annulée. */
-async function confirmClose($: EngineInterface, source: Source, task: Task, kind: CloseKind): Promise<void> {
+async function confirmClose($: EngineInterface, source: Source, task: Task, kind: CloseKind, settled = false): Promise<void> {
   if (cancelling) return
   cancelling = true
   try {
@@ -8530,6 +8536,9 @@ async function confirmClose($: EngineInterface, source: Source, task: Task, kind
     // #242 : la route par Claude aussi attend l'envoi.
     const unsent = kind === 'done' ? await unsentClose($, source, task) : undefined
     if (unsent !== undefined) return void (await setView($, () => ({ cancelNote: unsent })))
+    // #556 : « Marquer faite » ne s'écrit qu'à la fin du sursis de 10 s ; l'abandon reste immédiat.
+    // `settled` : l'écriture du sursis (`flushUndo`, via `fiche`) ; elle ne rouvre pas la fiche.
+    if (kind === 'done' && !settled) return void (await startUndo($, source, [taskKey(task)], 'fiche'))
     const cowork = await coworkPyFor($, source)
     const route = closeRoute({ ecriture: source.ecriture, cowork, task, kind, reason: kind === 'abandon' ? cancelReason : '' })
     if (route.via === 'claude') {
@@ -8553,7 +8562,7 @@ async function confirmClose($: EngineInterface, source: Source, task: Task, kind
       return
     }
     cancelReason = ''
-    await setView($, () => ({ cancelAsk: '', cancelNote: out.note ?? '', selected: out.id ? `id:${out.id}` : '' }))
+    await setView($, () => ({ cancelAsk: '', cancelNote: out.note ?? '', ...(settled ? {} : { selected: out.id ? `id:${out.id}` : '' }) }))
     await update($, retryAtom, v => v + 1)
     try {
       $.ui.toast(`${out.id ? `#${out.id} ` : 'Tâche '}${kind === 'abandon' ? 'annulée' : 'faite'}${out.note ? ` : ${out.note}` : ''}`)
@@ -8702,6 +8711,150 @@ async function clearPick($: EngineInterface): Promise<void> {
   await setView($, () => ({ picked: [], batchMenu: '', batchNote: '', confirmDone: [] }))
 }
 
+/**
+ * Les tâches du sursis de #556 en cours d'écriture : le sursis a quitté la vue (il est retiré avant d'écrire),
+ * mais leurs lignes restent dessinées cochées jusqu'à la fin de l'écriture, pour ne pas revenir ouvertes un instant.
+ */
+const undoWriting = new Set<string>()
+/**
+ * Les tâches d'un sursis confiées à Claude (`ecriture`, `cowork.py`, #164) : la demande est partie, la roadmap
+ * n'est pas encore écrite. Leur ligne reste cochée jusqu'à ce que la roadmap les montre faites, au plus
+ * `CHECK_WAIT_MS` (l'échéance, par clé) ; passé ce délai encore ouvertes, la coche se retire et un toast le dit.
+ */
+const undoAwaiting = new Map<string, number>()
+/** Un sursis s'écrit une seule fois : l'échéance, le filet du dessin et un nouveau « Marquer faite » peuvent arriver ensemble. */
+let flushingUndo = false
+/** Un « Marquer faite » qui démarre son sursis : un second clic en même temps (double appui) est ignoré. */
+let startingUndo = false
+/** L'attente d'une écriture en cours avant d'écrire un sursis, par pas de `UNDO_STEP_MS`, au plus `UNDO_WAIT_MS`. */
+const UNDO_STEP_MS = 200
+const UNDO_WAIT_MS = 30_000
+
+/**
+ * Arme la minuterie d'un sursis (#556) : `flushUndo` à son échéance. Elle ne se rearme que si l'échéance n'est
+ * pas tout à fait venue (horloge du moteur en retard de quelques ms), trois fois au plus ; le dessin du panneau
+ * reprend le reste (`undoDue`). Sans horloge du moteur, pas de minuterie : le dessin s'en charge.
+ */
+function armUndo($: EngineInterface, source: Source, ms: number, again = 3): void {
+  const run = () =>
+    void flushUndo($, source)
+      .then(wait => {
+        if (wait > 0 && again > 0) armUndo($, source, wait, again - 1)
+      })
+      .catch(() => undefined)
+  try {
+    $.clock.after(ms, run)
+  } catch {
+    // pas d'horloge sur cette surface : le dessin écrit le sursis échu
+  }
+}
+
+/**
+ * Un « Marquer faite » (#556) : rien ne s'écrit pendant `UNDO_MS`. La vue retient le sursis (`undo`), les
+ * tâches cochées jouent leur mouvement et restent à leur place ; la question, la sélection (gardée dans le
+ * sursis, que « Annuler » rend), la fiche et les notes se ferment. Un sursis déjà là s'écrit d'abord : son
+ * annulation n'est plus offerte. Rend `false`, rien de changé, si cette écriture ne peut pas partir.
+ */
+async function startUndo($: EngineInterface, source: Source, keys: readonly string[], via: DoneUndo['via'], mother?: string): Promise<boolean> {
+  if (startingUndo) return false
+  startingUndo = true
+  try {
+    if ((await read($, viewAtom)).undo !== undefined) {
+      await flushUndo($, source, true)
+      if ((await read($, viewAtom)).undo !== undefined) {
+        try {
+          $.ui.toast('Une écriture est en cours : réessaie dans un instant.')
+        } catch {
+          // pas de toast sur cette surface
+        }
+        return false
+      }
+    }
+    const now = await $.clock.now()
+    const picked = (await read($, viewAtom)).picked ?? []
+    for (const key of keys) checkMoves.set(key, { done: true, at: now })
+    const undo: DoneUndo = { keys: [...keys], via, ...(mother !== undefined ? { mother } : {}), until: now + UNDO_MS, picked: [...picked] }
+    await setView($, () => ({ undo, confirmDone: [], picked: [], cancelAsk: '', cancelNote: '', batchNote: '', batchMenu: '', selected: '' }))
+    armUndo($, source, UNDO_MS)
+    return true
+  } finally {
+    startingUndo = false
+  }
+}
+
+/**
+ * Écrit le sursis de #556 (`lot` : `applyBatch` ; `fiche` : `confirmClose` ; `famille` : `closeFamily`, leurs fonctions d'avant, inchangées)
+ * quand son échéance est venue, ou tout de suite avec `force`. Le sursis quitte la vue AVANT l'écriture : un
+ * second passage ne l'écrit pas deux fois. Une écriture en cours (`batching`, `checking`) est attendue, pas
+ * perdue. L'écriture n'ouvre pas de fiche et ne fait pas défiler. Rend le délai avant de réessayer si
+ * l'échéance n'est pas tout à fait venue, 0 sinon.
+ */
+async function flushUndo($: EngineInterface, source: Source, force = false): Promise<number> {
+  if (flushingUndo) {
+    if (!force) return 0
+    while (flushingUndo) await engineWait($, UNDO_STEP_MS)
+  }
+  flushingUndo = true
+  try {
+    const before = await read($, viewAtom)
+    const undo = before.undo
+    if (undo === undefined) return 0
+    const now = await $.clock.now()
+    if (!force && !undoDue(undo, now)) return Math.max(50, undo.until - now)
+    const saved = before.picked ?? []
+    for (const key of undo.keys) {
+      undoWriting.add(key)
+      checkMoves.delete(key)
+    }
+    await setView($, () => ({ undo: undefined }))
+    try {
+      // Une autre écriture tient la main : on l'attend, sans perdre le sursis (les lignes restent cochées).
+      for (let waited = 0; (batching || checking) && waited < UNDO_WAIT_MS; waited += UNDO_STEP_MS) await engineWait($, UNDO_STEP_MS)
+      if (batching || checking) {
+        // Elle ne finit pas : le sursis revient, échu, pour le dessin suivant.
+        await setView($, () => ({ undo: { ...undo, until: now } }))
+        return 0
+      }
+      if (undo.via === 'lot') await applyBatch($, source, { status: 'done' }, undo.keys.length === 1 ? 'faite' : 'faites', undo.keys)
+      else if (undo.via === 'fiche') {
+        // « Marquer faite » de la fiche garde sa voie d'avant (`confirmClose`), qui ferme aussi une tâche prise par une session.
+        const task = (await batchTasks($, source)).find(t => !t.done && taskKey(t) === undo.keys[0])
+        if (task) await confirmClose($, source, task, 'done', true)
+        else await afterCheck($, { error: 'a quitté la roadmap' }, '')
+      } else {
+        const mother = (await batchTasks($, source)).find(t => !t.done && taskKey(t) === undo.mother)
+        if (mother) await closeFamily($, source, mother)
+        else await afterCheck($, { error: 'a quitté la roadmap' }, '')
+      }
+    } finally {
+      // Ce que Claude écrit pour le panneau n'est pas encore dans la roadmap : la coche tient jusqu'à son écriture.
+      try {
+        const cowork = await coworkPyFor($, source)
+        const still = (await batchTasks($, source)).filter(t => !t.done && undo.keys.includes(taskKey(t)))
+        const until = (await $.clock.now()) + CHECK_WAIT_MS
+        for (const t of still) if (checkRoute({ ecriture: source.ecriture, cowork, task: t, action: 'done', open: 0 }).via === 'claude') undoAwaiting.set(taskKey(t), until)
+      } catch {
+        // la roadmap ne se relit pas : les lignes reviennent ouvertes, le bilan a dit ce qui s'est passé
+      }
+      for (const key of undo.keys) undoWriting.delete(key)
+      // La sélection ouverte entre-temps reste : `applyBatch` la remplace par ses refus.
+      if (saved.length > 0) await setView($, () => ({ picked: saved })).catch(() => undefined)
+      await update($, checkMoveAtom, v => v + 1).catch(() => undefined)
+    }
+    return 0
+  } finally {
+    flushingUndo = false
+  }
+}
+
+/** « Annuler » de l'encart (#556) : le sursis s'efface, la sélection d'avant revient, rien n'a été écrit. */
+async function cancelUndo($: EngineInterface): Promise<void> {
+  const undo = (await read($, viewAtom)).undo
+  if (undo === undefined) return
+  for (const key of undo.keys) checkMoves.delete(key)
+  await setView($, () => ({ undo: undefined, picked: [...undo.picked], batchNote: '' }))
+}
+
 /** Les tâches de la roadmap, ouvertes (dates de parent comprises) et faites, relues pour un lot. */
 async function batchTasks($: EngineInterface, source: Source): Promise<Task[]> {
   const [open, done] = await Promise.all([load($, files(source).open, 'ROADMAP.md'), load($, files(source).done, 'ROADMAP-fait.md')])
@@ -8779,7 +8932,8 @@ async function runBatchStep($: EngineInterface, source: Source, step: BatchStep,
     const task = await fresh()
     if (task === undefined) whys.push('a quitté la roadmap')
     else if (!(await checkByClaude($, source, task, step.close ? 'done' : 'reopen', 0, asks))) {
-      checkMoves.set(key, { done: step.close, at })
+      // #556 : la case du sursis a déjà joué son mouvement ; à l'écriture, la ligne part sans le rejouer.
+      if (!undoWriting.has(key)) checkMoves.set(key, { done: step.close, at })
       const out = step.close
         ? await closeTask($, source, task, 'done', '').catch((err: unknown) => ({ error: `Clôture impossible : ${err instanceof Error ? err.message : String(err)}` }))
         : await reopenTask($, source, task).catch((err: unknown) => ({ error: `Réouverture impossible : ${err instanceof Error ? err.message : String(err)}` }))
@@ -8868,7 +9022,7 @@ async function closeFamily($: EngineInterface, source: Source, mother: Task): Pr
     const open = openKids.length
     // Chaque fille cochée joue son mouvement (#182), à son premier dessin faite.
     const at = await $.clock.now()
-    for (const kid of openKids) checkMoves.set(taskKey(kid), { done: true, at })
+    for (const kid of openKids) if (!undoWriting.has(taskKey(kid))) checkMoves.set(taskKey(kid), { done: true, at })
     if (await checkByClaude($, source, mother, 'family', open)) return
     const fresh = async (id: string | undefined) => {
       const tasks = await load($, files(source).open, 'ROADMAP.md')
@@ -12913,6 +13067,36 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   // La question d'une coche (#355) : ses tâches encore dans la roadmap.
   const asking = pickPrune(view.confirmDone ?? [], allTasks)
   const askedSet = new Set(asking)
+  // Le sursis du dernier « Marquer faite » (#556) : ses lignes restent à leur place, cochées et barrées ; échu, le
+  // dessin l'écrit (filet de sécurité d'une minuterie perdue : un module rechargé, une surface sans horloge).
+  const undoNow = view.undo
+  // Une coche confiée à Claude tient jusqu'à son écriture ; jamais venue dans le délai, elle se retire et le dit.
+  const lapsed: string[] = []
+  for (const [key, until] of undoAwaiting) {
+    const task = allTasks.find(t => taskKey(t) === key)
+    if (task === undefined || task.done) undoAwaiting.delete(key)
+    else if (now >= until) {
+      undoAwaiting.delete(key)
+      lapsed.push(task.id ? `#${task.id}` : `« ${clip(task.label, 30)} »`)
+    }
+  }
+  if (lapsed.length > 0) {
+    const say = () => {
+      try {
+        $.ui.toast(`${lapsed.join(', ')} : pas encore cochée${lapsed.length > 1 ? 's' : ''} par Claude, la coche est retirée.`)
+      } catch {
+        // pas de toast sur cette surface : la ligne redevenue ouverte le montre
+      }
+    }
+    if (typeof setTimeout === 'function') setTimeout(say, 0)
+    else void Promise.resolve().then(say)
+  }
+  const heldKeys = new Set([...(undoNow?.keys ?? []), ...undoWriting, ...undoAwaiting.keys()])
+  if (undoDue(undoNow, now)) {
+    const run = () => void flushUndo($, source).catch(() => undefined)
+    if (typeof setTimeout === 'function') setTimeout(run, 0)
+    else void Promise.resolve().then(run)
+  }
   // Un seul calcul des prérequises par tâche : la chaîne prend la première, « Débloque » toutes.
   const prereqsCache = new Map<Task, Task[]>()
   const prereqsFor = (t: Task): Task[] => {
@@ -13134,7 +13318,9 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     // Une mère à étapes ouvertes (#198) : « Marquer faite » la clôt avec elles, « Tout clore » (#163),
     // depuis que son carré, qui porte sa flèche, ne fait que la replier.
     const kidsOpen = current.id && !current.done ? openTasks.filter(t => t.parent === current.id && t.id !== current.id).length : 0
-    const closeAll = () => void setView($, () => ({ cancelAsk: '', cancelNote: '' })).then(() => closeFamily($, source, current))
+    // #556 : « Tout clore » passe par le sursis : la mère et ses étapes ouvertes.
+    const closeAll = () =>
+      void startUndo($, source, [taskKey(current), ...openTasks.filter(t => t.parent === current.id && t.id !== current.id).map(taskKey)], 'famille', taskKey(current))
     // Dans sa session : le dossier, la branche et son écart, lus hors de la roadmap.
     paneStage = 'la fiche de la tâche'
     // Son dossier (Spec, Plan, Maquettes) et le récap de fin de sa session (#144), dans les deux contextes.
@@ -16515,7 +16701,9 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     // dans toutes les vues, choisit sa tâche (fond bleu, filet bleu autour du carré) ; la barre de
     // sélection l'édite. La mère de l'arbre aussi, avec ses étapes : sa flèche, à part, la replie. Ni
     // une mère hors de l'arbre (sa flèche est dans son carré), ni une mère grise, ni une ligne du bloc de Maestro.
-    const checkable = !ghost && block === undefined && (!head || (tree !== undefined && !chain && Svg !== undefined))
+    // Une ligne du sursis de #556 (cochée, pas encore écrite) : sa case et son numéro ne répondent pas.
+    const held = heldKeys.has(taskKey(t)) && !t.done
+    const checkable = !ghost && block === undefined && !held && (!head || (tree !== undefined && !chain && Svg !== undefined))
     const chosen = checkable && pickedSet.has(taskKey(t))
     // Dans la question d'une coche (#355) : la case cerclée du vert de la coche, à la place du bleu de la sélection.
     const asked = checkable && askedSet.has(taskKey(t))
@@ -16531,15 +16719,15 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     // #468 : une ligne cloud ne se coche et ne se barre qu'une fois livrée, sa ligne close dans ROADMAP-fait ; fusionnée,
     // sa ligne encore ouverte, elle attend la suite de main et la publication.
     const cloudMerged = block?.cloud?.state === 'delivered'
-    const checkedMark = (t.done || cloudMerged) && !head && Svg !== undefined
+    const checkedMark = (t.done || cloudMerged || held) && !head && Svg !== undefined
     // La case qui vient d'être cochée ou rouverte joue son mouvement (#182, maquette A), une fois, dans
     // le cadre interactif qui seul joue le SMIL ; ensuite, le dessin fixe.
-    const moving = Svg !== undefined && !head && !ghost ? checkMoveOf($, taskKey(t), t.done, now) : undefined
+    const moving = Svg !== undefined && !head && !ghost ? checkMoveOf($, taskKey(t), t.done || held, now) : undefined
     // Une tâche faite qui reste dans les ouvertes le temps de sa tenue (#351) : sa ligne se teinte.
     const lingering = t.done && !head && !ghost && checkLingers(checkMoves.get(taskKey(t)), now)
     const markSource =
       moving !== undefined
-        ? squareCheckMoveIcon(axisHex(t.axis), palette.onAxis, t.done, moving, palette.ok)
+        ? squareCheckMoveIcon(axisHex(t.axis), palette.onAxis, t.done || held, moving, palette.ok)
         : asked || chosen
           ? squareArmedRowIcon(axisHex(t.axis), asked ? palette.ok : palette.live, palette.onAxis, checkedMark)
           : checkedMark
@@ -16567,7 +16755,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
           : grouped
             ? markSource
             : treeAloneRowIcon(markSource, markWidth)
-    const markAlt = `${isAbandoned(t) ? 'annulée' : t.done ? 'faite' : t.axis}${chosen ? ', choisie' : ''}${asked ? ', à confirmer' : ''}${chain ? `, étape ${chain.step}` : ''}${head ? (head.open ? ', replier' : ', déplier') : ''}`
+    const markAlt = `${isAbandoned(t) ? 'annulée' : t.done || held ? 'faite' : t.axis}${chosen ? ', choisie' : ''}${asked ? ', à confirmer' : ''}${chain ? `, étape ${chain.step}` : ''}${head ? (head.open ? ', replier' : ', déplier') : ''}`
     const checkKey = `check:${t.id ?? keyPart(t.key)}`
     const markFaded = greyed || (t.done && !checkedMark)
     const mark = Svg ? (
@@ -16636,7 +16824,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     // ZONE_LIMIT. Ni sur une tâche en session, bloquée ou déjà demandée ; sa colonne reste, vide,
     // pour garder les carrés alignés.
     // Ni sur une mère (#447) : elle n'a rien à livrer seule, dans l'arbre comme hors de lui (recherche).
-    const playable = !t.done && !ghost && !head && !inSession && !locked && !launched.includes(taskKey(t)) && !isMother(t, allTasks)
+    const playable = !t.done && !held && !ghost && !head && !inSession && !locked && !launched.includes(taskKey(t)) && !isMother(t, allTasks)
     const parts = rowParts(t, { tree: tree !== undefined, ghost, inSession, locked, open: head?.open === true, ...(child?.parent ? { parent: child.parent } : {}) })
     // En session, la ligne tient dans la largeur (#177, #248 de Splitmybill) : une pastille qui ne laisse
     // pas sa place au titre part, avant que la colonne de session ne soit poussée hors du panneau. Ses
@@ -16690,7 +16878,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
         </Text>
       </Box>
     ) : null
-    const number = t.id ? taskNumber(t.id, rowSession ? () => void openSession($, rowSession.entry) : undefined, t.done || cloudMerged, grouped ? (head ? 'content' : 'grow') : undefined, checkable ? { press: pickByNumber, chosen } : undefined) : undefined
+    const number = t.id ? taskNumber(t.id, rowSession ? () => void openSession($, rowSession.entry) : undefined, t.done || cloudMerged || held, grouped ? (head ? 'content' : 'grow') : undefined, checkable ? { press: pickByNumber, chosen } : undefined) : undefined
     return (
       <Box
         key={`hit:${t.key}`}
@@ -16772,7 +16960,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
               et barrée (#198), un titre provisoire estompé ; un bouton natif imposerait son encre, sa
               graisse et sa marge. Un bouton sans encre le couvre et ouvre la fiche. Au terminal, le bouton. */}
           {Svg ? (
-            <Text wrap="truncate-end" {...(t.done || cloudMerged ? { strikethrough: true, color: lingering ? palette.text2 : palette.text3 } : greyed || !titled(t) ? { color: palette.text2 } : {})}>
+            <Text wrap="truncate-end" {...(t.done || cloudMerged || held ? { strikethrough: true, color: lingering ? palette.text2 : palette.text3 } : greyed || !titled(t) ? { color: palette.text2 } : {})}>
               {s.titre}
             </Text>
           ) : null}
@@ -16785,7 +16973,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
             </Box>
           ) : (
             <Button key={t.key} plain dimColor={greyed || (!t.done && !titled(t))} onPress={select(selectionOf(t))}>
-              <Text wrap="truncate-end" {...(t.done ? { strikethrough: true, color: palette.text3 } : {})}>{s.titre}</Text>
+              <Text wrap="truncate-end" {...(t.done || held ? { strikethrough: true, color: palette.text3 } : {})}>{s.titre}</Text>
             </Button>
           )}
           {/* L'avancement de la mère (#163) : sa barre et ses filles faites sur leur total, juste après son
@@ -16915,7 +17103,8 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     const one = n === 1 ? allTasks.find(t => taskKey(t) === asking[0]) : undefined
     const question = one ? `${one.id ? `#${one.id}` : `« ${clip(one.label, 30)} »`} faite ?` : `${n} tâches faites ?`
     const okLabel = n === 1 ? '✓ Faite' : '✓ Faites'
-    const ok = () => void applyBatch($, source, { status: 'done' }, n === 1 ? 'faite' : 'faites', asking)
+    // #556 : rien ne s'écrit avant la fin du sursis de 10 s, que « Annuler » de l'encart coupe.
+    const ok = () => void startUndo($, source, asking, 'lot')
     const pill = Svg ? pillIcon({ text: okLabel, bg: palette.ok, fg: palette.onAxis, height: SIZE.pill.detail }) : undefined
     if (pill) ghostPressKeys.add('confirm-ok')
     return (
@@ -16936,6 +17125,25 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
         ) : (
           <Button key="confirm-ok" variant="primary" label={okLabel} onPress={ok} />
         )}
+      </Box>
+    )
+  }
+
+  // L'encart du sursis (#556, maquette A corrigée, choix du 2026-11-12) : à la place de la ligne de la liste, sur la
+  // teinte des faites, derrière une question posée entre-temps et devant la barre de sélection ; « Annuler »
+  // (un bouton de l'app) rend les lignes et la sélection, le filet `ok` de 2 px se vide sur le temps restant.
+  const undoBar = () => {
+    const undo = undoNow as DoneUndo
+    const left = Math.max(0, undo.until - now)
+    return (
+      <Box key="undo-bar" flexDirection="column" backgroundColor={palette.doneTint}>
+        <Box key="undo-line" flexDirection="row" alignItems="center" gap={SPACE.row} paddingX={SPACE.indent}>
+          <Box flexDirection="row" alignItems="center" flexGrow={1} flexShrink={1} minWidth={0}>
+            <Text weight="semibold" color={palette.text} wrap="truncate-end">{undoSay(undo, allTasks)}</Text>
+          </Box>
+          <Button key="undo-cancel" label="Annuler" onPress={() => void cancelUndo($)} />
+        </Box>
+        {Svg && <Svg source={undoTimerIcon(palette.ok, left, UNDO_MS, fullWidth((e.props as { bodyColumns?: number }).bodyColumns ?? 48))} alt="Temps restant pour annuler" height={2} isInteractive />}
       </Box>
     )
   }
@@ -17918,7 +18126,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
         {/* La barre de sélection (#316, maquette C) : à la place de la ligne de la liste tant qu'une tâche est
             choisie ; « Faites » coche les choisies, Éditer ouvre Date ▾ et Statut ▾ ; l'encart du calendrier et le bilan dessous. */}
         {/* Sinon, la ligne de la liste, discrète : ce qui est montré, et une seule action selon le cas. */}
-        {asking.length > 0 ? confirmBar() : picked.length > 0 ? batchBar() : (
+        {asking.length > 0 ? confirmBar() : undoNow !== undefined ? undoBar() : picked.length > 0 ? batchBar() : (
           <Box flexDirection="row" justifyContent="space-between" alignItems="center" paddingX={SPACE.indent}>
             <Text size="caption" color={palette.text2} wrap="truncate-end">
               {searching

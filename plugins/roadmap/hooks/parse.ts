@@ -8835,6 +8835,30 @@ export function caseConfirmKeys(picked: readonly string[], task: Task): string[]
   return picked.length === 0 ? [key] : picked.includes(key) ? [...picked] : [...picked, key]
 }
 
+/** Le délai de l'annulation d'un « Marquer faite » (#556) : rien ne s'écrit avant, 10 s. */
+export const UNDO_MS = 10_000
+
+/**
+ * Le sursis d'un « Marquer faite » (#556), gardé dans la vue : les clés `taskKey` des tâches à écrire, la voie
+ * d'écriture (`lot` : `applyBatch` ; `famille` : `closeFamily`, `mother` en est la mère), l'échéance (ms de
+ * l'horloge du moteur) et la sélection d'avant, que « Annuler » rend.
+ */
+export type DoneUndo = { keys: string[]; via: 'lot' | 'fiche' | 'famille'; mother?: string; until: number; picked: string[] }
+
+/** Le texte de l'encart du sursis (#556) : « ✓ #555 faite », « ✓ 1 tâche faite », « ✓ 3 tâches faites ». */
+export function undoSay(undo: DoneUndo, tasks: readonly Task[]): string {
+  const n = undo.keys.length
+  if (n !== 1) return `✓ ${n} tâches faites`
+  const key = undo.keys[0] as string
+  const id = tasks.find(t => taskKey(t) === key)?.id ?? /^#(\d+)$/.exec(key)?.[1]
+  return id ? `✓ #${id} faite` : '✓ 1 tâche faite'
+}
+
+/** Le sursis est échu (#556) : l'horloge a atteint son échéance ; sans sursis, jamais. */
+export function undoDue(undo: DoneUndo | undefined, now: number): boolean {
+  return undo !== undefined && now >= undo.until
+}
+
 /**
  * Le survol du numéro qui choisit (#355, survol C2 choisi par Bertrand) : une portée partagée par le texte du
  * numéro et le bouton sans encre posé dessus, qui allume le texte (fond `liveTint`, encre `liveOn`), sans dessin.
