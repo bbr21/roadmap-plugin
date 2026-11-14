@@ -82,7 +82,8 @@ export function gardienCardRefusal(o: { title: string; maestro: boolean; open: b
 
 /**
  * Le rappel fait à Maestro quand il pose une carte de tâche (« #N · … ») dans un projet de code sans gardien ouvert :
- * poser aussi la carte du gardien. Une fois par session ; rien pour une carte qui n'est pas une tâche.
+ * poser aussi la carte du gardien. À chaque carte de tâche posée tant qu'aucune carte Gardien ne l'a été (`told`, #615) ;
+ * rien pour une carte qui n'est pas une tâche.
  */
 export function gardienReminder(o: { maestro: boolean; code: boolean; cardTitle: string; open: boolean; told: boolean; script: string }): string | undefined {
   if (!o.maestro || !o.code || o.open || o.told || sessionTitleId(o.cardTitle) === undefined) return undefined

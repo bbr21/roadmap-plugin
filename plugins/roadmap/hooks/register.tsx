@@ -1744,10 +1744,10 @@ async function gardienHere($: EngineInterface): Promise<string | undefined> {
   }
 }
 
-/** #528 : le rappel de poser la carte du gardien, dit une fois par chargement ; une carte Gardien posée le vaut. */
+/** #528, #615 : une carte Gardien vraiment posée par ce chargement ; d'ici là, chaque carte de tâche posée rappelle la sienne. */
 let gardienTold = false
 
-/** Le rappel de la carte du gardien pour cette carte de tâche, ou rien ; dit, il ne revient plus. */
+/** Le rappel de la carte du gardien pour cette carte de tâche, ou rien ; il revient tant qu'aucune carte Gardien n'est posée (#615). */
 async function gardienCardNote($: EngineInterface, cardTitle: string): Promise<string | undefined> {
   const maestro = await maestroHere($)
   if (!maestro) return undefined
@@ -1762,7 +1762,6 @@ async function gardienCardNote($: EngineInterface, cardTitle: string): Promise<s
     told: gardienTold,
     script: `${$.plugin.root}/skills/maestro/scripts/gardien.py`,
   })
-  if (note !== undefined) gardienTold = true
   return note
 }
 
@@ -7403,9 +7402,8 @@ async function launchRefusal($: EngineInterface, e: unknown): Promise<string | u
       const own = await readOwnSession($)
       const maestro = await maestroHere($)
       const open = maestro && own.id !== undefined && gardienOf((await readListRows($)).rows, own.id) !== undefined
-      const refused = gardienCardRefusal({ title: card.title, maestro, open })
-      if (refused === undefined) gardienTold = true
-      return refused
+      // #615 : `gardienTold` ne passe à vrai qu'une fois la carte vraiment posée, au retour de l'app.
+      return gardienCardRefusal({ title: card.title, maestro, open })
     }
     const source = await sourceNow($)
     if (!source) return undefined
@@ -11014,8 +11012,11 @@ export const register: Register = (on, options) => {
     if (mission && ran.deny === undefined && !ran.isError && !cardNotProposed(ran)) {
       return { ...ran, text: `${ran.text ?? ''}\n\n${await takeMissionOnCard($, mission, startedAtCall(e as { initiation?: unknown }, ran.text))}`.trim() }
     }
-    // #528 : la première carte de tâche d'un Maestro de code sans gardien lui rappelle de poser celle du gardien.
-    if (byModel && id !== undefined && ran.deny === undefined && !gardienTold) {
+    // #615 : une carte refusée par l'app (« Nothing was proposed », Remote Control) n'est pas posée : rien ne se consomme.
+    const cardPosted = ran.deny === undefined && !ran.isError && !cardNotProposed(ran)
+    if (cardPosted && typeof title === 'string' && isGardienSession(title)) gardienTold = true
+    // #528 : chaque carte de tâche posée par un Maestro de code sans gardien lui rappelle de poser celle du gardien.
+    if (byModel && id !== undefined && cardPosted && !gardienTold) {
       const note = await gardienCardNote($, title as string).catch(() => undefined)
       if (note !== undefined) return { ...ran, context: [...(ran.context ?? []), note] }
     }

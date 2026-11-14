@@ -862,6 +862,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.301.1 (2026-11-14)** : maestro : le rappel de la carte du gardien ne se perd plus sur une carte refusée par l'app, il revient à chaque carte de tâche posée (#615)
 - **0.301.0 (2026-11-13)** : roadmap : le grain des tâches se règle par projet, l'audit le lit (#566)
 - **0.300.1 (2026-11-13)** : roadmap : la suite directe dans la tâche (#330), les sessions au-delà des 100 premières (#562)
 - **0.300.0 (2026-11-13)** : roadmap : document à valider d'un clic (#587), nom court de Maestro (#597), Centre de contrôle cloud et dossiers (#583), noms distincts mère/filles (#598), marquer faite mère et compteur (#596), clé routine (#591), fausse alerte d'archivage (#602), archivage refusé via Claude (#601)
