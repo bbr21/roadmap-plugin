@@ -840,6 +840,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.299.3 (2026-11-13)** : roadmap : la jauge d'une mère est calée à droite, avant le ▶ (#595, suite de #552)
 - **0.299.2 (2026-11-13)** : roadmap : la clôture d'une ligne cloud poste le signal sur sa PR (#588), la carte cloud demandée en user_asked garde son modèle (#575)
 - **0.299.1 (2026-11-13)** : roadmap : la durée du bloc En session ne coupe plus le titre étroit trop tôt (#579)
 - **0.299.0 (2026-11-13)** : roadmap : une mère vide lance ses enfants (#552), rappels de Maestro pendant une mission cloud (#581)

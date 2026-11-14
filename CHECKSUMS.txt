@@ -1,8 +1,8 @@
-# roadmap 0.299.2 : SHA-256 de chaque fichier installé du plugin, chemins relatifs à son dossier.
-# Vérifier une copie installée (~/.claude/plugins/cache/roadmap/roadmap/0.299.2) : plugins/roadmap/SECURITE.md, « Vérifier que ta copie est une vraie version ».
-5c4a800340276aeae21fa39c25225530e92932a64ad6dd7e86a92375bff67c06  .claude-plugin/plugin.json
-7206a4a4aeae71cf957fb6c705394c6ba4b324e99100b72dafdbf65d451b9dd3  README.md
-67c8bef5ff55433faa3d116b42d41b5707b470b48c7bd520af8287c2e0bad11d  SECURITE.md
+# roadmap 0.299.3 : SHA-256 de chaque fichier installé du plugin, chemins relatifs à son dossier.
+# Vérifier une copie installée (~/.claude/plugins/cache/roadmap/roadmap/0.299.3) : plugins/roadmap/SECURITE.md, « Vérifier que ta copie est une vraie version ».
+1538e53db729b05dbaccc95b7ea3014d8f574ab02e931c7dbf713ee5b7bcd904  .claude-plugin/plugin.json
+cf2530a0c6caedf6c1d6f584fc53148a30d8dab05f1e7860ab81ea591c9c9c3f  README.md
+bb59006e5c9120d6445aec0764d2154b46f5bd449213ffaa09b0380c55b596de  SECURITE.md
 bce019cb7147413a8e5f0687df59a41394fa92545568b5d37b1df8bd6d885e30  hooks/bar-hit.tsx
 602f5c595b5c755998f7901664565dacd0641c657bb1e61bbf69ac98372137b1  hooks/cartes.tsx
 4fd9ff51c99cb0c5ed33925a549448e862d372217a69bbe3fba7777f2453680d  hooks/controle.tsx
@@ -14,7 +14,7 @@ fbb4360b52e53d24de2e65b8f4eed503dd2c23c51857ca92c7498339dc195739  hooks/icons.ts
 143a5aec37673a05e1aa0ae53d24c853630084c1900c326cc91987d6379d478e  hooks/parse.ts
 9b52feecfcd53efd0c1ff4db4c52ef43cd298ceec725b1f153b67e4c016c6105  hooks/press-hit.tsx
 52b6b80acb84e20fe38bc8a9116af5078aaf7a925b8a58d9a4061c01e53e9d84  hooks/prise-cloud.ts
-8fe07e89ffd8c6284ea63604748f77320bf5ab831da36898b4a57b609ae91b31  hooks/register.tsx
+00db03a484d1db2a64801ff3bd78d144490a4e324298655119724c1cfb2d5bcd  hooks/register.tsx
 7f7438f1d283cf6311c781daee5c3e60d28d40d5e6641e2abbd6ad35b1ef97d9  hooks/reglages.tsx
 f5f8d051a0c7264cb7b70a147842d0cfccec83e13d8e1a3087e8c440d66aab45  hooks/reveil-cloud.ts
 c3ca17e4ee5c3b65a51e2e54a6e9c046864a1e0ff3b587e61025a1e0f8958de9  hooks/reveil-mission.ts

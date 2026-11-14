@@ -17020,7 +17020,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     // pastilles sont la Feedback et les clés (sans `listPills`), dans cet ordre. Le retrait compte les
     // marges du panneau, du cadre du bloc et de la ligne.
     // Dans l'arbre aussi (#258, la ligne la plus chargée de la vue de référence) : sa marque, son # serré,
-    // la jauge de la mère, le département et l'échéance comptent dans ce qui ne rétrécit pas.
+    // la jauge de la mère (à droite, à la place de l'échéance), le département et l'échéance comptent dans ce qui ne rétrécit pas.
     const gaugeCells = head ? pxCells(34) + 1 + pxCells(7.3 * `${head.block.done}/${head.block.total}`.length) + 1 : 0
     const dueCells = parts.due ? Math.max(AGE_CELLS, pxCells(6.5 * [...parts.due.text].length)) : AGE_CELLS
     // Jamais dans « En cours » (#177) : le bloc de Maestro ou le filtre ; le carré d'axe suffit.
@@ -17039,7 +17039,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
             fitRowPills({
               columns: (e.props as { bodyColumns?: number }).bodyColumns ?? 56,
               inset: 4,
-              steps: gaugeCells + dueCells + departmentCells + priorityCells,
+              steps: (head ? Math.max(AGE_CELLS, gaugeCells) : dueCells) + departmentCells + priorityCells,
               pills: parts.tags.map(spec => pxCells(pillIcon(spec).width)),
               mark: grouped ? 0 : markWidth,
               number: grouped ? treeNumCells + TREE_LEAD_CELLS : treeNumCells,
@@ -17065,6 +17065,15 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
         <Text size="caption" tabular color={dueInk(parts.due.kind, palette)} wrap="end">
           {parts.due.text}
         </Text>
+      </Box>
+    ) : null
+    // L'avancement de la mère (#163) : sa barre et ses filles faites sur leur total, calés à droite, à la place
+    // de l'échéance que #552 lui a retirée (suite de #552, choix de BBR du 2026-11-13 ; #258 la posait juste
+    // après le titre). Le titre gagne la place libérée.
+    const gauge = head ? (
+      <Box key={`gauge:${t.key}`} flexDirection="row" alignItems="center" gap={SPACE.row} flexShrink={0}>
+        {Svg ? <Svg source={progressIcon(head.block.done, head.block.total, palette.ok, palette.sel)} alt={`${head.block.done}/${head.block.total}`} width={34} height={SIZE.bar} /> : null}
+        <Text size="caption" tabular color={palette.text2}>{`${head.block.done}/${head.block.total}`}</Text>
       </Box>
     ) : null
     const number = t.id ? taskNumber(t.id, rowSession ? () => void openSession($, rowSession.entry) : undefined, t.done || cloudMerged || held, grouped ? (head ? 'content' : 'grow') : undefined, checkable ? { press: pickByNumber, chosen } : undefined) : undefined
@@ -17165,14 +17174,6 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
               <Text wrap="truncate-end" {...(t.done || held ? { strikethrough: true, color: palette.text3 } : {})}>{s.titre}</Text>
             </Button>
           )}
-          {/* L'avancement de la mère (#163) : sa barre et ses filles faites sur leur total, juste après son
-              titre (#258, maquette A) ; le titre se coupe avant elle. */}
-          {head && (
-            <Box key={`gauge:${t.key}`} flexDirection="row" alignItems="center" gap={SPACE.row} flexShrink={0} paddingLeft={SPACE.row}>
-              {Svg ? <Svg source={progressIcon(head.block.done, head.block.total, palette.ok, palette.sel)} alt={`${head.block.done}/${head.block.total}`} width={34} height={SIZE.bar} /> : null}
-              <Text size="caption" tabular color={palette.text2}>{`${head.block.done}/${head.block.total}`}</Text>
-            </Box>
-          )}
         </Box>
         )}
         {pills.length > 0 && (
@@ -17213,14 +17214,20 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
         )}
         {/* L'âge, à sa colonne calée à droite (#198) : les départements restent alignés. Une échéance
             prend sa place, en texte coloré (#203, maquette C des étiquettes). */}
-        {/* Une mère y met sa date (#224), sa barre restée après son titre (#258) : alignée sur celles des autres lignes. */}
+        {/* Une mère y met sa jauge (suite de #552, #258) : calée à droite, avant le ▶, alignée sur les échéances de ses filles. */}
         {!kept && !inSession && !locked && (
           <Box key={`age:${t.key}`} minWidth={AGE_CELLS} flexShrink={0} flexDirection="row" justifyContent="flex-end">
-            {due ?? (!head && right !== '' && (
+            {gauge ?? due ?? (!head && right !== '' && (
               <Text size="caption" tabular color={t.done ? palette.text3 : palette.text2} wrap="end">
                 {right}
               </Text>
             ))}
+          </Box>
+        )}
+        {/* Une mère en session, tenue ou bloquée n'a pas de colonne de l'âge : sa jauge garde sa place à droite, avant le ▶. */}
+        {(kept || inSession || locked) && gauge && (
+          <Box key={`age:${t.key}`} minWidth={AGE_CELLS} flexShrink={0} flexDirection="row" justifyContent="flex-end">
+            {gauge}
           </Box>
         )}
         {/* Le ▶ au bout de la ligne, à la place du chevron (#149) : le titre ouvre la fiche. Sa colonne
