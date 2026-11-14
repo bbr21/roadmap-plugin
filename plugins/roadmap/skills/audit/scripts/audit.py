@@ -412,9 +412,76 @@ def questions_de_noms(familles, taches, jour):
 
 # ---------------------------------------------------------------- #567 : l'audit selon les règles du projet
 
-# Le grain du tronc (#566 branchera ici le réglage du projet, source « projet »).
-GRAIN_TRONC = {"source": "tronc", "decouper_des": 2, "filles_min": 2, "filles_max": 8,
-               "message": "aucun réglage de grain dans ce projet : le grain du tronc s'applique"}
+# Le grain d'un projet (#566) : la section « Grain » de son fichier de règles, une puce `- <réglage> : <valeur>` par
+# réglage. `niveau` fixe les autres d'un mot ; une autre puce est une exception au niveau. Sans section : équilibré.
+# Le « ; » d'un libellé ne décide d'aucun découpage (BBR, 2026-11-13) : découper est une lecture, pas un compte.
+SECTION_GRAIN = "Grain"
+NIVEAU_DEFAUT = "équilibré"
+GRAIN_NIVEAUX = {
+    "regroupé": {"etape": "versée", "regroupement": "large", "sessions": "regroupées"},
+    "équilibré": {"etape": "versée", "regroupement": "strict", "sessions": "regroupées"},
+    "découpé": {"etape": "fille", "regroupement": "strict", "sessions": "une par tâche"},
+}
+# Le réglage tel qu'il s'écrit → (sa clé dans le grain, ses valeurs admises ; None : un nombre).
+GRAIN_REGLAGES = {
+    "niveau": ("niveau", tuple(GRAIN_NIVEAUX)),
+    "étape d'un sujet suivi": ("etape", ("versée", "fille")),
+    "regroupement": ("regroupement", ("strict", "large")),
+    "filles au plus": ("filles_max", None),
+    "sessions": ("sessions", ("regroupées", "une par tâche")),
+}
+FILLES_MIN, FILLES_MAX = 2, 8
+# Un libellé plus long se lit avant d'être jugé : une piste, jamais une proposition de découpage.
+LIBELLE_LONG = 400
+
+
+def _forme_grain(texte):
+    """Un mot de la section « Grain » sans casse, accents, apostrophe courbe ni espaces en trop."""
+    return re.sub(r"\s+", " ", _sans_accents(str(texte).replace("’", "'")).lower()).strip()
+
+
+def lire_grain(texte):
+    """Les réglages de la section « Grain » d'un fichier de règles (hors bloc de code) : ({clé: valeur}, erreurs).
+    Fonction pure. Une puce fautive (réglage inconnu, valeur hors liste, doublon) est ignorée et dite ; None quand
+    le fichier n'a pas de section."""
+    reglages = {_forme_grain(k): (k, v) for k, v in GRAIN_REGLAGES.items()}
+    lus, erreurs, dedans, vue, en_code = {}, [], False, False, False
+    for ligne in (texte or "").split("\n"):
+        ligne = ligne.rstrip("\r")
+        if ligne.lstrip().startswith(("```", "~~~")):
+            en_code = not en_code
+            continue
+        if en_code:
+            continue
+        if ligne.startswith("## "):
+            dedans = _forme_grain(ligne[3:]) == _forme_grain(SECTION_GRAIN)
+            vue = vue or dedans
+            continue
+        if not dedans or not ligne.startswith("- "):
+            continue
+        nom, sep, valeur = ligne[2:].partition(":")
+        connu = reglages.get(_forme_grain(nom.replace("`", "")))
+        valeur = valeur.strip().strip("`").strip()
+        if not sep or connu is None:
+            erreurs.append("réglage inconnu « %s » (admis : %s)" % (nom.strip(), ", ".join(GRAIN_REGLAGES)))
+            continue
+        ecrit, (cle, admises) = connu
+        if cle in lus:
+            erreurs.append("« %s » écrit deux fois : le premier vaut" % ecrit)
+            continue
+        if admises is None:
+            m = re.match(r"^(\d+)(?:\s+t[aâ]ches?)?$", valeur, re.I)
+            if not m or int(m.group(1)) < FILLES_MIN:
+                erreurs.append("« %s : %s » : un nombre de %d au moins attendu" % (ecrit, valeur, FILLES_MIN))
+                continue
+            lus[cle] = int(m.group(1))
+            continue
+        trouvee = next((a for a in admises if _forme_grain(a) == _forme_grain(valeur)), None)
+        if trouvee is None:
+            erreurs.append("« %s : %s » : valeur hors liste (%s)" % (ecrit, valeur, ", ".join(admises)))
+            continue
+        lus[cle] = trouvee
+    return (lus, erreurs) if vue else None
 NOM_MAX = 40
 # Les contrôles de conformité, dans l'ordre : (clé, niveau, la règle qu'il voit).
 CONTROLES = (
@@ -429,7 +496,7 @@ CONTROLES = (
     ("apres_introuvable", "ecart", "après: mène à une tâche qui existe"),
     ("apres_boucle", "ecart", "une chaîne d'après: ne revient pas sur elle-même"),
     ("apres_hors_famille", "ecart", "après: relie deux sœurs, ou deux tâches sans mère"),
-    ("grain_paquet", "ecart", "un libellé ne lie pas plusieurs actions par « ; »"),
+    ("libelle_a_lire", "piste", "un libellé long se lit en entier (mission, fiche, fichiers) avant d'être jugé"),
     ("grain_trop_de_filles", "ecart", "une mère n'a pas trop de filles ouvertes"),
     ("grain_fille_unique", "piste", "une mère a assez de filles pour exister"),
     ("mere_sans_nom", "piste", "une mère porte un nom:"),
@@ -479,9 +546,34 @@ def lire_regles(dossier, cfg):
 
 
 def grain_du_projet(dossier, cfg):
-    """Les seuils de découpage et de regroupement que les contrôles appliquent, et d'où ils viennent.
-    Aucun réglage de grain n'existe encore dans un projet : le grain du tronc (`cfg` n'est pas lu)."""
-    return dict(GRAIN_TRONC)
+    """Le grain que les contrôles et l'écriture appliquent (#566), et d'où il vient : `source` (`projet` quand le
+    fichier de règles porte une section « Grain », sinon `tronc`), `niveau`, `etape`, `regroupement`, `sessions`,
+    `filles_min`, `filles_max`, `exceptions` (les réglages écrits en plus du niveau), `erreurs` (les puces
+    ignorées) et `message`, la phrase du compte rendu."""
+    lieu = ob.chemin_regles(dossier, cfg)
+    lu = lire_grain(_lire_fichier(lieu["absolu"])) if lieu else None
+    lus, erreurs = lu if lu else ({}, [])
+    if lu and "niveau" not in lus:
+        erreurs = ["« niveau » absent : %s s'applique" % NIVEAU_DEFAUT] + erreurs
+    niveau = lus.get("niveau", NIVEAU_DEFAUT)
+    grain = dict(GRAIN_NIVEAUX[niveau], source="projet" if lu else "tronc", niveau=niveau,
+                 filles_min=FILLES_MIN, filles_max=FILLES_MAX)
+    base = dict(grain)
+    grain.update({k: v for k, v in lus.items() if k != "niveau"})
+    ecrits = {cle: ecrit for ecrit, (cle, _) in GRAIN_REGLAGES.items()}
+    grain["exceptions"] = [cle for cle in lus if cle != "niveau" and grain[cle] != base[cle]]
+    grain["erreurs"] = erreurs
+    if not lu:
+        message = "aucun réglage de grain dans ce projet : le niveau %s s'applique" % NIVEAU_DEFAUT
+    else:
+        message = "niveau %s (%s)" % (niveau, lieu["chemin"])
+        if grain["exceptions"]:
+            message += ", %s : %s" % ("exception" if len(grain["exceptions"]) == 1 else "exceptions", ", ".join(
+                "%s %s" % (ecrits[cle], grain[cle]) for cle in grain["exceptions"]))
+        if erreurs:
+            message += " ; %s : %s" % ("puce ignorée" if len(erreurs) == 1 else "puces ignorées", " ; ".join(erreurs))
+    grain["message"] = message
+    return grain
 
 
 def _num(valeur):
@@ -565,8 +657,6 @@ def conformite(ouvertes, closes, requis, sur, axes_declares, grain):
         boucle = _chemin_boucle(i, entre_ouvertes)
         if boucle:
             ajouter(i, "apres_boucle", "après: revient sur lui-même (%s)" % " → ".join("#" + n for n in boucle))
-        if len(fragments(t["libelle"])) >= grain["decouper_des"]:
-            ajouter(i, "grain_paquet", "%d actions liées par « ; » dans le libellé" % len(fragments(t["libelle"])))
         if len(filles_ouv.get(i, [])) > grain["filles_max"]:
             ajouter(i, "grain_trop_de_filles", "%d filles ouvertes (%d au plus)" % (len(filles_ouv[i]), grain["filles_max"]))
         if filles_tot.get(i) and filles_tot[i] < grain["filles_min"]:
@@ -575,6 +665,9 @@ def conformite(ouvertes, closes, requis, sur, axes_declares, grain):
             ajouter(i, "mere_sans_nom", "mère sans nom:")
         if i in sans and not (p in ids_ouverts and p not in sans):
             ajouter(i, "sans_source", "aucune source")
+        if len(t["libelle"]) > LIBELLE_LONG:
+            ajouter(i, "libelle_a_lire", "libellé de %d caractères : à lire en entier avant de juger son découpage"
+                    % len(t["libelle"]))
     niveau = {cle: n for cle, n, _ in CONTROLES}
     rang = {cle: k for k, (cle, _, _) in enumerate(CONTROLES)}
     taches, par_controle = {}, {}

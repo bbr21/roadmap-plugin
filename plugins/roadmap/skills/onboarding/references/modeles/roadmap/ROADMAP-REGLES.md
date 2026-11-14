@@ -9,10 +9,10 @@ Fixées par le plugin roadmap, les mêmes dans tout projet : elles ne se changen
 ### Le modèle
 
 - Un sujet, une tâche : avant d'écrire, une action se rapproche des tâches ouvertes et closes du même sujet ; déjà couverte, elle complète cette tâche au lieu d'en ouvrir une autre.
-- Une étape d'un sujet suivi devient une fille de sa tâche (`parent:N`) ; une tâche seule qui reçoit une étape devient une mère.
-- Un sujet de plusieurs tâches devient une mère : un titre court qui nomme le sujet (son `nom:`, 40 caractères au plus), sans action à elle ; ses filles portent les actions.
+- Dès que deux tâches peuvent être regroupées, elles vont sous une mère : un titre court qui nomme le sujet (son `nom:`, 40 caractères au plus), sans action à elle ; ses filles portent les actions. Une tâche seule ne devient pas la mère : une mère neuve la reçoit, avec la tâche qui la rejoint.
 - Deux niveaux au plus : une fille n'a pas de filles.
-- Une ligne, une action : un verbe à l'infinitif et son objet ; plusieurs actions liées par « ; » se découpent en filles.
+- Le grain est celui du projet : sa section « Grain », plus bas, dit si une étape nouvelle d'un sujet suivi s'ajoute à sa tâche ou devient une fille, ce qui rapproche deux tâches, et ce qui part dans sa propre session. Sans cette section, le niveau `équilibré` s'applique.
+- Découper est une lecture, jamais un compte : un « ; » dans un libellé ne décide rien. Avant de découper une tâche, on lit sa mission, sa fiche, ses fichiers et ses pièces jointes, puis on applique le critère du niveau du projet.
 - Une fille prend l'axe de sa mère ; la priorité (`prio:oui`) se pose sur n'importe quelle tâche, mère, fille ou seule ; la date d'une mère est celle de sa prochaine fille ouverte.
 - `après:` relie deux sœurs, ou deux tâches sans parent, jamais en boucle.
 
@@ -46,6 +46,13 @@ Fixées par le plugin roadmap, les mêmes dans tout projet : elles ne se changen
 ## Règles du projet
 
 - _Les règles propres à {{NOM}} : les axes et ce qu'ils couvrent, les préfixes, le jour d'une revue, qui tranche quoi. Une ligne chacune._
+
+## Grain
+
+À quel point {{NOM}} découpe ou regroupe ses tâches ; la skill `tasks`, Maestro, l'audit et `check.mjs` lisent cette section. `niveau` fixe tout d'un mot : `regroupé` (peu de lignes : on ne découpe que ce qui va à des personnes ou à des dates différentes, une étape nouvelle s'ajoute à sa tâche, le regroupement est large), `équilibré` (on découpe ce qui se livre et se prouve seul) ou `découpé` (on découpe dès qu'une partie se fait et se prouve seule, une étape nouvelle devient une fille, une session par tâche). Une puce de plus corrige un seul point du niveau : `étape d'un sujet suivi` (`versée` ou `fille`), `regroupement` (`strict` ou `large`), `sessions` (`regroupées` ou `une par tâche`), `filles au plus` (un nombre).
+
+- niveau : équilibré
+
 
 ## Preuves
 

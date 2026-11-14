@@ -962,10 +962,7 @@ export function newProblems(before: string | undefined, after: string, done: boo
   // Une sous-tâche se signale aussi quand c'est sa mère qui change d'axe (#190).
   const problems = lintRoadmap(after, done, rules).filter(p => !old.has(p.text) || (p.parentText !== undefined && !old.has(p.parentText)))
   if (done) return problems
-  // Une ligne neuve (un numéro, sinon un libellé, absent de `before`) qui enchaîne plusieurs actions (#289).
   const was = parseRoadmap(before ?? '', 'ROADMAP.md')
-  const ids = new Set(was.map(t => t.id).filter(id => id !== undefined))
-  const labels = new Set(was.map(t => t.label))
   const lines = after.split('\n')
   // #308 : une priorité qui devient 1, 2 ou 3 (ligne neuve, ou changée) revient à l'ancienne échelle de #130 ;
   // une ligne qui garde la sienne passe, pour ne pas refuser une roadmap pas encore migrée.
@@ -975,18 +972,8 @@ export function newProblems(before: string | undefined, after: string, done: boo
     const line = Number(t.key.slice(t.key.lastIndexOf(':') + 1))
     problems.push({ line, text: (lines[line - 1] ?? '').replace(/\r$/, ''), why: `prio:${t.prio} : l'ancienne échelle, écrire prio:oui ou rien (#300)` })
   }
-  for (const t of parseRoadmap(after, 'ROADMAP.md')) {
-    if (t.done || (t.id !== undefined ? ids.has(t.id) : labels.has(t.label))) continue
-    const n = actionFragments(t.label).length
-    if (n < 2) continue
-    const line = Number(t.key.slice(t.key.lastIndexOf(':') + 1))
-    problems.push({
-      line,
-      text: (lines[line - 1] ?? '').replace(/\r$/, ''),
-      why: `une ligne, une action : le libellé enchaîne ${n} actions par « ; » ; une tâche par action, ou un parent et ses enfants`,
-      soft: true,
-    })
-  }
+  // #566 : le « ; » d'un libellé ne décide plus d'un découpage (BBR, 2026-11-13) ; l'avertissement « une ligne, une
+  // action » de #289 est retiré. Découper se juge à la lecture de la tâche, au grain du projet (ROADMAP-REGLES.md).
   return problems.sort((a, b) => a.line - b.line)
 }
 

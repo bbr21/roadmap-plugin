@@ -19,6 +19,8 @@ French, as the roadmap does. Only this skill is in English.
   (`regles`, `ecriture`, `preuves`, `requis`, `cles`) are read on every pass, never copied here.
   Except its « Règles de l'outil » section (#276): the plugin's own rules, the same in every
   project, which no project rule overrides.
+- **The project sets its grain** (#566): how much to split, group and pour is read from the
+  « Grain » section of `ROADMAP-REGLES.md` (below), never assumed; a « ; » in a label never splits.
 - **All or nothing.** The script prepares in memory, checks, shows (dry run), then writes in one go
   after a backup, or hands the lines to the project's tool.
 - **A task is marked done on proof**, at the date of the proof, with its bilan row.
@@ -76,6 +78,51 @@ closed ones (`closes`), `parents` (each one's date) and `declarations`:
 A roadmap where a task has no `id:` is refused: run the import first (`onboarding` skill,
 « Importer une roadmap existante »).
 
+## The project's grain (#566)
+
+How finely a project cuts its tasks is its own choice, not the plugin's: one project wants every step on
+its own line, another wants few lines, well grouped. It says so in the « Grain » section of its rules file
+(`ROADMAP-REGLES.md`), one bullet per setting, `- <réglage> : <valeur>`. `tasks.py context` reads it into
+`grain` (`audit.grain_du_projet`); `write`, `lots` and `groupes` follow it. Without the section: `équilibré`.
+
+| Setting (as written) | `grain` key | regroupé | équilibré | découpé |
+|---|---|---|---|---|
+| `niveau` | `niveau` | sets the lines below in one word | | |
+| `étape d'un sujet suivi` : `versée`, `fille` | `etape` | versée | versée | fille |
+| `regroupement` : `strict`, `large` | `regroupement` | large | strict | strict |
+| `sessions` : `regroupées`, `une par tâche` | `sessions` | regroupées | regroupées | une par tâche |
+| `filles au plus` : a number | `filles_max` | 8 | 8 | 8 |
+
+A bullet other than `niveau` is an exception to the level (`grain.exceptions`). A faulty bullet (unknown
+setting, value off the list) is skipped, not fatal: `grain.erreurs` names it, the write's report says it
+(« Grain : … puce ignorée … »), and the project's `check.mjs` refuses it at commit.
+
+- **Splitting is a reading, never a count.** A « ; » in a label decides nothing (the person, 2026-11-13: a
+  semicolon must never split, the context must). Before proposing to split a
+  task or to write a request as a parent and children, read its content: the mission (the whole label), its
+  fiche, the files and attachments it names, its plan folder. Then apply the level's criterion:
+  **regroupé**, split only when the parts go to different people or different dates; **équilibré**, when a
+  part is delivered and proven on its own; **découpé**, as soon as a part can be done and proven on its
+  own, even a small one. No script proposes a split.
+- **`etape`**: a new action on the subject of an open task. `versée`: added to that task's label (the
+  table of § 2). `fille`: never poured silently into a free task that is not a parent; the `subject`
+  question offers the child first, « Regrouper #N et l'ajout sous une mère nouvelle « … » (recommandé) »
+  for a standalone task (#552), « Sous #P (recommandé) » for a child (one more sister), then « Mettre à
+  jour #N », « Tâche à part », « Ne rien ajouter ». An action already covered is still not a new task.
+- **`regroupement`**: what makes two tasks one theme, so one parent. Two tasks that can be grouped always
+  get a parent (the trunk rule, not a setting). `strict`: § 2's rule, a rare place plus a second sign;
+  it suits code. `large`: same axis and one sign is enough, a rare place, a rare mark of the project (same
+  client, same awaited person, #538) or the words; it suits a project without files, where `strict` almost
+  never groups. A pair (one `add`, one open task) then gets the `group` question too. The parent is always
+  proposed, never written alone: « Tâche à part » stays.
+- **`sessions`**: an action at the place of an open task. `regroupées`: § 2's `merge` question, pouring
+  recommended. `une par tâche`: the same question, but « Tâche à part, suite de #N (recommandé) » comes
+  first (the `add` with the note « suite de #N », and `après:N` when the task has no parent), pouring
+  stays offered; the same-files question of #366 is still asked, with that recommendation; `lots` no longer
+  proposes to pour two tasks at the same place, only the same-subject pairs of #538.
+- **`filles_max`**: a place carried by more open tasks does not make a theme; the audit reports a parent
+  with more open children.
+
 ## 2. Match by subject, before writing
 
 ```bash
@@ -129,7 +176,7 @@ subject an open task already has (`meme_structure` above) is not written as a ne
 
 | The match | What `write` does |
 |---|---|
-| Clear (`net`), the task is a free leaf | pours the action into it without a question: `append` to its label, the `add`'s new marks set as fields, its `src:` joined; the report says « complétée d'office (même sujet : …) » and the bilan lists it in `versees` |
+| Clear (`net`), the task is a free leaf (grain `etape: versée`; `fille`: the question above, § grain) | pours the action into it without a question: `append` to its label, the `add`'s new marks set as fields, its `src:` joined; the report says « complétée d'office (même sujet : …) » and the bilan lists it in `versees` |
 | Clear, the task is a parent | writes the `add` under it, without a question |
 | Clear, the task is taken by a session (`qui:` and `branche:`) | a `subject` question, never a silent write (the task may be tested already): « Tâche à part, suite de #N (recommandé) », « Verser dans #N, tenue par la session de … » (a relay, as in #320), « Ne rien ajouter » |
 | Same subject, not clear | a `subject` question: « Mettre à jour #N (recommandé) » (two candidates at most; « Sous #M » for a parent), « Tâche à part » (the same `add`, with `distinct`), « Ne rien ajouter » |
@@ -175,8 +222,8 @@ child yourself. A family already confused that the batch does not touch passes; 
 The groupings of #438 and #552 already put the distinct `nom` on each child they move.
 
 **One theme, one parent (#438).** `write` first looks for a **theme**: the open tasks and the other
-`add`s of the batch that share a rare place (a file, function, command or area carried by 8 open
-tasks at most) plus a second sign (another place, a chain link, a `#N` or a `src:` they both cite,
+`add`s of the batch that share a rare place (a file, function, command or area carried by `filles_max` open
+tasks at most, 8 unless the grain says otherwise) plus a second sign (another place, a chain link, a `#N` or a `src:` they both cite,
 such as the same study, or a quarter of the shorter label's weighted words), same axis. When the
 theme has several siblings (two `add`s, two open tasks, or a task already under its parent), its
 `add`s are not written as lines of their own: they become one `group` question: « Regrouper sous une

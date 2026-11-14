@@ -63,7 +63,7 @@ Then read the project's rules file in full (`tasks.py context` gives its path un
 then stop.
 
 It returns (French keys, shared with `tasks`): each open task with its `fragments` (the label cut
-at « ; » outside parentheses), `paquets` (two fragments or more), `trous` by type (a parent with
+at « ; » outside parentheses: the pieces a split is built from, never a reason to split, #566), `paquets` (two fragments or more), `trous` by type (a parent with
 an open child is never `sans_due`), `doublons_possibles` (pairs with close words or subject,
 threshold 0.3: a lead, not a verdict; each says which one to keep, `garder`, and the other's words
 it lacks, `a_reprendre`), `axes_a_plat`, `regroupements` and `seules` (#284, below), `heritage`
@@ -76,18 +76,28 @@ it lacks, `a_reprendre`), `axes_a_plat`, `regroupements` and `seules` (#284, bel
 - `regles` is the rules file cut into its rules: `liste` holds one entry per bullet, numbered `R1`…`Rn`
   in file order, with its `section`, `sous_section` and `texte`; `total` counts them. This list is the
   reading: go through it rule by rule, none skipped.
-- `grain` is the project's grain, the thresholds the checks apply: `decouper_des` (a label of that many
-  actions linked by « ; » is a bundle to split), `filles_min` and `filles_max` (children per parent), and
-  `source`: « tronc » while the project sets none (its `message` says so; say it in the report), « projet »
-  once it does. Never apply another grain than the one the survey gives: one project wants more split,
-  another fewer, better grouped tasks.
+- `grain` is the project's grain (#566), read from the « Grain » section of its rules file: `niveau`
+  (`regroupé`, `équilibré`, `découpé`), `etape`, `regroupement`, `sessions`, `filles_min` and `filles_max`
+  (children per parent), `exceptions` (settings written besides the level), `erreurs` (bullets skipped
+  because faulty: say them, and offer to fix the file), and `source`: « tronc » while the project sets none
+  (`équilibré`), « projet » once it does; `message` is the sentence for the report. Never apply another
+  grain than the one the survey gives: one project wants more split, another fewer, better grouped tasks.
+  The `tasks` skill, « The project's grain », says what each setting means.
+- **Splitting is a reading, never a count** (BBR, 2026-11-13). A « ; » in a label decides nothing: the
+  survey no longer reports a bundle as a lack. To judge whether an open task should be split, read its
+  content, the mission (the whole label), its fiche, the files and attachments it names, its plan folder,
+  then apply the level's criterion: **regroupé**, split only when the parts go to different people or
+  dates; **équilibré**, when a part is delivered and proven on its own; **découpé**, as soon as a part can
+  be done and proven on its own. `paquets` only lists the labels that hold several pieces: candidates to
+  read, in that order, not a to-do list.
 - `conformite` is the check of **every** open task: `taches` maps an id to what it lacks, each lack with
   its `controle`, its `niveau` and what it says (`dit`); `par_controle` gives the ids per check, `controles`
   what each check looks at; `total`, `conformes`, `avec_ecart`, `avec_piste_seule` count the tasks. An
   **`ecart`** breaks a rule as written (a required field missing, a taken line outside « En cours », an
   unknown axis, a `nom:` over 40 characters, a `parent:` unknown, closed or three levels deep, a child on
-  another axis than its parent, an `après:` unknown, looping or between two families, a bundle, a parent
-  with too many children). A **`piste`** is a lead to read before calling it a lack (a parent with a single
+  another axis than its parent, an `après:` unknown, looping or between two families, a parent
+  with more open children than `filles_max`). A **`piste`** is a lead to read before calling it a lack (a label over 400 characters, to read in
+  full before judging its split; a parent with a single
   child or without `nom:`, a task whose source is said nowhere: no `src:`, `feedback:` nor attribution in
   its label).
 
@@ -103,8 +113,7 @@ For each rule of `regles.liste`, write its verdict in `<scratchpad>/verdicts.jso
 
 The checks cover the rules a script can read; a rule in the project's own words (« une tâche prise porte
 sa spec ») is checked by reading every open task against it. A `piste` you confirm becomes an `ecarts`
-note; one you dismiss is not reported as a lack. Each `ecart` then feeds the next steps: a bundle is a
-split, a parent with too many children a group to rethink, a missing value a `values` entry or a per-task
+note; one you dismiss is not reported as a lack. Each `ecart` then feeds the next steps: a parent with too many children a group to rethink, a missing value a `values` entry or a per-task
 question, a misplaced `après:` an `after` entry.
 
 ## 2. Pending questions first
@@ -155,7 +164,8 @@ grammar or declared in `roadmap.json`. They never carry `id`, `qui`, `branche`, 
 `tasks` allows on a new line (#255); left out in a project that requires `qui:`, it gets the
 person. A new group parent never requires `due:`: it is dated by its children (#125).
 
-**Splitting a bundle**:
+**Splitting a bundle**, once its reading says the project's grain wants it split (step 1; never because of
+its « ; » alone, and under `regroupé` almost never):
 
 - **One child per work step**, 2 to 6 per parent: a step one ticks
   (« Analyser la data et checker l'EFC »), not each gesture. The common subject (often the text before the first « : ») becomes

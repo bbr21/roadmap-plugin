@@ -130,6 +130,16 @@ rule at the end of a turn that executed (below).
 - **The lines**: one line per task in `ROADMAP.md` (with its `id:`), in order; a prerequisite is
   written `après:N`. Before opening one, read the project's `ROADMAP-REGLES.md`, next to
   `ROADMAP.md` (#167): what becomes a task and what never does; the `tasks` skill writes it.
+- **The project's grain** (#566): the « Grain » section of that file says how finely this project cuts
+  its tasks and its sessions (`tasks.py context` gives it as `grain`; the `tasks` skill, « The project's
+  grain », says what each setting means). Follow it, never your own taste nor another project's. Whether
+  a request is one line or a parent and its children is a reading of its content (the mission, the fiche,
+  the files and attachments, the plan folder) against the level's criterion, never a count of « ; ».
+  `sessions : une par tâche`: one card per task, and an action at the place of an open task opens its own
+  line after it (`write` recommends « Tâche à part, suite de #N ») instead of being sent to the running
+  session; `sessions : regroupées`: pour it into the open task or its session as `write` recommends
+  (#320, #366). `etape : fille`: a new step of a followed subject becomes a child, not a longer label. Say
+  the level you applied in one line when you open several lines at once.
 - **The split**: list the files each task will touch. Two tasks that share a file do not run at the
   same time: the second one carries `après:` and starts from `main` once the first is merged.
 

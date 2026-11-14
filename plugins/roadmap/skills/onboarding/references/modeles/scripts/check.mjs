@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Contrôle avant commit : liens relatifs des docs, grammaire de ROADMAP, taille de CLAUDE.md, fichiers secrets suivis.
+// Contrôle avant commit : liens relatifs des docs, grammaire de ROADMAP, grain des règles, taille de CLAUDE.md, fichiers secrets suivis.
 // Sans réseau, sans dépendance. Code de retour 1 s'il trouve une erreur.
 //   node scripts/check.mjs
 import { execFileSync } from 'node:child_process';
@@ -298,6 +298,63 @@ check('Grammaire de ROADMAP.md et ROADMAP-fait.md', (err) => {
       if (pre && parentOf(pre) !== p) err(row.at, `après:${n} : #${n} n'a pas le même parent ; après: relie deux enfants d'un même parent, ou deux parents`);
     }
   }
+});
+
+// Le grain du projet (#566) : la section « Grain » du fichier de règles, une puce `- <réglage> : <valeur>` par
+// réglage ; la même table que `GRAIN_REGLAGES` de audit.py (skill audit du plugin roadmap), qui la lit.
+const GRAIN = new Map([
+  ['niveau', ['regroupé', 'équilibré', 'découpé']],
+  ["étape d'un sujet suivi", ['versée', 'fille']],
+  ['regroupement', ['strict', 'large']],
+  ['filles au plus', null],
+  ['sessions', ['regroupées', 'une par tâche']],
+]);
+const FILLES_MIN = 2;
+// Un mot sans casse, accents, apostrophe courbe, accents graves de code ni espaces en trop.
+const plain = (s) => s.replace(/[`’]/g, (c) => (c === '’' ? "'" : '')).normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+  .toLowerCase().replace(/\s+/g, ' ').trim();
+function rulesFile() {
+  try {
+    const r = JSON.parse(read('.claude/roadmap.json')).regles;
+    if (typeof r === 'string' && r.trim()) return r.trim().replace(/^\.\//, '');
+  } catch {
+    // Pas de réglage lisible : le fichier à côté de la roadmap.
+  }
+  return `${RM}ROADMAP-REGLES.md`;
+}
+
+check('Grain de ROADMAP-REGLES.md', (err) => {
+  const file = rulesFile();
+  if (!existsSync(join(root, file))) return;
+  const known = new Map([...GRAIN].map(([k, v]) => [plain(k), { name: k, values: v }]));
+  const seen = new Set();
+  let inside = false;
+  let at = 0;
+  for (const { line, n } of proseLines(read(file))) {
+    if (line.startsWith('## ')) {
+      inside = plain(line.slice(3)) === 'grain';
+      if (inside) at = n;
+      continue;
+    }
+    if (!inside || !line.startsWith('- ')) continue;
+    const sep = line.indexOf(':');
+    const name = sep < 0 ? line.slice(2).trim() : line.slice(2, sep).trim();
+    const value = sep < 0 ? '' : line.slice(sep + 1).trim().replace(/^`+|`+$/g, '').trim();
+    const rule = sep < 0 ? undefined : known.get(plain(name));
+    if (!rule) {
+      err(`${file}:${n}`, `réglage inconnu « ${name} » (admis : ${[...GRAIN.keys()].join(', ')})`);
+    } else if (seen.has(rule.name)) {
+      err(`${file}:${n}`, `« ${rule.name} » écrit deux fois`);
+    } else if (rule.values === null) {
+      const m = value.match(/^(\d+)(?:\s+t[aâ]ches?)?$/i);
+      if (!m || Number(m[1]) < FILLES_MIN) err(`${file}:${n}`, `« ${rule.name} : ${value} » : un nombre de ${FILLES_MIN} au moins attendu`);
+      seen.add(rule.name);
+    } else {
+      if (!rule.values.some((v) => plain(v) === plain(value))) err(`${file}:${n}`, `« ${rule.name} : ${value} » : valeur hors liste (${rule.values.join(', ')})`);
+      seen.add(rule.name);
+    }
+  }
+  if (at && !seen.has('niveau')) err(`${file}:${at}`, `« niveau » absent (${GRAIN.get('niveau').join(', ')})`);
 });
 
 check('CLAUDE.md sous 150 lignes', (err) => {
