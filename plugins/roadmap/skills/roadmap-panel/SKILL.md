@@ -84,7 +84,13 @@ How sessions work and the roadmap's settings (#76, #176), optional too:
   `ouvertes` (every open task). Default: `ouvert`, `due`, `qui`, `après` on launched tasks; an old
   `"mode": "projet"` keeps the six above on every open task. The detection never changes them.
 - `cles`: keys on top of the grammar (the tags of a Notion), each with its allowed values (empty
-  list: free); a task's detail shows them, the search reads them.
+  list: free); a task's detail shows them, the search reads them. The write check re-reads `cles`
+  from `.claude/roadmap.json` when it checks (#591): a key declared during a turn is accepted at the
+  next write, in this session and in sessions opened before. Declared `routine` (`"routine": []`)
+  links a recurring line to the cloud routine that runs it alone (`routine:<name>`): once a day at
+  session start, such a line whose `due:` is past moves to the first `due + period × k` not before
+  today, whatever its `tous:` and with or without a parent, so it is never late; a line with
+  `cycle:` or under an `a_preuve` shell stays.
 - No `vue` any more (#238): the panel opens « Par sujet » in every project; a `vue` left in the
   file is ignored and the `doctor` skill says to remove it. « Par échéance » and « Par
   responsable » are offered only when an open task has `due:` or `resp:`.

@@ -5061,15 +5061,41 @@ export function finishedLabel(n: number, after: boolean): string {
 }
 
 /**
- * #439 (BBR, 2026-11-10) : le nom que prend une session dite « Maestro » quand son titre ne l'est pas encore
- * (« AAFES 258.1 », laissé à la main) : « Maestro · <dossier du projet> ». « Maestro » reste en tête, par où le
- * panneau la reconnaît ; un titre déjà Maestro (alias « Lot … » compris) ou de tâche (« #N · … ») ne change
- * pas : le nom se pose une fois, puis ne change plus. Sans dossier : rien.
+ * #601 (capture de BBR du 2026-11-13) : le motif d'un archivage refusé, en mots simples sur la ligne de la bande, à la place de
+ * « refusée par l'app ». Le mode Auto refuse tout appel d'outil parti d'un clic du panneau (#248) ; une session épinglée
+ * ne s'archive pas (#90) ; sinon l'app n'a rien dit d'utile, et c'est ce qu'on dit.
  */
-export function maestroFolderTitle(title: string, folder: string): string | undefined {
-  if (isMaestroSession(title) || sessionTitleId(title) !== undefined) return undefined
-  const name = baseName(folder).trim()
-  return name === '' ? undefined : `Maestro · ${name}`
+export function archiveRefusalWhy(text: string): string {
+  if (isAutoModeRefusal(text)) return 'le mode Auto bloque les clics du panneau'
+  if (/pinned|épingl/i.test(text)) return 'session épinglée'
+  return 'l’app n’a pas dit pourquoi'
+}
+
+/**
+ * #601 : la demande à Claude quand l'app refuse l'archivage au panneau (mode Auto) : une ligne par session, l'identifiant
+ * seul dans une donnée (le titre se coupe et perd ses accents graves : jamais une consigne). Sur ce message, Claude appelle
+ * `archive_session` pour chacune ; l'outil qu'il appelle, l'app l'approuve, ce que le panneau ne peut pas obtenir.
+ */
+export function archiveAskText(list: readonly { sessionId: string; title: string }[]): string {
+  const lines = list.map(s => `- \`${s.sessionId.replace(/[^\w-]/g, '')}\` (${clip(s.title.replace(/[`\n\r]/g, ' ').trim(), 60)})`)
+  return [
+    `Archive ${list.length === 1 ? 'cette session finie' : 'ces sessions finies'} : appelle \`archive_session\` avec son \`session_id\` pour ${list.length === 1 ? 'elle' : 'chacune'} (charge l'outil par ToolSearch s'il est différé), sans autre geste.`,
+    ...lines,
+    'Dis en une ligne ce qui est archivé, et ce que l\'app refuse s\'il y a un refus.',
+  ].join('\n')
+}
+
+/**
+ * #597 (BBR, 2026-11-13, suite de #439) : le nom que prend une session dite « Maestro » : le seul nom court de son
+ * projet (`name` de son `.claude/roadmap.json` : « AAFES », pas « AAFES Cowork »), quel que soit son titre, celui que
+ * l'app tire du premier message (« Maestro », la cause des ratés de #439) comme un titre laissé à la main
+ * (« Roadmap 286.1 »). Un titre de tâche (« #N · … ») ou déjà ce nom ne change pas ; le panneau la reconnaît à sa
+ * marque, plus à son titre. Le « une fois, puis plus » se tient dans le store (`nameMaestro`). Sans nom : rien.
+ */
+export function maestroProjectTitle(title: string, project: string): string | undefined {
+  const name = project.trim()
+  if (name === '' || title.trim() === name || sessionTitleId(title) !== undefined) return undefined
+  return name
 }
 
 /** Le premier mot d'un texte, lettres seules, que ne suit ni un chiffre ni un souligné (#344). */
@@ -5717,6 +5743,7 @@ export function maestroClause(maestro: string, travail: Travail = 'code'): strin
       `- ${MAESTRO_CADRAGE}`,
       '- La première phrase de chaque compte rendu de fin de tour dit ton état, avec ton étape : « en cours : étape 3/7 … », « prête à clore », « attend une réponse : … » ou « bloquée : … ». Tiens ta liste d\'étapes (update_plan) : c\'est par elle que Maestro voit où tu en es.',
       `- ${maestroMockups('à côté du document')}`,
+      `- ${reviewLinkChild()}`,
       '- Ne coche pas ta ligne : Maestro la coche, avec son bilan. Ton dernier compte rendu dit ce qui a été fait et le souci rencontré.',
       `- ${PARTIAL_CLOSE_CHILD}`,
       `- ${maestroClauseEnd()}`,
@@ -5735,6 +5762,7 @@ export function maestroClause(maestro: string, travail: Travail = 'code'): strin
     '- La première phrase de chaque compte rendu de fin de tour dit ton état, avec ton étape : « en cours : étape 3/7 … », « prête à fusionner (tests : …) », « attend le simulateur », « attend une réponse : … » ou « bloquée : … ». Tiens ta liste d\'étapes (update_plan) : c\'est par elle que Maestro voit où tu en es.',
     '- Maestro peut te demander de mettre ta branche à jour après une autre fusion : merge de main dans ta branche, jamais de rebase d\'une branche poussée.',
     `- ${maestroMockups('dans le dossier du chantier, `docs/plans/<type>-<slug>/maquettes.html`')}`,
+    `- ${reviewLinkChild()}`,
     `- ${fidelityRule()}`,
     '- Ne coche pas ta ligne : Maestro la coche à la fusion, avec son bilan. Ton dernier compte rendu dit ce qui a été fait et le souci rencontré.',
     `- ${testChild()}`,
@@ -6438,6 +6466,34 @@ function closedAtOf(fait: string | undefined): number | undefined {
   if (!m) return undefined
   const [y, mo, d] = [Number(m[1]), Number(m[2]) - 1, Number(m[3])]
   return m[4] !== undefined ? new Date(y, mo, d, Number(m[4]), Number(m[5])).getTime() : new Date(y, mo, d + 1).getTime() - 1
+}
+
+/**
+ * Les occurrences closes de chaque récurrente (#602) : une ligne close dont la `src:` n'est qu'un renvoi `#N`
+ * (celle qu'écrit la reconduction d'une `tous:`, #99) compte pour la ligne N, avec son `fait:`. Une `src:` qui
+ * cite autre chose n'est pas une occurrence.
+ */
+export function occurrencesBySrc(done: readonly Task[]): Map<string, string[]> {
+  const out = new Map<string, string[]>()
+  for (const t of done) {
+    const n = /^#(\d+)$/.exec((t.src ?? '').trim())?.[1]
+    if (n === undefined || t.fait === undefined) continue
+    out.set(n, [...(out.get(n) ?? []), t.fait])
+  }
+  return out
+}
+
+/**
+ * Une occurrence de la récurrente close depuis le lancement de sa session (#602) : son `fait:` vient après
+ * `launchedAt` (un jour seul vaut jusqu'à sa fin, comme #395). Sans occurrence ou sans lancement connu : non,
+ * la session reste signalée.
+ */
+export function occurrenceClosedSince(faits: readonly string[] | undefined, launchedAt: number | undefined): boolean {
+  if (faits === undefined || launchedAt === undefined || !Number.isFinite(launchedAt)) return false
+  return faits.some(f => {
+    const at = closedAtOf(f)
+    return at !== undefined && at >= launchedAt
+  })
 }
 
 /** Les étapes d'une tâche close comptent toutes faites (#145), sauf quand sa session a repris après (#395). */
@@ -8369,18 +8425,31 @@ export function nextDue(due: string, tous: Recurrence, today: string): string {
   return addPeriods(due, tous, k)
 }
 
+/** Le premier `due + période × k` (k ≥ 1) qui n'est pas avant aujourd'hui (#277, #591) : aujourd'hui compte. */
+function firstNotBefore(due: string, tous: Recurrence, today: string): string {
+  let k = 1
+  while (addPeriods(due, tous, k) < today) k++
+  return addPeriods(due, tous, k)
+}
+
 /** Une étape reportée par `rollDaySteps` (#277) : sa ligne réécrite, son ancien et son nouveau `due:`. */
 export type DayStepMove = { id?: string; label: string; from: string; to: string; line: string }
 
-/** Les rythmes en jours qu'un jour passé reporte (#277) : `mois` et plus, une échéance manquée reste un retard. */
+/**
+ * Les rythmes qu'un jour passé reporte pour une étape sous un parent (#277) : `semaine` et
+ * `2semaines`, un `mois` et plus manqué reste un retard. Une ligne à `routine:` (#591) fait exception :
+ * tous ses rythmes avancent, parent ou non.
+ */
 const ROLLED: readonly Recurrence[] = ['semaine', '2semaines']
 
 /**
  * Les étapes de journée qui passent (#277) : une étape ouverte (`parent:` posé) `tous:semaine` ou
  * `tous:2semaines` dont le `due:` est avant aujourd'hui avance au premier `due + période × k` qui
- * n'est pas avant aujourd'hui, sans occurrence close ni retard. Restent : celle du jour (jusqu'à la
- * fin du jour, heure locale), une ligne à `cycle:`, et l'étape dont une coquille de sa lignée porte
- * un `ref:` de `aPreuve` (ses étapes attendent la preuve). Seul le `due:` change dans la ligne.
+ * n'est pas avant aujourd'hui, sans occurrence close ni retard. Une ligne à `routine:` non vide (une
+ * routine cloud la fait seule, #591) avance de même quel que soit son rythme `tous:`, avec ou sans
+ * parent. Restent : celle du jour (jusqu'à la fin du jour, heure locale), une ligne sans `tous:`, une
+ * ligne à `cycle:`, et l'étape dont une coquille de sa lignée porte un `ref:` de `aPreuve` (ses
+ * étapes attendent la preuve). Seul le `due:` change dans la ligne.
  */
 export function rollDaySteps(open: string, today: string, aPreuve: readonly string[]): { open: string; moves: DayStepMove[] } {
   const lines = open.split('\n')
@@ -8414,9 +8483,13 @@ export function rollDaySteps(open: string, today: string, aPreuve: readonly stri
     const tous = f.get('tous') as Recurrence | undefined
     const due = f.get('due')
     const parent = f.get('parent')
-    if (tous === undefined || !ROLLED.includes(tous) || due === undefined || !/^\d{4}-\d{2}-\d{2}$/.test(due)) return raw
-    if (parent === undefined || parent === '-' || f.get('cycle') !== undefined || due >= today || proven(parent)) return raw
-    const to = nextDue(due, tous, today)
+    const routine = (f.get('routine') ?? '') !== ''
+    // Un rythme hors de la grammaire (« quinzaine ») ne se reporte pas : il lèverait une date invalide.
+    if (tous === undefined || !RECURRENCES.includes(tous) || !(routine || ROLLED.includes(tous)) || due === undefined || !/^\d{4}-\d{2}-\d{2}$/.test(due)) return raw
+    if (!routine && (parent === undefined || parent === '-')) return raw
+    if (f.get('cycle') !== undefined || due >= today) return raw
+    if (parent !== undefined && proven(parent)) return raw
+    const to = firstNotBefore(due, tous, today)
     const line = raw.replace(/(\|\s*|\[)due:\s*\d{4}-\d{2}-\d{2}/, `$1due:${to}`)
     const id = f.get('id')
     moves.push({ ...(id !== undefined ? { id } : {}), label: f.label, from: due, to, line: line.replace(/\r$/, '') })
@@ -8868,8 +8941,106 @@ export const UNDO_MS = 10_000
  */
 export type DoneUndo = { keys: string[]; via: 'lot' | 'fiche' | 'famille'; mother?: string; until: number; picked: string[] }
 
-/** Le texte de l'encart du sursis (#556) : « ✓ #555 faite », « ✓ 1 tâche faite », « ✓ 3 tâches faites ». */
+/** Les filles ouvertes d'une tâche (#596) : celles dont `parent` est son `id`, elle-même exclue. */
+function openKidsOf(tasks: readonly Task[], mother: Task): Task[] {
+  if (mother.id === undefined) return []
+  return tasks.filter(k => !k.done && k.parent === mother.id && k.id !== mother.id)
+}
+
+/**
+ * Les clés d'un « Marquer faite » étendues aux filles (#596, « le fait de la mère ferme la mère et ferme aussi
+ * les enfants ») : les clés données, dans l'ordre, puis les filles ouvertes de chaque mère ouverte des clés, et
+ * les leurs, chacune une fois. Une clé inconnue reste telle quelle.
+ */
+export function withOpenKids(tasks: readonly Task[], keys: readonly string[]): string[] {
+  const out = [...keys]
+  const seen = new Set(out)
+  const byKey = new Map(tasks.map(t => [taskKey(t), t] as const))
+  for (let i = 0; i < out.length; i++) {
+    const mother = byKey.get(out[i] as string)
+    if (mother === undefined || mother.done) continue
+    for (const kid of openKidsOf(tasks, mother)) {
+      const key = taskKey(kid)
+      if (seen.has(key)) continue
+      seen.add(key)
+      out.push(key)
+    }
+  }
+  return out
+}
+
+/** Une fille que le geste de sa mère ferme sans qu'on l'ait demandée (#596) : la tâche et ce qui la tenait. */
+export type HeldKid = { task: Task; why: string }
+
+/**
+ * Les filles tenues parmi les clés (#596) : non faites, leur mère dans les clés aussi, et prises par une session
+ * (`qui:` et `branche:`) ou en attente d'un tiers. Dans l'ordre des clés.
+ */
+export function heldKids(tasks: readonly Task[], keys: readonly string[], me: readonly string[]): HeldKid[] {
+  const chosen = new Set(keys)
+  const byKey = new Map(tasks.map(t => [taskKey(t), t] as const))
+  const out: HeldKid[] = []
+  for (const key of keys) {
+    const task = byKey.get(key)
+    if (task === undefined || task.done || task.parent === undefined) continue
+    const mother = tasks.find(m => m.id === task.parent && m.id !== task.id)
+    if (mother === undefined || !chosen.has(taskKey(mother))) continue
+    if (task.qui !== undefined && task.qui !== '' && task.branche !== undefined && task.branche !== '') out.push({ task, why: 'en session' })
+    else if (isThirdParty(task.attend, me)) out.push({ task, why: `attend ${attendWho(task.attend as string)}` })
+  }
+  return out
+}
+
+/** Une tâche pour une phrase (#596) : « #585 », ou son libellé coupé entre guillemets quand elle n'a pas de numéro. */
+function sayTask(t: Task): string {
+  return t.id ? `#${t.id}` : `« ${clip(t.label, 30)} »`
+}
+
+/** Ce que la question dit des filles tenues (#596) : « #585 en session, #586 attend Acme : cochées avec #583. » */
+export function heldKidsSay(held: readonly HeldKid[], mother?: Task): string {
+  if (held.length === 0) return ''
+  const names = held.map(h => `${sayTask(h.task)} ${h.why}`).join(', ')
+  return `${names} : ${held.length > 1 ? 'cochées' : 'cochée'} avec ${mother?.id ? `#${mother.id}` : 'leur mère'}.`
+}
+
+/**
+ * La famille d'un lot (#596) : définie seulement quand exactement une clé est une mère non faite et que toutes
+ * les autres en descendent (filles ou petites-filles) ; `kids` compte ces autres clés.
+ */
+export function batchFamily(tasks: readonly Task[], keys: readonly string[]): { mother: Task; kids: number } | undefined {
+  if (keys.length < 2) return undefined
+  const byKey = new Map(tasks.map(t => [taskKey(t), t] as const))
+  const picked = keys.map(k => byKey.get(k))
+  if (picked.some(t => t === undefined)) return undefined
+  const list = picked as Task[]
+  const mothers = list.filter(t => !t.done && t.id !== undefined && tasks.some(k => k.parent === t.id && k.id !== t.id))
+  const under = (t: Task, root: Task): boolean => {
+    const seen = new Set<string>()
+    let up: Task | undefined = t
+    while (up?.parent !== undefined && !seen.has(taskKey(up))) {
+      seen.add(taskKey(up))
+      if (up.parent === root.id) return true
+      const parent: string = up.parent
+      up = tasks.find(m => m.id === parent && m.id !== up?.id)
+    }
+    return false
+  }
+  // Plusieurs mères dans les clés (une mère et sa fille mère) : la racine est celle dont les autres descendent.
+  const roots = mothers.filter(m => list.every(t => t === m || under(t, m)))
+  if (roots.length !== 1) return undefined
+  const mother = roots[0] as Task
+  return { mother, kids: list.length - 1 }
+}
+
+/** La famille dite en une phrase (#596) : « #583 faite, avec 3 étapes ». */
+export function familySay(mother: Task, kids: number): string {
+  return `${sayTask(mother)} faite, avec ${kids} étape${kids > 1 ? 's' : ''}`
+}
+
+/** Le texte de l'encart du sursis (#556) : « ✓ #555 faite », « ✓ 1 tâche faite », « ✓ 3 tâches faites », « ✓ #583 faite, avec 3 étapes » (#596). */
 export function undoSay(undo: DoneUndo, tasks: readonly Task[]): string {
+  const family = batchFamily(tasks, undo.keys)
+  if (family !== undefined) return `✓ ${familySay(family.mother, family.kids)}`
   const n = undo.keys.length
   if (n !== 1) return `✓ ${n} tâches faites`
   const key = undo.keys[0] as string
@@ -8981,7 +9152,9 @@ export function batchPlan(tasks: readonly Task[], picked: readonly string[], cha
     if (change.status === 'done') {
       const openKids = tasks.filter(k => !k.done && k.parent !== undefined && k.parent === task.id && k.id !== task.id)
       const missing = openKids.filter(k => !chosen.has(taskKey(k)))
-      if (taken) refused.push('prise par une session : seule sa date change')
+      // #596 : le fait de la mère ferme aussi ses filles, une fille prise comprise.
+      const motherChosen = task.parent !== undefined && tasks.some(m => m.id === task.parent && m.id !== task.id && chosen.has(taskKey(m)))
+      if (taken && !motherChosen) refused.push('prise par une session : seule sa date change')
       else if (missing.length > 0) refused.push(`étape${missing.length > 1 ? 's' : ''} ${missing.map(k => `#${k.id ?? '?'}`).join(', ')} encore ouverte${missing.length > 1 ? 's' : ''}`)
       else if (openKids.length > 0) motherWaits = true
       else close = true
@@ -9766,6 +9939,90 @@ function proposeHow(kind: ProposeKind): string {
 /** La règle entière, avec la variante de la session, jointe à chaque message d'un projet à roadmap (#216). */
 export function proposeTaskText(kind: ProposeKind): string {
   return `Proposer une task (plugin roadmap, règle fixe) : ${proposeRule()} ${proposeHow(kind)}`
+}
+
+// Document à valider ouvert d'un clic (#587, BBR le 2026-11-13, constat AAFES #722) : une sous-session avait
+// écrit sa note dans side-session-notes, hors du projet ; le lien n'ouvrait rien, le Finder cache Library, et
+// show_pane ne s'ouvrait pas, BBR lisant chez Maestro. Règle fixe, dite à chaque message d'un projet à roadmap.
+
+/** Les dossiers que la session où la personne lit n'ouvre pas : un lien qui y pointe est mort. */
+const REVIEW_HIDDEN = /side-session-notes|scratchpad|(?:^|\/)(?:private\/)?tmp\/|Claude outputs|Library\/Application Support/i
+
+function reviewWhere(kind: ProposeKind): string {
+  if (kind === 'child')
+    return "Tu travailles pour Maestro et la personne lit chez lui : le document se copie dans le dossier de Maestro (son `cwd`, que donne `list_sessions` avec `linked: true`), sous `.claude/a-valider/<id>/`, le lien en chemin relatif à son dossier (`.claude/a-valider/<id>/…`, prouvé par la matrice) ou absolu, et ce lien va dans ton message à Maestro, qui le recopie tel quel."
+  if (kind === 'maestro')
+    return "Chez toi, Maestro : le lien qu'une sous-session te donne se recopie tel quel dans ta demande de validation, et tu ouvres le document toi-même (`show_pane` en mode file) ; un lien mort ou absent, redemande-le-lui avant de relayer."
+  return "Quand la personne regarde la session, ouvre aussi le document toi-même : `show_pane` (pane `file`), ou `SendUserFile` avec `display: render`."
+}
+
+/** La règle fixe du document à lire ou à valider (#587), variante selon la session, en une ligne. */
+export function reviewLinkText(kind: ProposeKind): string {
+  return [
+    `Document à valider (plugin roadmap, règle fixe, #587) : tout ce que tu demandes à ${person()} de lire ou de valider (note, task file, email, plan, classeur, PDF, maquette, fichier MD) arrive avec un lien cliquable qui l'ouvre à côté du chat, dans la session où ${person()} lit : jamais à chercher.`,
+    "Le document vit dans le dossier du projet, jamais dans le scratchpad, `/tmp`, `side-session-notes` ni « Claude outputs/ » ; le lien se donne par son nom, en Markdown, `[le nom du document](chemin depuis la racine du projet)`.",
+    reviewWhere(kind),
+    "Le volet Fichiers ouvre le Markdown, le xlsx, le PDF et le HTML (matrice #587) ; un format qu'il n'affiche pas (docx, à vérifier) se double d'une version lisible à côté (page HTML, PDF ou Artifact privé) ; une maquette se donne par l'url de `serve.py`. En cloud, le document se publie en Artifact privé (outil `Artifact`) et son lien `https://claude.ai/artifact/…` se donne : un lien GitHub d'un dépôt privé s'ouvre en 404 dans le navigateur de l'app.",
+  ].join(' ')
+}
+
+/** Une demande de lecture ou de validation dans un message (#587), hors blocs de code ; « validé » n'en est pas une. */
+export function reviewAsked(text: string): boolean {
+  const prose = text.replace(/```[\s\S]*?```/g, ' ').replace(/`[^`\n]*`/g, ' ').replace(/[’]/g, "'")
+  return /(?<![\p{L}])(?:valide(?:s|z)?(?:-(?:le|la|les|tu|moi))?\s+\[?(?:le|la|les|l'|ce|cet|cette|ces|ça|si|mon|ma|mes|ton|ta|tes)\b|tu valides|valides-tu|relis|relisez|(?:à|a) (?:relire|valider|lire)|je te laisse (?:le |la |les |l')?(?:lire|relire|valider)|pour (?:validation|relecture)|ta validation|ton feu vert)/iu.test(prose)
+}
+
+export type ReviewLinkGap = 'sans-lien' | 'cache'
+
+/** Les cibles des liens Markdown d'un message, `<…>` compris (un chemin à espaces). */
+function markdownTargets(text: string): string[] {
+  const out: string[] = []
+  for (const m of text.matchAll(/\]\(\s*(?:<([^>]+)>|([^)]+?))(?:\s+"[^"]*")?\s*\)/g)) out.push((m[1] ?? m[2] ?? '').trim())
+  return out.filter(t => t !== '')
+}
+
+/** Une cible de lien : un document ouvrable, un document caché, ou pas un document (dossier, ancre). */
+function reviewTarget(target: string, o: { roots: readonly string[]; relative: boolean }): 'ok' | 'cache' | 'none' {
+  if (/^https?:\/\/(?:127\.0\.0\.1|localhost)(?::\d+)?\//i.test(target)) return 'ok'
+  if (/^https:\/\/claude\.ai\/(?:code\/)?artifact\//i.test(target)) return 'ok'
+  // Un fichier de GitHub : le navigateur de l'app n'a pas la session GitHub, un dépôt privé y répond 404 (matrice #587).
+  if (/^https:\/\/github\.com\//i.test(target)) return 'cache'
+  if (/^[a-z][a-z0-9+.-]*:/i.test(target) || target.startsWith('#')) return 'none'
+  const path = decodeURI(target).replace(/^file:\/\//, '').replace(/[#?].*$/, '').replace(/:\d+$/, '')
+  if (path.endsWith('/') || !/\.[A-Za-z0-9]{1,6}$/.test(path)) return 'none'
+  if (REVIEW_HIDDEN.test(path)) return 'cache'
+  if (path.startsWith('/') || path.startsWith('~')) {
+    const roots = o.roots.map(r => r.replace(/\/+$/, ''))
+    return roots.length === 0 || roots.some(r => path.startsWith(`${r}/`)) ? 'ok' : 'cache'
+  }
+  // Sous Maestro, `.claude/a-valider/…` se lit depuis le dossier de Maestro, où la personne clique (matrice #587).
+  return o.relative || /^(?:\.\/)?\.claude\/a-valider\//.test(path) ? 'ok' : 'cache'
+}
+
+/**
+ * Ce qui manque à un message qui demande une lecture ou une validation (#587) : aucun lien Markdown vers
+ * un fichier (`sans-lien`), ou seulement des liens que la session où la personne lit n'ouvre pas (`cache`).
+ * `roots` : les dossiers que cette session ouvre ; `relative` : un chemin relatif s'y lit (faux sous Maestro).
+ */
+export function reviewLinkGap(text: string | undefined, o: { roots: readonly string[]; relative: boolean }): ReviewLinkGap | undefined {
+  if (text === undefined || !reviewAsked(text)) return undefined
+  const seen = markdownTargets(text.replace(/```[\s\S]*?```/g, ' ')).map(t => reviewTarget(t, o))
+  if (seen.includes('ok')) return undefined
+  return seen.includes('cache') ? 'cache' : 'sans-lien'
+}
+
+/** Le rappel de fin de tour d'une demande de validation sans lien ouvrable (#587). */
+export function reviewLinkReminder(gap: ReviewLinkGap, kind: ProposeKind): string {
+  const what =
+    gap === 'cache'
+      ? "Plugin roadmap (#587) : ton message demande une lecture ou une validation, et son lien vise un dossier que la session où la personne lit n'ouvre pas (scratchpad, `/tmp`, `side-session-notes`, « Claude outputs/ », un autre dossier, ton worktree sous Maestro, ou GitHub, en 404 dans le navigateur de l'app pour un dépôt privé)."
+      : "Plugin roadmap (#587) : ton message demande une lecture ou une validation sans lien cliquable vers le document."
+  return `${what} Redonne en une ligne le lien \`[le nom du document](chemin)\`, sans réécrire ton message. ${reviewWhere(kind)}`
+}
+
+/** La ligne de la clause de Maestro (#587) : le document à valider s'ouvre chez Maestro. */
+function reviewLinkChild(): string {
+  return "Un document que tu demandes de lire ou de valider (note, plan, brouillon, classeur, maquette) s'ouvre d'un clic chez Maestro, où la personne lit : copie-le dans son dossier, `.claude/a-valider/<id>/`, jamais dans `side-session-notes`, le scratchpad ni `/tmp`, et mets son lien `[le nom du document](.claude/a-valider/<id>/<fichier>)` dans ton message ; Maestro le recopie tel quel (#587)."
 }
 
 const CLOCK_DAYS = ['dimanche', 'lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi']
@@ -11537,7 +11794,25 @@ export const CLOUD_WORDS_CELLS = 10
  * fusionnée mais sa ligne est encore ouverte (la suite de main n'a pas tourné, rien n'est publié) ; `delivered` : sa
  * ligne est close dans ROADMAP-fait, à la publication (#468).
  */
-export type CloudPr = { state: 'none' | 'open' | 'red' | 'ready' | 'merged' | 'delivered' | 'closed' | 'unknown'; url?: string; number?: number; createdAt?: number }
+export type CloudPr = { state: 'none' | 'open' | 'red' | 'ready' | 'merged' | 'delivered' | 'closed' | 'unknown'; url?: string; number?: number; createdAt?: number; /** Le dernier mouvement de la PR, en ms (#566). */ updatedAt?: number; session?: string }
+
+/** Le premier lien de session claude.ai d'un texte (#583) : `https://claude.ai/code/session_…`, aucun autre hôte. */
+export function sessionLinkOf(body: unknown): string | undefined {
+  if (typeof body !== 'string') return undefined
+  return /https:\/\/claude\.ai\/code\/session_[A-Za-z0-9_-]+/.exec(body)?.[0]
+}
+
+/**
+ * Le lien de la conversation d'une session cloud (#583) : celui du corps de sa PR (`CloudPr.session`), sinon la
+ * session de sa mission, `https://claude.ai/code/session_…` en entier ou le seul `session_…`. Rien d'autre ne s'ouvre.
+ */
+export function cloudSessionLinkOf(t: { cloud?: Pick<CloudPr, 'session'>; mission?: { session?: string } }): string | undefined {
+  if (t.cloud?.session) return t.cloud.session
+  const m = t.mission?.session
+  if (typeof m !== 'string') return undefined
+  if (/^https:\/\/claude\.ai\/code\/session_[A-Za-z0-9_-]+$/.test(m)) return m
+  return /^session_[A-Za-z0-9_-]+$/.test(m) ? `https://claude.ai/code/${m}` : undefined
+}
 
 const CLOUD_FAILED = new Set(['FAILURE', 'ERROR', 'CANCELLED', 'TIMED_OUT', 'ACTION_REQUIRED', 'STARTUP_FAILURE'])
 
@@ -11577,6 +11852,11 @@ export function cloudPrOf(prs: unknown, branche: string): CloudPr {
     ...(typeof pr.url === 'string' && /^https:\/\/\S+$/.test(pr.url) ? { url: pr.url } : {}),
     ...(typeof pr.number === 'number' ? { number: pr.number } : {}),
     ...(Number.isFinite(at(pr)) ? { createdAt: at(pr) } : {}),
+    ...(typeof pr.updatedAt === 'string' && Number.isFinite(Date.parse(pr.updatedAt)) ? { updatedAt: Date.parse(pr.updatedAt) } : {}),
+    ...(() => {
+      const session = typeof pr.session === 'string' && pr.session.startsWith('https://claude.ai/code/session_') ? pr.session : pr.session === undefined ? sessionLinkOf(pr.body) : undefined
+      return session ? { session } : {}
+    })(),
   }
   if (pr.state === 'MERGED') return { state: 'merged', ...base }
   if (pr.state === 'CLOSED') return { state: 'closed', ...base }
@@ -11585,6 +11865,27 @@ export function cloudPrOf(prs: unknown, branche: string): CloudPr {
   if (checks.includes('failed')) return { state: 'red', ...base }
   if (checks.includes('pending') || pr.isDraft === true) return { state: 'open', ...base }
   return { state: pr.mergeable === 'MERGEABLE' ? 'ready' : 'open', ...base }
+}
+
+/** #566 : une PR ouverte sans mouvement depuis ce temps ne dit plus « en session » : elle est « sans nouvelles ». */
+export const CLOUD_QUIET_MS = 12 * 3_600_000
+
+/**
+ * #566 : le dernier mouvement d'une PR cloud ouverte (`open` ou `red`) quand il remonte à 12 h ou plus. Le plugin ne voit
+ * pas si la session cloud est archivée ou supprimée : il ne lit que la ligne de roadmap et la PR.
+ */
+export function cloudQuietSince(cloud: Pick<CloudPr, 'state' | 'updatedAt'> | undefined, now: number): number | undefined {
+  if (!cloud || (cloud.state !== 'open' && cloud.state !== 'red') || cloud.updatedAt === undefined) return undefined
+  return now - cloud.updatedAt >= CLOUD_QUIET_MS ? cloud.updatedAt : undefined
+}
+
+/** #566 : « depuis le 12 à 18h40 », en heure locale ; d'un autre mois ou d'une autre année que `now` : « depuis le 12/10 à 18h40 ». */
+export function quietSinceText(at: number, now: number): string {
+  const d = new Date(at)
+  const n = new Date(now)
+  const same = d.getFullYear() === n.getFullYear() && d.getMonth() === n.getMonth()
+  const day = same ? String(d.getDate()) : `${d.getDate()}/${String(d.getMonth() + 1).padStart(2, '0')}`
+  return `depuis le ${day} à ${d.getHours()}h${String(d.getMinutes()).padStart(2, '0')}`
 }
 
 /**
@@ -15332,7 +15633,12 @@ export type ControlCard = {
   steps?: { done: number; total: number; current: string }
   sessionId?: string
   heavy: boolean
+  /** #583 : une tâche qui tourne dans le cloud, sans session sur le Mac ; `word` dit où elle en est. */
+  cloud?: { word: string; tone: 'run' | 'wait' | 'done' | 'quiet'; session?: string; pr?: { number?: number; url?: string } }
 }
+
+/** #583 : une tâche cloud à montrer au Centre de contrôle, d'après la ligne de ROADMAP et sa PR. */
+export type CloudControlInput = { root: string; id: string; title: string; word: string; tone: 'run' | 'wait' | 'done' | 'quiet'; session?: string; pr?: { number?: number; url?: string }; launchedAt?: number }
 
 /** L'index d'axe d'un nom (#367) : la somme de ses codes modulo 8, la même couleur d'un dessin à l'autre. */
 export function toneOf(name: string): number {
@@ -15390,6 +15696,8 @@ export function controlView(o: {
   projectOf?: (cwd: string) => string
   /** Les tâches closes de la roadmap, `<racine>#<numéro>` : leur session est finie. */
   closed?: ReadonlySet<string>
+  /** #583 : les tâches qui tournent dans le cloud ; leurs cartes viennent après celles du Mac. */
+  cloud?: readonly CloudControlInput[]
 }): { running: ControlCard[]; queued: ControlCard[] } {
   const projectOf = o.projectOf ?? rootOfCwd
   const name = (root: string) => root.split('/').filter(Boolean).pop() ?? root
@@ -15457,6 +15765,32 @@ export function controlView(o: {
     runningKeys.add(`${projectOf(rowCwd.get(c.sessionId as string) ?? '')}#${c.id}`)
     runningSessions.add(c.sessionId as string)
   }
+  // #583 : les cartes cloud, après celles du Mac, par lancement (sans date à la fin, l'ordre d'entrée sinon) ;
+  // une tâche déjà en session sur le Mac ne se double pas, et sa clé ne se montre pas non plus en file.
+  const cloudCards: ControlCard[] = (o.cloud ?? [])
+    .map((e, i) => ({ e, i }))
+    .filter(({ e }) => !runningKeys.has(`${e.root}#${e.id}`))
+    .sort((a, b) => {
+      const [x, y] = [a.e.launchedAt, b.e.launchedAt]
+      if (x !== undefined && y !== undefined && x !== y) return x - y
+      if ((x === undefined) !== (y === undefined)) return x === undefined ? 1 : -1
+      return a.i - b.i
+    })
+    .map(({ e }) => {
+      const project = name(e.root)
+      return {
+        key: `cloud:${e.root}#${e.id}`,
+        id: e.id,
+        title: bareTitle(e.title),
+        project,
+        tone: toneOf(project),
+        state: e.tone === 'wait' || e.tone === 'quiet' ? 'wait' : e.tone === 'done' ? 'done' : 'run',
+        prio: false,
+        heavy: false,
+        cloud: { word: e.word, tone: e.tone, ...(e.session ? { session: e.session } : {}), ...(e.pr ? { pr: e.pr } : {}) },
+      } satisfies ControlCard
+    })
+  for (const c of o.cloud ?? []) runningKeys.add(`${c.root}#${c.id}`)
   const shown = globalQueueOrder(o.queue).filter(e => {
     if (e.kind === 'resume') return e.sessionId !== undefined && o.pauses[e.sessionId]?.state === 'paused' && !runningSessions.has(e.sessionId)
     return !runningKeys.has(`${e.project}#${e.id}`)
@@ -15500,7 +15834,7 @@ export function controlView(o: {
       heavy: false,
     })
   }
-  return { running: sorted, queued }
+  return { running: [...sorted, ...cloudCards], queued }
 }
 
 /** La session s'est-elle dite en pause (#383) : « en pause » en tête de son récap (« La session est en pause : … »). */
@@ -15513,7 +15847,23 @@ export function selfPaused(recap: string | undefined): boolean {
  * comprises (c'est un arrêt du Mac) ; ni une finie, ni une dont la pause est déjà demandée.
  */
 export function pauseAllTargets(running: readonly ControlCard[]): ControlCard[] {
-  return running.filter(c => c.sessionId !== undefined && (c.state === 'run' || c.state === 'wait') && c.pause === undefined)
+  return running.filter(c => c.cloud === undefined && c.sessionId !== undefined && (c.state === 'run' || c.state === 'wait') && c.pause === undefined)
+}
+
+/** Les dossiers des cartes (#583) : un par projet, dans l'ordre de première apparition, avec leur ton et leur compte. */
+export function controlFolders(cards: readonly ControlCard[]): { name: string; tone: number; count: number }[] {
+  const out: { name: string; tone: number; count: number }[] = []
+  for (const c of cards) {
+    const f = out.find(x => x.name === c.project)
+    if (f) f.count++
+    else out.push({ name: c.project, tone: c.tone, count: 1 })
+  }
+  return out
+}
+
+/** Les cartes d'un dossier (#583) ; `undefined` ou « Tous » : toutes. */
+export function controlFilter(cards: readonly ControlCard[], folder: string | undefined): ControlCard[] {
+  return folder === undefined || folder === 'Tous' ? [...cards] : cards.filter(c => c.project === folder)
 }
 
 /** « Retirer » (#415) : la file sans l'entrée de cette carte ; les autres gardent leur rang. */
@@ -15950,7 +16300,7 @@ export function childNoteStale(at: unknown, now: number): boolean {
 }
 
 /** Les champs de `gh pr list` que lisent `cloudPrOf`, `cloudAdopted` et `mergedLocalIds` (#408, #445, #468). */
-const CLOUD_PR_KEPT = ['headRefName', 'title', 'number', 'url', 'state', 'isDraft', 'mergeable', 'createdAt', 'isCrossRepository'] as const
+const CLOUD_PR_KEPT = ['headRefName', 'title', 'number', 'url', 'state', 'isDraft', 'mergeable', 'createdAt', 'updatedAt', 'isCrossRepository'] as const
 
 /**
  * La sortie de `gh pr list` réduite aux champs lus (#518) : chaque contrôle de `statusCheckRollup` ne garde que
@@ -15964,6 +16314,9 @@ export function slimCloudPrs(prs: unknown): unknown {
     const pr = p as Record<string, unknown>
     const out: Record<string, unknown> = {}
     for (const k of CLOUD_PR_KEPT) if (k in pr) out[k] = pr[k]
+    // #583 : du body, seul le lien de la session se garde ; le texte lui-même pèserait au store.
+    const session = sessionLinkOf(pr.body)
+    if (session) out.session = session
     if (Array.isArray(pr.statusCheckRollup)) {
       const seen = new Set<string>()
       const checks: Record<string, unknown>[] = []

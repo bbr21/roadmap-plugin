@@ -70,6 +70,7 @@ import {
   flaskIcon,
   bellIcon,
   cloudTints,
+  unplugIcon,
   unarchiveIcon,
   pencilIcon,
   priorityIcon,
@@ -86,7 +87,7 @@ import {
   appAppearance,
   ringIcon,
   ruleIcon,
-  undoTimerIcon,
+  undoCountIcon,
   fullWidth,
   spinnerIcon,
   stepIcon,
@@ -170,6 +171,10 @@ import {
   studySteps,
   studyStepsReminder,
   proposeTaskText,
+  reviewAsked,
+  reviewLinkGap,
+  reviewLinkReminder,
+  reviewLinkText,
   localClockText,
   codeWithoutTests,
   isMethodSkill,
@@ -179,6 +184,8 @@ import {
   mockupPagesOf,
   fileUrl,
   mockupAskText,
+  archiveAskText,
+  archiveRefusalWhy,
   mockupHttpUrl,
   mockupServeArgs,
   viewUnseen,
@@ -468,6 +475,8 @@ import {
   conclusionOf,
   parseBilans,
   doneIds,
+  occurrencesBySrc,
+  occurrenceClosedSince,
   missingBilans,
   bilanReminder,
   type Bilan,
@@ -522,7 +531,7 @@ import {
   sessionModeIn,
   oneTaskStep,
   isMaestroSession,
-  maestroFolderTitle,
+  maestroProjectTitle,
   maestroSessionIds,
   withSelfRow,
   sessionScanNote,
@@ -624,6 +633,9 @@ import {
   cloudTakePickaxe,
   cloudTakenAt,
   cloudPrOf,
+  cloudQuietSince,
+  quietSinceText,
+  cloudSessionLinkOf,
   cloudWords,
   cloudBranchOf,
   cloudBriefText,
@@ -673,6 +685,7 @@ import {
   type Sessions,
   githubRepoOf,
   type CloudPr,
+  type CloudControlInput,
   type SessionPrefs,
   type Source,
   type Task,
@@ -855,6 +868,11 @@ import {
   cartonOf,
   detailsStory,
   familyOf,
+  batchFamily,
+  withOpenKids,
+  heldKids,
+  heldKidsSay,
+  familySay,
   srcFile,
   gaugeLine,
   stepGauge,
@@ -1046,10 +1064,14 @@ const CHILD_STATUS_PREFIX = 'child-status:'
 const CHILD_ALERTED_PREFIX = 'child-alerted:'
 /** Les sessions où Bertrand a dit « Maestro » : elles coordonnent ce qu'elles lancent (#71). */
 const MAESTROS_KEY = 'maestro-sessions'
+/** #597 : les sessions Maestro déjà nommées du nom de leur projet (identifiant → date), pour ne les nommer qu'une fois. */
+const MAESTRO_NAMED_KEY = 'maestro-named'
 /** Ce que le hook de la carte d'accueil a vu sur cette machine (#153) : `WelcomeCardSeen`. */
 const WELCOME_CARD_KEY = 'welcome-card'
 /** Une marque sans nouveau « Maestro » depuis 30 jours tombe. */
 const MAESTRO_MARK_MS = 30 * 86_400_000
+/** #597 : une session nommée par Maestro s'oublie au bout d'un an (le store ne grossit pas sans fin). */
+const MAESTRO_NAMED_MS = 365 * 86_400_000
 /** Les efforts que l'outil de lancement accepte ; « hérite » (ou toute autre valeur) n'en passe pas. */
 const LAUNCH_EFFORTS = new Set(['low', 'medium', 'high', 'xhigh', 'max'])
 /**
@@ -2298,6 +2320,14 @@ async function endOfTurnBlock($: EngineInterface, last: string | undefined, acti
   if (settings.capture && c && taskWork(c.source) !== 'projet') {
     notes.push(captureConsigneNoteText(captureConsigneGaps(last), captureTemplatePath(`${$.plugin.root}/skills/maestro/scripts/fidelite.py`)))
   }
+  // Le document à valider (#587) : une demande de lecture sans lien que la personne ouvre d'un clic.
+  if (settings.capture && c) {
+    try {
+      notes.push(await reviewNote($, last))
+    } catch {
+      // session illisible : pas de rappel
+    }
+  }
   // La clôture partielle (#245) : finie, sa ligne attend encore un tiers.
   if (settings.capture && c) {
     try {
@@ -2319,6 +2349,31 @@ async function endOfTurnBlock($: EngineInterface, last: string | undefined, acti
   }
   const block = notes.filter((b): b is string => b !== undefined).join('\n\n')
   return block === '' ? undefined : block
+}
+
+/**
+ * Le rappel du document à valider (#587) : seulement quand le message demande une lecture. La racine est
+ * le dossier de cette session ; sous Maestro, celui de Maestro, où la personne lit, et un chemin relatif
+ * (qui viserait le worktree de la sous-session) ne s'y ouvre pas.
+ */
+async function reviewNote($: EngineInterface, last: string | undefined): Promise<string | undefined> {
+  if (last === undefined || !reviewAsked(last)) return undefined
+  const maestro = await maestroHere($)
+  const child = !maestro && (await parentIsMaestro($))
+  let roots = [await $.session.cwd()]
+  if (child) {
+    const me = await ownParent($)
+    const ran = me ? await sessionRead($, { tool: GET_SESSION_TOOL, session_id: me.parent }) : undefined
+    let cwd: unknown
+    try {
+      cwd = ran && ran.deny === undefined && !ran.isError ? (JSON.parse(ran.text ?? '') as { cwd?: unknown }).cwd : undefined
+    } catch {
+      cwd = undefined
+    }
+    roots = typeof cwd === 'string' && cwd !== '' ? [cwd] : []
+  }
+  const gap = reviewLinkGap(last, { roots, relative: !child })
+  return gap === undefined ? undefined : reviewLinkReminder(gap, maestro ? 'maestro' : child ? 'child' : 'solo')
 }
 
 type BilanData = { config: BilanConfig; bilans: Map<string, Bilan>; viaCowork: boolean }
@@ -2346,6 +2401,22 @@ async function bilanNote($: EngineInterface, source: Source, before: string | un
 }
 
 /**
+ * La source avec `cles`, `requis` et `requisSur` relus dans `<racine>/.claude/roadmap.json` (#591) ;
+ * la source captée au début du tour sinon (pas de racine, fichier absent ou illisible).
+ */
+async function liveSource($: EngineInterface, source: Source): Promise<Source> {
+  if (!source.root) return source
+  try {
+    const config = `${source.root}/.claude/roadmap.json`
+    if (!(await $.fs.exists(config))) return source
+    const fresh = parseProjectConfigSafe(await readOr($, config), source.root, { name: source.name, me: source.me })
+    return fresh ? { ...source, cles: fresh.cles, requis: fresh.requis, requisSur: fresh.requisSur } : source
+  } catch {
+    return source
+  }
+}
+
+/**
  * Après une écriture : contrôle les lignes de la roadmap qui ont changé depuis la dernière vue.
  * `before`, la roadmap relue juste avant l'outil (juste après un Bash qui ne l'écrit pas, #89) :
  * seules les tâches que lui a ajoutées sont à la session, pas celles qu'une autre session a écrites
@@ -2355,13 +2426,16 @@ async function checkRoadmap($: EngineInterface, c: Capture, before?: { open?: st
   const now = await roadmapNow($, c.source)
   // Rien n'a bougé depuis la dernière vue : aucun contrôle à refaire (#523).
   if (now.open === c.seen.open && now.done === c.seen.done) return []
+  // #591 : les clés et les champs exigés se relisent ici, pas au début du tour : une clé déclarée
+  // pendant le tour (ou par une autre session) ne se refuse plus « clé inconnue ».
+  const live = await liveSource($, c.source)
   const ids = idProblems(now.open, now.done)
   const notes: string[] = []
   for (const [key, file, done] of [['open', 'ROADMAP.md', false], ['done', 'ROADMAP-fait.md', true]] as const) {
     const after = now[key]
     if (after === undefined || after === c.seen[key]) continue
     const old = new Set((c.seen[key] ?? '').split('\n').map(l => l.replace(/\r$/, '')))
-    const { requis, requiredOn, cles } = projectSettings(c.source)
+    const { requis, requiredOn, cles } = projectSettings(live)
     const problems = [...newProblems(c.seen[key], after, done, { requis, requiredOn, cles, today: todayOf(Date.now()), closed: doneIds(now.done) }), ...ids[key].filter(p => !old.has(p.text))]
     if (problems.length > 0) notes.push(problemsText(file, problems))
     if (!done) {
@@ -3487,37 +3561,56 @@ async function markMaestro($: EngineInterface): Promise<void> {
   const own = await readOwnSession($, true)
   if (!own.id || sessionTitleId(own.title) !== undefined) return
   const now = await $.clock.now()
-  const kept = Object.entries(await loadMaestros($)).filter(([, at]) => now - at <= MAESTRO_MARK_MS)
+  // #597 : nommée du nom de son projet, une session n'a plus que sa marque pour se dire Maestro : elle ne tombe pas.
+  const named = await loadNamedMaestros($)
+  const kept = Object.entries(await loadMaestros($)).filter(([id, at]) => now - at <= MAESTRO_MARK_MS || named[id] !== undefined)
   await storeSet($, MAESTROS_KEY, { ...Object.fromEntries(kept), [own.id]: now })
   maestrosMemo = undefined
   // La marque n'est pas un atome : sans ce redessin, la bande attendait qu'une session bouge (#225).
   await update($, liveVersionAtom, v => v + 1)
 }
 
+/** #597 : les sessions nommées du nom de leur projet ; store illisible ou mal formé : aucune. */
+async function loadNamedMaestros($: EngineInterface): Promise<Record<string, number>> {
+  const stored = await storeGet($, MAESTRO_NAMED_KEY)
+  if (typeof stored !== 'object' || stored === null || Array.isArray(stored)) return {}
+  return Object.fromEntries(Object.entries(stored).filter((e): e is [string, number] => typeof e[1] === 'number'))
+}
+
 /**
- * #439 : « Maestro » dit dans une session au titre laissé à la main (« AAFES 258.1 ») la nomme du dossier de
- * son projet, « Maestro · AAFES Cowork » (`maestroFolderTitle`) : une fois, puis le nom ne change plus. Ni
- * dans une session de tâche, ni chez une session lancée par un Maestro. Le renommage refusé (mode auto,
- * outil absent) : la consigne qui revient, pour que Claude le fasse lui-même ; sinon rien.
+ * #597 (suite de #439) : « Maestro » dit dans une session la nomme du seul nom court de son projet (`name` de son
+ * `.claude/roadmap.json`, `maestroProjectTitle`), que son titre soit celui que l'app tire du premier message
+ * (« Maestro ») ou un titre laissé à la main : une fois, gardée au store (`maestro-named`), puis le nom ne change
+ * plus, même renommée ensuite à la main. Ni dans une session de tâche, ni chez une session lancée par un Maestro.
+ * Le renommage refusé (mode auto, outil absent) : la consigne qui revient, pour que Claude le fasse lui-même.
  */
 async function nameMaestro($: EngineInterface): Promise<string | undefined> {
   const own = await readOwnSession($, true)
-  if (maestroFolderTitle(own.title, 'x') === undefined) return undefined
+  if (!own.id || sessionTitleId(own.title) !== undefined) return undefined
+  const named = await loadNamedMaestros($)
+  if (named[own.id] !== undefined) return undefined
   const source = await sourceNow($)
-  const title = source ? maestroFolderTitle(own.title, source.root ?? source.dir) : undefined
+  const title = source ? maestroProjectTitle(own.title, source.name) : undefined
   if (title === undefined || (await parentIsMaestro($))) return undefined
+  const remember = async () => {
+    const now = await $.clock.now()
+    const kept = Object.entries(named).filter(([, at]) => now - at <= MAESTRO_NAMED_MS)
+    await storeSet($, MAESTRO_NAMED_KEY, { ...Object.fromEntries(kept), [own.id as string]: now })
+  }
   try {
     toolCalls++
     const ran = await $.tool.call({ tool: SET_TITLE_TOOL, session_id: 'self', title })
     if (ran.deny === undefined && !ran.isError) {
       ownSession = { ...own, title }
+      await remember()
       await update($, liveVersionAtom, v => v + 1)
       return undefined
     }
   } catch {
     // outil absent : Claude renomme
   }
-  return `Cette session est Maestro et son titre (« ${own.title} ») ne le dit pas (#439) : nomme-la « ${title} » par set_session_title (session courante), une seule fois, sans un mot dans ta réponse. Le nom se pose au lancement, puis ne change plus.`
+  await remember()
+  return `Cette session est Maestro et son titre (« ${own.title} ») ne dit pas son projet (#597) : nomme-la « ${title} » par set_session_title (session courante), une seule fois, sans un mot dans ta réponse. Le nom se pose au lancement, puis ne change plus.`
 }
 
 /** Les propositions gardées pour les Maestros ; seules les entrées bien formées comptent. */
@@ -3974,7 +4067,7 @@ function fromAgent(e: unknown): boolean {
 }
 
 /** Ce que le parent lit de sa roadmap pour juger ses enfants : les numéros ouverts et clos, le `mode` qui force, ses dossiers. */
-type ParentLines = { open: Set<string>; done: Set<string>; fait?: Map<string, string | undefined>; mode?: Mode; match: string[]; attend: Map<string, string | undefined>; me: string[] }
+type ParentLines = { open: Set<string>; done: Set<string>; fait?: Map<string, string | undefined>; occurrences?: Map<string, string[]>; mode?: Mode; match: string[]; attend: Map<string, string | undefined>; me: string[] }
 
 /** git lit le dossier d'un enfant en 5 s au plus : le message de Bertrand attend la réponse (#90). */
 const GIT_TIMEOUT_MS = 5_000
@@ -4130,7 +4223,9 @@ async function childAlertContext($: EngineInterface): Promise<string | undefined
       const done = await load($, files(source).done, 'ROADMAP-fait.md')
       // #395 : le `fait:` de chaque ligne close, pour voir une session qui reprend après la clôture.
       const fait = new Map(typeof done === 'string' ? [] : done.flatMap(t => (t.id ? [[t.id, t.fait] as const] : [])))
-      return { open: ids(open), done: ids(done), fait, ...(forcedWork(source) ? { mode: forcedWork(source) } : {}), match: source.match, attend, me: [...source.me] }
+      // #602 : les `fait:` des occurrences closes de chaque récurrente, citée par `src:#N`.
+      const occurrences = occurrencesBySrc(typeof done === 'string' ? [] : done)
+      return { open: ids(open), done: ids(done), fait, occurrences, ...(forcedWork(source) ? { mode: forcedWork(source) } : {}), match: source.match, attend, me: [...source.me] }
     })()
     return known
   }
@@ -4198,7 +4293,8 @@ async function childAlertContext($: EngineInterface): Promise<string | undefined
 /**
  * Le filet (#124) : les enfants archivés dont la ligne `#N` est encore ouverte dans la roadmap de
  * Maestro, et leur branche fusionnée ou non dans leur base, lue dans le dépôt de Maestro (le worktree
- * de l'enfant a pu partir avec l'archivage, sa branche reste). Hors du projet de Maestro : rien.
+ * de l'enfant a pu partir avec l'archivage, sa branche reste). Hors du projet de Maestro : rien. Une
+ * récurrente garde sa ligne ouverte (#602) : une occurrence close depuis le lancement de la session l'écarte.
  */
 async function archivedOpen($: EngineInterface, archived: readonly ChildRow[], lines: () => Promise<ParentLines | undefined>): Promise<ArchivedOpen[]> {
   if (archived.length === 0) return []
@@ -4210,6 +4306,12 @@ async function archivedOpen($: EngineInterface, archived: readonly ChildRow[], l
     const n = sessionTitleId(child.title)
     const cwd = child.cwd
     if (!n || !known.open.has(n) || known.done.has(n) || !cwd || !known.match.some(prefix => cwd.startsWith(prefix))) continue
+    // #602 : une récurrente garde sa ligne ouverte ; l'occurrence cochée depuis le lancement de la session la clôt.
+    const faits = known.occurrences?.get(n)
+    if (faits !== undefined) {
+      await learnCreated($, [child.id], await $.clock.now()).catch(() => undefined)
+      if (occurrenceClosedSince(faits, createdBySession.get(child.id))) continue
+    }
     let merged: boolean | undefined
     if (child.branch) {
       try {
@@ -4414,18 +4516,29 @@ let openSessionIds = new Set<string>()
 const archivedSessionIds = new Set<string>()
 /** #522 : la bande « Finies » pliée (par défaut) ; et le dernier archivage fait d'un clic, ses refusées gardées sur leur ligne. */
 let finishedFolded = true
-let finishedBatch: { archived: number; refused: Set<string> } | undefined
+let finishedBatch: { archived: number; refused: Map<string, string>; asked: Set<string> } | undefined
 
-/** « Archiver les N » de la bande « Finies » (#522) : le clic de BBR archive chacune ; une refusée le dit sur sa ligne. */
+/**
+ * « Archiver les N » de la bande « Finies » (#522) : le clic de BBR archive chacune ; une refusée dit son motif sur sa ligne.
+ * Quand l'app refuse l'appel du panneau (mode Auto, #248), les sessions restantes partent en une seule demande à Claude,
+ * comme le ▶ refusé (#601), au lieu d'un « refusée par l'app » sans issue.
+ */
 async function archiveFinished($: EngineInterface, list: readonly FinishedSession[]): Promise<void> {
   let archived = 0
-  const refused = new Set<string>()
+  const refused = new Map<string, string>()
+  const asked: LiveEntry[] = []
   for (const s of list) {
-    if (await archiveSession($, `session:${s.sessionId}`, { sessionId: s.sessionId, startedAt: Date.now(), title: s.title })) archived++
-    else refused.add(s.sessionId)
+    const entry = { sessionId: s.sessionId, startedAt: Date.now(), title: s.title }
+    const done = await archiveSession($, `session:${s.sessionId}`, entry, asked)
+    if (done === 'archived') archived++
+    else if (done !== 'asked') refused.set(s.sessionId, done.why)
   }
-  finishedBatch = { archived, refused }
-  if (refused.size > 0) finishedFolded = false
+  if (asked.length > 0) {
+    queueSubmit($, archiveAskText(asked.map(a => ({ sessionId: a.sessionId ?? '', title: a.title }))))
+    await setView($, () => ({ openAt: '', openNote: `Archivage demandé à Claude dans la conversation (${archiveRefusalWhy(autoModeRefusal?.text ?? AUTO_MODE_WHY)}).` }))
+  }
+  finishedBatch = { archived, refused, asked: new Set(asked.map(a => a.sessionId ?? '')) }
+  if (refused.size > 0 || asked.length > 0) finishedFolded = false
   await update($, liveVersionAtom, v => v + 1)
 }
 /** Les rangées de la dernière relecture, fiche de cette session comprise : les filles de Maestro s'y lisent (#137). */
@@ -5674,6 +5787,71 @@ async function pickVictim(
   return { sessionId: picked.sessionId, maestro: parent !== undefined && parent !== '' ? parent : ownId }
 }
 
+/** Ouvre une adresse en https dans le navigateur par défaut (#583) ; tout autre lien, ou un `open` refusé, lève avec un mot lisible. */
+async function openHttpsUrl($: EngineInterface, url: string): Promise<void> {
+  if (!/^https:\/\/\S+$/.test(url)) throw new Error('seule une adresse en https s\'ouvre.')
+  try {
+    await $.process.run(['open', url], { timeoutMs: 10_000 })
+  } catch {
+    throw new Error(`le navigateur n'a pas ouvert ${url}.`)
+  }
+}
+
+const CONTROL_CLOUD_MS = 60_000
+let controlCloudMem: { at: number; value: CloudControlInput[] } | undefined
+let controlCloudFlight: Promise<CloudControlInput[]> | undefined
+
+/**
+ * Les sessions cloud en cours de tous les projets connus, pour le Centre de contrôle (#583) : les lignes `lieu:cloud`
+ * de la roadmap de cette session et de chaque autre (`otherSources`), lues comme la bande de Maestro (`cloudTasksOf`).
+ * Une source en panne n'empêche pas les autres ; gardé 60 s, une seule lecture en vol.
+ */
+async function readControlCloud($: EngineInterface, ownSource: () => Promise<Source | undefined>): Promise<CloudControlInput[]> {
+  const now = await $.clock.now()
+  if (controlCloudMem && now - controlCloudMem.at < CONTROL_CLOUD_MS) return controlCloudMem.value
+  if (controlCloudFlight) return controlCloudFlight
+  const run = (async () => {
+    const own = await ownSource().catch(() => undefined)
+    const sources = [...(own ? [own] : []), ...(await otherSources($, own).catch(() => [] as Source[]))]
+    const out: CloudControlInput[] = []
+    for (const s of sources) {
+      try {
+        const open = await loadParsed($, files(s).open, 'ROADMAP.md')
+        const done = await loadParsed($, files(s).done, 'ROADMAP-fait.md')
+        const tasks = [...(typeof open === 'string' ? [] : open), ...(typeof done === 'string' ? [] : done)]
+        for (const t of await cloudTasksOf($, s, tasks, x => x.nom ?? x.label, now)) {
+          if (!t.cloud || t.cloud.state === 'delivered' || t.mission?.state === 'done') continue
+          const band = cloudRowFiche({ cloud: t.cloud, ...(t.mission ? { mission: t.mission } : {}) }).band
+          // #566 : une PR ouverte sans mouvement depuis 12 h n'est plus « en session » : elle est sans nouvelles.
+          const quietAt = t.mission ? undefined : cloudQuietSince(t.cloud, now)
+          const tone: CloudControlInput['tone'] = quietAt !== undefined ? 'quiet' : t.cloud.state === 'merged' ? 'done' : band.mark === 'person' ? 'wait' : band.mark === 'check' || band.mark === 'merge' ? 'done' : 'run'
+          const session = cloudSessionLinkOf(t)
+          out.push({
+            root: s.root ?? s.dir,
+            id: t.id,
+            title: t.label,
+            word: quietAt !== undefined ? quietSinceText(quietAt, now) : band.word,
+            tone,
+            ...(session ? { session } : {}),
+            ...(t.cloud.url || t.cloud.number !== undefined ? { pr: { ...(t.cloud.number !== undefined ? { number: t.cloud.number } : {}), ...(t.cloud.url ? { url: t.cloud.url } : {}) } } : {}),
+            ...(t.launchedAt !== undefined ? { launchedAt: t.launchedAt } : {}),
+          })
+        }
+      } catch {
+        // une source en panne ne retient pas les autres
+      }
+    }
+    controlCloudMem = { at: await $.clock.now(), value: out }
+    return out
+  })()
+  controlCloudFlight = run
+  try {
+    return await run
+  } finally {
+    controlCloudFlight = undefined
+  }
+}
+
 /**
  * Ce que le volet Centre de contrôle (#367) demande à ce module : la liste des sessions, la file, les pauses, les
  * marques de priorité, la roadmap de ce projet et l'ouverture d'une session. `controle.tsx` n'importe pas ce fichier.
@@ -5765,6 +5943,8 @@ function controlDeps($: EngineInterface): ControlDeps {
       zoneDrawn(zones, 'press-hit', await $.clock.now())
       return zoneKeyOf(zones, pressKey(id), await read($, zoneGenAtom))
     },
+    cloud: () => readControlCloud($, ownSource),
+    openUrl: url => openHttpsUrl($, url),
   }
 }
 
@@ -7810,14 +7990,42 @@ async function archiveSelf($: EngineInterface, source: Source, task: { id?: stri
  * Archive la session d'une tâche faite. L'archivage se défait depuis la barre latérale ; la tâche
  * cesse aussitôt de pointer vers la session.
  */
-async function archiveSession($: EngineInterface, key: string, entry: LiveEntry): Promise<boolean> {
+/**
+ * #601 : l'app refuse tout appel d'outil parti d'un clic du panneau en mode Auto (#248). Là, ou après un premier refus du
+ * contrôle du mode auto, le panneau ne retente pas : la demande part à Claude, qui appelle `archive_session` au tour suivant.
+ * `batch` : la bande « Finies » les rassemble en une seule demande ; seule, la demande part ici. Un autre refus se dit en
+ * mots simples (`archiveRefusalWhy`).
+ */
+type ArchiveOutcome = 'archived' | 'asked' | { why: string }
+const AUTO_MODE_WHY = 'auto mode classifier'
+async function archiveSession($: EngineInterface, key: string, entry: LiveEntry, batch?: LiveEntry[]): Promise<ArchiveOutcome> {
   await setView($, () => ({ openAt: '', openNote: '' }))
-  if (!entry.sessionId) return false
+  if (!entry.sessionId) return { why: 'session introuvable' }
+  const askClaude = async (): Promise<'asked'> => {
+    if (batch) batch.push(entry)
+    else {
+      queueSubmit($, archiveAskText([{ sessionId: entry.sessionId ?? '', title: entry.title }]))
+      // La note redessine le panneau, et ce dessin envoie le message.
+      await setView($, () => ({ openAt: '', openNote: `Archivage demandé à Claude dans la conversation (${archiveRefusalWhy(autoModeRefusal?.text ?? AUTO_MODE_WHY)}).` }))
+    }
+    return 'asked'
+  }
+  if (autoModeRefusal !== undefined && tick() - autoModeRefusal.at < AUTO_MODE_SKIP_MS) return await askClaude()
+  if ((await ownMode($)) === 'auto') {
+    autoModeRefusal = { at: tick(), text: AUTO_MODE_WHY }
+    return await askClaude()
+  }
   try {
     const ran = await $.tool.call({ tool: ARCHIVE_SESSION_TOOL, session_id: entry.sessionId })
     if (ran.deny !== undefined || ran.isError) {
-      await setView($, () => ({ openAt: '', openNote: `Archivage refusé : ${ran.deny ?? ran.text ?? 'sans motif'}` }))
-      return false
+      const why = ran.deny ?? ran.text ?? ''
+      if (isAutoModeRefusal(why)) {
+        autoModeRefusal = { at: tick(), text: why }
+        return await askClaude()
+      }
+      const plain = archiveRefusalWhy(why)
+      await setView($, () => ({ openAt: '', openNote: `Archivage refusé : ${plain}.` }))
+      return { why: plain }
     }
     // La session est archivée : le panneau cesse d'y pointer tout de suite, puis oublie son suivi ; la
     // bande de Maestro la compte archivée avant la relecture des sessions (#174).
@@ -7837,10 +8045,10 @@ async function archiveSession($: EngineInterface, key: string, entry: LiveEntry)
     } catch {
       // stockage indisponible : l'entrée reste, marquée close ; le sondage suivant la retire
     }
-    return true
+    return 'archived'
   } catch (err) {
     await setView($, () => ({ openAt: '', openNote: `Archivage impossible : ${err instanceof Error ? err.message : String(err)}` }))
-    return false
+    return { why: 'l’app n’a pas répondu' }
   }
 }
 
@@ -8167,8 +8375,9 @@ const CLOUD_SEEN_KEY = 'cloud-seen'
 const CLOUD_SEEN_MAX = 60
 let cloudSeenMem: { at: number; map: Record<string, string> } | undefined
 const CLOUD_PRS_MS = 60_000
+// `body` : le lien de la session cloud, que `slimCloudPrs` seul garde (#583).
 // `title` : le « #N » qui rattache à sa tâche une session cloud lancée par la carte native (#445).
-const CLOUD_PR_FIELDS = 'headRefName,title,number,url,state,isDraft,mergeable,statusCheckRollup,createdAt,isCrossRepository'
+const CLOUD_PR_FIELDS = 'headRefName,title,number,url,state,isDraft,mergeable,statusCheckRollup,createdAt,updatedAt,isCrossRepository,body'
 let cloudPrsMem: { root: string; at: number; value: unknown } | undefined
 let cloudPrsFlight: { root: string; run: Promise<unknown> } | undefined
 let cloudHiddenMem: { at: number; keys: Set<string> } | undefined
@@ -8337,6 +8546,15 @@ async function cloudTasksOf($: EngineInterface, source: Source, tasks: readonly 
 const cloudRowSteps = (t: { cloud: CloudPr; mission?: BrandTask['mission'] }) => (t.mission ? missionSteps(t.mission.state) : cloudSteps(t.cloud.state))
 /** La bande d'état de la fiche d'une ligne cloud : celle de sa PR, ou celle de sa mission (#469). */
 const cloudRowFiche = (t: { cloud: CloudPr; mission?: BrandTask['mission'] }) => (t.mission ? missionFiche(t.mission.state, t.mission.phrase) : cloudFiche(t.cloud.state))
+
+/**
+ * #566 : « sans nouvelles · depuis le 12 à 18h40 » pour une ligne cloud dont la PR est ouverte et immobile depuis 12 h ;
+ * rien pour une mission (sa PR n'est pas ce qui la fait avancer) ni pour une PR qui a bougé.
+ */
+const cloudQuietWord = (t: { cloud?: CloudPr; mission?: BrandTask['mission'] }, now: number): string | undefined => {
+  const at = t.mission ? undefined : cloudQuietSince(t.cloud, now)
+  return at === undefined ? undefined : `sans nouvelles · ${quietSinceText(at, now)}`
+}
 
 /** Le fichier des missions d'un projet, relu seulement quand sa date ou sa taille change (#337), comme `loadParsed`. */
 const missionsKept = new Map<string, { path?: string; stamp?: string; missions: Record<string, MissionEntry> }>()
@@ -9097,7 +9315,8 @@ async function caseClick($: EngineInterface, source: Source, task: Task, kids: r
   const picked = (await read($, viewAtom)).picked ?? []
   const gesture = caseGesture({ task, picked, via })
   if (gesture === 'pick') return togglePick($, task, kids)
-  if (gesture === 'ask') return askDone($, caseConfirmKeys(picked, task))
+  // #596 : la case d'une mère prend ses filles ouvertes dans le même sursis.
+  if (gesture === 'ask') return askDone($, withOpenKids(await batchTasks($, source), caseConfirmKeys(picked, task)))
   if (batching || checking) {
     try {
       $.ui.toast('Une écriture est en cours : réessaie dans un instant.')
@@ -10585,7 +10804,12 @@ export const register: Register = (on, options) => {
       if (reminder !== undefined) texts.push(reminder)
       // Proposer une task (#216) : la règle entière à chaque message d'un projet à roadmap, selon la
       // session ; pas au réveil de Maestro, où la personne n'a rien dit.
-      if (current.roadmap && !wake) texts.push(proposeTaskText(maestro ? 'maestro' : (await parentIsMaestro($)) ? 'child' : 'solo'))
+      if (current.roadmap && !wake) {
+        const kind = maestro ? 'maestro' : (await parentIsMaestro($)) ? 'child' : 'solo'
+        texts.push(proposeTaskText(kind))
+        // Le document à valider ouvert d'un clic (#587) : règle fixe, dite comme celle-ci.
+        texts.push(reviewLinkText(kind))
+      }
     } catch {
       // réglages ou état de session illisibles : le message passe sans eux
     }
@@ -11411,7 +11635,11 @@ export const register: Register = (on, options) => {
         }
       })
       return maestroBandTree($, e, band, found.data.palette, views, infos, {
-        open: t => void (t.cloud ? openTaskFiche($, src, t.id) : t.sessionId ? openSession($, { sessionId: t.sessionId, startedAt: now, title: t.label }) : undefined),
+        // #583 : une ligne cloud ouvre sa conversation quand son lien est connu, sinon sa fiche.
+        open: t => {
+          const link = t.cloud ? cloudSessionLinkOf(t) : undefined
+          void (link ? openHttpsUrl($, link).catch(() => openTaskFiche($, src, t.id)) : t.cloud ? openTaskFiche($, src, t.id) : t.sessionId ? openSession($, { sessionId: t.sessionId, startedAt: now, title: t.label }) : undefined)
+        },
         archive: t => void archiveTaskRow($, t, now),
         compact: () => void compactFromBand($),
         openStuck: s => void (s.open ? openSession($, { sessionId: s.open, startedAt: now, title: `Maestro ${s.project}` }) : undefined),
@@ -12206,8 +12434,8 @@ function maestroBandTree(
   // #425 (maquette A) : le mot d'état en tête de la case de l'info ; une ligne cloud garde ses mots à elle.
   // #468 (maquette A v2 de la bande, BBR) : la grille du bloc « En session » : l'icône d'état collée à son mot, le même
   // pour une ligne du Mac et du cloud (`blockWord`), puis la jauge, le détail et la durée, à la couleur du mot.
-  const rowWord = (t: BrandTask) => blockWord({ state: t.finished ? 'done' : t.state, ...(t.cloud ? { cloud: t.cloud } : {}), ...(t.mission ? { mission: t.mission } : {}), ...(t.merged ? { merged: true } : {}) })
-  const rowInk = (t: BrandTask) => (t.cloud ? cloudTints(palette, t.cloud.state).word : hue(t)[1])
+  const rowWord = (t: BrandTask) => cloudQuietWord(t, now) ?? blockWord({ state: t.finished ? 'done' : t.state, ...(t.cloud ? { cloud: t.cloud } : {}), ...(t.mission ? { mission: t.mission } : {}), ...(t.merged ? { merged: true } : {}) })
+  const rowInk = (t: BrandTask) => (t.cloud ? (cloudQuietWord(t, now) ? palette.blockOn : cloudTints(palette, t.cloud.state).word) : hue(t)[1])
   const labels: string[] = []
   const cols = bandColumns({
     labels,
@@ -12238,6 +12466,11 @@ function maestroBandTree(
     const cloud = row?.cloud
     // #440 (maquette B6) : une session cloud a l'icône d'état d'une locale, tirée de sa PR (prête : la fusion) ;
     // le nuage, gris, dit seulement où elle tourne, devant son numéro (`placeMark`).
+    // #566 : sans nouvelles depuis 12 h, la prise débranchée à la place de la roue (maquette v4).
+    if (cloud && row && cloudQuietWord(row, now)) {
+      if (!Svg) return <Text size="caption" color={palette.blockOn}>⚠</Text>
+      return <Svg source={unplugIcon(palette.block, 12, 'sans nouvelles')} alt="sans nouvelles" width={17} height={12} />
+    }
     if (cloud && row) {
       const m = cloudRowFiche({ cloud, ...(row.mission ? { mission: row.mission } : {}) }).band.mark
       icon = m === 'person' ? 'hand' : m
@@ -12259,7 +12492,7 @@ function maestroBandTree(
   // qui creusait l'écart après le numéro (#211) ; au terminal, le bouton.
   const titleOf = (t: BrandTask, done = false, doneHex = palette.text3) => {
     // Une ligne cloud : le titre ouvre sa PR ; sans PR, pas de lien (#408).
-    const opens = Boolean(t.sessionId || t.cloud?.url)
+    const opens = Boolean(t.sessionId || t.cloud?.url || cloudSessionLinkOf(t))
     const graphic = Boolean(opens && Svg && Client)
     const name = (
       <Text size="footnote" wrap="truncate-end" {...(done ? { strikethrough: true, color: doneHex } : {})} {...(graphic ? { hover: { underline: true } } : {})}>
@@ -13519,6 +13752,8 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     // Une mère à étapes ouvertes (#198) : « Marquer faite » la clôt avec elles, « Tout clore » (#163),
     // depuis que son carré, qui porte sa flèche, ne fait que la replier.
     const kidsOpen = current.id && !current.done ? openTasks.filter(t => t.parent === current.id && t.id !== current.id).length : 0
+    // #596 : les étapes que « Tout clore » ferme sans qu'on l'ait demandé (prises par une session, ou en attente d'un tiers), nommées.
+    const heldSay = closeKind === 'done' && kidsOpen > 0 ? heldKidsSay(heldKids(allTasks, withOpenKids(allTasks, [taskKey(current)]), me), current) : ''
     // #556 : « Tout clore » passe par le sursis : la mère et ses étapes ouvertes.
     const closeAll = () =>
       void startUndo($, source, [taskKey(current), ...openTasks.filter(t => t.parent === current.id && t.id !== current.id).map(taskKey)], 'famille', taskKey(current))
@@ -15352,6 +15587,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
           {closeCaption(closeKind, { ecriture: source.ecriture, cowork: bilanData.viaCowork })}
         </Text>
         {(live || launched.includes(taskKey(current))) && <Text size="caption" color={palette.lateOn} wrap="wrap">Une session tient cette tâche : elle peut encore l'écrire.</Text>}
+        {heldSay !== '' && <Text size="caption" color={palette.lateOn} wrap="wrap">{heldSay}</Text>}
         {closeKind === 'done' && unsentNow !== undefined && cancelNote !== unsentNow && <Text size="caption" color={palette.lateOn} wrap="wrap">{unsentNow}</Text>}
         {closeKind === 'abandon' && Input && (
           <Input
@@ -15631,6 +15867,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
                         {(live || launched.includes(taskKey(current))) && (
                           <Text size="caption" color={palette.lateOn} wrap="wrap">Une session tient cette tâche : elle peut encore l'écrire.</Text>
                         )}
+                        {heldSay !== '' && <Text size="caption" color={palette.lateOn} wrap="wrap">{heldSay}</Text>}
                         {closeKind === 'done' && unsentNow !== undefined && cancelNote !== unsentNow && (
                           <Text size="caption" color={palette.lateOn} wrap="wrap">{unsentNow}</Text>
                         )}
@@ -15791,6 +16028,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
                   {(live || launched.includes(taskKey(current))) && (
                     <Text size="caption" color={palette.lateOn} wrap="wrap">Une session tient cette tâche : elle peut encore l'écrire.</Text>
                   )}
+                  {heldSay !== '' && <Text size="caption" color={palette.lateOn} wrap="wrap">{heldSay}</Text>}
                   {closeKind === 'done' && unsentNow !== undefined && cancelNote !== unsentNow && (
                     <Text size="caption" color={palette.lateOn} wrap="wrap">{unsentNow}</Text>
                   )}
@@ -16634,6 +16872,8 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   // L'icône d'état d'une ligne cloud, tirée de sa PR, et sa jauge (#440, maquette B6).
   const rowOf = (block: BrandTask): { cloud: CloudPr; mission?: BrandTask['mission'] } => ({ cloud: block.cloud as CloudPr, ...(block.mission ? { mission: block.mission } : {}) })
   const cloudStateMark = (row: { cloud: CloudPr; mission?: BrandTask['mission'] }) => {
+    // #566 : sans nouvelles depuis 12 h, la prise débranchée à la place de la roue (maquette v4).
+    if (cloudQuietWord(row, now)) return Svg ? <Svg source={unplugIcon(palette.block, 12, 'sans nouvelles')} alt="sans nouvelles" width={17} height={12} /> : <Text size="caption" color={palette.blockOn}>⚠</Text>
     const m = cloudRowFiche(row).band.mark
     const word = cloudRowFiche(row).band.word
     if (!Svg) return <Text size="caption" color={palette.text2}>{{ spinner: '◌', person: '✋', merge: '⑂', check: '✓' }[m]}</Text>
@@ -16679,7 +16919,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     // Sa suite dans la file des tests lourds (#321, maquette C) : la pastille à la place de la barre et du compte.
     const queued = block && t.branche !== undefined ? heavyMarks.get(t.branche) : undefined
     const cloud = block?.cloud
-    const tint = cloud ? cloudTints(palette, cloud.state) : undefined
+    const tint = cloud ? (block && cloudQuietWord(block, now) ? { ...cloudTints(palette, cloud.state), word: palette.blockOn } : cloudTints(palette, cloud.state)) : undefined
     // #375 : en test, la fiole et la version, qui ouvrent la session de test ; le numéro garde la session d'origine.
     const test = cloud ? undefined : testOf(t)
     const openTest = test ? () => void openSession($, testEntry(test)) : undefined
@@ -16695,7 +16935,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
           // #440 (maquette B6) : le mot court de sa PR, calé à droite devant sa jauge de six étapes ; la durée garde sa place.
           [
             <Box key={`cloud-words:${t.key}`} {...(Svg ? { width: CLOUD_WORDS_CELLS } : {})} flexShrink={0} minWidth={0} flexDirection="row" alignItems="center" justifyContent="flex-end">
-              <Text size="caption" color={tint.word} wrap="truncate-end">{block ? blockWord({ state: block.state, cloud, ...(block.mission ? { mission: block.mission } : {}) }) : cloudWords(cloud.state).short}</Text>
+              <Text size="caption" color={tint.word} wrap="truncate-end">{block ? cloudQuietWord(block, now) ?? blockWord({ state: block.state, cloud, ...(block.mission ? { mission: block.mission } : {}) }) : cloudWords(cloud.state).short}</Text>
             </Box>,
             ...(Svg && block ? [cloudRowBar(rowOf(block), `cloud-bar:${t.key}`)] : []),
           ]
@@ -16764,7 +17004,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   }
   const blockWordOf = (t: Task, block?: BrandTask) => {
     const test = block?.cloud ? undefined : testOf(t)
-    return test ? testWords(test.version) : blockWord({ state: blockState(t, block), ...(block?.cloud ? { cloud: block.cloud } : {}), ...(block?.mission ? { mission: block.mission } : {}), ...(blockMerged(t, block) ? { merged: true } : {}) })
+    return test ? testWords(test.version) : (block?.cloud ? cloudQuietWord(block, now) : undefined) ?? blockWord({ state: blockState(t, block), ...(block?.cloud ? { cloud: block.cloud } : {}), ...(block?.mission ? { mission: block.mission } : {}), ...(blockMerged(t, block) ? { merged: true } : {}) })
   }
   const blockWordCells = Math.max(0, ...blockTasks.map(t => pxCells(6.5 * [...blockWordOf(t, blockOf.get(t.id as string))].length)))
   // #579 : la colonne de la durée du bloc suit le texte de ses durées, pas le plancher de la bande.
@@ -16782,7 +17022,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     const openTest = test ? () => void openSession($, testEntry(test)) : undefined
     const word = blockWordOf(t, block)
     const merged = !cloud && blockMerged(t, block)
-    const ink = cloud ? cloudTints(palette, cloud.state).word : test || merged ? palette.waitOn : { live: palette.liveOn, wait: palette.blockOn, merge: palette.waitOn, done: palette.finishedOn }[state]
+    const ink = cloud ? (block && cloudQuietWord(block, now) ? palette.blockOn : cloudTints(palette, cloud.state).word) : test || merged ? palette.waitOn : { live: palette.liveOn, wait: palette.blockOn, merge: palette.waitOn, done: palette.finishedOn }[state]
     const checkHex = block?.finished ? palette.finished : palette.done
     const icon = cloud && block
       ? cloudStateMark(rowOf(block))
@@ -17076,7 +17316,9 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
         <Text size="caption" tabular color={palette.text2}>{`${head.block.done}/${head.block.total}`}</Text>
       </Box>
     ) : null
-    const number = t.id ? taskNumber(t.id, rowSession ? () => void openSession($, rowSession.entry) : undefined, t.done || cloudMerged || held, grouped ? (head ? 'content' : 'grow') : undefined, checkable ? { press: pickByNumber, chosen } : undefined) : undefined
+    // #583 : le numéro d'une ligne cloud du bloc ouvre sa conversation quand son lien est connu.
+    const cloudLink = rowSession === undefined && block?.cloud ? cloudSessionLinkOf(block) : undefined
+    const number = t.id ? taskNumber(t.id, rowSession ? () => void openSession($, rowSession.entry) : cloudLink ? () => void openHttpsUrl($, cloudLink).catch(() => undefined) : undefined, t.done || cloudMerged || held, grouped ? (head ? 'content' : 'grow') : undefined, checkable ? { press: pickByNumber, chosen } : undefined) : undefined
     return (
       <Box
         key={`hit:${t.key}`}
@@ -17273,7 +17515,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
                   key="batch-status"
                   label="Statut"
                   options={[{ value: 'Faite' }, { value: 'Ouverte' }]}
-                  onSelect={(v: string) => (v === 'Ouverte' ? run({ status: 'open' }, 'rouvertes')() : void askDone($, picked))}
+                  onSelect={(v: string) => (v === 'Ouverte' ? run({ status: 'open' }, 'rouvertes')() : void askDone($, withOpenKids(allTasks, picked)))}
                 />
               ) : (
                 <Button key="batch-status" label="Rouvrir" onPress={run({ status: 'open' }, 'rouvertes')} />
@@ -17297,29 +17539,39 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   const confirmBar = () => {
     const n = asking.length
     const one = n === 1 ? allTasks.find(t => taskKey(t) === asking[0]) : undefined
-    const question = one ? `${one.id ? `#${one.id}` : `« ${clip(one.label, 30)} »`} faite ?` : `${n} tâches faites ?`
+    // #596 : une mère et ses filles se disent d'un trait, et ce que la mère ferme sans qu'on l'ait demandé se nomme.
+    const family = batchFamily(allTasks, asking)
+    const held = heldKids(allTasks, asking, me)
+    const question = family ? `${familySay(family.mother, family.kids)} ?` : one ? `${one.id ? `#${one.id}` : `« ${clip(one.label, 30)} »`} faite ?` : `${n} tâches faites ?`
     const okLabel = n === 1 ? '✓ Faite' : '✓ Faites'
     // #556 : rien ne s'écrit avant la fin du sursis de 10 s, que « Annuler » de l'encart coupe.
     const ok = () => void startUndo($, source, asking, 'lot')
     const pill = Svg ? pillIcon({ text: okLabel, bg: palette.ok, fg: palette.onAxis, height: SIZE.pill.detail }) : undefined
     if (pill) ghostPressKeys.add('confirm-ok')
     return (
-      <Box key="confirm-bar" flexDirection="row" alignItems="center" gap={SPACE.row} paddingX={SPACE.indent} backgroundColor={palette.doneTint}>
-        <Box flexDirection="row" alignItems="center" flexGrow={1} flexShrink={1} minWidth={0}>
-          <Text weight="semibold" color={palette.text} wrap="truncate-end">{question}</Text>
-        </Box>
-        <Button key="confirm-cancel" plain dimColor label="Annuler" onPress={() => void setView($, () => ({ confirmDone: [] }))} />
-        {pill ? (
-          <Box flexShrink={0}>
-            <Svg source={pill.source} alt={okLabel} width={pill.width} height={pill.height} />
-            <Box position="absolute" top={0} bottom={0} left={0} right={0} flexDirection="row" justifyContent="center" alignItems="center">
-              <Button key="confirm-ok" plain onPress={ok}>
-                {CHECK_OVERLAY.repeat(3)}
-              </Button>
-            </Box>
+      <Box key="confirm" flexDirection="column">
+        <Box key="confirm-bar" flexDirection="row" alignItems="center" gap={SPACE.row} paddingX={SPACE.indent} backgroundColor={palette.doneTint}>
+          <Box flexDirection="row" alignItems="center" flexGrow={1} flexShrink={1} minWidth={0}>
+            <Text weight="semibold" color={palette.text} wrap="truncate-end">{question}</Text>
           </Box>
-        ) : (
-          <Button key="confirm-ok" variant="primary" label={okLabel} onPress={ok} />
+          <Button key="confirm-cancel" plain dimColor label="Annuler" onPress={() => void setView($, () => ({ confirmDone: [] }))} />
+          {pill ? (
+            <Box flexShrink={0}>
+              <Svg source={pill.source} alt={okLabel} width={pill.width} height={pill.height} />
+              <Box position="absolute" top={0} bottom={0} left={0} right={0} flexDirection="row" justifyContent="center" alignItems="center">
+                <Button key="confirm-ok" plain onPress={ok}>
+                  {CHECK_OVERLAY.repeat(3)}
+                </Button>
+              </Box>
+            </Box>
+          ) : (
+            <Button key="confirm-ok" variant="primary" label={okLabel} onPress={ok} />
+          )}
+        </Box>
+        {held.length > 0 && (
+          <Box key="confirm-held" paddingX={SPACE.indent}>
+            <Text size="caption" color={palette.lateOn} wrap="wrap">{heldKidsSay(held, family?.mother)}</Text>
+          </Box>
         )}
       </Box>
     )
@@ -17327,7 +17579,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
 
   // L'encart du sursis (#556, maquette A corrigée, choix du 2026-11-12) : à la place de la ligne de la liste, sur la
   // teinte des faites, derrière une question posée entre-temps et devant la barre de sélection ; « Annuler »
-  // (un bouton de l'app) rend les lignes et la sélection, le filet `ok` de 2 px se vide sur le temps restant.
+  // (un bouton de l'app) rend les lignes et la sélection, et le compteur « 8 s » le précède (#596).
   const undoBar = () => {
     const undo = undoNow as DoneUndo
     const left = Math.max(0, undo.until - now)
@@ -17337,9 +17589,13 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
           <Box flexDirection="row" alignItems="center" flexGrow={1} flexShrink={1} minWidth={0}>
             <Text weight="semibold" color={palette.text} wrap="truncate-end">{undoSay(undo, allTasks)}</Text>
           </Box>
+          {Svg && (
+            <Box flexShrink={0}>
+              <Svg source={undoCountIcon(palette.text2, left)} alt="Secondes restantes pour annuler" width={28} height={16} isInteractive />
+            </Box>
+          )}
           <Button key="undo-cancel" label="Annuler" onPress={() => void cancelUndo($)} />
         </Box>
-        {Svg && <Svg source={undoTimerIcon(palette.ok, left, UNDO_MS, fullWidth((e.props as { bodyColumns?: number }).bodyColumns ?? 48))} alt="Temps restant pour annuler" height={2} isInteractive />}
       </Box>
     )
   }
@@ -18027,7 +18283,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     ...(ownSession?.id ? { selfId: ownSession.id } : {}),
     skip: finishedSkip,
   })
-  const finishedRefused = finished.filter(s => finishedBatch?.refused.has(s.sessionId))
+  const finishedRefused = finished.filter(s => finishedBatch?.refused.has(s.sessionId) || finishedBatch?.asked.has(s.sessionId))
   const finishedAfter = finishedBatch !== undefined && finishedRefused.length > 0
   const toggleFinished = () => {
     finishedFolded = !finishedFolded
@@ -18035,7 +18291,9 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   }
   const finishedRow = (s: FinishedSession) => {
     const task = doneTasks.find(t => t.id === s.id)
-    const refused = finishedBatch?.refused.has(s.sessionId) === true
+    // #601 : le motif en mots simples, ou « demandée à Claude » quand la demande est partie dans la conversation.
+    const refusedWhy = finishedBatch?.refused.get(s.sessionId)
+    const asked = finishedBatch?.asked.has(s.sessionId) === true
     return (
       <Box key={`finished:${s.sessionId}`} flexDirection="row" alignItems="center" gap={SPACE.row} paddingX={SPACE.indent} hover={{ backgroundColor: palette.hover }}>
         {/* #544 (écarts de la preuve #541) : au gabarit d'une ligne de la liste, comme la maquette A. La marque du carré se
@@ -18050,7 +18308,13 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
         </Box>
         <Box flexGrow={1} />
         <Box flexShrink={0}>
-          {refused ? <Text size="caption" color={palette.lateOn}>refusée par l'app</Text> : <Text size="caption" tabular color={palette.text2}>{closedWhen(task?.fait, today)}</Text>}
+          {refusedWhy !== undefined ? (
+            <Text size="caption" color={palette.lateOn}>{`refusée : ${refusedWhy}`}</Text>
+          ) : asked ? (
+            <Text size="caption" color={palette.text2}>demandée à Claude</Text>
+          ) : (
+            <Text size="caption" tabular color={palette.text2}>{closedWhen(task?.fait, today)}</Text>
+          )}
         </Box>
       </Box>
     )

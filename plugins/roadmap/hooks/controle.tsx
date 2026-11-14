@@ -1,10 +1,12 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, RenderElement, RenderInput } from 'claude-code'
 
-import { archiveIcon, checkIcon, closeIcon, controlIcon, controlNodeIcon, pauseIcon, pausedIcon, pausingIcon, pillIcon, playIcon, priorityIcon, spinnerIcon, squareIcon, stepsBarIcon, axisColor, externalIcon, handIcon, clockIcon, type Palette } from './icons'
+import { archiveIcon, checkIcon, closeIcon, cloudIcon, controlIcon, controlNodeIcon, mergeIcon, pauseIcon, pausedIcon, pausingIcon, pillIcon, playIcon, priorityIcon, spinnerIcon, squareIcon, stepsBarIcon, axisColor, externalIcon, handIcon, clockIcon, unplugIcon, type Palette } from './icons'
 import { SPACE } from './tokens'
 import {
   controlView,
+  controlFilter,
+  controlFolders,
   globalQueueOrder,
   pausingPill,
   keyPart,
@@ -17,6 +19,7 @@ import {
   queuedLine,
   queueRank,
   type ChildStatus,
+  type CloudControlInput,
   type ControlCard,
   type GlobalQueued,
   type SessionPause,
@@ -27,6 +30,12 @@ import {
 // toutes les sessions de tâche du Mac en une liste, En cours en haut, la file d'attente sous son palier. Il ne fait
 // rien lui-même : chaque geste écrit une demande dans le store (pauses, ordre de la file, marques de priorité) que le
 // Maestro de la session exécute à son pas. Il existe dans toute session, Maestro ou non.
+//
+// #583 (maquette A de docs/plans/feat-centre-de-controle-cloud-et-dossiers) : les sessions cloud des roadmaps connues
+// entrent dans En cours après celles du Mac, sans rang, avec « Ouvrir » (leur conversation, sinon leur PR) et « PR n » ;
+// ni Pause, ni Prioritaire, ni Archiver, ni file : le Mac ne les arrête pas. La file se dit « du Mac ». Des filtres par
+// dossier (projet) sous le titre quand il y en a deux ou plus ; avec un seul, le titre le dit (« · dossier ») et les
+// cartes n'ont plus d'étiquette. Le filtre ne vaut que pour le dessin : les gestes lisent toujours les données entières.
 
 export const CONTROL_PANE = 'controle'
 
@@ -74,6 +83,10 @@ export type ControlDeps = {
   closed: () => Promise<Set<string>>
   /** Archive la session (l'outil de l'app) ; lève avec le motif d'un refus. */
   archive: (sessionId: string) => Promise<void>
+  /** Les sessions cloud en cours, de tous les projets connus (#583) ; lues au plus toutes les 60 s côté `register.tsx`. */
+  cloud: () => Promise<CloudControlInput[]>
+  /** Ouvre une adresse en https dans le navigateur (#583) ; lève avec un mot lisible si elle est refusée. */
+  openUrl: (url: string) => Promise<void>
   /** Ouvre la fiche de la tâche #N de la roadmap de cette session dans le volet de la roadmap (#386). */
   openFiche: (id: string) => Promise<void>
   /** Pose la zone de clic d'un texte : enregistre son geste et rend la clé de sa région Client. */
@@ -96,7 +109,7 @@ export type ControlData = {
 
 export async function controlData(deps: ControlDeps): Promise<ControlData> {
   const { rows, note } = await deps.rows()
-  const [pauses, queue, stored, own, heavy, maestros, closed] = await Promise.all([deps.pauses(), deps.queue(), deps.marks(), deps.ownPrio(), deps.heavyBranches(), deps.maestros(rows), deps.closed()])
+  const [pauses, queue, stored, own, heavy, maestros, closed, cloud] = await Promise.all([deps.pauses(), deps.queue(), deps.marks(), deps.ownPrio(), deps.heavyBranches(), deps.maestros(rows), deps.closed(), deps.cloud().catch(() => [] as CloudControlInput[])])
   // la priorité posée dans la roadmap (la fiche, le clic d'une autre session) compte comme une marque
   const marks = new Set(stored)
   if (own) for (const id of own.ids) marks.add(`${own.project}#${id}`)
@@ -111,7 +124,7 @@ export async function controlData(deps: ControlDeps): Promise<ControlData> {
   const statuses = new Map(pairs)
   const statusOf = (id: string) => statuses.get(id)
   const projectOf = deps.projectOf(queue)
-  const view = controlView({ rows, queue, pauses, marks, statusOf, createdOf: deps.createdOf, heavyBranches: heavy, maestros, projectOf, closed })
+  const view = controlView({ rows, queue, pauses, marks, statusOf, createdOf: deps.createdOf, heavyBranches: heavy, maestros, projectOf, closed, cloud })
   const places = await deps.places(rows, statusOf, pauses)
   return { rows, note, pauses, queue, marks, own, projectOf, view, taken: places.taken, max: places.max }
 }
@@ -294,8 +307,9 @@ async function moveByOne($: EngineInterface, deps: ControlDeps, key: string, by:
   if (rank > 0) controlInfo = `#${entry.id} est maintenant ${queueRank(rank)}`
 }
 
-/** La racine du projet d'une carte : celle de son entrée de la file, sinon celle du dossier de sa session. */
+/** La racine du projet d'une carte : celle de son entrée de la file, sinon celle du dossier de sa session (cloud : celle de sa clé). */
 function cardRoot(d: ControlData, card: ControlCard): string {
+  if (card.cloud) return card.key.slice('cloud:'.length, card.key.lastIndexOf('#'))
   const entry = card.sessionId && card.state !== 'paused' ? undefined : entryOf(d.queue, card.key)
   if (entry) return entry.project
   const rowOf = card.sessionId ? d.rows.find(r => (r as { sessionId?: unknown }).sessionId === card.sessionId) : undefined
@@ -315,9 +329,12 @@ async function showFiche(deps: ControlDeps, d: ControlData, card: ControlCard): 
   if (d.own && cardRoot(d, card) === d.own.project) return deps.openFiche(card.id)
   const own = d.own ? d.own.project.split('/').filter(Boolean).pop() ?? d.own.project : undefined
   const here = own ? `ce panneau ne lit que la roadmap ${ofName(own)}` : 'ce panneau ne lit aucune roadmap'
-  const next = card.sessionId ? 'sa session s\'ouvre, sa fiche est dans son panneau' : `sa fiche est dans le panneau ${ofName(card.project)}`
+  const conversation = card.cloud?.session
+  const next = card.sessionId || conversation ? 'sa session s\'ouvre, sa fiche est dans son panneau' : `sa fiche est dans le panneau ${ofName(card.project)}`
   controlInfo = `#${card.id} est une tâche ${ofName(card.project)} : ${here} ; ${next}.`
-  if (card.sessionId) await deps.open(card.sessionId, card.title, card.link)
+  // #583 : une session cloud s'ouvre par son lien, pas par la liste du Mac
+  if (conversation) await deps.openUrl(conversation)
+  else if (card.sessionId) await deps.open(card.sessionId, card.title, card.link)
 }
 
 /** Prioritaire : la marque du projet, la priorité de l'entrée de la file, et `prio:oui` dans la roadmap de cette session si la tâche en est. */
@@ -397,6 +414,9 @@ export async function redrawControl($: EngineInterface): Promise<void> {
 
 const STEP_BAR_WIDTH = 96
 
+/** Le dossier choisi par les filtres (#583), gardé le temps du module ; `undefined` : « Tous ». */
+let controlFolder: string | undefined
+
 /** Les segments d'une barre d'étapes d'après le compte de la carte : faites, l'étape en cours, à faire. */
 function segmentsOf(steps: { done: number; total: number }): StepSegment[] {
   return Array.from({ length: steps.total }, (_, i): StepSegment => (i < steps.done ? 'done' : i === steps.done ? 'now' : 'todo'))
@@ -412,7 +432,15 @@ export async function drawControl($: EngineInterface, e: RenderInput<'Pane'>, pa
   const d = await controlData(deps)
   lastSignature = signatureOf(d)
   watchControl($)
-  const { running, queued } = d.view
+  const { running: allRunning, queued: allQueued } = d.view
+  // #583 : les dossiers des cartes ; un filtre dont le dossier a disparu, ou qui n'a plus de pair, ramène à « Tous »
+  const folders = controlFolders([...allRunning, ...allQueued])
+  if (controlFolder !== undefined && !folders.some(f => f.name === controlFolder)) controlFolder = undefined
+  const oneFolder = folders.length === 1
+  const folder = folders.length >= 2 ? controlFolder : undefined
+  const running = controlFilter(allRunning, folder)
+  const queued = controlFilter(allQueued, folder)
+  const cloudCount = allRunning.filter(c => c.cloud).length
   const full = d.taken >= d.max
   // #386 : la zone de clic du numéro et du titre de chaque carte, qui ouvre sa fiche : une seule par carte et par dessin
   const ficheZones = new Map<string, string>()
@@ -498,7 +526,66 @@ export async function drawControl($: EngineInterface, e: RenderInput<'Pane'>, pa
     )
   }
 
+  /**
+   * #583 (maquette A) : la carte d'une session cloud. Nœud au nuage sans rang, la roue, la main ou la coche, ni barre
+   * d'étapes ni Pause, Prioritaire, Archiver ou flèches ; « Ouvrir » mène à sa conversation (sinon sa PR), « PR n » à sa PR.
+   */
+  const cloudCard = (c: ControlCard, k: NonNullable<ControlCard['cloud']>) => {
+    const done = k.tone === 'done'
+    // #566 (maquette v4) : sans nouvelles depuis 12 h, la prise débranchée, le bord et le mot d'alerte (`block`).
+    const quiet = k.tone === 'quiet'
+    const [mark, markAlt] = quiet ? [unplugIcon(palette.block, 14, 'sans nouvelles'), 'sans nouvelles'] : done ? [checkIcon(palette.finished, 14), 'prête'] : k.tone === 'wait' ? [handIcon(palette.wait, 14), "t'attend"] : [spinnerIcon(palette.live, 14), 'tourne']
+    const node = controlNodeIcon(palette, { kind: 'cloud', n: 0 })
+    const pills: RenderElement[] = []
+    if (quiet) {
+      const alert = pill('sans nouvelles', palette.blockTint, palette.blockOn)
+      pills.push(
+        Svg ? (
+          <Box key="pill:quiet" flexDirection="row" alignItems="center" gap={SPACE.tight} flexShrink={0}>
+            {icon(unplugIcon(palette.blockOn, 12, 'sans nouvelles'), 'sans nouvelles', 17, 12)}
+            {alert}
+          </Box>
+        ) : (
+          alert
+        ),
+      )
+    } else if (k.tone === 'wait') pills.push(pill("t'attend", palette.waitTint, palette.waitOn))
+    else if (done) pills.push(pill('prête', palette.finishedTint, palette.finishedOn))
+    const link = k.session ?? k.pr?.url
+    const buttons: RenderElement[] = []
+    if (link) buttons.push(gesture(`ctl:open:${keyPart(c.key)}`, externalIcon(palette.text3, 14), 'Ouvrir la conversation', 'Ouvrir', () => void act($, () => deps.openUrl(link), '')))
+    const prUrl = k.pr?.url
+    if (prUrl) buttons.push(gesture(`ctl:pr:${keyPart(c.key)}`, mergeIcon(palette.text3, 14), 'Ouvrir la PR', k.pr?.number !== undefined ? `PR ${k.pr.number}` : 'PR', () => void act($, () => deps.openUrl(prUrl), '')))
+    const progress = `${k.word}${k.pr?.number !== undefined ? ` · PR ${k.pr.number}` : ''}`
+    return (
+      <Box key={`card:${c.key}`} flexDirection="row" alignItems="flex-start" gap={SPACE.row}>
+        <Box flexShrink={0}>{icon(node.source, 'session cloud', node.width, node.height)}</Box>
+        <Box flexGrow={1} flexShrink={1} minWidth={0} flexDirection="column" gap={SPACE.tight} borderStyle="round" borderColor={quiet ? palette.block : done ? palette.finished : palette.border} paddingX="sm" paddingY="xs">
+          <Box flexDirection="row" alignItems="center" gap={SPACE.row}>
+            <Box flexShrink={0}>{icon(mark, markAlt, quiet ? 20 : 14, 14)}</Box>
+            {heading(c)}
+            {!oneFolder && tag(c)}
+          </Box>
+          <Box flexDirection="row" alignItems="center" gap={SPACE.row}>
+            <Box flexGrow={1} flexShrink={1} minWidth={0}>
+              <Text size="caption" color={quiet ? palette.blockOn : palette.text2} wrap="truncate-end">{progress}</Text>
+            </Box>
+            <Box flexDirection="row" alignItems="center" gap={SPACE.tight} flexShrink={0}>
+              {icon(cloudIcon(palette.text3, 12), 'Dans le cloud', 12)}
+              {caption('cloud', palette.text3)}
+            </Box>
+            {pills}
+          </Box>
+          <Box flexDirection="row" alignItems="center" gap={SPACE.tight} flexWrap="wrap">
+            {buttons}
+          </Box>
+        </Box>
+      </Box>
+    )
+  }
+
   const card = (c: ControlCard, rank: number, zone: 'run' | 'queue', moves: { up: boolean; down: boolean } = { up: false, down: false }) => {
+    if (c.cloud) return cloudCard(c, c.cloud)
     const [mark, markAlt] = stateMark(c)
     const done = c.state === 'done'
     // #415 : une session en pause se reconnaît dans la file à son nœud pause, sans rang
@@ -570,7 +657,7 @@ export async function drawControl($: EngineInterface, e: RenderInput<'Pane'>, pa
           <Box flexDirection="row" alignItems="center" gap={SPACE.row}>
             <Box flexShrink={0}>{icon(mark, markAlt, 14)}</Box>
             {heading(c)}
-            {tag(c)}
+            {!oneFolder && tag(c)}
           </Box>
           <Box flexDirection="row" alignItems="center" gap={SPACE.row}>
             {bar}
@@ -603,14 +690,30 @@ export async function drawControl($: EngineInterface, e: RenderInput<'Pane'>, pa
   })
   // #415 (maquette C) : un seul bouton dans le titre, « Tout en pause » tant qu'une session tourne, « Tout reprendre »
   // quand rien ne tourne et qu'une session attend sa reprise à la main.
-  const toPause = pauseAllTargets(running).length
-  const toResume = d.queue.filter(e => e.kind === 'resume' && e.held && queued.some(c => c.key === queueCardKey(e))).length + queued.filter(c => c.orphan).length
+  // le bouton agit sur tout le Mac (les gestes lisent les données entières), pas sur le seul dossier montré
+  const toPause = pauseAllTargets(allRunning).length
+  const toResume = d.queue.filter(e => e.kind === 'resume' && e.held && allQueued.some(c => c.key === queueCardKey(e))).length + allQueued.filter(c => c.orphan).length
   const general =
     toPause > 0
       ? gesture('ctl:pause-all', pauseIcon(palette.block, 14), 'Tout mettre en pause', 'Tout en pause', () => void act($, () => pauseAll($, deps)))
       : toResume > 0
         ? gesture('ctl:resume-all', playIcon(palette.live, 14), 'Tout reprendre', 'Tout reprendre', () => void act($, () => resumeAll($, deps)))
         : null
+
+  // #583 : les filtres par dossier, à partir de deux dossiers ; le choisi est teinté, les autres atténués.
+  const chip = (key: string, name: string, count: number, tone: number | undefined, chosen: boolean) => (
+    <Box key={`chip:${key}`} flexDirection="row" alignItems="center" gap={SPACE.tight} paddingX="sm" paddingY={0} flexShrink={0} {...(chosen ? { backgroundColor: palette.liveTint } : {})}>
+      {tone !== undefined && icon(squareIcon(axisColor(palette, tone), 8), `dossier ${name}`, 8)}
+      <Button key={key} plain dimColor={!chosen} label={`${name} ${count}`} onPress={() => void act($, async () => void (controlFolder = name === 'Tous' ? undefined : name), '')} />
+    </Box>
+  )
+  const filters =
+    folders.length >= 2 ? (
+      <Box key="folders" flexDirection="row" alignItems="center" gap={SPACE.tight} flexWrap="wrap">
+        {chip('ctl:folder:all', 'Tous', allRunning.length + allQueued.length, undefined, folder === undefined)}
+        {folders.map(f => chip(`ctl:folder:${keyPart(f.name)}`, f.name, f.count, f.tone, folder === f.name))}
+      </Box>
+    ) : null
 
   return (
     <Box flexDirection="column" gap={SPACE.block} paddingX={SPACE.indent} paddingTop="sm" paddingBottom="md">
@@ -620,12 +723,19 @@ export async function drawControl($: EngineInterface, e: RenderInput<'Pane'>, pa
           <Text size="heading" weight="semibold">
             Centre de contrôle
           </Text>
+          {oneFolder && (
+            <Text size="heading" color={palette.text2}>
+              {`· ${folders[0]?.name}`}
+            </Text>
+          )}
         </Box>
         <Box flexDirection="row" alignItems="center" gap={SPACE.row} flexShrink={0}>
           {general}
-          {pill(`Mac ${d.taken}/${d.max} · ${queued.length} en file`, full ? palette.blockTint : palette.liveTint, full ? palette.blockOn : palette.liveOn)}
+          {pill(`Mac ${d.taken}/${d.max} · ${allQueued.length} en file`, full ? palette.blockTint : palette.liveTint, full ? palette.blockOn : palette.liveOn)}
+          {cloudCount > 0 && pill(`Cloud ${cloudCount}`, palette.btn, palette.text2)}
         </Box>
       </Box>
+      {filters}
       {unreadable && <Box key="note">{caption(d.note, palette.lateOn)}</Box>}
       {controlNote !== '' && <Box key="act-note">{caption(controlNote, palette.lateOn)}</Box>}
       {controlInfo !== '' && <Box key="act-info">{caption(controlInfo, palette.text2)}</Box>}
@@ -636,20 +746,20 @@ export async function drawControl($: EngineInterface, e: RenderInput<'Pane'>, pa
           En cours
         </Text>
         <Box flexShrink={1} minWidth={0}>
-          {caption(`${running.length} · prioritaires en tête, puis par ordre de lancement`, palette.text3)}
+          {caption(running.some(c => c.cloud) ? `${running.length} · Mac d'abord, puis cloud, par ordre de lancement` : `${running.length} · prioritaires en tête, puis par ordre de lancement`, palette.text3)}
         </Box>
       </Box>
       <Box key="run-list" flexDirection="column" gap={SPACE.tight}>
-        {running.map((c, i) => card(c, i + 1, 'run'))}
+        {running.map((c, i) => card(c, c.cloud ? 0 : i + 1, 'run'))}
         {running.length === 0 && (unreadable ? null : caption('Rien ne tourne.', palette.text3))}
       </Box>
 
       <Box key="palier" flexDirection="row" alignItems="center" gap={SPACE.row} paddingX="sm" backgroundColor={palette.blockTint}>
         <Text size="caption" weight="semibold" color={palette.blockOn}>
-          {`File d'attente · ${queued.length}`}
+          {`File du Mac · ${queued.length}`}
         </Text>
         <Text size="caption" color={palette.blockOn}>
-          {queued.length > 0 ? 'partent dans cet ordre' : 'vide'}
+          {queued.length > 0 ? "partent dans cet ordre quand une place se libère · une tâche cloud n'y passe jamais" : 'vide'}
         </Text>
       </Box>
       <Box key="queue-zone" flexDirection="column" gap={SPACE.tight} paddingX="sm" paddingY="xs" backgroundColor={palette.note}>

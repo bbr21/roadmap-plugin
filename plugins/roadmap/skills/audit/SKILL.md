@@ -68,7 +68,8 @@ an open child is never `sans_due`), `doublons_possibles` (pairs with close words
 threshold 0.3: a lead, not a verdict; each says which one to keep, `garder`, and the other's words
 it lacks, `a_reprendre`), `axes_a_plat`, `regroupements` and `seules` (#284, below), `heritage`
 (the keys a child takes from its parent), `pistes_preuve`, `questions`, `en_attente` (below),
-`frictions` (#462, below), and `regles`, `grain` and `conformite` (#567, below).
+`frictions` (#462, below), `regles`, `grain` and `conformite` (#567, below), and `noms_confondus`
+(#598, below).
 
 **Rules and conformity** (#567):
 
@@ -224,12 +225,19 @@ carrying its `operations` for `tasks.py write`:
 |---|---|---|
 | `late` | `due:` before today | reschedule to next Monday, done, pause, drop |
 | `undated` | no `due:` (a parent with an open child never is) | date to next Monday, done, pause, drop |
+| `name` (key `noms-<parent>`, #598) | open children whose `nom:` repeats their parent's name | rename them to the proposed names (`update` of `nom`), keep the names |
 
 The recommendation: a proof lead → « Faite » at the lead's date; more than 30 days late → « En
 pause »; otherwise the date. A line taken by a session only offers reschedule and done; a parent
 with an open child only offers two dates. **Pause** (#159): `due:` becomes the resume date (the
 Monday after four weeks), the task moves to « Plus tard », its note says « (en pause depuis le
 JJ/MM : raison) ».
+
+**Names that blur** (#598): `noms_confondus` lists, per open parent, its open children whose `nom:`
+repeats a subject word of the parent's name (`repris`) or equals it (`egal`), with the proposed name
+(`propose`: the child's name without the parent's words, « Fichiers de la fiche » → « Fichiers » under
+« Fiche d'une tâche »; `null` when nothing of its own is left, to name by hand). Its `name` question
+renames them through `tasks.py write`, which refuses a new confusing name.
 
 **Look for proof** where `preuves` says, before asking about a late task:
 

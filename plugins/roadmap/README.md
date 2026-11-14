@@ -244,9 +244,10 @@ et dit en une ligne ce qu'elle montre, ou pourquoi rien : session de tâche ou l
 (son Maestro porte la bande), aucune session en cours dans le projet (#385), roadmap absente ou illisible, question de la
 boîte de fin à l'écran, app qui n'a jamais demandé la bande. Une session renommée « Maestro … » ou
 qui vient de dire « Maestro » voit aussi sa bande paraître seule, sans attendre qu'une session bouge.
-Une session au titre laissé à la main (« AAFES 258.1 ») qui dit « Maestro » prend le nom du dossier
-de son projet, « Maestro · AAFES Cowork » (#439), une fois : un titre déjà « Maestro … » ou de tâche
-ne change pas.
+Une session qui dit « Maestro » prend le seul nom court de son projet (`name` de son
+`.claude/roadmap.json` : « AAFES », pas « AAFES Cowork »), que l'app l'ait titrée « Maestro » d'après ce
+premier message ou qu'elle porte un titre laissé à la main (#597, suite de #439), une fois : renommée
+ensuite, elle garde son nom ; un titre de tâche ne change pas. Elle reste reconnue par sa marque.
 
 **Les mots d'état du panneau** (#174) : « Completed » pour une tâche close (bande de Maestro, voies,
 pastille violette de sa fiche) et « Done » pour ce qui est fait (« 7/7 Done », « N Done » de l'en-tête,
@@ -387,7 +388,16 @@ filtres, « Qui », les rangements) vaut dans tout projet.
   l'arbre est rangé par axe, #168). `"ranger_par": "projet"` range
   l'arbre en bandes repliables, une par valeur de la clé (les déclarées dans leur ordre, puis les
   autres, puis « Sans projet »), les blocs sous la valeur de leur parent. Une clé non déclarée
-  dans `cles` est ignorée, et le doctor le dit.
+  dans `cles` est ignorée, et le doctor le dit. Le contrôle de chaque écriture relit `cles` dans
+  `.claude/roadmap.json` au moment où il contrôle (#591) : une clé déclarée pendant un tour vaut dès
+  l'écriture suivante, dans cette session comme dans celles ouvertes avant.
+- **La clé `routine:`** (#591) : déclarée dans `cles` (`"routine": []`), elle relie une récurrente à la
+  routine cloud qui l'exécute seule (sa valeur, le nom de la routine). Au démarrage, une fois par jour
+  (comme les étapes de journée, #277), une telle ligne dont le `due:` est passé avance au premier
+  `due + période × k` qui n'est pas avant aujourd'hui, quel que soit son rythme `tous:` et avec ou sans
+  parent : ni occurrence close, ni retard. Restent à leur date une ligne à `cycle:` et une étape sous
+  une coquille `a_preuve`. Sans `routine:`, seules les étapes `tous:semaine` et `tous:2semaines` sous
+  un parent avancent ainsi ; une quotidienne ou une mensuelle reste en retard.
 - **Les règles du projet** (#158), dans tout projet. Tout projet a son fichier de règles,
   `ROADMAP-REGLES.md`, à côté de `ROADMAP.md` (#167) : ce qui devient une tâche, ce qui n'en
   devient jamais une, les règles du projet et ses preuves. L'onboarding le pose depuis un modèle
@@ -578,6 +588,18 @@ chaque projet qui a une roadmap :
 
 Pour adBricks, le repo et ses worktrees comptent comme le projet du dossier Adbricks Cowork, qui
 porte la roadmap. Le réglage `capture` coupe les deux.
+
+## Document à valider ouvert d'un clic (#587)
+
+Règle fixe, jointe à chaque message d'un projet à roadmap avec « Proposer une task » : tout document qu'une
+session demande à lire ou à valider (note, task file, email, plan, classeur, PDF, maquette, fichier MD) arrive
+avec un lien Markdown, `[le nom du document](chemin)`, qui l'ouvre à côté du chat dans la session où la
+personne lit. Le document vit dans le dossier du projet, jamais dans le scratchpad, `/tmp`,
+`side-session-notes` ni « Claude outputs/ » ; sous Maestro, une sous-session le copie dans le dossier de
+Maestro (`.claude/a-valider/<id>/`) et Maestro recopie le lien tel quel ; le volet ouvre le Markdown, le xlsx, le PDF et
+le HTML, un docx se double d'une version lisible ; en cloud, le document se publie en Artifact privé (un lien GitHub d'un dépôt privé s'ouvre en 404 dans le navigateur de l'app). En fin de tour,
+un message qui demande une validation (« valide », « relis », « je te laisse lire ») sans lien ouvrable reçoit
+son rappel (`reviewLinkGap`). La matrice des essais : `docs/plans/feat-document-a-valider/matrice.md`.
 
 ## Sur un compte Team ou Enterprise (#116)
 
@@ -840,6 +862,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.300.0 (2026-11-13)** : roadmap : document à valider d'un clic (#587), nom court de Maestro (#597), Centre de contrôle cloud et dossiers (#583), noms distincts mère/filles (#598), marquer faite mère et compteur (#596), clé routine (#591), fausse alerte d'archivage (#602), archivage refusé via Claude (#601)
 - **0.299.3 (2026-11-13)** : roadmap : la jauge d'une mère est calée à droite, avant le ▶ (#595, suite de #552)
 - **0.299.2 (2026-11-13)** : roadmap : la clôture d'une ligne cloud poste le signal sur sa PR (#588), la carte cloud demandée en user_asked garde son modèle (#575)
 - **0.299.1 (2026-11-13)** : roadmap : la durée du bloc En session ne coupe plus le titre étroit trop tôt (#579)

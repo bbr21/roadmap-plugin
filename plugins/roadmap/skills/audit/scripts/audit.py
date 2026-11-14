@@ -286,6 +286,130 @@ def regroupements(taches, noms=frozenset()):
     return sortie
 
 
+# ---------------------------------------------------------------- #598 : noms distincts entre mère et filles
+
+# Les petits mots qui mènent un mot du sujet (« de la fiche », « depuis la fiche ») : les mots vides,
+# et ceux que la liste fermée des mots vides laisse compter dans un bilan.
+PETITS_MOTS = frozenset(MOTS_VIDES | {"depuis", "des", "avant", "apres"})
+JETON_NOM = re.compile(r"[^\W\d_]+['’]|[\w-]+|\S")
+
+
+def _racine_du_mot(mot):
+    """Le mot d'un nom ramené à sa racine de sujet, ou None s'il ne dit pas le sujet : plus de deux
+    lettres, pas un nombre, pas un mot vide, un -s ou -x final ôté au-delà de quatre lettres."""
+    m = _sans_accents(mot).lower()
+    if len(m) <= 2 or m.isdigit() or m in MOTS_VIDES:
+        return None
+    return m[:-1] if len(m) > 4 and m[-1] in "sx" else m
+
+
+def mots_du_nom(nom):
+    """Les mots du sujet d'un nom : ses mots signifiants, sans accents, un pluriel ramené au singulier
+    (« fiches » = « fiche », mais « fichiers » n'est pas « fiche »)."""
+    return {r for r in (_racine_du_mot(m) for m in mots(nom)) if r}
+
+
+def _texte_normalise(nom):
+    return " ".join(re.findall(r"[a-z0-9]+", _sans_accents(nom or "").lower()))
+
+
+def noms_confondus(nom_mere, nom_fille):
+    """None si le nom de la fille ne reprend aucun mot du sujet de la mère ; sinon {"egal", "repris"} :
+    `egal` quand, ces mots ôtés, il ne lui reste aucun mot du sujet à elle."""
+    mere, fille = mots_du_nom(nom_mere), mots_du_nom(nom_fille)
+    if not fille:
+        if _texte_normalise(nom_mere) and _texte_normalise(nom_mere) == _texte_normalise(nom_fille):
+            return {"egal": True, "repris": []}
+        return None
+    repris = sorted(mere & fille)
+    if not repris:
+        return None
+    return {"egal": not (fille - mere), "repris": repris}
+
+
+def _petit(jeton):
+    """Un jeton qui n'est qu'un petit mot (« de », « d' », « depuis »), ou de la ponctuation."""
+    brut = _sans_accents(jeton).lower().replace("'", "").replace("’", "")
+    return brut in PETITS_MOTS or not re.search(r"\w", brut)
+
+
+def nom_distinct(nom_mere, nom_fille):
+    """Le nom proposé à la fille : le sien sans les mots de la mère ni les petits mots qui les menaient,
+    la majuscule remise. None si rien du sujet ne reste, ou si le résultat se confond encore."""
+    mere = mots_du_nom(nom_mere)
+    gardes, texte_fille = [], nom_fille or ""
+    # Chaque jeton garde l'espace qui le précédait dans le nom (« /config » reste collé).
+    for m in JETON_NOM.finditer(texte_fille):
+        jeton, espace = m.group(0), m.start() > 0 and texte_fille[m.start() - 1].isspace()
+        if not jeton.endswith(("'", "’")) and _racine_du_mot(jeton) in mere:
+            while gardes and _petit(gardes[-1][0]):
+                gardes.pop()
+            continue
+        gardes.append((jeton, espace))
+    while gardes and _petit(gardes[0][0]):
+        gardes.pop(0)
+    while gardes and _petit(gardes[-1][0]):
+        gardes.pop()
+    texte = "".join((" " if espace and k else "") + jeton for k, (jeton, espace) in enumerate(gardes))
+    texte = texte[:1].upper() + texte[1:]
+    if not mots_du_nom(texte) or noms_confondus(nom_mere, texte):
+        return None
+    return texte
+
+
+def _titre_de_mere(libelle):
+    """Le nom d'une mère sans `nom:` : le titre court de `tasks.py` (cinq mots, coupés au mot sous 40 caractères)."""
+    sortie = []
+    for m in libelle.replace("`", "").split()[:5]:
+        if len(" ".join(sortie + [m])) > 40:
+            break
+        sortie.append(m)
+    return " ".join(sortie) or libelle[:40]
+
+
+def familles_confondues(taches):
+    """Par mère ouverte, ses filles ouvertes au `nom:` écrit qui redisent le sien : [{"mere", "nom_mere",
+    "filles": [{"id", "nom", "egal", "repris", "propose"}]}], par numéro de mère. Les autres filles
+    n'ont rien à refuser."""
+    par_id = {t["id"]: t for t in taches}
+    familles = []
+    for mere in sorted((t for t in taches if t["enfants"]), key=lambda t: _num(t["id"])):
+        nom_mere = (mere["champs"].get("nom") or "").strip() or _titre_de_mere(mere["libelle"])
+        filles = []
+        for i in mere["enfants"]:
+            nom = ((par_id[i]["champs"].get("nom") or "").strip()) if i in par_id else ""
+            conf = noms_confondus(nom_mere, nom) if nom else None
+            if conf:
+                filles.append({"id": i, "nom": nom, "egal": conf["egal"], "repris": conf["repris"],
+                               "propose": nom_distinct(nom_mere, nom)})
+        if filles:
+            familles.append({"mere": mere["id"], "nom_mere": nom_mere, "filles": filles})
+    return familles
+
+
+def questions_de_noms(familles, taches, jour):
+    """Une question par famille confondue : renommer les filles (la recommandation) ou garder les noms."""
+    par_id = {t["id"]: t for t in taches}
+    questions = []
+    for f in familles:
+        renommer = [x for x in f["filles"] if x["propose"]]
+        if renommer:
+            premiere = {"label": "Renommer : " + ", ".join("#%s « %s »" % (x["id"], x["propose"]) for x in renommer)
+                        + " (recommandé)",
+                        "operations": [{"op": "update", "id": x["id"], "fields": {"nom": x["propose"]}}
+                                       for x in renommer]}
+        else:
+            premiere = {"label": "Les nommer à la main (recommandé)", "operations": []}
+        redites = ", ".join("#%s « %s »" % (x["id"], x["nom"]) for x in f["filles"])
+        questions.append({
+            "key": "noms-%s" % f["mere"], "task": f["mere"], "kind": "name",
+            "priority": _priorite(par_id[f["mere"]], par_id), "asked": jour,
+            "question": "Les filles de #%s « %s » redisent son nom (%s) : les nommer par ce qui les distingue ?"
+                        % (f["mere"], f["nom_mere"], redites),
+            "options": [premiere, {"label": "Garder les noms", "operations": []}]})
+    return questions
+
+
 # ---------------------------------------------------------------- #567 : l'audit selon les règles du projet
 
 # Le grain du tronc (#566 branchera ici le réglage du projet, source « projet »).
@@ -551,6 +675,7 @@ def releve(dossier, jour=None, perso="~/.claude/roadmap-perso.json"):
             heritage.add(k)
 
     pistes = pistes_preuve(taches, ob.declarations(dossier, cfg), dossier, jour, noms)
+    noms_confus = familles_confondues(taches)
     # Hors de main (#570) : le relevé dit la branche lue, celle où rien ne s'écrira.
     branche = hors_main(dossier) if mode == "code" else None
     return dict(regroupements(taches, noms), **({"lu_sur": branche} if branche else {}), **{
@@ -561,7 +686,8 @@ def releve(dossier, jour=None, perso="~/.claude/roadmap-perso.json"):
         "trous": trous, "doublons_possibles": doublons, "heritage": sorted(heritage),
         "cles": sorted(declarees),
         "pistes_preuve": pistes,
-        "questions": questions_par_tache(taches, trous, pistes, jour),
+        "questions": questions_par_tache(taches, trous, pistes, jour) + questions_de_noms(noms_confus, taches, jour),
+        "noms_confondus": noms_confus,
         "en_attente": _en_attente(_lire_questions(rdir), taches)[0],
         "frictions": _frictions(dossier, jour),
         "regles": lire_regles(dossier, cfg), "grain": grain,

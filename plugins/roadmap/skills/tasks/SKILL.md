@@ -159,6 +159,17 @@ its new children without a question. Before asking, replace the proposed parent 
 name of 2 to 5 words, as for #438. Case of #546 and #550: #550 added under #546 made #546 the
 parent although it had its own work; now both go under a new empty parent.
 
+**A child is named by what sets it apart (#598).** A parent is named by its subject; each child by
+what distinguishes it, without repeating the parent's subject: under #411 « Fiche d'une tâche », not
+« Fichiers de la fiche » but « Fichiers ». `write` refuses (nothing written) a batch that gives a
+child a `nom:` repeating a subject word of its parent's name (its `nom:`, or its first five words),
+or equal or nearly equal to it (nothing of its own left once those words are removed): an `add`
+under a parent with `fields.nom`, an `update` that renames a child or moves a named task under a
+parent, an `update` that renames a parent one of whose open children would then repeat it. The
+message names the repeated words and the proposed name (`audit.nom_distinct`): use it, or name the
+child yourself. A family already confused that the batch does not touch passes; the audit raises it.
+The groupings of #438 and #552 already put the distinct `nom` on each child they move.
+
 **One theme, one parent (#438).** `write` first looks for a **theme**: the open tasks and the other
 `add`s of the batch that share a rare place (a file, function, command or area carried by 8 open
 tasks at most) plus a second sign (another place, a chain link, a `#N` or a `src:` they both cite,

@@ -1334,6 +1334,15 @@ def _nom_de_mere(membres):
     return titre_court(membres[0]["libelle"])
 
 
+def _nom_propose(nom_mere, nom):
+    """#598 : le nom distinct à poser à une fille rangée dont le nom écrit redit celui de sa mère, ou None (pas de nom
+    écrit, aucun écart, ou rien de distinct à proposer : le contrôle d'écriture refusera alors avec son message)."""
+    nom = audit._propre(nom)
+    if nom and audit.noms_confondus(nom_mere, nom):
+        return audit.nom_distinct(nom_mere, nom)
+    return None
+
+
 def _options_de_groupe(ctx, par_ref, refs, cle_mere, ajouts_du_lot, minimum=2):
     """Les opérations d'un regroupement : « Ranger sous #P » quand une fille de la grappe a déjà une mère, sinon une
     mère nouvelle (son axe, son échéance finale, les clés exigées que ses filles partagent). Seules bougent les tâches
@@ -1353,9 +1362,21 @@ def _options_de_groupe(ctx, par_ref, refs, cle_mere, ajouts_du_lot, minimum=2):
         par_id = {t["id"]: t for t in ctx["taches"]}
         axe = (par_id.get(cible) or {}).get("axe")
         libres = [n for n in libres if not axe or n["axe"] == axe]
-        ops = [dict({c: v for c, v in n["op"].items() if c not in ("axis", "section", "distinct", "zone")}, parent=cible)
-               for n in ajouts]
-        ops += [{"op": "update", "id": n["id"], "fields": {"parent": cible}} for n in libres]
+        mere_nom = audit._propre(((par_id.get(cible) or {}).get("champs") or {}).get("nom")) \
+            or titre_court((par_id.get(cible) or {}).get("libelle") or "")
+        ops = []
+        for n in ajouts:
+            op = dict({c: v for c, v in n["op"].items() if c not in ("axis", "section", "distinct", "zone")}, parent=cible)
+            propose = _nom_propose(mere_nom, (n["op"].get("fields") or {}).get("nom"))
+            if propose:
+                op["fields"] = dict(op.get("fields") or {}, nom=propose)
+            ops.append(op)
+        for n in libres:
+            f = {"parent": cible}
+            propose = _nom_propose(mere_nom, n["champs"].get("nom"))
+            if propose:
+                f["nom"] = propose
+            ops.append({"op": "update", "id": n["id"], "fields": f})
         if not ops:
             return None
         ranges = [n["ref"] for n in ajouts + libres]
@@ -1389,11 +1410,17 @@ def _options_de_groupe(ctx, par_ref, refs, cle_mere, ajouts_du_lot, minimum=2):
     ops = [mere]
     for n in ajouts:
         op = dict({c: v for c, v in n["op"].items() if c not in ("axis", "section", "distinct", "zone")}, parent=cle_mere)
+        propose = _nom_propose(nom, (n["op"].get("fields") or {}).get("nom"))
+        if propose:
+            op["fields"] = dict(op.get("fields") or {}, nom=propose)
         if n["apres"] & hors:
             op["fields"] = dict(op.get("fields") or {}, **{"après": sorted(n["apres"] - hors, key=_rang_ref) or "-"})
         ops.append(op)
     for n in libres:
         f = {"parent": cle_mere}
+        propose = _nom_propose(nom, n["champs"].get("nom"))
+        if propose:
+            f["nom"] = propose
         if n["apres"] & hors:
             f["après"] = sorted(n["apres"] - hors, key=_rang_ref) or "-"
         ops.append({"op": "update", "id": n["id"], "fields": f})
@@ -1527,6 +1554,9 @@ def sous_une_feuille(ctx, operations, retenues):
             if origine is not None:
                 champs = dict(o.get("fields") or {}, **(origine.get("fields") or {}))
                 champs["parent"] = cle_mere
+                # #598 : le nom distinct proposé l'emporte sur le nom que l'origine posait et qui redisait la mère.
+                if "nom" in (o.get("fields") or {}):
+                    champs["nom"] = o["fields"]["nom"]
                 ops[j] = dict(origine, fields=champs)
         # Ce qui dépend d'un ajout retenu (ses filles, par `parent`) le suit tel quel.
         cles_ajouts = {a["key"] for a in ajouts if a.get("key")}
@@ -1690,6 +1720,9 @@ class _Tenue(audit._Preparation):
         # #538 : ce que `un_sujet` verse d'office, pour que le compte rendu le dise : par numéro de tâche
         # complétée, par clé d'ajout rangé sous une mère.
         self.versees_maj, self.versees_sous = {}, {}
+        # #598 : ce que le lot nomme ou range (filles ajoutées, nommées ou rangées) et les mères qu'il nomme, pour
+        # `controler_noms`.
+        self.filles_nommees, self.meres_nommees = [], []
 
     # -- règles
 
@@ -1772,6 +1805,8 @@ class _Tenue(audit._Preparation):
         t = audit._Tache(id=champs["id"], libelle=_aparte(libelle, op.get("note")), axe=axe,
                          champs=audit._ordonnes(champs))
         self.cles[op["key"]] = t
+        if mere is not None:
+            self.filles_nommees.append(t)
         if apres is not None:
             self.poser_apres(t, apres, quoi)
         self.placer(t, mere, op.get("section"), quoi)
@@ -1847,6 +1882,11 @@ class _Tenue(audit._Preparation):
                 t.axe = mere.axe
         if apres is not None:
             self.poser_apres(t, apres, quoi)
+        # #598 : un nom posé ou une mère changée se contrôle ; une mère qui change de nom contrôle ses filles.
+        if "nom" in brut or parent is not None:
+            self.filles_nommees.append(t)
+        if "nom" in brut:
+            self.meres_nommees.append(t)
         self.tenue["completees"].append(t.id)
         # #275 : les noms des clés, jamais leurs valeurs brutes (un src: de trois lignes dans le compte rendu).
         dit = (["libellé"] if "append" in op else []) + [
@@ -2251,6 +2291,35 @@ class _Tenue(audit._Preparation):
                             {"label": "Garder le titre tiré du libellé", "operations": []}]})
         return sortie
 
+    def controler_noms(self):
+        """#598 : le nom d'une fille ne redit pas celui de sa mère. Contrôle les filles que le lot ajoute, nomme ou
+        range, et les filles ouvertes d'une mère qu'il nomme ; une famille déjà confondue que le lot ne touche pas
+        passe. La mère sans `nom:` s'appelle par son titre court. `Erreur` avec le nom distinct proposé."""
+        par_id = {t.id: t for t in self.ouvertes()}
+        filles = list(self.filles_nommees)
+        for m in self.meres_nommees:
+            filles += self.enfants_ouverts(m)
+        vues = set()
+        for f in filles:
+            nom, p = audit._propre(f.get("nom")), f.get("parent")
+            if id(f) in vues or getattr(f, "retiree", False) or not nom or p in (None, "", "-"):
+                continue
+            vues.add(id(f))
+            mere = par_id.get(str(p))
+            if mere is None:
+                continue
+            nom_mere = audit._propre(mere.get("nom")) or titre_court(mere.libelle)
+            confondu = audit.noms_confondus(nom_mere, nom)
+            if confondu is None:
+                continue
+            propose = audit.nom_distinct(nom_mere, nom)
+            dit = ("est égal ou presque égal à celui de sa mère" if confondu["egal"]
+                   else "redit celui de sa mère")
+            raise Erreur("#%s : le nom « %s » %s #%s « %s »%s ; nomme-la par ce qui la distingue%s"
+                         % (f.id, nom, dit, mere.id, nom_mere,
+                            "" if confondu["egal"] else " (%s)" % ", ".join(confondu["repris"]),
+                            " : « %s »" % propose if propose else ""))
+
     def ouvertes(self):
         vues, sortie = set(), []
         for t in super().ouvertes():
@@ -2340,6 +2409,7 @@ def preparer(ctx, props, maintenant=None):
     for q in du_lot:
         prep.attendre(q)
     prep.boucles()
+    prep.controler_noms()
     apres_o = prep.rendre_ouvert()
     apres_f = prep.rendre_fait()
     prep.controler(apres_o, apres_f or "")

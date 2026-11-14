@@ -118,10 +118,11 @@ rule at the end of a turn that executed (below).
   line; sessions are always all said. The keywords win over an axis of the same name
   (« Maestro sessions » is the action); « Maestro axe sessions » opens the axis. A word that is not
   an axis keeps its usual meaning.
-  Said in a session whose title is neither Maestro nor a task (« AAFES 258.1 », left by hand), « Maestro »
-  names it after its project's folder, `Maestro · AAFES Cowork` (#439): the panel renames it by
+  Said in a session that is not a task (« #N · … »), « Maestro » names it with its project's short name
+  alone, the `name` of its `.claude/roadmap.json` (`AAFES`, not `AAFES Cowork`; #597, after #439), even
+  when the app already titled it « Maestro » from that first message: the panel renames it by
   `set_session_title`; refused, its brief asks you to do it, once, without a word. The name is set
-  then, and never changes: a title already « Maestro … » or « #N · … » stays.
+  then, and never changes, even if the person renames the session afterwards.
   The Roadmap panel recognises Maestro by that title, by the mark set when the person says
   « Maestro » in it, or by its having launched at least two sessions still open; an old title
   « Lot … » is still recognised (alias of the sessions opened before #112). It never marks it
@@ -687,6 +688,16 @@ otherwise they see an empty worktree.
   asks no question (« à archiver », « fini, rien en attente ») is not waiting for the person. Same
   rule as archiving (§ 6, #110). Remind only of the questions of its own sessions: those of
   another open Maestro belong to that one.
+- **A document to validate** (#587, the person, 2026-11-13: they must never have to look for the
+  file themselves): the person reads in Maestro, so a sub-session copies the document it asks
+  to read or validate into Maestro's folder, `.claude/a-valider/<id>/` (Maestro's `cwd`), and puts
+  its link in its report, `[the document's name](.claude/a-valider/<id>/<file>)`, relative to Maestro's folder
+  (proven by the #587 matrix; an absolute path works too). When Maestro has to put that
+  validation to the person (the No relay rule above leaves it to the sub-session otherwise), it
+  copies the link as is and opens the document itself (`show_pane`, pane `file`). A link into
+  `side-session-notes`, the scratchpad, `/tmp` or the sub-session's own worktree opens nothing in
+  Maestro: ask the sub-session for the copy before relaying. The panel's end-of-turn reminder
+  catches a validation asked without an openable link.
 - **A mockup choice** (#96): a sub-session that is
   « attend une réponse : choix de maquette, <chemin> » has written its mockups in a page, opened
   it in its own browser pane and asked the choice through its own form: the person picks there.
@@ -1013,7 +1024,10 @@ The merge itself:
   days: « archivée avant la clôture de sa ligne », with its branch merged or not. Merged, Maestro
   ticks the line with its bilan (the last report stays readable through
   `search_session_transcripts`); not merged, its branch stays: Maestro reviews it and merges it
-  (§ 5), or unarchives it (`unarchive_session`) if it has work left.
+  (§ 5), or unarchives it (`unarchive_session`) if it has work left. A recurring line (`tous:`)
+  stays open by design (#602): its ticked occurrence goes to ROADMAP-fait under a new number that
+  cites the line only by `src:#N`. Its session is not flagged once an occurrence citing `#N` has a
+  `fait:` after the session's launch; archived before ticking the day's occurrence, it still is.
 - **Maestro's conclusion** (#136, then #243 mockup A): on the turn where it offers its archiving,
   in ADHD mode, its answer ends on its conclusion: `---`, then the title
   `### ✅ Maestro · <le lot> : tout est livré`, one sentence (how many tasks, from the first
@@ -1244,8 +1258,9 @@ closes on proof:
 - It recognises Maestro by its title « Maestro … » (or by the alias « Lot … » of old titles), by
   the mark set when the person says « Maestro » in it, or by its launched sessions still open (at
   least two).
-- « Maestro » said in a session titled neither Maestro nor task renames it `Maestro · <project folder>`
-  (#439, `maestroFolderTitle`), once; refused, it hands you the `set_session_title` to make.
+- « Maestro » said in a session that is not a task renames it with the project's short name (#597,
+  `maestroProjectTitle`), once; refused, it hands you the `set_session_title` to make. Named so, the
+  session is recognised by its mark, which no longer expires.
 - Its message at a sub-session's end of turn carries the fixed block of a « prête » report (#537),
   read in the session's own answer, and says what is missing from it (§ 3, « Read the fixed
   block »).

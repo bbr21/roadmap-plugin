@@ -397,6 +397,23 @@ export function flaskIcon(hex: string, size = 14, title?: string): string {
   return line(hex, size, 2, '<path d="M9 3h6"/><path d="M10 3v6.5L4.6 18.8A1.5 1.5 0 0 0 5.9 21h12.2a1.5 1.5 0 0 0 1.3-2.2L14 9.5V3"/><path d="M7.2 15h9.6"/>', title)
 }
 
+/**
+ * Prise débranchée (#566, maquette v4) : une session cloud « sans nouvelles ». Une fiche pleine à gauche (deux broches),
+ * une prise vide à droite (deux trous), un vide entre les deux ; viewBox 20x14, donc plus large que haute : `size` est la
+ * hauteur, la largeur en suit le rapport. Trait 1,5, bouts ronds.
+ */
+export function unplugIcon(hex: string, size = 14, alt?: string): string {
+  const width = Math.round((size * 20) / 14)
+  const label = alt === undefined ? '' : `<title>${escapeXml(alt)}</title>`
+  const body =
+    `<g fill="none" stroke="${hex}" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">` +
+    `<path d="M0.8 7h1.6"/><rect x="2.4" y="3.5" width="4.2" height="7" rx="1.4" fill="${hex}"/><path d="M6.6 5.3h2.2M6.6 8.7h2.2"/>` +
+    `<rect x="12.6" y="2.8" width="4.6" height="8.4" rx="1.4"/>` +
+    `<circle cx="14.9" cy="5.6" r="0.6" fill="${hex}" stroke="none"/><circle cx="14.9" cy="8.4" r="0.6" fill="${hex}" stroke="none"/>` +
+    `<path d="M17.2 7h1.8"/><path d="M10.4 1.5v2M10.4 10.5v2" stroke-width="1.2" stroke-dasharray="0.1 2.2"/></g>`
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${size}" viewBox="0 0 20 14">${label}${body}</svg>`
+}
+
 /** Portable : une tâche qui tourne en local (#436), le pendant du nuage ; même trait 2, bouts ronds. */
 export function laptopIcon(hex: string, size = 14, title?: string): string {
   return line(hex, size, 2, '<rect x="4" y="5" width="16" height="11" rx="1.5"/><path d="M2.5 19h19"/>', title)
@@ -524,11 +541,13 @@ export function controlIcon(hex: string, size = 16, width: number = STROKE.base)
  * Le nœud de la frise d'une carte : rond numéroté (bleu en cours, orange en attente de pause, bleu-vert t'attend, gris en file),
  * carré rouge à drapeau pour une prioritaire ; une session en pause (#415) : rond orange pâle à deux barres, sans rang.
  */
-export function controlNodeIcon(palette: Palette, o: { kind: 'run' | 'wait' | 'pausing' | 'paused' | 'queued' | 'prio' | 'done'; n: number }): { source: string; width: number; height: number } {
+export function controlNodeIcon(palette: Palette, o: { kind: 'run' | 'wait' | 'pausing' | 'paused' | 'queued' | 'prio' | 'done' | 'cloud'; n: number }): { source: string; width: number; height: number } {
   const size = 24
-  const [bg, fg] = { run: [palette.liveTint, palette.liveOn], wait: [palette.waitTint, palette.waitOn], pausing: [palette.blockTint, palette.blockOn], paused: [palette.blockTint, palette.blockOn], queued: [palette.btn, palette.text2], prio: [palette.late, palette.onAxis], done: [palette.finishedTint, palette.finishedOn] }[o.kind]
+  const [bg, fg] = { run: [palette.liveTint, palette.liveOn], wait: [palette.waitTint, palette.waitOn], pausing: [palette.blockTint, palette.blockOn], paused: [palette.blockTint, palette.blockOn], queued: [palette.btn, palette.text2], prio: [palette.late, palette.onAxis], done: [palette.finishedTint, palette.finishedOn], cloud: [palette.note, palette.text2] }[o.kind]
   const shape =
-    o.kind === 'paused'
+    o.kind === 'cloud'
+      ? `<rect x="2.5" y="2.5" width="19" height="19" rx="${RADIUS.chip}" fill="${bg}" stroke="${palette.border}" stroke-width="1"/><g transform="translate(6 6) scale(0.5)"><path d="M17.5 19H7a5 5 0 1 1 1.3-9.84A6 6 0 0 1 19.8 11.4 3.8 3.8 0 0 1 17.5 19z" fill="${fg}"/></g>`
+      : o.kind === 'paused'
       ? `<circle cx="12" cy="12" r="10" fill="${bg}"/><path d="M10 8v8M14 8v8" fill="none" stroke="${fg}" stroke-width="2.2" stroke-linecap="round"/>`
       : o.kind === 'done'
       ? `<circle cx="12" cy="12" r="10" fill="${bg}"/><path d="M7.5 12.4l3 3 6-6.4" fill="none" stroke="${fg}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>`
@@ -1185,14 +1204,26 @@ export function foldArrowIcon(o: { fg: string; bg: string; up: boolean }): strin
 }
 
 /**
- * Le filet du temps restant de l'encart « Annuler » (#556) : 2 px, pleine largeur (l'app le ramène à celle du
- * panneau), qui se vide de `remainingMs` à 0 par SMIL ; un redessin le reprend où il en est. Sans SMIL (image
- * fixe), il montre ce qui reste au dernier dessin.
+ * Le compteur de l'encart « Annuler » (#556, #596, maquette A) : « N s » aligné à droite, à chiffres fixes, qui
+ * passe d'une seconde à l'autre par SMIL (`<set>` de `visibility`), sans redessiner le panneau. Un texte par
+ * valeur : la courante visible d'emblée, les autres cachées jusqu'à leur tour. Sans SMIL (image fixe), il montre
+ * ce qui restait au dernier dessin.
  */
-export function undoTimerIcon(okHex: string, remainingMs: number, totalMs: number, width = BAR_WIDTH): string {
-  const from = Math.round(width * Math.min(1, Math.max(0, remainingMs / totalMs)) * 10) / 10
-  const anim = from > 0 ? `<animate attributeName="width" from="${from}" to="0" dur="${(remainingMs / 1000).toFixed(3)}s" begin="0s" fill="freeze"/>` : ''
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="2" viewBox="0 0 ${width} 2" preserveAspectRatio="none"><rect width="${from}" height="2" fill="${okHex}">${anim}</rect></svg>`
+export function undoCountIcon(hex: string, remainingMs: number, width = 28, height = 16): string {
+  const secs = (ms: number) => `${(ms / 1000).toFixed(3)}s`
+  const text = (n: number, hidden: boolean, sets: string) =>
+    `<text x="${width}" y="${height - 4}" text-anchor="end" font-size="12" font-family="-apple-system, system-ui, sans-serif" style="font-variant-numeric:tabular-nums" fill="${hex}"${hidden ? ' visibility="hidden"' : ''}>${n} s${sets}</text>`
+  const set = (to: 'visible' | 'hidden', at: number) => `<set attributeName="visibility" to="${to}" begin="${secs(at)}" fill="freeze"/>`
+  const open = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">`
+  if (remainingMs <= 0) return `${open}${text(0, false, '')}</svg>`
+  const top = Math.ceil(remainingMs / 1000)
+  const parts: string[] = []
+  for (let n = top; n >= 1; n--) {
+    const hideAt = n === 1 ? remainingMs : remainingMs - (n - 1) * 1000
+    if (n === top) parts.push(text(n, false, set('hidden', hideAt)))
+    else parts.push(text(n, true, set('visible', remainingMs - n * 1000) + set('hidden', hideAt)))
+  }
+  return `${open}${parts.join('')}</svg>`
 }
 
 /** Le filet au-dessus de la ligne de filtre : 1 px, pleine largeur. */
