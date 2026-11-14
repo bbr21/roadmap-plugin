@@ -345,6 +345,7 @@ import {
   deliveredCount,
   ROW_STEPS,
   rowStepsCells,
+  blockEndCells as blockEndCellsOf,
   filterSummary,
   cachedTitle,
   fallbackTitle,
@@ -16763,7 +16764,8 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     return test ? testWords(test.version) : blockWord({ state: blockState(t, block), ...(block?.cloud ? { cloud: block.cloud } : {}), ...(block?.mission ? { mission: block.mission } : {}), ...(blockMerged(t, block) ? { merged: true } : {}) })
   }
   const blockWordCells = Math.max(0, ...blockTasks.map(t => pxCells(6.5 * [...blockWordOf(t, blockOf.get(t.id as string))].length)))
-  const blockEndCells = ROW_STEPS.clock + stepsCells.count
+  // #579 : la colonne de la durée du bloc suit le texte de ses durées, pas le plancher de la bande.
+  const blockEndCells = blockEndCellsOf(blockTasks.map(t => sinceText(t, blockOf.get(t.id as string))))
   // #561 : les points des livraisons ne se dessinent plus au bloc (BBR les veut dans la bande seule) ; la case y fait
   // `MARK_SQUARE_PX`, comme dans la bande, et la jauge est une colonne facultative, qui part après le mot d'état.
   // Ce qui reste toujours : marges du panneau et du cadre, case, lieu, numéro, icône d'état, durée, et leurs écarts.

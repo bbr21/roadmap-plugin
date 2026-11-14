@@ -3532,6 +3532,15 @@ export const TREE_LEAD_CELLS = 4
 export const ROW_STEPS = { icon: 2, bar: 56, clock: 2, count: 6 } as const
 
 /**
+ * La colonne de la durée du bloc « En session » (#579, finding F44 de la preuve de #561) : l'horloge et la plus longue
+ * durée montrée, mesurée sur son texte (6,5 px le signe, comme le mot d'état), sans le plancher de six signes de
+ * `rowStepsCells`. Plus large que son texte, la colonne coupait le titre étroit à huit signes alors qu'un vide restait.
+ */
+export function blockEndCells(counts: readonly string[]): number {
+  return ROW_STEPS.clock + pxCells(6.5 * Math.max(0, ...counts.map(c => [...c].length)))
+}
+
+/**
  * La largeur de la colonne d'une ligne en session (#177) : l'icône, un écart, la barre, un écart,
  * l'horloge et la durée depuis le lancement (#385, à la place du compte « 6/8 »), à la largeur de la plus
  * longue montrée (« 2 h 10 »). La colonne tient tout son contenu : la durée n'est jamais coupée ni
