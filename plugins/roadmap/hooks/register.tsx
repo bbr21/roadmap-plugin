@@ -647,6 +647,7 @@ import {
   isPanelOnlyRefusal,
   cloudAskText,
   withCloudLaunch,
+  cloudCardKeepsModel,
   cloudViaClaudeNote,
   MISSIONS_FILE,
   isMissionTask,
@@ -10706,7 +10707,9 @@ export const register: Register = (on, options) => {
     // Une carte du modèle reçoit la section de l'arbre, comme le ▶ (#237).
     const treed = mission ? (mission.card as typeof raw) : byModel ? ((await withTree($, cloudAsked ? cloudAsked.card : raw)) as typeof raw) : raw
     // #575 : une carte cloud du modèle porte le modèle et l'effort de sa tâche, sans quoi elle prend ceux de cette session.
-    const e = byModel ? ((await withTaskCloudLaunch($, treed)) as typeof raw) : treed
+    // #575 (cas #579) : en `user_asked`, l'app perd le modèle et l'effort d'une carte cloud ; elle part en proposition.
+    // Une mission garde sa voie directe (#510, cas AAFES #644) : ni modèle ajouté ni proposition.
+    const e = byModel && !mission ? (cloudCardKeepsModel((await withTaskCloudLaunch($, treed)) as Record<string, unknown>) as typeof raw) : treed
     // #263 : la carte qui se pose ici (pas remontée à Maestro) part seulement si son titre vient de la ligne écrite.
     let titleRefused = false
     const ran = await forwardProposal($, e, next.origin.plugin, async () => {

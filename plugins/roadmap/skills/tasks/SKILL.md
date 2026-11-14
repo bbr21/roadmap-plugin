@@ -343,7 +343,9 @@ Write `<scratchpad>/operations.json`:
 - **done**: `date` (the date of the proof, `AAAA-MM-JJ` or `AAAA-MM-JJ HH:MM`), `proof` (what
   proves it, and where), `bilan` (#262). The line moves to the top of `ROADMAP-fait.md` with
   `fait:AAAA-MM-JJ HH:MM` (the time of the write when the date is today; a past date gets no
-  invented time), its bilan row to the bilan journal. A recurring standalone task (`tous:`) is
+  invented time), its bilan row to the bilan journal. Optional `version` (X.Y.Z): for a `lieu:cloud` line or one tied
+  to a PR, `--apply` also posts on that PR « ligne close par Maestro le AAAA-MM-JJ, version X.Y.Z » (« sans version »
+  without one; not reposted; a failure never blocks and prints the `gh pr comment` command, #588). A recurring standalone task (`tous:`) is
   marked done with the panel's « Marquer faite » button, which carries it over. **A task whose
   requested step could not be done is never done (#487)** (no connection, the person absent, a
   tool or connector unavailable): `done` is refused when the bilan's `manque` says so, or, without
@@ -385,7 +387,7 @@ Write `<scratchpad>/operations.json`:
   « (en pause depuis le JJ/MM : <reason>) » (#285), and a task without a parent moves to « Plus tard »; a
   child stays under its parent. Refused on a line taken by a session and on a parent with an open
   child.
-- **handoff** (#245, « Partial closure » below): `date` and `proof` as for `done`, `delivered`
+- **handoff** (#245, « Partial closure » below): `date`, `proof` and the optional `version` (closure signal on the PR, #588) as for `done`, `delivered`
   (what was delivered, added at the end of the closed label: « ; livré : … »), and the follow-up:
   `key`, `label` (only what remains with the third party), `waiting` (the third party: its
   `attend:`), `src` (the message that asked the third party), `fields` (`due`, `nom`…; never

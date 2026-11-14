@@ -840,6 +840,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.299.2 (2026-11-13)** : roadmap : la clôture d'une ligne cloud poste le signal sur sa PR (#588), la carte cloud demandée en user_asked garde son modèle (#575)
 - **0.299.1 (2026-11-13)** : roadmap : la durée du bloc En session ne coupe plus le titre étroit trop tôt (#579)
 - **0.299.0 (2026-11-13)** : roadmap : une mère vide lance ses enfants (#552), rappels de Maestro pendant une mission cloud (#581)
 - **0.298.0 (2026-11-13)** : roadmap : le Gardien du projet dans la bande (#577), le détail de la bande large (#578), une tâche close reprise n'est plus barrée (#582), le réveil d'une PR cloud rattachée par son titre (#580), preuve de #561 (#576)

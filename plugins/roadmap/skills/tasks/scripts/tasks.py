@@ -10,6 +10,8 @@ python3 tasks.py groupes FOLDER    (#438 : les tâches ouvertes d'un même thèm
 python3 tasks.py write FOLDER --operations operations.json [--apply] [--json]
 
 `write` finit par le compte rendu (#232), en lignes de journal depuis #261 : une puce par tâche, son glyphe devant.
+Une clôture (`done`, `handoff`) d'une ligne cloud ou à PR poste, après l'écriture, « ligne close par Maestro le …, version X.Y.Z »
+sur sa PR (`POSTER_SIGNAL`, #588) ; jamais bloquant, jamais en essai à blanc.
 
 Python 3.9 et plus, bibliothèque standard seulement. Hérite du moteur d'écriture de l'audit
 (`audit._Preparation`) et lit la grammaire par l'import de la skill onboarding : les trois skills
@@ -53,11 +55,11 @@ OPS = {
     "add": {"op", "key", "label", "axis", "section", "parent", "note", "fields", "distinct", "zone"},
     "update": {"op", "id", "fields", "append"},
     "reschedule": {"op", "id", "due"},
-    "done": {"op", "id", "date", "proof", "bilan"},
+    "done": {"op", "id", "date", "proof", "bilan", "version"},
     "drop": {"op", "id", "reason", "bilan"},
     "pause": {"op", "id", "until", "reason"},
     "handoff": {"op", "id", "date", "proof", "delivered", "key", "label", "waiting", "src", "fields", "bilan",
-                "missing"},
+                "missing", "version"},
 }
 # Le bilan d'une clôture (#262), au contrat de `cowork.py roadmap close --bilan-b64` : ses colonnes, les
 # valeurs admises du journal par défaut, la borne d'une ligne de conclusion.
@@ -1616,6 +1618,49 @@ def _refs(v, quoi):
     return [str(x).strip() for x in v]
 
 
+SIGNAL_PHRASE = "ligne close par Maestro"
+SIGNAL_TEMPS_MAX = 30
+
+
+def _gh(dossier, args):
+    """Un appel à `gh` dans le dossier du projet : (code, sortie) ; `OSError` et délai remontent à l'appelant."""
+    r = subprocess.run(["gh"] + args, cwd=dossier, capture_output=True, text=True, timeout=SIGNAL_TEMPS_MAX)
+    return r.returncode, (r.stdout or ""), (r.stderr or "").strip()
+
+
+def _poster_signal(dossier, signal):
+    """#588 : poste le signal de clôture sur la PR et rend {"etat": "poste"|"deja"|"echec"|"sans_pr", "pr", "raison"}.
+    Ne lève jamais : la roadmap est déjà écrite."""
+    pr = signal.get("pr")
+    try:
+        if pr is None:
+            if not signal.get("branche"):
+                return {"etat": "sans_pr", "pr": None, "raison": "aucune PR connue"}
+            code, sortie, err = _gh(dossier, ["pr", "list", "--head", signal["branche"], "--state", "all",
+                                              "--json", "number", "--limit", "1"])
+            if code != 0:
+                return {"etat": "echec", "pr": None, "raison": err or "gh pr list a échoué"}
+            trouvees = json.loads(sortie or "[]")
+            if not trouvees:
+                return {"etat": "sans_pr", "pr": None, "raison": "aucune PR trouvée pour %s" % signal["branche"]}
+            pr = int(trouvees[0]["number"])
+        code, sortie, err = _gh(dossier, ["pr", "view", str(pr), "--json", "comments"])
+        if code != 0:
+            return {"etat": "echec", "pr": pr, "raison": err or "gh pr view a échoué"}
+        if any(SIGNAL_PHRASE in (c.get("body") or "") for c in json.loads(sortie or "{}").get("comments") or []):
+            return {"etat": "deja", "pr": pr, "raison": ""}
+        code, _, err = _gh(dossier, ["pr", "comment", str(pr), "--body", signal["texte"]])
+        if code != 0:
+            return {"etat": "echec", "pr": pr, "raison": err or "gh pr comment a échoué"}
+        return {"etat": "poste", "pr": pr, "raison": ""}
+    except (OSError, subprocess.SubprocessError, ValueError, TypeError, KeyError, AttributeError) as e:
+        return {"etat": "echec", "pr": pr, "raison": "%s" % (e or type(e).__name__)}
+
+
+# Remplaçable en test : un essai ne parle jamais à GitHub.
+POSTER_SIGNAL = _poster_signal
+
+
 class _Tenue(audit._Preparation):
     """La préparation de l'audit, avec les opérations du quotidien et leurs règles (#125, #158)."""
 
@@ -1629,6 +1674,7 @@ class _Tenue(audit._Preparation):
         self.axes = ctx.get("axes") or []
         self.sections = ctx.get("sections") or []
         self.notes = []
+        self.signaux = []  # #588 : les signaux de clôture à poster sur les PR après l'écriture
         self.tenue = {"ajoutees": [], "completees": [], "redatees": [], "cochees": [], "abandonnees": [],
                       "en_pause": [], "suites": []}
         # Le compte rendu (#232) : une entrée par tâche ajoutée, une par changement d'une tâche ; les
@@ -1951,6 +1997,27 @@ class _Tenue(audit._Preparation):
                      "`%s`%s, committe le registre, puis refais la clôture ; zéro finding trouvé vaut relevé"
                      % (quoi, commande, ou))
 
+    def noter_signal(self, t, op, date, preuve):
+        """#588 : la clôture de cette ligne (elle seule, pas sa mère close avec son dernier enfant) laisse un signal à
+        poster sur sa PR, si elle est cloud, a une branche ou nomme une PR dans sa preuve."""
+        dite = re.search(r"\bPR\s*(?:n°\s*)?#?(\d+)", preuve or "")
+        cloud = t.get("lieu") == "cloud"
+        branche = t.get("branche") or ""
+        if not (cloud or branche or dite):
+            return
+        traces = []
+        try:
+            registre = json.loads(audit._lire_fichier(os.path.join(self.dossier_roadmap, REGISTRE_FINDINGS)) or "[]")
+            traces = [e for e in registre if isinstance(e, dict) and "n" not in e and isinstance(e.get("pr"), int)
+                      and str(e.get("de")) == t.id]
+        except (ValueError, TypeError):
+            pass
+        finies = [e for e in traces if e.get("etat") in PR_FINIE]
+        pr = (finies or traces)[-1]["pr"] if traces else int(dite.group(1)) if dite else None
+        version = audit._propre(op.get("version")) or (re.search(r"\b\d+\.\d+\.\d+\b", preuve or "") or [None])[0]
+        texte = "%s le %s, %s" % (SIGNAL_PHRASE, str(date)[:10], "version %s" % version if version else "sans version")
+        self.signaux.append({"id": t.id, "pr": pr, "branche": branche, "texte": texte, "cloud": cloud})
+
     def cocher(self, op):
         t = self.tache(op.get("id"), "clôture")
         quoi = "clôture de #%s" % t.id
@@ -1979,6 +2046,7 @@ class _Tenue(audit._Preparation):
             raise Erreur("%s : tâche récurrente (tous:%s) : le bouton « Marquer faite » du panneau la reconduit"
                          % (quoi, t.get("tous")))
         self.fermer_tache(t, date, "", "Faite : %s" % preuve, bilan=bilan)
+        self.noter_signal(t, op, date, preuve)
         self.tenue["cochees"].append(t.id)
         self.changer(t, "cochée le %s : %s" % (_jj_mm(date), preuve))
         p = _sans_parent(t)
@@ -2070,6 +2138,7 @@ class _Tenue(audit._Preparation):
             self.fermer_tache(t, date, " ; livré : %s" % dits["delivered"],
                               "Faite : %s ; suite chez %s en #%s" % (dits["proof"], chez, suite.id), bilan=bilan)
             self.changer(t, "close le %s : %s ; suite chez %s en #%s" % (_jj_mm(date), dits["proof"], chez, suite.id))
+        self.noter_signal(t, op, date, dits["proof"])
         self.tenue["cochees"].append(t.id)
         self.tenue["ajoutees"].append(suite.id)
         self.tenue["suites"].append(dict({"close": t.id, "suite": suite.id, "tiers": chez},
@@ -2283,7 +2352,7 @@ def preparer(ctx, props, maintenant=None):
         fichiers[chemin_bilans] = bilans
     fichiers = {p: t for p, t in fichiers.items() if audit._lire_fichier(p) != t}
     bilan = dict(prep.tenue, ids_crees=prep.bilan["ids_crees"], notes=prep.notes, comptes=prep.bilan.get("comptes"),
-                 questions=du_lot, versees=versees,
+                 questions=du_lot, versees=versees, signaux=[dict(x, etat="a_poster") for x in prep.signaux],
                  compte_rendu=prep.compte, jour=prep.jour,
                  lignes={os.path.basename(p): audit.lignes_changees(audit._lire_fichier(p), t) for p, t in fichiers.items()})
     return fichiers, bilan
@@ -2318,12 +2387,50 @@ def ecrire(dossier, chemin_ops, appliquer=False, maintenant=None, en_json=False)
             bilan["sauvegarde"] = audit._sauvegarder(lieu, maintenant, fichiers, prefixe="sauvegarde-tasks-")
             im._ecrire_tout(fichiers)
             bilan["ecrit"] = True
+    if bilan["ecrit"]:
+        bilan["signaux"] = _poster_les_signaux(ctx["dossier"], bilan["signaux"])
     outil = decl["ecriture"]["outil"] if decl["ecriture"] else None
     bilan["etat"] = "ecrit" if bilan["ecrit"] else ("outil" if outil else "essai")
     bilan["markdown"] = rendre_compte_rendu(bilan["compte_rendu"], bilan["etat"], bilan["jour"], outil,
                                             bilan["sauvegarde"])
     afficher(bilan, decl, en_json)
     return bilan
+
+
+def _poster_les_signaux(dossier, signaux):
+    """#588 : poste chaque signal par `POSTER_SIGNAL`, sans jamais lever (la roadmap est écrite). Une ligne qui n'est
+    pas cloud et dont la PR n'existe pas ne dit rien."""
+    rendus = []
+    for signal in signaux:
+        try:
+            res = POSTER_SIGNAL(dossier, dict(signal))
+            etat, pr, raison = res["etat"], res.get("pr") or signal.get("pr"), res.get("raison") or ""
+        except Exception as e:  # noqa: BLE001 : un envoi raté ne défait pas l'écriture
+            etat, pr, raison = "echec", signal.get("pr"), "%s" % (e or type(e).__name__)
+        if etat == "sans_pr" and not signal.get("cloud"):
+            continue
+        rendus.append(dict(signal, etat=etat, pr=pr, raison=raison))
+    return rendus
+
+
+def _lignes_signaux(signaux):
+    """#588 : ce que la sortie dit de chaque signal de clôture."""
+    lignes = []
+    for s in signaux:
+        n = s.get("pr")
+        quoi = "la PR %s" % n if n else "sa PR"
+        commande = 'gh pr comment %s --body "%s"' % (n or "<n>", s["texte"])
+        if s["etat"] == "a_poster":
+            lignes.append("Signal de clôture à poster sur %s à l'écriture : %s" % (quoi, s["texte"]))
+        elif s["etat"] == "poste":
+            lignes.append("Signal de clôture posté sur la PR %s : %s" % (n, s["texte"]))
+        elif s["etat"] == "deja":
+            lignes.append("Signal de clôture déjà sur la PR %s, pas reposté" % n)
+        else:
+            trouver = "" if n else " (la PR : gh pr list --head %s --state all)" % (s.get("branche") or "<branche>")
+            lignes.append("Signal de clôture NON posté (%s) : lance `%s`%s"
+                          % (s.get("raison") or "PR inconnue", commande, trouver))
+    return lignes
 
 
 def _plat(texte):
@@ -2378,6 +2485,8 @@ def afficher(bilan, decl, en_json=False):
               % (decl["ecriture"]["outil"], decl["ecriture"]["consigne"]))
     else:
         print("Essai à blanc : rien n'est écrit. Relance avec --apply pour écrire.")
+    for ligne in _lignes_signaux(bilan.get("signaux") or []):
+        print(ligne)
     if bilan.get("questions"):
         print()
         print("Questions du lot (#288), à poser par le formulaire ; l'option choisie part dans un nouveau write :")

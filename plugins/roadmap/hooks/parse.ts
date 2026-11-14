@@ -14897,6 +14897,18 @@ export function withCloudLaunch<T extends Record<string, unknown>>(card: T, laun
   }
   return Object.keys(add).length === 0 ? card : { ...card, ...add }
 }
+/**
+ * #575 (cas #579, 2026-11-13) : une carte cloud `user_asked` part sans modèle ni effort, car l'app la met en file par
+ * `requestCloudSideSession`, qui ne les garde pas (`app.asar` du 2026-11-10) : la session prend le modèle de celle qui
+ * la pose (#579 en Fable). Seule la proposition (`own_initiative`) les garde (essai C). La carte cloud qui porte l'un
+ * des deux part donc en proposition, que la personne clique, comme toute carte cloud. Une carte du Mac, une relance
+ * (`proposal_id`) ou une carte sans modèle ni effort : telle quelle.
+ */
+export function cloudCardKeepsModel<T extends Record<string, unknown>>(card: T): T {
+  if (card.target !== 'cloud' || card.initiation !== 'user_asked' || card.proposal_id !== undefined) return card
+  if (card.model === undefined && card.effort === undefined) return card
+  return { ...card, initiation: 'own_initiative' }
+}
 export const CLOUD_ECONOMY = 'Économie (#327) : le cadrage, la spec et le plan se font ici ; chaque étape du plan part chez un sous-agent avec `model: "sonnet"` passé à l\'outil Agent. Tu relis le diff de chaque étape et reprends la main sur un test rouge qui résiste à deux essais.'
 
 /**

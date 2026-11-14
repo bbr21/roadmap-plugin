@@ -182,7 +182,9 @@ to it.
   that rewrites a hook), take the row that fits and say so in one line. A cloud card carries them too (#575): pass
   `model` and `effort` from `--carte` with `target: "cloud"`, whatever the tool's description says (test C of
   2026-11-13: a cloud card asking Sonnet 5.5 low, posted by an Opus session, started in claude-sonnet-5-5, Low; without
-  them it takes your own model, as #561 left in Fable). The plugin adds them to a cloud card « #N · … » that lacks them.
+  them it takes your own model, as #561 left in Fable). Post it `own_initiative`, never `user_asked`: the app queues a
+  `user_asked` cloud card without its model and effort (#579 left in Fable under a Fable Maestro, 2026-11-13); the plugin
+  turns such a card into `own_initiative`, except a mission (#510). The plugin adds them to a cloud card « #N · … » that lacks them.
   The person picks nothing in Options. The brief of `brief_cloud.py` repeats them right after « Fini quand » (« Options
   de la carte : Model …, Effort … »), and its « Ton modèle » paragraph has the session delegate each plan step to a
   Sonnet sub-agent. It never asks the session to switch itself (#559): `set_session_model` and `set_session_effort` do
@@ -454,9 +456,10 @@ with « Cible : en local, … » and the recommendation. What changes for Maestr
   keeps `qui:` and `branche:`, so the pushed work is not lost, and prints the instruction for the Mac session (fetch
   and switch to that branch). Commit and push `main`, then post the Mac card with that instruction as an extra
   message. A question from a cloud session is not a stall: answer it by PR comment.
-- **Close** as usual (§ 6), the PR link in the bilan; once the line is closed and pushed, post on its PR
-  `gh pr comment <n> --body "ligne close par Maestro le AAAA-MM-JJ, version X.Y.Z"` (`date +%F`; no version: « sans
-  version »): it wakes the cloud session, which writes its conclusion and offers to archive itself (#483,
+- **Close** as usual (§ 6), the PR link in the bilan; the closing tool (`tasks.py write --apply`, #588) posts
+  on its PR « ligne close par Maestro le AAAA-MM-JJ, version X.Y.Z » (« sans version » without one) itself: pass
+  `version` in the `done` operation, and read its output. Only when it says « NON posté », post it by hand with the
+  `gh pr comment <n> --body "…"` command it prints. The comment wakes the cloud session, which writes its conclusion and offers to archive itself (#483,
   `docs/session-cloud.md`, « La fin d'une tâche »). The cloud session needs no archiving gesture from Maestro: the band's archive icon hides its row and archives the cloud session by the id its PR carries, or tells BBR to archive it from the app's left list when the app refuses (#435).
 - **A task with a render** goes to the cloud too (#409, #427): its recommendation (#416) says « cloud », the reason
   naming the mockups and the fidelity proof; only a real need of the Mac (real site in the browser pane, simulator…)
