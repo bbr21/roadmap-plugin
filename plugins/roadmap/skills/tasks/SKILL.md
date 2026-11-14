@@ -39,6 +39,10 @@ longer written (see « Migrating the old priorities »). Marking the last open c
 a recurring parent (`tous:`), which stays open for the next period's steps. A child has no axis
 of its own (#190): it takes its parent's, and the roadmap check refuses a child whose axis differs
 from its parent's; a parent whose axis changes in the panel takes its open children with it.
+Announcing a task's result (the email that passes it on) is the last step of that task, never a
+child of its own (#330, AAFES #598 split into #599 for the work and #600 for the email to the
+client, both carried by one session): split into children only when different sessions carry the
+parts, or when a part waits on a third party.
 
 The script is `scripts/tasks.py`, run from this skill's folder (the path given when the skill
 loads). It inherits the `audit` skill's writing engine and reads the grammar through the
@@ -544,7 +548,11 @@ a project that has a roadmap, because the skill is not always loaded when the id
   the scope of the task in progress, whoever says it, the person or Claude. In the turn where it
   appears, without waiting to be asked.
 - **Not**: a reflection, an answered question, an explanation; a fix within the scope of the
-  task in progress (it is done there); a decision without an action (it goes into the project's
+  task in progress (it is done there); the direct continuation of the task in progress (#330):
+  passing its result on to whom it is for (the email that announces a check's result, the recap
+  to the client) and whatever the person asks in the session to finish it are done in that
+  session, even once its line is closed; under Maestro, the session says it in its report
+  (« suite faite dans #N : … ») and Maestro adds it to the line's bilan; a decision without an action (it goes into the project's
   memory); a subject that already has its task (§ 2: enrich it, and say so in one line).
 - **The project's rules win** (`regles`): what they exclude never becomes a task (at Blur, an
   action that is not Caroline's becomes a follow-up « qui doit parler à qui »).

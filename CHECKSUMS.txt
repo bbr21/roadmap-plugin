@@ -1,8 +1,8 @@
-# roadmap 0.300.0 : SHA-256 de chaque fichier installé du plugin, chemins relatifs à son dossier.
-# Vérifier une copie installée (~/.claude/plugins/cache/roadmap/roadmap/0.300.0) : plugins/roadmap/SECURITE.md, « Vérifier que ta copie est une vraie version ».
-749d90ac5a7d64e4382ea5a5e6d790665403ae2e808c0bedb6898f6ed4aa2816  .claude-plugin/plugin.json
-ff5299e2bb10c3cd384d04fa20676c76ee9d8e6cb12f4ab5248c5b0bdbe34077  README.md
-560222035efa97e60210d35dd1e4d9c95af61c892e0ba03a2ceb0b9153db06ae  SECURITE.md
+# roadmap 0.300.1 : SHA-256 de chaque fichier installé du plugin, chemins relatifs à son dossier.
+# Vérifier une copie installée (~/.claude/plugins/cache/roadmap/roadmap/0.300.1) : plugins/roadmap/SECURITE.md, « Vérifier que ta copie est une vraie version ».
+2bae71a8a75463527b41cbc9412025b1afbcb21432f60e78cd910c1110055af1  .claude-plugin/plugin.json
+037b8e7a5c9ff7639e15f5fe690fe036c8b6b8568782648e8a1590ea9700d787  README.md
+36b5d60cf6912463ca020e358ff066edf97c6ed4a8fb850e6dc7f5ef183264c9  SECURITE.md
 bce019cb7147413a8e5f0687df59a41394fa92545568b5d37b1df8bd6d885e30  hooks/bar-hit.tsx
 602f5c595b5c755998f7901664565dacd0641c657bb1e61bbf69ac98372137b1  hooks/cartes.tsx
 aabf55be3e47546e35758537fb540836bfcef577c3dc154b1b270fe595e0a532  hooks/controle.tsx
@@ -11,16 +11,16 @@ aabf55be3e47546e35758537fb540836bfcef577c3dc154b1b270fe595e0a532  hooks/controle
 8badb4232eec57867d86b8cb12e27ef9457b91b3590a15686ca50937df8cd95f  hooks/gardien.ts
 d842d789476d67282d0f04b7e5fdc68a3d981ccec65dd79cfa2d11eed13fb828  hooks/hooks.json
 b534b1076115160fa61b66e3740ac188d4c8c765e8e527dc1846e2c7ddd70617  hooks/icons.ts
-72599b50ece05ffcfb5b89a7c91f9fb2496da5bc780e42ec8850213da41b8cb4  hooks/parse.ts
+a90cee97b8b3bcb6f566161436e891f0a48c4dca637f67a5db137e0babfa9b6c  hooks/parse.ts
 9b52feecfcd53efd0c1ff4db4c52ef43cd298ceec725b1f153b67e4c016c6105  hooks/press-hit.tsx
 52b6b80acb84e20fe38bc8a9116af5078aaf7a925b8a58d9a4061c01e53e9d84  hooks/prise-cloud.ts
-624243ff1b5f19508c706e05011bd5cb1ef561de433a02a8ac63777d5d19635d  hooks/register.tsx
+6b83668868413b026071094eec0dab3b285ff0ebde7a931b427b0f13e038ddef  hooks/register.tsx
 7f7438f1d283cf6311c781daee5c3e60d28d40d5e6641e2abbd6ad35b1ef97d9  hooks/reglages.tsx
 f5f8d051a0c7264cb7b70a147842d0cfccec83e13d8e1a3087e8c440d66aab45  hooks/reveil-cloud.ts
 c3ca17e4ee5c3b65a51e2e54a6e9c046864a1e0ff3b587e61025a1e0f8958de9  hooks/reveil-mission.ts
 ee3e0d04f7d05c2d22300d69accad8bfedf06ecc1f86452e4537fc20ffe68905  hooks/tokens.ts
 be1055c33675b146c70cc84464c3c5cf8c10c97df8927492629b021919d5a3a5  scripts/one-at-a-time.sh
-9db1bea48a747206d320d495db603ad83dd3d9547f8ea352cc72306a35513c1b  skills/audit/SKILL.md
+d29c5cbddbda0d99068688e3872a2c366314c7114d2094779392b3e98351ded0  skills/audit/SKILL.md
 229895a7bd0efd118113a06fd4055938f83a0adf7af256a24b728f273cf2d1bc  skills/audit/scripts/audit.py
 8597d909a0c1281bc461cdf9dcbe74525db1634e71e26f100a3eee7ceefb3019  skills/audit/scripts/frictions.py
 dfa421db944cdfb0f34a254f46745b3f6d95c439413f094a8b1d814365fad596  skills/doctor/SKILL.md
@@ -28,7 +28,7 @@ dfa421db944cdfb0f34a254f46745b3f6d95c439413f094a8b1d814365fad596  skills/doctor/
 08959bbd48409cf4eab51bdb7b7eedaa4fc6c2622440bde2989a0f731bf3dd6b  skills/doctor/scripts/doctor.py
 6e80d5202351ec18b5590ac70bb51872289b2d5843226d3cc688fea6290193b0  skills/impact/SKILL.md
 e1a956cec45116d5fe0f6cd2a033b84bd2052f674fc29f0cc0755452dfa83973  skills/impact/scripts/impact.py
-2512adf64c806b41142f00fc45c73f19456a31d64c0190f73f46eab8ee979000  skills/maestro/SKILL.md
+f69657796d20066952a60e4821007b65383468d15c9d906e4a4175102205a6b6  skills/maestro/SKILL.md
 525466e64c2194b8845c348757ff2097385e5297260c7eb2a559653f9c47fa90  skills/maestro/references/consigne-capture.md
 c69a8d972b70e20e74d8b221249ad4ac8ad60042ad667fe8b65556f25a866eb0  skills/maestro/scripts/brief_cloud.py
 b39412d7bc1868f45b5690e7c0d239fe50456cb9ef63b626a704742c188d1b1b  skills/maestro/scripts/etat_maestro.py
@@ -77,7 +77,7 @@ bad694cf7a50f3020386722780146399a1ec6849cb26820b7861f15e13799590  skills/onboard
 90fc25ec683de643e688970d7f2043eaec30b08fa5970701ff96aea05ad6f786  skills/onboarding/scripts/onboarding.py
 bc392dd92df77f00cf85d20299d4679c29090c1e8927791549f629f3dba82569  skills/reglages-session/SKILL.md
 baca9d712adf547a3ab84d0604f06ee17090746146de6573e75cad12f47d6f6a  skills/roadmap-panel/SKILL.md
-7d9566313dbb72c8398272a1ebe1cc44c3d8e5e9e7ef0d70f1faab244cc72e48  skills/tasks/SKILL.md
+c940ed4d3e032a8cc039b3bb221ed8919f90842ce585c2fbc806106cb5a58de7  skills/tasks/SKILL.md
 2d8f4fbbfdb1057010f8f78a5afaacf9608d8434740881bafae4b52ddf31d3c6  skills/tasks/scripts/cout.py
 964419158a34327927d125bf043ae5a685b079513923bd214e73efcc24c8cfca  skills/tasks/scripts/tasks.py
 419f0ab9291a69e78f7a5e5a4bca0ea42c486eddb60bfec7ef289473b43d312a  types/index.d.ts

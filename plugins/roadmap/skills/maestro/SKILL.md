@@ -712,7 +712,12 @@ otherwise they see an empty worktree.
   proposes it and that the person clicks Start. A launch the person asked for counts as consent:
   the card is posted in this turn, without asking them again whether they want it; it is a card and
   not a launch, because the app refuses `user_asked` on a turn woken by a session's message. Maestro
-  does not code it, and adds its step to its list once it is launched.
+  does not code it, and adds its step to its list once it is launched. A proposal that is the
+  direct continuation of that session's own task (#330: passing its result on, a deliverable it
+  has already produced, a gesture the person asked of it there) is neither a line nor a card: send
+  it back to that session, and enrich its line, or its bilan when the line is closed (AAFES #605,
+  opened on 2026-11-05 for an email that #567 had already drafted, then two cards posted and
+  withdrawn).
 - **Findings** (#531): what a session finds outside its task (a possible gain, a tool or environment
   failure, a trap, a debt, an idea) is written in its report, one line per finding, the same on the
   Mac and in the cloud:
@@ -756,7 +761,9 @@ otherwise they see an empty worktree.
   forced `distinct`**: `write` asks whether they share a parent with the open tasks of their theme,
   #438, after #419, #423, #433 and #434 were opened apart on 2026-11-10), then posts the card (`own_initiative`, title `#<id> · <nom>`, brief opened
   by its mission, Maestro clause). Work done elsewhere: the line alone, said in one line. Nothing
-  for a reflection, an answered question, a decision without an action (the project's memory), a
+  for a reflection, an answered question, a decision without an action (the project's memory), the
+  direct continuation of a task in progress (its result passed on, what the person asks in its
+  session to finish it: done there, #330), a
   subject that already has its task (enrich it, one line); the project's rules (`regles`) win.
   One card per idea, after rereading the roadmap and the linked sessions; launching keeps the
   person's click. The panel states the rule with every message, in the session's own variant
@@ -918,7 +925,8 @@ The merge itself:
 - **A project session ends on « prête à clore »** (#510, C9): no branch, no PR, nothing to merge. The panel shows it
   « prête », like a branch ready to merge, and its wake message tells you to close its line: read what it says it
   did, then close the line with its bilan as below, with no merge and no release. Its brief, launched by you, tells it
-  never to tick the line itself.
+  never to tick the line itself. A « suite faite dans #N : … » in a later report of the same
+  session is added to that line's bilan (`tasks` skill, `update`), never opened as a new line (#330).
 - **After the merge** (after the « c'est bon » for a published task in test, below; for a render,
   at its publication, its proof going to a task apart, #455), Maestro ticks the line (`fait:`, what was delivered, the PR), moves it to the
   top of `ROADMAP-fait.md` and writes its bilan from the sub-session's last report. In a countable

@@ -160,6 +160,9 @@ person. A new group parent never requires `due:`: it is dated by its children (#
 - **One child per work step**, 2 to 6 per parent: a step one ticks
   (« Analyser la data et checker l'EFC »), not each gesture. The common subject (often the text before the first « : ») becomes
   the parent's label: a subject name, without an action.
+- **Announcing the result is not a child** (#330): « Contrôler X ; envoyer le résultat à Rong »
+  stays one task, the email being its last step. Children only when different sessions carry the
+  parts, or when a part waits on a third party.
 - **A child is not split**: its pieces become siblings under its parent (no third level).
 - **Each fragment has one target**: a child (`fragments`) or the parent (`parent_fragments`). Its
   words stay: rephrase (order, infinitive verb added), never cut. A word may move into a field

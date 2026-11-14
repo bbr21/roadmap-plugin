@@ -82,6 +82,21 @@ export const RECURRENCES: readonly Recurrence[] = ['jour', 'ouvré', 'semaine', 
 /** `skill:` : un nom de skill, `nom` ou `plugin:nom` (#280). */
 const SKILL_RE = /^[a-z0-9][a-z0-9-]*(:[a-z0-9][a-z0-9-]*)?$/
 
+/** Les sessions lues par relecture : au-delà des 40 d'avant, une journée chargée en laissait dehors. */
+export const LIST_LIMIT = 100
+/** La limite la plus large que la lecture de la liste des sessions atteint (#562 : 400 rangées pèsent 209 Ko, essai #206). */
+export const LIST_MAX = 400
+
+/**
+ * La limite de la prochaine lecture de `list_sessions` (#562) : une réponse pleine double la limite, jusqu'à
+ * `LIST_MAX` ; une réponse qui tient dans le quart de la limite la ramène à la moitié, jamais sous `LIST_LIMIT`.
+ */
+export function nextListLimit(limit: number, rows: number): number {
+  if (rows >= limit) return Math.min(limit * 2, LIST_MAX)
+  if (rows <= limit / 4) return Math.max(LIST_LIMIT, Math.floor(limit / 2))
+  return limit
+}
+
 /** Au-delà de ce nombre de jours sans nouvelle, une attente de tiers est à relancer (#99) ; `relance` de roadmap.json le change. */
 export const RELAUNCH_DAYS = 14
 
@@ -1629,7 +1644,7 @@ export function ideaReminder(source: Source, phrase: string, child = false): str
   return [
     `Plugin roadmap : ta dernière réponse propose une chose à construire (« ${phrase} »), et ni la roadmap (\`${source.dir}/ROADMAP.md\`) ni une carte de session n'ont bougé pendant ce tour.`,
     "Règle du plugin roadmap (Proposer une task, #216) : une chose à construire qui sort de l'échange devient une task proposée dans le tour même, pour que l'idée ne se perde pas.",
-    `${child ? proposeHow('child') : proposeHow('solo')} Si ce n'est pas une task (un geste de la tâche en cours, une piste en l'air, un sujet qui a déjà sa task), dis pourquoi en une ligne et termine.`,
+    `${child ? proposeHow('child') : proposeHow('solo')} Si ce n'est pas une task (un geste de la tâche en cours, la suite directe de la tâche en cours, une piste en l'air, un sujet qui a déjà sa task), dis pourquoi en une ligne et termine.`,
   ].join('\n')
 }
 
@@ -9924,15 +9939,16 @@ function designText(design?: Design): string {
 // fil d'un échange se perdait dès que le sujet changeait ou que la session se compactait ; le filet de
 // #83 ne venait qu'en fin de tour. Règle fixe, pas un réglage : dite en entier à chaque message d'un
 // projet à roadmap, la variante selon la session (Maestro, sous-session, session seule).
+// #330 (AAFES #567 puis #605, 2026-11-05) : la suite directe d'une tâche (transmettre son résultat, ce que la personne y demande pour finir) reste dans sa session, même ligne close ; Maestro ne l'ouvre pas en task.
 export type ProposeKind = 'maestro' | 'child' | 'solo'
 
 function proposeRule(): string {
-  return `une idée neuve qui demande du travail (outil, règle, document, réglage), ou une action à faire hors du périmètre de la tâche en cours, qu'elle vienne de ${person()} ou de toi, devient une task proposée dans le tour même, sans attendre qu'on la demande. Rien pour une réflexion, une question répondue, une explication ; ni pour une correction dans le périmètre de la tâche en cours (elle s'y fait) ; ni pour une décision sans action (elle va dans la mémoire du projet) ; un sujet qui a déjà sa task : étoffe-la et dis-le en une ligne. Les règles du projet (\`ROADMAP-REGLES.md\`, ou le fichier \`regles\` de \`.claude/roadmap.json\`) passent en premier. Une carte par idée, sans doublon : relis la roadmap et les sessions liées (\`list_sessions\` avec \`linked: true\`) avant. Lancer garde le clic de ${person()} sur Start, même en autonome.`
+  return `une idée neuve qui demande du travail (outil, règle, document, réglage), ou une action à faire hors du périmètre de la tâche en cours, qu'elle vienne de ${person()} ou de toi, devient une task proposée dans le tour même, sans attendre qu'on la demande. Rien pour une réflexion, une question répondue, une explication ; ni pour une correction dans le périmètre de la tâche en cours (elle s'y fait) ; ni pour la suite directe de la tâche en cours : transmettre son résultat à qui il revient (l'email qui annonce le résultat d'un contrôle, le récap au client) et tout ce que ${person()} y demande pour finir se font dans la session, même ligne déjà close ; ni pour une décision sans action (elle va dans la mémoire du projet) ; un sujet qui a déjà sa task : étoffe-la et dis-le en une ligne. Les règles du projet (\`ROADMAP-REGLES.md\`, ou le fichier \`regles\` de \`.claude/roadmap.json\`) passent en premier. Une carte par idée, sans doublon : relis la roadmap et les sessions liées (\`list_sessions\` avec \`linked: true\`) avant. Lancer garde le clic de ${person()} sur Start, même en autonome.`
 }
 
 function proposeHow(kind: ProposeKind): string {
-  if (kind === 'child') return "Tu travailles pour Maestro : pose ta carte `own_initiative` dans le tour même et n'écris pas la ligne : le panneau la remonte à Maestro, qui ouvre la ligne et la repropose. Ce que tu trouves hors de ta tâche sans en faire une carte (#531) s'écrit dans ton compte rendu, une ligne par finding : `> **Hors de ma tâche :** finding · <sorte> · <fichier ou outil> · <ce qui a été vu, sa preuve>` (sorte : gain, panne, piège, dette ou idée ; « · geste de " + person() + " » en dernier champ si la suite demande son geste) ; le panneau le remonte à Maestro, qui lui donne son sort."
-  if (kind === 'maestro') return 'Chez toi, Maestro : ouvre la ligne par la skill `tasks` (après rapprochement), puis pose la carte `own_initiative`, titre `#<id> · <nom>`, tirés de la ligne écrite (son `nom:`), brief ouvert par Mission, Fichiers, Fini quand, avec la clause de Maestro ; un travail fait ailleurs (autre dépôt, autre personne) : la ligne seule, dite en une ligne.'
+  if (kind === 'child') return "Tu travailles pour Maestro : pose ta carte `own_initiative` dans le tour même et n'écris pas la ligne : le panneau la remonte à Maestro, qui ouvre la ligne et la repropose. Ce que tu trouves hors de ta tâche sans en faire une carte (#531) s'écrit dans ton compte rendu, une ligne par finding : `> **Hors de ma tâche :** finding · <sorte> · <fichier ou outil> · <ce qui a été vu, sa preuve>` (sorte : gain, panne, piège, dette ou idée ; « · geste de " + person() + " » en dernier champ si la suite demande son geste) ; le panneau le remonte à Maestro, qui lui donne son sort. Ta ligne est déjà close et " + person() + " te demande sa suite directe : fais-la ici, sans carte, et dis-la dans ton compte rendu (« suite faite dans #<id> : … ») ; Maestro l'ajoute au bilan de ta ligne."
+  if (kind === 'maestro') return `Chez toi, Maestro : ouvre la ligne par la skill \`tasks\` (après rapprochement), puis pose la carte \`own_initiative\`, titre \`#<id> · <nom>\`, tirés de la ligne écrite (son \`nom:\`), brief ouvert par Mission, Fichiers, Fini quand, avec la clause de Maestro ; un travail fait ailleurs (autre dépôt, autre personne) : la ligne seule, dite en une ligne. Une proposition d'une sous-session qui porte sur la suite directe de sa propre tâche (son résultat, un livrable qu'elle a déjà produit, un geste que ${person()} lui a demandé) ne s'ouvre pas : renvoie-la à cette session, et étoffe sa ligne, ou son bilan si elle est close.`
   return 'Ouvre la ligne par la skill `tasks` (après rapprochement), puis pose la carte `own_initiative`, titre `#<id> · <nom>`, tirés de la ligne écrite (son `nom:`), brief complet.'
 }
 

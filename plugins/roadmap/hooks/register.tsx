@@ -891,6 +891,8 @@ import {
   isCloudSession,
   utf8Length,
   type AxisStyle,
+  LIST_LIMIT,
+  nextListLimit,
 } from './parse'
 import type { HeavyQueue, QueueMark, StoreSeen } from './parse'
 import { holdWrite } from './parse'
@@ -3521,7 +3523,7 @@ async function ownIsMaestro($: EngineInterface, own: { id: string | undefined; t
   if (!own.id || listDenied) return named
   try {
     toolCalls++
-    const ran = await sessionRead($, { tool: LIST_SESSIONS_TOOL, limit: LIST_LIMIT })
+    const ran = await sessionRead($, { tool: LIST_SESSIONS_TOOL, limit: listLimit })
     if (ran.deny !== undefined || ran.isError) return named
     const listedRows: unknown = JSON.parse(ran.text ?? '[]')
     if (!Array.isArray(listedRows)) return named
@@ -4601,8 +4603,8 @@ async function behindDraw($: EngineInterface, work: Promise<unknown>): Promise<v
   void settled.then(() => update($, liveVersionAtom, v => v + 1)).catch(() => undefined)
 }
 
-/** Les sessions lues par relecture : au-delà des 40 d'avant, une journée chargée en laissait dehors. */
-const LIST_LIMIT = 100
+/** La limite courante de la liste des sessions (#562) : grandit quand la réponse est pleine, redescend quand elle est petite. */
+let listLimit = LIST_LIMIT
 /** La dernière liste lue : une panne passagère la garde, au lieu de vider « En cours » le temps d'un pas. */
 let lastListRows: unknown[] = []
 /** Le pas de la minuterie où `lastListRows` a été lue (#519) : `doseState` la reprend dans ce même pas. */
@@ -4635,9 +4637,24 @@ async function readListRows($: EngineInterface): Promise<{ rows: unknown[]; note
   if (!listCall || Date.now() - listCall.at > LIST_CALL_DEAD_MS) {
     toolCalls++
     const at = Date.now()
+    // #562 : une réponse pleine (autant de rangées que la limite) a pu en couper : la même lecture repart aussitôt
+    // à la limite doublée, jusqu'à LIST_MAX, pour rendre la liste entière ; la limite atteinte se garde.
+    const readGrowing = async (): Promise<{ rows: unknown[]; note: string }> => {
+      for (;;) {
+        const used = listLimit
+        const before = lastListRows
+        const ran = await $.tool.call({ tool: LIST_SESSIONS_TOOL, limit: used })
+        const read = takeListRows(ran)
+        // Refus (qui peut vider la liste gardée), panne ou réponse illisible : la limite ne bouge pas.
+        if (ran.deny !== undefined || ran.isError || lastListRows === before) return read
+        const next = nextListLimit(used, read.rows.length)
+        listLimit = next
+        if (read.rows.length < used || next <= used) return read
+      }
+    }
     const ran = Promise.resolve()
-      .then(() => $.tool.call({ tool: LIST_SESSIONS_TOOL, limit: LIST_LIMIT }))
-      .then(takeListRows, () => ({ rows: lastListRows, note: '' }))
+      .then(readGrowing)
+      .catch(() => ({ rows: lastListRows, note: '' }))
     listCall = { at, ran }
     void ran.finally(() => {
       if (listCall?.ran === ran) listCall = undefined
@@ -6150,7 +6167,7 @@ async function relieveLaunches($: EngineInterface): Promise<void> {
       }
       // #424 : orpheline (session non Maestro, archivée ou absente de la liste complète), retenue comprise ; un Maestro
       // d'un autre projet la prend aussi quand celui de son projet ne l'a pas prise en `QUEUE_ORPHAN_MS`.
-      const orphan = (e: GlobalQueued) => (listed ? orphanTake(e, { ownProject, rows: state.rows, maestros, marks: state.marks, complete: state.rows.length < LIST_LIMIT, now }) : undefined)
+      const orphan = (e: GlobalQueued) => (listed ? orphanTake(e, { ownProject, rows: state.rows, maestros, marks: state.marks, complete: state.rows.length < listLimit, now }) : undefined)
       const lost = globalQueueOrder(queue).find(e => e.maestro !== ownId && e.kind !== 'resume' && !launchInFlight(e, now) && e.carded === undefined && (orphan(e)?.take === true || (!queueHeld(e) && (gone.has(e.maestro) || (!e.failed?.remote && !live.has(e) && gateOf(e).go)))))
       const lostOrphan = lost ? orphan(lost) : undefined
       if (lost) queue = await takeEntry($, ownId, lost, now, lostOrphan?.take === true, lostOrphan?.keepHeld === true)
