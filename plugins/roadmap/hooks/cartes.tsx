@@ -6,7 +6,7 @@
 import type { EngineInterface, RenderElement } from 'claude-code'
 
 import { checkIcon, cloudIcon, laptopIcon, mixOver } from './icons'
-import { daysBetween, dueLabel, isPriority, isThirdParty, queueRank, roadmapAxes, shortAttend, testTitle, type Bilan, type Sessions, type Task } from './parse'
+import { daysBetween, dueLabel, isMother, isPriority, isThirdParty, motherLaunchable, queueRank, roadmapAxes, shortAttend, testTitle, type Bilan, type Sessions, type Task } from './parse'
 import { SIZE, SPACE, type Palette } from './tokens'
 
 /** La sorte d'une ligne : une tâche neuve, mise à jour, faite ou annulée. */
@@ -105,6 +105,12 @@ export type WrittenCard = {
   start?: true
   /** #436 : où tourne la tâche (`lieu:cloud`, sinon en local) ; absent pour une tâche introuvable. */
   lieu?: Sessions
+  /**
+   * #616 (maquette C2) : la carte neuve d'une mère ouverte. La jauge dit ses filles directes faites sur toutes, `launch` le
+   * nombre de filles que son bouton « Lancer les N filles » fait lancer (`motherLaunchable` : ni en session, ni tenues).
+   * Une mère n'a ni description, ni échéance, ni Start, ni lieu : elle n'a rien à livrer seule (#447).
+   */
+  mother?: { done: number; total: number; launch: number }
 }
 
 /** Ce que la mémoire de l'avant garde d'une tâche (#371) : les trois champs que la carte montre en « avant → après ». */
@@ -264,6 +270,21 @@ export function writtenCards(lines: readonly WrittenLine[], tasks: readonly Task
       const took = tookDays(task)
       if (took) foot.push([{ text: took, ink: 'text2' }])
     }
+    // #616 : la carte neuve d'une mère ouverte est courte : « Axe X · N filles », la jauge de ses filles, le bouton qui les lance.
+    if (line.kind === 'new' && live && isMother(task, tasks)) {
+      const kids = tasks.filter(k => k !== task && k.parent === task.id)
+      const motherFoot: FootRun[][] = []
+      if (task.axis !== '') motherFoot.push([{ text: 'Axe ', ink: 'text2' }, { text: task.axis, ink: 'text', strong: true }])
+      motherFoot.push([{ text: kids.length === 1 ? '1 fille' : `${kids.length} filles`, ink: 'text2' }])
+      return {
+        id: line.id,
+        kind: line.kind,
+        title,
+        change: '',
+        foot: motherFoot,
+        mother: { done: kids.filter(k => k.done).length, total: kids.length, launch: motherLaunchable(task, tasks, t => o.who?.(t)?.session === true).length },
+      }
+    }
     const startable = line.kind === 'new' && live && !who?.session
     return {
       id: line.id,
@@ -422,6 +443,10 @@ export type WrittenDrawOptions = {
   start?: (id: string) => void
   /** #388 : ce que le clic a fait de la carte (en file chez Maestro, ou carte « New session » proposée) ; sans état, « Start » reste cliquable. */
   started?: (id: string) => WrittenStart | undefined
+  /** #616 : le clic sur « Lancer les N filles » de la carte d'une mère (le geste de son ▶ du panneau, #552). */
+  launchDaughters?: (id: string) => void
+  /** #616 : le lancement des filles de cette mère est demandé : le bouton dit « Demandé » et une note le redit. */
+  launched?: (id: string) => boolean
 }
 
 /** #388 : l'état d'une carte après « Start » : en file chez un Maestro (rang, 1 pour la prochaine), ou la carte « New session » posée. */
@@ -432,6 +457,22 @@ const kindInk = (p: Palette, kind: WrittenKind): string => ({ new: p.ok, upd: p.
 
 /** Le point de 8 px de la sorte : un disque plein de son encre. */
 const dotSource = (hex: string): string => `<svg xmlns="http://www.w3.org/2000/svg" width="8" height="8" viewBox="0 0 8 8"><circle cx="4" cy="4" r="4" fill="${hex}"/></svg>`
+
+/** #616 : le mot du bandeau de la carte d'une mère. */
+export const MOTHER_WORD = 'Nouvelle tâche mère'
+
+/** #616 : la marque d'une mère (le carré à chevron de sa ligne du panneau, #447) : un carré arrondi en trait, un chevron droit dedans. */
+const motherMarkSource = (hex: string): string =>
+  `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 14 14"><rect x="1" y="1" width="12" height="12" rx="2.5" fill="none" stroke="${hex}" stroke-width="1.6"/><path d="M5 4.5 8 7 5 9.5" fill="none" stroke="${hex}" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>`
+
+const GAUGE_WIDTH = 34
+const GAUGE_HEIGHT = 6
+
+/** #616 : la barre de la jauge d'une mère, 34 × 6 px : piste `track`, remplie de `fill` à proportion de done/total. */
+const gaugeSource = (done: number, total: number, track: string, fill: string): string => {
+  const w = total > 0 ? Math.round((GAUGE_WIDTH * Math.min(done, total)) / total) : 0
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${GAUGE_WIDTH}" height="${GAUGE_HEIGHT}" viewBox="0 0 ${GAUGE_WIDTH} ${GAUGE_HEIGHT}"><rect width="${GAUGE_WIDTH}" height="${GAUGE_HEIGHT}" rx="3" fill="${track}"/>${w > 0 ? `<rect width="${w}" height="${GAUGE_HEIGHT}" rx="3" fill="${fill}"/>` : ''}</svg>`
+}
 
 /**
  * Le message redessiné : le texte en Markdown, les lignes du compte rendu en une carte par tâche, à leur place
@@ -472,10 +513,26 @@ export function drawWrittenMessage(el: ReturnType<EngineInterface['ui']['resolve
       ))
       return i === 0 ? runs : [<Text key={`dot${i}`} color={palette.text3}>{' · '}</Text>, ...runs]
     })
+    // #616 : la jauge des filles faites sur toutes, entre le titre et la croix.
+    const gauge = c.mother && (
+      <Box key={`written-gauge:${c.id}${suffix}`} flexDirection="row" alignItems="center" gap={SPACE.tight} flexShrink={0}>
+        {Svg ? (
+          <Svg key="written-gauge-bar" source={gaugeSource(c.mother.done, c.mother.total, palette.sel, palette.ok)} alt={`${c.mother.done} ${c.mother.done > 1 ? 'filles faites' : 'fille faite'} sur ${c.mother.total}`} width={GAUGE_WIDTH} height={GAUGE_HEIGHT} />
+        ) : null}
+        <Text size="footnote" color={palette.text2}>{`${c.mother.done}/${c.mother.total}`}</Text>
+      </Box>
+    )
+    const launching = c.mother !== undefined && c.mother.launch > 0
+    const launched = launching ? o.launched?.(c.id) === true : false
     const started = c.start ? o.started?.(c.id) : undefined
-    const note = started && (
+    const note = (started || launched) && (
       <Box key={`written-note:${c.id}${suffix}`} paddingLeft="lg" paddingBottom="md">
-        {started.state === 'queued' ? (
+        {launched ? (
+          <Text size="body" color={palette.text2}>
+            <Text color={palette.waitOn}>Demandé à Maestro</Text>
+            <Text color={palette.text2}> · il lance les filles dans l'ordre qu'il calcule</Text>
+          </Text>
+        ) : started?.state === 'queued' ? (
           <Text size="body" color={palette.text2}>
             <Text color={palette.waitOn}>{`En file chez ${started.maestro}`}</Text>
             <Text color={palette.text2}>{` · ${queueRank(started.rank)}, part seule à son tour`}</Text>
@@ -491,10 +548,12 @@ export function drawWrittenMessage(el: ReturnType<EngineInterface['ui']['resolve
         <Box key={`written-band:${c.id}${suffix}`} backgroundColor={bandBg} borderStyle="round" borderColor={bandBg} paddingX="lg" paddingY="sm">
           <Box key={`written-band-row:${c.id}${suffix}`} flexDirection="row" alignItems="center" justifyContent="space-between" gap={SPACE.tight}>
             <Box key="written-kind" flexDirection="row" alignItems="center" gap={SPACE.tight}>
-              {done
+              {c.mother
+                ? (Svg ? <Svg key="written-dot" source={motherMarkSource(palette.text2)} alt="Tâche mère" width={SIZE.icon.sm} height={SIZE.icon.sm} /> : <Text key="written-dot" size="footnote" color={palette.text2}>▢</Text>)
+                : done
                 ? (Svg ? <Svg key="written-dot" source={checkIcon(ink, SIZE.icon.sm)} alt={KIND_WORD[c.kind]} width={SIZE.icon.sm} height={SIZE.icon.sm} /> : <Text key="written-dot" size="footnote" color={ink}>✓</Text>)
                 : (Svg ? <Svg key="written-dot" source={dotSource(ink)} alt={KIND_WORD[c.kind]} width={8} height={8} /> : <Text key="written-dot" size="footnote" color={ink}>●</Text>)}
-              <Text size="footnote" weight="bold" color={ink}>{KIND_WORD[c.kind]}</Text>
+              <Text size="footnote" weight="bold" color={c.mother ? palette.text : ink}>{c.mother ? MOTHER_WORD : KIND_WORD[c.kind]}</Text>
             </Box>
             {place || null}
           </Box>
@@ -504,6 +563,7 @@ export function drawWrittenMessage(el: ReturnType<EngineInterface['ui']['resolve
             <Box key="written-title-text" flexGrow={1} flexShrink={1} minWidth={0}>
               <Text {...(done ? { size: 'heading' as const, weight: 'semibold' as const, color: palette.finishedOn } : { size: 'body' as const, weight: 'medium' as const })} wrap="truncate-end" {...(cancelled ? { strikethrough: true, color: palette.text3 } : done ? {} : { color: palette.text })}>{`#${c.id} · ${c.title}`}</Text>
             </Box>
+            {gauge}
             {/* #489 (choix de BBR du 2026-11-12) : la croix de toute carte a le même rond, au filet de sa carte. */}
             <Box key={`written-close-frame:${c.id}${suffix}`} borderStyle="round" borderColor={done ? palette.finished : palette.border} paddingX={0} paddingY={0} flexShrink={0}>
               <Button key={`written-close:${c.id}${suffix}`} plain onPress={() => o.close?.(c.id)}>
@@ -524,10 +584,18 @@ export function drawWrittenMessage(el: ReturnType<EngineInterface['ui']['resolve
           <Box key="written-foot-actions" flexDirection="row" alignItems="center" gap={SPACE.tight} flexShrink={0}>
             <Button
               key={n === 0 ? `written-open:${c.id}` : `written-open:${c.id}${suffix}`}
-              {...(c.start ? { plain: true } : { variant: 'primary' as const })}
+              {...(c.start || launching ? { plain: true } : { variant: 'primary' as const })}
               label={c.session ? 'Ouvrir la session' : 'Ouvrir la task'}
               onPress={() => (c.session ? o.openSession?.(c.id) : o.open?.(c.id))}
             />
+            {launching && (
+              <Button
+                key={n === 0 ? `written-launch:${c.id}` : `written-launch:${c.id}${suffix}`}
+                {...(launched ? {} : { variant: 'primary' as const })}
+                label={launched ? 'Demandé' : c.mother!.launch === 1 ? 'Lancer la fille' : `Lancer les ${c.mother!.launch} filles`}
+                onPress={() => (launched ? undefined : o.launchDaughters?.(c.id))}
+              />
+            )}
             {c.start && (
               <Button
                 key={n === 0 ? `written-start:${c.id}` : `written-start:${c.id}${suffix}`}

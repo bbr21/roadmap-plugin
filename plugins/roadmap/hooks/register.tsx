@@ -3652,6 +3652,8 @@ async function rootMaestro($: EngineInterface): Promise<{ id: string; title: str
 
 /** Ce que « Start » d'une carte écrite a fait (#388), par `<projet>|<id>` : la carte le redit tant que le module vit. */
 const cardStarts = new Map<string, WrittenStart>()
+/** #616 : les mères dont la carte écrite a demandé « Lancer les filles », par `<projet>|<id>` : la carte dit « Demandé » tant que le module vit. */
+const motherCardLaunches = new Set<string>()
 /** Les « Start » en cours (#388) : un second clic pendant la lecture des sessions ne double rien. */
 const cardStarting = new Set<string>()
 
@@ -11588,11 +11590,20 @@ export const register: Register = (on, options) => {
       }
       // Les bilans : ce que le panneau a déjà en mémoire (`paneData`), jamais une nouvelle lecture.
       const cards = (lines: WrittenLine[]) => writtenCards(lines, tasks, { short: t => shownTitle(t, data.titles), today: todayOf(now), me: source.me, who, bilans: data.bilan.bilans, ...(before ? { before } : {}), reco: (t: Task) => (isRoutine(t) ? 'mac' : launchTargetOf(source, t)) })
+      // #616 : « Lancer les filles » de la carte d'une mère, le geste de son ▶ du panneau (#552) : la consigne part dans la conversation.
+      const launchDaughtersFromCard = (id: string) => {
+        const mother = tasks.find(x => x.id === id)
+        if (!mother) return
+        const daughters = motherLaunchable(mother, tasks, x => who(x)?.session === true)
+        if (daughters.length === 0) return
+        motherCardLaunches.add(`${source.root ?? source.dir}|${id}`)
+        void submitWelcome($, motherLaunchText(mother, daughters, x => shownTitle(x, data.titles))).then(() => update($, retryAtom, v => v + 1))
+      }
       const openSessionOf = (id: string) => {
         const entry = sessions.get(id)
         void (entry ? openSession($, entry) : openTaskFiche($, source, id))
       }
-      return drawWrittenMessage($.ui.resolve(e), parts, cards, data.palette, { open: id => void openTaskFiche($, source, id), openSession: openSessionOf, start: id => { const t = tasks.find(x => x.id === id); if (t) void startFromCard($, source, id, shownTitle(t, data.titles)) }, started: id => cardStarts.get(`${source.root ?? source.dir}|${id}`), close: id => void storeGet($, CLOSED_KEY).catch(() => undefined).then(stored => storeSet($, CLOSED_KEY, keepClosed(stored, `${fingerprint}:${id}`) as StoreValue)).then(() => update($, retryAtom, v => v + 1)) })
+      return drawWrittenMessage($.ui.resolve(e), parts, cards, data.palette, { open: id => void openTaskFiche($, source, id), openSession: openSessionOf, start: id => { const t = tasks.find(x => x.id === id); if (t) void startFromCard($, source, id, shownTitle(t, data.titles)) }, started: id => cardStarts.get(`${source.root ?? source.dir}|${id}`), launchDaughters: id => launchDaughtersFromCard(id), launched: id => motherCardLaunches.has(`${source.root ?? source.dir}|${id}`), close: id => void storeGet($, CLOSED_KEY).catch(() => undefined).then(stored => storeSet($, CLOSED_KEY, keepClosed(stored, `${fingerprint}:${id}`) as StoreValue)).then(() => update($, retryAtom, v => v + 1)) })
     } catch (err) {
       $.ui.log(`roadmap : cartes des tâches écrites non dessinées (${err instanceof Error ? err.message : String(err)})`, { to: 'debug' })
       return next(e)
