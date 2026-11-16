@@ -862,6 +862,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.302.3 (2026-11-16)** : hooks : l'interrupteur Local | Cloud de la fiche grise Cloud sans dépôt joignable (#622)
 - **0.302.2 (2026-11-15)** : hooks : la reco de lieu du panneau et du script suit la règle du dépôt joignable (#614)
 - **0.302.1 (2026-11-15)** : hooks : le chevron de dépli d'une mère s'aligne à 1, 2 et 3 chiffres (#618)
 - **0.302.0 (2026-11-14)** : hooks : la carte Nouvelle d'une tâche mère a son affichage (bandeau, jauge, Lancer les filles) (#616)

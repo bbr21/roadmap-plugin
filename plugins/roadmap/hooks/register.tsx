@@ -3680,6 +3680,7 @@ async function startFromCard($: EngineInterface, source: Source, id: string, sho
     if (!task) return
     // #479 : Start part au lieu que dit la carte ; #510 : sous un Maestro, la file commune pour les deux cibles (une
     // entrée cloud n'y attend que le plafond du projet), sinon le ▶, local ou cloud (`launchTask`).
+    await loadRepoReach($, source)
     const target: Sessions = !isRoutine(task) && launchTargetOf(source, task) === 'cloud' ? 'cloud' : 'mac'
     const maestro = await rootMaestro($)
     if (maestro) {
@@ -6623,11 +6624,47 @@ const launchTargets = new Map<string, Sessions>()
 
 const recoSig = (task: Task) => `${task.label}|${task.spec ?? ''}|${task.fiche ?? ''}`
 
-/** La reco d'une tâche : le verdict du modèle s'il est à jour (#430), sinon la règle, avec ses documents s'ils sont lus. */
+/**
+ * #622 : le dépôt que le cloud peut cloner (`cloudRepoOf`), lu une fois par projet (dossier et `depot`) : la fiche
+ * n'appelle jamais `git` à chaque dessin. `known` reste faux tant que `git` n'a pas répondu ; la reco ne change qu'après.
+ */
+const repoReach: { key?: string; known: boolean; repo?: string; run?: Promise<void> } = { known: false }
+const repoReachKey = (source: Source) => `${source.root ?? source.dir}|${projectSettings(source).depot ?? ''}`
+
+/** Lit une fois le dépôt joignable du projet, puis redessine s'il n'y en a pas ; la promesse sert au lancement qui l'attend. */
+function loadRepoReach($: EngineInterface, source: Source): Promise<void> {
+  const key = repoReachKey(source)
+  if (repoReach.key === key && repoReach.run) return repoReach.run
+  const depot = projectSettings(source).depot
+  repoReach.key = key
+  repoReach.known = depot !== undefined
+  repoReach.repo = depot
+  repoReach.run = depot !== undefined
+    ? Promise.resolve()
+    : (async () => {
+        const repo = await cloudRepoOf($, source.root ?? source.dir)
+        if (repoReach.key !== key) return
+        repoReach.known = true
+        repoReach.repo = repo
+        if (repo === undefined) await update($, recoStampAtom, v => v + 1).catch(() => undefined)
+      })()
+  return repoReach.run
+}
+
+/** #622 : faux seulement quand le dépôt du projet est lu et qu'aucun n'est joignable : le cloud ne se propose plus. */
+function cloudReachable(source: Source): boolean {
+  return !(repoReach.key === repoReachKey(source) && repoReach.known && repoReach.repo === undefined)
+}
+
+/**
+ * La reco d'une tâche : le verdict du modèle s'il est à jour (#430), sinon la règle, avec ses documents s'ils sont lus ;
+ * sans dépôt joignable, le Mac et sa raison (#622, comme `reco_cloud.py` et le contrôle des cartes depuis #614).
+ */
 function recoOf(source: Source, task: Task): JudgedReco {
   const kept = recoDocs.get(taskKey(task))
   const docs = kept && kept.sig === recoSig(task) ? kept.docs : undefined
-  return judgedReco(task, recoCache.cache, docs)
+  const reco = judgedReco(task, recoCache.cache, docs)
+  return cloudReachable(source) ? reco : reachableReco(reco, undefined)
 }
 
 // --- La reco jugée par le modèle (#430) ---------------------------------------------------------------
@@ -6769,6 +6806,8 @@ function loadRecoDocs($: EngineInterface, source: Source, task: Task): void {
 
 /** La cible posée sur l'interrupteur d'une tâche, sinon sa reco. */
 function launchTargetOf(source: Source, task: Task): Sessions {
+  // #622 : sans dépôt joignable, le cloud n'est jamais la cible, même posé avant que le dépôt soit lu.
+  if (!cloudReachable(source)) return 'mac'
   return launchTargets.get(taskKey(task)) ?? recoOf(source, task).lieu
 }
 
@@ -14885,6 +14924,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     // #416 (maquette B) : une routine n'a pas de cible ; une autre tâche lance vers la cible de l'interrupteur.
     const targeted = !isRoutine(current)
     if (targeted && launchable) {
+      void loadRepoReach($, source)
       loadRecoDocs($, source, current)
       askJudge($, source, current)
     }
@@ -14899,6 +14939,20 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     // L'interrupteur Local | Cloud, posé sur la reco (« conseillé ») ; au terminal, deux boutons.
     const targetSwitch = (): RenderElement => {
       const seg = (t: Sessions) => {
+        // #622 (choix de BBR du 2026-11-16, « Cloud grisé ») : sans dépôt joignable, Cloud reste à sa place, grisé et
+        // inerte ; la ligne sous « Lancer » dit pourquoi.
+        if (t === 'cloud' && !cloudReachable(source)) {
+          return Svg ? (
+            <Box key="launch-target:cloud" flexDirection="row" alignItems="center" gap={SPACE.tight} paddingX={SPACE.indent} backgroundColor={palette.btn}>
+              {corners(RADIUS.chip, palette.btn)}
+              {strut(SIZE.strut.field)}
+              <Svg source={cloudIcon(palette.text3, SIZE.icon.sm)} alt="Cloud indisponible : aucun dépôt joignable" width={SIZE.icon.sm} height={SIZE.icon.sm} />
+              <Text size="footnote" color={palette.text3}>Cloud</Text>
+            </Box>
+          ) : (
+            <Text key="launch-target:cloud" dimColor>Cloud (sans dépôt)</Text>
+          )
+        }
         const on = t === target
         const word = t === 'cloud' ? 'Cloud' : 'Local'
         const ink = on ? palette.text : palette.text2
