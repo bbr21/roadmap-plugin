@@ -13638,7 +13638,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   // `pickIt` (#355, maquette C, survol C2) : le numéro d'une ligne sans session la choisit ; au survol, le fond
   // `liveTint` et l'encre `liveOn`, sans dessin ; choisie, sa pastille `live`. Sur le bureau, un bouton sans
   // encre posé dessus, sans zone de clic, dont le survol allume le numéro (même portée de survol).
-  const taskNumber = (id: string, open?: () => void, done = false, fit?: 'content' | 'grow', pickIt?: { press: () => void; chosen: boolean }) => {
+  const taskNumber = (id: string, open?: () => void, done = false, fit?: 'grow', pickIt?: { press: () => void; chosen: boolean }) => {
     // Une fois cliquable par dessin (#220) : la même tâche dessinée deux fois n'a qu'un numéro qui ouvre.
     const opens = open && (graphic ? numberZones.has(id) : true) && firstZone(`num:${id}`) ? open : undefined
     // Une tâche en session garde son numéro qui mène à sa session (#220) : elle se choisit par sa case.
@@ -13650,7 +13650,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
       // alignés ; à la largeur du plus long numéro (#258), dans la liste comme dans la fiche (#259). Un
       // numéro cliquable est un bouton au terminal ; sur le bureau, un texte et sa zone de clic (un bouton
       // imposait sa taille de texte, 2026-10-23). Une faite : gris clair, barré.
-      <Box key={`n:${id}`} {...(fit === 'grow' ? { flexGrow: 1 } : fit === 'content' ? {} : { width: treeNumCells })} flexDirection="row" justifyContent="flex-end" alignItems="center" flexShrink={0}>
+      <Box key={`n:${id}`} {...(fit === 'grow' ? { flexGrow: 1 } : { width: treeNumCells })} flexDirection="row" justifyContent="flex-end" alignItems="center" flexShrink={0}>
         {opens && !graphic ? (
           <Button key={`num:${id}`} plain dimColor onPress={opens}>{`#${id}`}</Button>
         ) : picking && !Svg ? (
@@ -17347,7 +17347,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     ) : null
     // #583 : le numéro d'une ligne cloud du bloc ouvre sa conversation quand son lien est connu.
     const cloudLink = rowSession === undefined && block?.cloud ? cloudSessionLinkOf(block) : undefined
-    const number = t.id ? taskNumber(t.id, rowSession ? () => void openSession($, rowSession.entry) : cloudLink ? () => void openHttpsUrl($, cloudLink).catch(() => undefined) : undefined, t.done || cloudMerged || held, grouped ? (head ? 'content' : 'grow') : undefined, checkable ? { press: pickByNumber, chosen } : undefined) : undefined
+    const number = t.id ? taskNumber(t.id, rowSession ? () => void openSession($, rowSession.entry) : cloudLink ? () => void openHttpsUrl($, cloudLink).catch(() => undefined) : undefined, t.done || cloudMerged || held, grouped && !head ? 'grow' : undefined, checkable ? { press: pickByNumber, chosen } : undefined) : undefined
     return (
       <Box
         key={`hit:${t.key}`}
@@ -17372,9 +17372,11 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
           </Button>
         ) : grouped ? (
           // Dans l'arbre (#282) : le carré, la place de la flèche, puis le # calé à droite, sans écart entre eux.
-          // La place grandit jusqu'au # : la flèche y est centrée, au milieu du carré et du #, quelle que soit
-          // la largeur d'une cellule ou du numéro ; une tâche seule la garde vide. La mère se replie par le
-          // carré et la flèche.
+          // La place grandit jusqu'à la colonne du # : la flèche y est centrée, au milieu du carré et du # le
+          // plus large, quelle que soit la largeur d'une cellule ; une tâche seule la garde vide. Le # d'une mère
+          // tient la colonne entière (`treeNumCells`), calé à droite : à sa seule largeur, la place de la flèche
+          // changeait avec ses chiffres et #9 sortait à droite de #52 (#618). La mère se replie par le carré et
+          // la flèche.
           // Une tâche seule : sa marque, puis son # qui prend la place qui reste, calé à droite (une Box de
           // moins par ligne : le poids d'un dessin est borné).
           <Box flexDirection="row" alignItems="center" flexShrink={0} width={treeNumCells + TREE_LEAD_CELLS}>

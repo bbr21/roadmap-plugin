@@ -862,6 +862,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.302.1 (2026-11-15)** : hooks : le chevron de dépli d'une mère s'aligne à 1, 2 et 3 chiffres (#618)
 - **0.302.0 (2026-11-14)** : hooks : la carte Nouvelle d'une tâche mère a son affichage (bandeau, jauge, Lancer les filles) (#616)
 - **0.301.1 (2026-11-14)** : maestro : le rappel de la carte du gardien ne se perd plus sur une carte refusée par l'app, il revient à chaque carte de tâche posée (#615)
 - **0.301.0 (2026-11-13)** : roadmap : le grain des tâches se règle par projet, l'audit le lit (#566)
