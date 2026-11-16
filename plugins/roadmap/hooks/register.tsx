@@ -113,7 +113,7 @@ import {
 } from './icons'
 import { MIX, PX, RADIUS, SIZE, SPACE, TEXT } from './tokens'
 import { BEFORE_KEY, CLOSED_KEY, NATIVE_KEY, beforeMap, closedKeys, drawWrittenMessage, keepBefore, keepClosed, keepNative, nativeKeys, splitWritten, testSessions, withoutClosed, withoutNative, writtenCards, type WrittenLine, type WrittenStart, type WrittenWho } from './cartes'
-import { CARD_DEADLINE_MS, CARD_LATE_WHY, cardTargetOf, dismissCall, panelChoiceIn, proposalIdIn, recoTargetRefusal, withFreshBackground, type Place } from './depart'
+import { CARD_DEADLINE_MS, CARD_LATE_WHY, cardTargetOf, dismissCall, panelChoiceIn, proposalIdIn, reachableReco, recoTargetRefusal, withFreshBackground, type Place } from './depart'
 import { CLOUD_WATCH_EVERY_MS, CLOUD_WATCH_KEY, MISSION_START_KEY, addMissionStart, addWatch, startedAtCall, briefBranchOf, dueWatches, lineVerdict, missionStartList, pushedSince, remoteHeads, startedCardTitles, watchList, type CloudWatch } from './prise-cloud'
 import { CLOUD_WAKE_EVERY_MS, CLOUD_WAKE_KEY, CLOUD_WAKE_PR_FIELDS, cloudWakeAdopts, cloudWakeDue, cloudWakes, wakePrompt, wakeStateOf, type WakeRole } from './reveil-cloud'
 import { MISSION_WAKE_EVERY_MS, MISSION_WAKE_KEY, missionDeparted, missionWakeDue, missionWakePrompt, missionWakeStateOf, missionWakes } from './reveil-mission'
@@ -670,6 +670,7 @@ import {
   parseMissions,
   type MissionEntry,
   judgedReco,
+  maestroReco,
   parseRecoCache,
   parseRecoVerdicts,
   recoCacheText,
@@ -3406,7 +3407,8 @@ async function dismissPendingCard($: EngineInterface, source: Source, id: string
  * --carte` : dans un projet ouvert au cloud, une carte dont le lieu la contredit se refuse, avec l'appel juste. Sans
  * #N, sans roadmap, ligne absente ou close, projet fermé au cloud, démarrage d'une proposition : rien. Un projet
  * `cloud: missions` (#476) non plus : la reco d'un projet sans code dit toujours Mac, et Maestro y choisit la mission
- * ou le Mac par le § 2 ter de sa skill.
+ * ou le Mac par le § 2 ter de sa skill. #614 : le contrôle juge comme `reco_cloud.py` (cache relu du disque, verdict
+ * pris au libellé, `maestroReco`), et un projet sans dépôt joignable reçoit la reco local (`reachableReco`).
  */
 /**
  * #575 : la carte cloud de la tâche #N (titre « #N · … ») reçoit le modèle et l'effort de sa charge (`taskLaunch`) ; une
@@ -3441,13 +3443,18 @@ async function recoCardRefusal($: EngineInterface, e: unknown): Promise<string |
     const open = await load($, files(source).open, 'ROADMAP.md')
     if (typeof open === 'string') return undefined
     const task = open.find(t => t.id === id && !t.done)
-    // Une mission (tâche de projet) n'a pas de reco de lieu à contredire.
-    if (!task || isRoutine(task) || taskWork(source, task) === 'projet') return undefined
+    if (!task) return undefined
+    const repo = await cloudRepoOf($, source.root ?? source.dir, projectSettings(source).depot)
+    // Une mission (tâche de projet) n'a pas de reco de lieu à contredire ; sans dépôt joignable, la règle du Mac vaut pour toute tâche.
+    if (repo !== undefined && (isRoutine(task) || taskWork(source, task) === 'projet')) return undefined
+    // #614 : le verdict qu'un autre panneau vient d'écrire compte : le fichier relu, sans toucher au cache en mémoire.
     await loadRecoCache($, source)
+    const disk = recoCache.path ? await readOr($, recoCache.path) : undefined
+    const cache = disk === undefined ? recoCache.cache : { ...recoCache.cache, ...parseRecoCache(disk) }
     const found = await briefFound($, source, task)
     const docs: string[] = []
     for (const doc of briefDocs(source, task, found)) docs.push((await readOr($, doc)) ?? '')
-    const reco = judgedReco(task, recoCache.cache, task.spec || task.fiche ? docs : undefined)
+    const reco = reachableReco(maestroReco(task, cache, docs), repo)
     const title = card.title.replace(/ · (?:cloud|local|Mac)$/, '')
     // #479 : le lieu choisi dans le panneau, que dit le brief du ▶ passé par Claude, l'emporte sur la reco.
     const chosen = panelChoiceIn(card.prompt)

@@ -11438,6 +11438,16 @@ export function judgedReco(task: Task, cache: RecoCache, docs: readonly string[]
 }
 
 /**
+ * #614 : la reco que juge `reco_cloud.py` pour Maestro : le verdict du modèle dès que le libellé est celui qu'il a jugé
+ * (sans regarder l'empreinte des documents), sinon la règle des mots sur la ligne et ses documents.
+ */
+export function maestroReco(task: Task, cache: RecoCache, docs: readonly string[]): JudgedReco {
+  const v = cache[recoKeyOf(task)]
+  if (v && v.label === task.label.trim()) return { lieu: v.lieu, why: v.why, ...(v.besoins ? { besoins: v.besoins } : {}), by: 'model' }
+  return { ...cloudReco(task, docs), by: 'rule' }
+}
+
+/**
  * La charge d'une tâche (#492) : celle du verdict du modèle, jugée sur la tâche entière, tant que le libellé est celui
  * qu'il a jugé (comme pour Maestro, `reco_cloud.py`) ; sinon, ou sans charge dans le verdict (ancien cache), les mots
  * du libellé (#490). Projet sans code compris : la charge ne dépend pas du lieu.

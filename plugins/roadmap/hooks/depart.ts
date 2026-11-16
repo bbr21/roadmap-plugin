@@ -14,6 +14,14 @@ export const CARD_DEADLINE_MS = 30_000
 /** La note d'une carte à laquelle l'app n'a pas répondu dans `CARD_DEADLINE_MS`. */
 export const CARD_LATE_WHY = `l'app n'a pas répondu en ${CARD_DEADLINE_MS / 1000} s ; rien n'est parti, relance d'un clic`
 
+/** #614 : la raison d'une reco locale faute de dépôt que le cloud puisse cloner. */
+export const NO_REPO_WHY = 'aucun dépôt joignable (ni depot dans .claude/roadmap.json, ni remote GitHub) : le cloud ne peut pas prendre la tâche'
+
+/** #614 : sans dépôt joignable (`repo` absent), la reco dit toujours le Mac, avec `NO_REPO_WHY` ; sinon elle reste telle quelle. */
+export function reachableReco<T extends { lieu: Place | string; why: string }>(reco: T, repo: string | undefined): T {
+  return repo === undefined ? { ...reco, lieu: 'mac', why: NO_REPO_WHY } : reco
+}
+
 /** Le lieu d'une carte `start_session` : `target: "cloud"` en cloud, toute autre carte en local. */
 export function cardTargetOf(card: Record<string, unknown>): Place {
   return card.target === 'cloud' ? 'cloud' : 'mac'

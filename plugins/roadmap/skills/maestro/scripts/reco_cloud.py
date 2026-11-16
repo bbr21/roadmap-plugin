@@ -42,6 +42,10 @@ compris), champ facultatif `charge` du verdict gardé. Tant que le libellé est 
 mots ; un ancien verdict sans elle, ou une valeur inconnue, laisse les mots répondre. Un projet sans dossier .git garde
 son cache dans DEPOT/.claude/roadmap-reco.json.
 
+#614 : un projet sans dépôt joignable (ni `depot` dans .claude/roadmap.json, ni remote `origin` GitHub) ne reçoit
+jamais la reco cloud, le cloud ne pouvant pas prendre sa tâche : le lieu devient « mac », la raison `SANS_DEPOT`
+(le texte de NO_REPO_WHY du panneau), les besoins restent ceux lus ; vaut pour la sortie texte et pour `--carte`.
+
 Python 3.9 et plus, bibliothèque standard seulement.
 """
 
@@ -49,6 +53,7 @@ import argparse
 import json
 import os
 import re
+import subprocess
 import sys
 import unicodedata
 
@@ -90,6 +95,8 @@ MODELES = {
 }
 NOMS_MODELES = {"claude-sonnet-5-5": "Sonnet 5.5", "claude-opus-5-5": "Opus 5.5"}
 CACHE = "roadmap-reco.json"
+# #614 : le même texte que NO_REPO_WHY du panneau (hooks/depart.ts).
+SANS_DEPOT = "aucun dépôt joignable (ni depot dans .claude/roadmap.json, ni remote GitHub) : le cloud ne peut pas prendre la tâche"
 LOGIQUE = "tâche de logique : ni simulateur, ni volet navigateur pour un vrai site, ni ressource du Mac"
 
 
@@ -264,6 +271,26 @@ def carte(depot, id_, ligne, r, par):
     return carte_
 
 
+def depot_joignable(depot):
+    """Le cloud peut-il joindre le dépôt de DEPOT (#614) ? `depot` de .claude/roadmap.json, sinon un remote `origin`
+    qui est une adresse GitHub. Git absent, pas de .git, erreur ou délai de 5 s : non."""
+    if suivi_cloud.depot_github(depot):
+        return True
+    try:
+        sortie = subprocess.run(["git", "-C", depot, "remote", "get-url", "origin"], capture_output=True, text=True,
+                                timeout=5, check=True).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return bool(suivi_cloud.ADRESSE_GITHUB.match(sortie))
+
+
+def joignable(r, ok):
+    """`r` inchangé si le dépôt est joignable, sinon une copie dite locale, de raison SANS_DEPOT (#614)."""
+    if ok:
+        return r
+    return dict(r, lieu="mac", why=SANS_DEPOT)
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(description="La cible recommandée d'une tâche : cloud ou local.")
     p.add_argument("depot")
@@ -286,6 +313,7 @@ def main(argv=None):
     r = verdict(a.depot, id_, ligne["libelle"])
     par = "jugée sur la tâche entière" if r else "règle des mots : pas encore jugée"
     r = r or reco(ligne["libelle"], *documents(a.depot, ligne["cles"]))
+    r = joignable(r, r["lieu"] != "cloud" or depot_joignable(a.depot))
     if a.carte:
         print(json.dumps(carte(a.depot, id_, ligne, r, par), ensure_ascii=False))
         return 0
