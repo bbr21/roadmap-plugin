@@ -13,6 +13,7 @@ import {
   pauseAllTargets,
   queueAtBetween,
   releaseHandPauses,
+  withRetired,
   withoutQueueEntry,
   queueCardKey,
   STATE_WORDS,
@@ -21,6 +22,7 @@ import {
   type ChildStatus,
   type CloudControlInput,
   type ControlCard,
+  type ControlRetired,
   type GlobalQueued,
   type SessionPause,
   type StepSegment,
@@ -91,6 +93,12 @@ export type ControlDeps = {
   openFiche: (id: string) => Promise<void>
   /** Pose la zone de clic d'un texte : enregistre son geste et rend la clé de sa région Client. */
   pressZone: (id: string, onPress: () => void) => Promise<string>
+  /** #629 : les cartes retirées d'« En cours », par clé, avec la marque de la tâche au retrait. */
+  retired: () => Promise<ControlRetired>
+  /** #629 : écrit les cartes retirées (vide : la clé du store s'efface). */
+  writeRetired: (next: ControlRetired) => Promise<void>
+  /** #629 : lève la prise d'une ligne cloud muette dans la roadmap de ce projet ; rend sa branche, qui reste sur GitHub. Lève avec un mot lisible si l'écriture est refusée. */
+  releaseCloud: (root: string, id: string) => Promise<{ branch?: string; note?: string }>
 }
 
 /** Tout ce que lit le volet en un passage : la liste, la file, les pauses, les marques et ce qui s'en déduit. */
@@ -102,14 +110,14 @@ export type ControlData = {
   marks: Set<string>
   own: { project: string; ids: ReadonlySet<string> } | undefined
   projectOf: (cwd: string) => string
-  view: { running: ControlCard[]; queued: ControlCard[] }
+  view: { running: ControlCard[]; queued: ControlCard[]; hidden: ControlCard[] }
   taken: number
   max: number
 }
 
 export async function controlData(deps: ControlDeps): Promise<ControlData> {
   const { rows, note } = await deps.rows()
-  const [pauses, queue, stored, own, heavy, maestros, closed, cloud] = await Promise.all([deps.pauses(), deps.queue(), deps.marks(), deps.ownPrio(), deps.heavyBranches(), deps.maestros(rows), deps.closed(), deps.cloud().catch(() => [] as CloudControlInput[])])
+  const [pauses, queue, stored, own, heavy, maestros, closed, cloud, retired] = await Promise.all([deps.pauses(), deps.queue(), deps.marks(), deps.ownPrio(), deps.heavyBranches(), deps.maestros(rows), deps.closed(), deps.cloud().catch(() => [] as CloudControlInput[]), deps.retired().catch(() => ({}) as ControlRetired)])
   // la priorité posée dans la roadmap (la fiche, le clic d'une autre session) compte comme une marque
   const marks = new Set(stored)
   if (own) for (const id of own.ids) marks.add(`${own.project}#${id}`)
@@ -124,7 +132,7 @@ export async function controlData(deps: ControlDeps): Promise<ControlData> {
   const statuses = new Map(pairs)
   const statusOf = (id: string) => statuses.get(id)
   const projectOf = deps.projectOf(queue)
-  const view = controlView({ rows, queue, pauses, marks, statusOf, createdOf: deps.createdOf, heavyBranches: heavy, maestros, projectOf, closed, cloud })
+  const view = controlView({ rows, queue, pauses, marks, statusOf, createdOf: deps.createdOf, heavyBranches: heavy, maestros, projectOf, closed, cloud, retired })
   const places = await deps.places(rows, statusOf, pauses)
   return { rows, note, pauses, queue, marks, own, projectOf, view, taken: places.taken, max: places.max }
 }
@@ -191,7 +199,7 @@ async function pauseOne($: EngineInterface, deps: ControlDeps, d: ControlData, i
  */
 async function pauseAll($: EngineInterface, deps: ControlDeps): Promise<void> {
   const d = await controlData(deps)
-  const targets = pauseAllTargets(d.view.running)
+  const targets = pauseAllTargets([...d.view.running, ...d.view.hidden])
   if (targets.length === 0) return
   const here = await deps.ownIsMaestro().catch(() => false)
   let stopped = 0
@@ -221,6 +229,21 @@ async function resumeAll($: EngineInterface, deps: ControlDeps): Promise<void> {
 async function retire(deps: ControlDeps, card: ControlCard): Promise<void> {
   await deps.writeQueue(withoutQueueEntry(await deps.queue(), card.key))
   controlInfo = `#${card.id} est sortie de la file ; sa ligne reste ouverte, son ▶ la relance`
+}
+
+/**
+ * « Retirer » une carte d'« En cours » (#629) : elle sort du volet, revient dès que sa tâche bouge. Une carte cloud
+ * muette lève d'abord sa prise (sa ligne revient à lancer), avant la marque : un refus d'écriture la laisse en place.
+ */
+async function retireRunning($: EngineInterface, deps: ControlDeps, card: ControlCard): Promise<void> {
+  const d = await controlData(deps)
+  const fresh = d.view.running.find(c => c.key === card.key)
+  if (!fresh) return
+  const out = fresh.cloud?.tone === 'quiet' ? await deps.releaseCloud(cardRoot(d, fresh), fresh.id) : undefined
+  await deps.writeRetired(withRetired(await deps.retired(), fresh, await $.clock.now()))
+  controlInfo = out?.branch
+    ? `#${fresh.id} est retirée : sa ligne est remise à lancer, sa branche ${out.branch} reste sur GitHub, son ▶ la reprend${out.note ? ` · ${out.note}` : ''}`
+    : `#${fresh.id} est retirée d'« En cours » : sa session n'est ni arrêtée ni archivée, sa carte revient dès qu'elle bouge`
 }
 
 /** Annuler la pause : une demande pas encore exécutée s'efface. */
@@ -534,7 +557,9 @@ export async function drawControl($: EngineInterface, e: RenderInput<'Pane'>, pa
     const done = k.tone === 'done'
     // #566 (maquette v4) : sans nouvelles depuis 12 h, la prise débranchée, le bord et le mot d'alerte (`block`).
     const quiet = k.tone === 'quiet'
-    const [mark, markAlt] = quiet ? [unplugIcon(palette.block, 14, 'sans nouvelles'), 'sans nouvelles'] : done ? [checkIcon(palette.finished, 14), 'prête'] : k.tone === 'wait' ? [handIcon(palette.wait, 14), "t'attend"] : [spinnerIcon(palette.live, 14), 'tourne']
+    // #629 : une PR fusionnée en test : la coche de « en test », jamais « prête »
+    const test = k.tone === 'test'
+    const [mark, markAlt] = quiet ? [unplugIcon(palette.block, 14, 'sans nouvelles'), 'sans nouvelles'] : test ? [checkIcon(palette.finished, 14), 'en test'] : done ? [checkIcon(palette.finished, 14), 'prête'] : k.tone === 'wait' ? [handIcon(palette.wait, 14), "t'attend"] : [spinnerIcon(palette.live, 14), 'tourne']
     const node = controlNodeIcon(palette, { kind: 'cloud', n: 0 })
     const pills: RenderElement[] = []
     if (quiet) {
@@ -550,9 +575,12 @@ export async function drawControl($: EngineInterface, e: RenderInput<'Pane'>, pa
         ),
       )
     } else if (k.tone === 'wait') pills.push(pill("t'attend", palette.waitTint, palette.waitOn))
+    else if (test) pills.push(pill(k.word, palette.finishedTint, palette.finishedOn))
     else if (done) pills.push(pill('prête', palette.finishedTint, palette.finishedOn))
     const link = k.session ?? k.pr?.url
     const buttons: RenderElement[] = []
+    // #629 : « Retirer » en premier, comme dans la file
+    buttons.push(gesture(`ctl:retire:${keyPart(c.key)}`, closeIcon(palette.lateOn, 14), 'Retirer', 'Retirer', () => void act($, () => retireRunning($, deps, c))))
     if (link) buttons.push(gesture(`ctl:open:${keyPart(c.key)}`, externalIcon(palette.text3, 14), 'Ouvrir la conversation', 'Ouvrir', () => void act($, () => deps.openUrl(link), '')))
     const prUrl = k.pr?.url
     if (prUrl) buttons.push(gesture(`ctl:pr:${keyPart(c.key)}`, mergeIcon(palette.text3, 14), 'Ouvrir la PR', k.pr?.number !== undefined ? `PR ${k.pr.number}` : 'PR', () => void act($, () => deps.openUrl(prUrl), '')))
@@ -560,7 +588,7 @@ export async function drawControl($: EngineInterface, e: RenderInput<'Pane'>, pa
     return (
       <Box key={`card:${c.key}`} flexDirection="row" alignItems="flex-start" gap={SPACE.row}>
         <Box flexShrink={0}>{icon(node.source, 'session cloud', node.width, node.height)}</Box>
-        <Box flexGrow={1} flexShrink={1} minWidth={0} flexDirection="column" gap={SPACE.tight} borderStyle="round" borderColor={quiet ? palette.block : done ? palette.finished : palette.border} paddingX="sm" paddingY="xs">
+        <Box flexGrow={1} flexShrink={1} minWidth={0} flexDirection="column" gap={SPACE.tight} borderStyle="round" borderColor={quiet ? palette.block : done || test ? palette.finished : palette.border} paddingX="sm" paddingY="xs">
           <Box flexDirection="row" alignItems="center" gap={SPACE.row}>
             <Box flexShrink={0}>{icon(mark, markAlt, quiet ? 20 : 14, 14)}</Box>
             {heading(c)}
@@ -623,6 +651,8 @@ export async function drawControl($: EngineInterface, e: RenderInput<'Pane'>, pa
     const buttons: RenderElement[] = []
     // #415 (maquette C) : « Retirer » en premier sur une entrée en attente ; une session en pause garde « Reprendre ».
     if (zone === 'queue' && c.state !== 'paused') buttons.push(gesture(`ctl:retire:${keyPart(c.key)}`, closeIcon(palette.lateOn, 14), 'Retirer', 'Retirer', () => void act($, () => retire(deps, c))))
+    // #629 : « Retirer » sur toute carte d'« En cours » : le volet la cache jusqu'à ce que sa tâche bouge
+    else if (zone === 'run') buttons.push(gesture(`ctl:retire:${keyPart(c.key)}`, closeIcon(palette.lateOn, 14), 'Retirer', 'Retirer', () => void act($, () => retireRunning($, deps, c))))
     // #383 : une tâche en test garde sa session ouverte (les retours de test y arrivent) : pas d'archivage d'ici.
     if (done && c.test) {
       // la session attend les retours de test
@@ -691,7 +721,7 @@ export async function drawControl($: EngineInterface, e: RenderInput<'Pane'>, pa
   // #415 (maquette C) : un seul bouton dans le titre, « Tout en pause » tant qu'une session tourne, « Tout reprendre »
   // quand rien ne tourne et qu'une session attend sa reprise à la main.
   // le bouton agit sur tout le Mac (les gestes lisent les données entières), pas sur le seul dossier montré
-  const toPause = pauseAllTargets(allRunning).length
+  const toPause = pauseAllTargets([...allRunning, ...d.view.hidden]).length
   const toResume = d.queue.filter(e => e.kind === 'resume' && e.held && allQueued.some(c => c.key === queueCardKey(e))).length + allQueued.filter(c => c.orphan).length
   const general =
     toPause > 0

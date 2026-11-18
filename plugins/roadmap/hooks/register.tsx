@@ -653,6 +653,10 @@ import {
   cloudDepotRefusal,
   cloudStartRefusal,
   takeCloudLine,
+  releaseCloudLine,
+  controlCloudState,
+  testVersionOf,
+  retiredMarks,
   takeMissionLine,
   missionCardPrompt,
   isMissionPrompt,
@@ -5858,14 +5862,21 @@ async function readControlCloud($: EngineInterface, ownSource: () => Promise<Sou
           const band = cloudRowFiche({ cloud: t.cloud, ...(t.mission ? { mission: t.mission } : {}) }).band
           // #566 : une PR ouverte sans mouvement depuis 12 h n'est plus « en session » : elle est sans nouvelles.
           const quietAt = t.mission ? undefined : cloudQuietSince(t.cloud, now)
-          const tone: CloudControlInput['tone'] = quietAt !== undefined ? 'quiet' : t.cloud.state === 'merged' ? 'done' : band.mark === 'person' ? 'wait' : band.mark === 'check' || band.mark === 'merge' ? 'done' : 'run'
+          // #629 : une PR fusionnée n'a plus de carte, sauf en test (la ligne ouverte de même id porte une livraison)
+          const open = tasks.find(x => x.id === t.id && !x.done)
+          const test = open ? testVersionOf(open, t.cloud.number) : undefined
+          const state = controlCloudState({ state: t.cloud.state, mark: band.mark, word: band.word, ...(quietAt !== undefined ? { quietAt } : {}), ...(test !== undefined ? { test } : {}), ...(t.mission ? { mission: true } : {}), now })
+          if (!state) continue
+          const { tone } = state
+          const movedAt = t.cloud.updatedAt ?? t.cloud.createdAt
           const session = cloudSessionLinkOf(t)
           out.push({
             root: s.root ?? s.dir,
             id: t.id,
             title: t.label,
-            word: quietAt !== undefined ? quietSinceText(quietAt, now) : band.word,
+            word: state.word,
             tone,
+            ...(movedAt !== undefined ? { movedAt } : {}),
             ...(session ? { session } : {}),
             ...(t.cloud.url || t.cloud.number !== undefined ? { pr: { ...(t.cloud.number !== undefined ? { number: t.cloud.number } : {}), ...(t.cloud.url ? { url: t.cloud.url } : {}) } } : {}),
             ...(t.launchedAt !== undefined ? { launchedAt: t.launchedAt } : {}),
@@ -5884,6 +5895,38 @@ async function readControlCloud($: EngineInterface, ownSource: () => Promise<Sou
   } finally {
     controlCloudFlight = undefined
   }
+}
+
+/** #629 : les cartes retirées d'« En cours » du Centre de contrôle, partagées par tous les panneaux. */
+const CONTROL_RETIRED_KEY = 'control-retired'
+
+/**
+ * #629 : lève la prise d'une ligne cloud (`releaseCloudLine`) dans la roadmap du projet `root`, quand sa carte muette
+ * est retirée du Centre de contrôle. Une ligne déjà libre ou absente n'écrit rien. Lève si l'écriture est refusée.
+ */
+async function releaseCloudTake($: EngineInterface, own: Source | undefined, root: string, id: string): Promise<{ branch?: string; note?: string }> {
+  const sources = [...(own ? [own] : []), ...(await otherSources($, own).catch(() => [] as Source[]))]
+  const source = sources.find(s => (s.root ?? s.dir) === root)
+  if (!source) throw new Error('la roadmap de ce projet ne se lit pas d\'ici.')
+  let branch: string | undefined
+  const wrote = await writeRoadmapFiles($, source, ['ROADMAP.md'], `roadmap: release #${id} (cloud, retirée du Centre de contrôle)`, async () => {
+    const out = releaseCloudLine(await $.fs.read(files(source).open), id)
+    // pas prise en cloud, ou introuvable : rien à écrire, la ligne n'était rattachée que par sa PR
+    if ('error' in out) return {}
+    branch = out.branch
+    return { 'ROADMAP.md': out.text }
+  })
+  if ('error' in wrote) throw new Error(wrote.error)
+  if (branch !== undefined) {
+    controlCloudMem = undefined
+    try {
+      await update($, liveVersionAtom, v => v + 1)
+      $.ui.invalidate('ui.render')
+    } catch {
+      // le panneau se redessine à son prochain pas
+    }
+  }
+  return { ...(branch !== undefined ? { branch } : {}), ...(wrote.note ? { note: wrote.note } : {}) }
 }
 
 /**
@@ -5979,6 +6022,9 @@ function controlDeps($: EngineInterface): ControlDeps {
     },
     cloud: () => readControlCloud($, ownSource),
     openUrl: url => openHttpsUrl($, url),
+    retired: async () => retiredMarks(await storeGet($, CONTROL_RETIRED_KEY).catch(() => undefined)),
+    writeRetired: next => (Object.keys(next).length === 0 ? storeDelete($, CONTROL_RETIRED_KEY) : storeSet($, CONTROL_RETIRED_KEY, next as unknown as StoreValue)),
+    releaseCloud: async (root, id) => releaseCloudTake($, await ownSource().catch(() => undefined), root, id),
   }
 }
 

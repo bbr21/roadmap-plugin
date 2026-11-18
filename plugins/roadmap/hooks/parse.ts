@@ -11577,6 +11577,32 @@ export function takeCloudLine(text: string, id: string, branch: string, today: s
   })
 }
 
+/**
+ * #629 : la prise levée d'une ligne cloud, quand sa session est retirée : `qui:`, `branche:` et `lieu:` partent, les
+ * autres champs restent dans leur ordre, et la ligne passe en tête de « ## Prochain » (sur place sans cette section).
+ * Rend le texte réécrit, la ligne et la branche qu'elle tenait ; une ligne pas prise en cloud ou absente est refusée.
+ */
+export function releaseCloudLine(text: string, id: string): { text: string; line: string; branch: string } | { error: string } {
+  const lines = text.split('\n')
+  const at = lines.findIndex(l => /^- \[ \] /.test(l) && new RegExp(`\\| id:${id}( |\\|)`).test(l.slice(l.lastIndexOf('`[')) + ' '))
+  if (at < 0) return { error: `#${id} introuvable dans la roadmap` }
+  const raw = lines[at]!
+  const cut = raw.lastIndexOf('`[')
+  const fields = raw.slice(cut + 2, raw.endsWith(']`') ? -2 : undefined).split('|').map(f => f.trim())
+  const held = fields.find(f => f.startsWith('branche:'))
+  if (!held || !fields.includes('lieu:cloud')) return { error: `#${id} n'est pas prise en cloud` }
+  const line = `${raw.slice(0, cut)}\`[${fields.filter(f => !/^(qui|branche|lieu):/.test(f)).join(' | ')}]\``
+  lines.splice(at, 1)
+  const head = lines.findIndex(l => /^## Prochain\s*$/.test(l))
+  if (head < 0) lines.splice(at, 0, line)
+  else {
+    let first = head + 1
+    while (first < lines.length && lines[first]!.trim() === '') first++
+    lines.splice(first, 0, line)
+  }
+  return { text: lines.join('\n'), line, branch: held.slice(8).trim() }
+}
+
 /** Le `qui:` d'une ligne partie en mission cloud (#476) : sans branche ni PR, Maestro la suit par `mission_cloud.py`. */
 export const MISSION_QUI = 'mission'
 
@@ -15718,11 +15744,11 @@ export type ControlCard = {
   sessionId?: string
   heavy: boolean
   /** #583 : une tâche qui tourne dans le cloud, sans session sur le Mac ; `word` dit où elle en est. */
-  cloud?: { word: string; tone: 'run' | 'wait' | 'done' | 'quiet'; session?: string; pr?: { number?: number; url?: string } }
+  cloud?: { word: string; tone: 'run' | 'wait' | 'done' | 'quiet' | 'test'; session?: string; pr?: { number?: number; url?: string }; /** #629 : le dernier mouvement de la tâche cloud, pour la marque « retirée ». */ movedAt?: number }
 }
 
 /** #583 : une tâche cloud à montrer au Centre de contrôle, d'après la ligne de ROADMAP et sa PR. */
-export type CloudControlInput = { root: string; id: string; title: string; word: string; tone: 'run' | 'wait' | 'done' | 'quiet'; session?: string; pr?: { number?: number; url?: string }; launchedAt?: number }
+export type CloudControlInput = { root: string; id: string; title: string; word: string; tone: 'run' | 'wait' | 'done' | 'quiet' | 'test'; session?: string; pr?: { number?: number; url?: string }; launchedAt?: number; /** #629 : le dernier mouvement de la tâche cloud, pour la marque « retirée ». */ movedAt?: number }
 
 /** L'index d'axe d'un nom (#367) : la somme de ses codes modulo 8, la même couleur d'un dessin à l'autre. */
 export function toneOf(name: string): number {
@@ -15782,7 +15808,9 @@ export function controlView(o: {
   closed?: ReadonlySet<string>
   /** #583 : les tâches qui tournent dans le cloud ; leurs cartes viennent après celles du Mac. */
   cloud?: readonly CloudControlInput[]
-}): { running: ControlCard[]; queued: ControlCard[] } {
+  /** #629 : les cartes retirées du volet (`withRetired`) ; une carte dont la marque a le même `controlStamp` passe dans `hidden`. */
+  retired?: ControlRetired
+}): { running: ControlCard[]; queued: ControlCard[]; hidden: ControlCard[] } {
   const projectOf = o.projectOf ?? rootOfCwd
   const name = (root: string) => root.split('/').filter(Boolean).pop() ?? root
   const running: ControlCard[] = []
@@ -15862,16 +15890,19 @@ export function controlView(o: {
     })
     .map(({ e }) => {
       const project = name(e.root)
+      const testWord = /(\d+\.\d+\.\d+)/.exec(e.word)?.[1]
       return {
         key: `cloud:${e.root}#${e.id}`,
         id: e.id,
         title: bareTitle(e.title),
         project,
         tone: toneOf(project),
-        state: e.tone === 'wait' || e.tone === 'quiet' ? 'wait' : e.tone === 'done' ? 'done' : 'run',
+        state: e.tone === 'wait' || e.tone === 'quiet' ? 'wait' : e.tone === 'done' || e.tone === 'test' ? 'done' : 'run',
+        // #629 : la version en test, d'après le mot « en test X.Y.Z » ; sans version, pas de pastille de version.
+        ...(e.tone === 'test' && testWord ? { test: testWord } : {}),
         prio: false,
         heavy: false,
-        cloud: { word: e.word, tone: e.tone, ...(e.session ? { session: e.session } : {}), ...(e.pr ? { pr: e.pr } : {}) },
+        cloud: { word: e.word, tone: e.tone, ...(e.session ? { session: e.session } : {}), ...(e.pr ? { pr: e.pr } : {}), ...(e.movedAt !== undefined ? { movedAt: e.movedAt } : {}) },
       } satisfies ControlCard
     })
   for (const c of o.cloud ?? []) runningKeys.add(`${c.root}#${c.id}`)
@@ -15918,7 +15949,10 @@ export function controlView(o: {
       heavy: false,
     })
   }
-  return { running: [...sorted, ...cloudCards], queued }
+  // #629 : une carte retirée dont la tâche n'a pas bougé (même marque) sort d'« En cours » ; la file ne la remontre pas.
+  const all = [...sorted, ...cloudCards]
+  const gone = (c: ControlCard) => o.retired?.[c.key]?.stamp === controlStamp(c)
+  return { running: all.filter(c => !gone(c)), queued, hidden: all.filter(gone) }
 }
 
 /** La session s'est-elle dite en pause (#383) : « en pause » en tête de son récap (« La session est en pause : … »). */
@@ -15953,6 +15987,54 @@ export function controlFilter(cards: readonly ControlCard[], folder: string | un
 /** « Retirer » (#415) : la file sans l'entrée de cette carte ; les autres gardent leur rang. */
 export function withoutQueueEntry<T extends GlobalQueued>(queue: readonly T[], key: string): T[] {
   return queue.filter(e => queueCardKey(e) !== key)
+}
+
+/** #629 : les cartes retirées d'« En cours », par clé de carte : la marque de la tâche au retrait, et l'instant. */
+export type ControlRetired = Record<string, { stamp: string; at: number }>
+
+/** #629 : la marque d'une carte : ce qui, en changeant, la fait revenir (cloud : ton et dernier mouvement ; Mac : état et étapes faites). */
+export function controlStamp(c: ControlCard): string {
+  if (c.cloud) return `${c.cloud.tone === 'quiet' ? 'run' : c.cloud.tone}|${c.cloud.movedAt ?? ''}`
+  return `${c.state}|${c.steps ? `${c.steps.done}/${c.steps.total}` : '/'}`
+}
+
+/** #629 : les marques lues du store, sans le mal formé (une entrée sans `stamp` chaîne ou sans `at` nombre). */
+export function retiredMarks(stored: unknown): ControlRetired {
+  const out: ControlRetired = {}
+  if (typeof stored !== 'object' || stored === null || Array.isArray(stored)) return out
+  for (const [k, v] of Object.entries(stored)) {
+    const m = v as { stamp?: unknown; at?: unknown } | null
+    if (m && typeof m.stamp === 'string' && typeof m.at === 'number') out[k] = { stamp: m.stamp, at: m.at }
+  }
+  return out
+}
+
+/** #629 : les marques avec celle de cette carte, sans muter ; 100 au plus, les plus récentes. */
+export function withRetired(marks: ControlRetired, card: ControlCard, now: number): ControlRetired {
+  const all = Object.entries({ ...marks, [card.key]: { stamp: controlStamp(card), at: now } })
+  all.sort((a, b) => b[1].at - a[1].at)
+  return Object.fromEntries(all.slice(0, 100))
+}
+
+/**
+ * #629 : l'état d'une tâche cloud pour sa carte, ou `undefined` si elle n'en a pas : une PR fusionnée n'en a plus,
+ * sauf en test (`test` : la version livrée, `''` sans version) ; sans nouvelles, à toi, prête, en cours sinon.
+ */
+export function controlCloudState(o: { state: CloudPr['state']; mark: 'person' | 'spinner' | 'merge' | 'check'; word: string; quietAt?: number; test?: string; mission?: boolean; now: number }): { tone: CloudControlInput['tone']; word: string } | undefined {
+  if (o.state === 'merged' && !o.mission) return o.test === undefined ? undefined : { tone: 'test', word: o.test === '' ? STATE_WORDS.test : `${STATE_WORDS.test} ${o.test}` }
+  if (o.quietAt !== undefined) return { tone: 'quiet', word: quietSinceText(o.quietAt, o.now) }
+  return { tone: o.mark === 'person' ? 'wait' : o.mark === 'check' || o.mark === 'merge' ? 'done' : 'run', word: o.word }
+}
+
+/**
+ * #629 : la version en test d'une ligne ouverte, celle de sa dernière livraison (`''` sans version) ; `undefined` sans
+ * livraison ou close. `pr` : la PR de la carte ; une livraison qui nomme une autre PR (`livré:…#73`) est une passe
+ * d'avant, la PR fusionnée d'aujourd'hui n'est pas encore publiée : pas en test.
+ */
+export function testVersionOf(task: Task, pr?: number): string | undefined {
+  const last = task.done ? undefined : task.livre?.[task.livre.length - 1]
+  if (last === undefined || (pr !== undefined && last.pr !== undefined && last.pr !== pr)) return undefined
+  return last.version ?? ''
 }
 
 /**

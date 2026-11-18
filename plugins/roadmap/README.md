@@ -862,6 +862,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.305.0 (2026-11-18)** : panneau : Centre de contrôle, une PR fusionnée quitte « En cours » (« en test » si livrée), bouton « Retirer » sur chaque carte, une session cloud muette retirée rend sa ligne à lancer (#629)
 - **0.304.0 (2026-11-18)** : hooks : un formulaire qui demande de valider un plan, un brouillon ou un document que le tour n'a pas montré est refusé une fois (#626)
 - **0.303.0 (2026-11-17)** : panneau : les tâches annulées ont leur vue à part des faites, marque annulée:oui (#624)
 - **0.302.3 (2026-11-16)** : hooks : l'interrupteur Local | Cloud de la fiche grise Cloud sans dépôt joignable (#622)
