@@ -9975,11 +9975,67 @@ function reviewWhere(kind: ProposeKind): string {
 /** La règle fixe du document à lire ou à valider (#587), variante selon la session, en une ligne. */
 export function reviewLinkText(kind: ProposeKind): string {
   return [
-    `Document à valider (plugin roadmap, règle fixe, #587) : tout ce que tu demandes à ${person()} de lire ou de valider (note, task file, email, plan, classeur, PDF, maquette, fichier MD) arrive avec un lien cliquable qui l'ouvre à côté du chat, dans la session où ${person()} lit : jamais à chercher.`,
+    `Document à valider (plugin roadmap, règle fixe, #587) : tout ce que tu demandes à ${person()} de lire ou de valider (note, task file, email, plan, classeur, PDF, maquette, fichier MD) arrive avec un lien cliquable qui l'ouvre à côté du chat, dans la session où ${person()} lit : jamais à chercher. Un plan, un brouillon ou un document que tu demandes de valider s'écrit aussi en entier dans ton message, juste au-dessus du formulaire, sous un titre « Le plan » ; long, un résumé là et le document entier ouvert à côté du chat (#626).`,
     "Le document vit dans le dossier du projet, jamais dans le scratchpad, `/tmp`, `side-session-notes` ni « Claude outputs/ » ; le lien se donne par son nom, en Markdown, `[le nom du document](chemin depuis la racine du projet)`.",
     reviewWhere(kind),
     "Le volet Fichiers ouvre le Markdown, le xlsx, le PDF et le HTML (matrice #587) ; un format qu'il n'affiche pas (docx, à vérifier) se double d'une version lisible à côté (page HTML, PDF ou Artifact privé) ; une maquette se donne par l'url de `serve.py`. En cloud, le document se publie en Artifact privé (outil `Artifact`) et son lien `https://claude.ai/artifact/…` se donne : un lien GitHub d'un dépôt privé s'ouvre en 404 dans le navigateur de l'app.",
   ].join(' ')
+}
+
+// #626 (BBR, 2026-11-17, constat #73 : « Le plan de tri Gmail… : je l'applique ? » sans le plan au-dessus) : un
+// formulaire qui demande de valider un plan, un brouillon ou un document que le tour n'a pas montré est refusé une fois.
+const PLAN_OBJECT = /(?<![a-z])(?:plans?|brouillons?|drafts?|documents?|docs?|notes?|e-?mails?|mails?|courriels?|messages?|textes?|specs?|propositions?|programmes?|listes?)(?![a-z])/
+const PLAN_GESTURE =
+  /(?<![a-z])(?:valid(?:e|es|er|ez|ation)|appliqu(?:e|es|er|ez)|envoi(?:e|es)|envoyer|envoyez|pos(?:e|es|er|ez)|publi(?:e|es|er|ez)|execut(?:e|es|er|ez)|approuv(?:e|es|er|ez)|go|ok|(?:te|vous) va|feu vert|je lance|on y va)(?![a-z])/
+
+/** Le formulaire demande-t-il de valider un plan, un brouillon ou un document (#626) ? Un formulaire à aperçus n'en est pas un (#322). */
+export function planAsked(input: unknown): boolean {
+  if (isMockupCall('AskUserQuestion', input)) return false
+  const questions = (input as { questions?: unknown } | null | undefined)?.questions
+  if (!Array.isArray(questions)) return false
+  return questions.some(q => {
+    const { question, header } = (q ?? {}) as { question?: unknown; header?: unknown }
+    const said = normalizeTitle(`${typeof question === 'string' ? question : ''} ${typeof header === 'string' ? header : ''}`)
+      .toLowerCase()
+      .replace(/[’']/g, ' ')
+    return PLAN_OBJECT.test(said) && PLAN_GESTURE.test(said)
+  })
+}
+
+const PLAN_TITLE = /^(?:le plan|le brouillon|le document|la note|l'email|l'e-mail|le message|le texte|la proposition|le programme|the plan)(?![a-z])/
+
+/** Le texte du tour montre-t-il un plan (#626) : un titre « Le plan » (ou brouillon, document…) suivi d'au moins 40 signes. */
+export function planShown(text: string | undefined): boolean {
+  if (typeof text !== 'string' || text.trim() === '') return false
+  let inFence = false
+  let open = false
+  let signs = 0
+  for (const raw of text.split('\n')) {
+    const line = raw.trim()
+    if (/^```/.test(line)) {
+      inFence = !inFence
+      if (open) signs += line.replace(/\s/g, '').length
+      continue
+    }
+    const title = inFence ? undefined : (/^#{1,6}\s+(.+)$/.exec(line)?.[1] ?? /^\*\*([^*]+)\*\*$/.exec(line)?.[1])
+    if (title !== undefined) {
+      if (open && signs >= 40) return true
+      const said = normalizeTitle(title.replace(/\*+/g, ''))
+        .toLowerCase()
+        .replace(/[’]/g, "'")
+        .replace(/[\s:.!?…]+$/, '')
+      open = PLAN_TITLE.test(said)
+      signs = 0
+      continue
+    }
+    if (open) signs += line.replace(/\s/g, '').length
+  }
+  return open && signs >= 40
+}
+
+/** Le refus d'un formulaire qui demande de valider un plan que le tour n'a pas montré (#626), en une ligne. */
+export function planUnshownRefusal(): string {
+  return "Plugin roadmap (#626) : ce formulaire demande de valider un plan, un brouillon ou un document que ton message n'a pas montré. Écris-le d'abord en entier dans ton message, juste au-dessus du formulaire, sous un titre « Le plan » (ou « Le brouillon », « Le document ») ; long, un résumé là et le document entier ouvert à côté du chat (#587 : fichier du projet en local, Artifact privé en cloud). Puis renvoie le formulaire. S'il ne demande de valider ni un plan, ni un brouillon, ni un document, renvoie-le tel quel : il passera."
 }
 
 /** Une demande de lecture ou de validation dans un message (#587), hors blocs de code ; « validé » n'en est pas une. */

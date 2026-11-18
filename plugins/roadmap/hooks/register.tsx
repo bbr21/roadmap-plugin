@@ -175,6 +175,9 @@ import {
   reviewAsked,
   reviewLinkGap,
   reviewLinkReminder,
+  planAsked,
+  planShown,
+  planUnshownRefusal,
   reviewLinkText,
   localClockText,
   codeWithoutTests,
@@ -1650,6 +1653,10 @@ function noteBox(e: unknown): void {
 type ReportTurn = { changes: TaskChange[]; touched: boolean; questionsAtTurn?: string; fromTasks: Waiting[]; asked: boolean; refused: boolean; given: string }
 const freshReport = (): ReportTurn => ({ changes: [], touched: false, fromTasks: [], asked: false, refused: false, given: '' })
 let reportTurn: ReportTurn = freshReport()
+
+// #626 : le texte que le modèle principal a écrit depuis le début du tour, et les formulaires de plan déjà refusés une fois (clé : leurs questions).
+let turnText = ''
+let planRefused = new Set<string>()
 
 const questionsPath = (source: Source) => files(source).open.replace(/[^/]*$/, 'ROADMAP-questions.json')
 
@@ -11118,6 +11125,12 @@ export const register: Register = (on, options) => {
   on('tool.call', { tool: ASK_TOOL }, async ($, e, next) => {
     if (await inCloud($)) return next(e)
     if (fromAgent(e)) return next(e)
+    // #626 : un plan à valider que le tour n'a pas montré ; refusé une fois, renvoyé tel quel il passe.
+    const planKey = JSON.stringify(((e as { questions?: { question?: unknown }[] }).questions ?? []).map(q => q?.question))
+    if (planAsked(e) && !planShown(turnText) && !planRefused.has(planKey)) {
+      planRefused.add(planKey)
+      return { deny: planUnshownRefusal() }
+    }
     // « T'attendent » passe par ce formulaire (#244).
     reportTurn.asked = true
     if (capture && isMockupCall(ASK_TOOL, e)) {
@@ -11256,8 +11269,24 @@ export const register: Register = (on, options) => {
     }
   })
 
+  // #626 : le texte des réponses du modèle principal, gardé pour le tour (les sous-agents n'y comptent pas).
+  on('session.append', { door: 'response' }, async ($, e, next) => {
+    if (await inCloud($)) return next(e)
+    if (e.agentId === undefined) {
+      const content = (e as { message?: { content?: unknown } }).message?.content
+      const texts = Array.isArray(content) ? content.flatMap(b => (b?.type === 'text' && typeof b.text === 'string' ? [b.text as string] : [])) : []
+      // Les 60 000 derniers signes suffisent : le plan se montre juste au-dessus du formulaire.
+      if (texts.length > 0) turnText = [turnText, ...texts].filter(t => t !== '').join('\n\n').slice(-60_000)
+    }
+    return next(e)
+  })
+
   on('turn.start', async ($, e, next) => {
     if (await inCloud($)) return next(e)
+    if (e.agentId === undefined) {
+      turnText = ''
+      planRefused = new Set()
+    }
     if (e.agentId === undefined) {
       // La fenêtre de tour (#523) : ouverte par le message, ou ici quand aucun message ne l'a précédée ; git se relit.
       forgetGit()
