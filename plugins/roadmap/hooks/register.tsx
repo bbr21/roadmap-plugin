@@ -6682,7 +6682,7 @@ const recoSig = (task: Task) => `${task.label}|${task.spec ?? ''}|${task.fiche ?
  * #622 : le dépôt que le cloud peut cloner (`cloudRepoOf`), lu une fois par projet (dossier et `depot`) : la fiche
  * n'appelle jamais `git` à chaque dessin. `known` reste faux tant que `git` n'a pas répondu ; la reco ne change qu'après.
  */
-const repoReach: { key?: string; known: boolean; repo?: string; run?: Promise<void> } = { known: false }
+const repoReach: { key?: string; known: boolean; repo?: string; run?: Promise<void>; redraw?: boolean } = { known: false }
 const repoReachKey = (source: Source) => `${source.root ?? source.dir}|${projectSettings(source).depot ?? ''}`
 
 /** Lit une fois le dépôt joignable du projet, puis redessine s'il n'y en a pas ; la promesse sert au lancement qui l'attend. */
@@ -6691,6 +6691,7 @@ function loadRepoReach($: EngineInterface, source: Source): Promise<void> {
   if (repoReach.key === key && repoReach.run) return repoReach.run
   const depot = projectSettings(source).depot
   repoReach.key = key
+  repoReach.redraw = false
   repoReach.known = depot !== undefined
   repoReach.repo = depot
   repoReach.run = depot !== undefined
@@ -6700,7 +6701,9 @@ function loadRepoReach($: EngineInterface, source: Source): Promise<void> {
         if (repoReach.key !== key) return
         repoReach.known = true
         repoReach.repo = repo
-        if (repo === undefined) await update($, recoStampAtom, v => v + 1).catch(() => undefined)
+        // Redessine seulement si une fiche a montré Cloud avant la réponse : la lecture part dès le premier dessin du
+        // panneau, et un clic n'écrit l'état qu'une fois (tests/roadmap-zones-reglages.test.tsx).
+        if (repo === undefined && repoReach.redraw) await update($, recoStampAtom, v => v + 1).catch(() => undefined)
       })()
   return repoReach.run
 }
@@ -13488,6 +13491,9 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     )
   }
 
+  // #622 : le dépôt joignable se lit dès le premier dessin, une fois par projet : la fiche ouverte ensuite le sait déjà.
+  void loadRepoReach($, source)
+
   // Toutes les lectures d'état d'un coup : une à une, chacune attendait la précédente. Les quatre
   // premières ne servent qu'à redessiner (empreinte des fichiers, titres courts, thème, « Réessayer »,
   // sessions suivies) et disent si les données gardées en mémoire valent encore.
@@ -15003,6 +15009,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     const targeted = !isRoutine(current)
     if (targeted && launchable) {
       void loadRepoReach($, source)
+      if (!repoReach.known) repoReach.redraw = true
       loadRecoDocs($, source, current)
       askJudge($, source, current)
     }
