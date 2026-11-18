@@ -2054,12 +2054,14 @@ class _Tenue(audit._Preparation):
                 r.pop(k)
         return r
 
-    def fermer_tache(self, t, date, suffixe, souci, raison="", bilan=None):
+    def fermer_tache(self, t, date, suffixe, souci, raison="", bilan=None, annulee=False):
         """`raison` (un abandon) va dans le libellé, après « ; » et avant le suffixe (#285), comme la reprise
         à la main d'Adbricks Cowork ; une note déjà portée par la ligne reste où elle était."""
         t.retiree = True
         fait = self.moment(date)
-        champs = [(k, v) for k, v in t.champs if k not in ("fait", "attend")] + [("fait", fait)]
+        champs = [(k, v) for k, v in t.champs if k not in ("fait", "attend", "annulée")] + [("fait", fait)]
+        if annulee:  # #624 : la marque d'une annulée, juste après fait:
+            champs.append(("annulée", "oui"))
         libelle = "%s ; %s" % (t.libelle, raison) if raison else t.libelle
         self.vers_fait.append(im.rendre_ligne(True, libelle + suffixe, t.axe, champs, t.note))
         rang = dict(bilan) if bilan else {"fait": t.libelle, "souci": souci}
@@ -2321,7 +2323,7 @@ class _Tenue(audit._Preparation):
             raise Erreur("%s : #%s a un enfant ouvert (#%s) : abandonne ou coche d'abord ses enfants"
                          % (quoi, t.id, ouverts[0].id))
         bilan = self.bilan_de(op, quoi)
-        self.fermer_tache(t, self.jour, " (abandonné)", "Abandonnée : %s" % raison, raison, bilan)
+        self.fermer_tache(t, self.jour, " (abandonné)", "Abandonnée : %s" % raison, raison, bilan, annulee=True)
         self.tenue["abandonnees"].append(t.id)
         self.changer(t, "annulée : %s" % raison)
 

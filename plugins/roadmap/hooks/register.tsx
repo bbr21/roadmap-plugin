@@ -39,6 +39,7 @@ import {
   progressIcon,
   bubbleIcon,
   squareCheckRowIcon,
+  cancelRowIcon,
   squareArmedRowIcon,
   squareGhostRingIcon,
   calendarDayIcon,
@@ -10104,7 +10105,7 @@ function pressAxis($: EngineInterface, a: string): void {
 /** `shown` : la vue Done telle que dessinée, d'office comprise (#202) : le clic en sort. */
 function pressDone($: EngineInterface, shown: boolean): void {
   // La fenêtre des faites repart à 14 jours (#497).
-  void setView($, () => ({ showDone: !shown, axis: 'all', attend: 'all', closedGroups: [], moreGroups: [], doneDays: DONE_DAYS_STEP }))
+  void setView($, () => ({ showDone: !shown, axis: 'all', attend: 'all', closedGroups: [], moreGroups: [], doneDays: DONE_DAYS_STEP, doneKind: 'done' }))
 }
 
 // --- Mesures du rendu (2026-10-23) ------------------------------------------------------------
@@ -13527,9 +13528,11 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
 
   // La date d'un parent est celle de son enfant ouvert le plus proche (#125) : filtres, tri et pastilles la lisent.
   const openTasks = withParentDates(open.filter(t => !t.done))
-  const doneTasks = done.filter(t => t.done)
+  // Les annulées à part des faites (#624) : elles restent dans `allTasks` (arbres, chaînes), hors de tout compte de faites.
+  const doneTasks = done.filter(t => t.done && !isAbandoned(t))
+  const cancelledTasks = done.filter(t => t.done && isAbandoned(t))
   // Le # de l'arbre (#258) : sa colonne à la largeur du plus long numéro, contre la flèche.
-  const treeNumCells = treeNumberCells([...openTasks, ...doneTasks].flatMap(t => (t.id ? [t.id] : [])))
+  const treeNumCells = treeNumberCells([...openTasks, ...doneTasks, ...cancelledTasks].flatMap(t => (t.id ? [t.id] : [])))
   // Toutes faites : les Done par jour, barre verte, plutôt qu'une liste vide (#202) ; la dernière
   // cochée compte encore le temps de son mouvement, dans les ouvertes (#182).
   const settling = doneTasks.filter(t => checkLingers(checkMoves.get(taskKey(t)), now)).length
@@ -13569,7 +13572,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     }),
   )
   // Tâches enchaînées : `après:` désigne la prérequise ; une tâche est bloquée tant qu'elle n'est pas faite.
-  const allTasks = [...openTasks, ...doneTasks]
+  const allTasks = [...openTasks, ...doneTasks, ...cancelledTasks]
   // La sélection de la liste (#316) : les tâches choisies encore dans la roadmap.
   const picked = pickPrune(view.picked ?? [], allTasks)
   const pickedSet = new Set(picked)
@@ -13822,7 +13825,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   // Sa tâche introuvable, la session a vu l'alerte plus haut (#213).
   const ownTask = focusBrand ? allTasks.find(t => t.id === focusBrand.id) : undefined
   const inSession = ownTask !== undefined
-  const current = ownTask ?? findSelected([...openTasks, ...doneTasks], selected)
+  const current = ownTask ?? findSelected([...openTasks, ...doneTasks, ...cancelledTasks], selected)
   if (current) {
     // Une mère à étapes ouvertes (#198) : « Marquer faite » la clôt avec elles, « Tout clore » (#163),
     // depuis que son carré, qui porte sa flèche, ne fait que la replier.
@@ -16658,9 +16661,11 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   const titleOf = (t: Task) => cachedTitle(t, titles)
   // #486 : une tâche du bloc « En session » se trouve aussi : la recherche les prend toutes.
   const foundOpen = searching ? sortTasks(searchTasks(openTasks, search, titleOf), sortOrder) : []
+  // Les annulées se trouvent comme les faites (#624), avec leur marque ; le résumé les compte à part.
   const foundDone = searching
-    ? searchTasks(doneTasks, search, titleOf).sort((a, b) => (b.fait ?? '').localeCompare(a.fait ?? ''))
+    ? searchTasks([...doneTasks, ...cancelledTasks], search, titleOf).sort((a, b) => (b.fait ?? '').localeCompare(a.fait ?? ''))
     : []
+  const foundCancelled = foundDone.filter(isAbandoned).length
   const foundCount = foundOpen.length + foundDone.length
   const foundShown = foundOpen.slice(0, SEARCH_MAX)
   const foundDoneShown = foundDone.slice(0, Math.max(0, SEARCH_MAX - foundShown.length))
@@ -16673,6 +16678,9 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
 
   const setAxis = (a: string) => () => pressAxis($, a)
   const toggleDone = () => pressDone($, showDone)
+  // Le sélecteur « Faites | Annulées » (#624, maquette B) : la vue des annulées, tant qu'il y en a.
+  const showCancelled = showDone && view.doneKind === 'cancelled' && cancelledTasks.length > 0
+  const pickKind = (kind: 'done' | 'cancelled') => () => void setView($, () => ({ doneKind: kind, doneDays: DONE_DAYS_STEP, closedGroups: [], moreGroups: [] }))
   // Un tiers choisi revient, au second clic, à « Attend un tiers ».
   const setAttend = (v: string, back = 'all') => () => {
     void setView($, () => ({ attend: attend === v ? back : v, showDone: false, closedGroups: [], moreGroups: [] }))
@@ -17247,7 +17255,9 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
         : asked || chosen
           ? squareArmedRowIcon(axisHex(t.axis), asked ? palette.ok : palette.live, palette.onAxis, checkedMark)
           : checkedMark
-            ? squareCheckRowIcon(axisHex(t.axis), palette.onAxis)
+            ? isAbandoned(t) && !head
+              ? cancelRowIcon(palette.text3)
+              : squareCheckRowIcon(axisHex(t.axis), palette.onAxis)
             : squareRowIcon(axisHex(t.axis))
     // L'arbre par axe (#168) : la mère porte sa flèche dans son carré, une fille son coude.
     // La vue de référence (#258, maquette A) : la flèche de la mère sort de son carré, grise, devant le # ;
@@ -17351,7 +17361,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     // marges du panneau, du cadre du bloc et de la ligne.
     // Dans l'arbre aussi (#258, la ligne la plus chargée de la vue de référence) : sa marque, son # serré,
     // la jauge de la mère (à droite, à la place de l'échéance), le département et l'échéance comptent dans ce qui ne rétrécit pas.
-    const gaugeCells = head ? pxCells(34) + 1 + pxCells(7.3 * `${head.block.done}/${head.block.total}`.length) + 1 : 0
+    const gaugeCells = head && head.block.total > 0 ? pxCells(34) + 1 + pxCells(7.3 * `${head.block.done}/${head.block.total}`.length) + 1 : 0
     const dueCells = parts.due ? Math.max(AGE_CELLS, pxCells(6.5 * [...parts.due.text].length)) : AGE_CELLS
     // Jamais dans « En cours » (#177) : le bloc de Maestro ou le filtre ; le carré d'axe suffit.
     // La priorité (#300, maquette D1) : le drapeau blanc dans son carré rouge, juste devant le titre, le
@@ -17400,7 +17410,8 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     // L'avancement de la mère (#163) : sa barre et ses filles faites sur leur total, calés à droite, à la place
     // de l'échéance que #552 lui a retirée (suite de #552, choix de BBR du 2026-11-13 ; #258 la posait juste
     // après le titre). Le titre gagne la place libérée.
-    const gauge = head ? (
+    // Une mère des seules annulées (vue Annulées) se lirait 0/0 : sans jauge.
+    const gauge = head && head.block.total > 0 ? (
       <Box key={`gauge:${t.key}`} flexDirection="row" alignItems="center" gap={SPACE.row} flexShrink={0}>
         {Svg ? <Svg source={progressIcon(head.block.done, head.block.total, palette.ok, palette.sel)} alt={`${head.block.done}/${head.block.total}`} width={34} height={SIZE.bar} /> : null}
         <Text size="caption" tabular color={palette.text2}>{`${head.block.done}/${head.block.total}`}</Text>
@@ -17923,7 +17934,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
 
   // Toutes les faites de l'axe, la plus récente d'abord ; rangées par jour ou par sujet.
   // Une close du bloc « En cours » (#218) n'y est pas redite : sa ligne est dans le bloc.
-  const doneAll = doneTasks
+  const doneAll = (showCancelled ? cancelledTasks : doneTasks)
     .filter(t => matches(t, axis, 'all', me) && !inBlock(t))
     .sort((a, b) => (b.fait ?? '').localeCompare(a.fait ?? ''))
   // La fenêtre des faites (#497, maquette A) : les 14 derniers jours, 14 de plus par clic ; un dessin trop
@@ -18205,12 +18216,36 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
         }
       : { label: 'Tout déplier', run: () => void setView($, v => ({ openGroups: names, closedGroups: v.closedGroups.filter(c => !bandIds.includes(c)) })) }
 
+  // Le sélecteur à deux cases (#624, maquette B) : « Faites N | Annulées M » à la place du résumé de la liste.
+  const kindSelector = () => {
+    const seg = (kind: 'done' | 'cancelled', word: string, n: number) => {
+      const on = (kind === 'cancelled') === showCancelled
+      const text = `${word} ${n}`
+      return graphic ? (
+        <Box key={`hit:done-kind:${kind}`} paddingX={SPACE.indent} paddingY={0} alignItems="center" {...(on ? { backgroundColor: palette.bg } : { hover: { backgroundColor: palette.hover } })}>
+          <Text size="caption" tabular color={on ? palette.text : palette.text2} {...(on ? { weight: 'semibold' as const } : {})}>{text}</Text>
+          {hit(`done-kind:${kind}`, pickKind(kind))}
+        </Box>
+      ) : (
+        <Button key={`done-kind:${kind}`} plain dimColor={!on} label={text} onPress={pickKind(kind)} />
+      )
+    }
+    return (
+      <Box key="done-kinds" flexDirection="row" gap={SPACE.row} paddingX={0} paddingY={0} {...(graphic ? { backgroundColor: palette.btn } : {})}>
+        {graphic && corners(RADIUS.control, palette.bg)}
+        {seg('done', 'Faites', doneTasks.length)}
+        {seg('cancelled', 'Annulées', cancelledTasks.length)}
+      </Box>
+    )
+  }
   const anyAxis = axis !== 'all' || showDone
   const axisOn = (a: string) => axis === a && !showDone
   // La barre (#180, maquette C) : les seules ouvertes, par axe ; en vue Done, pleine, du vert des Done,
   // et un clic dessus revient aux ouvertes.
   const segments = showDone
-    ? [{ name: DONE_SEGMENT, hex: palette.done, theme: 'success', n: doneTasks.length, dim: false }]
+    ? [showCancelled
+      ? { name: DONE_SEGMENT, hex: palette.text3, theme: 'subtle', n: cancelledTasks.length, dim: false }
+      : { name: DONE_SEGMENT, hex: palette.done, theme: 'success', n: doneTasks.length, dim: false }]
     : axes.map(a => ({ name: a, hex: axisHex(a), theme: axisTheme(a), n: axisCount(openTasks, a), dim: anyAxis && !axisOn(a) }))
   const shares = integerShares(segments.map(seg => seg.n))
   // La barre et le filet se dessinent un peu plus larges que le panneau, et l'app les y ramène.
@@ -18680,11 +18715,15 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
         {/* Sinon, la ligne de la liste, discrète : ce qui est montré, et une seule action selon le cas. */}
         {asking.length > 0 ? confirmBar() : undoNow !== undefined ? undoBar() : picked.length > 0 ? batchBar() : (
           <Box flexDirection="row" justifyContent="space-between" alignItems="center" paddingX={SPACE.indent}>
+            {showDone && !searching && cancelledTasks.length > 0 ? (
+              kindSelector()
+            ) : (
             <Text size="caption" color={palette.text2} wrap="truncate-end">
               {searching
-                ? searchSummary(foundOpen.length, foundDone.length, search, SEARCH_MAX)
+                ? searchSummary(foundOpen.length, foundDone.length - foundCancelled, search, SEARCH_MAX, foundCancelled)
                 : filterSummary({ axis, attend, showDone, shown: shown.length, doneShown: doneShown.length, groupBy: by, who })}
             </Text>
+            )}
             {/* Le bouton des sous-tâches (#203, choix de Bertrand du 2026-11-01) : dans toutes les vues dès
                 qu'une mère est dessinée, Done compris, il les déplie ou les replie toutes, à côté de l'action
                 de la liste. Les mères Done se tiennent dans `openGroups`, filtre ou non. */}
@@ -18725,7 +18764,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
         <Box key="done-older" flexDirection="column" gap="xs">
           {Svg && <Svg source={ruleIcon(palette.border, wide)} alt="séparateur" height={1} />}
           <Box flexDirection="row" alignItems="center" justifyContent="space-between" gap={SPACE.row} paddingX={SPACE.indent}>
-            <Text color={palette.text2} wrap="wrap">{`Plus anciennes : ${doneWin.rest} faite${doneWin.rest > 1 ? 's' : ''} sur ${doneWin.restDays} jour${doneWin.restDays > 1 ? 's' : ''}`}</Text>
+            <Text color={palette.text2} wrap="wrap">{`Plus anciennes : ${doneWin.rest} ${showCancelled ? 'annulée' : 'faite'}${doneWin.rest > 1 ? 's' : ''} sur ${doneWin.restDays} jour${doneWin.restDays > 1 ? 's' : ''}`}</Text>
             <Box key="done-older-row" flexShrink={0} paddingX={SPACE.indent} alignItems="center" backgroundColor={palette.btn} hover={{ backgroundColor: palette.btnHover }}>
               {corners(RADIUS.control, palette.bg)}
               <Button key="done-older" plain label={`Voir ${DONE_DAYS_STEP} jours de plus`} onPress={() => void setView($, () => ({ doneDays: doneDaysChosen + DONE_DAYS_STEP }))} />

@@ -99,7 +99,7 @@ les sessions toutes les 3 s (le dossier de la roadmap toutes les 15 s), et montr
   « Marquer faite », après une confirmation sans champ, la coche et la fait descendre en tête de
   ROADMAP-fait.md avec le bilan « Marquée faite depuis le panneau Roadmap » ; « Annuler la tâche »
   ne l'efface pas : après une confirmation et une raison facultative, elle est cochée
-  « (abandonné) » et descend en tête de ROADMAP-fait.md avec son bilan (« Annulée : <raison> ») ;
+  « (abandonné) », marquée `annulée:oui` (#624), et descend en tête de ROADMAP-fait.md avec son bilan (« Annulée : <raison> ») ;
   les deux passent par `cowork.py roadmap close` (`--abandon` pour une annulation) dans un dossier
   Cowork (Python isolé, `-I`), sauf quand son `cowork.json` confie la roadmap au plugin
   (`"roadmap": "plugin-roadmap"`, #262) ; ailleurs le panneau écrit les deux fichiers et le journal, et dans
@@ -862,6 +862,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.303.0 (2026-11-17)** : panneau : les tâches annulées ont leur vue à part des faites, marque annulée:oui (#624)
 - **0.302.3 (2026-11-16)** : hooks : l'interrupteur Local | Cloud de la fiche grise Cloud sans dépôt joignable (#622)
 - **0.302.2 (2026-11-15)** : hooks : la reco de lieu du panneau et du script suit la règle du dépôt joignable (#614)
 - **0.302.1 (2026-11-15)** : hooks : le chevron de dépli d'une mère s'aligne à 1, 2 et 3 chiffres (#618)

@@ -90,6 +90,8 @@ export type View = {
   moreGroups: string[]
   /** Les jours que montre la vue Faites (#497) : 14 d'office, 14 de plus par « Voir 14 jours de plus » ; absent, 14. */
   doneDays?: number
+  /** Dans la vue Faites (#624) : les faites (d'office) ou les annulées, par le sélecteur « Faites | Annulées » ; absent, les faites. */
+  doneKind?: 'done' | 'cancelled'
   /** Sections repliées sous un filtre, où tout est déplié par défaut ; vidé à chaque changement de filtre. */
   closedGroups: string[]
   /** Tâche close dont la confirmation « désarchiver la session » est ouverte (clé `taskKey`, #302) ; vide ou absente sinon. */

@@ -147,7 +147,7 @@ check('Grammaire de ROADMAP.md et ROADMAP-fait.md', (err) => {
   const axes = knownAxes();
   if (!axes.size) err(OPEN, 'liste des axes introuvable (puce « - **axe** »)');
   // Les clés que lit et contrôle le panneau Roadmap (plugin roadmap).
-  const keys = new Set(['id', 'nom', 'qui', 'attend', 'resp', 'branche', 'verrou', 'ouvert', 'due', 'parent', 'après', 'prio', 'feedback', 'pj', 'livrable', 'livré', 'fait', 'spec', 'fiche', 'src', 'tous', 'relance', 'skill', 'lieu']);
+  const keys = new Set(['id', 'nom', 'qui', 'attend', 'resp', 'branche', 'verrou', 'ouvert', 'due', 'parent', 'après', 'prio', 'feedback', 'pj', 'livrable', 'livré', 'fait', 'annulée', 'spec', 'fiche', 'src', 'tous', 'relance', 'skill', 'lieu']);
   const declared = declaredKeys();
   // id: unique sur les deux fichiers, gardé quand la ligne descend dans ROADMAP-fait.
   const ids = new Map();
@@ -206,6 +206,8 @@ check('Grammaire de ROADMAP.md et ROADMAP-fait.md', (err) => {
         found.set(key, value.trim());
         if ((key === 'ouvert' || key === 'due' || key === 'relance') && !isDate(value)) err(at, `${key}:${value} : date AAAA-MM-JJ attendue`);
         if (key === 'fait' && !isDone(value)) err(at, `fait:${value} : date AAAA-MM-JJ (et heure HH:MM) attendue`);
+        // #624 : annulée:oui marque une tâche annulée, dans ROADMAP-fait seulement.
+        if (key === 'annulée' && value.trim() !== 'oui') err(at, `annulée:${value.trim()} : oui attendu`);
         // Une date de clôture ou d'ouverture n'est jamais après aujourd'hui (#201).
         if ((key === 'ouvert' || key === 'fait') && value.trim().slice(0, 10) > TODAY && isDone(value.trim())) err(at, `${key}:${value.trim()} : date dans le futur (aujourd'hui : ${TODAY}, heure locale)`);
         // #300 : prio:oui ; l'ancienne échelle 1, 2, 3 (#130) reste tolérée jusqu'à la migration (tasks.py prio-oui).
@@ -269,6 +271,7 @@ check('Grammaire de ROADMAP.md et ROADMAP-fait.md', (err) => {
       if (!found.has('id')) err(at, `champ id: absent : une ligne neuve prend id:${nextId}, juste après l'axe`);
       if (inDone && !found.has('fait')) err(at, 'champ fait:AAAA-MM-JJ absent');
       if (!inDone && found.has('fait')) err(at, 'champ fait: dans ROADMAP.md : la ligne part dans ROADMAP-fait');
+      if (!inDone && found.has('annulée')) err(at, 'champ annulée: dans ROADMAP.md : la ligne part dans ROADMAP-fait');
       if (!inDone && found.has('qui') && found.has('branche') && section !== 'En cours') {
         err(at, `ligne prise (qui: et branche:) hors de « En cours » (section « ${section} »)`);
       }

@@ -51,6 +51,8 @@ export type Task = {
   relance?: string
   /** `lieu:cloud` (#408) : la session de la tâche tourne en cloud ; absent, en local. */
   lieu?: 'cloud'
+  /** `annulée:oui` (#624) : la tâche close a été annulée, non faite ; les anciennes formes se lisent par `isAbandoned`. */
+  annulee?: true
   /** Les clés hors grammaire (les clés déclarées dans `cles`), valeurs coupées aux virgules. */
   extra?: Record<string, string[]>
   /** Calculé par `withParentDates` (#125) : la tâche a des enfants ouverts ; `due` est alors la date du plus proche. */
@@ -684,6 +686,7 @@ export function parseRoadmap(text: string, file: string): Task[] {
       else if (k === 'tous' && (RECURRENCES as readonly string[]).includes(v)) task.tous = v as Recurrence
       else if (k === 'skill' && SKILL_RE.test(v)) task.skill = v
       else if (k === 'lieu' && v === 'cloud') task.lieu = v // #408
+      else if (k === 'annulée' && v === 'oui') task.annulee = true // #624
       else if (k === 'relance' && DATE_RE.test(v)) task.relance = v
       else if (k === 'feedback' && FEEDBACK_RE.test(v)) task.feedback = v.split(',')
       else if (k === 'livré') {
@@ -799,7 +802,7 @@ export function passesShown(p: readonly Pass[]): boolean {
 // Le contrôle de la grammaire, plus strict que la lecture : la lecture ignore une ligne qu'elle ne
 // comprend pas, le contrôle la signale. Clés admises : celles que la lecture garde, plus `verrou`
 // (Splitmybill).
-const KEYS: readonly string[] = [...FIELDS, 'après', 'parent', 'id', 'nom', 'prio', 'feedback', 'pj', 'livrable', 'livré', 'verrou', 'tous', 'relance', 'skill', 'lieu' /* #408 */]
+const KEYS: readonly string[] = [...FIELDS, 'après', 'parent', 'id', 'nom', 'prio', 'feedback', 'pj', 'livrable', 'livré', 'verrou', 'tous', 'relance', 'skill', 'lieu' /* #408 */, 'annulée' /* #624 */]
 /** Les clés de la grammaire : une clé déclarée dans `cles` ne peut en reprendre aucune. */
 export const GRAMMAR_KEYS: readonly string[] = KEYS
 const DECLARED_KEY_RE = /^[a-zà-ÿ][a-zà-ÿ0-9-]*$/
@@ -914,6 +917,7 @@ export function lintRoadmap(text: string, done: boolean, rules: Partial<LintRule
       else if (k === 'tous' && !(RECURRENCES as readonly string[]).includes(v)) say(`tous: vaut ${RECURRENCES.slice(0, -1).join(', ')} ou ${RECURRENCES[RECURRENCES.length - 1]} (« ${v} »)`)
       else if (k === 'skill' && !SKILL_RE.test(v)) say(`skill: vaut un nom de skill, nom ou plugin:nom (« ${v} »)`)
       else if (k === 'lieu' && v !== 'cloud') say(`lieu:${v} : cloud attendu`) // #408
+      else if (k === 'annulée' && v !== 'oui') say(`annulée: vaut oui (« ${v} »)`) // #624
       else if (k === 'feedback' && !FEEDBACK_RE.test(v)) say(`feedback: des numéros de retours séparés par des virgules (« ${v} »)`)
       else if ((k === 'pj' || k === 'livrable') && (v === '' || v.split(',').some(x => x.trim() === ''))) say(`${k}: des chemins de fichiers séparés par des virgules (« ${v} »)`)
       else if (k === 'livré' && parseDelivered(v) === null) say(`livré: <version>@<AAAA-MM-JJ>[#<PR>] ou <AAAA-MM-JJ>, séparés par des virgules (« ${v} »)`) // #480
@@ -3709,8 +3713,10 @@ export function chainOf(
   const stateOf = (t: Task): SisterState =>
     t.done ? (isAbandoned(t) ? 'cancelled' : 'done') : o.isLive(t) ? 'live' : o.prereqsOf(t).some(p => !p.done) ? 'blocked' : 'todo'
   const sisters = ordered.map(t => ({ task: t, state: stateOf(t) }))
-  const done = kids.filter(t => t.done).length
-  return { mother, sisters, index: ordered.indexOf(task), done, total: kids.length }
+  // #624 : une annulée n'est ni une faite ni une fille à faire, elle sort du compte et du total.
+  const counted = kids.filter(t => !isAbandoned(t))
+  const done = counted.filter(t => t.done).length
+  return { mother, sisters, index: ordered.indexOf(task), done, total: counted.length }
 }
 
 /**
@@ -3803,10 +3809,11 @@ export function chainGauge(
     const sisters = chainOf(first, all, o)?.sisters ?? []
     const ordered = lineOf(sisters)
     const nextKid = ordered.find(s => s.state !== 'done' && s.state !== 'cancelled')
-    const done = kids.filter(k => k.done).length
+    const counted = kids.filter(k => !isAbandoned(k)) // #624
+    const done = counted.filter(k => k.done).length
     return {
       head: 'Ses filles',
-      count: faites(done, kids.length),
+      count: faites(done, counted.length),
       segs: ordered.map(s => sisterSeg(s.task, s.state)),
       line: { title: `${name(task)}, ici`, sub: nextKid ? `prochaine : ${name(nextKid.task)}${when(nextKid.task.due)}` : 'toutes ses filles sont faites', tone: 'text' },
     }
@@ -3905,10 +3912,11 @@ export function familyOf(
   const kids = task.id === undefined ? [] : all.filter(t => t !== task && t.parent === task.id)
   if (kids.length > 0) {
     const sisters = chainOf(kids[0]!, all, o)?.sisters ?? []
-    const done = kids.filter(k => k.done).length
+    const counted = kids.filter(k => !isAbandoned(k)) // #624
+    const done = counted.filter(k => k.done).length
     // Aucune fille n'est « ici » : c'est la mère qui l'est.
     const rows = build(sisters.map(x => x.task)).map(r => ({ ...r, here: false }))
-    const lead = { title: o.titleOf(task), right: `${done}/${kids.length}`, done: task.done, kinds: kindsOf(rows), task, here: true }
+    const lead = { title: o.titleOf(task), right: `${done}/${counted.length}`, done: task.done, kinds: kindsOf(rows), task, here: true }
     return { head: gauge.head, count: gauge.count, lead, rows, tree: true }
   }
   const links = [...o.prereqsOf(task), task, ...o.unlocksOf(task)]
@@ -3985,7 +3993,7 @@ export function byTree(
 ): TreeBlock[] {
   const listed = new Set(tasks)
   // Les filles faites montrées sous leur mère : celles du jour seulement, quand on le sait (#240).
-  const shownDone = (kids: readonly Task[]) => kids.filter(x => x.done && (today === undefined || x.fait?.startsWith(today)))
+  const shownDone = (kids: readonly Task[]) => kids.filter(x => x.done && !isAbandoned(x) && (today === undefined || x.fait?.startsWith(today)))
   // Une table par numéro, la première tâche ouverte qui le porte : les parents possibles.
   const openById = new Map<string, Task>()
   for (const t of [...tasks, ...all]) if (!t.done && t.id !== undefined && !openById.has(t.id)) openById.set(t.id, t)
@@ -4018,7 +4026,7 @@ export function byTree(
     const children = kids.get(head) ?? []
     const rows = children.filter(c => !isParent(c) && !seen.has(c))
     for (const r of rows) seen.add(r)
-    const direct = head.id === undefined ? [] : (directOf.get(head.id) ?? []).filter(x => x !== head)
+    const direct = head.id === undefined ? [] : (directOf.get(head.id) ?? []).filter(x => x !== head && !isAbandoned(x))
     const ghost = !listed.has(head)
     // Un grand-parent gardé sans ligne à lui ne paraît pas : son enfant-parent porte le contexte.
     if (!ghost || rows.length > 0) {
@@ -4062,7 +4070,7 @@ export function byTree(
   // Une mère faite aujourd'hui avec ses filles garde son bloc, barré : on la décoche encore (#163).
   if (today !== undefined && closedMothers) {
     for (const m of all) {
-      const kids = m.id === undefined ? [] : (directOf.get(m.id) ?? []).filter(x => x !== m)
+      const kids = m.id === undefined ? [] : (directOf.get(m.id) ?? []).filter(x => x !== m && !isAbandoned(x))
       if (!m.done || !m.fait?.startsWith(today) || kids.length === 0 || kids.some(x => !x.done)) continue
       if (!keep(m) && !kids.some(keep)) continue
       if (blocks.some(b => b.head?.id === m.id)) continue
@@ -4391,7 +4399,7 @@ export function doneTree(
       seen.add(head)
       const children = [...(kids.get(head) ?? [])].sort(recent)
       const rows = children.filter(c => !kids.has(c))
-      const direct = head.id === undefined ? [] : (directOf.get(head.id) ?? []).filter(x => x !== head)
+      const direct = head.id === undefined ? [] : (directOf.get(head.id) ?? []).filter(x => x !== head && !isAbandoned(x))
       out.push({
         kind: 'mother',
         block: {
@@ -8357,9 +8365,9 @@ export function conclusionOf(b: Bilan, abandoned = false): { emoji: string; fait
   return { emoji: RESSENTI_EMOJI[b.ressenti] ?? '📝', fait, souci, smooth }
 }
 
-/** Une tâche annulée : cochée, « (abandonné) » au bout du libellé (`cowork.py roadmap close --abandon`), ou une note qui commence par lui. */
+/** Une tâche annulée : cochée, `annulée:oui` (#624), « (abandonné) » au bout du libellé (`cowork.py roadmap close --abandon`), ou une note qui commence par lui. */
 export function isAbandoned(t: Task): boolean {
-  return t.done && (/\(abandonnée?\)$/.test(t.label.trim()) || /^\(?abandonné/.test(t.note ?? ''))
+  return t.done && (t.annulee === true || /\(abandonnée?\)$/.test(t.label.trim()) || /^\(?abandonné/.test(t.note ?? ''))
 }
 
 /** Une raison d'annulation sur une ligne de roadmap : ni retour à la ligne, ni accent grave (le bloc de métadonnées en dépend). */
@@ -8539,8 +8547,8 @@ export function closeInTexts(
     fields.splice(1, 0, `id:${id}`)
   }
   const after = fields.findIndex(f => f.startsWith('ouvert:'))
-  fields.splice(after >= 0 ? after + 1 : fields.findIndex(f => f.startsWith('id:')) + 1, 0, `fait:${moment}`)
   const abandon = kind === 'abandon'
+  fields.splice(after >= 0 ? after + 1 : fields.findIndex(f => f.startsWith('id:')) + 1, 0, `fait:${moment}`, ...(abandon ? ['annulée:oui'] : [])) // #624
   const label = !abandon || /\(abandonnée?\)$/.test(task.label) ? task.label : `${task.label} (abandonné)`
   const why = flatReason(reason)
   const tail = abandon ? (why !== '' ? `abandonné le ${moment.slice(0, 10)} : ${why}` : '') : DONE_NOTE
@@ -8566,7 +8574,7 @@ function reopenedLine(raw: string): string | undefined {
   const m = LINE_RE.exec(raw.replace(/\r$/, ''))
   if (!m || m[1] === ' ') return undefined
   const label = (m[2] ?? '').replace(/ \(abandonnée?\)$/, '')
-  const fields = (m[3] ?? '').split('|').map(f => f.trim()).filter(f => f !== '' && !f.startsWith('fait:'))
+  const fields = (m[3] ?? '').split('|').map(f => f.trim()).filter(f => f !== '' && !f.startsWith('fait:') && !f.startsWith('annulée:'))
   const note = (m[4] ?? '')
     .trim()
     .replace(new RegExp(`(?:^| ; )${DONE_NOTE}$`), '')
@@ -9628,11 +9636,16 @@ export function shownLines(items: readonly AxisItem[]): number {
   return items.reduce((n, i) => n + (i.kind === 'alone' ? 1 : (i.block.ghost ? 0 : 1) + i.block.tasks.length + i.block.doneTasks.length), 0)
 }
 
-/** L'en-tête d'une recherche (#318) : le compte et le mot cherché, puis ouvertes et faites quand il y a des faites. */
-export function searchSummary(open: number, done: number, query: string, max: number): string {
-  const n = open + done
+/** L'en-tête d'une recherche (#318) : le compte et le mot cherché, puis ouvertes, faites et annulées (#624, `cancelled` en plus de `done`) quand il y a des faites ou des annulées. */
+export function searchSummary(open: number, done: number, query: string, max: number, cancelled = 0): string {
+  const n = open + done + cancelled
   const head = `${n} résultat${n > 1 ? 's' : ''} pour « ${query.trim()} »`
-  const split = done === 0 ? '' : ` · ${[...(open > 0 ? [`${open} ouverte${open > 1 ? 's' : ''}`] : []), `${done} faite${done > 1 ? 's' : ''}`].join(', ')}`
+  const parts = [
+    ...(open > 0 ? [`${open} ouverte${open > 1 ? 's' : ''}`] : []),
+    ...(done > 0 ? [`${done} faite${done > 1 ? 's' : ''}`] : []),
+    ...(cancelled > 0 ? [`${cancelled} annulée${cancelled > 1 ? 's' : ''}`] : []),
+  ]
+  const split = done === 0 && cancelled === 0 ? '' : ` · ${parts.join(', ')}`
   return `${head}${split}${n > max ? ` (${max} affichés)` : ''}`
 }
 
@@ -10833,7 +10846,7 @@ export function activityFacts(o: { tasks: readonly Task[]; today: string }): Act
   const days: ActivityDay[] = Array.from({ length: daysBetween(first, o.today) + 1 }, (_, i) => ({ date: shiftDay(first, i), done: 0, added: 0 }))
   const at = (date: string | undefined) => (date && date >= first && date <= o.today ? days[daysBetween(first, date)] : undefined)
   for (const t of counted) {
-    if (t.done && t.fait) {
+    if (t.done && t.fait && !isAbandoned(t)) { // #624 : une annulée n'est pas une faite
       const day = at(t.fait.slice(0, 10))
       if (day) day.done++
     }
@@ -10888,7 +10901,7 @@ export function recentWork(o: {
   // Une mère close (avec sa dernière fille, #262) a des filles dans la liste : elles la disent.
   const mothers = new Set(o.tasks.flatMap(t => (t.parent !== undefined && t.parent !== t.id ? [t.parent] : [])))
   const picked = o.tasks
-    .map((t, i) => ({ t, i, days: t.done && t.fait && !t.isParent && !(t.id !== undefined && mothers.has(t.id)) ? daysBetween(t.fait.slice(0, 10), o.today) : -1 }))
+    .map((t, i) => ({ t, i, days: t.done && t.fait && !t.isParent && !isAbandoned(t) && !(t.id !== undefined && mothers.has(t.id)) ? daysBetween(t.fait.slice(0, 10), o.today) : -1 }))
     .filter(x => x.days === 0 || x.days === 1)
     .sort((a, b) => (b.t.fait! < a.t.fait! ? -1 : b.t.fait! > a.t.fait! ? 1 : a.i - b.i))
   if (picked.length === 0) return undefined
@@ -10919,7 +10932,9 @@ export function welcomeFacts(o: {
 }): WelcomeFacts {
   // Une mère n'est pas une action à elle (#125) : ses filles comptent, pas elle.
   const tasks = o.tasks.filter(t => !t.isParent)
-  const done = tasks.filter(t => t.done)
+  // #624 : une annulée n'est ni une faite ni dans le total.
+  const counted = tasks.filter(t => !isAbandoned(t))
+  const done = counted.filter(t => t.done)
   const monday = sinceMonday(o.today)
   const closedWeek = done.filter(t => {
     if (!t.fait) return false
@@ -10934,9 +10949,9 @@ export function welcomeFacts(o: {
   const recent = recentWork({ tasks, today: o.today, ...(o.bilans ? { bilans: o.bilans } : {}), ...(o.titleOf ? { titleOf: o.titleOf } : {}) })
   const activity = activityFacts({ tasks: o.tasks, today: o.today })
   return {
-    total: tasks.length,
+    total: counted.length,
     done: done.length,
-    pct: tasks.length === 0 ? 0 : Math.round((done.length / tasks.length) * 100),
+    pct: counted.length === 0 ? 0 : Math.round((done.length / counted.length) * 100),
     closedWeek,
     late: count('En retard'),
     soon: count("Aujourd'hui et demain"),

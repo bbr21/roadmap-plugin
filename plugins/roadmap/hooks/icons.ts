@@ -879,6 +879,14 @@ export function squareCheckRowIcon(hex: string, inkHex: string): string {
 }
 
 /**
+ * La marque d'une tâche annulée (#624, maquette B) : un cercle barré d'une diagonale, en `hex` (`text3`),
+ * à la place du carré coché, centré sur les 16 × 24 de la case.
+ */
+export function cancelRowIcon(hex: string): string {
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="24" viewBox="0 0 16 24"><circle cx="8" cy="12" r="5.5" fill="none" stroke="${hex}" stroke-width="1.5"/><path d="M4.2 15.8l7.6-7.6" fill="none" stroke="${hex}" stroke-width="1.5" stroke-linecap="round"/></svg>`
+}
+
+/**
  * Le carré d'une ligne armée (#198, maquette A) : celui d'une ouverte (ou, `done`, coché) entouré d'un
  * filet `ringHex` (orange, `block`), qui le relie au tag « Confirmer » au bout de la ligne.
  */

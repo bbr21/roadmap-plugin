@@ -444,7 +444,8 @@ Write `<scratchpad>/operations.json`:
   checks every row. **Required** too in a countable journal, with its `type`. Elsewhere optional: without it, the row says the label and « Faite : <proof> ».
   A parent closed with its last child gets the child's bilan, its `fait` naming that child.
 - **drop**: `reason`, `bilan`; the reason goes into the label after « ; », then « (abandonné) » at
-  its end (« Préparer le budget mocap ; budget repris par Linda (abandonné) », #285), like the panel's « Annuler la tâche ».
+  its end (« Préparer le budget mocap ; budget repris par Linda (abandonné) », #285), like the panel's « Annuler la tâche »;
+  it also writes `annulée:oui` right after `fait:` (#624), the mark that sets a cancelled task apart from a done one.
 - **pause** (#159): `until` (the resume date), `reason`. `due:` becomes `until`, the label gets
   « (en pause depuis le JJ/MM : <reason>) » (#285), and a task without a parent moves to « Plus tard »; a
   child stays under its parent. Refused on a line taken by a session and on a parent with an open
