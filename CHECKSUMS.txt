@@ -1,8 +1,8 @@
-# roadmap 0.305.1 : SHA-256 de chaque fichier installé du plugin, chemins relatifs à son dossier.
-# Vérifier une copie installée (~/.claude/plugins/cache/roadmap/roadmap/0.305.1) : plugins/roadmap/SECURITE.md, « Vérifier que ta copie est une vraie version ».
-ede2ad309919df270912872f1f9d498b9154a26050fcae426614f7c2c3316f49  .claude-plugin/plugin.json
-7049e92cb181d5225eca1356e68ec24970b4eabe562f5346d7b82e78e4783659  README.md
-d88281c76ef5b3d7b0f005874ef55e0d8178411e3fa463264b1fdac71cf77f53  SECURITE.md
+# roadmap 0.305.2 : SHA-256 de chaque fichier installé du plugin, chemins relatifs à son dossier.
+# Vérifier une copie installée (~/.claude/plugins/cache/roadmap/roadmap/0.305.2) : plugins/roadmap/SECURITE.md, « Vérifier que ta copie est une vraie version ».
+fa283f71ae0550a4e32c91f5a39d2b2161704665b538e8c8b156f904e7a34d64  .claude-plugin/plugin.json
+6a09b97742577aaa949884122c17a479610330bae4a3dc97634d4de06f6d06ee  README.md
+73a8dacf9623cf9707ceaeb817ed62adf6a9dde71fe1e1d4292e467d0375976e  SECURITE.md
 bce019cb7147413a8e5f0687df59a41394fa92545568b5d37b1df8bd6d885e30  hooks/bar-hit.tsx
 9825e10c433b86e78421ac39ddf6de95d74617988ace547fb57f21651d572003  hooks/cartes.tsx
 9d8bca32c2583740c7c67dc06c1925741a77516cddc05d57d2c0eaa644c5860e  hooks/controle.tsx
@@ -11,7 +11,7 @@ e43eb7dba870d0b7175bbb6b49ce7c56efabc07d72fe7046d1f1fc1ab9b2bee9  hooks/depart.t
 a83804b4da5f7cc773c2e4a3b28924001b12143466a9ee100c1a559d2f6345e6  hooks/gardien.ts
 d842d789476d67282d0f04b7e5fdc68a3d981ccec65dd79cfa2d11eed13fb828  hooks/hooks.json
 ed3fd26f0d051a11afd0e4cb8e08f1519aca25082cad982c7021743d2acbd563  hooks/icons.ts
-251d07d29f857c7daa49e2373f53bddd19207cedb9000c37f9cf789b24465ced  hooks/parse.ts
+8699ada99d2761fc87c6f4f5a11e2a3d42137aee4530e034adf60721686f58c1  hooks/parse.ts
 9b52feecfcd53efd0c1ff4db4c52ef43cd298ceec725b1f153b67e4c016c6105  hooks/press-hit.tsx
 52b6b80acb84e20fe38bc8a9116af5078aaf7a925b8a58d9a4061c01e53e9d84  hooks/prise-cloud.ts
 7081c7b0d6f4f12070218cbe508babfecc6caec16c7a0df9ccc12b9b56152f10  hooks/register.tsx

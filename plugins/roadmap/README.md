@@ -862,6 +862,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.305.2 (2026-11-18)** : hooks : la suite de main réécrite par la file des tests passe le garde-fou du dossier principal en mode auto (#630)
 - **0.305.1 (2026-11-18)** : hooks : la fiche lit le dépôt joignable dès le premier dessin du panneau, un clic sur la fiche ne dessine plus deux fois (#622)
 - **0.305.0 (2026-11-18)** : panneau : Centre de contrôle, une PR fusionnée quitte « En cours » (« en test » si livrée), bouton « Retirer » sur chaque carte, une session cloud muette retirée rend sa ligne à lancer (#629)
 - **0.304.0 (2026-11-18)** : hooks : un formulaire qui demande de valider un plan, un brouillon ou un document que le tour n'a pas montré est refusé une fois (#626)

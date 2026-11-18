@@ -14787,6 +14787,8 @@ function shellQuote(text: string): string {
  * le libellé est la commande courte de la file. Sous Maestro une suite sans voie propre prend la voie 0.
  * `prio` (#536, la session porte une tâche prioritaire) : la suite se marque `ROADMAP_QUEUE_PRIO=1` et prend
  * la voie 0, même un `un_test.sh` qui irait sinon en voie 1.
+ * Le code se garde par `set -- $?` puis `(exit $1)` (#630) : une affectation `rc=$?` se lit, pour le garde-fou du
+ * dossier principal, comme une commande construite, et la commande réécrite, renvoyée telle quelle en mode auto, y était refusée.
  */
 export function queuedCommand(command: string, root: string, opts: { maestro?: boolean; slots?: number; prio?: boolean } = {}): string | undefined {
   if (command.includes('one-at-a-time.sh') || !heavyTest(command) || queueOff(command)) return undefined
@@ -14802,7 +14804,7 @@ export function queuedCommand(command: string, root: string, opts: { maestro?: b
     ctx.for !== undefined ? `ROADMAP_QUEUE_FOR=${shellQuote(ctx.for)}` : '',
   ].filter(Boolean)
   const script = shellQuote(`${root}/scripts/one-at-a-time.sh`)
-  return `${env.length ? `${env.join(' ')} ` : ''}${script} take $$ ${shellQuote(label)}; {\n${command}\n}; __roadmap_rc=$?; ${script} give $$; (exit $__roadmap_rc)`
+  return `${env.length ? `${env.join(' ')} ` : ''}${script} take $$ ${shellQuote(label)}; {\n${command}\n}; set -- $?; ${script} give $$; (exit $1)`
 }
 
 /**
