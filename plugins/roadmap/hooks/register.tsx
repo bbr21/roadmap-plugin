@@ -499,11 +499,11 @@ import {
   writesRoadmap,
   taskForSessionTitle,
   launchTitleRefusal,
+  closeLaterReminder,
+  closeReminder,
   originSession,
   publishedRelease,
   releaseCommandIds,
-  testLaterReminder,
-  testReminder,
   testSessionNote,
   testsUnder,
   testTitle,
@@ -2148,13 +2148,17 @@ async function deliveredBy($: EngineInterface, command: unknown): Promise<Delive
   return kinds
 }
 
-/** #366 : les #N publiés par ce Maestro dans ce chargement, en test jusqu'au « c'est bon » de la personne. */
+/**
+ * #366 (retirée par #634) : les #N publiés par ce Maestro ne passent plus en test, mais la variable reste pour
+ * `testsUnder` : le panneau montre encore les sessions de test ouvertes (#635 retire cet affichage). Plus rien n'y est ajouté.
+ */
 let publishedTests: string[] = []
 
 /**
- * Le rappel « en test » d'une publication de Maestro (#366) : la version et les #N ouverts lus dans la
- * sortie de `release.py release` ou `remote` (#410), la session d'origine de chacun, la carte de test entière. Publication
- * lancée en arrière-plan (pas de sortie) : le rappel de la poser à sa fin. Rien sans #N ouvert.
+ * Le rappel de clôture d'une publication de Maestro (#634) : la version et les #N ouverts lus dans la sortie de
+ * `release.py release` ou `remote` (#410), la session d'origine de chacun ; les tâches se closent à leur publication
+ * (`vérifié:non`, `essai:`), sans carte de test. Publication lancée en arrière-plan (pas de sortie) : le rappel de
+ * les clore à sa fin. Rien sans #N ouvert.
  */
 async function testAfterRelease($: EngineInterface, command: string, stdout: string): Promise<string | undefined> {
   const pub = publishedRelease(stdout)
@@ -2166,25 +2170,15 @@ async function testAfterRelease($: EngineInterface, command: string, stdout: str
   if (typeof open === 'string') return undefined
   const kept = ids.flatMap(id => open.filter(t => t.id === id && !t.done))
   if (kept.length === 0) return undefined
-  publishedTests = [...new Set([...publishedTests, ...kept.map(t => t.id as string)])]
-  if (!pub) return testLaterReminder(kept.map(t => t.id as string))
+  if (!pub) return closeLaterReminder(kept.map(t => t.id as string))
   const titles = await loadTitles($)
   const rows = (await readListRows($)).rows
-  const own = await readOwnSession($)
-  // Ce que la tâche a changé (#269, gardé dans le store à chaque fin de tour) : la session de test dit quoi essayer.
-  const tasks = await Promise.all(kept.map(async t => {
+  const tasks = kept.map(t => {
     const id = t.id as string
     const origin = originSession(rows, id)
-    const changes = changesOf(await storeGet($, changesKey(source.name, id)).catch(() => undefined))?.zones ?? []
-    return {
-      id,
-      name: t.nom ?? cachedTitle(t, titles) ?? fallbackTitle(t.label),
-      label: t.label,
-      changes: changes.map(z => ({ name: z.name, ...(z.why !== undefined ? { why: z.why } : {}) })),
-      ...(origin ? { origin } : {}),
-    }
-  }))
-  return testReminder({ version: pub.version, tasks, main: source.root ?? source.dir, ...(own.id ? { maestro: own.id } : {}) })
+    return { id, name: t.nom ?? cachedTitle(t, titles) ?? fallbackTitle(t.label), ...(origin ? { origin } : {}) }
+  })
+  return closeReminder({ version: pub.version, tasks })
 }
 
 /** La consigne d'une session de test (#366), à chaque message de la personne : rien hors d'une session « Tester #N · X.Y.Z ». */

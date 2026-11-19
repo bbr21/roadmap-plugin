@@ -802,7 +802,7 @@ export function passesShown(p: readonly Pass[]): boolean {
 // Le contrôle de la grammaire, plus strict que la lecture : la lecture ignore une ligne qu'elle ne
 // comprend pas, le contrôle la signale. Clés admises : celles que la lecture garde, plus `verrou`
 // (Splitmybill).
-const KEYS: readonly string[] = [...FIELDS, 'après', 'parent', 'id', 'nom', 'prio', 'feedback', 'pj', 'livrable', 'livré', 'verrou', 'tous', 'relance', 'skill', 'lieu' /* #408 */, 'annulée' /* #624 */]
+const KEYS: readonly string[] = [...FIELDS, 'après', 'parent', 'id', 'nom', 'prio', 'feedback', 'pj', 'livrable', 'livré', 'verrou', 'tous', 'relance', 'skill', 'lieu' /* #408 */, 'annulée' /* #624 */, 'vérifié' /* #634 */, 'essai' /* #634 */]
 /** Les clés de la grammaire : une clé déclarée dans `cles` ne peut en reprendre aucune. */
 export const GRAMMAR_KEYS: readonly string[] = KEYS
 const DECLARED_KEY_RE = /^[a-zà-ÿ][a-zà-ÿ0-9-]*$/
@@ -918,6 +918,9 @@ export function lintRoadmap(text: string, done: boolean, rules: Partial<LintRule
       else if (k === 'skill' && !SKILL_RE.test(v)) say(`skill: vaut un nom de skill, nom ou plugin:nom (« ${v} »)`)
       else if (k === 'lieu' && v !== 'cloud') say(`lieu:${v} : cloud attendu`) // #408
       else if (k === 'annulée' && v !== 'oui') say(`annulée: vaut oui (« ${v} »)`) // #624
+      else if (k === 'vérifié' && v !== 'non' && !DATE_RE.test(v)) say(`vérifié:${v} : non ou une date AAAA-MM-JJ attendue (#634)`)
+      else if (k === 'vérifié' && v !== 'non' && rules.today !== undefined && v > rules.today) say(`vérifié:${v} : date dans le futur (aujourd'hui : ${rules.today}, heure locale)`)
+      else if (k === 'essai' && v === '') say('essai: vide : écrire où regarder et quoi voir (#634)')
       else if (k === 'feedback' && !FEEDBACK_RE.test(v)) say(`feedback: des numéros de retours séparés par des virgules (« ${v} »)`)
       else if ((k === 'pj' || k === 'livrable') && (v === '' || v.split(',').some(x => x.trim() === ''))) say(`${k}: des chemins de fichiers séparés par des virgules (« ${v} »)`)
       else if (k === 'livré' && parseDelivered(v) === null) say(`livré: <version>@<AAAA-MM-JJ>[#<PR>] ou <AAAA-MM-JJ>, séparés par des virgules (« ${v} »)`) // #480
@@ -930,6 +933,12 @@ export function lintRoadmap(text: string, done: boolean, rules: Partial<LintRule
       const parent = parents.has(keys.get('id') ?? '') && !keys.has('tous')
       for (const k of requis) if ((keys.get(k) ?? '') === '' && !(k === 'due' && parent)) say(`champ exigé absent : ${k}:${requiredExample(k)}`)
     }
+    // #634 : l'étiquette se pose à la clôture, sur la ligne close de ROADMAP-fait ; les deux clés vont ensemble.
+    if (!done && keys.has('vérifié')) say("champ vérifié: dans ROADMAP.md : l'étiquette se pose sur la ligne close de ROADMAP-fait (#634)")
+    if (!done && keys.has('essai')) say("champ essai: dans ROADMAP.md : l'étiquette se pose sur la ligne close de ROADMAP-fait (#634)")
+    if (done && keys.has('vérifié') && !keys.has('livré')) say("vérifié: sans livré: : l'étiquette ne va qu'à une tâche publiée (#634)")
+    if (done && keys.has('vérifié') && !keys.has('essai')) say('vérifié: sans essai: : écrire où regarder et quoi voir (#634)')
+    if (done && keys.has('essai') && !keys.has('vérifié')) say('essai: sans vérifié: (#634)')
     if (!checked && keys.has('tous') && (keys.get('due') ?? '') === '') say('tous: demande une due:AAAA-MM-JJ, la prochaine occurrence')
     // Les règles de structure du modèle (#125), que la skill tasks refuse à l'écriture : des problèmes francs (#289).
     // L'échéance d'un enfant après celle de son parent reste un avertissement.
@@ -5496,9 +5505,10 @@ export function partialCloseNote(o: { id: string; attend: string | undefined; me
   return `${lead} ${partialCloseRule('solo')} Ici : clos #${o.id} et ouvre sa suite chez ${tiers}, puis dis « #${o.id} close, la suite chez ${tiers} passe en #<suite> ». Notre part pas encore faite : dis-le, ta tâche n'est pas finie.`
 }
 
-// #366 : une tâche publiée passe en test. Après la publication, Maestro pose la carte « Tester #N · X.Y.Z » ;
-// la session de test relaie les retours de la personne à la session d'origine, gardée ouverte, et la tâche
-// se coche au « c'est bon ». L'état « en test » se déduit des titres de session, sans contrat nouveau.
+// #366, retirée par #634 : une tâche publiée passait en test (carte « Tester #N · X.Y.Z », session de test qui
+// relaie les retours, « c'est bon »). Elle se clôt désormais à sa publication, `vérifié:non` + `essai:`, et le
+// « c'est bon » pose `vérifié:<date>` (op verify de la skill tasks). Restent ici, pour les lignes encore ouvertes
+// « en test » : les titres de session de test, leurs règles de relais et leur lecture ; #635 retire leur affichage.
 
 const TEST_TITLE = /^\s*tester\s+#([1-9]\d*)\s*·\s*(\d+\.\d+\.\d+)\s*$/i
 
@@ -5524,14 +5534,14 @@ export function publishedRelease(output: string): { plugin: string; version: str
   return { plugin: m[1], version: m[2], ids }
 }
 
-/** La ligne « en test » de la clause de Maestro, dite à la session qui a codé la tâche. */
-export function testChild(): string {
+/** La ligne « à vérifier » de la clause de Maestro, dite à la session qui a codé la tâche (#634, remplace « en test » de #366). */
+export function verifyChild(): string {
   const p = person()
-  return `En test (#366) : après la fusion et la publication de ta tâche, Maestro pose la carte « Tester #N · X.Y.Z » d'une session de test ; ta tâche passe en test et ta session reste ouverte. Chaque retour de ${p} t'arrive par message « Retour de test #N (X.Y.Z) : … » : code-le sur ta branche (merge de main d'abord, jamais de rebase d'une branche poussée), rejoue les tests, pousse, puis « prête à fusionner » ; Maestro fusionne, publie et pose la carte de la version suivante. Ta ligne se coche au « c'est bon » de ${p} dans la session de test : alors seulement « fini » et l'archivage.`
+  return `À vérifier (#634) : ta tâche se clôt à sa publication, sans session de test. Ton compte rendu « prête » porte une ligne « À vérifier : <où regarder> → <quoi voir> », en mots simples, que Maestro recopie en essai: sur ta ligne close (vérifié:non jusqu'au « c'est bon » de ${p}). Un retour de ${p} après la clôture ouvre une tâche de correctif.`
 }
 
-/** `testChild()` pour la personne connue au chargement ; `maestroClause` lit `testChild()` à chaque appel. */
-export const TEST_CHILD: string = testChild()
+/** `verifyChild()` pour la personne connue au chargement ; `maestroClause` lit `verifyChild()` à chaque appel. */
+export const VERIFY_CHILD: string = verifyChild()
 
 /** Les règles de relais de la session de test, dites dans son brief et redites à chaque message (`testSessionNote`). */
 function testRelayRules(o: { id: string; version: string; origin?: string; maestro?: string }): string[] {
@@ -5543,85 +5553,36 @@ function testRelayRules(o: { id: string; version: string; origin?: string; maest
   return [
     `Ne code rien : tu ne fais que relayer.`,
     `Un retour de ${p} (défaut, demande, capture) part tel quel, sans le réécrire, à ${origin} par SendMessage : « Retour de test #${o.id} (${o.version}) : … ». Dis ensuite en une ligne qu'il est transmis.`,
-    `Quand ${p} dit « c'est bon », envoie à ${maestro} : « Test validé : #${o.id} ${o.version}, c'est bon de ${p} ».`,
+    `Quand ${p} dit « c'est bon », envoie à ${maestro} : « Test validé : #${o.id} ${o.version}, c'est bon de ${p} » : Maestro pose vérifié (op verify de la skill tasks) sur la ligne. Aucune carte de version suivante ne viendra (#634).`,
     `Une question de ${p} se répond ici, sans la relayer.`,
   ]
 }
 
-/** Ce qu'une tâche a changé, dit à la session de test : une zone et sa phrase (« Ce qui a changé », #269). */
-export type TestChange = { name: string; why?: string }
-
 /**
- * Le brief de la carte « Tester #N · X.Y.Z » : tout écrit par le plugin, identifiants compris. Il dit quoi
- * essayer (ce qui a changé, sinon le libellé) et demande à la session de faire elle-même les essais que ses
- * outils permettent, puis de ne demander à la personne que ce qui ne se voit que dans l'app (retour de BBR
- * au premier test de #366 : « Je dois tester quoi, soit clair ! Tu peux pas faire les tests toi-même ? »).
- * `main` : le dossier principal, d'où la version se lit (la copie de travail de la session peut être en retard).
+ * Le rappel à Maestro après une publication (#634, remplace la carte de test de #366) : les tâches du message se
+ * closent à leur publication, `vérifié:non` et `essai:`, par `done` de la skill tasks. Rien sans tâche.
  */
-export function testBrief(o: { id: string; name: string; version: string; origin?: string; maestro?: string; main?: string; label?: string; changes?: readonly TestChange[] }): string {
-  const p = person()
-  const said = (o.changes ?? []).filter(c => c.why !== undefined && c.why.trim() !== '')
-  const what = said.length > 0
-    ? [`Ce que #${o.id} change :`, ...said.map(c => `- ${c.name} : ${c.why}`)]
-    : o.label !== undefined ? [`Ce que #${o.id} change : ${o.label}`] : []
-  const status = `python3 ${o.main !== undefined ? `${o.main}/` : ''}tools/release.py status`
-  return [
-    `Mission : tester #${o.id} · ${o.name} dans la version ${o.version} du plugin, avec ${p}`,
-    `Fini quand : ${p} dit « c'est bon »`,
-    ...what,
-    '---',
-    `Tu ouvres une session de test : ${p} essaie la version ${o.version} et te dit ce qui va ou non.`,
-    `Vérifie d'abord la version chargée : \`${status}\`, ligne « Dans l'app »${o.main !== undefined ? ' (lis le dépôt par le dossier principal : ta copie de travail peut être en retard, le plugin chargé ne dépend pas d\'elle)' : ''}. Si elle est en retard, dis à ${p} le geste que la ligne donne.`,
-    `Fais d'abord toi-même les essais que tes outils permettent (commandes, fichiers, tests, le volet navigateur pour une page) et dis en une ligne ce que tu as vu. Puis ne demande à ${p} que ce qui ne se voit que dans l'app : trois points au plus, en mots simples, chacun avec où regarder ou cliquer et ce qu'il doit voir. Ton premier message ouvre là-dessus, sans attendre qu'on te demande quoi tester.`,
-    ...testRelayRules(o),
-    `Finis sur « Archiver cette session ? » (avec le bouton « Oui, archiver ») quand Maestro dit « #${o.id} close », ou qu'une version plus récente de #${o.id} a sa propre carte de test.`,
-  ].join('\n')
-}
-
-/**
- * Le rappel à Maestro après une publication (#366) : les tâches du message passent en test. Une carte
- * par tâche, que Maestro recopie telle quelle. Rien sans tâche.
- */
-export function testReminder(o: { version: string; tasks: { id: string; name: string; origin?: string; label?: string; changes?: readonly TestChange[] }[]; maestro?: string; main?: string }): string | undefined {
+export function closeReminder(o: { version: string; tasks: { id: string; name: string; origin?: string }[] }): string | undefined {
   if (o.tasks.length === 0) return undefined
   const p = person()
   const ids = o.tasks.map(t => `#${t.id}`).join(', ')
-  const cards = o.tasks.map(t => {
-    const brief = testBrief({ ...t, version: o.version, ...(o.maestro !== undefined ? { maestro: o.maestro } : {}), ...(o.main !== undefined ? { main: o.main } : {}) })
-    return [
-      `Carte de #${t.id} : start_session, initiation: own_initiative, context: fresh, use_worktree: false, titre « ${testCardTitle(t.id, o.version)} », prompt (recopie-le tel quel) :`,
-      '<<<',
-      brief,
-      '>>>',
-    ].join('\n')
-  })
   return [
-    `Roadmap — publication ${o.version} : ${ids} passe${o.tasks.length > 1 ? 'nt' : ''} en test (#366).`,
+    `Roadmap — publication ${o.version} : ${ids} se ${o.tasks.length > 1 ? 'closent' : 'clôt'} à ${o.tasks.length > 1 ? 'leur' : 'sa'} publication (#634), sans session de test.`,
     `Dis « Nouvelle version ${o.version} : ${ids} » en une ligne, même sur un tour réveillé : c'est un besoin de ${p}.`,
-    `Ne coche pas ${ids} : l'étape devient « · en test ${o.version} », ce qui l'emporte sur « livrée » du rappel de livraison ; la ligne se coche au « Test validé » de ${p}.`,
-    `Pose une carte de test par tâche :`,
-    ...cards,
+    ...o.tasks.map(t => `Clos #${t.id} maintenant par la skill tasks : done avec version: "${o.version}" et check: "<où regarder → quoi voir>", la ligne « À vérifier : … » du compte rendu de sa session (sinon écris-la d'après ce qui a changé) ; la ligne close porte vérifié:non et essai:.`),
+    `Ne pose aucune carte « Tester #N » : la règle #366 est retirée.`,
+    ...o.tasks.map(t => `Au « c'est bon » de ${p} sur #${t.id} : op verify. Un essai raté : une tâche de correctif (op add, après:-), #${t.id} reste close et vérifié:non.`),
+    ...o.tasks.filter(t => t.origin !== undefined).map(t => `Dis « #${t.id} close » à sa session (session ${t.origin}) : elle conclut et propose l'archivage.`),
   ].join('\n')
 }
 
 /**
  * Le contrôle d'une carte de test, appelé en tête de `launchTitleRefusal` : rien quand le titre n'est pas
- * un titre de test ou que la carte peut partir ; un refus quand #N est close ou absente, ou qu'une session
- * ouverte porte déjà ce titre.
+ * un titre de test ; un titre « Tester #N · X.Y.Z » est toujours refusé (#634 retire la règle #366).
  */
 export function testCardRefusal(o: { title: string; open: readonly Task[]; done: readonly Task[]; sessions: readonly { title: string }[] }): string | undefined {
-  const t = testTitle(o.title)
-  if (!t) return undefined
-  const head = 'Carte de test refusée (#366) :'
-  if (!o.open.some(x => x.id === t.id)) {
-    const closed = o.done.some(x => x.id === t.id)
-    return `${head} #${t.id} ${closed ? 'est close (ROADMAP-fait.md)' : "n'existe pas dans ROADMAP.md"} : un test se pose sur une tâche ouverte.`
-  }
-  const wanted = normalizeTitle(o.title)
-  if (o.sessions.some(s => normalizeTitle(s.title) === wanted)) {
-    return `${head} la session « ${o.title} » est déjà ouverte : une seule session de test par version.`
-  }
-  return undefined
+  if (!testTitle(o.title)) return undefined
+  return 'Carte de test refusée (#634) : une tâche publiée se clôt à sa publication, vérifié:non, sans session de test ; au « c\'est bon », op verify de la skill tasks.'
 }
 
 /** La consigne redite à chaque message de la personne dans une session de test. */
@@ -5671,11 +5632,11 @@ export function releaseCommandIds(command: string): string[] {
   return ids
 }
 
-/** Le rappel d'une publication lancée en arrière-plan (#366) : la carte de test se pose quand sa sortie dit la version. */
-export function testLaterReminder(ids: readonly string[]): string | undefined {
+/** Le rappel d'une publication lancée en arrière-plan (#634) : la clôture se fait quand sa sortie dit la version. */
+export function closeLaterReminder(ids: readonly string[]): string | undefined {
   if (ids.length === 0) return undefined
   const list = ids.map(id => `#${id}`).join(', ')
-  return `Roadmap — publication lancée en arrière-plan pour ${list} (#366) : à sa fin, quand sa sortie dit « Publié : <plugin> X.Y.Z … », ne coche pas ${list} : dis « Nouvelle version X.Y.Z : ${list} » en une ligne, mets l'étape à « · en test X.Y.Z », et pose une carte par tâche titrée « ${ids.map(id => testCardTitle(id, 'X.Y.Z')).join(' », « ')} » (start_session, own_initiative, fresh, use_worktree: false), brief de test avec l'identifiant de la session d'origine et le tien (skill roadmap:maestro, § 6, « A published task goes to test »).`
+  return `Roadmap — publication lancée en arrière-plan pour ${list} (#634) : à sa fin, quand sa sortie dit « Publié : <plugin> X.Y.Z … », dis « Nouvelle version X.Y.Z : ${list} » en une ligne et clos ${list} par la skill tasks : done avec version et check (« <où regarder → quoi voir> », la ligne « À vérifier : … » du compte rendu de sa session), vérifié:non et essai: sur la ligne close. Ne pose aucune carte « Tester #N » : la règle #366 est retirée.`
 }
 
 /**
@@ -5775,7 +5736,7 @@ export function maestroClause(maestro: string, travail: Travail = 'code'): strin
     `- ${reviewLinkChild()}`,
     `- ${fidelityRule()}`,
     '- Ne coche pas ta ligne : Maestro la coche à la fusion, avec son bilan. Ton dernier compte rendu dit ce qui a été fait et le souci rencontré.',
-    `- ${testChild()}`,
+    `- ${verifyChild()}`,
     `- Ton compte rendu « prête à fusionner » s'ouvre par le bloc fixe que Maestro lit sans ouvrir ta session (#537) : ${reportBlockRule()}. Colle ce compte rendu entier en dernier commentaire de ta PR, comme une session cloud, si le projet en a (le texte écrit dans un fichier, puis \`gh pr comment <numéro> --body-file <fichier>\`, jamais dans la commande).`,
     `- Ton compte rendu « prête à fusionner » finit par le bloc « Ce qui a changé », que la fiche de ta tâche montre (#269) : ${CHANGES_BLOCK_RULE}.`,
     `- ${PARTIAL_CLOSE_CHILD}`,
@@ -8744,7 +8705,7 @@ function fieldOfProblem(why: string, cles: Readonly<Record<string, readonly stri
  * L'ordre de la grammaire, où se place un champ que la ligne n'avait pas (#161) ; `*` : les clés
  * déclarées par le projet, et toute clé inconnue.
  */
-const EDIT_ORDER = ['id', 'nom', 'resp', 'qui', 'attend', 'branche', 'verrou', 'ouvert', 'due', 'parent', 'après', 'prio', 'tous', 'relance', 'feedback', '*', 'spec', 'fiche', 'pj', 'livrable', 'livré', 'src']
+const EDIT_ORDER = ['id', 'nom', 'resp', 'qui', 'attend', 'branche', 'verrou', 'ouvert', 'due', 'parent', 'après', 'prio', 'tous', 'relance', 'feedback', '*', 'spec', 'fiche', 'pj', 'livrable', 'livré', 'vérifié', 'essai', 'src']
 function editRank(field: string): number {
   const k = field.slice(0, Math.max(0, field.indexOf(':')))
   const at = EDIT_ORDER.indexOf(k)

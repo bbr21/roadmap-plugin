@@ -147,7 +147,7 @@ check('Grammaire de ROADMAP.md et ROADMAP-fait.md', (err) => {
   const axes = knownAxes();
   if (!axes.size) err(OPEN, 'liste des axes introuvable (puce « - **axe** »)');
   // Les clés que lit et contrôle le panneau Roadmap (plugin roadmap).
-  const keys = new Set(['id', 'nom', 'qui', 'attend', 'resp', 'branche', 'verrou', 'ouvert', 'due', 'parent', 'après', 'prio', 'feedback', 'pj', 'livrable', 'livré', 'fait', 'annulée', 'spec', 'fiche', 'src', 'tous', 'relance', 'skill', 'lieu']);
+  const keys = new Set(['id', 'nom', 'qui', 'attend', 'resp', 'branche', 'verrou', 'ouvert', 'due', 'parent', 'après', 'prio', 'feedback', 'pj', 'livrable', 'livré', 'fait', 'annulée', 'vérifié', 'essai', 'spec', 'fiche', 'src', 'tous', 'relance', 'skill', 'lieu']);
   const declared = declaredKeys();
   // id: unique sur les deux fichiers, gardé quand la ligne descend dans ROADMAP-fait.
   const ids = new Map();
@@ -208,6 +208,10 @@ check('Grammaire de ROADMAP.md et ROADMAP-fait.md', (err) => {
         if (key === 'fait' && !isDone(value)) err(at, `fait:${value} : date AAAA-MM-JJ (et heure HH:MM) attendue`);
         // #624 : annulée:oui marque une tâche annulée, dans ROADMAP-fait seulement.
         if (key === 'annulée' && value.trim() !== 'oui') err(at, `annulée:${value.trim()} : oui attendu`);
+        // #634 : vérifié: vaut non ou la date où la tâche publiée a été essayée (jamais dans le futur) ; essai: dit où regarder et quoi voir.
+        if (key === 'vérifié' && value.trim() !== 'non' && !isDate(value.trim())) err(at, `vérifié:${value.trim()} : non ou une date AAAA-MM-JJ attendue`);
+        if (key === 'vérifié' && isDate(value.trim()) && value.trim() > TODAY) err(at, `vérifié:${value.trim()} : date dans le futur (aujourd'hui : ${TODAY}, heure locale)`);
+        if (key === 'essai' && !value.trim()) err(at, 'essai: vide : écrire où regarder et quoi voir (#634)');
         // Une date de clôture ou d'ouverture n'est jamais après aujourd'hui (#201).
         if ((key === 'ouvert' || key === 'fait') && value.trim().slice(0, 10) > TODAY && isDone(value.trim())) err(at, `${key}:${value.trim()} : date dans le futur (aujourd'hui : ${TODAY}, heure locale)`);
         // #300 : prio:oui ; l'ancienne échelle 1, 2, 3 (#130) reste tolérée jusqu'à la migration (tasks.py prio-oui).
@@ -272,6 +276,12 @@ check('Grammaire de ROADMAP.md et ROADMAP-fait.md', (err) => {
       if (inDone && !found.has('fait')) err(at, 'champ fait:AAAA-MM-JJ absent');
       if (!inDone && found.has('fait')) err(at, 'champ fait: dans ROADMAP.md : la ligne part dans ROADMAP-fait');
       if (!inDone && found.has('annulée')) err(at, 'champ annulée: dans ROADMAP.md : la ligne part dans ROADMAP-fait');
+      // #634 : l'étiquette vérifié:/essai: se pose à la clôture, sur la ligne de ROADMAP-fait, jamais sur une ligne ouverte.
+      if (!inDone && found.has('vérifié')) err(at, "champ vérifié: dans ROADMAP.md : l'étiquette se pose sur la ligne close de ROADMAP-fait (#634)");
+      if (!inDone && found.has('essai')) err(at, "champ essai: dans ROADMAP.md : l'étiquette se pose sur la ligne close de ROADMAP-fait (#634)");
+      if (inDone && found.has('vérifié') && !found.has('livré')) err(at, "vérifié: sans livré: : l'étiquette ne va qu'à une tâche publiée (#634)");
+      if (inDone && found.has('vérifié') && !found.has('essai')) err(at, 'vérifié: sans essai: : écrire où regarder et quoi voir (#634)');
+      if (inDone && found.has('essai') && !found.has('vérifié')) err(at, 'essai: sans vérifié: (#634)');
       if (!inDone && found.has('qui') && found.has('branche') && section !== 'En cours') {
         err(at, `ligne prise (qui: et branche:) hors de « En cours » (section « ${section} »)`);
       }

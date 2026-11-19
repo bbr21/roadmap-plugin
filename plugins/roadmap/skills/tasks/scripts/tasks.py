@@ -55,7 +55,8 @@ OPS = {
     "add": {"op", "key", "label", "axis", "section", "parent", "note", "fields", "distinct", "zone"},
     "update": {"op", "id", "fields", "append"},
     "reschedule": {"op", "id", "due"},
-    "done": {"op", "id", "date", "proof", "bilan", "version"},
+    "done": {"op", "id", "date", "proof", "bilan", "version", "check"},
+    "verify": {"op", "id", "date"},
     "drop": {"op", "id", "reason", "bilan"},
     "pause": {"op", "id", "until", "reason"},
     "handoff": {"op", "id", "date", "proof", "delivered", "key", "label", "waiting", "src", "fields", "bilan",
@@ -1823,6 +1824,7 @@ class _Tenue(audit._Preparation):
         # #598 : ce que le lot nomme ou range (filles ajoutées, nommées ou rangées) et les mères qu'il nomme, pour
         # `controler_noms`.
         self.filles_nommees, self.meres_nommees = [], []
+        self.verifs = {}  # #634 : numéro de ligne de ROADMAP-fait.md -> date de vérification
 
     # -- règles
 
@@ -2054,7 +2056,7 @@ class _Tenue(audit._Preparation):
                 r.pop(k)
         return r
 
-    def fermer_tache(self, t, date, suffixe, souci, raison="", bilan=None, annulee=False):
+    def fermer_tache(self, t, date, suffixe, souci, raison="", bilan=None, annulee=False, extra=()):
         """`raison` (un abandon) va dans le libellé, après « ; » et avant le suffixe (#285), comme la reprise
         à la main d'Adbricks Cowork ; une note déjà portée par la ligne reste où elle était."""
         t.retiree = True
@@ -2062,6 +2064,7 @@ class _Tenue(audit._Preparation):
         champs = [(k, v) for k, v in t.champs if k not in ("fait", "attend", "annulée")] + [("fait", fait)]
         if annulee:  # #624 : la marque d'une annulée, juste après fait:
             champs.append(("annulée", "oui"))
+        champs += list(extra)  # #634 : `vérifié:non` et `essai:`, juste après fait:
         libelle = "%s ; %s" % (t.libelle, raison) if raison else t.libelle
         self.vers_fait.append(im.rendre_ligne(True, libelle + suffixe, t.axe, champs, t.note))
         rang = dict(bilan) if bilan else {"fait": t.libelle, "souci": souci}
@@ -2160,6 +2163,56 @@ class _Tenue(audit._Preparation):
         texte = "%s le %s, %s" % (SIGNAL_PHRASE, str(date)[:10], "version %s" % version if version else "sans version")
         self.signaux.append({"id": t.id, "pr": pr, "branche": branche, "texte": texte, "cloud": cloud})
 
+    def etiquette_verifiee(self, t, op, quoi):
+        """#634 : une tâche publiée (son `livré:` porte une version) se clôt `vérifié:non | essai:<check>` ; sans
+        version, aucune étiquette, et un `check` est refusé."""
+        livre = t.get("livré") or ""
+        publiee = bool(re.search(r"\d+\.\d+\.\d+@", livre))
+        brut = str(op.get("check") if op.get("check") is not None else "")
+        check = audit._propre(brut)
+        if not publiee:
+            if check:
+                raise Erreur("%s : rien à vérifier : pas de version dans livré: (#634)" % quoi)
+            return ()
+        if not check:
+            raise Erreur("%s : tâche publiée (livré:%s) : check manque, la ligne « À vérifier : où regarder → quoi "
+                         "voir » de son compte rendu (#634)" % (quoi, livre))
+        if any(c in brut for c in "|`]"):
+            raise Erreur("%s : check ne porte ni « | », ni backtick, ni « ] » (#634)" % quoi)
+        return (("vérifié", "non"), ("essai", check))
+
+    def verifier(self, op):
+        """#634 : `vérifié:non` d'une ligne déjà close devient `vérifié:<date>`, sur place dans ROADMAP-fait.md."""
+        i = str(op.get("id") or "").lstrip("#")
+        quoi = "vérification de #%s" % i
+        date = _date_fait(op.get("date"), quoi, "date")[:10]
+        if date > self.jour:
+            raise Erreur("%s : date dans le futur (%s)" % (quoi, date))
+        ligne = next((x for x in im.lire_checklist(self.texte_f or "")[0] if im.champ(x, "id") == i), None)
+        if ligne is None:
+            raise Erreur("%s : #%s n'est pas dans ROADMAP-fait.md (une tâche encore ouverte se clôt d'abord, #634)" % (quoi, i))
+        etat = im.champ(ligne, "vérifié")
+        if etat is None:
+            raise Erreur("%s : rien à vérifier : ni publiée ni étiquetée (#634)" % quoi)
+        if etat != "non":
+            raise Erreur("%s : déjà vérifiée le %s (#634)" % (quoi, etat))
+        self.verifs[ligne["ligne"]] = date
+        self.compte["mises_a_jour"].append({"id": i, "libelle": _court(ligne["libelle"]),
+                                            "change": "vérifiée le %s" % _jj_mm(date)})
+
+    def rendre_fait(self):
+        if not self.verifs:
+            return super().rendre_fait()
+        origine = self.texte_f
+        lignes = origine.split("\n")
+        for n, date in self.verifs.items():
+            lignes[n - 1] = re.sub(r"vérifié:non(?=[ |\]])", "vérifié:" + date, lignes[n - 1], count=1)
+        self.texte_f = "\n".join(lignes)
+        try:
+            return super().rendre_fait()
+        finally:
+            self.texte_f = origine
+
     def cocher(self, op):
         t = self.tache(op.get("id"), "clôture")
         quoi = "clôture de #%s" % t.id
@@ -2187,7 +2240,7 @@ class _Tenue(audit._Preparation):
         if t.get("tous"):
             raise Erreur("%s : tâche récurrente (tous:%s) : le bouton « Marquer faite » du panneau la reconduit"
                          % (quoi, t.get("tous")))
-        self.fermer_tache(t, date, "", "Faite : %s" % preuve, bilan=bilan)
+        self.fermer_tache(t, date, "", "Faite : %s" % preuve, bilan=bilan, extra=self.etiquette_verifiee(t, op, quoi))
         self.noter_signal(t, op, date, preuve)
         self.tenue["cochees"].append(t.id)
         self.changer(t, "cochée le %s : %s" % (_jj_mm(date), preuve))
@@ -2496,7 +2549,7 @@ def preparer(ctx, props, maintenant=None):
     for op in a_ecrire:
         {"add": prep.ajouter, "update": prep.completer_tache, "reschedule": prep.redater,
          "done": prep.cocher, "drop": prep.abandonner, "pause": prep.mettre_en_pause,
-         "handoff": prep.passer_la_main}[op["op"]](op)
+         "handoff": prep.passer_la_main, "verify": prep.verifier}[op["op"]](op)
     questions = props.get("questions") or []
     if not isinstance(questions, list):
         raise Erreur("questions : une liste de questions (le format de l'audit)")

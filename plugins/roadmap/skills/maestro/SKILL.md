@@ -640,8 +640,8 @@ otherwise they see an empty worktree.
   turn.
   - **One step per launched task**, labelled `#<id> <libellé court> · <état>`, the status in plain
     words of the one shared vocabulary (#509): « en session (3/7) », « t'attend : <la question en trois mots> »,
-    « attend le simulateur », « prête », « fusionnée », « en test 0.230.0 » (published,
-    waiting for the person's « c'est bon », § 6), « livrée 0.230.0 ». Example:
+    « attend le simulateur », « prête », « fusionnée », « livrée 0.230.0 » (published and closed, § 6:
+    no « en test » since #634). Example:
     `#99 Priorités et filtres · prête`. The sessions' own report sentences (« en cours : étape 3/7 »,
     « prête à fusionner ») stay as they are: they are contracts, read by the panel.
   - **In the merge order** of § 5; a delivered task (merged, or closed in a folder without code) is ticked
@@ -937,8 +937,8 @@ The merge itself:
   did, then close the line with its bilan as below, with no merge and no release. Its brief, launched by you, tells it
   never to tick the line itself. A « suite faite dans #N : … » in a later report of the same
   session is added to that line's bilan (`tasks` skill, `update`), never opened as a new line (#330).
-- **After the merge** (after the « c'est bon » for a published task in test, below; for a render,
-  at its publication, its proof going to a task apart, #455), Maestro ticks the line (`fait:`, what was delivered, the PR), moves it to the
+- **After the merge** (for a published task, at its publication, with its label `vérifié:non`, below, #634; for a
+  render, its proof going to a task apart, #455), Maestro ticks the line (`fait:`, what was delivered, the PR), moves it to the
   top of `ROADMAP-fait.md` and writes its bilan from the sub-session's last report. In a countable
   journal (#460, `ROADMAP-bilans.csv` of Roadmap once `tools/ranger_bilans.py --apply` ran) the
   bilan is required with its `type` (`code`, `doc`, `rendu`, `sans-code`), the cause from the closed
@@ -955,37 +955,28 @@ The merge itself:
   nothing: add them to the audit's pending questions (`audit.py pending <main folder> --add <file>`). In the
   Roadmap repository, a friction « environnement » in the cloud proposes adding its tasks to
   `RECO_STALLED_EXAMPLES` (#461, below), those already there left out.
-- **A render task does not go to test** (#455): its proof apart, « Prouver la fidélité de #N », is its test.
-  Maestro ticks it at the publication and posts no « Tester #N · X.Y.Z » card for it, even when the reminder below
-  names it: the person's feedback comes as the capture, and each gap as its correction task.
-- **A published task goes to test** (#366, the person's request of 2026-11-06): a version is only
-  loaded by the sessions opened after the plugin's sync, so the person tries it in a new session, and
-  their feedback goes to the session that coded the task, kept open. The panel adds the instruction
-  to the result of a `release.py release` or `remote` whose message cites `#N`:
-  1. Say it in one line, even on a turn woken by a session (it is a need of the person: testing):
-     « Nouvelle version X.Y.Z : #N <ce qui change> ».
-  2. Do not tick #N. Its step reads `#N <libellé court> · en test X.Y.Z`; its session stays open.
-  3. Post one card per task, the one the reminder writes: title `Tester #N · X.Y.Z`,
-     `own_initiative`, `fresh`, without a worktree of its own (`use_worktree: false`), its brief copied
-     as is: it carries the ids of the original session and of Maestro, what the task changed (its
-     « Ce qui a changé », else its label), and the main folder from which the version is read (a
-     worktree copy may lag behind; the loaded plugin does not depend on it). The test session runs the
-     checks its tools allow first, then asks the person only what shows in the app alone: three points
-     at most, each with where to look and what to see (the person, first test of #366: « Je dois
-     tester quoi, soit clair ! »). That title does not start with
-     `#N ·`: the test session does not hold the task (no tree, no clause, no launch queue), and the
-     panel checks it by its own rule (#N open, no open test session with the same title).
-  4. The test session codes nothing: each piece of feedback from the person goes, as is, to the
-     original session (« Retour de test #N (X.Y.Z) : … »), which codes it on its branch (merge of
-     `main` first), reruns its tests, pushes and says « prête à fusionner »: § 5, then a new
-     publication and a new card `Tester #N · X.Y.Z+1`; tell the old test session by message that a
-     newer version has its card, it offers its archiving.
-  5. « c'est bon » in the test session reaches Maestro (« Test validé : #N X.Y.Z, c'est bon de … »):
-     tick #N with its bilan (`tasks` skill), then tell both sessions by message « #N close » (one line
-     each): each concludes and ends on « Archiver cette session ? ».
-  While a task is in test, the children's news do not call its two sessions « prête » or
-  « silencieuse »: they wait for the person by nature. A publication that cites no `#N`, or a merge
-  without publication, closes as before (after the merge).
+- **A render task** (#455): its proof apart, « Prouver la fidélité de #N », is its test. It closes at its
+  publication like any published task (below), its `essai:` naming the proof task (« la preuve en #M »).
+- **A published task closes at its publication** (#634, the person's decision of 2026-11-18, replacing the
+  « en test » rule of #366: #615 and #622 stayed open « en test » 4 and 2 days and cluttered the Control Centre).
+  No `Tester #N · X.Y.Z` card, no test session, no « en test » state: the panel refuses that card. The panel adds
+  the instruction to the result of a `release.py release` or `remote` whose message cites `#N`:
+  1. Say it in one line, even on a turn woken by a session (it is a need of the person): « Nouvelle version
+     X.Y.Z : #N <ce qui change> ».
+  2. Close #N right away with the `tasks` skill: `done` with `version` (`X.Y.Z`) and `check`, the session's
+     « À vérifier : <où regarder> → <quoi voir> » line of its « prête » report (write it from what changed when the
+     report has none). The closed line carries `vérifié:non | essai:<check>`: the label « non vérifiée ». A line
+     whose `livré:` has no version (a project without code, a merge without publication) gets no label: `check`
+     is refused there.
+  3. Tell its session « #N close » (one line): it concludes and offers its archiving.
+  4. **The person's « c'est bon »** on #N (said to you, or relayed by a session: « Test validé : #N … »): `verify`
+     of the `tasks` skill, `vérifié:<date>`, one line « #N vérifiée ». **A failed try**: a correction task of its own
+     (`add`, `après:-`, the person's words in its label and `src:`), launched like any task; #N stays closed and
+     `vérifié:non`.
+  5. **Lines still « en test »** (published under #366, open with a version `livré:` and no work left, their
+     session `Tester #N · X.Y.Z` open): close each at your next pass the same way (`vérifié:non`, its `essai:` from
+     the test session's points), then offer the archiving of its test session.
+  A merge without publication closes as before (after the merge).
 - **No study closed with a step left over** (#293): a study, a spike or an audit whose last report
   recommends steps is not ticked while one of those steps has neither a line (open, or the task it
   was attached to) nor a reason to be set aside, said in the report. Maestro reads the report's
@@ -1183,7 +1174,7 @@ back into Maestro's context). Decision in `docs/decisions.md` of the Roadmap rep
 | Review a diff, order the merges, merge, have the suite of `main` run, publish | gardien | Maestro |
 | Close a line, write its bilan | gardien | Maestro |
 | Hand over a unique resource (§ 4) | Maestro; the publication is the gardien's | Maestro |
-| The card `Tester #N · X.Y.Z`, the task « Prouver la fidélité de #N » | Maestro, from the gardien's message | Maestro |
+| The task « Prouver la fidélité de #N », a correction task after a failed try (#634) | Maestro, from the gardien's message | Maestro |
 
 ### Maestro's side
 
@@ -1199,12 +1190,11 @@ back into Maestro's context). Decision in `docs/decisions.md` of the Roadmap rep
   command gives the follow-up brief (below, « Without code »).
 - **What you stop doing while it is open**: reviewing, merging, publishing, running the suite of `main`, closing a
   line. A « prête à fusionner » that still reaches you (the children's news after 15 min, a « fusionne et publie #N »
-  or a « Test validé : #N » sent to your id) is forwarded to the gardien in one line by `SendMessage`, never handled.
+  or a « Test validé : #N » sent to your id, which the gardien turns into `verify`, #634) is forwarded to the gardien in one line by `SendMessage`, never handled.
 - **What you tell it**: anything the person decided with you that touches a delivery (« ne publie pas #N avant #M »,
   « #N passe devant »), in one line. It has none of your context: it reads the roadmap, the PRs, git and the reports.
 - **What it tells you**: one line per delivery, « #N livrée X.Y.Z : ce qui change » (« #N fusionnée » without a
-  publication), with what falls to you (« rendu : ouvre sa preuve »; a `Tester #N · X.Y.Z` card it posted comes up to
-  you through the panel, as any sub-session's card: post it). On that turn, woken by a session, tick the step of #N in
+  publication), with what falls to you (« rendu : ouvre sa preuve »; the line is already closed `vérifié:non`, #634). On that turn, woken by a session, tick the step of #N in
   your list (`· livrée X.Y.Z`), notify the sessions whose line carries `après:N`, and say nothing to the person
   (#133); at their next message, put `- #N livrée X.Y.Z : ce qui change` under your verdict. It also writes you what
   only you can do: a cloud session « bloquée » or « attend une réponse », a branch sent back twice.
@@ -1239,9 +1229,9 @@ publication) and § 6 (closing, bilan, partial closure, « no closing before the
   publication, answer a session's question to the person, speak to the person except for a need of theirs (a secret,
   a merge click without `autonome`).
 - **What needs a new line or a card after a delivery** (the proof of a render, #455; an example for the cloud judge,
-  #461) is Maestro's: say it in the delivery line. The `Tester #N · X.Y.Z` card the panel hands it after a publication
-  (#366) is posted as written: the panel sends it up to Maestro, and the « Test validé » comes back to the gardien,
-  which then closes #N.
+  #461) is Maestro's: say it in the delivery line. A published task is closed by the gardien at its publication
+  (#634: `done` with `version` and `check`, `vérifié:non`), no test card; a « Test validé : #N » that reaches it
+  becomes `verify`, and a failed try is a correction task for Maestro to open.
 - **A cloud « bloquée » or « attend une réponse »** in its wake-up is Maestro's (a fallback on the Mac is a launch):
   one line to Maestro, no answer of its own.
 - **It is quiet**: nothing to the person on a turn woken by a session; its step list shows where things stand.
@@ -1328,10 +1318,10 @@ closes on proof:
   session already running (§ 2, #122).
 - Maestro's brief and the children's news remind it to keep its step list (§ 3); it no longer asks
   for a card (#97 removed by #104).
-- After a publication whose message cites `#N` (#366), it adds to the command's result the « en
-  test » instruction and the full card `Tester #N · X.Y.Z` (§ 6); in the test session, each of the
-  person's messages gets the relay rule; the children's news skip « prête » and « silencieuse » for a
-  task in test.
+- After a publication whose message cites `#N` open (#634), it adds to the command's result the
+  closing instruction (§ 6: `done` with `version` and `check`, `vérifié:non`, no test card) and refuses a
+  `Tester #N · X.Y.Z` card; in a test session still open from #366, each of the person's messages gets the relay
+  rule, its « c'est bon » going to Maestro for `verify`.
 - After a merge into `main` or a publication, it reminds Maestro to send its step list again and
   say its recap line (in the command's result), then says it again at the end of the turn if the
   list has not moved (§ 3, #136); it refuses its « à archiver » end without the table of its tasks

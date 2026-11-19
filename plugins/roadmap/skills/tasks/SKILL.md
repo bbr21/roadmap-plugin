@@ -443,6 +443,13 @@ Write `<scratchpad>/operations.json`:
   `cowork.json` says `"roadmap": "plugin-roadmap"` (Adbricks Cowork, AAFES Cowork): its doctor
   checks every row. **Required** too in a countable journal, with its `type`. Elsewhere optional: without it, the row says the label and « Faite : <proof> ».
   A parent closed with its last child gets the child's bilan, its `fait` naming that child.
+- **done, published task** (#634): when the open line's `livré:` carries a version (`X.Y.Z@AAAA-MM-JJ`), `done`
+  requires `check` (the « À vérifier : where to look → what to see » line of the report; no `|`, backtick or `]`) and the
+  closed line carries `vérifié:non | essai:<check>` right after `fait:`. Without a version in `livré:` (no code, or a
+  date-only `livré:`), no label is written and `check` is refused. The parent closed with its last child gets none.
+- **verify** (#634): `id`, `date`. On a line already in `ROADMAP-fait.md` that carries `vérifié:non`, writes
+  `vérifié:<date>` in place (the day BBR saw it work). Refused: id not in `ROADMAP-fait.md`, line without `vérifié:`,
+  line already verified, date in the future.
 - **drop**: `reason`, `bilan`; the reason goes into the label after « ; », then « (abandonné) » at
   its end (« Préparer le budget mocap ; budget repris par Linda (abandonné) », #285), like the panel's « Annuler la tâche »;
   it also writes `annulée:oui` right after `fait:` (#624), the mark that sets a cancelled task apart from a done one.
