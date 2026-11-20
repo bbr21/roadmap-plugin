@@ -593,7 +593,18 @@ export function textWidth(text: string, size: number, bold = false): number {
   return Math.ceil(em * size * (bold ? 1.05 : 1))
 }
 
-export type PillMark = 'clock' | 'person' | 'spinner' | 'check' | 'merge' | 'cancel' | 'repeat' | 'warn'
+/**
+ * La largeur en px d'une colonne de texte `caption` (12 px) d'une ligne de session (#636) : celle de son plus long texte,
+ * avec une marge pour l'estimation (`textWidth` ne mesure pas la police), plafonnée à `cap`. Une colonne comptée une
+ * cellule par lettre réservait presque le double de son texte (une cellule fait ~11 px dans l'app de BBR, une lettre ~6,5).
+ */
+export function textColumnPx(texts: readonly string[], cap = Infinity): number {
+  const widest = texts.reduce((a, t) => Math.max(a, textWidth(t, 12)), 0)
+  if (widest === 0) return 0
+  return Math.min(cap, Math.ceil(widest * 1.08) + 2)
+}
+
+export type PillMark ='clock' | 'person' | 'spinner' | 'check' | 'merge' | 'cancel' | 'repeat' | 'warn'
 
 /**
  * Une pastille : 18 px de haut (20 au détail), rayon de la moitié, texte de 12 px gras, chiffres

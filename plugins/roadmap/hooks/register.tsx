@@ -111,6 +111,7 @@ import {
   donutIcon,
   PANE_PILL_MAX,
   wrapPillIcon,
+  textColumnPx,
 } from './icons'
 import { MIX, PX, RADIUS, SIZE, SPACE, TEXT } from './tokens'
 import { BEFORE_KEY, CLOSED_KEY, NATIVE_KEY, beforeMap, closedKeys, drawWrittenMessage, keepBefore, keepClosed, keepNative, nativeKeys, splitWritten, testSessions, withoutClosed, withoutNative, writtenCards, type WrittenLine, type WrittenStart, type WrittenWho } from './cartes'
@@ -141,7 +142,6 @@ import {
   branchText,
   brandText,
   briefTaskOf,
-  bandColumns,
   bandInfo,
   sinceLabel,
   bandState,
@@ -356,7 +356,6 @@ import {
   deliveredCount,
   ROW_STEPS,
   rowStepsCells,
-  blockEndCells as blockEndCellsOf,
   filterSummary,
   cachedTitle,
   fallbackTitle,
@@ -12623,16 +12622,38 @@ function maestroBandTree(
   // pour une ligne du Mac et du cloud (`blockWord`), puis la jauge, le détail et la durée, à la couleur du mot.
   const rowWord = (t: BrandTask) => cloudQuietWord(t, now) ?? blockWord({ state: t.finished ? 'done' : t.state, ...(t.cloud ? { cloud: t.cloud } : {}), ...(t.mission ? { mission: t.mission } : {}), ...(t.merged ? { merged: true } : {}) })
   const rowInk = (t: BrandTask) => (t.cloud ? (cloudQuietWord(t, now) ? palette.blockOn : cloudTints(palette, t.cloud.state).word) : hue(t)[1])
-  const labels: string[] = []
-  const cols = bandColumns({
-    labels,
-    infos: infos.map(x => x.text),
-    // #400 : la durée en file d'une entrée bloquée partage la colonne de la durée des sessions.
-    sinces: [...infos.map(x => x.since), ...stuck.map(s => s.since), ...(guard ? [guard.since] : [])],
-    archive: band.tasks.some(t => t.archivable && (t.sessionId || t.cloud)),
-  })
   // L'horloge devant la durée, centrée sur le texte (#385) : sa case de 2 cellules sur chaque ligne dès qu'une en a.
   const clocked = infos.some(x => x.since !== '') || stuck.length > 0 || (guard?.since ?? '') !== ''
+  // #636 (maquette A) : le mot d'état, l'étape et la durée ont la largeur en px de leur plus long texte, la même sur chaque
+  // ligne. Une colonne en cellules du kit comptait une cellule (~11 px) par lettre de ~6,5 px : le titre était écrasé.
+  // Une colonne en px : une Box sans `width` qui tient une cale `Svg` (la seule mesure en px du kit, `alt` non vide) et
+  // porte son contenu par-dessus, en absolu. Au terminal, le texte seul.
+  const pxColumn = (key: string, alt: string, px: number, children: any, justify: 'flex-start' | 'flex-end' = 'flex-start') =>
+    Svg ? (
+      <Box key={key} flexShrink={0} flexDirection="row" alignItems="center" justifyContent={justify}>
+        <Svg source={`<svg xmlns="http://www.w3.org/2000/svg" width="${px}" height="${SIZE.strut.row}"/>`} alt={alt} width={px} height={SIZE.strut.row} />
+        <Box position="absolute" top={0} bottom={0} left={0} right={0} flexDirection="row" alignItems="center" justifyContent={justify} gap={0}>
+          {children}
+        </Box>
+      </Box>
+    ) : (
+      <Box key={key} flexShrink={0} flexDirection="row" alignItems="center" justifyContent={justify} gap={0}>
+        {children}
+      </Box>
+    )
+  // L'horloge de 12 px, 4 px d'écart, puis le texte de la durée (au terminal : « ◷ » et une espace).
+  const clockParts = (key: string, hex: string, alt: string, text: string) => [
+    <Box key={`${key}-clock`} flexShrink={0} flexDirection="row" alignItems="center">
+      {Svg ? <Svg source={clockIcon(hex, 12)} alt={alt} width={12} height={12} /> : <Text size="caption" color={hex}>◷ </Text>}
+    </Box>,
+    Svg ? <Svg key={`${key}-clock-gap`} source={`<svg xmlns="http://www.w3.org/2000/svg" width="4" height="1"/>`} alt="espace" width={4} height={1} /> : null,
+    <Text key={`${key}-since-text`} size="caption" tabular color={hex} wrap="truncate-end">{text}</Text>,
+  ]
+  const wordPx = textColumnPx([...band.tasks, ...(guardTask ? [guardTask] : [])].map(t => rowWord(t)))
+  // Le plafond de l'étape : l'ancien `BAND_INFO_MAX` signes, comptés à la largeur d'un signe de 12 px ; au-delà, elle se tronque.
+  const detailPx = textColumnPx(infos.map(x => x.text), textColumnPx(['x'.repeat(BAND_INFO_MAX)]))
+  // La durée : l'horloge de 12 px, 4 px d'écart, le texte ; l'archive de 14 px y tient.
+  const sincePx = 12 + 4 + textColumnPx([...infos.map(x => x.since), ...stuck.map(s => s.since), ...(guard ? [guard.since] : [])])
   // L'icône de l'état, celles du bloc « En cours » (#211) ; au terminal, son signe.
   // #440 (maquette B6) : où tourne la session, en gris, devant son numéro : le nuage ou l'ordinateur.
   const placeMark = (cloud: boolean, key: string) =>
@@ -12747,12 +12768,7 @@ function maestroBandTree(
             <Text size="caption" weight="medium" color={palette.blockOn}>{s.act}</Text>
           </Box>
         </Box>
-        <Box key={`${id}-since`} width={2 + cols.since} flexShrink={0} flexDirection="row" alignItems="center" justifyContent="flex-end" gap={0}>
-          <Box width={2} flexShrink={0} flexDirection="row" alignItems="center">
-            {Svg ? <Svg source={clockIcon(palette.blockOn, 12)} alt="en file depuis" width={12} height={12} /> : <Text size="caption" color={palette.blockOn}>◷</Text>}
-          </Box>
-          <Text size="caption" tabular color={palette.blockOn}>{s.since}</Text>
-        </Box>
+        {pxColumn(`${id}-since`, 'colonne durée', sincePx, clockParts(id, palette.blockOn, 'en file depuis', s.since), 'flex-end')}
         {zone && Client && (
           <Box position="absolute" top={0} left={0} right={0}>
             <Client key={zoneKeyOf(zones, pressKey(id), zoneGen)} module="./press-hit.tsx" props={{ id }} width="100%" height={1} />
@@ -12778,12 +12794,13 @@ function maestroBandTree(
     bandCloud > 0 && bandMac > 0 ? [{ where: 'cloud', n: bandCloud }, { where: 'mac', n: bandMac }] : bandCloud > 0 ? [{ where: 'cloud', n: 0 }] : bandMac > 0 ? [{ where: 'mac', n: 0 }] : []
   // #468 : les colonnes de la grille, à la largeur du plus long texte montré ; ce qui part quand la place manque.
   const bandNumberCells = Math.max(0, ...band.tasks.map(t => `#${t.id}`.length))
-  const bandWordCells = Math.max(0, ...[...band.tasks, ...(guardTask ? [guardTask] : [])].map(t => [...rowWord(t)].length))
-  const bandDetailCells = Math.min(BAND_INFO_MAX, Math.max(0, ...infos.map(x => [...x.text].length)))
+  // Pour le calcul de place seulement : les colonnes se dessinent en px (#636).
+  const bandWordCells = pxCells(wordPx)
+  const bandDetailCells = pxCells(detailPx)
   // #480 (option A) : les points des livraisons avant la jauge, la même colonne sur chaque ligne, aucune sans pastille.
   const bandPassCells = Svg ? Math.max(0, ...infos.map(x => (x.passes && passesShown(x.passes) ? pxCells(deliveryDotsIcon(x.passes, palette).width) : 0))) : 0
   // #561 : ce qui reste toujours ; le mot, les points, la jauge et le détail sont des colonnes facultatives que `sessionRowFit` retire.
-  const bandFixedCells = 2 + pxCells(MARK_SQUARE_PX) + 2 + bandNumberCells + 2 + 2 + cols.since + 6
+  const bandFixedCells = 2 + pxCells(MARK_SQUARE_PX) + 2 + bandNumberCells + 2 + 2 + pxCells(sincePx) + 6
   // #578 (F43) : sur le bureau, `bodyColumns` est plus court que la place réelle de la bande, et le détail n'y paraissait jamais.
   // Il ne compte plus dans le retrait : il se dessine tant que rien d'autre n'est retiré. Sa colonne garde sa largeur (#326 :
   // rétrécie, elle décalerait la jauge d'une ligne à l'autre) ; c'est le titre qui cède. Au terminal, la règle reste celle de #561.
@@ -12806,11 +12823,11 @@ function maestroBandTree(
         <Box flexGrow={1} flexShrink={1} minWidth={0}>
           {(bandFit.title || !Svg) && titleOf(t)}
         </Box>
-        <Box key="band-state:gardien" flexShrink={0} flexDirection="row" alignItems="center" gap={SPACE.row} {...(Svg ? { width: 2 + (bandFit.word ? 1 + bandWordCells : 0) } : {})}>
+        <Box key="band-state:gardien" flexShrink={0} flexDirection="row" alignItems="center" gap={SPACE.row}>
           <Box key="band-mark:gardien" width={2} flexShrink={0} flexDirection="row" justifyContent="center">
             {stateIcon(mark.icon, mark.word, dot, t)}
           </Box>
-          {(bandFit.word || !Svg) && <Text key="band-word:gardien" size="caption" color={ink} wrap="truncate-end">{rowWord(t)}</Text>}
+          {!Svg ? <Text key="band-word:gardien" size="caption" color={ink} wrap="truncate-end">{rowWord(t)}</Text> : bandFit.word ? pxColumn('band-word:gardien', 'colonne mot', wordPx, <Text size="caption" color={ink} wrap="truncate-end">{rowWord(t)}</Text>) : null}
         </Box>
         {Svg && bandFit.dots && bandPassCells > 0 && <Box key="band-liv:gardien" width={bandPassCells} flexShrink={0} />}
         {Svg && bandFit.gauge && (
@@ -12818,17 +12835,8 @@ function maestroBandTree(
             <Svg source={`<svg xmlns="http://www.w3.org/2000/svg" width="${BAND_GAUGE.row}" height="4"/>`} alt="espace" width={BAND_GAUGE.row} height={4} />
           </Box>
         )}
-        {bandFit.detail && <Box key="band-info:gardien" width={bandDetailCells} flexShrink={0} minWidth={0} />}
-        {clocked && (
-          <Box key="band-since:gardien" width={2 + cols.since} flexShrink={0} flexDirection="row" alignItems="center" justifyContent="flex-end" gap={0}>
-            {g.since !== '' && [
-              <Box key="band-clock:gardien" width={2} flexShrink={0} flexDirection="row" alignItems="center">
-                {Svg ? <Svg source={clockIcon(ink, 12)} alt="lancée depuis" width={12} height={12} /> : <Text size="caption" color={ink}>◷</Text>}
-              </Box>,
-              <Text key="band-since-text:gardien" size="caption" tabular color={ink} wrap="truncate-end">{g.since}</Text>,
-            ]}
-          </Box>
-        )}
+        {bandFit.detail && (Svg ? pxColumn('band-info:gardien', 'colonne étape', detailPx, null) : <Box key="band-info:gardien" width={bandDetailCells} flexShrink={0} minWidth={0} />)}
+        {clocked && pxColumn('band-since:gardien', 'colonne durée', sincePx, g.since !== '' ? clockParts('band-clock:gardien', ink, 'lancée depuis', g.since) : null, 'flex-end')}
       </Box>
     )
   }
@@ -12899,11 +12907,11 @@ function maestroBandTree(
                 {(bandFit.title || !Svg) && titleOf(t, done, palette.finishedOn)}
               </Box>
               {/* L'icône d'état collée au début de son mot (#468), dans une colonne à la largeur du plus long mot. */}
-              <Box key={`band-state:${keyPart(t.id)}`} flexShrink={0} flexDirection="row" alignItems="center" gap={SPACE.row} {...(Svg ? { width: 2 + (bandFit.word ? 1 + bandWordCells : 0) } : {})}>
+              <Box key={`band-state:${keyPart(t.id)}`} flexShrink={0} flexDirection="row" alignItems="center" gap={SPACE.row}>
                 <Box key={`band-mark:${keyPart(t.id)}`} width={2} flexShrink={0} flexDirection="row" justifyContent="center">
                   {stateIcon(mark.icon, mark.word, dot, t, t.merged === true)}
                 </Box>
-                {(bandFit.word || !Svg) && <Text key={`band-word:${keyPart(t.id)}`} size="caption" color={ink} wrap="truncate-end">{rowWord(t)}</Text>}
+                {!Svg ? <Text key={`band-word:${keyPart(t.id)}`} size="caption" color={ink} wrap="truncate-end">{rowWord(t)}</Text> : bandFit.word ? pxColumn(`band-word:${keyPart(t.id)}`, 'colonne mot', wordPx, <Text size="caption" color={ink} wrap="truncate-end">{rowWord(t)}</Text>) : null}
               </Box>
               {/* #480 : les points de ses livraisons, juste avant la jauge, une colonne de même largeur sur chaque ligne. */}
               {Svg && bandFit.dots && bandPassCells > 0 && (
@@ -12922,24 +12930,22 @@ function maestroBandTree(
                 </Box>
               )}
               {/* Le détail, ce que la bande a la place de dire en plus du bloc : « 4/8 · Coder le réglage », « 2/6 · PR 72 ». */}
-              {bandFit.detail && (
-                <Box key={`band-info:${keyPart(t.id)}`} width={bandDetailCells} flexShrink={0} minWidth={0} flexDirection="row" alignItems="center">
-                  {detail !== '' && <Text size="caption" tabular color={palette.text3} wrap="truncate-end">{detail}</Text>}
-                </Box>
-              )}
+              {bandFit.detail && (Svg
+                ? pxColumn(`band-info:${keyPart(t.id)}`, 'colonne étape', detailPx, detail !== '' ? <Text size="caption" tabular color={palette.text3} wrap="truncate-end">{detail}</Text> : null)
+                : (
+                  <Box key={`band-info:${keyPart(t.id)}`} width={bandDetailCells} flexShrink={0} minWidth={0} flexDirection="row" alignItems="center">
+                    {detail !== '' && <Text size="caption" tabular color={palette.text3} wrap="truncate-end">{detail}</Text>}
+                  </Box>
+                ))}
               {/* La durée au bord droit, à la couleur du mot de sa ligne (#468, BBR) ; une livrée y met son archive. */}
-              {(clocked || archivable) && (
-                <Box key={`band-since:${keyPart(t.id)}`} width={2 + cols.since} flexShrink={0} flexDirection="row" alignItems="center" justifyContent="flex-end" gap={0}>
-                  {archivable
-                    ? archiveButton(t, done ? palette.finished : palette.text2)
-                    : info?.since && [
-                        <Box key={`band-clock:${keyPart(t.id)}`} width={2} flexShrink={0} flexDirection="row" alignItems="center">
-                          {Svg ? <Svg source={clockIcon(ink, 12)} alt="lancée depuis" width={12} height={12} /> : <Text size="caption" color={ink}>◷</Text>}
-                        </Box>,
-                        <Text key={`band-since-text:${keyPart(t.id)}`} size="caption" tabular color={ink} wrap="truncate-end">{info.since}</Text>,
-                      ]}
-                </Box>
-              )}
+              {(clocked || archivable) &&
+                pxColumn(
+                  `band-since:${keyPart(t.id)}`,
+                  'colonne durée',
+                  sincePx,
+                  archivable ? archiveButton(t, done ? palette.finished : palette.text2) : info?.since ? clockParts(`band-clock:${keyPart(t.id)}`, ink, 'lancée depuis', info.since) : null,
+                  'flex-end',
+                )}
             </Box>
           )
           // #469 (maquette A) : la phrase de fin d'une mission, sur la ligne d'info sous sa ligne ; « lancée » et « au travail » n'ont rien à dire de plus.
@@ -17219,9 +17225,28 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     const test = block?.cloud ? undefined : testOf(t)
     return test ? testWords(test.version) : (block?.cloud ? cloudQuietWord(block, now) : undefined) ?? blockWord({ state: blockState(t, block), ...(block?.cloud ? { cloud: block.cloud } : {}), ...(block?.mission ? { mission: block.mission } : {}), ...(blockMerged(t, block) ? { merged: true } : {}) })
   }
-  const blockWordCells = Math.max(0, ...blockTasks.map(t => pxCells(6.5 * [...blockWordOf(t, blockOf.get(t.id as string))].length)))
-  // #579 : la colonne de la durée du bloc suit le texte de ses durées, pas le plancher de la bande.
-  const blockEndCells = blockEndCellsOf(blockTasks.map(t => sinceText(t, blockOf.get(t.id as string))))
+  // #636 (maquette A) : le mot d'état et la durée ont la largeur en px de leur plus long texte, comme dans la bande ; les
+  // cellules ci-dessous ne servent qu'au calcul de place (`sessionRowFit`).
+  const blockWordPx = textColumnPx(blockTasks.map(t => blockWordOf(t, blockOf.get(t.id as string))))
+  const blockWordCells = pxCells(blockWordPx)
+  // #579 : la colonne de la durée du bloc suit le texte de ses durées, pas le plancher de la bande : l'horloge de 12 px,
+  // 4 px d'écart, le texte ; l'archive de 16 px y tient.
+  const blockEndPx = Math.max(SIZE.icon.md, 12 + 4 + textColumnPx(blockTasks.map(t => sinceText(t, blockOf.get(t.id as string)))))
+  const blockEndCells = pxCells(blockEndPx)
+  // Une colonne en px : une Box sans `width` qui tient une cale `Svg` (alt non vide) et porte son contenu par-dessus, en absolu.
+  const pxColumn = (key: string, alt: string, px: number, children: any, justify: 'flex-start' | 'flex-end' = 'flex-start') =>
+    Svg ? (
+      <Box key={key} flexShrink={0} flexDirection="row" alignItems="center" justifyContent={justify}>
+        <Svg source={`<svg xmlns="http://www.w3.org/2000/svg" width="${px}" height="${SIZE.strut.row}"/>`} alt={alt} width={px} height={SIZE.strut.row} />
+        <Box position="absolute" top={0} bottom={0} left={0} right={0} flexDirection="row" alignItems="center" justifyContent={justify} gap={0}>
+          {children}
+        </Box>
+      </Box>
+    ) : (
+      <Box key={key} flexShrink={0} flexDirection="row" alignItems="center" justifyContent={justify} gap={0}>
+        {children}
+      </Box>
+    )
   // #561 : les points des livraisons ne se dessinent plus au bloc (BBR les veut dans la bande seule) ; la case y fait
   // `MARK_SQUARE_PX`, comme dans la bande, et la jauge est une colonne facultative, qui part après le mot d'état.
   // Ce qui reste toujours : marges du panneau et du cadre, case, lieu, numéro, icône d'état, durée, et leurs écarts.
@@ -17265,12 +17290,12 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     const archiveId = `block-archive:${t.id ?? keyPart(t.key)}`
     return [
       // L'icône d'état collée au début de son mot (retour de BBR sur la v2) : les icônes en colonne, le mot à gauche.
-      <Box key={`state:${t.key}`} flexDirection="row" alignItems="center" gap={SPACE.row} flexShrink={0} {...(Svg ? { width: ROW_STEPS.icon + (blockFit.word ? 1 + blockWordCells : 0) } : {})}>
+      <Box key={`state:${t.key}`} flexDirection="row" alignItems="center" gap={SPACE.row} flexShrink={0}>
         <Box width={ROW_STEPS.icon} flexShrink={0} flexDirection="row" justifyContent="center">
           {icon}
         </Box>
         {(blockFit.word || !Svg) &&
-          (openTest ? (
+          pxColumn(`word-col:${t.key}`, 'colonne mot', blockWordPx, openTest ? (
             <Box key={`test-words:${t.key}`} flexShrink={1} minWidth={0} flexDirection="row" alignItems="center">
               {Svg ? (
                 <Box flexDirection="row" alignItems="center" minWidth={0} hover={{ backgroundColor: palette.hover }}>
@@ -17301,8 +17326,11 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
           ]
         : []),
       // La durée au bord droit ; une livrée y met son archive (#468), qui n'a plus de durée à dire.
-      <Box key={`end:${t.key}`} width={blockEndCells} flexShrink={0} flexDirection="row" alignItems="center" justifyContent="flex-end" gap={0}>
-        {archivable && block ? (
+      pxColumn(
+        `end:${t.key}`,
+        'colonne durée',
+        blockEndPx,
+        archivable && block ? (
           Svg ? (
             <Box flexDirection="row" alignItems="center" flexShrink={0}>
               {strut(SIZE.strut.row)}
@@ -17312,16 +17340,18 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
           ) : (
             <Button key={archiveId} plain dimColor label="Archiver" onPress={() => void archiveTaskRow($, block, now)} />
           )
-        ) : (
-          since !== '' && [
-            // #468 (bande v2, BBR) : la durée à la couleur du mot de sa ligne, comme dans la bande.
-            <Box key={`clock:${t.key}`} width={ROW_STEPS.clock} flexShrink={0} flexDirection="row" alignItems="center">
-              {Svg ? <Svg source={clockIcon(ink, 12)} alt="lancée depuis" width={12} height={12} /> : <Text size="caption" color={ink}>◷</Text>}
+        ) : since !== '' ? (
+          // #468 (bande v2, BBR) : la durée à la couleur du mot de sa ligne, comme dans la bande.
+          [
+            <Box key={`clock:${t.key}`} flexShrink={0} flexDirection="row" alignItems="center">
+              {Svg ? <Svg source={clockIcon(ink, 12)} alt="lancée depuis" width={12} height={12} /> : <Text size="caption" color={ink}>◷ </Text>}
             </Box>,
+            Svg ? <Svg key={`clock-gap:${t.key}`} source={`<svg xmlns="http://www.w3.org/2000/svg" width="4" height="1"/>`} alt="espace" width={4} height={1} /> : null,
             <Text key={`since:${t.key}`} size="caption" tabular color={ink} wrap="truncate-end">{since}</Text>,
           ]
-        )}
-      </Box>,
+        ) : null,
+        'flex-end',
+      ),
     ]
   }
 
