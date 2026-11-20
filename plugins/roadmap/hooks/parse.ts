@@ -12340,6 +12340,8 @@ export function cloudAdopted(tasks: readonly Task[], prs: unknown, now: number, 
  * prise de sa ligne (`takenAt`, le commit qui a posé `branche:`, #426), sinon l'ouverture de sa PR ; jamais après `now`,
  * jamais `ouvert:` (la ligne peut dormir des jours avant d'être prise : #319 disait « 6 j » prise à l'instant) ; rien
  * plutôt qu'une durée fausse. Rangées par lancement, les sans-date à la fin.
+ * #632 : le bloc et la bande en écartent la fusionnée et la livrée (et la carte retirée du Centre de contrôle),
+ * `runningCloudTasksOf` ; ce qui est dit de la fusionnée ou de la livrée ci-dessus vaut pour la fiche d'une tâche.
  */
 export function cloudBrandTasks(open: readonly Task[], prs: unknown, now: number, takenAt: (branche: string) => number | undefined = () => undefined, closed: readonly Task[] = [], held: ReadonlySet<string> = new Set()): BrandTask[] {
   const past = (at: number | undefined): number | undefined => (at !== undefined && Number.isFinite(at) && at <= now ? at : undefined)
@@ -15855,7 +15857,7 @@ export function controlView(o: {
       const project = name(e.root)
       const testWord = /(\d+\.\d+\.\d+)/.exec(e.word)?.[1]
       return {
-        key: `cloud:${e.root}#${e.id}`,
+        key: cloudCardKey(e.root, e.id),
         id: e.id,
         title: bareTitle(e.title),
         project,
@@ -15957,8 +15959,32 @@ export type ControlRetired = Record<string, { stamp: string; at: number }>
 
 /** #629 : la marque d'une carte : ce qui, en changeant, la fait revenir (cloud : ton et dernier mouvement ; Mac : état et étapes faites). */
 export function controlStamp(c: ControlCard): string {
-  if (c.cloud) return `${c.cloud.tone === 'quiet' ? 'run' : c.cloud.tone}|${c.cloud.movedAt ?? ''}`
+  if (c.cloud) return cloudStamp(c.cloud.tone, c.cloud.movedAt)
   return `${c.state}|${c.steps ? `${c.steps.done}/${c.steps.total}` : '/'}`
+}
+
+/** #632 : la marque d'une carte cloud, celle de `controlStamp` : le ton (`quiet` lu comme `run`) et le dernier mouvement. */
+export function cloudStamp(tone: CloudControlInput['tone'], movedAt: number | undefined): string {
+  return `${tone === 'quiet' ? 'run' : tone}|${movedAt ?? ''}`
+}
+
+/** #632 : la clé de la carte cloud d'une tâche dans `controlView` et dans les marques retirées. */
+export function cloudCardKey(root: string, id: string): string {
+  return `cloud:${root}#${id}`
+}
+
+/**
+ * #632 : la règle commune au Centre de contrôle, au bloc « En cours » et à la bande : une tâche cloud sort des
+ * tâches en cours quand sa PR est livrée, sa mission faite, ou sa PR fusionnée hors mission.
+ */
+export function cloudLeavesRunning(t: { cloud?: CloudPr; mission?: { state: MissionState } }): boolean {
+  if (t.cloud?.state === 'delivered' || t.mission?.state === 'done') return true
+  return t.cloud?.state === 'merged' && !t.mission
+}
+
+/** #632 : la carte cloud de cette entrée est-elle retirée du volet : la marque gardée au retrait est celle d'aujourd'hui. */
+export function cloudRetiredNow(e: CloudControlInput, retired: ControlRetired): boolean {
+  return retired[cloudCardKey(e.root, e.id)]?.stamp === cloudStamp(e.tone, e.movedAt)
 }
 
 /** #629 : les marques lues du store, sans le mal formé (une entrée sans `stamp` chaîne ou sans `at` nombre). */

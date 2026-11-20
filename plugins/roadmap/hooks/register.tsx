@@ -657,6 +657,8 @@ import {
   controlCloudState,
   testVersionOf,
   retiredMarks,
+  cloudLeavesRunning,
+  cloudRetiredNow,
   takeMissionLine,
   missionCardPrompt,
   isMissionPrompt,
@@ -5834,6 +5836,35 @@ let controlCloudMem: { at: number; value: CloudControlInput[] } | undefined
 let controlCloudFlight: Promise<CloudControlInput[]> | undefined
 
 /**
+ * #629 : l'entrée de carte du Centre de contrôle d'une ligne cloud (`undefined` : pas de carte), sortie de
+ * `readControlCloud` pour que le bloc « En cours » et la bande retrouvent la même carte et la même marque (#632).
+ */
+function controlCloudInputOf(t: BrandTask, tasks: readonly Task[], root: string, now: number): CloudControlInput | undefined {
+  if (!t.cloud || t.cloud.state === 'delivered' || t.mission?.state === 'done') return undefined
+  const band = cloudRowFiche({ cloud: t.cloud, ...(t.mission ? { mission: t.mission } : {}) }).band
+  // #566 : une PR ouverte sans mouvement depuis 12 h n'est plus « en session » : elle est sans nouvelles.
+  const quietAt = t.mission ? undefined : cloudQuietSince(t.cloud, now)
+  // #629 : une PR fusionnée n'a plus de carte, sauf en test (la ligne ouverte de même id porte une livraison)
+  const open = tasks.find(x => x.id === t.id && !x.done)
+  const test = open ? testVersionOf(open, t.cloud.number) : undefined
+  const state = controlCloudState({ state: t.cloud.state, mark: band.mark, word: band.word, ...(quietAt !== undefined ? { quietAt } : {}), ...(test !== undefined ? { test } : {}), ...(t.mission ? { mission: true } : {}), now })
+  if (!state) return undefined
+  const movedAt = t.cloud.updatedAt ?? t.cloud.createdAt
+  const session = cloudSessionLinkOf(t)
+  return {
+    root,
+    id: t.id,
+    title: t.label,
+    word: state.word,
+    tone: state.tone,
+    ...(movedAt !== undefined ? { movedAt } : {}),
+    ...(session ? { session } : {}),
+    ...(t.cloud.url || t.cloud.number !== undefined ? { pr: { ...(t.cloud.number !== undefined ? { number: t.cloud.number } : {}), ...(t.cloud.url ? { url: t.cloud.url } : {}) } } : {}),
+    ...(t.launchedAt !== undefined ? { launchedAt: t.launchedAt } : {}),
+  }
+}
+
+/**
  * Les sessions cloud en cours de tous les projets connus, pour le Centre de contrôle (#583) : les lignes `lieu:cloud`
  * de la roadmap de cette session et de chaque autre (`otherSources`), lues comme la bande de Maestro (`cloudTasksOf`).
  * Une source en panne n'empêche pas les autres ; gardé 60 s, une seule lecture en vol.
@@ -5851,30 +5882,10 @@ async function readControlCloud($: EngineInterface, ownSource: () => Promise<Sou
         const open = await loadParsed($, files(s).open, 'ROADMAP.md')
         const done = await loadParsed($, files(s).done, 'ROADMAP-fait.md')
         const tasks = [...(typeof open === 'string' ? [] : open), ...(typeof done === 'string' ? [] : done)]
+        const root = s.root ?? s.dir
         for (const t of await cloudTasksOf($, s, tasks, x => x.nom ?? x.label, now)) {
-          if (!t.cloud || t.cloud.state === 'delivered' || t.mission?.state === 'done') continue
-          const band = cloudRowFiche({ cloud: t.cloud, ...(t.mission ? { mission: t.mission } : {}) }).band
-          // #566 : une PR ouverte sans mouvement depuis 12 h n'est plus « en session » : elle est sans nouvelles.
-          const quietAt = t.mission ? undefined : cloudQuietSince(t.cloud, now)
-          // #629 : une PR fusionnée n'a plus de carte, sauf en test (la ligne ouverte de même id porte une livraison)
-          const open = tasks.find(x => x.id === t.id && !x.done)
-          const test = open ? testVersionOf(open, t.cloud.number) : undefined
-          const state = controlCloudState({ state: t.cloud.state, mark: band.mark, word: band.word, ...(quietAt !== undefined ? { quietAt } : {}), ...(test !== undefined ? { test } : {}), ...(t.mission ? { mission: true } : {}), now })
-          if (!state) continue
-          const { tone } = state
-          const movedAt = t.cloud.updatedAt ?? t.cloud.createdAt
-          const session = cloudSessionLinkOf(t)
-          out.push({
-            root: s.root ?? s.dir,
-            id: t.id,
-            title: t.label,
-            word: state.word,
-            tone,
-            ...(movedAt !== undefined ? { movedAt } : {}),
-            ...(session ? { session } : {}),
-            ...(t.cloud.url || t.cloud.number !== undefined ? { pr: { ...(t.cloud.number !== undefined ? { number: t.cloud.number } : {}), ...(t.cloud.url ? { url: t.cloud.url } : {}) } } : {}),
-            ...(t.launchedAt !== undefined ? { launchedAt: t.launchedAt } : {}),
-          })
+          const entry = controlCloudInputOf(t, tasks, root, now)
+          if (entry) out.push(entry)
         }
       } catch {
         // une source en panne ne retient pas les autres
@@ -5893,6 +5904,14 @@ async function readControlCloud($: EngineInterface, ownSource: () => Promise<Sou
 
 /** #629 : les cartes retirées d'« En cours » du Centre de contrôle, partagées par tous les panneaux. */
 const CONTROL_RETIRED_KEY = 'control-retired'
+
+/** #632 : les marques retirées, gardées en mémoire pour le bloc « En cours » et la bande ; relues au plus toutes les 60 s. */
+let controlRetiredMem: { at: number; marks: ControlRetired } | undefined
+async function controlRetiredNow($: EngineInterface, now: number): Promise<ControlRetired> {
+  if (controlRetiredMem && now - controlRetiredMem.at >= 0 && now - controlRetiredMem.at < CLOUD_PRS_MS) return controlRetiredMem.marks
+  controlRetiredMem = { at: now, marks: retiredMarks(await storeGet($, CONTROL_RETIRED_KEY).catch(() => undefined)) }
+  return controlRetiredMem.marks
+}
 
 /**
  * #629 : lève la prise d'une ligne cloud (`releaseCloudLine`) dans la roadmap du projet `root`, quand sa carte muette
@@ -6017,7 +6036,11 @@ function controlDeps($: EngineInterface): ControlDeps {
     cloud: () => readControlCloud($, ownSource),
     openUrl: url => openHttpsUrl($, url),
     retired: async () => retiredMarks(await storeGet($, CONTROL_RETIRED_KEY).catch(() => undefined)),
-    writeRetired: next => (Object.keys(next).length === 0 ? storeDelete($, CONTROL_RETIRED_KEY) : storeSet($, CONTROL_RETIRED_KEY, next as unknown as StoreValue)),
+    writeRetired: async next => {
+      await (Object.keys(next).length === 0 ? storeDelete($, CONTROL_RETIRED_KEY) : storeSet($, CONTROL_RETIRED_KEY, next as unknown as StoreValue))
+      // #632 : le bloc « En cours » et la bande suivent aussitôt le retrait.
+      controlRetiredMem = { at: await $.clock.now(), marks: next }
+    },
     releaseCloud: async (root, id) => releaseCloudTake($, await ownSource().catch(() => undefined), root, id),
   }
 }
@@ -8654,6 +8677,22 @@ async function cloudTasksOf($: EngineInterface, source: Source, tasks: readonly 
   const missions = await missionTasksOf($, source, tasks, short, now)
   const cloud = await prCloudTasksOf($, source, tasks, short, now)
   return missions.length === 0 ? cloud : [...cloud.filter(c => !missions.some(m => m.id === c.id)), ...missions]
+}
+
+/**
+ * #632 : les lignes cloud « en cours » du bloc et de la bande : celles de `cloudTasksOf` sans ce que le Centre de
+ * contrôle a trié (la fusionnée en sort, sans l'exception « en test » ; la livrée aussi), et sans la carte retirée au
+ * Centre de contrôle, jusqu'à ce que sa tâche bouge. La fiche d'une tâche garde `cloudTasksOf`.
+ */
+async function runningCloudTasksOf($: EngineInterface, source: Source, tasks: readonly Task[], short: (t: Task) => string, now: number): Promise<BrandTask[]> {
+  const rows = (await cloudTasksOf($, source, tasks, short, now)).filter(bt => !cloudLeavesRunning(bt))
+  if (rows.length === 0) return rows
+  const root = source.root ?? source.dir
+  const marks = await controlRetiredNow($, now).catch(() => ({}) as ControlRetired)
+  return rows.filter(bt => {
+    const entry = controlCloudInputOf(bt, tasks, root, now)
+    return !entry || !cloudRetiredNow(entry, marks)
+  })
 }
 
 /** La jauge d'une ligne cloud : celle de sa PR, ou les trois étapes d'une mission (#469). */
@@ -12002,7 +12041,7 @@ async function projectBandOthers($: EngineInterface, data: NonNullable<Awaited<R
   })
   // #408 : les sessions cloud du projet, lues par leur PR, entrent dans la bande comme les autres.
   // #445 : une PR « #N » ne prend pas la place d'une session locale qui tient déjà sa tâche sans ligne prise.
-  const cloud = (await cloudTasksOf($, data.source, data.tasks, data.short, now)).filter(c => !mine.has(c.id) && !found.some(f => f.task.id === c.id && !f.task.branche))
+  const cloud = (await runningCloudTasksOf($, data.source, data.tasks, data.short, now)).filter(c => !mine.has(c.id) && !found.some(f => f.task.id === c.id && !f.task.branche))
   if (found.length === 0) return cloud
   // #539 : comme chez Maestro, les fiches et l'avance des branches ne retiennent pas le dessin.
   await behindDraw($, learnCreated($, found.map(f => f.sessionId), now))
@@ -16654,7 +16693,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   // #408 : les lignes `lieu:cloud` prises entrent dans le bloc avec l'état de leur PR (aucune session locale à suivre).
   // #445 : et celles qu'une session cloud lancée par la carte native travaille, sans ligne prise, par le « #N » de leur PR.
   const cloudRows = maestroBrand
-    ? (await cloudTasksOf($, source, [...openTasks, ...doneTasks], t => short(t).titre, now)).filter(c => !maestroBrand.tasks.some(b => b.id === c.id) && !openTasks.some(t => t.id === c.id && !t.branche && isLive(t)))
+    ? (await runningCloudTasksOf($, source, [...openTasks, ...doneTasks], t => short(t).titre, now)).filter(c => !maestroBrand.tasks.some(b => b.id === c.id) && !openTasks.some(t => t.id === c.id && !t.branche && isLive(t)))
     : []
   // #468 (BBR) : les tâches du Mac dont la PR est fusionnée et la ligne ouverte disent « fusionnée · suite de main ».
   const mergedIds = maestroBrand ? await mergedIdsOf($, source, openTasks) : new Set<string>()
