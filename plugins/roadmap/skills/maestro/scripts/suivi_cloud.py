@@ -115,12 +115,15 @@ def lire_ligne(texte):
     if i < 0:
         return None
     cles = {}
-    for champ in reste[i + 2:-2].split("|"):
+    axe = ""
+    for n, champ in enumerate(reste[i + 2:-2].split("|")):
         champ = champ.strip()
+        if n == 0 and ":" not in champ:
+            axe = champ
         if ":" in champ:
             k, v = champ.split(":", 1)
             cles[k.strip()] = v.strip()
-    return {"close": m.group(1) != " ", "libelle": reste[:i].strip(), "cles": cles, "brut": texte.rstrip()}
+    return {"close": m.group(1) != " ", "libelle": reste[:i].strip(), "cles": cles, "axe": axe, "brut": texte.rstrip()}
 
 
 def lignes_cloud(texte_roadmap):

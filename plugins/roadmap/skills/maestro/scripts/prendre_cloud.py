@@ -113,11 +113,12 @@ def prendre_mission(texte, ident, aujourdhui):
 
 
 def id_de(texte):
-    """Le numéro de tâche d'un « 458 », « #458 » ou d'un titre « #458 · … » ; None sans numéro."""
+    """Le numéro de tâche d'un « 458 », « #458 » ou d'un titre « #458 · … » ou « Revlon #458 · … » ; None sans numéro."""
     t = texte.strip()
     if re.fullmatch(r"#?\d+", t):
         return t.lstrip("#")
-    m = re.match(r"^#(\d+)\s*·", t)
+    # #643 : un axe facultatif devant « #N · » (sans « # » ni « · », 40 signes au plus), comme `SESSION_PREFIX` du panneau.
+    m = re.match(r"^(?:[^#·\s][^#·\n]{0,39}?\s+)?#(\d+)\s*·", t)
     return m.group(1) if m else None
 
 

@@ -2,6 +2,8 @@
 // que dit la reco, cloud ou Mac ; le lieu que BBR choisit dans le panneau l'emporte (#479). Fonctions pures, sans
 // moteur : `register.tsx` les appelle.
 
+import { projectSettings, type Source } from './parse'
+
 /** Le lieu d'une session : le cloud (une VM claude.ai) ou le Mac. */
 export type Place = 'cloud' | 'mac'
 
@@ -79,4 +81,15 @@ export const FRESH_BACKGROUND_MIN = 80
 export function withFreshBackground(card: Record<string, unknown>, fallback: string): Record<string, unknown> {
   const own = typeof card.background === 'string' ? card.background.trim() : ''
   return own.length >= FRESH_BACKGROUND_MIN ? card : { ...card, background: fallback }
+}
+
+/** Le contexte d'une carte de mission (#476), le même pour la carte du panneau et celle que pose Claude (#510). */
+export function missionCardBackground(source: Source, id: string): string {
+  return `Mission #${id} du projet ${source.name}, lancée en cloud depuis le panneau roadmap (#476) : sans branche ni PR ; Maestro la suit par mission_cloud.py retour puis fin (skill roadmap:maestro, § 2 ter).`
+}
+
+/** Le contexte d'une carte cloud de code (#416), le même pour la carte du panneau et celle que pose Claude (#510). */
+export function cloudCardBackground(source: Source, id: string): string {
+  const depot = projectSettings(source).depot
+  return `Tâche #${id} du projet ${source.name}, lancée en cloud depuis le panneau roadmap (#416) : la session tourne dans une VM claude.ai où le plugin ne sert que par ses skills (#457) ; ses règles sont dans docs/session-cloud.md du dépôt${depot ? ` ${depot}` : ''}, Maestro la suit par sa PR sur le Mac.`
 }

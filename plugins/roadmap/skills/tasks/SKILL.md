@@ -612,7 +612,7 @@ a project that has a roadmap, because the skill is not always loaded when the id
 - **The project's rules win** (`regles`): what they exclude never becomes a task (at Blur, an
   action that is not Caroline's becomes a follow-up « qui doit parler à qui »).
 - **How**: write the line (§ 2 to 5) with its short name in `nom:`, then post the session card
-  (`start_session`, `own_initiative`), titled `#<id> · <nom>` as reread from the written line
+  (`start_session`, `own_initiative`), titled `#<id> · <nom>` as reread from the written line (for a `projet` task, `<axis> #<id> · <nom>`, #643)
   (never a number foreseen before writing: the panel refuses it, #263), its brief opened by Mission, Fichiers,
   Fini quand. Under Maestro, a sub-session posts its card only, without writing the line: the panel
   sends it up to Maestro, who opens the line and posts it again. Work done elsewhere (another

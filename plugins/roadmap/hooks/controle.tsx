@@ -19,6 +19,7 @@ import {
   STATE_WORDS,
   queuedLine,
   queueRank,
+  sessionTitleId,
   type ChildStatus,
   type CloudControlInput,
   type ControlCard,
@@ -124,7 +125,7 @@ export async function controlData(deps: ControlDeps): Promise<ControlData> {
   const ids = [
     ...rows.flatMap(r => {
       const row = r as { sessionId?: unknown; title?: unknown }
-      return typeof row.sessionId === 'string' && typeof row.title === 'string' && /^#\d+\s*·/.test(row.title) ? [row.sessionId] : []
+      return typeof row.sessionId === 'string' && typeof row.title === 'string' && sessionTitleId(row.title) !== undefined ? [row.sessionId] : []
     }),
     ...queue.flatMap(e => (e.kind === 'resume' && e.sessionId ? [e.sessionId] : [])),
   ]

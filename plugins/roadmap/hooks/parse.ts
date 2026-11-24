@@ -5016,19 +5016,58 @@ export function meaningfulWords(text: string): string[] {
 
 /**
  * Le préfixe des sessions lancées depuis le panneau (`launchBrief`) : « #47 · » depuis le
- * 2026-10-23 ; « Roadmap #47 · » et « Roadmap · » (sans numéro) avant.
+ * 2026-10-23 ; « Roadmap #47 · » et « Roadmap · » (sans numéro) avant ; « <axe> #47 · » d'une tâche `projet` (#643).
+ * « Tester #N · » est une session de test (`testTitle`), pas une session de la tâche.
  */
-const SESSION_PREFIX = /^(?:roadmap\s*(?:#([1-9]\d*)\s*)?|#([1-9]\d*)\s*)·\s*/i
+const SESSION_PREFIX = /^(?:roadmap\s*(?:#([1-9]\d*)\s*)?|(?!tester\s+#)(?:([^#·\s][^#·\n]{0,39}?)\s+)?#([1-9]\d*)\s*)·\s*/i
 
-/** Le numéro d'une tâche dans le titre d'une session lancée du panneau (« #47 · … »). */
-export function sessionTitleId(title: string): string | undefined {
-  const m = SESSION_PREFIX.exec(title)
-  return m?.[1] ?? m?.[2]
+/** Le numéro lu par `SESSION_PREFIX` : celui de « Roadmap #N · » ou celui de « [axe] #N · ». */
+function prefixId(m: RegExpExecArray | null): string | undefined {
+  return m?.[1] ?? m?.[3]
 }
 
-/** Le titre d'une session qui travaille sur une tâche : « #47 · <titre court> », 58 caractères au plus. */
-export function sessionTitleFor(task: Task, shortTitle: string): string {
+/** Le numéro d'une tâche dans le titre d'une session lancée du panneau (« #47 · … », « Revlon #47 · … »). */
+export function sessionTitleId(title: string): string | undefined {
+  return prefixId(SESSION_PREFIX.exec(title))
+}
+
+/**
+ * #643 : l'axe qui précède « #N · » dans le titre d'une session d'une tâche `projet` (« Revlon #573 · Plan »).
+ * Il ne contient ni « # » ni « · » ; « Roadmap #N · » (avant #643) n'en est pas un.
+ */
+export function sessionTitleAxis(title: string): string | undefined {
+  const axis = SESSION_PREFIX.exec(title)?.[2]?.trim()
+  return axis === undefined || axis === '' || /^roadmap$/i.test(axis) ? undefined : axis
+}
+
+/** #643 : le nom d'une tâche sans l'axe qui le commence (« Revlon Pro BF » sous Revlon → « Pro BF ») ; réduit à rien, il reste entier. */
+function nameWithoutAxis(axis: string, name: string): string {
+  const esc = axis.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const rest = name.replace(new RegExp(`^${esc}(?:\\s*[·:\\-–]\\s*|\\s+)`, 'i'), '').trim()
+  return rest === '' ? name : rest
+}
+
+/**
+ * Le titre d'une session qui travaille sur une tâche, 58 caractères au plus : « #47 · <titre court> » pour du code ;
+ * pour une tâche `projet` (#643) « <axe> #47 · <titre court> », sans marque de lieu, l'axe étant le premier champ de la ligne.
+ */
+export function sessionTitleFor(task: Task, shortTitle: string, travail?: Travail): string {
+  if (task.id && travail === 'projet' && task.axis) {
+    const axis = task.axis.replace(/[#·\n]/g, ' ').trim().slice(0, 40)
+    if (axis !== '') return clip(`${axis} #${task.id} · ${nameWithoutAxis(axis, shortTitle)}`, 58)
+  }
   return clip(task.id ? `#${task.id} · ${shortTitle}` : `Roadmap · ${shortTitle}`, 58)
+}
+
+/**
+ * #643 : le titre d'une carte « #N · nom[ · lieu] » d'une tâche `projet` récrit à la forme à axe, sans marque.
+ * Un titre de code, ou qui n'est pas celui de cette tâche, ne change pas.
+ */
+export function clientTitle(title: string, task: Task, travail: Travail): string {
+  if (travail !== 'projet' || !task.id || sessionTitleId(title) !== task.id) return title
+  const name = sessionNameRaw(title)
+  if (name === undefined) return title
+  return sessionTitleFor(task, name, travail)
 }
 
 /** #436 : la marque de cible qui finit le titre d'une carte native (« · cloud », « · local »). « · Mac » d'un titre d'avant (#509) se lit encore. */
@@ -5040,8 +5079,10 @@ const TARGET_MARK = /\s*·\s*(?:cloud|mac|local)\s*$/i
  * une marque déjà posée est remplacée, la base coupée pour que le tout tienne dans les 58 signes.
  * Un titre qui n'est pas celui d'une tâche ne change pas.
  */
-export function targetTitle(title: string, target: Sessions): string {
+export function targetTitle(title: string, target: Sessions, travail?: Travail): string {
   if (sessionTitleId(title) === undefined) return title
+  // #643 : le titre d'une tâche `projet` (avec axe, ou sans axe quand l'appelant le dit) ne porte aucune marque de lieu.
+  if (travail === 'projet' || sessionTitleAxis(title) !== undefined) return title.replace(TARGET_MARK, '')
   const mark = ` · ${target === 'cloud' ? 'cloud' : 'local'}`
   return `${clip(title.replace(TARGET_MARK, ''), 58 - mark.length)}${mark}`
 }
@@ -5159,8 +5200,8 @@ export function macHeldIds(index: Readonly<Record<string, string>>, project: str
 }
 
 /** Le titre d'une session qui vérifie une tâche : « #47 · Vérifier · <titre court> », 58 caractères au plus. */
-export function checkTitleFor(task: Task, shortTitle: string): string {
-  return sessionTitleFor(task, `Vérifier · ${shortTitle}`)
+export function checkTitleFor(task: Task, shortTitle: string, travail?: Travail): string {
+  return sessionTitleFor(task, `Vérifier · ${shortTitle}`, travail)
 }
 
 /**
@@ -7195,7 +7236,7 @@ export function taskForSessionTitle(title: string, tasks: readonly Task[], title
   // Une session de vérification porte « Vérifier · » devant le titre court.
   const rest = launched ? title.slice(launched[0].length).replace(CHECK_MARK, '') : title
   // Le numéro désigne la tâche sans deviner ; une tâche close n'a plus de session en cours.
-  const number = launched?.[1] ?? launched?.[2]
+  const number = prefixId(launched)
   if (number !== undefined) return open.find(t => t.id === number)
   if (launched) {
     const exact = open.filter(t => {
@@ -7230,6 +7271,14 @@ export function sessionName(title: string): string | undefined {
   const m = SESSION_PREFIX.exec(title)
   if (!m) return undefined
   const name = title.slice(m[0].length).replace(CHECK_MARK, '').replace(ROUTINE_MARK, '').replace(TARGET_MARK, '').trim()
+  return name === '' ? undefined : name
+}
+
+/** Ce qui suit le préfixe, marque de vérification gardée : « Vérifier · X » (#643, pour récrire un titre sans perdre sa variante). */
+function sessionNameRaw(title: string): string | undefined {
+  const m = SESSION_PREFIX.exec(title)
+  if (!m) return undefined
+  const name = title.slice(m[0].length).replace(TARGET_MARK, '').trim()
   return name === '' ? undefined : name
 }
 
@@ -7989,7 +8038,7 @@ export function launchBrief(
     '',
     ...ending,
   ].join('\n')
-  return { title: sessionTitleFor(task, shortTitle), prompt, background: briefBackground(source) }
+  return { title: sessionTitleFor(task, shortTitle, travail), prompt, background: briefBackground(source) }
 }
 
 /**
@@ -8038,7 +8087,7 @@ export function checkBrief(
     '',
     `Termine sur ${ARCHIVE_BOX}. ${archiveThen()}`,
   ].join('\n')
-  return { title: checkTitleFor(task, shortTitle), prompt, background: briefBackground(source) }
+  return { title: checkTitleFor(task, shortTitle, taskWork(source, task)), prompt, background: briefBackground(source) }
 }
 
 /**
@@ -8103,7 +8152,7 @@ export function routineBrief(
     ...roadmap,
     "Montre le résultat en quelques lignes, et ce qui demande une décision ; rien ne part en son nom sans l'accord de " + person() + '.',
   ].join('\n')
-  return { title: sessionTitleFor(task, `Routine du ${o.today} · ${shortTitle}`), prompt, background: briefBackground(source) }
+  return { title: sessionTitleFor(task, `Routine du ${o.today} · ${shortTitle}`, taskWork(source, task)), prompt, background: briefBackground(source) }
 }
 
 /** `.claude/roadmap.json` d'un projet : tout est facultatif, `dir` relatif au projet ou absolu. */
@@ -10831,7 +10880,7 @@ export function archiveVerdicts(sessions: readonly ArchiveSession[], tasks: read
   const rows: { row: ArchiveRow; n: number }[] = []
   for (const s of sessions) {
     const place = s.cloud ? 'cloud' : 'Mac'
-    const num = /^\s*#(\d+)\b/.exec(s.title)?.[1]
+    const num = sessionTitleId(s.title) ?? /^\s*#(\d+)\b/.exec(s.title)?.[1]
     const task = (num !== undefined ? tasks.find(t => t.id === num) : undefined) ?? (s.branch ? tasks.find(t => t.branche === s.branch) : undefined)
     const name = task ? `#${task.id ?? '?'} ${archiveCell(task.nom ?? task.label)}` : archiveCell(s.title)
     const base = { session: `${name} · ${place}`, ...(task?.id ? { id: task.id } : {}) }
@@ -15937,8 +15986,8 @@ export function queueCardKey(e: { id: string; project: string; kind?: string; se
   return e.kind === 'resume' && e.sessionId ? `q:${e.sessionId}` : `q:${e.project}#${e.id}`
 }
 
-/** Le titre d'une session sans son « #N · » (#367). */
-function bareTitle(title: string): string {
+/** Le titre d'une session sans son « #N · » ni son axe (#367, #643). */
+export function bareTitle(title: string): string {
   return title.replace(SESSION_PREFIX, '').trim()
 }
 

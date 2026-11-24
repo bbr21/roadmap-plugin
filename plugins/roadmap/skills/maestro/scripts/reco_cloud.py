@@ -232,8 +232,20 @@ def mission_de_ligne(depot, ligne):
     return onboarding.travail_de_ligne(nature_du_depot(depot), valeur or None) == "projet"
 
 
-def titre_carte(id_, nom, target):
-    """Le titre de la carte, la cible au bout, comme `targetTitle` du panneau (#436)."""
+def nom_sans_axe(axe, nom):
+    """Le nom sans l'axe qui le commence (mot entier, avec son séparateur), comme `nameWithoutAxis` du panneau (#643) ;
+    réduit à rien, il reste entier."""
+    reste = re.sub(r"^%s(?:\s*[·:\-–]\s*|\s+)" % re.escape(axe), "", nom, flags=re.IGNORECASE).strip()
+    return reste or nom
+
+
+def titre_carte(id_, nom, target, axe=None, projet=False):
+    """Le titre de la carte, comme `sessionTitleFor` et `targetTitle` du panneau : « #N · nom · lieu » pour du code
+    (#436) ; pour une tâche de projet (#643) « <axe> #N · nom », sans marque de lieu (sans axe « #N · nom »)."""
+    if projet:
+        axe = re.sub(r"[#·\n]", " ", axe or "").strip()[:40]
+        base = "%s#%s · %s" % (axe + " " if axe else "", id_, nom_sans_axe(axe, nom) if axe else nom)
+        return base if len(base) <= 58 else base[:57].rstrip() + "…"
     marque = " · %s" % ("cloud" if target == "cloud" else "local")
     base = "#%s · %s" % (id_, nom)
     place = 58 - len(marque)
@@ -248,11 +260,12 @@ def carte(depot, id_, ligne, r, par):
     target = "cloud" if r["lieu"] == "cloud" else "mac"
     raison = r["why"]
     # #476, #508 : une ligne de travail « projet » part en mission (mission_cloud.py carte, prise en qui:mission), sans branche.
-    mission = target == "cloud" and mission_de_ligne(depot, ligne)
+    projet = mission_de_ligne(depot, ligne)
+    mission = target == "cloud" and projet
     carte_ = {
         "id": id_,
         "target": target,
-        "titre": titre_carte(id_, nom, target),
+        "titre": titre_carte(id_, nom, target, ligne.get("axe"), projet),
         "branche": prendre_cloud.branche_cloud(nom, id_) if target == "cloud" and not mission else None,
         "mission": mission,
         "reco": r["lieu"],

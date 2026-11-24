@@ -114,7 +114,8 @@ import {
 } from './icons'
 import { MIX, PX, RADIUS, SIZE, SPACE, TEXT } from './tokens'
 import { BEFORE_KEY, CLOSED_KEY, NATIVE_KEY, beforeMap, closedKeys, drawWrittenMessage, keepBefore, keepClosed, keepNative, nativeKeys, splitWritten, withoutClosed, withoutNative, writtenCards, type WrittenLine, type WrittenStart, type WrittenWho } from './cartes'
-import { CARD_DEADLINE_MS, CARD_LATE_WHY, cardTargetOf, dismissCall, panelChoiceIn, proposalIdIn, reachableReco, recoTargetRefusal, withFreshBackground, type Place } from './depart'
+import { clientCardOf, sameCardTitle, withTargetTitle } from './titre'
+import { CARD_DEADLINE_MS, CARD_LATE_WHY, cardTargetOf, cloudCardBackground, missionCardBackground, dismissCall, panelChoiceIn, proposalIdIn, reachableReco, recoTargetRefusal, withFreshBackground, type Place } from './depart'
 import { CLOUD_WATCH_EVERY_MS, CLOUD_WATCH_KEY, MISSION_START_KEY, addMissionStart, addWatch, startedAtCall, briefBranchOf, dueWatches, lineVerdict, missionStartList, pushedSince, remoteHeads, startedCardTitles, watchList, type CloudWatch } from './prise-cloud'
 import { CLOUD_REMIND_EVERY_MS, CLOUD_WAKE_EVERY_MS, CLOUD_WAKE_KEY, CLOUD_WAKE_PR_FIELDS, cloudReminders, cloudWakeAdopts, cloudWakeDue, cloudWakes, readyPrs, wakePrompt, wakeStateOf, type WakeEvent, type WakeRole } from './reveil-cloud'
 import { MISSION_WAKE_EVERY_MS, MISSION_WAKE_KEY, missionDeparted, missionWakeDue, missionWakePrompt, missionWakeStateOf, missionWakes } from './reveil-mission'
@@ -550,6 +551,8 @@ import {
   globalQueueOrder,
   sessionTitleFor,
   targetTitle,
+  bareTitle,
+  clientTitle,
   liveQueue,
   launchInFlight,
   pauseRunnable,
@@ -3214,11 +3217,11 @@ function cardReason(r: ToolCallResult): string {
  * auto (#248), de Remote Control (#390) ou qui veut l'accord d'une personne (#515, #575) ne tient à aucun champ : la
  * carte ne se repose pas. Sert au ▶ et à la relève (#393).
  */
-async function proposeCard($: EngineInterface, raw: Record<string, unknown>, optional: [field: string, value: unknown, note: string][]): Promise<{ ran: ToolCallResult; refusals: string[] }> {
+async function proposeCard($: EngineInterface, raw: Record<string, unknown>, optional: [field: string, value: unknown, note: string][], travail?: Travail): Promise<{ ran: ToolCallResult; refusals: string[] }> {
   const refusals: string[] = []
   const fields = [...optional]
   // #436 : la cible (cloud ou Mac) finit le titre de la carte native.
-  const card = withTargetTitle(raw)
+  const card = withTargetTitle(raw, travail)
   const withFields = () => ({ ...card, ...Object.fromEntries(fields.map(([field, value]) => [field, value])) }) as Parameters<EngineInterface['tool']['call']>[0]
   // #575 : le refus « needs a person's approval » (`isPanelOnlyRefusal`) ne tient à aucun champ non plus : la carte ne
   // retombe pas champ par champ, elle passe par Claude avec tous ses champs (le modèle et l'effort d'une carte cloud).
@@ -3234,9 +3237,15 @@ async function proposeCard($: EngineInterface, raw: Record<string, unknown>, opt
   return { ran, refusals }
 }
 
-/** #436 : la carte native avec sa cible au bout du titre (« · cloud » pour `target: 'cloud'`, « · local » sinon). */
-function withTargetTitle(card: Record<string, unknown>): Record<string, unknown> {
-  return typeof card.title === 'string' ? { ...card, title: targetTitle(card.title, card.target === 'cloud' ? 'cloud' : 'mac') } : card
+/** #643 : la carte d'une tâche `projet` prend son titre à axe (`clientCardOf`), lue sur la roadmap ouverte. */
+async function clientCard($: EngineInterface, card: Record<string, unknown>): Promise<{ card: Record<string, unknown>; travail?: Travail }> {
+  try {
+    const source = typeof card.title === 'string' && sessionTitleId(card.title) !== undefined ? await sourceNow($) : undefined
+    const open = source && natureOf(source) !== 'code' ? await load($, files(source).open, 'ROADMAP.md') : undefined
+    return clientCardOf(card, source, typeof open === 'string' ? undefined : open)
+  } catch {
+    return { card }
+  }
 }
 
 /**
@@ -3257,17 +3266,6 @@ const pendingMissions = new Map<string, string>()
  * (`<projet>|<id>`) : la carte que Claude pose pour cette tâche part en cloud avec ce brief, mot pour mot.
  */
 const pendingClouds = new Map<string, string>()
-
-/** Le contexte d'une carte de mission (#476), le même pour la carte du panneau et celle que pose Claude (#510). */
-function missionCardBackground(source: Source, id: string): string {
-  return `Mission #${id} du projet ${source.name}, lancée en cloud depuis le panneau roadmap (#476) : sans branche ni PR ; Maestro la suit par mission_cloud.py retour puis fin (skill roadmap:maestro, § 2 ter).`
-}
-
-/** Le contexte d'une carte cloud de code (#416), le même pour la carte du panneau et celle que pose Claude (#510). */
-function cloudCardBackground(source: Source, id: string): string {
-  const depot = projectSettings(source).depot
-  return `Tâche #${id} du projet ${source.name}, lancée en cloud depuis le panneau roadmap (#416) : la session tourne dans une VM claude.ai où le plugin ne sert que par ses skills (#457) ; ses règles sont dans docs/session-cloud.md du dépôt${depot ? ` ${depot}` : ''}, Maestro la suit par sa PR sur le Mac.`
-}
 
 /**
  * #515 : la carte que pose Claude pour un ▶ Cloud refusé au panneau : cible cloud, contexte neuf, et le brief que le
@@ -3315,7 +3313,7 @@ async function missionCardOf($: EngineInterface, e: unknown): Promise<{ card: Re
     const prompt = pending ?? (isMissionPrompt(card.prompt, id) ? card.prompt : missionCardPrompt({ project: source.name, id, label: task.label }))
     const { permission_mode: _, ...rest } = card
     // #510 (cas AAFES #653) : en contexte neuf, l'app exige un contexte de 80 caractères : celui du panneau si Claude n'en a pas donné.
-    return { card: withFreshBackground({ ...rest, target: 'cloud', context: 'fresh', prompt }, missionCardBackground(source, id)), source, id }
+    return { card: withFreshBackground({ ...rest, title: clientTitle(card.title, task, 'projet'), target: 'cloud', context: 'fresh', prompt }, missionCardBackground(source, id)), source, id }
   } catch {
     return undefined
   }
@@ -3707,7 +3705,7 @@ async function startFromCard($: EngineInterface, source: Source, id: string, sho
         const before = own.find(q => q.id === id && q.kind !== 'resume')
         const entry: GlobalQueued = {
           id,
-          title: sessionTitleFor(task, shortTitle),
+          title: sessionTitleFor(task, shortTitle, taskWork(source, task)),
           launch: { shortTitle, ...(target === 'cloud' ? { target } : {}) },
           at: before?.at ?? now,
           maestro: maestro.id,
@@ -5551,7 +5549,7 @@ async function doseCards($: EngineInterface, now: number): Promise<DoseCard[]> {
 async function reserveCard($: EngineInterface, title: string): Promise<void> {
   try {
     const now = await $.clock.now()
-    const kept = (await doseCards($, now)).filter(c => c.title !== title)
+    const kept = (await doseCards($, now)).filter(c => !sameCardTitle(c.title, title))
     await storeSet($, LAUNCH_CARDS_KEY, [...kept, { title, at: now, project: doseProject().project }])
   } catch {
     // store illisible : la place se lira à l'ouverture de la session
@@ -5563,7 +5561,7 @@ async function unreserveCard($: EngineInterface, title: string): Promise<void> {
   try {
     const now = await $.clock.now()
     const cards = await doseCards($, now)
-    if (cards.some(c => c.title === title)) await storeSet($, LAUNCH_CARDS_KEY, cards.filter(c => c.title !== title))
+    if (cards.some(c => sameCardTitle(c.title, title))) await storeSet($, LAUNCH_CARDS_KEY, cards.filter(c => !sameCardTitle(c.title, title)))
   } catch {
     // store illisible : la réservation tombera à son délai
   }
@@ -5751,7 +5749,7 @@ async function releaseBrief($: EngineInterface, head: GlobalQueued, source: Sour
   // Un ▶, et depuis #374 une carte en file, partent seuls : le brief se refait de la roadmap, jamais d'un texte gardé dans le store.
   const task = open?.find(t => t.id === head.id && !t.done)
   if ((!head.launch && !head.card) || !source || !task) return undefined
-  const shortTitle = head.launch?.shortTitle ?? head.title.replace(/^#\d+\s*·\s*/, '')
+  const shortTitle = head.launch?.shortTitle ?? bareTitle(head.title)
   const brief = await briefOf($, source, task, shortTitle, head.launch?.extra ?? '', head.launch?.kind ?? '')
   // #510 : un ▶ Cloud mis en file repart en cloud : sa carte (brief cloud ou mission) se refait par sa couche, et le
   // crochet de `start_session` la donne telle quelle à la carte que pose Maestro (#512, #515).
@@ -5763,7 +5761,7 @@ async function releaseBrief($: EngineInterface, head: GlobalQueued, source: Sour
     const prompt = String(prepared.card.prompt ?? '')
     if (mission) pendingMissions.set(pendingKey(source, task.id), prompt)
     else pendingClouds.set(pendingKey(source, task.id), withTargetNote(prompt, 'cloud', recoOf(source, task)))
-    return { id: head.id, title: targetTitle(brief.title, 'cloud'), prompt, background: String(prepared.card.background ?? ''), travail: taskWork(source, task), bypass: false, target: 'cloud' }
+    return { id: head.id, title: targetTitle(brief.title, 'cloud', taskWork(source, task)), prompt, background: String(prepared.card.background ?? ''), travail: taskWork(source, task), bypass: false, target: 'cloud' }
   }
   const bypass = wantsBypass(settings.launchBypass, await ownMode($))
   // #490 : le modèle et l'effort que dit la tâche.
@@ -6469,7 +6467,7 @@ async function cardEntry($: EngineInterface, ownId: string, head: GlobalQueued, 
   if (brief.travail === 'projet') optional.push(['use_worktree', false, 'sans worktree'])
   // Une entrée reprise d'un autre Maestro (#374) part dans le dossier de son projet.
   if (at.away) optional.push(['cwd', head.project, `dans ${head.project}`])
-  const { ran } = await proposeCard($, { tool: START_SESSION_TOOL, initiation: 'own_initiative', context: 'fresh', title: brief.title, prompt: brief.prompt, background: brief.background }, optional)
+  const { ran } = await proposeCard($, { tool: START_SESSION_TOOL, initiation: 'own_initiative', context: 'fresh', title: brief.title, prompt: brief.prompt, background: brief.background }, optional, brief.travail)
   if (ran.deny !== undefined || ran.isError) {
     await settleQueued($, ownId, brief.title, ran)
     return readGlobalQueue($)
@@ -7082,14 +7080,14 @@ function cloudLayer($: EngineInterface, source: Source, task: Task, title: strin
       const background = String(card.background ?? '')
       if (mission) {
         pendingMissions.set(pendingKey(source, id), prompt)
-        queueSubmit($, missionAskText({ title: targetTitle(title, 'cloud'), id, prompt, background }))
+        queueSubmit($, missionAskText({ title: targetTitle(title, 'cloud', taskWork(source, task)), id, prompt, background }))
         await setView($, () => ({ launchNote: missionViaClaudeNote(refusals.length > 0) }))
         return
       }
       // Le brief imposé mot pour mot, avec la cible choisie (la reco ne la retient pas, #479).
       const asked = withTargetNote(prompt, 'cloud', recoOf(source, task))
       pendingClouds.set(pendingKey(source, id), asked)
-      queueSubmit($, cloudAskText({ title: targetTitle(title, 'cloud'), id, branch, prompt: asked, background, ...launch }))
+      queueSubmit($, cloudAskText({ title: targetTitle(title, 'cloud', taskWork(source, task)), id, branch, prompt: asked, background, ...launch }))
       await setView($, () => ({ launchNote: cloudViaClaudeNote() }))
     },
     // #510 (C4) : la carte posée ne prend rien ; la ligne se prend au départ de la session : sa branche poussée (#474)
@@ -7463,7 +7461,7 @@ async function launchTask($: EngineInterface, source: Source, task: Task, shortT
     // L'app ne démarre jamais une session sur un clic de plugin : elle n'accepte qu'une proposition, la carte « New
     // session » que la personne démarre d'un clic sur « Start » (deux refus mesurés le 2026-10-22). #465 : l'app qui ne
     // répond pas ne laisse pas la fiche sur « Lancement… ».
-    const posted = await withinMs($, proposeCard($, prepared.card, prepared.optional), CARD_DEADLINE_MS)
+    const posted = await withinMs($, proposeCard($, prepared.card, prepared.optional, taskWork(source, task)), CARD_DEADLINE_MS)
     if (posted === 'late') {
       noteLaunch('panel')
       return void (await fail(CARD_LATE_WHY))
@@ -7896,7 +7894,7 @@ async function archiveText($: EngineInterface): Promise<string> {
   // #558 : une session cloud close garde la main tant que le registre n'a pas la trace du relevé de sa PR.
   const traces = ledgerTraces(ledgerText)
   const cloud = cloudArchiveSessions(tasks, now).map(s => {
-    const id = /^#(\d+)/.exec(s.title)?.[1]
+    const id = sessionTitleId(s.title) ?? /^#(\d+)/.exec(s.title)?.[1]
     const task = id !== undefined ? tasks.find(t => t.id === id) : undefined
     return task?.done ? { ...s, traced: traces.has(id as string) } : s
   })
@@ -11270,7 +11268,9 @@ export const register: Register = (on, options) => {
         return { deny: dose.refusal }
       }
       // #436 : la cible finit le titre de la carte posée ; le titre lu ici (file, réservation) reste celui de la ligne.
-      const posted = mission ? await next(withTargetTitle(e) as typeof e) : await launchWithMode($, e, card => next(withTargetTitle(card) as typeof e))
+      // #643 : une tâche `projet` prend le titre « <axe> #N · nom », sans marque.
+      const shown = mission ? { card: e as Record<string, unknown>, travail: 'projet' as const } : await clientCard($, e as Record<string, unknown>)
+      const posted = mission ? await next(withTargetTitle(shown.card, shown.travail) as typeof e) : await launchWithMode($, shown.card as typeof e, card => next(withTargetTitle(card, shown.travail) as typeof e))
       if (dose.ownId && typeof cardTitle === 'string' && posted.deny === undefined && !posted.isError) await reserveCard($, cardTitle)
       // #374 : la réponse de l'app règle l'entrée en file : acceptée, elle sort ; refusée, elle reste avec sa trace.
       if (dose.ownId && typeof cardTitle === 'string') {
@@ -18723,7 +18723,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
           <Text size="caption" tabular color={palette.text2}>{`#${s.id}`}</Text>
         </Box>
         <Box flexShrink={1} minWidth={0}>
-          <Text wrap="truncate-end">{task ? short(task).titre : s.title.replace(/^#\d+\s*·\s*/, '')}</Text>
+          <Text wrap="truncate-end">{task ? short(task).titre : bareTitle(s.title)}</Text>
         </Box>
         <Box flexGrow={1} />
         <Box flexShrink={0}>

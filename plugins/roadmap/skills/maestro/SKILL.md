@@ -174,6 +174,8 @@ to it.
   name is not the line's `nom:` (or, without one, shares no word with its label), or whose #N is
   already held by an open session of the same kind; its refusal gives the title to post. A session's
   title never changes: an open session with a wrong name is not renamed, the screen shows its title.
+  For a task whose work is `projet` (#643) the title is `<axis> #<id> · <nom>` (the line's first field in front, no `· cloud` / `· local`
+  mark); the panel rewrites a `#<id> · <nom>` card of such a task to that form before it leaves, and reads both forms.
 - **The panel's ▶**: title `#<id> · <nom>`, full brief opened by its mission, and the
   Maestro clause added by itself.
 - **Which model on the card** (#327, #490, #492): the recommendation gives it. `reco_cloud.py <main folder> <id>
@@ -390,7 +392,7 @@ follows the recommendation** (#458, BBR's request of 2026-11-11: a task recommen
 the cloud, never on the Mac): before posting a task card, run
 `python3 "<skill folder>/scripts/reco_cloud.py" <main folder> <id> --carte`. It prints the card as JSON: `target`
 « cloud » when the recommendation says cloud, « mac » otherwise; `titre`,
-`#<id> · <nom> · cloud` or `#<id> · <nom> · local` (the target at the end, as the panel writes it, #436); `branche`, the
+`#<id> · <nom> · cloud` or `#<id> · <nom> · local` (the target at the end, as the panel writes it, #436); for a task whose work is `projet` (#643) `<axis> #<id> · <nom>`, with no target mark (the axis is the line's first field; the card's `target` carries the place); `branche`, the
 cloud session's branch (`feat/<slug>` of the `nom:`, as the panel's), null for the Mac. Post the card on that target
 with that title, without asking the target first: the person still chooses by clicking Start, and can switch the
 target in the card's options. **The plugin enforces it** (#465): in any project, a
@@ -507,7 +509,7 @@ otherwise they see an empty worktree.
   « Fait : … » or « Échec : … ». The instruction says what to change, where (workspace, campaign number, platform),
   what never to touch, and that nobody watches the run. A write a person did not ask for in words is never in it:
   their request names the change.
-- **Launch**: the card, titled `#<id> · <nom> · cloud`, with that brief; the person clicks Start, as for any card.
+- **Launch**: the card, titled `<axis> #<id> · <nom>` (#643: the `titre` of `reco_cloud.py --carte`, no `· cloud` mark for a `projet` task), with that brief; the person clicks Start, as for any card.
 - **The project's setting** (#476, #482): such a folder declares `"travail": "projet"` (or a `hybride` project's line
   says `travail:projet`) and `"depot": "<owner>/<porte>"` in `.claude/roadmap.json`; the old `"cloud": "missions"` is
   still read as the same thing. Its work is then `projet`, so every Mac card goes with
