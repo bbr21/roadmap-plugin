@@ -5859,7 +5859,20 @@ const FINDING_NONE = new Set(['rien', 'aucun', 'aucune', 'néant', '-', '—', '
  * elle commence par « Hors de ma tâche : » ou « finding · » ; rien dans un bloc de code, ni pour un gabarit.
  */
 export function findingLines(text: string | undefined): string[] {
-  const out: string[] = []
+  return scanFindings(text).filter(f => !f.explicit || findingParts(f.line) !== undefined).map(f => f.line)
+}
+
+/**
+ * Les lignes « finding · » d'un compte rendu que le panneau ne sait pas lire (#641) : pas assez de champs, sorte
+ * inconnue ou lieu vide. Elles ne montent pas à Maestro : la session les réécrit (`findingReminder`).
+ */
+export function unreadableFindings(text: string | undefined): string[] {
+  return scanFindings(text).filter(f => f.explicit && findingParts(f.line) === undefined).map(f => f.line)
+}
+
+/** Les lignes canoniques d'un compte rendu, avec leur en-tête : « finding » écrit (`explicit`) ou l'ancien « Hors de ma tâche : » seul. */
+function scanFindings(text: string | undefined): { line: string; explicit: boolean }[] {
+  const out: { line: string; explicit: boolean }[] = []
   let fenced = false
   for (const raw of (text ?? '').split('\n')) {
     if (raw.trim().startsWith('```')) {
@@ -5873,9 +5886,44 @@ export function findingLines(text: string | undefined): string[] {
     const rest = (m[2] ?? '').trim()
     if (rest.startsWith('<') || FINDING_NONE.has(rest.replace(/\.+$/, '').toLowerCase())) continue
     const line = `finding · ${rest}`
-    if (!out.includes(line)) out.push(line)
+    if (!out.some(f => f.line === line)) out.push({ line, explicit: m[1] !== undefined })
   }
   return out
+}
+
+/** Le lieu d'un finding, sous ses trois formes : lien Markdown `[texte](cible)` (le texte, sans accents graves), entre accents graves, ou nu. */
+function findingPlace(field: string): string {
+  const f = field.trim()
+  const link = /^\[([^\]]*)\]\((?:<[^>]*>|[^)]*)\)$/.exec(f)
+  return (link ? (link[1] ?? '') : f).replaceAll('`', '').trim()
+}
+
+const FINDING_SORTS: [string, string][] = [['gain', 'gain'], ['panne', 'panne'], ['piège', 'piège'], ['piege', 'piège'], ['dette', 'dette'], ['idée', 'idée'], ['idee', 'idée']]
+
+/**
+ * Une ligne canonique découpée : sorte, lieu, fait, geste. La même règle que `lire` de `findings.py` : au moins trois
+ * champs séparés par « · » (le dernier « geste de … » ôté d'abord), une sorte connue, un lieu non vide. Sinon rien.
+ */
+export function findingParts(line: string): { sorte: string; lieu: string; vu: string; geste: boolean } | undefined {
+  const rest = line.replace(/^finding\s*·\s*/i, '')
+  const fields = rest.split(' · ').map(f => f.trim())
+  const geste = fields.length > 1 && /^geste/i.test(fields[fields.length - 1] ?? '')
+  if (geste) fields.pop()
+  if (fields.length < 3) return undefined
+  const first = (fields[0] ?? '').toLowerCase()
+  const sorte = FINDING_SORTS.find(([prefix]) => first.startsWith(prefix))?.[1]
+  const lieu = findingPlace(fields[1] ?? '')
+  if (sorte === undefined || lieu === '') return undefined
+  return { sorte, lieu, vu: fields.slice(2).join(' · '), geste }
+}
+
+const FINDING_REMINDER_QUOTE = 200
+
+/** Le rappel de fin de tour pour les lignes « finding · » illisibles : à réécrire en une ligne. Rien sans ligne. */
+export function findingReminder(lines: readonly string[]): string | undefined {
+  if (lines.length === 0) return undefined
+  const quoted = lines.map(l => `« ${clip(l, FINDING_REMINDER_QUOTE)} »`).join(' ')
+  return `Plugin roadmap (#641) : ${lines.length === 1 ? 'une ligne « finding · »' : `${lines.length} lignes « finding · »`} de ton message que le panneau ne sait pas lire, donc pas remontée${lines.length === 1 ? '' : 's'} à Maestro : ${quoted}. Réécris-la en une ligne, sans réécrire ton message : \`> **Hors de ma tâche :** finding · <sorte> · <lieu> · <le fait>\` (sorte : gain, panne, piège, dette ou idée ; le lieu nu, entre accents graves ou en lien Markdown \`[texte](chemin)\` ; les champs séparés par « · » ; « · geste de ${person()} » en dernier champ si la suite demande son geste).`
 }
 
 /** La longueur gardée d'une ligne de finding remontée par le panneau : au-delà, elle est coupée. */

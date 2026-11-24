@@ -9,6 +9,11 @@ compte rendu, une ligne par finding, la même au Mac et en cloud :
 geste de la personne (un réglage de l'app, un accès, un choix de produit) ; tout va à Maestro, qui répartit. Une
 ligne « Hors de ma tâche : … » d'avant le format se relève aussi, sorte « autre ».
 
+Le lieu se lit sous trois formes : nu (`src/a.ts`), entre accents graves, ou en lien Markdown `[texte](cible)`, dont
+le texte fait le lieu (ses accents graves ôtés) ; `brut` garde la ligne telle quelle. Une ligne qui dit « finding · »
+sans trois champs, sans sorte connue ou sans lieu est illisible (`lisible` faux) : `relever` la nomme (« Illisible, non
+relevé ») au lieu de l'entrer, pour que sa session la réécrive.
+
   python3 findings.py relever DEPOT --de N [--source TEXTE] [FICHIER]   le compte rendu, d'un fichier ou de l'entrée
   python3 findings.py relever DEPOT --pr N [--de N]                     les commentaires de l'auteur d'une PR (cloud)
   python3 findings.py sort DEPOT F (--ligne N | --rattache N | --ecarte RAISON)
@@ -43,6 +48,7 @@ import sys
 REGISTRE = "ROADMAP-findings.json"
 SORTES = [("gain", "gain"), ("panne", "panne"), ("piège", "piège"), ("piege", "piège"), ("dette", "dette"),
           ("idée", "idée"), ("idee", "idée")]
+LIEN = re.compile(r"^\[([^\]]*)\]\((?:<[^>]*>|[^)]*)\)$")
 TETE = re.compile(r"^(?:hors de ma tâche\s*:\s*)?(?:(finding)\s*[·:]\s*)?(.*)$", re.IGNORECASE)
 HORS = re.compile(r"^hors de ma tâche\s*:", re.IGNORECASE)
 RIEN = {"rien", "aucun", "aucune", "néant", "-", "—", "…", ""}
@@ -65,8 +71,18 @@ def _sorte(champ):
     return None
 
 
+def _lieu(champ):
+    """Le lieu d'un finding : le texte d'un lien Markdown, sinon le champ, accents graves ôtés."""
+    champ = champ.strip()
+    m = LIEN.match(champ)
+    if m:
+        champ = m.group(1)
+    return champ.replace("`", "").strip()
+
+
 def lire(texte):
-    """Les findings d'un compte rendu, dans l'ordre : `{"sorte", "objet", "vu", "geste", "brut"}`. Une ligne en est
+    """Les findings d'un compte rendu, dans l'ordre : `{"sorte", "objet", "vu", "geste", "brut", "lisible"}`.
+    `lisible` : faux pour une ligne qui dit « finding · » sans trois champs, sans sorte connue ou sans lieu. Une ligne en est
     un quand, sa mise en forme ôtée (`>`, `-`, `**`), elle commence par « Hors de ma tâche : » ou « finding · ».
     Rien dans un bloc de code, ni pour un gabarit (`<sorte>`), ni pour « Hors de ma tâche : rien »."""
     rendu, dans_bloc = [], False
@@ -88,11 +104,14 @@ def lire(texte):
         if geste:
             champs = champs[:-1]
         sorte = _sorte(champs[0]) if len(champs) >= 3 else None
-        if sorte:
-            objet, vu = champs[1].strip("` "), " · ".join(champs[2:])
+        objet = _lieu(champs[1]) if sorte else ""
+        if sorte and objet:
+            vu = " · ".join(champs[2:])
         else:
             sorte, objet, vu = "autre", "", " · ".join(champs)
-        rendu.append({"sorte": sorte, "objet": objet, "vu": vu, "geste": geste, "brut": "finding · " + reste})
+        lisible = bool(objet) or not m.group(1)
+        rendu.append({"sorte": sorte, "objet": objet, "vu": vu, "geste": geste, "brut": "finding · " + reste,
+                      "lisible": lisible})
     return rendu
 
 
@@ -239,7 +258,9 @@ def relever(a, run):
         else:
             textes = [sys.stdin.read()]
         de, source = a.de, a.source or "session de #%d" % a.de
-    vus = [f for t in textes for f in lire(t)]
+    tous = [f for t in textes for f in lire(t)]
+    vus = [f for f in tous if f["lisible"]]
+    illisibles = list(dict.fromkeys(f["brut"] for f in tous if not f["lisible"]))
     jour = datetime.date.today().isoformat()
     entres = ajouter(registre, vus, de, source, jour)
     trace = a.pr is not None and tracer(registre, a.pr, de, etat, len({f["brut"] for f in vus}), jour)
@@ -254,6 +275,12 @@ def relever(a, run):
     elif a.pr is not None:
         print("PR %s relevée avant sa fusion : relance ce relevé une fois la PR fusionnée, la clôture de #%s l'exige "
               "(#558)." % (a.pr, de))
+    for brut in illisibles:
+        print("Illisible, non relevé : %s" % brut)
+    if illisibles:
+        print("Redemande-la à sa session au format « finding · <sorte> · <lieu> · <le fait> » (sorte : gain, panne, "
+              "piège, dette ou idée ; lieu nu, entre accents graves ou en lien Markdown)%s, puis relance ce relevé." % (
+                  " par un commentaire de sa PR" if a.pr is not None else ""))
     reste = [e for e in registre if not est_trace(e) and not e.get("sort")]
     if reste:
         print("Sans sort : %s. Donne à chacun le sien (sort : --ligne, --rattache, --ecarte)." % ", ".join(

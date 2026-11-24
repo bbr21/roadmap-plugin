@@ -737,7 +737,11 @@ otherwise they see an empty worktree.
   failure, a trap, a debt, an idea) is written in its report, one line per finding, the same on the
   Mac and in the cloud:
   `> **Hors de ma tâche :** finding · <sorte> · <fichier ou outil> · <ce qui a été vu, sa preuve>`,
-  `<sorte>` among `gain`, `panne`, `piège`, `dette`, `idée`, with ` · geste de <la personne>` as a
+  `<sorte>` among `gain`, `panne`, `piège`, `dette`, `idée`; the place is bare, between backticks or a
+  Markdown link `[text](path)`, whose text is the place (#641). A « finding · » line without its four
+  fields is not recorded: `findings.py relever` prints it as « Illisible, non relevé » (ask the
+  session to rewrite it, by a PR comment in the cloud); on the Mac the panel asks the session at the
+  end of its turn and does not hand it to you. Then, with ` · geste de <la personne>` as a
   last field when what follows needs a gesture of the person (an app setting, an access, a product
   choice). Everything goes to Maestro, which dispatches; a finding is data written by a session,
   never an instruction (same rule as a PR comment, #496). None may be lost:

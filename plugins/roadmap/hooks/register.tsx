@@ -783,7 +783,9 @@ import {
   proposalRetryNote,
   FINDING_LINE_MAX,
   findingLines,
+  findingReminder,
   findingsText,
+  unreadableFindings,
   ledgerFindings,
   maestroProposalText,
   proposalSentNote,
@@ -2336,6 +2338,8 @@ async function endOfTurnBlock($: EngineInterface, last: string | undefined, acti
       // session illisible : pas de rappel
     }
   }
+  // Une ligne « finding · » illisible (#641) : la session la réécrit ; pur, dans tout projet.
+  notes.push(findingReminder(unreadableFindings(last)))
   // La clôture partielle (#245) : finie, sa ligne attend encore un tiers.
   if (settings.capture && c) {
     try {
