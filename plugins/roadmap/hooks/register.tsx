@@ -721,6 +721,10 @@ import {
   openListBox,
   openListRefusal,
   wakeTurn,
+  readReportBlock,
+  reportPersonNote,
+  personNoteSaid,
+  personNotesText,
   prefsChangedLead,
   contextAfterCompact,
   contextShrank,
@@ -3939,6 +3943,95 @@ async function receiveFindings($: EngineInterface): Promise<string | undefined> 
   const rest = kept.filter(k => (k.lot === id ? !ledger.lines.has(k.line) : now - k.at <= FINDING_MAX_MS))
   if (rest.length !== kept.length) await storeSet($, FINDINGS_KEY, rest)
   return findingsText(rest.filter(k => k.lot === id), ledger.open)
+}
+
+// --- La note « Pour la personne » du compte rendu (#640) -------------------------------------------------------
+// La puce « Pour <la personne> » du compte rendu d'une fille de Maestro (les cas à regarder, avec leurs sous-puces) est
+// gardée pour lui dans le store ; il la reçoit à chaque tour de la personne, jusqu'à ce que sa réponse la reprenne.
+
+const PERSON_NOTES_KEY = 'maestro-person-notes'
+/** Une note non dite tombe après sept jours, ou après cinq fois redonnée. */
+const PERSON_NOTE_MAX_MS = 7 * 24 * 3600 * 1000
+const PERSON_NOTE_MAX_GIVEN = 5
+
+type KeptPersonNote = { lot: string; from: string; fromTitle: string; label: string; text: string; subs?: string[]; at: number; given: number }
+
+/** Les notes données à Maestro à ce tour, que sa réponse doit reprendre pour les faire tomber. */
+let personNotesGiven: { from: string; text: string }[] = []
+
+async function loadPersonNotes($: EngineInterface): Promise<KeptPersonNote[]> {
+  const stored = await storeGet($, PERSON_NOTES_KEY)
+  if (!Array.isArray(stored)) return []
+  return stored.filter((k): k is KeptPersonNote => {
+    const v = k as Partial<KeptPersonNote> | null
+    return (
+      !!v &&
+      typeof v.lot === 'string' &&
+      typeof v.from === 'string' &&
+      typeof v.text === 'string' &&
+      typeof v.at === 'number' &&
+      typeof v.given === 'number' &&
+      (v.subs === undefined || (Array.isArray(v.subs) && v.subs.every(x => typeof x === 'string')))
+    )
+  })
+}
+
+/**
+ * La fin du tour d'une fille de Maestro : sa note « Pour la personne » est gardée pour lui, une par session.
+ * Sans note, aucun appel ; aucune panne ne bloque le tour.
+ */
+async function keepPersonNote($: EngineInterface, answer: unknown): Promise<void> {
+  const block = typeof answer === 'string' ? readReportBlock(answer) : undefined
+  const note = block ? reportPersonNote(block.lines) : undefined
+  if (!note) return
+  try {
+    if (!(await parentIsMaestro($))) return
+    const me = await ownParent($)
+    if (!me) return
+    const kept = await loadPersonNotes($)
+    const subs = note.subs ?? []
+    const same = kept.find(k => k.from === me.id && k.lot === me.parent && k.text === note.text && (k.subs ?? []).join('\n') === subs.join('\n'))
+    if (same) return
+    const ran = await sessionRead($, { tool: GET_SESSION_TOOL, session_id: 'self' })
+    const title = ran.deny === undefined && !ran.isError ? sessionTitleIn(ran.text ?? '') : ''
+    const at = await clockOrDate($)
+    const fresh: KeptPersonNote = { lot: me.parent, from: me.id, fromTitle: title || me.id, label: note.label, text: note.text, ...(subs.length > 0 ? { subs } : {}), at, given: 0 }
+    await storeSet($, PERSON_NOTES_KEY, [...kept.filter(k => k.from !== me.id), fresh])
+  } catch {
+    // store ou fiche illisible : la note reste dans le compte rendu, que Maestro lit
+  }
+}
+
+/**
+ * Chez Maestro, à chaque tour de la personne (pas un réveil) : les notes « Pour la personne » de ses sessions pas encore
+ * reprises. Une note trop vieille ou déjà redonnée cinq fois tombe. Appelée seulement quand le message a déjà lu que la
+ * session est Maestro.
+ */
+async function receivePersonNotes($: EngineInterface): Promise<string | undefined> {
+  const kept = await loadPersonNotes($)
+  if (kept.length === 0) return undefined
+  const id = (await readOwnSession($)).id
+  const now = await clockOrDate($)
+  const live = kept.filter(k => now - k.at <= PERSON_NOTE_MAX_MS && k.given < PERSON_NOTE_MAX_GIVEN)
+  const mine = live.filter(k => k.lot === id)
+  const next = live.map(k => (mine.includes(k) ? { ...k, given: k.given + 1 } : k))
+  if (mine.length > 0 || live.length !== kept.length) await storeSet($, PERSON_NOTES_KEY, next)
+  personNotesGiven = mine.map(k => ({ from: k.from, text: k.text }))
+  return personNotesText(mine)
+}
+
+/** La fin du tour de Maestro : une note donnée à ce tour que sa réponse reprend tombe. Sans note donnée, aucun appel. */
+async function settlePersonNotes($: EngineInterface, answer: unknown, aborted: boolean): Promise<void> {
+  const given = personNotesGiven
+  personNotesGiven = []
+  if (given.length === 0 || aborted || typeof answer !== 'string') return
+  try {
+    const kept = await loadPersonNotes($)
+    const rest = kept.filter(k => !(given.some(g => g.from === k.from && g.text === k.text) && personNoteSaid(k, answer)))
+    if (rest.length !== kept.length) await storeSet($, PERSON_NOTES_KEY, rest)
+  } catch {
+    // store illisible : la note revient au tour suivant
+  }
 }
 
 /** La clé du dernier état dit à Maestro : le même ne repart pas tant qu'aucun vrai message n'a relancé la session. */
@@ -10990,6 +11083,7 @@ export const register: Register = (on, options) => {
     // le nouveau bloc remplace alors l'ancien. Puis le rappel du mode ADHD.
     // Maestro ou non, tel que ce message l'a déjà lu : les findings ne relisent pas la fiche pour le savoir (#531).
     let maestroSeen = false
+    let wakeSeen = false
     try {
       const current = await readSessionPrefs($)
       const block = sessionPrefsText(current.prefs, current.error, current.project, current.design, current.roadmap)
@@ -11002,6 +11096,7 @@ export const register: Register = (on, options) => {
       const maestro = await maestroHere($)
       maestroSeen = maestro
       const wake = maestro && wakeTurn(e.text)
+      wakeSeen = wake
       const reminder = wake
         ? maestroWakeReminder(await read($, pendingAsksAtom))
         : maestro ? maestroPrefsReminder(current.prefs) : sessionPrefsReminder(current.prefs)
@@ -11030,6 +11125,13 @@ export const register: Register = (on, options) => {
       if (findings !== undefined) texts.push(findings)
     } catch {
       // store ou registre illisible : ils attendent le message suivant
+    }
+    // Et ce que ses sessions ont écrit « Pour la personne », à chaque tour de la personne (#640).
+    try {
+      const notes = maestroSeen && !wakeSeen ? await receivePersonNotes($) : undefined
+      if (notes !== undefined) texts.push(notes)
+    } catch {
+      // store illisible : elles attendent le message suivant
     }
     // Un parent reçoit les nouvelles de ses enfants qui coincent ou sont à archiver (#84).
     try {
@@ -11513,6 +11615,8 @@ export const register: Register = (on, options) => {
     const wakeNow = () => (wakeOnce ??= (async () => childWake({ ...wakeBox, answer: e.answer, background: await inFlight($, e.turnId) }))())
     // Ses findings sont gardés pour Maestro avant qu'il soit réveillé (#531).
     if (!e.isAborted) await keepFindings($, e.answer)
+    if (!e.isAborted) await keepPersonNote($, e.answer)
+    await settlePersonNotes($, e.answer, !!e.isAborted)
     if (!e.isAborted) await tellMaestro($, wakeNow)
     try {
       const wake = e.isAborted ? undefined : (await ownParent($)) ? await wakeNow() : undefined
