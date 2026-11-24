@@ -84,6 +84,33 @@ BLOC = (
     "- **Méthode non suivie** : <la skill ou l'étape de méthode sautée, et pourquoi>",
 )
 
+# #639 : la puce « Pour la personne » ne demande jamais un geste du gardien ou de Maestro ; mot pour mot
+# `CLOUD_PERSON_BULLET_RULE` du panneau (hooks/parse.ts).
+REGLE_POUR_PERSONNE = (
+    "La puce « Pour <la personne> » de ton compte rendu ne demande jamais un geste du gardien ou de Maestro (#639) : "
+    "ni fusion, ni « Ready for review », ni vérification de déploiement, ni publication, ni suppression de branche, "
+    "ni build ; ces gestes vont dans « Pour Maestro ». Avant tout conseil sur ta PR, relis ses commentaires : une PR "
+    "que le gardien ou Maestro dit « retenue » ne se propose plus à la fusion, et ton compte rendu dit ce qui la retient."
+)
+
+# #639 (F98) : le titre de la PR, « #N · NOM » ; mot pour mot `cloudPrTitleRule` du panneau.
+REGLE_TITRE_PR = (
+    "Titre ta PR « #%(id)s · %(nom)s » (#639) : « # », le numéro de ta tâche, puis son nom ; "
+    "jamais « N · … » ni « … (id:N) »."
+)
+NOM_DE_LIGNE = re.compile(r"\|\s*nom:([^|`]+?)\s*(?=\||`)")
+
+
+def nom_de_ligne(brut, libelle):
+    """Le `nom:` de la ligne brute, sinon son libellé sans point final (jumelle de `lineNameOf`)."""
+    m = NOM_DE_LIGNE.search(brut)
+    return m.group(1) if m else libelle.rstrip(".")
+
+
+def regle_titre_pr(ident, nom):
+    return REGLE_TITRE_PR % {"id": ident, "nom": nom}
+
+
 # #474 : la branche poussée au départ, le panneau la voit sur origin et prend la ligne sans attendre que Maestro se
 # réveille ; `briefBranchOf` de hooks/prise-cloud.ts lit la branche dans la phrase « Travaille sur la branche … ».
 REGLE_DEPART = (
@@ -386,6 +413,7 @@ def texte_brief(e):
         "",
         "Travaille sur la branche `%s`, partie de `origin/main`." % branche,
         REGLE_DEPART % {"branche": branche},
+        regle_titre_pr(ident, nom_de_ligne(e["line"], e["label"])),
         "",
         "Tes règles : lis `docs/session-cloud.md` à la racine du dépôt avant tout geste ; elles remplacent les "
         "règles du Mac de CLAUDE.md.",
@@ -399,6 +427,8 @@ def texte_brief(e):
         REGLE_SOUS_AGENT,
         "",
         REGLE_BLOC,
+        "",
+        REGLE_POUR_PERSONNE,
         "",
         # #496, #559 : le bloc de fin que la personne colle dans Maestro.
         regle_bloc_de_fin(ident),

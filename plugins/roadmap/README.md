@@ -862,6 +862,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.313.0 (2026-11-23)** : maestro : la puce « Pour la personne » d'une session cloud ne demande plus de geste du gardien ou de Maestro (fusion, publication), les PR cloud portent le titre « #N · nom », et Maestro relit une telle demande avant de la redire (#639)
 - **0.312.0 (2026-11-23)** : maestro : une session d'une tâche de projet s'intitule « <client> #N · nom » (Revlon #573 · Pro BF), sans « · local » ni « · cloud », carte et session ; une tâche de code garde « #N · nom · lieu » (#643)
 - **0.311.0 (2026-11-23)** : maestro : le brief cloud dit quoi faire d'un sous-agent bloqué sur une permission (sa demande attend dans l'app de la personne : relire les règles ask, le dire en PR, TaskStop) (#642)
 - **0.310.0 (2026-11-23)** : maestro : le compte rendu d'une session arrive entier chez Maestro, sous-puces comprises, et la puce « Pour la personne » lui est redite tant qu'il ne l'a pas reprise ; plus de « Il y manque » quand c'est le panneau qui n'a pas su lire (#640)
