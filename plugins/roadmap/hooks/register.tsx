@@ -117,7 +117,7 @@ import { MIX, PX, RADIUS, SIZE, SPACE, TEXT } from './tokens'
 import { BEFORE_KEY, CLOSED_KEY, NATIVE_KEY, beforeMap, closedKeys, drawWrittenMessage, keepBefore, keepClosed, keepNative, nativeKeys, splitWritten, testSessions, withoutClosed, withoutNative, writtenCards, type WrittenLine, type WrittenStart, type WrittenWho } from './cartes'
 import { CARD_DEADLINE_MS, CARD_LATE_WHY, cardTargetOf, dismissCall, panelChoiceIn, proposalIdIn, reachableReco, recoTargetRefusal, withFreshBackground, type Place } from './depart'
 import { CLOUD_WATCH_EVERY_MS, CLOUD_WATCH_KEY, MISSION_START_KEY, addMissionStart, addWatch, startedAtCall, briefBranchOf, dueWatches, lineVerdict, missionStartList, pushedSince, remoteHeads, startedCardTitles, watchList, type CloudWatch } from './prise-cloud'
-import { CLOUD_WAKE_EVERY_MS, CLOUD_WAKE_KEY, CLOUD_WAKE_PR_FIELDS, cloudWakeAdopts, cloudWakeDue, cloudWakes, wakePrompt, wakeStateOf, type WakeRole } from './reveil-cloud'
+import { CLOUD_REMIND_EVERY_MS, CLOUD_WAKE_EVERY_MS, CLOUD_WAKE_KEY, CLOUD_WAKE_PR_FIELDS, cloudReminders, cloudWakeAdopts, cloudWakeDue, cloudWakes, readyPrs, wakePrompt, wakeStateOf, type WakeEvent, type WakeRole } from './reveil-cloud'
 import { MISSION_WAKE_EVERY_MS, MISSION_WAKE_KEY, missionDeparted, missionWakeDue, missionWakePrompt, missionWakeStateOf, missionWakes } from './reveil-mission'
 import { gardienBandRow, gardienCardRefusal, gardienDeliveryNote, gardienOf, gardienReminder, goesToGardien, isGardienSession, withoutGardien } from './gardien'
 import { CONTROL_PANE, drawControl, openControl, redrawControl, type ControlDeps } from './controle'
@@ -7113,8 +7113,17 @@ async function takeWatchedLine($: EngineInterface, source: Source, w: CloudWatch
 // le dernier commentaire de l'auteur qui dit « prête à fusionner », « bloquée » ou « attend une réponse » dépose un
 // message dans la boîte d'envoi, que le dessin du panneau vide (un hook, comme `launchOutbox`, #140). Le message vient
 // du plugin, pas d'un clic : il part sans `asUser`, et le moteur l'encadre comme tel.
+// #621 : Maestro relit aussi les PR toutes les 10 minutes au plus, même derrière un gardien qui lit, pour redire les
+// « prêtes à fusionner » qui attendent (`cloudReminders`) ; il n'écrit alors rien dans `cloud-wake`, le gardien garde
+// ses réveils. La trace de ce rappel vit en mémoire de la session, jamais au store.
 
 let cloudWakeNextAt = 0
+/** #621 : l'instant (horloge du moteur) de la dernière lecture du rappel ; 0 avant la première depuis le chargement. */
+let remindReadAt = 0
+/** #621 : l'instant du premier passage de `checkCloudWake` dans ce chargement : le premier rappel attend 10 min depuis lui. */
+let remindLoadedAt = 0
+/** #621 : les PR prêtes et rattachées à la dernière lecture du rappel : une prête qui n'y était pas se redit tout de suite. */
+let remindKnown: Set<number> | undefined
 let cloudWaking = false
 /** Les marques Maestro, relues au plus une fois par minute (temps réel) : la minuterie de 3 s ne lit pas le store. */
 let cloudWakeMarks: { at: number; ids: Record<string, number> } | undefined
@@ -7167,27 +7176,45 @@ async function checkCloudWake($: EngineInterface): Promise<void> {
     const tasks = await loadParsed($, files(source).open, 'ROADMAP.md')
     if (typeof tasks === 'string') return
     const root = source.root ?? source.dir
-    // #580 : une tâche ouverte sans `branche:` peut se rattacher à une PR par le « #N » de son titre. Sans ligne cloud
-    // prise, on ne lit le store que si les PR déjà en mémoire (`cloudPrsMem`, lues pour la bande, sans store) en
-    // rattachent une : le budget de lectures de l'ouverture de Maestro tient (budget-fond, 94).
-    const mem = cloudPrsMem && cloudPrsMem.root === root ? cloudPrsMem.value : undefined
-    if (!tasks.some(t => !t.done && t.lieu === 'cloud' && t.branche) && !cloudWakeAdopts(tasks, mem, now)) return
+    // #580 : une tâche ouverte sans `branche:` peut se rattacher à une PR par son titre ou sa branche. Sans ligne cloud
+    // prise, le rattachement se décide sur `readCloudPrs` (#621, gardée 60 s en mémoire et au store, partagée avec la
+    // bande), jamais sur ce que la bande a déjà lu : chez un gardien ou une session sans bande récente, la mémoire
+    // manquait et la PR d'une tâche non prise ne réveillait personne. L'ordre des conditions garde le budget : avec une
+    // ligne cloud prise, rien n'est lu ici.
+    if (!tasks.some(t => !t.done && t.lieu === 'cloud' && t.branche)) {
+      const known = await readCloudPrs($, root, projectSettings(source).depot)
+      if (!cloudWakeAdopts(tasks, known, now)) return
+    }
+    if (!remindLoadedAt) remindLoadedAt = now
     const stored = await storeGet($, CLOUD_WAKE_KEY).catch(() => undefined)
     const state = wakeStateOf(stored, root)
-    // Une autre session du projet a pris cette minute ; derrière un gardien qui lit, Maestro attend (#528).
-    if (!cloudWakeDue(state, now, role)) return
+    // Une autre session du projet a pris cette minute ; derrière un gardien qui lit, Maestro attend (#528) : il ne lit
+    // alors que pour le rappel (#621), toutes les 10 minutes au plus.
+    const due = cloudWakeDue(state, now, role)
+    const remind = role === 'maestro' && (due || now - (remindReadAt || remindLoadedAt) >= CLOUD_REMIND_EVERY_MS)
+    if (!due && !remind) return
     const all = (o: unknown) => (typeof o === 'object' && o !== null && !Array.isArray(o) ? { ...(o as Record<string, unknown>) } : {})
-    await storeSet($, CLOUD_WAKE_KEY, { ...all(stored), [root]: { at: now, seen: state.seen, by: role } } as unknown as StoreValue)
+    if (due) await storeSet($, CLOUD_WAKE_KEY, { ...all(stored), [root]: { at: now, seen: state.seen, by: role } } as unknown as StoreValue)
     const repo = await cloudRepoOf($, root, projectSettings(source).depot)
     if (!repo) return
     const prs = await runGh($, ['pr', 'list', '-R', repo, '--state', 'open', '--limit', '100', '--json', CLOUD_WAKE_PR_FIELDS])
     if (prs === undefined) return
     const held = cloudWakeAdopts(tasks, prs, now) ? await macHeld($, source, now).catch(() => new Set<string>()) : new Set<string>()
-    const { events, seen } = cloudWakes(tasks, prs, state.seen, now, held)
-    const again = await storeGet($, CLOUD_WAKE_KEY).catch(() => undefined)
-    await storeSet($, CLOUD_WAKE_KEY, { ...all(again), [root]: { at: now, seen, by: role } } as unknown as StoreValue)
-    if (events.length === 0) return
-    queueWake($, wakePrompt(events, role, gardienOfMaestro))
+    let events: WakeEvent[] = []
+    if (due) {
+      const woke = cloudWakes(tasks, prs, state.seen, now, held)
+      events = woke.events
+      const again = await storeGet($, CLOUD_WAKE_KEY).catch(() => undefined)
+      await storeSet($, CLOUD_WAKE_KEY, { ...all(again), [root]: { at: now, seen: woke.seen, by: role } } as unknown as StoreValue)
+    }
+    // #621 : le rappel des prêtes qui attendent, chez Maestro seulement ; sa trace reste en mémoire de la session.
+    const reminders = role === 'maestro' ? cloudReminders(tasks, prs, now, remindReadAt, held, remindKnown) : []
+    if (role === 'maestro') {
+      remindReadAt = now
+      remindKnown = readyPrs(tasks, prs, now, held)
+    }
+    if (events.length === 0 && reminders.length === 0) return
+    queueWake($, wakePrompt(events, role, gardienOfMaestro, reminders))
     // Le panneau se redessine et envoie le réveil.
     await update($, liveVersionAtom, v => v + 1)
   } catch {

@@ -862,6 +862,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.307.0 (2026-11-23)** : maestro : une PR cloud prête qui attend se redit à Maestro (2 h, 4 h, 8 h…), même derrière un gardien, et le réveil rattache une tâche non prise par sa branche ou son titre (#621)
 - **0.306.2 (2026-11-19)** : panneau : dans la bande de Maestro et le bloc « En session », le mot d'état, l'étape et la durée prennent la largeur de leur texte, la place gagnée va au titre (#636)
 - **0.306.1 (2026-11-19)** : panneau : le bloc « En session » et la bande de Maestro écartent une tâche cloud fusionnée ou livrée et la carte retirée au Centre de contrôle (#632)
 - **0.306.0 (2026-11-19)** : roadmap : une tâche publiée se clôt à sa publication, vérifié:non et essai:, sans session de test ; le « c'est bon » pose vérifié:<date> (#634)

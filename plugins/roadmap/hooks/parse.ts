@@ -12275,10 +12275,18 @@ export function mergedLocalIds(tasks: readonly Task[], prs: unknown): Set<string
   return out
 }
 
-/** Le numéro de tâche d'un titre de PR (#445) : « #N » en tête (« #445 · … », « #445: … », « [#445] … ») ou « (#N) » en fin. */
+/**
+ * Le numéro de tâche d'un titre de PR (#445) : « #N » en tête (« #445 · … », « #445: … », « [#445] … ») ou « (#N) » en fin.
+ * #621, deux formes de plus vues chez Splitmybill : un numéro nu en tête suivi de « · » (« 428 · Solo mode … ») et
+ * « (id:N) » en fin (« docs: étude … (id:429) »). Jumelle de `titre_id` de suivi_cloud.py.
+ */
 export function cloudTitleId(title: unknown): string | undefined {
   if (typeof title !== 'string') return undefined
-  const m = title.match(/^\s*\[?#([1-9]\d*)(?![\d\w])/) ?? title.match(/\(#([1-9]\d*)\)\s*$/)
+  const m =
+    title.match(/^\s*\[?#([1-9]\d*)(?![\d\w])/) ??
+    title.match(/^\s*([1-9]\d*)\s*·/) ??
+    title.match(/\(#([1-9]\d*)\)\s*$/) ??
+    title.match(/\(id:([1-9]\d*)\)\s*$/)
   return m?.[1]
 }
 
@@ -12293,6 +12301,9 @@ export const CLOUD_ADOPT_MS = 7 * 24 * 3600_000
  * « #N » d'une tâche rouverte ne la ferait pas passer pour lancée). `held` : les tâches qu'une session du Mac porte
  * (`macHeldIds`), qu'aucune PR ne rattache (#571 : les correctifs de #510, ouverts par sa session du Mac archivée,
  * la montraient en session cloud « fusionnée »). Illisible : rien, jamais d'exception.
+ * #621 : la PR dont la branche est `cloudBranchOf(tâche)`, celle que le brief a donnée à la tâche, la rattache aussi,
+ * quel que soit son titre, aux mêmes conditions et au même classement que le titre. Jumelle de `lignes_rattachees` de
+ * suivi_cloud.py.
  */
 export function cloudAdopted(tasks: readonly Task[], prs: unknown, now: number, held: ReadonlySet<string> = new Set()): Map<string, string> {
   const out = new Map<string, string>()
@@ -12307,23 +12318,31 @@ export function cloudAdopted(tasks: readonly Task[], prs: unknown, now: number, 
   if (!Array.isArray(list)) return out
   const taken = new Set(tasks.flatMap(t => (t.branche ? [t.branche] : [])))
   // #571 : une tâche qu'une session du Mac porte (archivée comprise) n'est pas une session cloud : ses PR sont les siennes.
-  const free = new Set(tasks.filter(t => !t.done && t.id !== undefined && !t.branche && !held.has(t.id)).map(t => t.id as string))
+  const freeTasks = tasks.filter(t => !t.done && t.id !== undefined && !t.branche && !held.has(t.id))
+  const free = new Set(freeTasks.map(t => t.id as string))
+  // #621 : la branche que le brief a donnée à chaque tâche libre.
+  const byBranch = new Map<string, string[]>()
+  for (const t of freeTasks) byBranch.set(cloudBranchOf(t), [...(byBranch.get(cloudBranchOf(t)) ?? []), t.id as string])
   const at = (p: Record<string, unknown>) => (typeof p.createdAt === 'string' ? Date.parse(p.createdAt) : Number.NaN)
   const best = new Map<string, Record<string, unknown>>()
   for (const p of list) {
     if (typeof p !== 'object' || p === null) continue
     const pr = p as Record<string, unknown>
-    const id = cloudTitleId(pr.title)
     const head = pr.headRefName
-    if (id === undefined || !free.has(id) || typeof head !== 'string' || head === '' || taken.has(head) || pr.isCrossRepository === true) continue
+    if (typeof head !== 'string' || head === '' || taken.has(head) || pr.isCrossRepository === true) continue
+    const titled = cloudTitleId(pr.title)
+    const ids = new Set([...(titled !== undefined && free.has(titled) ? [titled] : []), ...(byBranch.get(head) ?? [])])
+    if (!ids.size) continue
     if (pr.state !== 'OPEN' && !(Number.isFinite(at(pr)) && now - at(pr) <= CLOUD_ADOPT_MS)) continue
-    const prev = best.get(id)
     const rank = (x: Record<string, unknown>) => [x.state === 'OPEN' ? 1 : 0, Number.isFinite(at(x)) ? at(x) : -Infinity] as const
-    if (!prev) best.set(id, pr)
-    else {
-      const [a1, a2] = rank(pr)
-      const [b1, b2] = rank(prev)
-      if (a1 > b1 || (a1 === b1 && a2 > b2)) best.set(id, pr)
+    for (const id of ids) {
+      const prev = best.get(id)
+      if (!prev) best.set(id, pr)
+      else {
+        const [a1, a2] = rank(pr)
+        const [b1, b2] = rank(prev)
+        if (a1 > b1 || (a1 === b1 && a2 > b2)) best.set(id, pr)
+      }
     }
   }
   for (const [id, pr] of best) out.set(id, pr.headRefName as string)

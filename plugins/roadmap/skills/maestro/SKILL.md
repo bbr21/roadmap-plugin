@@ -447,7 +447,12 @@ with « Cible : en local, … » and the recommendation. What changes for Maestr
   A cloud session started outside the panel's ▶ (the native card, Options then cloud) has no taken line (#445): a
   PR whose title starts with « #N » (or ends with « (#N) ») ties it to open task N without `branche:`, its branch
   standing for `branche:`; `suivi_cloud.py` lists it « sans ligne prise (<branch>) » and the panel shows it too (in a
-  project open to the cloud). Take its line then (`qui:`, `branche:` the PR's branch, `lieu:cloud`) so the merge and
+  project open to the cloud). Since #621 the PR's branch also ties it when it is the brief's branch (`feat/<slug of
+  the name>`), and the titles « N · … » and « … (id:N) » count; the state is read from the first sentence or, failing
+  that, from the end-block line `#N prête à fusionner, PR M`; an open PR nothing ties that still says a state is
+  listed « PR M sans ligne · … » (take its line or ask the person); a ready PR older than 2 h says « prête depuis 3 h »,
+  and the panel re-announces it to you (never to the gardien) at 2 h, 4 h, 8 h…: merge it, or tell the person what
+  holds it. Take its line then (`qui:`, `branche:` the PR's branch, `lieu:cloud`) so the merge and
   the close follow the usual path. A task held by a Mac session, archived or not, is never tied this way (#573): the
   script reads the panel's index of Mac sessions (`task-session-ids` in the plugin store), so the « #N » PR of a fix
   opened by that Mac session does not come back as a cloud session.
