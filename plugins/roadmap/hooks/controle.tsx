@@ -557,9 +557,7 @@ export async function drawControl($: EngineInterface, e: RenderInput<'Pane'>, pa
     const done = k.tone === 'done'
     // #566 (maquette v4) : sans nouvelles depuis 12 h, la prise débranchée, le bord et le mot d'alerte (`block`).
     const quiet = k.tone === 'quiet'
-    // #629 : une PR fusionnée en test : la coche de « en test », jamais « prête »
-    const test = k.tone === 'test'
-    const [mark, markAlt] = quiet ? [unplugIcon(palette.block, 14, 'sans nouvelles'), 'sans nouvelles'] : test ? [checkIcon(palette.finished, 14), 'en test'] : done ? [checkIcon(palette.finished, 14), 'prête'] : k.tone === 'wait' ? [handIcon(palette.wait, 14), "t'attend"] : [spinnerIcon(palette.live, 14), 'tourne']
+    const [mark, markAlt] = quiet ? [unplugIcon(palette.block, 14, 'sans nouvelles'), 'sans nouvelles'] : done ? [checkIcon(palette.finished, 14), 'prête'] : k.tone === 'wait' ? [handIcon(palette.wait, 14), "t'attend"] : [spinnerIcon(palette.live, 14), 'tourne']
     const node = controlNodeIcon(palette, { kind: 'cloud', n: 0 })
     const pills: RenderElement[] = []
     if (quiet) {
@@ -575,7 +573,6 @@ export async function drawControl($: EngineInterface, e: RenderInput<'Pane'>, pa
         ),
       )
     } else if (k.tone === 'wait') pills.push(pill("t'attend", palette.waitTint, palette.waitOn))
-    else if (test) pills.push(pill(k.word, palette.finishedTint, palette.finishedOn))
     else if (done) pills.push(pill('prête', palette.finishedTint, palette.finishedOn))
     const link = k.session ?? k.pr?.url
     const buttons: RenderElement[] = []
@@ -588,7 +585,7 @@ export async function drawControl($: EngineInterface, e: RenderInput<'Pane'>, pa
     return (
       <Box key={`card:${c.key}`} flexDirection="row" alignItems="flex-start" gap={SPACE.row}>
         <Box flexShrink={0}>{icon(node.source, 'session cloud', node.width, node.height)}</Box>
-        <Box flexGrow={1} flexShrink={1} minWidth={0} flexDirection="column" gap={SPACE.tight} borderStyle="round" borderColor={quiet ? palette.block : done || test ? palette.finished : palette.border} paddingX="sm" paddingY="xs">
+        <Box flexGrow={1} flexShrink={1} minWidth={0} flexDirection="column" gap={SPACE.tight} borderStyle="round" borderColor={quiet ? palette.block : done ? palette.finished : palette.border} paddingX="sm" paddingY="xs">
           <Box flexDirection="row" alignItems="center" gap={SPACE.row}>
             <Box flexShrink={0}>{icon(mark, markAlt, quiet ? 20 : 14, 14)}</Box>
             {heading(c)}
@@ -621,7 +618,7 @@ export async function drawControl($: EngineInterface, e: RenderInput<'Pane'>, pa
     const node = controlNodeIcon(palette, { kind: nodeKind, n: rank })
     const border = done ? palette.finished : c.state === 'paused' || c.state === 'pausing' ? palette.block : c.prio ? palette.late : palette.border
     const pills: RenderElement[] = []
-    if (done) pills.push(pill(c.test ? `en test ${c.test}` : STATE_WORDS.done, palette.finishedTint, palette.finishedOn))
+    if (done) pills.push(pill(STATE_WORDS.done, palette.finishedTint, palette.finishedOn))
     else if (c.state === 'pausing') pills.push(pill(pausingPill(c.pause?.mode ?? 'soft'), palette.blockTint, palette.blockOn))
     else if (c.prio) pills.push(pill('prioritaire', palette.lateTint, palette.lateOn))
     else if (c.state === 'wait') pills.push(pill("t'attend", palette.waitTint, palette.waitOn))
@@ -653,10 +650,7 @@ export async function drawControl($: EngineInterface, e: RenderInput<'Pane'>, pa
     if (zone === 'queue' && c.state !== 'paused') buttons.push(gesture(`ctl:retire:${keyPart(c.key)}`, closeIcon(palette.lateOn, 14), 'Retirer', 'Retirer', () => void act($, () => retire(deps, c))))
     // #629 : « Retirer » sur toute carte d'« En cours » : le volet la cache jusqu'à ce que sa tâche bouge
     else if (zone === 'run') buttons.push(gesture(`ctl:retire:${keyPart(c.key)}`, closeIcon(palette.lateOn, 14), 'Retirer', 'Retirer', () => void act($, () => retireRunning($, deps, c))))
-    // #383 : une tâche en test garde sa session ouverte (les retours de test y arrivent) : pas d'archivage d'ici.
-    if (done && c.test) {
-      // la session attend les retours de test
-    } else if (done) {
+    if (done) {
       buttons.push(gesture(`ctl:archive:${keyPart(c.key)}`, archiveIcon(palette.text3, 14), 'Archiver', 'Archiver', () => void act($, () => deps.archive(c.sessionId as string))))
     } else {
       buttons.push(gesture(`ctl:prio:${keyPart(c.key)}`, Svg ? priorityIcon(c.prio, palette, 14) : false, c.prio ? 'Prioritaire' : 'Sans priorité', 'Prioritaire', () => void act($, () => togglePrio(deps, c))))

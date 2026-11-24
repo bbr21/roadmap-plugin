@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Les mots de l'état, les mêmes pour le panneau et pour Maestro (#509).
 
-Ce module est la jumelle de `STATE_WORDS` et de `CLOUD_FAILED` de `hooks/parse.ts` : `MOTS` dit les huit mots du
+Ce module est la jumelle de `STATE_WORDS` et de `CLOUD_FAILED` de `hooks/parse.ts` : `MOTS` dit les sept mots du
 vocabulaire (un par état, quelle que soit la nature de la ligne), `ROUGES` la liste unique des conclusions de contrôle
 qui rendent une PR rouge. `test_mots_etat.py` lit `parse.ts` et vérifie que les deux disent la même chose.
 
@@ -16,7 +16,6 @@ MOTS = {
     "wait": "t'attend",
     "ready": "prête",
     "merged": "fusionnée",
-    "test": "en test",
     "done": "livrée",
     "cancelled": "annulée",
 }

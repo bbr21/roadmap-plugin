@@ -862,6 +862,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.308.0 (2026-11-23)** : panneau : une tâche close dit « vérifiée » ou « non vérifiée » dans sa fiche, avec son essai et le clic qui la passe à vérifiée ; la vue Faites a sa case « À vérifier » pour les passer en lot ; plus aucun « en test » (#635)
 - **0.307.0 (2026-11-23)** : maestro : une PR cloud prête qui attend se redit à Maestro (2 h, 4 h, 8 h…), même derrière un gardien, et le réveil rattache une tâche non prise par sa branche ou son titre (#621)
 - **0.306.2 (2026-11-19)** : panneau : dans la bande de Maestro et le bloc « En session », le mot d'état, l'étape et la durée prennent la largeur de leur texte, la place gagnée va au titre (#636)
 - **0.306.1 (2026-11-19)** : panneau : le bloc « En session » et la bande de Maestro écartent une tâche cloud fusionnée ou livrée et la carte retirée au Centre de contrôle (#632)

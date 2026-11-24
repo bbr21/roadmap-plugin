@@ -91,7 +91,9 @@ export type View = {
   /** Les jours que montre la vue Faites (#497) : 14 d'office, 14 de plus par « Voir 14 jours de plus » ; absent, 14. */
   doneDays?: number
   /** Dans la vue Faites (#624) : les faites (d'office) ou les annulées, par le sélecteur « Faites | Annulées » ; absent, les faites. */
-  doneKind?: 'done' | 'cancelled'
+  doneKind?: 'done' | 'cancelled' | 'verify'
+  /** Les ids des tâches choisies dans la case « À vérifier » de la vue Faites (#635) ; vide ou absent sinon. */
+  verifyPick?: string[]
   /** Sections repliées sous un filtre, où tout est déplié par défaut ; vidé à chaque changement de filtre. */
   closedGroups: string[]
   /** Tâche close dont la confirmation « désarchiver la session » est ouverte (clé `taskKey`, #302) ; vide ou absente sinon. */

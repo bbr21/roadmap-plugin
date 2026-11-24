@@ -68,7 +68,6 @@ import {
   archiveIcon,
   cloudIcon,
   computerIcon,
-  flaskIcon,
   bellIcon,
   cloudTints,
   unplugIcon,
@@ -114,7 +113,7 @@ import {
   textColumnPx,
 } from './icons'
 import { MIX, PX, RADIUS, SIZE, SPACE, TEXT } from './tokens'
-import { BEFORE_KEY, CLOSED_KEY, NATIVE_KEY, beforeMap, closedKeys, drawWrittenMessage, keepBefore, keepClosed, keepNative, nativeKeys, splitWritten, testSessions, withoutClosed, withoutNative, writtenCards, type WrittenLine, type WrittenStart, type WrittenWho } from './cartes'
+import { BEFORE_KEY, CLOSED_KEY, NATIVE_KEY, beforeMap, closedKeys, drawWrittenMessage, keepBefore, keepClosed, keepNative, nativeKeys, splitWritten, withoutClosed, withoutNative, writtenCards, type WrittenLine, type WrittenStart, type WrittenWho } from './cartes'
 import { CARD_DEADLINE_MS, CARD_LATE_WHY, cardTargetOf, dismissCall, panelChoiceIn, proposalIdIn, reachableReco, recoTargetRefusal, withFreshBackground, type Place } from './depart'
 import { CLOUD_WATCH_EVERY_MS, CLOUD_WATCH_KEY, MISSION_START_KEY, addMissionStart, addWatch, startedAtCall, briefBranchOf, dueWatches, lineVerdict, missionStartList, pushedSince, remoteHeads, startedCardTitles, watchList, type CloudWatch } from './prise-cloud'
 import { CLOUD_REMIND_EVERY_MS, CLOUD_WAKE_EVERY_MS, CLOUD_WAKE_KEY, CLOUD_WAKE_PR_FIELDS, cloudReminders, cloudWakeAdopts, cloudWakeDue, cloudWakes, readyPrs, wakePrompt, wakeStateOf, type WakeEvent, type WakeRole } from './reveil-cloud'
@@ -654,7 +653,6 @@ import {
   takeCloudLine,
   releaseCloudLine,
   controlCloudState,
-  testVersionOf,
   retiredMarks,
   cloudLeavesRunning,
   cloudRetiredNow,
@@ -906,6 +904,7 @@ import {
 } from './parse'
 import type { HeavyQueue, QueueMark, StoreSeen } from './parse'
 import { holdWrite } from './parse'
+import { unverifyInText, verifiedLabel, verifyInText } from './parse'
 
 /**
  * L'attente du moteur entre deux essais d'une écriture du store (#350) : son horloge, sinon `setTimeout` ;
@@ -4292,7 +4291,7 @@ async function childAlertContext($: EngineInterface): Promise<string | undefined
       // roadmap illisible : les nouvelles d'avant, sans la clôture partielle
     }
   }
-  // #366 : une tâche en test (sa session d'origine, sa session de test) attend la personne : ni « prête » ni « silencieuse ».
+  // #366 (reste) : une session « Tester #N » qui traîne ne fait pas de nouvelle « prête » ni « silencieuse ».
   const alerts = withoutTests(childAlerts({ children: withoutGardien(children), statuses, finished, alerted, now: await $.clock.now(), lines: openLines, me }), testsUnder(rows, publishedTests))
   // Les relances de cette fois s'ajoutent, avec l'étape de l'enfant ; un enfant qui n'est plus listé sort.
   const next: Record<string, ChildRelaunch> = {}
@@ -5838,15 +5837,13 @@ let controlCloudFlight: Promise<CloudControlInput[]> | undefined
  * #629 : l'entrée de carte du Centre de contrôle d'une ligne cloud (`undefined` : pas de carte), sortie de
  * `readControlCloud` pour que le bloc « En cours » et la bande retrouvent la même carte et la même marque (#632).
  */
-function controlCloudInputOf(t: BrandTask, tasks: readonly Task[], root: string, now: number): CloudControlInput | undefined {
+function controlCloudInputOf(t: BrandTask, root: string, now: number): CloudControlInput | undefined {
   if (!t.cloud || t.cloud.state === 'delivered' || t.mission?.state === 'done') return undefined
   const band = cloudRowFiche({ cloud: t.cloud, ...(t.mission ? { mission: t.mission } : {}) }).band
   // #566 : une PR ouverte sans mouvement depuis 12 h n'est plus « en session » : elle est sans nouvelles.
   const quietAt = t.mission ? undefined : cloudQuietSince(t.cloud, now)
-  // #629 : une PR fusionnée n'a plus de carte, sauf en test (la ligne ouverte de même id porte une livraison)
-  const open = tasks.find(x => x.id === t.id && !x.done)
-  const test = open ? testVersionOf(open, t.cloud.number) : undefined
-  const state = controlCloudState({ state: t.cloud.state, mark: band.mark, word: band.word, ...(quietAt !== undefined ? { quietAt } : {}), ...(test !== undefined ? { test } : {}), ...(t.mission ? { mission: true } : {}), now })
+  // #629 : une PR fusionnée n'a plus de carte (#635 : plus d'exception « en test », la ligne se clôt à la publication)
+  const state = controlCloudState({ state: t.cloud.state, mark: band.mark, word: band.word, ...(quietAt !== undefined ? { quietAt } : {}), ...(t.mission ? { mission: true } : {}), now })
   if (!state) return undefined
   const movedAt = t.cloud.updatedAt ?? t.cloud.createdAt
   const session = cloudSessionLinkOf(t)
@@ -5883,7 +5880,7 @@ async function readControlCloud($: EngineInterface, ownSource: () => Promise<Sou
         const tasks = [...(typeof open === 'string' ? [] : open), ...(typeof done === 'string' ? [] : done)]
         const root = s.root ?? s.dir
         for (const t of await cloudTasksOf($, s, tasks, x => x.nom ?? x.label, now)) {
-          const entry = controlCloudInputOf(t, tasks, root, now)
+          const entry = controlCloudInputOf(t, root, now)
           if (entry) out.push(entry)
         }
       } catch {
@@ -8707,7 +8704,7 @@ async function cloudTasksOf($: EngineInterface, source: Source, tasks: readonly 
 
 /**
  * #632 : les lignes cloud « en cours » du bloc et de la bande : celles de `cloudTasksOf` sans ce que le Centre de
- * contrôle a trié (la fusionnée en sort, sans l'exception « en test » ; la livrée aussi), et sans la carte retirée au
+ * contrôle a trié (la fusionnée en sort, comme la livrée), et sans la carte retirée au
  * Centre de contrôle, jusqu'à ce que sa tâche bouge. La fiche d'une tâche garde `cloudTasksOf`.
  */
 async function runningCloudTasksOf($: EngineInterface, source: Source, tasks: readonly Task[], short: (t: Task) => string, now: number): Promise<BrandTask[]> {
@@ -8716,7 +8713,7 @@ async function runningCloudTasksOf($: EngineInterface, source: Source, tasks: re
   const root = source.root ?? source.dir
   const marks = await controlRetiredNow($, now).catch(() => ({}) as ControlRetired)
   return rows.filter(bt => {
-    const entry = controlCloudInputOf(bt, tasks, root, now)
+    const entry = controlCloudInputOf(bt, root, now)
     return !entry || !cloudRetiredNow(entry, marks)
   })
 }
@@ -9816,6 +9813,30 @@ function sayToast($: EngineInterface, text: string): void {
   } catch {
     // pas de toast sur cette surface
   }
+}
+
+/**
+ * L'étiquette vérifiée (#635) : « vérifié:non » devient « vérifié:<aujourd'hui> » sur les lignes closes des `ids`,
+ * en une seule écriture de ROADMAP-fait.md, ou l'inverse (`on` faux). Le même geste que l'op `verify` de `tasks`.
+ */
+async function setVerified($: EngineInterface, source: Source, ids: readonly string[], on: boolean): Promise<void> {
+  await afterBackgroundWrites()
+  const today = todayOf(await $.clock.now())
+  const list = ids.map(id => `#${id}`).join(', ')
+  const out = await writeRoadmapFiles($, source, ['ROADMAP-fait.md'], `roadmap: ${on ? 'verify' : 'unverify'} ${list}`, async () => {
+    const text = await readOr($, files(source).done)
+    if (text === undefined) return { error: "ROADMAP-fait.md est introuvable : rien n'a été écrit." }
+    const next = on ? verifyInText(text, ids, today) : ids.reduce((t, id) => unverifyInText(t, id), text)
+    if (next === text) return { error: `${list} a bougé dans ROADMAP-fait.md depuis l'affichage : rien n'a été écrit, réessaie.` }
+    return { 'ROADMAP-fait.md': next }
+  }).catch((err: unknown) => ({ error: `Écriture impossible : ${err instanceof Error ? err.message : String(err)}` }))
+  if (!('error' in out)) {
+    paneCache = undefined
+    parsedFiles.clear()
+    knownSource = undefined
+    await setView($, v => ({ verifyPick: (v.verifyPick ?? []).filter(id => !ids.includes(id)) }))
+  }
+  await afterCheck($, 'error' in out ? out : { note: out.note ?? '', id: ids.length === 1 ? ids[0] as string : `${ids.length} tâches` }, on ? 'vérifiée' : 'repassée non vérifiée')
 }
 
 /**
@@ -11366,7 +11387,7 @@ export const register: Register = (on, options) => {
       const gardienFor = await gardienHere($)
       const maestro = gardienFor !== undefined || (await maestroHere($))
       delivered = { kinds: [...new Set([...delivered.kinds, ...kinds])], maestro: maestro || delivered.maestro }
-      // #366 : chez Maestro, la tâche publiée passe en test ; le rappel porte sa carte.
+      // #634 : chez Maestro, la tâche publiée se clôt à sa publication ; le rappel porte la consigne de clôture.
       const said = (ran.result as { stdout?: unknown } | undefined)?.stdout
       const test = maestro && kinds.includes('publication')
         ? await testAfterRelease($, e.command, typeof said === 'string' ? said : (ran.text ?? '')).catch(() => undefined)
@@ -11758,15 +11779,9 @@ export const register: Register = (on, options) => {
       const updated = parts.some(part => part.kind === 'cards' && part.lines.some(l => l.kind === 'upd'))
       const before = updated ? beforeMap(storedBefore) : undefined
       // Qui tient la tâche : ce que le module sait déjà des sessions (jamais un nouvel appel d'outil).
-      const tests = testSessions(sessionRows)
       // La session qui tient chaque tâche : le bouton de sa carte l'ouvre, par le chemin de « Ouvrir la session » de la fiche.
       const sessions = new Map<string, LiveEntry>()
       const who = (t: Task): WrittenWho | undefined => {
-        const test = t.id === undefined ? undefined : tests.get(t.id)
-        if (test !== undefined) {
-          sessions.set(t.id as string, { sessionId: test.sessionId, startedAt: now, title: test.title })
-          return { text: `en test ${test.version}`, tone: 'wait', session: true }
-        }
         const found = t.done ? undefined : trackedSession(source, t, data.live, data.ignored, now)
         if (!found) return undefined
         if (t.id !== undefined) sessions.set(t.id, found.entry)
@@ -13500,7 +13515,7 @@ function stepsCard(
 const STEP_WORDS: Record<StepSegment, string> = { done: 'faite', now: 'en cours', todo: 'à faire' }
 const STEP_MARKS: Record<StepSegment, string> = { done: '✓', now: '›', todo: '○' }
 /** Ce que dit l'icône de la bande d'état de la fiche (#199). */
-const BAND_MARK_WORDS: Record<NonNullable<ReturnType<typeof stateBand>['mark']>, string> = { person: 'attend ta réponse', spinner: 'en cours', merge: 'fusion', check: 'faite', flask: 'en test', bell: 'à relancer' }
+const BAND_MARK_WORDS: Record<NonNullable<ReturnType<typeof stateBand>['mark']>, string> = { person: 'attend ta réponse', spinner: 'en cours', merge: 'fusion', check: 'faite', bell: 'à relancer' }
 
 async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<RenderElement> {
   // Les gestionnaires de clic ne se vident pas ici : un rendu attend ses lectures, et un clic
@@ -13702,10 +13717,6 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     return found && found.state === 'open' ? found : undefined
   }
   const isLive = (t: Task) => liveOf(t) !== undefined
-  // #375 (maquette A) : en test, une session « Tester #N · X.Y.Z » ouverte ; sa ligne le dit à la place de sa barre.
-  const testsNow = testSessions(listedSessionRows())
-  const testOf = (t: Task) => (t.done || t.id === undefined ? undefined : testsNow.get(t.id))
-  const testEntry = (test: { sessionId: string; title: string }): LiveEntry => ({ sessionId: test.sessionId, startedAt: now, title: test.title })
   // Les notes d'étapes des tâches en session (#143) : la mini-barre et la carte de leur ligne.
   // Avec « Fusionner » ajoutée dans un dossier à git (#191).
   const rowSteps = new Map<string, ChildStatus>()
@@ -14038,8 +14049,6 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     const srcPath = srcFile(current.src) ? `${source.dir}/${current.src!.trim()}` : undefined
     const due = current.due && !current.done ? dueLabel(current.due, today) : undefined
     const live = liveOf(current)
-    // #375 (maquette A) : publiée, sa session « Tester #N · X.Y.Z » ouverte : la carte sarcelle remplace la bleue.
-    const ficheTest = testOf(current)
     // Depuis quand elle tourne (#341) : la date de création de sa session, apprise une fois, en fond ; sans elle,
     // une session repérée par son titre n'a que sa dernière activité.
     if (live?.entry.sessionId && !current.done) void learnCreated($, [live.entry.sessionId], now)
@@ -14843,7 +14852,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
       waitState === 'wait' ? brandStateOf(taskSessionState({ asking: stepsNote?.question !== undefined, ahead: aheadNow ?? 0, ...(stepsNote ? { status: stepsNote } : {}), ...(ficheMerged ? { merged: true } : {}) })) : waitState
     // #440 : une ligne cloud n'a ni session locale ni étapes à lire ; sa fiche dit l'état de sa PR, celui de la bande.
     const cloudRow =
-      !current.done && !headState && current.id !== undefined && !ficheTest
+      !current.done && !headState && current.id !== undefined
         ? (await cloudTasksOf($, source, allTasks, t => t.label, now).catch(() => [] as BrandTask[])).find(c => c.id === current.id)
         : undefined
     const cloudNow = cloudRow?.cloud
@@ -14895,13 +14904,11 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     const stepsPart = ficheSteps($, e, palette, stepsNote, now, stepsDone, stepsSession, headState)
     // L'état sous l'en-tête (#199, choix de Bertrand) : une bande teintée, son icône, son mot et pourquoi ;
     // il a quitté la ligne « Tâche lancée par Maestro », où il flottait à droite.
-    // #375 (maquette A) : en test, la bande dit « en test · version X.Y.Z » en sarcelle, fiole devant.
     const band = cloudState
       ? cloudState.band
-      : headState || (ficheTest && !current.done)
+      : headState
       ? stateBand({
-          state: headState ?? 'live',
-          ...(ficheTest ? { test: ficheTest.version } : {}),
+          state: headState,
           abandoned,
           ...(stepsNote?.question ? { question: stepsNote.question.text } : {}),
           ...(stepsNote?.steps.find(x => x.status === 'in_progress') ? { current: stepsNote.steps.find(x => x.status === 'in_progress')!.content } : {}),
@@ -14917,7 +14924,6 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
         wait: [palette.blockTint, palette.blockOn],
         live: [palette.liveTint, palette.liveOn],
         merge: [palette.waitTint, palette.waitOn],
-        test: [palette.waitTint, palette.waitOn],
         done: [palette.finishedTint, palette.finishedOn],
         cancel: [palette.sel, palette.text2],
       }[band.tone]
@@ -14930,11 +14936,9 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
               ? checkIcon(fg, SIZE.icon.sm, STROKE.pill)
               : band.mark === 'spinner'
                 ? spinnerIcon(fg, SIZE.icon.sm, undefined, false, now)
-                : band.mark === 'flask'
-                  ? flaskIcon(fg, SIZE.icon.sm)
-                  : band.mark === 'bell'
-                    ? bellIcon(fg, SIZE.icon.sm)
-                    : undefined
+                : band.mark === 'bell'
+                  ? bellIcon(fg, SIZE.icon.sm)
+                  : undefined
       const row = (
         <Box key="state-band-row" paddingX={SPACE.indent}>
           <Box key="state-band" flexDirection="row" alignItems="center" gap={SPACE.row} paddingX={SPACE.indent} flexGrow={1} backgroundColor={bg}>
@@ -14950,6 +14954,13 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
             )}
             {reopenRow && <Box flexGrow={1} />}
             {reopenRow && reopenArm(fg)}
+            {current.done && current.verifie !== undefined && (
+              <Box key="verified-pill" flexGrow={reopenRow ? 0 : 1} flexShrink={0} flexDirection="row" justifyContent="flex-end">
+                {Svg
+                  ? drawnPill({ text: verifiedLabel(current.verifie), bg: current.verifie === 'non' ? palette.blockTint : palette.doneTint, fg: current.verifie === 'non' ? palette.blockOn : palette.done, height: SIZE.pill.detail })
+                  : <Text color={current.verifie === 'non' ? palette.blockOn : palette.done}>{verifiedLabel(current.verifie)}</Text>}
+              </Box>
+            )}
           </Box>
         </Box>
       )
@@ -14968,6 +14979,41 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
               <Text size="caption" color={palette.text2} wrap="wrap">{`Session non retrouvée : ${sessionFail}`}</Text>
             </Box>
           )}
+        </Box>
+      )
+    }
+    // L'encart « À vérifier » (#635, fiche A) sous la bande d'une close publiée : l'essai, et « C'est bon, vérifiée »
+    // (clé verify-task) ; vérifiée, le filet gris, l'essai en gris et « Repasser non vérifiée » (unverify-task).
+    const verifyBox = () => {
+      if (!current.done || current.verifie === undefined || isAbandoned(current) || !current.id) return null
+      const id = current.id
+      const ok = current.verifie !== 'non'
+      const title = ok ? `✓ Vérifiée le ${shortDate(current.verifie)}` : 'À vérifier'
+      const run = () => void setVerified($, ficheSource, [id], !ok)
+      const label = ok ? 'Repasser non vérifiée' : "C'est bon, vérifiée"
+      const key = ok ? 'unverify-task' : 'verify-task'
+      return (
+        <Box key="verify-row" paddingX={SPACE.indent}>
+          <Box key="verify-box" flexDirection="column" gap={SPACE.tight} paddingX={SPACE.indent} paddingY="xs" flexGrow={1} flexShrink={1} minWidth={0} borderStyle="round" borderColor={ok ? palette.border : palette.block}>
+            <Text weight="semibold" color={ok ? palette.done : palette.blockOn} wrap="wrap">{title}</Text>
+            {current.essai !== undefined && <Text size="caption" color={ok ? palette.text2 : palette.text} wrap="wrap">{current.essai}</Text>}
+            <Box flexDirection="row" alignItems="center" gap={SPACE.row}>
+              {ok ? (
+                <Button key={key} plain dimColor label={label} onPress={run} />
+              ) : (
+                pressable(
+                  key,
+                  run,
+                  <Box flexDirection="row" alignItems="center" paddingX={SPACE.indent} backgroundColor={palette.pri}>
+                    {corners(RADIUS.control, palette.bg)}
+                    {strut(SIZE.strut.row)}
+                    <Text weight="semibold" color={palette.priText}>{label}</Text>
+                  </Box>,
+                  <Button key={key} variant="primary" label={label} onPress={run} />,
+                )
+              )}
+            </Box>
+          </Box>
         </Box>
       )
     }
@@ -15180,49 +15226,10 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
         {primary('open-pr', externalIcon(palette.priText, 14), pr.number !== undefined ? `Ouvrir la PR ${pr.number}` : 'Ouvrir la PR', () => void openCloudPr($, pr))}
       </Box>
     )
-    // #375 (maquette A) : en test, « Ouvrir la session de test » en sarcelle et, hors d'elle, « Session d'origine »
-    // (où arrivent les retours) ; puis la règle en une ligne.
-    const testAction = (test: { sessionId: string; title: string }): RenderElement => {
-      const openTest = () => void openSession($, testEntry(test))
-      const origin = live && !inSession ? live : undefined
-      const openOrigin = () => void (origin ? openSession($, origin.entry) : undefined)
-      return (
-        <Box key="top-action" flexDirection="column" gap={SPACE.block} paddingX={SPACE.indent}>
-          <Box flexDirection="row" alignItems="stretch" gap={SPACE.row}>
-            {pressable(
-              'open-test-session',
-              openTest,
-              <Box flexDirection="row" alignItems="center" gap={SPACE.row} paddingX={SPACE.indent} flexGrow={1} backgroundColor={palette.wait} hover={{ backgroundColor: mixOver(palette.wait, palette.bg, MIX.primaryHover) }}>
-                {corners(RADIUS.control, palette.bg)}
-                {strut(SIZE.strut.control)}
-                {Svg && <Svg source={externalIcon(palette.bg, 14)} alt="Ouvrir" width={SIZE.icon.sm} height={SIZE.icon.sm} />}
-                <Text weight="semibold" color={palette.bg}>Ouvrir la session de test</Text>
-                <Box flexGrow={1} />
-              </Box>,
-              <Button key="open-test-session" variant="primary" label="Ouvrir la session de test" onPress={openTest} />,
-              true,
-            )}
-            {origin &&
-              pressable(
-                'open-origin-session',
-                openOrigin,
-                // Une Box à filet pose son paddingY, 0 compris (#352).
-                <Box flexDirection="row" alignItems="center" paddingX={SPACE.indent} paddingY={0} borderStyle="round" borderColor={palette.waitOn} hover={{ backgroundColor: palette.waitTint }}>
-                  {strut(SIZE.strut.control)}
-                  <Text color={palette.waitOn}>Session d'origine</Text>
-                </Box>,
-                <Button key="open-origin-session" plain label="Session d'origine" onPress={openOrigin} />,
-              )}
-          </Box>
-          <Text size="caption" color={palette.text2} wrap="wrap">Tes retours dans la session de test vont à la session d'origine. « Test validé » la coche.</Text>
-        </Box>
-      )
-    }
     const topAction = (): RenderElement | null => {
       if (current.done && inSession && stepsDone) return archiveSelfBand()
       if (prLink && !live) return prAction(prLink)
       if (current.done) return null
-      if (ficheTest) return testAction(ficheTest)
       // Dans sa propre session, « Ouvrir la session » n'a pas de sens (#336) : la bande d'état suffit.
       if (live && inSession) return null
       if (live) {
@@ -16663,6 +16670,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
         </Box>
         {/* La fiche finale (#291) : en session, la bande d'état se fond dans « Ouvrir la session ». */}
         {(headState !== 'live' || !live || inSession) && stateBox()}
+        {verifyBox()}
         {topAction()}
         {mockupBand()}
         {draftBlock()}
@@ -16828,7 +16836,11 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
   const toggleDone = () => pressDone($, showDone)
   // Le sélecteur « Faites | Annulées » (#624, maquette B) : la vue des annulées, tant qu'il y en a.
   const showCancelled = showDone && view.doneKind === 'cancelled' && cancelledTasks.length > 0
-  const pickKind = (kind: 'done' | 'cancelled') => () => void setView($, () => ({ doneKind: kind, doneDays: DONE_DAYS_STEP, closedGroups: [], moreGroups: [] }))
+  // La case « À vérifier » (#635, vue Faites A) : les closes `vérifié:non`, tant qu'il y en a ; la vue retombe sur Faites à 0.
+  const unverifiedTasks = doneTasks.filter(t => t.verifie === 'non' && t.id !== undefined)
+  const showVerify = showDone && view.doneKind === 'verify' && unverifiedTasks.length > 0
+  const verifyPicked = (view.verifyPick ?? []).filter(id => unverifiedTasks.some(t => t.id === id))
+  const pickKind = (kind: 'done' | 'cancelled' | 'verify') => () => void setView($, () => ({ doneKind: kind, doneDays: DONE_DAYS_STEP, closedGroups: [], moreGroups: [] }))
   // Un tiers choisi revient, au second clic, à « Attend un tiers ».
   const setAttend = (v: string, back = 'all') => () => {
     void setView($, () => ({ attend: attend === v ? back : v, showDone: false, closedGroups: [], moreGroups: [] }))
@@ -17105,14 +17117,11 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     const sid = block?.sessionId ?? live?.entry.sessionId
     return sinceLabel(block?.since ?? sinceOf(sid, live?.entry, live?.inferred ?? true), now)
   }
-  const stepsCells = rowStepsCells([...blockTasks.map(t => sinceText(t, blockOf.get(t.id as string))), ...openTasks.filter(t => !inBlock(t) && (isLive(t) || testOf(t) !== undefined)).map(t => sinceText(t))])
+  const stepsCells = rowStepsCells([...blockTasks.map(t => sinceText(t, blockOf.get(t.id as string))), ...openTasks.filter(t => !inBlock(t) && (isLive(t))).map(t => sinceText(t))])
   // #408 : une ligne cloud écrit l'état de sa PR là où les autres ont leur barre : la colonne s'élargit à ces mots, et
   // la durée de chaque ligne reste au bord droit.
   const cloudColumn = [...blockOf.values()].some(bt => bt.cloud !== undefined)
-  // #375 (maquette A) : « en test X.Y.Z » à la place de la barre ; la colonne s'élargit au plus long de ces mots.
-  const testWords = (version: string) => `en test ${version}`
-  const testCells = Math.max(0, ...[...blockTasks, ...openTasks].flatMap(t => { const test = testOf(t); return test ? [pxCells(6.5 * [...testWords(test.version)].length)] : [] }))
-  const wordsCells = Math.max(cloudColumn ? CLOUD_WORDS_CELLS : 0, testCells)
+  const wordsCells = cloudColumn ? CLOUD_WORDS_CELLS : 0
   // #440 (maquette B6) : une ligne cloud porte ses mots et sa jauge ; la colonne s'élargit des mots.
   const stepsColumns = wordsCells > 0 ? Math.max(stepsCells.columns, ROW_STEPS.icon + 1 + wordsCells + 1 + (cloudColumn ? pxCells(ROW_STEPS.bar) + 1 : 0) + ROW_STEPS.clock + stepsCells.count) : stepsCells.columns
   // L'icône d'état d'une ligne cloud, tirée de sa PR, et sa jauge (#440, maquette B6).
@@ -17166,16 +17175,13 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     const queued = block && t.branche !== undefined ? heavyMarks.get(t.branche) : undefined
     const cloud = block?.cloud
     const tint = cloud ? (block && cloudQuietWord(block, now) ? { ...cloudTints(palette, cloud.state), word: palette.blockOn } : cloudTints(palette, cloud.state)) : undefined
-    // #375 : en test, la fiole et la version, qui ouvrent la session de test ; le numéro garde la session d'origine.
-    const test = cloud ? undefined : testOf(t)
-    const openTest = test ? () => void openSession($, testEntry(test)) : undefined
     return (
       // Calée à droite (capture de 0.249.0, BBR : « Le temps doit être aligné à droite avec le bouton file d'attente ») :
       // la case est comptée en cellules, plus larges dans l'app que dans le compte ; le vide part à gauche, la durée
       // finit au bord, sous l'icône du centre de contrôle.
       <Box key={`steps:${t.key}`} flexDirection="row" alignItems="center" justifyContent="flex-end" gap={SPACE.row} flexShrink={0} {...(Svg ? { width: stepsColumns } : {})}>
         <Box width={ROW_STEPS.icon} flexShrink={0} flexDirection="row" justifyContent="center">
-          {cloud && tint && block ? cloudStateMark(rowOf(block)) : test ? (Svg ? <Svg source={flaskIcon(palette.waitOn, 14, 'En test')} alt="En test" width={SIZE.icon.sm} height={SIZE.icon.sm} /> : <Text size="caption" color={palette.waitOn}>⚗</Text>) : completed ? (Svg ? <Svg source={checkIcon(checkHex, 14, STROKE.pill)} alt={completedWord} width={SIZE.icon.sm} height={SIZE.icon.sm} /> : <Text size="caption" color={checkHex}>✓</Text>) : merging ? mergeMark() : waiting ? hand() : spinner()}
+          {cloud && tint && block ? cloudStateMark(rowOf(block)) : completed ? (Svg ? <Svg source={checkIcon(checkHex, 14, STROKE.pill)} alt={completedWord} width={SIZE.icon.sm} height={SIZE.icon.sm} /> : <Text size="caption" color={checkHex}>✓</Text>) : merging ? mergeMark() : waiting ? hand() : spinner()}
         </Box>
         {cloud && tint ? (
           // #440 (maquette B6) : le mot court de sa PR, calé à droite devant sa jauge de six étapes ; la durée garde sa place.
@@ -17185,24 +17191,6 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
             </Box>,
             ...(Svg && block ? [cloudRowBar(rowOf(block), `cloud-bar:${t.key}`)] : []),
           ]
-        ) : test && openTest ? (
-          // #375 (maquette A) : « en test 0.268.0 » en sarcelle, à la place de la barre ; le texte ouvre la session de test.
-          <Box key={`test-words:${t.key}`} {...(Svg ? { width: wordsCells } : {})} flexShrink={0} minWidth={0} flexDirection="row" alignItems="center">
-            {Svg ? (
-              <Box flexDirection="row" alignItems="center" minWidth={0} hover={{ backgroundColor: palette.hover }}>
-                <Text size="caption" color={palette.waitOn} wrap="truncate-end">{testWords(test.version)}</Text>
-                <Box position="absolute" top={0} left={0}>
-                  <Button key={`row-test:${t.id}`} plain onPress={openTest}>
-                    {titleOverlay(testWords(test.version))}
-                  </Button>
-                </Box>
-              </Box>
-            ) : (
-              <Button key={`row-test:${t.id}`} plain onPress={openTest}>
-                <Text color={palette.waitOn}>{testWords(test.version)}</Text>
-              </Button>
-            )}
-          </Box>
         ) : queued ? (
           <Box flexGrow={1} flexShrink={1} minWidth={0} flexDirection="row" justifyContent="flex-end">
             {queuePill(queued)}
@@ -17249,8 +17237,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     return stopped === 'merge' ? 'merge' : stopped === 'wait' || status?.question !== undefined ? 'wait' : 'live'
   }
   const blockWordOf = (t: Task, block?: BrandTask) => {
-    const test = block?.cloud ? undefined : testOf(t)
-    return test ? testWords(test.version) : (block?.cloud ? cloudQuietWord(block, now) : undefined) ?? blockWord({ state: blockState(t, block), ...(block?.cloud ? { cloud: block.cloud } : {}), ...(block?.mission ? { mission: block.mission } : {}), ...(blockMerged(t, block) ? { merged: true } : {}) })
+    return (block?.cloud ? cloudQuietWord(block, now) : undefined) ?? blockWord({ state: blockState(t, block), ...(block?.cloud ? { cloud: block.cloud } : {}), ...(block?.mission ? { mission: block.mission } : {}), ...(blockMerged(t, block) ? { merged: true } : {}) })
   }
   // #636 (maquette A) : le mot d'état et la durée ont la largeur en px de leur plus long texte, comme dans la bande ; les
   // cellules ci-dessous ne servent qu'au calcul de place (`sessionRowFit`).
@@ -17283,17 +17270,13 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     const status = blockStatus(t, block)
     const state = blockState(t, block)
     const cloud = block?.cloud
-    const test = cloud ? undefined : testOf(t)
-    const openTest = test ? () => void openSession($, testEntry(test)) : undefined
     const word = blockWordOf(t, block)
     const merged = !cloud && blockMerged(t, block)
-    const ink = cloud ? (block && cloudQuietWord(block, now) ? palette.blockOn : cloudTints(palette, cloud.state).word) : test || merged ? palette.waitOn : { live: palette.liveOn, wait: palette.blockOn, merge: palette.waitOn, done: palette.finishedOn }[state]
+    const ink = cloud ? (block && cloudQuietWord(block, now) ? palette.blockOn : cloudTints(palette, cloud.state).word) : merged ? palette.waitOn : { live: palette.liveOn, wait: palette.blockOn, merge: palette.waitOn, done: palette.finishedOn }[state]
     const checkHex = block?.finished ? palette.finished : palette.done
     const icon = cloud && block
       ? cloudStateMark(rowOf(block))
-      : test
-        ? Svg ? <Svg source={flaskIcon(palette.waitOn, 14, 'En test')} alt="En test" width={SIZE.icon.sm} height={SIZE.icon.sm} /> : <Text size="caption" color={palette.waitOn}>⚗</Text>
-        : state === 'done'
+      : state === 'done'
           ? Svg ? <Svg source={checkIcon(checkHex, 14, STROKE.pill)} alt={word} width={SIZE.icon.sm} height={SIZE.icon.sm} /> : <Text size="caption" color={checkHex}>✓</Text>
           : merged
             ? Svg ? <Svg source={spinnerIcon(palette.wait, 14, word, false, now)} alt={word} width={SIZE.icon.sm} height={SIZE.icon.sm} isInteractive /> : <Text size="caption" color={palette.waitOn}>◌</Text>
@@ -17322,24 +17305,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
           {icon}
         </Box>
         {(blockFit.word || !Svg) &&
-          pxColumn(`word-col:${t.key}`, 'colonne mot', blockWordPx, openTest ? (
-            <Box key={`test-words:${t.key}`} flexShrink={1} minWidth={0} flexDirection="row" alignItems="center">
-              {Svg ? (
-                <Box flexDirection="row" alignItems="center" minWidth={0} hover={{ backgroundColor: palette.hover }}>
-                  <Text size="caption" color={ink} wrap="truncate-end">{word}</Text>
-                  <Box position="absolute" top={0} left={0}>
-                    <Button key={`row-test:${t.id}`} plain onPress={openTest}>
-                      {titleOverlay(word)}
-                    </Button>
-                  </Box>
-                </Box>
-              ) : (
-                <Button key={`row-test:${t.id}`} plain onPress={openTest}>
-                  <Text color={ink}>{word}</Text>
-                </Button>
-              )}
-            </Box>
-          ) : (
+          pxColumn(`word-col:${t.key}`, 'colonne mot', blockWordPx, (
             <Text key={`word:${t.key}`} size="caption" color={ink} wrap="truncate-end">{word}</Text>
           ))}
       </Box>,
@@ -17508,11 +17474,10 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
     const right = dueQuiet ? '' : doneRights.get(t) ?? (tree ? (t.done ? 'fait' : days === undefined ? '' : ageLabel(days)) : t.done ? axisShown(t.axis) : days === undefined ? '' : ageLabel(days))
     // Une tâche faite dont la session reste ouverte : y retourner, ou l'archiver, d'un clic.
     const kept = block === undefined && sessionRows.has(taskKey(t)) ? doneSessionOf(t) : undefined
-    const inSession = isLive(t) || block !== undefined || testOf(t) !== undefined
+    const inSession = isLive(t) || block !== undefined
     // La session de la tâche, ouverte ou faite : son numéro y mène ; dans le bloc, celle de Maestro.
     const blockEntry = block?.sessionId ? { sessionId: block.sessionId, startedAt: now, title: block.label } : undefined
-    const rowTest = testOf(t)
-    const rowSession = liveOf(t) ?? doneSessionOf(t) ?? (blockEntry ? { entry: blockEntry } : undefined) ?? (rowTest ? { entry: testEntry(rowTest) } : undefined)
+    const rowSession = liveOf(t) ?? doneSessionOf(t) ?? (blockEntry ? { entry: blockEntry } : undefined)
     // La roue l'emporte sur le cadenas : une tâche en session n'attend plus sa prérequise.
     const blocker = inSession ? undefined : blockerFor(t)
     const locked = blocker !== undefined
@@ -17745,6 +17710,12 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
         {(kept || inSession || locked) && gauge && (
           <Box key={`age:${t.key}`} minWidth={AGE_CELLS} flexShrink={0} flexDirection="row" justifyContent="flex-end">
             {gauge}
+          </Box>
+        )}
+        {/* #635 : une close non vérifiée porte un petit rond orange au bout de sa ligne. */}
+        {t.done && t.verifie === 'non' && Svg && (
+          <Box key={`unverified:${t.key}`} flexShrink={0}>
+            <Svg source={ringIcon(palette.block, SIZE.icon.sm)} alt="non vérifiée" width={SIZE.icon.sm} height={SIZE.icon.sm} />
           </Box>
         )}
         {/* Le ▶ au bout de la ligne, à la place du chevron (#149) : le titre ouvre la fiche. Sa colonne
@@ -18106,7 +18077,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
 
   // Toutes les faites de l'axe, la plus récente d'abord ; rangées par jour ou par sujet.
   // Une close du bloc « En cours » (#218) n'y est pas redite : sa ligne est dans le bloc.
-  const doneAll = (showCancelled ? cancelledTasks : doneTasks)
+  const doneAll = (showVerify ? [] : showCancelled ? cancelledTasks : doneTasks)
     .filter(t => matches(t, axis, 'all', me) && !inBlock(t))
     .sort((a, b) => (b.fait ?? '').localeCompare(a.fait ?? ''))
   // La fenêtre des faites (#497, maquette A) : les 14 derniers jours, 14 de plus par clic ; un dessin trop
@@ -18388,12 +18359,52 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
         }
       : { label: 'Tout déplier', run: () => void setView($, v => ({ openGroups: names, closedGroups: v.closedGroups.filter(c => !bandIds.includes(c)) })) }
 
+  // La case « À vérifier » (#635, vue Faites A) : la barre « N choisies · Tout choisir · Marquer vérifiées », puis
+  // les closes non vérifiées, chacune avec sa case, son titre et son essai en une ligne grise. Un seul écrit pour le lot.
+  const verifyView = () => {
+    if (!showVerify) return null
+    const n = verifyPicked.length
+    const run = () => void setVerified($, source, verifyPicked, true)
+    const all = () => void setView($, () => ({ verifyPick: unverifiedTasks.map(t => t.id as string) }))
+    const toggle = (id: string) => () => void setView($, v => ({ verifyPick: (v.verifyPick ?? []).includes(id) ? (v.verifyPick ?? []).filter(x => x !== id) : [...(v.verifyPick ?? []), id] }))
+    return (
+      <Box key="verify-view" flexDirection="column" gap={SPACE.tight}>
+        <Box key="verify-bar" flexDirection="row" alignItems="center" gap={SPACE.row} paddingX={SPACE.indent} {...(n > 0 ? { backgroundColor: palette.liveTint } : {})}>
+          <Box flexGrow={1} flexShrink={1} minWidth={0}>
+            <Text weight="semibold" color={n > 0 ? palette.text : palette.text2} wrap="truncate-end">{n > 0 ? `${n} choisie${n > 1 ? 's' : ''}` : 'Choisis les tâches essayées'}</Text>
+          </Box>
+          <Button key="verify-all" plain dimColor label="Tout choisir" onPress={all} />
+          {n > 0 && <Button key="verify-batch" variant="primary" label="Marquer vérifiées" onPress={run} />}
+        </Box>
+        {unverifiedTasks.map(t => {
+          const id = t.id as string
+          const on = verifyPicked.includes(id)
+          return (
+            <Box key={`verify-row:${keyPart(id)}`} flexDirection="row" alignItems="flex-start" gap={SPACE.row} paddingX={SPACE.indent} {...(on ? { backgroundColor: palette.liveTint } : { hover: { backgroundColor: palette.hover } })}>
+              <Text color={on ? palette.live : palette.text3}>{on ? '☑' : '☐'}</Text>
+              <Box flexDirection="column" flexGrow={1} flexShrink={1} minWidth={0}>
+                <Text wrap="truncate-end">{`#${id} ${short(t).titre}`}</Text>
+                {t.essai !== undefined && <Text size="caption" color={palette.text2} wrap="truncate-end">{t.essai}</Text>}
+              </Box>
+              {graphic ? hit(`verify-pick:${keyPart(id)}`, toggle(id)) : <Button key={`verify-pick:${keyPart(id)}`} plain dimColor label={on ? 'Retirer' : 'Choisir'} onPress={toggle(id)} />}
+            </Box>
+          )
+        })}
+      </Box>
+    )
+  }
   // Le sélecteur à deux cases (#624, maquette B) : « Faites N | Annulées M » à la place du résumé de la liste.
   const kindSelector = () => {
-    const seg = (kind: 'done' | 'cancelled', word: string, n: number) => {
-      const on = (kind === 'cancelled') === showCancelled
+    const seg = (kind: 'done' | 'cancelled' | 'verify', word: string, n: number) => {
+      const on = kind === 'verify' ? showVerify : kind === 'cancelled' ? showCancelled : !showCancelled && !showVerify
       const text = `${word} ${n}`
-      return graphic ? (
+      return graphic && kind === 'verify' ? (
+        <Box key={`hit:done-kind:${kind}`} flexDirection="row" gap={SPACE.row} paddingX={SPACE.indent} paddingY={0} alignItems="center" {...(on ? { backgroundColor: palette.bg } : { hover: { backgroundColor: palette.hover } })}>
+          <Text size="caption" color={on ? palette.text : palette.text2} {...(on ? { weight: 'semibold' as const } : {})}>{word}</Text>
+          <Text size="caption" tabular weight="semibold" color={palette.blockOn}>{String(n)}</Text>
+          {hit(`done-kind:${kind}`, pickKind(kind))}
+        </Box>
+      ) : graphic ? (
         <Box key={`hit:done-kind:${kind}`} paddingX={SPACE.indent} paddingY={0} alignItems="center" {...(on ? { backgroundColor: palette.bg } : { hover: { backgroundColor: palette.hover } })}>
           <Text size="caption" tabular color={on ? palette.text : palette.text2} {...(on ? { weight: 'semibold' as const } : {})}>{text}</Text>
           {hit(`done-kind:${kind}`, pickKind(kind))}
@@ -18406,7 +18417,8 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
       <Box key="done-kinds" flexDirection="row" gap={SPACE.row} paddingX={0} paddingY={0} {...(graphic ? { backgroundColor: palette.btn } : {})}>
         {graphic && corners(RADIUS.control, palette.bg)}
         {seg('done', 'Faites', doneTasks.length)}
-        {seg('cancelled', 'Annulées', cancelledTasks.length)}
+        {unverifiedTasks.length > 0 && seg('verify', 'À vérifier', unverifiedTasks.length)}
+        {cancelledTasks.length > 0 && seg('cancelled', 'Annulées', cancelledTasks.length)}
       </Box>
     )
   }
@@ -18887,7 +18899,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
         {/* Sinon, la ligne de la liste, discrète : ce qui est montré, et une seule action selon le cas. */}
         {asking.length > 0 ? confirmBar() : undoNow !== undefined ? undoBar() : picked.length > 0 ? batchBar() : (
           <Box flexDirection="row" justifyContent="space-between" alignItems="center" paddingX={SPACE.indent}>
-            {showDone && !searching && cancelledTasks.length > 0 ? (
+            {showDone && !searching && (cancelledTasks.length > 0 || unverifiedTasks.length > 0) ? (
               kindSelector()
             ) : (
             <Text size="caption" color={palette.text2} wrap="truncate-end">
@@ -18928,6 +18940,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<Ren
         <Text color={palette.text2}>{attend === 'today' ? "Rien d'urgent aujourd'hui." : attend === 'tomorrow' ? 'Rien de prévu demain.' : 'Aucune tâche ouverte pour ce filtre.'}</Text>
       )}
 
+      {verifyView()}
       <Box flexDirection="column">{groups.map(g => (g.band ? bandRow(idOf(g), g.name, g.band.count, g.band.lead, g.band.axis, g.band.look) : section(idOf(g), g.name, g.tasks, rowsOf.get(idOf(g)) ?? 0, g.lead, g.mark, g.block, g.bare, g.focus)))}</Box>
 
       {/* La fin de la fenêtre des faites (#497, maquette A) : ce qui reste, et 14 jours de plus ; un dessin

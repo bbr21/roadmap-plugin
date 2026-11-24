@@ -6,7 +6,7 @@
 import type { EngineInterface, RenderElement } from 'claude-code'
 
 import { checkIcon, cloudIcon, laptopIcon, mixOver } from './icons'
-import { daysBetween, dueLabel, isMother, isPriority, isThirdParty, motherLaunchable, queueRank, roadmapAxes, shortAttend, testTitle, type Bilan, type Sessions, type Task } from './parse'
+import { daysBetween, dueLabel, isMother, isPriority, isThirdParty, motherLaunchable, queueRank, roadmapAxes, shortAttend, type Bilan, type Sessions, type Task } from './parse'
 import { SIZE, SPACE, type Palette } from './tokens'
 
 /** La sorte d'une ligne : une tâche neuve, mise à jour, faite ou annulée. */
@@ -82,7 +82,7 @@ export function splitWritten(text: string): MessagePart[] {
 
 /** La couleur d'une échéance ou de « qui » : la même famille que les pastilles du panneau. */
 export type WrittenDue = { text: string; tone: 'late' | 'soon' | 'none' }
-/** `session` : une session tient la tâche, le bouton de la carte ouvre cette session (« en session », « t'attend », « en test »). */
+/** `session` : une session tient la tâche, le bouton de la carte ouvre cette session (« en session », « t'attend »). */
 export type WrittenWho = { text: string; tone: 'live' | 'wait' | 'soon'; session?: true }
 
 /** L'encre d'un morceau du pied : les couleurs du panneau, sans fond. */
@@ -384,32 +384,6 @@ export function withoutNative(parts: readonly MessagePart[], ids: ReadonlySet<st
     const lines = part.lines.filter(l => l.kind !== 'new' || !ids.has(l.id))
     return lines.length > 0 ? [{ kind: 'cards', lines }] : []
   })
-}
-
-/** Les sessions « Tester #N · X.Y.Z » ouvertes (archivées exclues), par `#N` : leur version, leur session et leur titre. */
-export function testSessions(rows: readonly unknown[]): Map<string, { version: string; sessionId: string; title: string }> {
-  const out = new Map<string, { version: string; sessionId: string; title: string }>()
-  for (const raw of rows) {
-    if (typeof raw !== 'object' || raw === null) continue
-    const r = raw as { title?: unknown; isArchived?: unknown; sessionId?: unknown }
-    if (r.isArchived === true || typeof r.title !== 'string' || typeof r.sessionId !== 'string') continue
-    const t = testTitle(r.title)
-    if (t) out.set(t.id, { version: t.version, sessionId: r.sessionId, title: r.title })
-  }
-  return out
-}
-
-/** Les `#N` en test et leur version, d'après les titres « Tester #N · X.Y.Z » des sessions listées (archivées exclues). */
-export function testVersions(rows: readonly unknown[]): Map<string, string> {
-  const out = new Map<string, string>()
-  for (const raw of rows) {
-    if (typeof raw !== 'object' || raw === null) continue
-    const r = raw as { title?: unknown; isArchived?: unknown }
-    if (r.isArchived === true || typeof r.title !== 'string') continue
-    const t = testTitle(r.title)
-    if (t) out.set(t.id, t.version)
-  }
-  return out
 }
 
 // ── Le dessin (maquette n1b : la carte native, version 3) ────────────────────

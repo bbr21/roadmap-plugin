@@ -53,6 +53,10 @@ export type Task = {
   lieu?: 'cloud'
   /** `annulée:oui` (#624) : la tâche close a été annulée, non faite ; les anciennes formes se lisent par `isAbandoned`. */
   annulee?: true
+  /** `vérifié:` (#634) : `non` tant que BBR n'a pas essayé la livraison, sinon la date de son « c'est bon ». Sur une ligne close seulement. */
+  verifie?: string
+  /** `essai:` (#634) : « où regarder → quoi voir », écrit par la session à la livraison. */
+  essai?: string
   /** Les clés hors grammaire (les clés déclarées dans `cles`), valeurs coupées aux virgules. */
   extra?: Record<string, string[]>
   /** Calculé par `withParentDates` (#125) : la tâche a des enfants ouverts ; `due` est alors la date du plus proche. */
@@ -687,6 +691,8 @@ export function parseRoadmap(text: string, file: string): Task[] {
       else if (k === 'skill' && SKILL_RE.test(v)) task.skill = v
       else if (k === 'lieu' && v === 'cloud') task.lieu = v // #408
       else if (k === 'annulée' && v === 'oui') task.annulee = true // #624
+      else if (k === 'vérifié' && (v === 'non' || DATE_RE.test(v))) task.verifie = v // #634
+      else if (k === 'essai' && v !== '') task.essai = v // #634
       else if (k === 'relance' && DATE_RE.test(v)) task.relance = v
       else if (k === 'feedback' && FEEDBACK_RE.test(v)) task.feedback = v.split(',')
       else if (k === 'livré') {
@@ -731,7 +737,7 @@ export function parseDelivered(v: string): Published[] | null {
  * Le vocabulaire d'état, un mot par état, le même partout (#509, choix de BBR du 2026-11-12) : la liste, la bande, la
  * fiche, les livraisons. Ce qui dépend du lieu (Mac, cloud) passe dans le détail, jamais dans le mot.
  */
-export const STATE_WORDS = { todo: 'à lancer', live: 'en session', wait: "t'attend", ready: 'prête', merged: 'fusionnée', test: 'en test', done: 'livrée', cancelled: 'annulée' } as const
+export const STATE_WORDS = { todo: 'à lancer', live: 'en session', wait: "t'attend", ready: 'prête', merged: 'fusionnée', done: 'livrée', cancelled: 'annulée' } as const
 
 /** Un compte de tâches livrées, au singulier ou au pluriel : « 1 livrée », « 466 livrées » (#509, ex-« N Done »). */
 export function deliveredCount(n: number): string {
@@ -3168,6 +3174,27 @@ export function shortDate(iso: string): string {
   return dateFormat === 'fr' || !month ? `${d}/${m}` : `${month} ${Number(d)}`
 }
 
+/** La pastille de la fiche d'une close (#635) : « non vérifiée » ou « ✓ vérifiée JJ/MM » ; rien sans `vérifié:`. */
+export function verifiedLabel(verifie: string | undefined): string {
+  if (verifie === undefined || verifie === '') return ''
+  return verifie === 'non' ? 'non vérifiée' : `✓ vérifiée ${shortDate(verifie)}`
+}
+
+const idOfLine = (line: string): string | undefined => /\bid:(\d+)/.exec(line)?.[1]
+
+/** `vérifié:non` → `vérifié:<date>` sur les lignes dont l'`id:` est dans `ids` ; le reste du texte ne bouge pas (#635). */
+export function verifyInText(text: string, ids: readonly string[], date: string): string {
+  return text.split('\n').map(line => {
+    const id = idOfLine(line)
+    return id !== undefined && ids.includes(id) ? line.replace(/vérifié:non(?=\s*[|\]])/, `vérifié:${date}`) : line
+  }).join('\n')
+}
+
+/** L'inverse : `vérifié:<date>` → `vérifié:non` sur la ligne de `id` (#635). */
+export function unverifyInText(text: string, id: string): string {
+  return text.split('\n').map(line => (idOfLine(line) === id ? line.replace(/vérifié:\d{4}-\d{2}-\d{2}(?=\s*[|\]])/, 'vérifié:non') : line)).join('\n')
+}
+
 /** « 20:11 » → « 8:11 PM » (us), ou tel quel (fr). */
 function clockLabel(hhmm: string): string {
   if (dateFormat === 'fr') return hhmm
@@ -5590,7 +5617,7 @@ export function testSessionNote(o: { id: string; version: string; origin?: strin
   return `Roadmap — session de test de #${o.id} (${o.version}). ${testRelayRules(o).join(' ')}`
 }
 
-/** Les `#N` en test : sessions de test ouvertes (rangées de `list_sessions`), plus les `#N` publiés dans ce chargement. */
+/** Les `#N` sous une session de test (reste de #366) : sessions de test ouvertes (rangées de `list_sessions`), plus les `#N` publiés dans ce chargement. */
 export function testsUnder(rows: readonly unknown[], published: readonly string[]): Set<string> {
   const ids = new Set<string>(published)
   for (const raw of rows) {
@@ -5603,7 +5630,7 @@ export function testsUnder(rows: readonly unknown[], published: readonly string[
   return ids
 }
 
-/** Les nouvelles des enfants sans « prête » ni « silencieuse » pour une tâche en test : elle attend la personne par nature. */
+/** Les nouvelles des enfants sans « prête » ni « silencieuse » pour une tâche dont une session « Tester #N » traîne : une carte de test ne se pose plus (#634). */
 export function withoutTests(alerts: readonly ChildAlert[], ids: ReadonlySet<string>): ChildAlert[] {
   return alerts.filter(a => {
     if (a.kind !== 'ready' && a.kind !== 'silent') return true
@@ -6597,24 +6624,21 @@ export type TaskSessionState =
   | { kind: 'paused' }
   | { kind: 'pausing'; mode: 'stop' | 'soft' }
   | { kind: 'run' }
-  | { kind: 'test'; version: string }
   | { kind: 'merge' }
   | { kind: 'merged' }
   | { kind: 'wait' }
 
 /**
  * L'état unique d'une session (#383, dans la lignée de `stoppedState`, #384), calculé ici seulement, dans cet ordre :
- * tâche close ; pause exécutée, puis demandée ; elle tourne ; publiée et en test (une session « Tester #N · X.Y.Z »
- * ouverte) ; du travail de fond en vol (ses tests) ; elle s'est dite en pause ; une question qui attend ; prête
+ * tâche close ; pause exécutée, puis demandée ; elle tourne ; du travail de fond en vol (ses tests) ; elle s'est dite en pause ; une question qui attend ; prête
  * (verdict, étapes cochées, clôture partielle ou « fini ») ; sinon elle t'attend. Avec l'avance de sa branche connue
  * (`ahead`), la règle de #384 décide de « prête ».
  */
-export function taskSessionState(o: { closed?: boolean; running?: boolean; pause?: SessionPause; test?: string; asking?: boolean; ahead?: number; status?: ChildStatus; merged?: boolean }): TaskSessionState {
+export function taskSessionState(o: { closed?: boolean; running?: boolean; pause?: SessionPause; asking?: boolean; ahead?: number; status?: ChildStatus; merged?: boolean }): TaskSessionState {
   if (o.closed) return { kind: 'done' }
   if (o.pause?.state === 'paused') return { kind: 'paused' }
   if (o.pause?.state === 'asked') return { kind: 'pausing', mode: o.pause.mode }
   if (o.running) return { kind: 'run' }
-  if (o.test !== undefined) return { kind: 'test', version: o.test }
   if (o.status?.waits) return { kind: 'run' }
   if (selfPaused(o.status?.recap)) return { kind: 'paused' }
   if (o.asking) return { kind: 'wait' }
@@ -6849,7 +6873,7 @@ function childShortList(children: readonly ChildRow[]): string {
  * son état en mots, une seule en cours comme l'outil l'exige.
  */
 export const MAESTRO_STEP_LIST =
-  "- Ta liste d'étapes (update_plan) suit tes sessions : une étape par tâche lancée, « #<id> <libellé court> · <état> » (en session : étape 3/7, t'attend, prête, fusionnée, en test X.Y.Z, livrée X.Y.Z), dans l'ordre de fusion ; la tâche livrée cochée (completed) ; une seule en cours (in_progress) : celle dont tu t'occupes, sinon la prochaine à fusionner. Renvoie la liste entière (items) dès qu'un état change (skill roadmap:maestro, § 3). Pas de carte show_widget."
+  "- Ta liste d'étapes (update_plan) suit tes sessions : une étape par tâche lancée, « #<id> <libellé court> · <état> » (en session : étape 3/7, t'attend, prête, fusionnée, livrée X.Y.Z), dans l'ordre de fusion ; la tâche livrée cochée (completed) ; une seule en cours (in_progress) : celle dont tu t'occupes, sinon la prochaine à fusionner. Renvoie la liste entière (items) dès qu'un état change (skill roadmap:maestro, § 3). Pas de carte show_widget."
 
 /**
  * Ce que lit le parent à chaque message de Bertrand (#84) : les enfants à archiver sur une ligne,
@@ -12976,14 +13000,12 @@ export function relaunchOf(t: Pick<Task, 'label' | 'note' | 'done'>): string | u
  * La bande d'état de la fiche (#199, sous l'en-tête, hors de la ligne « Tâche lancée par Maestro ») : le
  * mot de la pastille de Maestro, pourquoi, l'icône devant et sa teinte. Une close dit « livrée », une annulée « annulée », sans icône.
  */
-export function stateBand(o: { state: 'wait' | 'live' | 'merge' | 'done'; question?: string; current?: string; ahead?: number; fait?: string; abandoned?: boolean; test?: string; merged?: boolean; relaunch?: string }): {
+export function stateBand(o: { state: 'wait' | 'live' | 'merge' | 'done'; question?: string; current?: string; ahead?: number; fait?: string; abandoned?: boolean; merged?: boolean; relaunch?: string }): {
   word: string
   why: string
-  mark?: 'person' | 'spinner' | 'merge' | 'check' | 'flask' | 'bell'
-  tone: 'wait' | 'live' | 'merge' | 'done' | 'cancel' | 'test'
+  mark?: 'person' | 'spinner' | 'merge' | 'check' | 'bell'
+  tone: 'wait' | 'live' | 'merge' | 'done' | 'cancel'
 } {
-  // #375 (maquette A) : publiée, une session « Tester #N · X.Y.Z » ouverte ; la close l'emporte.
-  if (o.test && o.state !== 'done') return { word: STATE_WORDS.test, why: `version ${o.test}`, mark: 'flask', tone: 'test' }
   // #468 (BBR) : sa PR fusionnée, sa ligne ouverte : le mot de la ligne cloud, jamais « t'attend ».
   if (o.merged && o.state !== 'done') return { word: STATE_WORDS.merged, why: 'suite de main, puis publication', mark: 'spinner', tone: 'merge' }
   if (o.state === 'done' && o.abandoned) return { word: STATE_WORDS.cancelled, why: o.fait ? `annulée le ${shortDate(o.fait)}` : '', tone: 'cancel' }
@@ -15714,8 +15736,6 @@ export type ControlCard = {
   held?: { at: number; reason: string; cause: 'refused' }
   /** La carte posée par le panneau (#393), qui attend le Start. */
   carded?: { at: number }
-  /** La version en test (#383, #366) : une session « Tester #N · X.Y.Z » est ouverte pour la tâche. */
-  test?: string
   /** #415 : une session en pause sans entrée de reprise dans la file ; « Reprendre » la lui recrée. */
   orphan?: { root: string }
   id: string
@@ -15728,11 +15748,11 @@ export type ControlCard = {
   sessionId?: string
   heavy: boolean
   /** #583 : une tâche qui tourne dans le cloud, sans session sur le Mac ; `word` dit où elle en est. */
-  cloud?: { word: string; tone: 'run' | 'wait' | 'done' | 'quiet' | 'test'; session?: string; pr?: { number?: number; url?: string }; /** #629 : le dernier mouvement de la tâche cloud, pour la marque « retirée ». */ movedAt?: number }
+  cloud?: { word: string; tone: 'run' | 'wait' | 'done' | 'quiet'; session?: string; pr?: { number?: number; url?: string }; /** #629 : le dernier mouvement de la tâche cloud, pour la marque « retirée ». */ movedAt?: number }
 }
 
 /** #583 : une tâche cloud à montrer au Centre de contrôle, d'après la ligne de ROADMAP et sa PR. */
-export type CloudControlInput = { root: string; id: string; title: string; word: string; tone: 'run' | 'wait' | 'done' | 'quiet' | 'test'; session?: string; pr?: { number?: number; url?: string }; launchedAt?: number; /** #629 : le dernier mouvement de la tâche cloud, pour la marque « retirée ». */ movedAt?: number }
+export type CloudControlInput = { root: string; id: string; title: string; word: string; tone: 'run' | 'wait' | 'done' | 'quiet'; session?: string; pr?: { number?: number; url?: string }; launchedAt?: number; /** #629 : le dernier mouvement de la tâche cloud, pour la marque « retirée ». */ movedAt?: number }
 
 /** L'index d'axe d'un nom (#367) : la somme de ses codes modulo 8, la même couleur d'un dessin à l'autre. */
 export function toneOf(name: string): number {
@@ -15800,13 +15820,6 @@ export function controlView(o: {
   const running: ControlCard[] = []
   const orphans: { sessionId: string; id: string; title: string; root: string; by: SessionPause['by'] }[] = []
   const rowCwd = new Map<string, string>()
-  // #383 : la version en test de chaque tâche, d'après les sessions « Tester #N · X.Y.Z » ouvertes.
-  const tests = new Map<string, string>()
-  for (const raw of o.rows) {
-    const r = raw as { title?: unknown; isArchived?: unknown }
-    const t = typeof r.title === 'string' && r.isArchived !== true ? testTitle(r.title) : undefined
-    if (t) tests.set(t.id, t.version)
-  }
   for (const raw of o.rows) {
     const r = raw as { sessionId?: unknown; title?: unknown; cwd?: unknown; isArchived?: unknown; isRunning?: unknown; branch?: unknown }
     if (typeof r.sessionId !== 'string' || typeof r.title !== 'string' || r.isArchived === true) continue
@@ -15823,10 +15836,9 @@ export function controlView(o: {
     const project = name(root)
     const status = o.statusOf(r.sessionId)
     // #383 : l'état unique de la session (`taskSessionState`), la même règle que la ligne En cours, la bande et la fiche.
-    const test = tests.get(id)
     const closed = o.closed?.has(`${root}#${id}`) === true
-    const st = taskSessionState({ closed, running: r.isRunning === true, ...(pause ? { pause } : {}), ...(test !== undefined ? { test } : {}), ...(status ? { status } : {}) })
-    const finished = st.kind === 'done' || st.kind === 'merge' || st.kind === 'test'
+    const st = taskSessionState({ closed, running: r.isRunning === true, ...(pause ? { pause } : {}), ...(status ? { status } : {}) })
+    const finished = st.kind === 'done' || st.kind === 'merge'
     const steps = finished ? doneSteps(status) : cardSteps(status)
     running.push({
       key: `run:${r.sessionId}`,
@@ -15836,7 +15848,6 @@ export function controlView(o: {
       project,
       tone: toneOf(project),
       ...(!finished && pause?.state === 'asked' ? { pause: { mode: pause.mode, ...(pause.failed ? { failed: pause.failed } : {}) } } : {}),
-      ...(st.kind === 'test' ? { test: st.version } : {}),
       state: finished ? 'done' : st.kind === 'pausing' ? 'pausing' : st.kind === 'paused' ? 'paused' : st.kind === 'run' ? 'run' : 'wait',
       prio: o.marks.has(`${root}#${id}`),
       ...(steps ? { steps } : {}),
@@ -15874,16 +15885,13 @@ export function controlView(o: {
     })
     .map(({ e }) => {
       const project = name(e.root)
-      const testWord = /(\d+\.\d+\.\d+)/.exec(e.word)?.[1]
       return {
         key: cloudCardKey(e.root, e.id),
         id: e.id,
         title: bareTitle(e.title),
         project,
         tone: toneOf(project),
-        state: e.tone === 'wait' || e.tone === 'quiet' ? 'wait' : e.tone === 'done' || e.tone === 'test' ? 'done' : 'run',
-        // #629 : la version en test, d'après le mot « en test X.Y.Z » ; sans version, pas de pastille de version.
-        ...(e.tone === 'test' && testWord ? { test: testWord } : {}),
+        state: e.tone === 'wait' || e.tone === 'quiet' ? 'wait' : e.tone === 'done' ? 'done' : 'run',
         prio: false,
         heavy: false,
         cloud: { word: e.word, tone: e.tone, ...(e.session ? { session: e.session } : {}), ...(e.pr ? { pr: e.pr } : {}), ...(e.movedAt !== undefined ? { movedAt: e.movedAt } : {}) },
@@ -16025,24 +16033,13 @@ export function withRetired(marks: ControlRetired, card: ControlCard, now: numbe
 }
 
 /**
- * #629 : l'état d'une tâche cloud pour sa carte, ou `undefined` si elle n'en a pas : une PR fusionnée n'en a plus,
- * sauf en test (`test` : la version livrée, `''` sans version) ; sans nouvelles, à toi, prête, en cours sinon.
+ * #629 : l'état d'une tâche cloud pour sa carte, ou `undefined` si elle n'en a pas : une PR fusionnée n'en a plus
+ * (#635 : plus d'exception « en test », la ligne se clôt à la publication) ; sans nouvelles, à toi, prête, en cours sinon.
  */
-export function controlCloudState(o: { state: CloudPr['state']; mark: 'person' | 'spinner' | 'merge' | 'check'; word: string; quietAt?: number; test?: string; mission?: boolean; now: number }): { tone: CloudControlInput['tone']; word: string } | undefined {
-  if (o.state === 'merged' && !o.mission) return o.test === undefined ? undefined : { tone: 'test', word: o.test === '' ? STATE_WORDS.test : `${STATE_WORDS.test} ${o.test}` }
+export function controlCloudState(o: { state: CloudPr['state']; mark: 'person' | 'spinner' | 'merge' | 'check'; word: string; quietAt?: number; mission?: boolean; now: number }): { tone: CloudControlInput['tone']; word: string } | undefined {
+  if (o.state === 'merged' && !o.mission) return undefined
   if (o.quietAt !== undefined) return { tone: 'quiet', word: quietSinceText(o.quietAt, o.now) }
   return { tone: o.mark === 'person' ? 'wait' : o.mark === 'check' || o.mark === 'merge' ? 'done' : 'run', word: o.word }
-}
-
-/**
- * #629 : la version en test d'une ligne ouverte, celle de sa dernière livraison (`''` sans version) ; `undefined` sans
- * livraison ou close. `pr` : la PR de la carte ; une livraison qui nomme une autre PR (`livré:…#73`) est une passe
- * d'avant, la PR fusionnée d'aujourd'hui n'est pas encore publiée : pas en test.
- */
-export function testVersionOf(task: Task, pr?: number): string | undefined {
-  const last = task.done ? undefined : task.livre?.[task.livre.length - 1]
-  if (last === undefined || (pr !== undefined && last.pr !== undefined && last.pr !== pr)) return undefined
-  return last.version ?? ''
 }
 
 /**
