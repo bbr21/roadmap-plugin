@@ -862,6 +862,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.311.0 (2026-11-23)** : maestro : le brief cloud dit quoi faire d'un sous-agent bloqué sur une permission (sa demande attend dans l'app de la personne : relire les règles ask, le dire en PR, TaskStop) (#642)
 - **0.310.0 (2026-11-23)** : maestro : le compte rendu d'une session arrive entier chez Maestro, sous-puces comprises, et la puce « Pour la personne » lui est redite tant qu'il ne l'a pas reprise ; plus de « Il y manque » quand c'est le panneau qui n'a pas su lire (#640)
 - **0.309.0 (2026-11-23)** : maestro : un finding dont le lieu est un lien Markdown est reconnu (lieu nu, entre accents graves ou en lien), et une ligne « finding · » illisible est rendue à sa session en fin de tour au lieu de se perdre (#641)
 - **0.308.0 (2026-11-23)** : panneau : une tâche close dit « vérifiée » ou « non vérifiée » dans sa fiche, avec son essai et le clic qui la passe à vérifiée ; la vue Faites a sa case « À vérifier » pour les passer en lot ; plus aucun « en test » (#635)

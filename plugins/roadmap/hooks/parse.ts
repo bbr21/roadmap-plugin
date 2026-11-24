@@ -12025,6 +12025,9 @@ export function cloudBriefText(o: { project: string; id: string; label: string; 
     ...(o.prefs ? ['', cloudPrefsLine(o.prefs, o.prefsError)] : []),
     ...(modelLines ? ['', modelLines.para] : []),
     '',
+    // #642 : le sous-agent dont la demande de permission attend la personne, mot pour mot comme brief_cloud.py.
+    CLOUD_SUBAGENT_RULE,
+    '',
     // #537 : le bloc fixe du compte rendu, mot pour mot comme brief_cloud.py.
     CLOUD_REPORT_BLOCK_RULE,
     '',
@@ -15488,7 +15491,13 @@ export function cloudCardKeepsModel<T extends Record<string, unknown>>(card: T):
   if (card.model === undefined && card.effort === undefined) return card
   return { ...card, initiation: 'own_initiative' }
 }
-export const CLOUD_ECONOMY = 'Économie (#327) : le cadrage, la spec et le plan se font ici ; chaque étape du plan part chez un sous-agent avec `model: "sonnet"` passé à l\'outil Agent. Tu relis le diff de chaque étape et reprends la main sur un test rouge qui résiste à deux essais.'
+/**
+ * #642 (F154 de Splitmybill) : la demande de permission d'un sous-agent d'une session cloud part à l'app de la
+ * personne, pas à la session, et y attend sans limite ; la session la voit (notice, `pending_actions` de
+ * get_session) et `TaskStop` la retire. Même texte que REGLE_SOUS_AGENT de brief_cloud.py.
+ */
+export const CLOUD_SUBAGENT_RULE = 'Un sous-agent bloqué sur une permission (#642) : sa demande part à l\'app de la personne, pas chez toi, et y attend sans limite ; aucun message ne l\'accorde, et le sous-agent ne sait pas qu\'il a attendu. Avant de confier une étape, relis les règles `ask` de `.claude/settings.json` : une étape qui lance une commande qu\'elles retiennent reste chez toi. Dès la notice « … is waiting for permission » (ou un `agent_id` dans les `pending_actions` de `get_session` sans `session_id`), dis la commande et pourquoi dans un commentaire de ta PR qui commence par « attend une réponse : permission … » ; sans réponse quand le reste est fait, arrête le sous-agent (`TaskStop`, qui retire sa demande) et fais l\'étape toi-même sans cette commande, ou reste « attend une réponse ». Aucun sous-agent en cours ni en attente avant « prête ». Un réglage qui élargit les permissions se propose à la personne par le formulaire, avec ce qu\'il ouvre exactement, jamais écrit par toi. Détail : `docs/session-cloud.md`, « Un sous-agent bloqué sur une permission ».'
+export const CLOUD_ECONOMY ='Économie (#327) : le cadrage, la spec et le plan se font ici ; chaque étape du plan part chez un sous-agent avec `model: "sonnet"` passé à l\'outil Agent. Tu relis le diff de chaque étape et reprends la main sur un test rouge qui résiste à deux essais.'
 
 /**
  * Le bloc de fin d'un compte rendu cloud (#496, #559), même texte que `regle_bloc_de_fin` de brief_cloud.py : trois

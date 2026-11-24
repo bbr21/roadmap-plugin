@@ -102,6 +102,22 @@ CONSIGNE_327 = (
 )
 NOMS_CHARGES = {"retouche": "une retouche", "normale": "une tâche normale", "lourde": "une tâche lourde"}
 
+# #642 (F154 de Splitmybill) : la demande de permission d'un sous-agent part à l'app de la personne, pas à la session,
+# et y attend sans limite ; la session la voit (notice, `pending_actions` de get_session) et `TaskStop` la retire.
+# Même texte que `CLOUD_SUBAGENT_RULE` du panneau ; le détail : docs/session-cloud.md et la note du chantier.
+REGLE_SOUS_AGENT = (
+    "Un sous-agent bloqué sur une permission (#642) : sa demande part à l'app de la personne, pas chez toi, et y "
+    "attend sans limite ; aucun message ne l'accorde, et le sous-agent ne sait pas qu'il a attendu. Avant de confier "
+    "une étape, relis les règles `ask` de `.claude/settings.json` : une étape qui lance une commande qu'elles "
+    "retiennent reste chez toi. Dès la notice « … is waiting for permission » (ou un `agent_id` dans les "
+    "`pending_actions` de `get_session` sans `session_id`), dis la commande et pourquoi dans un commentaire de ta PR "
+    "qui commence par « attend une réponse : permission … » ; sans réponse quand le reste est fait, arrête le "
+    "sous-agent (`TaskStop`, qui retire sa demande) et fais l'étape toi-même sans cette commande, ou reste « attend une "
+    "réponse ». Aucun sous-agent en cours ni en attente avant « prête ». Un réglage qui élargit les permissions se "
+    "propose à la personne par le formulaire, avec ce qu'il ouvre exactement, jamais écrit par toi. Détail : "
+    "`docs/session-cloud.md`, « Un sous-agent bloqué sur une permission »."
+)
+
 
 def ligne_options(mots):
     return "Options de la carte (#490) : " + mots + OPTIONS_SUITE
@@ -378,6 +394,9 @@ def texte_brief(e):
         "",
         "Ton modèle (#490) : cette tâche est %s, prévue en %s, effort %s. %s" % (
             NOMS_CHARGES[l["charge"]], nom, l["effort"], CONSIGNE_327),
+        "",
+        # #642 : le sous-agent dont la demande de permission attend la personne.
+        REGLE_SOUS_AGENT,
         "",
         REGLE_BLOC,
         "",
