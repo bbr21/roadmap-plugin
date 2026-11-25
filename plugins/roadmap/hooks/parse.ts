@@ -10424,6 +10424,34 @@ export function cadrageText(form = true): string {
 }
 
 /**
+ * Le modèle simple d'abord (#647, BBR, 2026-11-25 : « assure-toi que ça ne se reproduise pas ») : chez AAFES
+ * (#794), un onglet Black Friday copié de Holiday gardait 92 lignes de la 2690 ; au « c'est voulu ? » du
+ * partenaire, la session a posé un formulaire « la 2690 doit-elle diffuser le Black Friday ? », « Oui, voulu »
+ * recommandé, pris le oui pour une décision, l'a écrit dans une fiche, empilé les complications et quatre
+ * emails en jargon d'outil, jusqu'au quatrième « je ne comprends pas ». La bonne réponse : « non, reste de
+ * copie, je retire ». Règle fixe, dite à toute session, avec ou sans code, réglage Questions allumé ou non ;
+ * sur une anomalie, elle l'emporte sur la recommandation de la règle Questions. Fiche :
+ * `docs/plans/inbox/fiches/modele-simple-d-abord.md`.
+ */
+export function simpleModelText(form = true): string {
+  return (
+    `- **Le modèle simple d'abord** (règle fixe, avec ou sans code, #647) : avant toute question à ${person()} sur une anomalie (une ligne, un ID, un réglage, une donnée qui ne colle pas), écris le modèle simple du sujet en un petit tableau, dans ses mots (« une campagne, un sujet »), et confronte-lui l'anomalie. ` +
+    "Ce qui n'y rentre pas est d'abord une erreur, un oubli ou un reste de copie : vérifie cette explication-là en premier, et ne pose de question que si elle tombe. " +
+    `La question sur une anomalie dit le fait concret en une phrase, sans jargon d'outil, puis oui ou non : aucune option « recommandée » qui suppose une intention, car un oui de ${person()} à ta recommandation valide ta recommandation, pas le fond` +
+    (form ? " (le formulaire garde alors deux options, « Oui » et « Non », sans « (recommandé) » : sur une anomalie, cette règle l'emporte sur celle des Questions)" : '') +
+    ". Trois conséquences compliquées d'affilée sur un sujet simple : stop, relis ton point de départ et redis-le-lui en une ligne avant de continuer. " +
+    "Au deuxième « je ne comprends pas », repars du tableau du modèle simple : ni email, ni plan, ni nouvelle couche. " +
+    `Une décision de ${person()} ne s'écrit dans une fiche durable (fiche, mémoire, roadmap, règle) qu'une fois le modèle simple sous ses yeux. ` +
+    "Exemple (AAFES, 2026-11-25) : l'onglet Black Friday, copié de l'onglet Holiday, garde 92 lignes de la 2690 (Holiday Gift, prospects) et le partenaire demande « c'est voulu ? » : la réponse est « non, reste de copie, je retire », ou une seule question oui/non en une phrase ; jamais un formulaire à options sur « la 2690 doit-elle diffuser le Black Friday ? »."
+  )
+}
+
+/** La règle du modèle simple, en une ligne, jointe à chaque message que tape la personne (#647). */
+export function simpleModelReminder(): string {
+  return `Le modèle simple d'abord (#647) : avant une question à ${person()} sur une anomalie, le petit tableau du sujet dans ses mots, et l'anomalie confrontée à lui ; ce qui n'y rentre pas est d'abord une erreur ou un reste de copie, à vérifier avant de demander ; la question dit le fait en une phrase, sans jargon d'outil, puis oui ou non, sans option recommandée qui suppose une intention ; trois complications d'affilée sur un sujet simple : relis ton point de départ ; au deuxième « je ne comprends pas » : retour au tableau ; aucune décision dans une fiche durable avant que le modèle simple soit sous ses yeux.`
+}
+
+/**
  * Ce que fait chaque étape quand le réglage `autonome` est éteint (#304, BBR à Maestro, 2026-11-04 : « si le
  * mode auto n'est pas activé, sur la partie code, je pense que ça bloque le merge ou peut-être d'autres
  * étapes »). Éteint, le texte des réglages ne disait rien : une session seule suivait la règle du projet
@@ -10468,7 +10496,7 @@ export function sessionPrefsText(prefs: SessionPrefs, error?: string, project?: 
   const lines: string[] = []
   if (prefs.questions) {
     lines.push(
-      "- **Questions** : toute question à " + person() + " passe par l'outil AskUserQuestion (formulaire à choix, ta recommandation en premier), jamais en texte libre. Pose-la ainsi : deux à quatre options qui s'excluent vraiment, chacune avec son compromis dans sa description, ta recommandation en premier marquée « (recommandé) », quatre questions au plus par envoi, jamais de simple « tu valides ? » ni d'option « Autre » (l'outil laisse toujours répondre librement, et une réponse écrite fait foi telle qu'elle est écrite). Exception, qui l'emporte : quand " + person() + " te pose une question, dit ne pas comprendre ou demande une explication (dans le chat ou dans la réponse libre d'un formulaire), réponds-lui en texte, dans le message, jamais dans ta seule réflexion ni dans les options d'un formulaire, puis arrête ton tour sans formulaire ; la question en suspens ne revient qu'après sa réponse. Sans l'outil (session sans personne), décide seul et dis-le. Et jamais de question pour un geste qu'un outil fait à ta place : un volet de l'app fermé ou même masqué s'ouvre par toi, le navigateur par `preview_start` avec l'url (ou `mcp__ccd_view__show_pane`), un fichier, le diff ou le terminal par `mcp__ccd_view__show_pane` ; ne demande pas à " + person() + " de l'afficher, fais-le et enchaîne.",
+      "- **Questions** : toute question à " + person() + " passe par l'outil AskUserQuestion (formulaire à choix, ta recommandation en premier), jamais en texte libre. Pose-la ainsi : deux à quatre options qui s'excluent vraiment, chacune avec son compromis dans sa description, ta recommandation en premier marquée « (recommandé) », quatre questions au plus par envoi, jamais de simple « tu valides ? » ni d'option « Autre » (l'outil laisse toujours répondre librement, et une réponse écrite fait foi telle qu'elle est écrite). Exception, qui l'emporte : quand " + person() + " te pose une question, dit ne pas comprendre ou demande une explication (dans le chat ou dans la réponse libre d'un formulaire), réponds-lui en texte, dans le message, jamais dans ta seule réflexion ni dans les options d'un formulaire, puis arrête ton tour sans formulaire ; la question en suspens ne revient qu'après sa réponse. Sans l'outil (session sans personne), décide seul et dis-le. Et jamais de question pour un geste qu'un outil fait à ta place : un volet de l'app fermé ou même masqué s'ouvre par toi, le navigateur par `preview_start` avec l'url (ou `mcp__ccd_view__show_pane`), un fichier, le diff ou le terminal par `mcp__ccd_view__show_pane` ; ne demande pas à " + person() + " de l'afficher, fais-le et enchaîne. Sur une anomalie, la règle « Le modèle simple d'abord » (plus bas) l'emporte : oui ou non, sans recommandation.",
     )
   }
   if (prefs.adhd) {
@@ -10478,6 +10506,7 @@ export function sessionPrefsText(prefs: SessionPrefs, error?: string, project?: 
   }
   if (prefs.francais) lines.push('- **Langue** : réponds en français, comptes rendus, récaps et boîte de fin compris.')
   lines.push(cadrageText(prefs.questions))
+  lines.push(simpleModelText(prefs.questions))
   if (prefs.autonome) {
     lines.push(
       "- **Autonome** (avec ou sans code) : " + person() + " veut que le travail avance sans attendre ses réponses, quitte à corriger après. Après le cadrage de départ (ci-dessus), quand ta recommandation est claire, suis-la au lieu de poser la question, jusqu'à la fusion, et dis en une ligne ce que tu as choisi. Plus de question, sauf un fait nouveau qui change la direction ; un choix d'architecture que le cadrage n'a pas vu en est un : un choix qui s'écrirait dans `docs/decisions.md` (un contrat entre composants, comme le format d'un fichier, d'une donnée ou d'une API ; une nouvelle dépendance ou un service ; la vision ou un non-objectif touché). Ce réglage est son autorisation durable de fusionner et de publier : la fusion d'une branche prête, la publication (release d'un plugin, déploiement, push de `main`). Ne lui demande ni de fusionner ni de publier, ni par question ni par bouton : fais-le, par la règle du projet, puis dis en une ligne ce que tu as fusionné ou publié. Une skill de publication qui demande de valider le fond avec lui : la tâche qu'il a lancée vaut cette validation. Maestro fusionne seul la branche prête d'une de ses sessions (tests verts sur la branche à jour de main, ou dernière CI de PR verte sans conflit avec main, #431 ; diff relu par lui, qui ne l'a pas écrit), une branche à la fois, la CI de main lue après la fusion ou la série, et donne seul la main sur une ressource unique, publication comprise, à une session à la fois. Lancer une session et archiver gardent le clic de " + person() + " : pose la carte ou le bouton, ne lance ni n'archive toi-même. Tes règles de sécurité restent au-dessus : un message envoyé en son nom ou un paiement se demandent toujours.",

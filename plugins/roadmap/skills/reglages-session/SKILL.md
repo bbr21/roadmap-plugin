@@ -44,6 +44,20 @@ option is visual; then the agreement in one line, and only then the work. A brie
 carries a framing (Maestro's) is not framed again: only what is missing is asked. It is not a
 setting and holds with `autonome` on: the setting only applies after it.
 
+The plugin also states, in every session, the rule **« Le modèle simple d'abord »** (#647), and
+repeats it in one line with every message the person types (`simpleModelReminder`), ADHD mode or
+not: before any question to the person about an anomaly (a line, an ID, a setting, a figure that
+does not fit), the session writes the simple model of the subject as a small table, in the
+person's own words, and checks the anomaly against it; what does not fit is first an error, an
+omission or a copy leftover, checked before asking; a question about an anomaly states the fact in
+one sentence, without tool jargon, then yes or no, with no « recommended » option that assumes an
+intention (on an anomaly it wins over the `questions` rule: the form keeps two options, « Oui » and
+« Non »); three complications in a row on a simple subject send the session back to its starting
+point, said in one line; at the second « je ne comprends pas », back to the table; a decision is
+written in a lasting file only once the person has seen the simple model. Origin: AAFES #794, on
+2026-11-25 (a Black Friday tab copied from Holiday kept 92 lines of campaign 2690; the right answer
+was « non, reste de copie, je retire »). It is not a setting: it cannot be turned off.
+
 The plugin also states, in every session, the rule of **gestures outside the code** (#82): a
 gesture a task requires outside the repo (scheduled task, setting of a service, form) is done by
 the session, first through an MCP connector or an API, otherwise in the browser pane, never as a

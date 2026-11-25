@@ -650,6 +650,15 @@ remplaçant le précédent (#119) :
   d'ambigu, elle le dit en une ligne et part ; sinon un seul formulaire d'une à quatre questions
   (rendu et style, architecture, périmètre, ce qui est en place), puis l'accord en une ligne. Un
   brief de Maestro qui porte déjà le cadrage ne se recadre pas : la session ne demande que ce qui manque ;
+- le modèle simple d'abord (#647, dit à toute session, pas un réglage, redit en une ligne à chaque
+  message de Bertrand) : avant toute question sur une anomalie, la session écrit le modèle simple du
+  sujet en un petit tableau, dans les mots de Bertrand, et y confronte l'anomalie ; ce qui n'y rentre
+  pas est d'abord une erreur ou un reste de copie, vérifié avant de demander ; la question dit le fait
+  en une phrase sans jargon d'outil, puis oui ou non, sans option recommandée (sur une anomalie, elle
+  l'emporte sur la règle des questions) ; trois complications d'affilée font relire le point de
+  départ ; au deuxième « je ne comprends pas », retour au tableau ; une décision n'entre dans une
+  fiche durable qu'une fois le modèle simple montré. Cas d'origine : AAFES #794, le 2026-11-25
+  ([la fiche](../../docs/plans/inbox/fiches/modele-simple-d-abord.md)) ;
 - `autonome` (#77, #105, avec ou sans code, éteint par défaut) : après le cadrage de départ
   (#303, ci-dessous), Claude suit sa recommandation au lieu de poser la question, jusqu'à la
   fusion, sauf un fait nouveau qui change la direction, comme une question d'architecture que le
@@ -862,6 +871,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.313.1 (2026-11-25)** : maestro : règle fixe « le modèle simple d'abord » dite à toute session et redite à chaque message : avant une question sur une anomalie, le petit tableau du sujet, puis oui ou non sans option recommandée (#647)
 - **0.313.0 (2026-11-23)** : maestro : la puce « Pour la personne » d'une session cloud ne demande plus de geste du gardien ou de Maestro (fusion, publication), les PR cloud portent le titre « #N · nom », et Maestro relit une telle demande avant de la redire (#639)
 - **0.312.0 (2026-11-23)** : maestro : une session d'une tâche de projet s'intitule « <client> #N · nom » (Revlon #573 · Pro BF), sans « · local » ni « · cloud », carte et session ; une tâche de code garde « #N · nom · lieu » (#643)
 - **0.311.0 (2026-11-23)** : maestro : le brief cloud dit quoi faire d'un sous-agent bloqué sur une permission (sa demande attend dans l'app de la personne : relire les règles ask, le dire en PR, TaskStop) (#642)

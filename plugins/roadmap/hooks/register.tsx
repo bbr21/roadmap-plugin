@@ -718,6 +718,7 @@ import {
   sessionPrefs,
   sessionPrefsText,
   sessionPrefsReminder,
+  simpleModelReminder,
   maestroPrefsReminder,
   maestroWakeReminder,
   pendingAskRefusal,
@@ -11099,6 +11100,9 @@ export const register: Register = (on, options) => {
         ? maestroWakeReminder(await read($, pendingAsksAtom))
         : maestro ? maestroPrefsReminder(current.prefs) : sessionPrefsReminder(current.prefs)
       if (reminder !== undefined) texts.push(reminder)
+      // Le modèle simple d'abord (#647) : règle fixe, à chaque message que tape la personne, mode ADHD ou non ;
+      // pas au réveil de Maestro, où personne n'a rien demandé.
+      if (!wake) texts.push(simpleModelReminder())
       // Proposer une task (#216) : la règle entière à chaque message d'un projet à roadmap, selon la
       // session ; pas au réveil de Maestro, où la personne n'a rien dit.
       if (current.roadmap && !wake) {
