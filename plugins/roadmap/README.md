@@ -871,6 +871,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.313.2 (2026-11-25)** : maestro : la publication ne refuse plus de partir quand le registre des findings, relevé par Maestro, n'est pas encore committé : elle le laisse en place, hors de son commit de version (#648)
 - **0.313.1 (2026-11-25)** : maestro : règle fixe « le modèle simple d'abord » dite à toute session et redite à chaque message : avant une question sur une anomalie, le petit tableau du sujet, puis oui ou non sans option recommandée (#647)
 - **0.313.0 (2026-11-23)** : maestro : la puce « Pour la personne » d'une session cloud ne demande plus de geste du gardien ou de Maestro (fusion, publication), les PR cloud portent le titre « #N · nom », et Maestro relit une telle demande avant de la redire (#639)
 - **0.312.0 (2026-11-23)** : maestro : une session d'une tâche de projet s'intitule « <client> #N · nom » (Revlon #573 · Pro BF), sans « · local » ni « · cloud », carte et session ; une tâche de code garde « #N · nom · lieu » (#643)

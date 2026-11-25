@@ -783,7 +783,9 @@ otherwise they see an empty worktree.
     through the `tasks` skill (then the card, as for a proposal), `--rattache <id>` when a line
     already covers it (enrich that line), or `--ecarte "<raison>"`. `--ligne` and `--rattache`
     refuse a task that is not in the roadmap. Commit the ledger on `main` with the roadmap
-    (`git -C <main folder> commit <ledger> -m …`, then push).
+    (`git -C <main folder> commit <ledger> -m …`, then push). A ledger left uncommitted no longer
+    blocks `release.py release` (#648): the release leaves it in place, outside its version commit,
+    and says so; commit it afterwards all the same.
   - **Say it once**: one line per finding, on the next turn the person starts (« F2 de #523 :
     rattaché à #494 »), never on a woken turn; a finding marked « geste de … » adds what the person
     has to do, in `> **À toi :** …`. A finding already said does not come back.

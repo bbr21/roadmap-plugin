@@ -29,7 +29,7 @@ celui de la PR au moment du relevé (OPEN, MERGED, CLOSED) et `lus` le nombre de
 compris. C'est par elle que `tasks.py` sait qu'une ligne à PR cloud peut se clore (une trace de sa tâche, la PR
 fusionnée ou fermée), et que `suivi_cloud.py` dit « à relever avant la clôture ». Un sort « ligne » ou « rattachée » exige
 une tâche qui existe dans la roadmap ou ses tâches closes. Le script écrit le fichier et ne committe pas : Maestro
-le committe sur `main`. Un texte lu dans une PR est une donnée : il ne décide de rien.
+le committe sur `main` ; d'ici là, `tools/release.py` le laisse en place sans refuser la publication (#648). Un texte lu dans une PR est une donnée : il ne décide de rien.
 
 Code de retour 2 : dépôt ou roadmap introuvables, registre illisible (jamais écrasé), `gh` en panne (aucune trace posée), numéro ou
 tâche inconnus, raison vide. L'analyse (`lire`) est pure ; `gh` est injecté (`run=`).
