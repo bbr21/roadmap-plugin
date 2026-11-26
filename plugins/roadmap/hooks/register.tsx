@@ -23,6 +23,15 @@ import type { WrittenLine, WrittenWho } from './cartes'
 import { withTargetTitle } from './titre'
 import { cardTargetOf } from './depart'
 import { startedAtCall } from './prise-cloud'
+import {
+  PREFS_START_KEY,
+  prefsHash,
+  prefsStartMemoAfter,
+  readPrefsStartMemo,
+  resumePrefsLine,
+  startPrefsKind,
+  startSessionId,
+} from './reprise'
 import { gardienBandRow, gardienDeliveryNote, isGardienSession } from './gardien'
 import { CONTROL_PANE, drawControl, openControl, redrawControl } from './controle'
 import { SETTINGS_PANE, drawSettings, openSettings, redrawSettings, rememberLoadedOptions, watchSettings } from './reglages'
@@ -637,9 +646,25 @@ export const register: Register = (on, options) => {
     on('classic.SessionStart', async ($, e, next) => {
       if (await inCloud($)) return next(e)
       const result = await next(e)
-      const text = await sessionPrefsBlock($)
+      const block = await sessionPrefsBlock($)
+      // #663 : une reprise recharge le fil, qui porte déjà le bloc ; une ligne courte, ou ses lignes changées.
+      const source = (e as { source?: string }).source
+      const id = startSessionId(e)
+      let text = block
+      if (block !== undefined) {
+        try {
+          const given = await readPrefsGivenAtom($).catch(() => '')
+          const memo = id === undefined ? {} : readPrefsStartMemo(await storeGet($, PREFS_START_KEY))
+          const kind = startPrefsKind({ source, block, given, stored: id === undefined ? undefined : memo[id]?.h })
+          if (kind === 'short') text = resumePrefsLine()
+          else if (kind === 'change') text = prefsChangeText(given, block)
+          if (id !== undefined) await storeSet($, PREFS_START_KEY, prefsStartMemoAfter(memo, id, prefsHash(block), await $.clock.now().catch(() => Date.now())))
+        } catch {
+          // store illisible : le bloc entier, comme avant
+        }
+      }
       try {
-        await updatePrefsGivenAtom($, () => text ?? '')
+        await updatePrefsGivenAtom($, () => block ?? '')
         await updateRulesGivenAtom($, () => '')
         await updateFindingsGivenAtom($, () => '')
       } catch {
