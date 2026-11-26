@@ -4,6 +4,7 @@ marchent, ligne par ligne, OK, KO ou À voir, avec la commande qui corrige.
 
   python3 doctor.py [DOSSIER]          le dossier du projet (défaut : le dossier courant)
   python3 doctor.py [DOSSIER] --json   le même diagnostic en JSON
+  python3 doctor.py [DOSSIER] --jours 30 --seuil 10   la fenêtre et le seuil des hooks en échec (défaut 7 et 10, #660)
 
 Lecture seule : il ne change rien, ni au projet ni à la machine. Il lit sur le réseau les empreintes
 publiées du plugin roadmap (CHECKSUMS.txt du dépôt public, par curl, #274). Code de retour 1 s'il y a un KO.
@@ -14,6 +15,7 @@ Python 3.9 et plus, bibliothèque standard seulement.
 """
 
 import argparse
+import calendar
 import glob
 import hashlib
 import json
@@ -22,6 +24,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REQUIS = os.path.join(os.path.dirname(HERE), "references", "requis.json")
@@ -865,6 +868,111 @@ def travail(main, home=None):
     return ligne(OK, "Travail", detail)
 
 
+# ---------------------------------------------------------------- hooks en échec
+
+JOURS_HOOKS = 7
+SEUIL_HOOKS = 10
+MARQUE_ECHEC = '"hook_non_blocking_error"'
+SCRIPT_DE_HOOK = re.compile(r"([^\s\"'/\\]+)\.(?:cjs|mjs|js|ts|py|sh|rb|pl)\b")
+
+
+def dossier_des_journaux(dossier):
+    """Le nom que Claude Code donne au dossier des journaux d'un projet sous ~/.claude/projects : son chemin,
+    tout ce qui n'est ni lettre ni chiffre remplacé par un tiret."""
+    return re.sub(r"[^A-Za-z0-9]", "-", dossier)
+
+
+def _instant(iso):
+    """Un horodatage de journal (« 2026-11-25T10:00:00.000Z », UTC) en secondes ; None s'il est illisible."""
+    try:
+        return calendar.timegm(time.strptime(str(iso)[:19], "%Y-%m-%dT%H:%M:%S"))
+    except ValueError:
+        return None
+
+
+def _nom_du_hook(commande):
+    """Le script que lance la commande, sans dossier ni extension (les copies d'un même script, posées sous
+    des chemins temporaires différents, n'en font qu'un) ; à défaut, la commande elle-même."""
+    m = SCRIPT_DE_HOOK.findall(commande)
+    return m[-1] if m else commande.strip()[:60]
+
+
+def _journaux_du_projet(main, home):
+    """Les dossiers de journaux du projet : le sien, ceux des worktrees de l'app (`--claude-worktrees-…`) et
+    ceux de ses worktrees git ; jamais un projet voisin dont le nom commence pareil."""
+    racine = os.path.join(home, ".claude", "projects")
+    nom = dossier_des_journaux(main)
+    noms = {nom}
+    r = git(main, "worktree", "list", "--porcelain")
+    if r.returncode == 0:
+        noms |= {dossier_des_journaux(l[9:].strip()) for l in r.stdout.splitlines() if l.startswith("worktree ")}
+    try:
+        presents = os.listdir(racine)
+    except OSError:
+        return []
+    return sorted(os.path.join(racine, d) for d in presents if d in noms or d.startswith(nom + "--claude-worktrees-"))
+
+
+def hooks_en_echec(main, home, jours=JOURS_HOOKS, seuil=SEUIL_HOOKS, maintenant=None):
+    """Les hooks qui échouent à répétition (#660) : les pièces jointes `hook_non_blocking_error` des journaux
+    du projet sur les `jours` derniers jours, regroupées par événement et par script ; une ligne « À voir » par
+    hook qui atteint `seuil` échecs, le pire d'abord, avec son nom, sa commande et le dernier échec. Chaque
+    échec injecte son erreur dans le contexte de la session, à chaque appel d'outil, sans que personne le voie
+    (lego-gitnexus-guard, des semaines sur adBricks, plan #656). Ne retient que le nom du hook, sa commande et
+    la date : jamais la sortie du hook ni le contenu d'un message. Un journal que rien n'a touché depuis la
+    fenêtre ne s'ouvre pas, et une entrée recopiée d'une session reprise ne compte qu'une fois."""
+    fin = _instant(maintenant) if maintenant else time.time()
+    debut = fin - jours * 86400
+    vus = set()
+    hooks = {}
+    for d in _journaux_du_projet(main, home):
+        for f in glob.glob(os.path.join(d, "*.jsonl")):
+            try:
+                if os.path.getmtime(f) < debut:
+                    continue
+                with open(f, encoding="utf-8", errors="replace") as fh:
+                    for brut in fh:
+                        if MARQUE_ECHEC not in brut:
+                            continue
+                        try:
+                            e = json.loads(brut)
+                        except ValueError:
+                            continue
+                        a = e.get("attachment") if isinstance(e, dict) else None
+                        if not isinstance(a, dict) or a.get("type") != "hook_non_blocking_error":
+                            continue
+                        t = _instant(e.get("timestamp"))
+                        if t is None or t < debut or t > fin + 86400:
+                            continue
+                        uid = e.get("uuid")
+                        if uid:
+                            if uid in vus:
+                                continue
+                            vus.add(uid)
+                        commande = str(a.get("command") or "")
+                        cle = (str(a.get("hookName") or a.get("hookEvent") or "?"), _nom_du_hook(commande))
+                        h = hooks.setdefault(cle, {"n": 0, "dernier": 0, "commandes": {}})
+                        h["n"] += 1
+                        h["dernier"] = max(h["dernier"], t)
+                        h["commandes"][commande] = h["commandes"].get(commande, 0) + 1
+            except OSError:
+                continue
+    lignes = []
+    for (evenement, nom), h in sorted(hooks.items(), key=lambda kv: (-kv[1]["n"], kv[0])):
+        if h["n"] < seuil:
+            continue
+        commande = max(h["commandes"].items(), key=lambda kv: (kv[1], kv[0]))[0]
+        chemins = " (%d chemins)" % len(h["commandes"]) if len(h["commandes"]) > 1 else ""
+        lignes.append(ligne(
+            VOIR, "Hooks en échec",
+            "%s · %s : %d échecs sur %d jours, le dernier le %s ; commande%s : %s" % (
+                evenement, nom, h["n"], jours, time.strftime("%Y-%m-%d", time.localtime(h["dernier"])), chemins,
+                commande if len(commande) <= 200 else commande[:200] + "…"),
+            "réparer ou retirer ce hook là où il est déclaré (hooks de ~/.claude/settings.json, du .claude/settings.json "
+            "du projet, ou du plugin qui le pose) : chaque échec ajoute son erreur au contexte de la session"))
+    return lignes
+
+
 # ---------------------------------------------------------------- ensemble
 
 
@@ -1257,7 +1365,8 @@ def reglages_masques(main, home):
     return ligne(VOIR, "Réglages masqués", " ; ".join(soucis), " ; ".join(gestes))
 
 
-def diagnostiquer(dossier, plugins="lire", home=None, avec_outils=True, gere=None, empreintes_de=None):
+def diagnostiquer(dossier, plugins="lire", home=None, avec_outils=True, gere=None, empreintes_de=None,
+                  jours=JOURS_HOOKS, seuil=SEUIL_HOOKS):
     """`empreintes_de` : la lecture des empreintes publiées ; par défaut le réseau, seulement quand le
     doctor juge les outils de la machine."""
     dossier = os.path.abspath(os.path.expanduser(dossier))
@@ -1284,6 +1393,7 @@ def diagnostiquer(dossier, plugins="lire", home=None, avec_outils=True, gere=Non
         lignes += copies
         lignes += [l for l in [python_intercepte(plugins, shutil.which if avec_outils else None)] if l]
         lignes.append(sec_default(home, gere))
+        lignes += hooks_en_echec(principal, home, jours, seuil)
         lignes.append(nom_utilisateur(home))
         return {"dossier": principal, "lignes": lignes,
                 "ko": sum(1 for l in lignes if l["statut"] == KO), "a_voir": sum(1 for l in lignes if l["statut"] == VOIR)}
@@ -1304,6 +1414,7 @@ def diagnostiquer(dossier, plugins="lire", home=None, avec_outils=True, gere=Non
     lignes += copies
     lignes += [l for l in [python_intercepte(plugins, shutil.which if avec_outils else None)] if l]
     lignes.append(sec_default(home, gere))
+    lignes += hooks_en_echec(main, home, jours, seuil)
     lignes.append(nom_utilisateur(home))
     if est_ios(main):
         lignes.append(skill_ios(requis, plugins, home))
@@ -1328,8 +1439,12 @@ def main(argv=None):
     p = argparse.ArgumentParser(description="Doctor d'un projet de code (plugin roadmap).")
     p.add_argument("dossier", nargs="?", default=".")
     p.add_argument("--json", action="store_true")
+    p.add_argument("--jours", type=int, default=JOURS_HOOKS,
+                   help="hooks en échec : la fenêtre des journaux lus, en jours (défaut %d)" % JOURS_HOOKS)
+    p.add_argument("--seuil", type=int, default=SEUIL_HOOKS,
+                   help="hooks en échec : le nombre d'échecs à partir duquel un hook se signale (défaut %d)" % SEUIL_HOOKS)
     a = p.parse_args(argv)
-    d = diagnostiquer(a.dossier)
+    d = diagnostiquer(a.dossier, jours=a.jours, seuil=a.seuil)
     print(json.dumps(d, ensure_ascii=False, indent=2) if a.json else texte(d))
     return 1 if d["ko"] else 0
 

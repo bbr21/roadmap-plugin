@@ -1,8 +1,8 @@
-# roadmap 0.315.0 : SHA-256 de chaque fichier installé du plugin, chemins relatifs à son dossier.
-# Vérifier une copie installée (~/.claude/plugins/cache/roadmap/roadmap/0.315.0) : plugins/roadmap/SECURITE.md, « Vérifier que ta copie est une vraie version ».
-1d66640e3e5a7050fd2a3eb244e3cb4a6082baac45d597f729e04aafa7c4af7f  .claude-plugin/plugin.json
-8bbf2c0d6d32d4655cf39a27e39960988ba70e8c026a919b2d3203a9e78c3d2c  README.md
-b2891316bf66a6066846f23f6fce25e9fb2d62ac9d547f8c34baed1b17aa08c0  SECURITE.md
+# roadmap 0.315.1 : SHA-256 de chaque fichier installé du plugin, chemins relatifs à son dossier.
+# Vérifier une copie installée (~/.claude/plugins/cache/roadmap/roadmap/0.315.1) : plugins/roadmap/SECURITE.md, « Vérifier que ta copie est une vraie version ».
+1582b8ed22cc6142efcb5abe3245b67b10fcae0977ed340a384e60069e701f39  .claude-plugin/plugin.json
+cca8ee7bffe92b0024cb84576d156c7f02d68d5be63695d73ae997e41680d228  README.md
+278bfd916d6fd62d4a29e945d6b725aa71816b632457092be953d9af59d80c8b  SECURITE.md
 bce019cb7147413a8e5f0687df59a41394fa92545568b5d37b1df8bd6d885e30  hooks/bar-hit.tsx
 3c92c2682663d95cd34c2a1aa6f4a8b868579b1e78367750a81a5618fca0962f  hooks/cartes.tsx
 7b2d0b264386ef04405dea734ce26eb8b411779c078b183220292425f2090aaf  hooks/controle.tsx
@@ -27,9 +27,9 @@ be1055c33675b146c70cc84464c3c5cf8c10c97df8927492629b021919d5a3a5  scripts/one-at
 b14567eacda639d54c407b7435348850484cb0e1c8fececb2806fcaa42fafd87  skills/audit/SKILL.md
 fbfd60b79a4b9ae19893f5c88d47503616a6abe2e3d13de44c8f432f61b8c057  skills/audit/scripts/audit.py
 8597d909a0c1281bc461cdf9dcbe74525db1634e71e26f100a3eee7ceefb3019  skills/audit/scripts/frictions.py
-dfa421db944cdfb0f34a254f46745b3f6d95c439413f094a8b1d814365fad596  skills/doctor/SKILL.md
+fb7cfa002a1907016ef63c9fb4a49cf3d60409ed517773b1b3388aee53b0c7f5  skills/doctor/SKILL.md
 44d591f8999b245c9b184ee332336a58415f5c04c37d87411149f3ee6fb816a9  skills/doctor/references/requis.json
-08959bbd48409cf4eab51bdb7b7eedaa4fc6c2622440bde2989a0f731bf3dd6b  skills/doctor/scripts/doctor.py
+cc0229166967ec31f7afedc3793abc7bda35597f520b47363eebf261fab5c237  skills/doctor/scripts/doctor.py
 6e80d5202351ec18b5590ac70bb51872289b2d5843226d3cc688fea6290193b0  skills/impact/SKILL.md
 e1a956cec45116d5fe0f6cd2a033b84bd2052f674fc29f0cc0755452dfa83973  skills/impact/scripts/impact.py
 3303b43c84bb3d5bcf9b4f360f47692899439908832081849fd6f4cba41c8968  skills/maestro/SKILL.md

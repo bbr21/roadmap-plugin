@@ -1,6 +1,6 @@
 ---
 name: doctor
-description: "Read-only checklist of a project wired to the roadmap system; says first the nature the project declares, `travail`. With code: tools (git, node, python3, gh logged in), repo on main and pushed to GitHub, roadmap found and valid, node scripts/check.mjs, roadmap plugin enabled and matching its fingerprints, Superpowers and every method skill the launched sessions cite, swiftui-pro on an iOS project. Without code: python3, roadmap, settings of .claude/roadmap.json, required fields of open tasks, roadmap plugin, and Superpowers (optional there, « À voir » if missing). One OK, KO or « À voir » line per item, with the fix command. Run at the end of onboarding. Triggers on « doctor », « lance le doctor sur ce projet », « tout est branché ? », « checklist du projet », « le projet est prêt pour Maestro ? », « Superpowers est bien installé ? », « pourquoi Maestro ne voit rien ». Not for a Cowork folder (its own doctor), nor for fixing: it says what to do, nor for the content of tasks (audit)."
+description: "Read-only checklist of a project wired to the roadmap system; says first the nature the project declares, `travail`. With code: tools (git, node, python3, gh logged in), repo on main and pushed to GitHub, roadmap found and valid, node scripts/check.mjs, roadmap plugin enabled and matching its fingerprints, Superpowers and every method skill the launched sessions cite, swiftui-pro on an iOS project, no hook failing often. Without code: python3, roadmap, settings of .claude/roadmap.json, required fields of open tasks, roadmap plugin, and Superpowers (optional there, « À voir » if missing). One OK, KO or « À voir » line per item, with the fix command. Run at the end of onboarding. Triggers on « doctor », « lance le doctor sur ce projet », « tout est branché ? », « checklist du projet », « le projet est prêt pour Maestro ? », « Superpowers est bien installé ? », « pourquoi Maestro ne voit rien ». Not for a Cowork folder (its own doctor), nor for fixing: it says what to do, nor for the content of tasks (audit)."
 ---
 
 # Doctor of a project
@@ -37,6 +37,7 @@ published fingerprints (`CHECKSUMS.txt` of the public repo `bbr21/roadmap-plugin
 | Superpowers updates | installed by the app: tracked by the app, with the date of the last one; installed from the terminal: automatic, otherwise the date of the last one and how to turn it on |
 | swiftui-pro skill | only in a Swift project: installed |
 | Plugin hooks | no `cc-plugin-sec-default`, or the plugin set by the admin in `appendPlugins`; on a Team or Enterprise account, or with managed settings, « À voir » (the plugin goes through its fallbacks) |
+| Failing hooks | no hook fails again and again in the project's recent session logs (#660): the doctor reads the `hook_non_blocking_error` attachments of `~/.claude/projects/<project folder>/*.jsonl` (the project's own folder, its app worktrees `--claude-worktrees-…` and its git worktrees, never a neighbour project), over the last 7 days (`--jours N`), groups them by event and script (copies of one script under different temporary paths count as one hook; an entry copied by a resumed session counts once), and gives one « À voir » line per hook at 10 failures or more (`--seuil N`), worst first: event, hook name, count, date of the last failure, command. It keeps the hook's name, command and date only, never the hook's output nor any message content; a log untouched since the window is not opened. No line when none |
 | User name | `me` in `~/.claude/roadmap-perso.json` holds a name (otherwise « À voir »: Claude says « l'utilisateur ») |
 | Cloud | the cloud is open to every project (#508): the Cloud \| Mac switch of the task card, the model's recommendation and Maestro's card work everywhere, with no setting. The line follows the declared nature. `projet`: the gateway repo (`depot`, otherwise the GitHub `origin`) is there, OK (missions start from it, with no branch and no PR, #467, #476); without it, « À voir » (the ▶ Cloud will refuse). `code` or `hybride`: without a GitHub repo, « local seulement », OK; with one, a missing `docs/session-cloud.md` or a missing local clone of the `depot` repo, « À voir »; otherwise OK. The settings are read in the panel's order (`.claude/roadmap.json`, otherwise the longest-prefix entry of `roadmap-perso.json`). `sessions: "cloud"` and `cloud: "missions"` are older forms with no effect when `travail` is declared. Each line gives the gesture, written where the session reads its settings |
 | Masked settings | a key of `.claude/roadmap.json` that the entry of the same project in `roadmap-perso.json` masks: sessions opened in one of that entry's folders outside the project read the entry, not the file (adBricks, 2026-11-11: `sessions` set in the folder, no effect): « À voir », naming the keys and the values to copy into the entry. No line when the entry carries them or covers only the project |
@@ -63,6 +64,7 @@ In a project that declares `"travail": "projet"` (#76, #176, #508; no code, git 
 | Plugin fingerprints | as with code |
 | Superpowers, its updates | optional (#94): missing or disabled, « À voir » with the command, never KO |
 | Plugin hooks | as with code |
+| Failing hooks | as with code |
 | User name | as with code |
 | Design system | as with code: its document or deck templates, one per task type |
 | Cloud, masked settings | the Cloud line above (a mission starts from the gateway repo, not from a project without one); masked settings as with code |
@@ -81,7 +83,9 @@ python3 "<dossier de la skill>/scripts/doctor.py" <dossier du projet>
 ```
 
 Without a folder, it takes the current folder; from a worktree, it goes up to the main checkout.
-`--json` gives the same diagnosis in JSON. Exit code 1 if there is a KO. The script is in
+`--json` gives the same diagnosis in JSON. `--jours N` and `--seuil N` set the window (7 days) and the
+threshold (10 failures) of the failing hooks line; a wide window reads every log of the project and
+can take ten seconds or more. Exit code 1 if there is a KO. The script is in
 `scripts/doctor.py`; it runs on the user's machine (terminal, Claude Code, or the
 « Control your Mac » tool), not in a container.
 
@@ -123,6 +127,13 @@ command that fixes it, as the script gives it. Then the verdict in one sentence.
 - Cloud KO or « À voir »: the gesture is a line of settings (`depot`) or a copy of `docs/session-cloud.md`, which
   the user approves; a code project without any GitHub repo stays local, but Maestro's connectors-only missions (#467) need none: say so.
   A code project without `docs/session-cloud.md` is not closed to the cloud: the ▶ follows the recommendation and may start there (#508), hence the « À voir ».
+- Failing hooks « À voir »: every failure of a hook puts its error into the session's context, at
+  each tool call, and nobody sees it (a broken `lego-gitnexus-guard` did so for weeks on adBricks,
+  7 % of what its sessions re-read, #656). Name the hook, its command and the count, and say where
+  such a hook is declared (`hooks` of `~/.claude/settings.json`, of the project's
+  `.claude/settings.json`, or of the plugin that sets it): the user repairs or removes it
+  themselves; the doctor never edits a hook. A last failure several days old may mean the hook is
+  already fixed: say the date.
 - Everything green: say so in one sentence, and that « Maestro » works in this project.
 - The doctor does not read the content of tasks. Tasks bundled together, duplicated or without a
   deadline: offer the `audit` skill, which splits, merges and completes after validation.
