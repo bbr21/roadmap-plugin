@@ -478,6 +478,7 @@ import {
   heldFocus,
   DEFAULT_SESSION_PREFS,
   sessionPrefs,
+  sessionPrefsShortText,
   sessionPrefsText,
   pendingAskRefusal,
   readReportBlock,
@@ -10832,6 +10833,16 @@ export async function sessionPrefsBlock($: EngineInterface): Promise<string | un
   try {
     const { prefs, error, project, design, roadmap } = await readSessionPrefs($)
     return sessionPrefsText(prefs, error, project, design, roadmap)
+  } catch {
+    return undefined
+  }
+}
+
+/** Le bloc court des réglages, donné après une compaction (#665) ; une panne de lecture : rien, comme le bloc entier. */
+export async function sessionPrefsShortBlock($: EngineInterface): Promise<string | undefined> {
+  try {
+    const { prefs, error, project, design, roadmap } = await readSessionPrefs($)
+    return sessionPrefsShortText(prefs, error, project, design, roadmap)
   } catch {
     return undefined
   }

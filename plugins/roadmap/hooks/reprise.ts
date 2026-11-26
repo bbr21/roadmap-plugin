@@ -12,8 +12,8 @@ export const PREFS_START_KEEP = 60
 /** Ce que garde le store, par id de session. */
 export type PrefsStartMemo = Record<string, { h: string; at: number }>
 
-/** Ce que le démarrage donne : le bloc entier, ses lignes changées, ou une ligne courte. */
-export type StartPrefsKind = 'full' | 'change' | 'short'
+/** Ce que le démarrage donne : le bloc entier, ses lignes changées, une ligne courte, ou le bloc court d'après compaction (#665). */
+export type StartPrefsKind = 'full' | 'change' | 'short' | 'compact'
 
 /** L'empreinte d'un bloc : FNV-1a 32 bits en hexadécimal, et sa longueur. */
 export function prefsHash(text: string): string {
@@ -32,6 +32,8 @@ export function prefsHash(text: string): string {
  * même bloc, une ligne courte ; un autre bloc connu, ses lignes changées ; rien de connu, le bloc entier.
  */
 export function startPrefsKind(o: { source: string | undefined; block: string; given: string; stored: string | undefined }): StartPrefsKind {
+  // #665 : le résumé d'une compaction ne garde pas les réglages fidèlement ; le bloc court, une ligne par réglage.
+  if (o.source === 'compact') return 'compact'
   if (o.source !== 'resume') return 'full'
   if (o.given !== '') return o.given === o.block ? 'short' : 'change'
   return o.stored !== undefined && o.stored === prefsHash(o.block) ? 'short' : 'full'

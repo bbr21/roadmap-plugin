@@ -344,6 +344,7 @@ import {
   sessionBrandOf,
   sessionDeadline,
   sessionPrefsBlock,
+  sessionPrefsShortBlock,
   sessionRows,
   setAutoModeRefusal,
   setBackgroundShells,
@@ -648,6 +649,7 @@ export const register: Register = (on, options) => {
       const result = await next(e)
       const block = await sessionPrefsBlock($)
       // #663 : une reprise recharge le fil, qui porte déjà le bloc ; une ligne courte, ou ses lignes changées.
+      // #665 : une compaction, dont le résumé ne garde pas les réglages fidèlement : le bloc court, une ligne par réglage.
       const source = (e as { source?: string }).source
       const id = startSessionId(e)
       let text = block
@@ -658,6 +660,7 @@ export const register: Register = (on, options) => {
           const kind = startPrefsKind({ source, block, given, stored: id === undefined ? undefined : memo[id]?.h })
           if (kind === 'short') text = resumePrefsLine()
           else if (kind === 'change') text = prefsChangeText(given, block)
+          else if (kind === 'compact') text = (await sessionPrefsShortBlock($)) ?? block
           if (id !== undefined) await storeSet($, PREFS_START_KEY, prefsStartMemoAfter(memo, id, prefsHash(block), await $.clock.now().catch(() => Date.now())))
         } catch {
           // store illisible : le bloc entier, comme avant

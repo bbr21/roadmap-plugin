@@ -873,6 +873,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.318.1 (2026-11-26)** : maestro : après une compaction, le démarrage donne un bloc court des réglages (une ligne par règle, limites de sécurité comprises) ; le bloc entier reste au vrai démarrage (#665)
 - **0.318.0 (2026-11-26)** : maestro : l'onboarding propose un jeu de plugins par projet (clé enabledPlugins du projet) et le doctor le vérifie (ligne « Plugins du projet ») (#659)
 - **0.317.1 (2026-11-26)** : maestro : une reprise de session ne redonne plus le bloc entier des réglages : une ligne courte si rien n'a changé, sinon les lignes changées ; après une compaction, le bloc entier revient (#663)
 - **0.317.0 (2026-11-26)** : maestro : le volet Réglages gagne une section « Compactage » : interrupteur pour cette session ou partout, et les deux seuils du compactage automatique (350 k et 250 k) (#664)

@@ -6676,6 +6676,39 @@ export function sessionPrefsText(prefs: SessionPrefs, error?: string, project?: 
   ].join('\n')
 }
 
+/**
+ * Le bloc court des réglages, donné après une compaction (#665) : une ligne par réglage, sous le même titre et dans
+ * le même ordre que `sessionPrefsText`, que le résumé ne garde pas fidèlement (autonome et maquettes une fois sur
+ * dix, essai de #665). La règle, pas son mode d'emploi : le texte entier revient au vrai démarrage, ou par la skill
+ * reglages-session. Les règles redites à chaque message (ADHD, modèle simple, task) y gardent aussi leur ligne.
+ */
+export function sessionPrefsShortText(prefs: SessionPrefs, error?: string, project?: string, design?: Design, roadmap = false): string {
+  const p = person()
+  const lines: string[] = []
+  if (prefs.questions) lines.push(`- **Questions** : toute question à ${p} par AskUserQuestion, jamais en texte libre, 2 à 4 options, ta recommandation en premier « (recommandé) » ; quand ${p} demande une explication, réponds en texte, sans formulaire ; ce qu'un outil fait (ouvrir un volet, un fichier), fais-le sans demander.`)
+  if (prefs.adhd) lines.push(`- **Mode ADHD** : un verdict en gras qui ouvre le message, puis la preuve (puces de mots, chiffres dans un petit tableau), \`> **À toi :**\`, \`> **Une question :**\`, \`> **Hors de ma tâche :**\` en fin ; rien de répété ; « prête » : le bloc \`**Compte rendu**\` ; à la ligne close, la conclusion \`### ✅ #<id> · … : c'est livré\` et « Archiver cette session ? ».`)
+  if (prefs.francais) lines.push('- **Langue** : en français, comptes rendus, récaps et boîte de fin compris.')
+  lines.push(`- **Cadrage de départ** : avant le premier geste d'une tâche, relis la ligne et sa fiche ; rien d'ambigu : « Cadrage : … » en une ligne, sinon un seul formulaire d'une à quatre questions.`)
+  lines.push(`- **Le modèle simple d'abord** : avant une question sur une anomalie, le petit tableau du sujet ; une question oui ou non, sans recommandation.`)
+  const always = `Allumé ou non, attendent toujours ${p} : le cadrage de départ, un choix sur maquettes, lancer une session et archiver, un message en son nom ou un paiement.`
+  lines.push(
+    prefs.autonome
+      ? `- **Autonome** : suis ta recommandation claire sans demander, jusqu'à la fusion et la publication, et dis-le en une ligne ; ne demande ni de fusionner ni de publier ; une question seulement sur un fait nouveau ou un choix d'architecture. ${always}`
+      : `- **Autonome éteint** : attendent le oui de ${p}, une fois par geste prêt : ${AUTONOME_OFF_STEPS.filter(s => s.off === 'attend').map(s => autonomeStepInText(s.step)).join(' ; ')} ; le reste avance (lire, coder, tester, pousser sa branche, prendre sa ligne). ${always}`,
+  )
+  lines.push(`- **Liste d'étapes** : une tâche de plus d'un geste tient sa liste (\`update_plan\`), trois à sept étapes de 2 à 4 mots, jamais renommées, jamais recopiée dans le message.`)
+  lines.push(`- **Gestes hors du code** : un geste hors du dépôt se fait par toi (connecteur, API, volet navigateur), jamais par un texte que ${p} recopie ; ${prefs.autonome ? 'sans demander' : "le oui de " + p + " avant d'écrire"} ; tes règles de sécurité restent au-dessus : envoyer un message en son nom, payer, valider un formulaire que son message ne demandait pas se demandent quand même.`)
+  const ds = Array.isArray(design) ? ` ; design system : ${design.map(e => `\`${e.chemin}\``).join(', ')}` : ''
+  lines.push(`- **Maquettes avant un choix visuel** : 2 ou 3 maquettes (skill \`roadmap:mockups\`, servies par \`serve.py\`), ta recommandation en premier ; seule la version validée d'un oui se code${ds} ; jamais à ${p} de tester un rendu non publié ; l'autonome ne s'y applique pas.`)
+  if (roadmap) lines.push(`- **Proposer une task** : une idée neuve ou une action hors de la tâche en cours devient une task proposée dans le tour, sans doublon (skill \`tasks\`, puis la carte) ; Lancer garde le clic de ${p} sur Start, même en autonome.`)
+  const broken = error === undefined ? [] : [`- Le fichier ${SESSION_PREFS_FILE} est illisible (${error}) : réglages par défaut. La skill reglages-session le répare.`]
+  return [
+    `Réglages de session de ${p}${project === undefined ? '' : ` pour le projet ${project}`} (plugin roadmap), en bref après une compaction : chaque règle tient sa forme entière, que la skill reglages-session redonne à la demande. Ils valent pour toute la session ; une consigne de ${p} dans la conversation l'emporte.`,
+    ...lines,
+    ...broken,
+  ].join('\n')
+}
+
 /** Sous cette part du contexte du message précédent, le contexte a été compacté. */
 export const COMPACT_RATIO = 0.5
 

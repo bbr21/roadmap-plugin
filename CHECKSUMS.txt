@@ -1,8 +1,8 @@
-# roadmap 0.318.0 : SHA-256 de chaque fichier installé du plugin, chemins relatifs à son dossier.
-# Vérifier une copie installée (~/.claude/plugins/cache/roadmap/roadmap/0.318.0) : plugins/roadmap/SECURITE.md, « Vérifier que ta copie est une vraie version ».
-9d8d8ae3bd4c58e29a11d444ce533e02b77fd9f284d2096bbaf9d3113434f0fd  .claude-plugin/plugin.json
-4eee5e3f56ec49f0813cd57fcd31728b4afe4bad96429ef0c253acfbbc254528  README.md
-828a37ad02ed8f3fe4c8c163b9b0564ba9b87a0ff26b577d37164027f580bcb6  SECURITE.md
+# roadmap 0.318.1 : SHA-256 de chaque fichier installé du plugin, chemins relatifs à son dossier.
+# Vérifier une copie installée (~/.claude/plugins/cache/roadmap/roadmap/0.318.1) : plugins/roadmap/SECURITE.md, « Vérifier que ta copie est une vraie version ».
+7f63865d925c543cfee0edb16f823c5863df183049cc877bd5f3bb4b1ef8df4a  .claude-plugin/plugin.json
+2ff75dd9b46986e986bc930566653a9891626befbeea9a11c8da906b2af5fc29  README.md
+8bc0e87c8cf59a13ce445a2f3800bba8c901fd20055e3aa99e325c397e1cfd14  SECURITE.md
 bce019cb7147413a8e5f0687df59a41394fa92545568b5d37b1df8bd6d885e30  hooks/bar-hit.tsx
 3c92c2682663d95cd34c2a1aa6f4a8b868579b1e78367750a81a5618fca0962f  hooks/cartes.tsx
 261aa8e26458b526a3615af51f1450c325983a03bef015badb8c1d0559c7b94f  hooks/compactage.ts
@@ -14,15 +14,15 @@ d842d789476d67282d0f04b7e5fdc68a3d981ccec65dd79cfa2d11eed13fb828  hooks/hooks.js
 77e23dd43666d898a40a3bfd9b6a03c39e9049d0b07fb01ac74a82444d9f16f2  hooks/icons.ts
 252dc68e06aa76652284d37388e4dc55a4394591136a14b7706ab6da718377ce  hooks/lecture.ts
 a8a655283af9e34600ac0a21b866c0a3cc7b46bab5cb6117a9afb627df66d4d7  hooks/panneau.tsx
-62a61236a551f0f2ff5de98cee8afdbeb734f47200a96ec7073b5d680bb9f086  hooks/parse.ts
+d4cd684c5d03fd4ffd29f47574371e7a49617b52cc32a595e774ab2fea7f8648  hooks/parse.ts
 9b52feecfcd53efd0c1ff4db4c52ef43cd298ceec725b1f153b67e4c016c6105  hooks/press-hit.tsx
 52b6b80acb84e20fe38bc8a9116af5078aaf7a925b8a58d9a4061c01e53e9d84  hooks/prise-cloud.ts
-1287d59edd6768574314bb78231813ca74b2b7bbe4152a1eedaba4ecfc6cc8be  hooks/register.tsx
+87426ece7adc6e6a555065da75059a65c82e76a8cd9bde063846f57938030981  hooks/register.tsx
 318d761f4d41e0416dc4442db3d4c4ba5c106472d49caa97e44729fd5a1a4d09  hooks/reglages.tsx
-a419a28b94e200aca5157d7e9363ceba9d6c5f129484f8ee0c28c1eddd571563  hooks/reprise.ts
+47955bc1b36fcf330a79ec8ae75670fd9e59cd59016f63ffcaed1ebc6453eb8a  hooks/reprise.ts
 6bf9e7105dc09eb17bff30ee2db74ec9850ad57c399ad4a98c7b92281e28ce34  hooks/reveil-cloud.ts
 c3ca17e4ee5c3b65a51e2e54a6e9c046864a1e0ff3b587e61025a1e0f8958de9  hooks/reveil-mission.ts
-00f60efaae3fb4319804c78d3e8e32e61d3af77c8882a03d1d78af8ce28c4dcc  hooks/socle.tsx
+2694cdee015ca0513e869a04a3ea69628c41e4c7b8935bc6dd29b395c6bf9d15  hooks/socle.tsx
 adfc4c3214763ed1f9d2178ee3e84cce688d1654f079f1b0a6b2530b8049c265  hooks/titre.ts
 ee3e0d04f7d05c2d22300d69accad8bfedf06ecc1f86452e4537fc20ffe68905  hooks/tokens.ts
 be1055c33675b146c70cc84464c3c5cf8c10c97df8927492629b021919d5a3a5  scripts/one-at-a-time.sh
