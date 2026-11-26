@@ -27,6 +27,20 @@ export const SETTINGS_PANE = 'reglages'
 /** Monte après chaque écriture du fichier (par le volet ou ailleurs) : le volet se redessine. */
 export const prefsStampAtom = atom({ plugin: 'roadmap', key: 'prefsStamp' } as const, 0)
 
+/** « Cette session » du compactage (#664) : vrai par défaut, propre à la session, fini avec elle. */
+const compactHereAtom = atom({ plugin: 'roadmap', key: 'compactHere' } as const, true)
+
+/** Le compactage de cette session est-il allumé ? */
+export async function readCompactHere($: EngineInterface): Promise<boolean> {
+  return read($, compactHereAtom)
+}
+
+/** Allume ou coupe le compactage de cette session, et redessine le volet. */
+export async function setCompactHere($: EngineInterface, value: boolean): Promise<void> {
+  await update($, compactHereAtom, () => value)
+  await update($, prefsStampAtom, v => v + 1)
+}
+
 /** L'explication ouverte (#118) : la clé de sa ligne (`pref:adhd`, `opt:theme`), vide sinon. */
 export const settingsInfoAtom = atom({ plugin: 'roadmap', key: 'settingsInfo' } as const, '')
 
@@ -294,7 +308,7 @@ async function manifestOptions($: EngineInterface): Promise<PluginOption[]> {
 type SectionOption = { field: string; name: string; def: string }
 
 /** Une section du volet : réglages de session, ou options du panneau. */
-type SettingsSection = { id: string; title: string; prefs?: readonly PrefKey[]; options?: readonly SectionOption[] }
+type SettingsSection = { id: string; title: string; prefs?: readonly PrefKey[]; session?: boolean; options?: readonly SectionOption[] }
 
 /**
  * Les sections du volet (#118, maquette A1 choisie par Bertrand le 2026-10-29), par sujet et dans cet
@@ -322,6 +336,16 @@ export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
     ],
   },
   {
+    id: 'compact',
+    title: 'Compactage',
+    session: true,
+    options: [
+      { field: 'autoCompact', name: 'Partout', def: 'On' },
+      { field: 'compactAt', name: 'Seuil d’une tâche', def: '350' },
+      { field: 'compactAtLead', name: 'Seuil de Maestro et du gardien', def: '250' },
+    ],
+  },
+  {
     id: 'roadmap',
     title: 'Roadmap',
     options: [
@@ -346,6 +370,8 @@ export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
 
 /** Ce que le volet écrit pour une valeur de liste quand la valeur seule ne se lit pas (#223) ; `/config` montre la valeur. */
 const CHOICE_LABELS: Readonly<Record<string, Readonly<Record<string, string>>>> = {
+  compactAt: { '200': '200 k', '250': '250 k', '300': '300 k', '350': '350 k', '400': '400 k', '500': '500 k' },
+  compactAtLead: { '150': '150 k', '200': '200 k', '250': '250 k', '300': '300 k', '350': '350 k' },
   account: { auto: 'Auto', perso: 'Perso', team: 'Team / Enterprise' },
 }
 
@@ -384,6 +410,7 @@ export async function drawSettings($: EngineInterface, e: RenderInput<'Pane'>, p
   await read($, prefsStampAtom)
   const openInfo = await read($, settingsInfoAtom)
   const options = await pluginOptions($)
+  const compactHere = await readCompactHere($)
 
   const file = await prefsFile($)
   let text: string | undefined
@@ -563,6 +590,19 @@ export async function drawSettings($: EngineInterface, e: RenderInput<'Pane'>, p
     ])
   }
 
+  /** « Cette session » (#664) : coupe le compactage de la session seule, jusqu'à sa fin. */
+  const compactHereRow = () =>
+    line(
+      'compact:here',
+      'compact-row:here',
+      'Cette session',
+      onOff('compact:here', compactHere, to => void setCompactHere($, to)),
+      {
+        text: 'Coupe le compactage de cette session seulement, jusqu’à sa fin. Les autres sessions gardent le réglage Partout.',
+        meta: 'Par défaut : On · Prend effet : tout de suite, dans cette session',
+      },
+    )
+
   const sections: RenderElement[] = []
   for (const s of SETTINGS_SECTIONS) {
     if (s.prefs) {
@@ -594,6 +634,10 @@ export async function drawSettings($: EngineInterface, e: RenderInput<'Pane'>, p
       const o = options.find(option => option.field === known.field)
       return o ? [optionRow(o, known)] : []
     })
+    if (s.session && rows.length > 0) {
+      sections.push(section(s.id, s.title, 'une session qui passe son seuil se compacte en fin de tour', [compactHereRow(), ...rows], sections.length === 0))
+      continue
+    }
     if (rows.length > 0) sections.push(section(s.id, s.title, OPTIONS_SCOPE, rows, sections.length === 0))
   }
   // Une option qu'aucune section ne range encore (ajoutée au plugin après le volet) : dans « Autres ».

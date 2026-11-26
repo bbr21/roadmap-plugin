@@ -42,6 +42,8 @@ declare module 'claude-code' {
       contextSeen: number
       /** Le plancher du compactage au-delà du seuil (#657) : -1 demandé et pas encore mesuré, 0 aucun, sinon le contexte mesuré juste après. */
       compactFloor: number
+      /** « Cette session » du compactage dans le volet Réglages (#664) : faux, la session ne se compacte pas d'elle-même. */
+      compactHere: boolean
       /** Le contexte de cette session à la fin de son dernier tour (#157), pour l'en-tête de la bande de Maestro ; null avant la première mesure. */
       bandContext: { tokens: number; window: number } | null
       /** Les questions des boîtes de fin de Maestro depuis le dernier message de la personne (#133) : un réveil ne les repose pas. */

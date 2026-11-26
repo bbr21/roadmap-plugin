@@ -97,12 +97,12 @@ import {
 } from './reveil-cloud'
 import type { WakeEvent, WakeRole } from './reveil-cloud'
 import { MISSION_WAKE_EVERY_MS, MISSION_WAKE_KEY, missionDeparted, missionWakeDue, missionWakePrompt, missionWakeStateOf, missionWakes } from './reveil-mission'
-import { compactArgs, compactDue, compactFloorAfter, compactThreshold, compactToast } from './compactage'
+import { compactArgs, compactDue, compactFloorAfter, compactLimits, compactThreshold, compactToast } from './compactage'
 import type { CompactRole } from './compactage'
 import { gardienCardRefusal, gardienOf, gardienReminder, goesToGardien, isGardienSession, withoutGardien } from './gardien'
 import { openControl } from './controle'
 import type { ControlDeps } from './controle'
-import { openSettings, prefsFile, sessionProject } from './reglages'
+import { openSettings, prefsFile, readCompactHere, sessionProject } from './reglages'
 import type { SettingsProject } from './reglages'
 import {
   CLASSIC_SKIPS_OFF,
@@ -1115,7 +1115,7 @@ export function axisCount(tasks: Task[], axis: string): number {
 }
 
 /** Les réglages du plugin (userConfig), relus à chaque chargement du module. */
-export let settings = { me: [] as string[], autoOpen: true, titleModel: 'sonnet', capture: true, theme: 'auto', launchEffort: 'high', launchModel: 'opus', codeModel: 'sonnet', launchBypass: false, pruneBranches: true, launchQueue: true, projectSessions: '3', macSessions: '12', testSlots: '1', idleMinutes: '10', queueAlertMinutes: '30', axisPill: false, priorities: false, dateFormat: 'us', account: 'auto' as Account }
+export let settings = { me: [] as string[], autoOpen: true, titleModel: 'sonnet', capture: true, theme: 'auto', launchEffort: 'high', launchModel: 'opus', codeModel: 'sonnet', launchBypass: false, pruneBranches: true, launchQueue: true, projectSessions: '3', macSessions: '12', testSlots: '1', idleMinutes: '10', queueAlertMinutes: '30', autoCompact: true, compactAt: '350', compactAtLead: '250', axisPill: false, priorities: false, dateFormat: 'us', account: 'auto' as Account }
 /** Écrit `settings` depuis un autre module : un import ne s'écrit pas (#646). */
 export function setSettings(v: typeof settings): typeof settings {
   return (settings = v)
@@ -8690,12 +8690,14 @@ export async function compactFromBand($: EngineInterface): Promise<void> {
 
 /**
  * Le compactage au-delà du seuil (#657), à la fin d'un tour du fil principal : le contexte du dernier appel passe
- * 350 k (Maestro et le gardien : 250 k), /compact se met en file avec ce que le résumé garde (`compactArgs`), et un
+ * 350 k par défaut (Maestro et le gardien : 250 k ; seuils et interrupteurs réglables, #664), /compact se met en file avec ce que le résumé garde (`compactArgs`), et un
  * toast le dit, hors du contexte. Le plancher (`compactFloorAtom`) retient la suivante tant que le contexte n'a pas
  * repris 100 k au-dessus de sa mesure d'après compactage. Usage ou fiche illisibles : rien.
  */
 export async function compactPastThreshold($: EngineInterface): Promise<void> {
   try {
+    // Coupé (« Partout » ou « Cette session », #664) : rien en file, le plancher reste tel quel.
+    if (!settings.autoCompact || !(await readCompactHere($))) return
     const tokens = (await $.session.usage()).context.tokens
     const floor = compactFloorAfter(await read($, compactFloorAtom), tokens)
     let role: CompactRole = 'tache'
@@ -8705,12 +8707,13 @@ export async function compactPastThreshold($: EngineInterface): Promise<void> {
     } catch {
       // fiche illisible : le seuil d'une tâche
     }
-    if (!compactDue({ tokens, role, floor })) {
+    const limits = compactLimits(settings)
+    if (!compactDue({ tokens, role, floor, limits })) {
       await update($, compactFloorAtom, () => floor)
       return
     }
     await update($, compactFloorAtom, () => -1)
-    $.ui.toast(compactToast(tokens ?? 0, compactThreshold(role)))
+    $.ui.toast(compactToast(tokens ?? 0, compactThreshold(role, limits)))
     // En file jusqu'au repos de la session : jamais attendu ici, le tour n'est pas encore fini.
     void $.command.run({ command: 'compact', args: compactArgs(role) }).catch((err: unknown) => {
       $.ui.toast(`Compaction impossible : ${err instanceof Error ? err.message : String(err)}`)

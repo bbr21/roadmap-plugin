@@ -1,6 +1,6 @@
 {
   "name": "roadmap",
-  "version": "0.316.0",
+  "version": "0.317.0",
   "description": "Panneau Claude Code à côté du chat : la roadmap du projet de la session, filtrable, avec le détail d'une tâche et son lancement dans une nouvelle session",
   "author": {
     "name": "Bertrand Fargheon"
@@ -155,6 +155,26 @@
       "description": "Le nombre de minutes après lequel une entrée de la file de lancement qui n'est pas partie paraît dans la bande de chaque Maestro ouvert, tous projets compris, avec ce qui la retient (retenue, Remote Control, carte posée, départ raté, place qui manque) et le geste qui la débloque ; un clic sur sa ligne ouvre le Maestro où se fait le geste.",
       "default": "30",
       "options": ["15", "30", "60", "120"]
+    },
+    "autoCompact": {
+      "type": "boolean",
+      "title": "Compactage automatique",
+      "description": "Au-delà du seuil de contexte, une session se compacte d'elle-même à la fin de son tour (/compact mis en file, un toast le dit). Éteint : aucune session ne se compacte d'elle-même, sur aucun projet ; l'app compacte encore près du plafond de sa fenêtre. La ligne « Cette session » du volet Réglages le coupe pour une session seulement.",
+      "default": true
+    },
+    "compactAt": {
+      "type": "string",
+      "title": "Seuil de compactage d'une tâche",
+      "description": "Le contexte, en milliers de jetons, au-delà duquel une session de tâche se compacte à la fin de son tour. Plus bas : des résumés plus tôt, un contexte plus léger à relire à chaque appel ; plus haut : plus de fil gardé, plus cher à chaque appel. Ne vaut que le « Compactage automatique » allumé.",
+      "default": "350",
+      "options": ["200", "250", "300", "350", "400", "500"]
+    },
+    "compactAtLead": {
+      "type": "string",
+      "title": "Seuil de compactage de Maestro et du gardien",
+      "description": "Le contexte, en milliers de jetons, au-delà duquel Maestro et son gardien se compactent à la fin de leur tour : plus bas qu'une tâche, parce que ces sessions sont réveillées sans fin par les autres. Ne vaut que le « Compactage automatique » allumé.",
+      "default": "250",
+      "options": ["150", "200", "250", "300", "350"]
     },
     "account": {
       "type": "string",

@@ -12,19 +12,35 @@ export const COMPACT_AT_LEAD = 250_000
 /** Ce que le contexte doit reprendre au-dessus de sa mesure d'après compactage avant un compactage de plus. */
 export const COMPACT_REGROW = 100_000
 
-/** Le seuil du rôle. */
-export function compactThreshold(role: CompactRole): number {
-  return role === 'tache' ? COMPACT_AT : COMPACT_AT_LEAD
+/** Les seuils en jetons : celui d'une tâche, celui de Maestro et du gardien (options `compactAt` et `compactAtLead`, #664). */
+export type CompactLimits = { task: number; lead: number }
+
+/** Des milliers de jetons en texte (« 300 ») → jetons ; illisible, vide ou pas positif : le défaut. */
+function limitOf(text: unknown, fallback: number): number {
+  const n = typeof text === 'string' ? Number(text.trim()) : NaN
+  return Number.isFinite(n) && n > 0 ? Math.round(n * 1000) : fallback
+}
+
+/** Les seuils d'après les options du plugin, en milliers de jetons (#664). */
+export function compactLimits(o: { compactAt?: unknown; compactAtLead?: unknown }): CompactLimits {
+  return { task: limitOf(o.compactAt, COMPACT_AT), lead: limitOf(o.compactAtLead, COMPACT_AT_LEAD) }
+}
+
+/** Le seuil du rôle ; sans seuils donnés, ceux de #657. */
+export function compactThreshold(role: CompactRole, limits?: CompactLimits): number {
+  return role === 'tache' ? (limits?.task ?? COMPACT_AT) : (limits?.lead ?? COMPACT_AT_LEAD)
 }
 
 /**
  * À compacter ? `tokens` : le contexte du dernier appel (absent : pas mesuré, rien). `floor` : -1 quand un compactage
  * est demandé et pas encore mesuré, 0 sans compactage demandé, sinon le contexte mesuré juste après le dernier : un
- * socle au-dessus du seuil (adBricks, 260 k) ne compacte pas à chaque tour.
+ * socle au-dessus du seuil (adBricks, 260 k) ne compacte pas à chaque tour. `enabled: false` (interrupteurs « Partout »
+ * et « Cette session », #664) : jamais. `limits` : les seuils réglés.
  */
-export function compactDue(o: { tokens: number | undefined; role: CompactRole; floor: number }): boolean {
+export function compactDue(o: { tokens: number | undefined; role: CompactRole; floor: number; limits?: CompactLimits; enabled?: boolean }): boolean {
+  if (o.enabled === false) return false
   if (o.tokens === undefined || o.floor === -1) return false
-  if (o.tokens < compactThreshold(o.role)) return false
+  if (o.tokens < compactThreshold(o.role, o.limits)) return false
   return o.floor <= 0 || o.tokens >= o.floor + COMPACT_REGROW
 }
 
