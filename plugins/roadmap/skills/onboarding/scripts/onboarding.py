@@ -15,6 +15,8 @@ reconstitue au besoin la roadmap depuis l'historique du dépôt, et vérifie le 
   python3 onboarding.py analyser FICHIER [--fait F]        analyse une roadmap existante (checklist, CSV,
           [--dossier D] [--qui NOM] [--requis a,b]         Notion, tableau Markdown) : correspondance en JSON
   python3 onboarding.py importer DOSSIER --analyse A.json  l'importe : sauvegarde, numéros, bilan avant/après
+  python3 onboarding.py plugins DOSSIER [--couts]          le jeu de plugins du projet (#659) : ceux à couper, ceux à
+          [--retirer id,id] [--garder id,id] [--appliquer]   choisir ; --appliquer écrit enabledPlugins du projet
 
 La roadmap d'un nouveau projet vit dans `roadmap/` (ROADMAP.md, ROADMAP-fait.md, ROADMAP-bilans.csv et
 ROADMAP-REGLES.md, ses règles),
@@ -1536,6 +1538,159 @@ def design(dossier, poser=None):
     return {"declare": valeur, "candidats": reperer_design(dossier)}
 
 
+# ---------------------------------------------------------------- un jeu de plugins par projet (#659)
+
+PLUGINS_PAR_PROJET = os.path.join(os.path.dirname(HERE), "references", "plugins-par-projet.json")
+
+
+def _nom_plugin(i):
+    return i.split("@")[0]
+
+
+def _marche(i):
+    return i.split("@", 1)[1] if "@" in i else ""
+
+
+def jeu_de_plugins(plugins, travail, ios, reglages_projet, familles=None):
+    """Pure. `plugins` : la liste effective de `claude plugin list --json`. Rend {couper, a_choisir, gardes} :
+    couper = les plugins activés dont la famille ne sert pas le projet (code si travail == « projet », ios hors
+    iOS) ; a_choisir = les autres activés hors familles, hors « toujours », hors @builtin et non décidés (clé
+    présente) dans `enabledPlugins` du projet ; gardes = le reste."""
+    if familles is None:
+        with open(PLUGINS_PAR_PROJET, encoding="utf-8") as f:
+            familles = json.load(f)
+    fam = familles.get("familles", {})
+    toujours = set(familles.get("toujours", []))
+    inutiles = set()
+    if travail == "projet":
+        inutiles |= set(fam.get("code", []))
+    if not ios:
+        inutiles |= set(fam.get("ios", []))
+    connus = {n for noms in fam.values() for n in noms}
+    decides = (reglages_projet or {}).get("enabledPlugins") or {}
+    out = {"couper": [], "a_choisir": [], "gardes": []}
+    for p in plugins or []:
+        i, nom = p.get("id", ""), _nom_plugin(p.get("id", ""))
+        if not i or not p.get("enabled"):
+            continue
+        if _marche(i) == "builtin" or nom in toujours:
+            out["gardes"].append(i)
+        elif nom in inutiles:
+            out["couper"].append(i)
+        elif nom in connus or i in decides:
+            out["gardes"].append(i)
+        else:
+            out["a_choisir"].append(i)
+    return out
+
+
+def plugins_effectifs(dossier, timeout=30):
+    """La liste effective des plugins du dossier (`claude plugin list --json`, lancé depuis lui), ou None sans
+    `claude` ou en cas d'erreur."""
+    try:
+        res = subprocess.run(["claude", "plugin", "list", "--json"], cwd=dossier, capture_output=True,
+                             text=True, timeout=timeout)
+        if res.returncode != 0:
+            return None
+        v = json.loads(res.stdout)
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return None
+    return v if isinstance(v, list) else None
+
+
+def cout_always_on(texte):
+    """Les tokens « Always-on » d'une sortie de `claude plugin details`, ou None."""
+    m = re.search(r"Always-on:\s*~?([\d,\s]+)\s*tok", texte or "")
+    if not m:
+        return None
+    n = re.sub(r"\D", "", m.group(1))
+    return int(n) if n else None
+
+
+def _cout_du_plugin(i, dossier):
+    try:
+        res = subprocess.run(["claude", "plugin", "details", i], cwd=dossier, capture_output=True,
+                             text=True, timeout=30)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return cout_always_on(res.stdout) if res.returncode == 0 else None
+
+
+def reglages_du_projet(dossier):
+    """Le `.claude/settings.json` du projet ({} s'il manque ou n'est pas un objet JSON)."""
+    try:
+        with open(os.path.join(dossier, ".claude", "settings.json"), encoding="utf-8") as f:
+            v = json.load(f)
+    except (OSError, ValueError):
+        return {}
+    return v if isinstance(v, dict) else {}
+
+
+def ecrire_jeu(dossier, couper, garder):
+    """Fusionne le jeu dans `<dossier>/.claude/settings.json` : `false` pour chaque plugin à couper, `true` pour
+    chaque plugin gardé (le choix s'enregistre), sans rien perdre du fichier et sans jamais rallumer un `false`.
+    Un fichier qui n'est pas du JSON se refuse, jamais écrasé."""
+    chemin = os.path.join(dossier, ".claude", "settings.json")
+    cfg = {}
+    if os.path.exists(chemin):
+        try:
+            with open(chemin, encoding="utf-8") as f:
+                cfg = json.load(f)
+        except (OSError, ValueError) as e:
+            raise Erreur("%s n'est pas du JSON valide, rien n'est écrit (%s)" % (chemin, e))
+        if not isinstance(cfg, dict):
+            raise Erreur("%s n'est pas un objet JSON, rien n'est écrit" % chemin)
+    ep = cfg.get("enabledPlugins")
+    if not isinstance(ep, dict):
+        ep = {}
+    for i in couper:
+        ep[i] = False
+    for i in garder:
+        if ep.get(i) is not False:
+            ep[i] = True
+    cfg["enabledPlugins"] = ep
+    os.makedirs(os.path.dirname(chemin), exist_ok=True)
+    with open(chemin, "w", encoding="utf-8") as f:
+        json.dump(cfg, f, ensure_ascii=False, indent=2)
+        f.write("\n")
+    return chemin
+
+
+def est_ios(dossier, profondeur=4):
+    """Un projet Swift : un .xcodeproj, un Package.swift ou un fichier .swift, hors dossiers cachés et de build."""
+    base = os.path.abspath(dossier)
+    for racine, dirs, fichiers in os.walk(base):
+        niveau = racine[len(base):].count(os.sep)
+        if any(d.endswith(".xcodeproj") for d in dirs) or "Package.swift" in fichiers or any(f.endswith(".swift") for f in fichiers):
+            return True
+        dirs[:] = [d for d in dirs if d not in ("node_modules", "build", "Pods", "DerivedData") and not d.startswith(".")] if niveau < profondeur else []
+    return False
+
+
+def _ids(valeur):
+    return [x.strip() for x in (valeur or "").split(",") if x.strip()]
+
+
+def plugins_du_projet(dossier, couts=False, retirer=(), garder=(), appliquer=False, effectifs=None):
+    """Le jeu de plugins du dossier (#659), en dict JSON ; avec `appliquer`, l'écrit dans `.claude/settings.json`."""
+    if effectifs is None:
+        effectifs = plugins_effectifs(dossier)
+    if effectifs is None:
+        raise Erreur("la liste des plugins est illisible (claude absent ou en erreur)")
+    j = jeu_de_plugins(effectifs, travail_du_dossier(dossier), est_ios(dossier), reglages_du_projet(dossier))
+    j["travail"] = travail_du_dossier(dossier)
+    if couts:
+        j["couts"] = {i: _cout_du_plugin(i, dossier) for i in j["couper"] + j["a_choisir"]}
+        j["total"] = sum(c for c in j["couts"].values() if c)
+    if appliquer:
+        actifs = {p["id"] for p in effectifs if p.get("enabled")}
+        a_couper = list(dict.fromkeys(j["couper"] + [i for i in retirer if i in actifs]))
+        a_garder = [i for i in garder if i in actifs and i not in a_couper]
+        j["ecrit"] = ecrire_jeu(dossier, a_couper, a_garder)
+        j["coupes"], j["gardes_choisis"] = a_couper, a_garder
+    return j
+
+
 # ---------------------------------------------------------------- ligne de commande
 
 
@@ -1574,9 +1729,18 @@ def main(argv=None):
     pd = sub.add_parser("design")
     pd.add_argument("dossier")
     pd.add_argument("--poser")
+    pp = sub.add_parser("plugins")
+    pp.add_argument("dossier")
+    pp.add_argument("--couts", action="store_true")
+    pp.add_argument("--retirer")
+    pp.add_argument("--garder")
+    pp.add_argument("--appliquer", action="store_true")
     a = p.parse_args(argv)
     try:
-        if a.cmd == "exemple":
+        if a.cmd == "plugins":
+            print(json.dumps(plugins_du_projet(a.dossier, a.couts, _ids(a.retirer), _ids(a.garder), a.appliquer),
+                             ensure_ascii=False, indent=2))
+        elif a.cmd == "exemple":
             print(json.dumps(EXEMPLE_PROJET if a.sans_code or a.mode == "projet" else EXEMPLE, ensure_ascii=False, indent=2))
         elif a.cmd == "init":
             init(a.dossier, charger_reponses(a.reponses), a.manquants)

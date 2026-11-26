@@ -493,6 +493,27 @@ def est_ios(dossier, profondeur=4):
     return False
 
 
+def plugins_du_projet(main, travail, ios, effectifs):
+    """La ligne « Plugins du projet » (#659) : les plugins d'une famille qui ne sert pas le projet, et ceux
+    chargés sans choix, d'après la liste effective (`claude plugin list --json` lancé depuis le projet) ;
+    None sans `claude`."""
+    if effectifs is None:
+        return None
+    j = ob.jeu_de_plugins(effectifs, travail, ios, ob.reglages_du_projet(main))
+    cmd = "python3 %s plugins %s" % (os.path.join(os.path.dirname(os.path.abspath(ob.__file__)), "onboarding.py"), main)
+    if not j["couper"] and not j["a_choisir"]:
+        return ligne(OK, "Plugins du projet", "aucun plugin chargé dont ce projet n'a pas l'usage")
+    detail, corr = [], []
+    if j["couper"]:
+        detail.append("chargés sans servir ce projet : %s (leurs listes de skills et d'outils sont relues à chaque appel)"
+                      % ", ".join(j["couper"]))
+        corr.append("%s --appliquer" % cmd)
+    if j["a_choisir"]:
+        detail.append("chargés sans choix pour ce projet : %s" % ", ".join(j["a_choisir"]))
+        corr.append("%s --couts, puis --retirer id,id ou --garder id,id avec --appliquer" % cmd)
+    return ligne(VOIR, "Plugins du projet", " ; ".join(detail), " ; ".join(corr))
+
+
 def skill_ios(requis, plugins, home):
     nom = requis["ios"]["skill"]
     if os.path.isfile(os.path.join(home, ".claude", "skills", nom, "SKILL.md")):
@@ -1366,8 +1387,9 @@ def reglages_masques(main, home):
 
 
 def diagnostiquer(dossier, plugins="lire", home=None, avec_outils=True, gere=None, empreintes_de=None,
-                  jours=JOURS_HOOKS, seuil=SEUIL_HOOKS):
-    """`empreintes_de` : la lecture des empreintes publiées ; par défaut le réseau, seulement quand le
+                  jours=JOURS_HOOKS, seuil=SEUIL_HOOKS, plugins_effectifs=None):
+    """`plugins_effectifs` : la liste de `claude plugin list --json` depuis le projet (#659) ; lue si absente et
+    si les outils sont jugés. `empreintes_de` : la lecture des empreintes publiées ; par défaut le réseau, seulement quand le
     doctor juge les outils de la machine."""
     dossier = os.path.abspath(os.path.expanduser(dossier))
     home = home or os.path.expanduser("~")
@@ -1379,6 +1401,8 @@ def diagnostiquer(dossier, plugins="lire", home=None, avec_outils=True, gere=Non
     copies = empreintes([p for p in plugins or [] if _nom(p) == "roadmap"], empreintes_de) if empreintes_de else []
     lignes = []
     principal = ob.principal(dossier)
+    if plugins_effectifs is None and avec_outils:
+        plugins_effectifs = ob.plugins_effectifs(principal)
     if ob.travail_du_dossier(principal) == "projet":
         # Un dossier sans code (#76, #176) : ni GitHub, ni check.mjs, ni swiftui-pro ; la roadmap et ses champs.
         est_git = git(principal, "rev-parse", "--git-dir").returncode == 0
@@ -1395,6 +1419,7 @@ def diagnostiquer(dossier, plugins="lire", home=None, avec_outils=True, gere=Non
         lignes.append(sec_default(home, gere))
         lignes += hooks_en_echec(principal, home, jours, seuil)
         lignes.append(nom_utilisateur(home))
+        lignes += [l for l in [plugins_du_projet(principal, "projet", est_ios(principal), plugins_effectifs)] if l]
         return {"dossier": principal, "lignes": lignes,
                 "ko": sum(1 for l in lignes if l["statut"] == KO), "a_voir": sum(1 for l in lignes if l["statut"] == VOIR)}
     if avec_outils:
@@ -1418,6 +1443,7 @@ def diagnostiquer(dossier, plugins="lire", home=None, avec_outils=True, gere=Non
     lignes.append(nom_utilisateur(home))
     if est_ios(main):
         lignes.append(skill_ios(requis, plugins, home))
+    lignes += [l for l in [plugins_du_projet(main, "code", est_ios(main), plugins_effectifs)] if l]
     return {"dossier": main, "lignes": lignes,
             "ko": sum(1 for l in lignes if l["statut"] == KO), "a_voir": sum(1 for l in lignes if l["statut"] == VOIR)}
 

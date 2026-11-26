@@ -1,6 +1,6 @@
 # Est-il sûr de l'installer ?
 
-Version décrite : roadmap 0.317.1
+Version décrite : roadmap 0.318.0
 Un plugin de Claude Code fait tourner du code sur ta machine, donc la question se pose. Certains plugins
 malveillants ont l'air inoffensifs quand on les installe, puis téléchargent et lancent autre chose plus
 tard. Cette page dit tout ce que fait roadmap. Un test vérifie à chaque version qu'elle dit vrai, et tu
@@ -60,7 +60,7 @@ réserve (`session.*`, `turn.*`, `skill.prompt`) ; le plugin a alors un secours 
 | `open` | `hooks/socle.tsx` | ouvrir un lien ou un fichier que tu as cliqué dans le panneau, avec l'app par défaut du Mac ; un fichier seulement s'il est rangé dans ton projet (chemin réel, liens résolus), ordinaire (jamais un dossier ni une app) et d'une extension de document : jamais un programme (#349) |
 | `sips`, `mktemp`, `rm` | `hooks/socle.tsx` | faire la vignette d'une pièce jointe dans un dossier privé de `$TMPDIR`, puis la retirer |
 | `sips`, `magick`, `convert` | `skills/maestro/scripts/fidelite.py` | seulement quand `fidelite.py poser --zone` recadre l'image que tu as collée dans le chat pour prouver qu'un rendu est fidèle à sa maquette (#357, #377) : `sips` sur le Mac, sinon ImageMagick (`magick`, puis `convert`) s'il est installé, dans une session cloud (#409) ; le script ne capture jamais l'écran ; rien ne sort de la machine |
-| `claude` | `skills/doctor/scripts/doctor.py` | `claude plugin list --json`, pour voir quelles copies du plugin sont installées |
+| `claude` | `skills/doctor/scripts/doctor.py`, `skills/onboarding/scripts/onboarding.py` | `claude plugin list --json`, pour voir quelles copies du plugin sont installées et quels plugins sont actifs dans le projet ; `claude plugin details <plugin>` (onboarding, `plugins --couts`), pour le coût d'un plugin en tokens (#659) |
 | `node` | `skills/doctor/scripts/doctor.py` | lancer le contrôle du projet lui-même, `scripts/check.mjs` |
 | `rm` | `scripts/one-at-a-time.sh` | rendre la place dans la file des tests lourds |
 | `ps` | `hooks/socle.tsx` | dans le panneau de Maestro, quand la file des tests lourds n'est pas vide, au plus toutes les 30 s : savoir si les suites qui la tiennent vivent encore, pour ne pas montrer un verrou mort (#321) |
@@ -124,6 +124,7 @@ le moteur saute les hooks).
 | `roadmap-frictions.json`, dans le dossier `.git` du projet (sinon `~/.claude/`) : la date de la dernière lecture de la semaine et les frictions écartées, rien de tes bilans | `skills/audit/scripts/frictions.py` | quand Maestro fait la lecture des frictions de la semaine, ou que tu réponds « Pas maintenant » à une friction proposée (#462) |
 | la roadmap du projet, après une copie de sauvegarde à côté d'elle | `skills/audit/scripts/audit.py` | quand tu valides un audit, ou une écriture de la skill tasks, qui passe par lui |
 | les fichiers que pose l'onboarding dans le projet (`CLAUDE.md`, `docs/`, `roadmap/`, `scripts/`, `.claude/roadmap.json`…) | `skills/onboarding/scripts/onboarding.py` | quand tu lances l'onboarding et valides son plan |
+| `.claude/settings.json` du projet, sa clé `enabledPlugins` seule (les autres clés gardées) | `skills/onboarding/scripts/onboarding.py` | `plugins --appliquer` : quand tu valides le jeu de plugins du projet (#659) |
 | la roadmap importée, après une copie de sauvegarde | `skills/onboarding/scripts/importer.py` | quand l'onboarding reprend une roadmap existante |
 | `ROADMAP-findings.json`, à côté de la roadmap du projet | `skills/maestro/scripts/findings.py` | quand Maestro relève au registre ce qu'une session a trouvé hors de sa tâche, ou lui donne son sort (#531) |
 | `fidelite.html` et `capture-panneau.png`, dans le dossier du chantier (`docs/plans/<type>-<slug>/`) | `skills/maestro/scripts/fidelite.py` | quand une session pose la preuve de fidélité d'un rendu à sa maquette (#357) |

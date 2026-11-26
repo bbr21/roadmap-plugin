@@ -147,7 +147,15 @@ the plan, not the whole scoping.
    `design <dossier> --poser '<JSON>'` writes the field without touching the rest of the file.
    Neither declared nor refused (`"aucun"`): offer to set one, with a multiple-choice question
    (« Je déclare `design/` ? », « J'ouvre la tâche « Poser le design system » ? », « S'en passer »).
-4. Run the doctor (this plugin's `doctor` skill) on the folder. A KO due to the machine
+4. **Plugins of the project** (#659): every enabled plugin is loaded in every project and its skill and tool
+   lists are re-read at each call. Run `python3 "<dossier de la skill>/scripts/onboarding.py" plugins <folder> --couts`:
+   it lists what would be cut (families that do not serve the project: code analysis in a folder without
+   code, SwiftUI outside iOS) and the other plugins « à choisir », with their always-on cost in tokens. Show
+   both, ask one question (« Je coupe ces plugins pour ce projet ? »), then on yes run the same command with
+   `--appliquer` (add `--retirer id,id` for plugins the person also wants off, `--garder id,id` for those they
+   keep: the choice is recorded). It writes `enabledPlugins` in the project's `.claude/settings.json`, nothing
+   else, and never turns a plugin back on. It takes effect in sessions opened afterwards.
+5. Run the doctor (this plugin's `doctor` skill) on the folder. A KO due to the machine
    (Superpowers missing, `gh` not signed in) is reported with its command; a KO due to the project
    is fixed here. Without code, Superpowers missing is only « À voir »: it is optional there.
 
@@ -185,8 +193,9 @@ itself.
 6. **Templates** (#129): the « Modèles » answer declares the document or deck templates, one per
    task type, in `design`; then `onboarding.py design <dossier> [--poser …]` as with code
    (step 7.3).
-7. **Doctor** (`doctor` skill): it runs the checklist of the declared nature; its « Travail » line says that nature (KO if `travail` is missing).
-8. **Report**: what was set up, then how to use it: open the folder in the Code tab, the panel by
+7. **Plugins** (#659): as step 7.4 above: `plugins <dossier> --couts`, one question, then `--appliquer` on yes (code analysis and SwiftUI plugins are the first to cut here).
+8. **Doctor** (`doctor` skill): it runs the checklist of the declared nature; its « Travail » line says that nature (KO if `travail` is missing).
+9. **Report**: what was set up, then how to use it: open the folder in the Code tab, the panel by
    due date (the button switches to owner and to tree), ▶ on a task, « Maestro » for what can be
    launched; task `id:1` lists the tasks in progress; day to day, the `tasks` skill adds, updates,
    reschedules, marks done and drops a task (it reads `ROADMAP-REGLES.md` on every pass, and

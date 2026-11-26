@@ -1,0 +1,9 @@
+{
+  "pourquoi": "Chaque plugin chargé alourdit chaque appel (listes de skills et d'outils relues à chaque tour) : un projet ne charge que ceux dont le travail le sert (#659).",
+  "familles": {
+    "code": ["static-analysis", "trailmark", "audit-context-building", "differential-review", "fp-check",
+             "insecure-defaults", "sharp-edges", "supply-chain-risk-auditor", "variant-analysis", "security-guidance"],
+    "ios": ["swiftui-pro"]
+  },
+  "toujours": ["roadmap", "superpowers", "claude-md-management"]
+}
