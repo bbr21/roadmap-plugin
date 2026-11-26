@@ -591,7 +591,7 @@ porte la roadmap. Le réglage `capture` coupe les deux.
 
 ## Document à valider ouvert d'un clic (#587)
 
-Règle fixe, jointe à chaque message d'un projet à roadmap avec « Proposer une task » : tout document qu'une
+Règle fixe, jointe aux messages d'un projet à roadmap avec « Proposer une task » (en entier au premier message, après une compaction et tous les 15 messages, une ligne courte entre-temps, #654) : tout document qu'une
 session demande à lire ou à valider (note, task file, email, plan, classeur, PDF, maquette, fichier MD) arrive
 avec un lien Markdown, `[le nom du document](chemin)`, qui l'ouvre à côté du chat dans la session où la
 personne lit. Le document vit dans le dossier du projet, jamais dans le scratchpad, `/tmp`,
@@ -871,6 +871,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.314.0 (2026-11-26)** : maestro : le rappel de chaque message passe de ~1,4 k à ~0,3 k tokens (règles en entier au premier message, après une compaction et tous les 15 messages), les findings et les réglages ne sont redits à Maestro que quand ils changent (#654)
 - **0.313.2 (2026-11-25)** : maestro : la publication ne refuse plus de partir quand le registre des findings, relevé par Maestro, n'est pas encore committé : elle le laisse en place, hors de son commit de version (#648)
 - **0.313.1 (2026-11-25)** : maestro : règle fixe « le modèle simple d'abord » dite à toute session et redite à chaque message : avant une question sur une anomalie, le petit tableau du sujet, puis oui ou non sans option recommandée (#647)
 - **0.313.0 (2026-11-23)** : maestro : la puce « Pour la personne » d'une session cloud ne demande plus de geste du gardien ou de Maestro (fusion, publication), les PR cloud portent le titre « #N · nom », et Maestro relit une telle demande avant de la redire (#639)

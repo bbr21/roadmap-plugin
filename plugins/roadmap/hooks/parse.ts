@@ -6209,6 +6209,43 @@ export function findingsText(pending: readonly { fromTitle: string; line: string
   return out.join('\n')
 }
 
+/**
+ * Les findings d'un message de Maestro (#654) : l'entier la première fois (`full`, ou `givenRaw` vide ou illisible),
+ * puis seulement les nouveaux avec le compte des déjà donnés, ou une ligne quand rien n'est neuf. `givenRaw` : les
+ * clés données au message d'avant (JSON) ; `next` : celles de maintenant, à garder.
+ */
+export function findingsDelta(
+  pending: readonly { fromTitle: string; line: string }[],
+  open: readonly LedgerFinding[],
+  givenRaw: string,
+  full: boolean,
+): { text: string | undefined; next: string } {
+  const pKey = (p: { line: string }) => `p:${p.line}`
+  const oKey = (f: LedgerFinding) => `F${f.n}`
+  const next = JSON.stringify([...pending.map(pKey), ...open.map(oKey)])
+  let given: Set<string> | undefined
+  try {
+    const v: unknown = JSON.parse(givenRaw)
+    if (Array.isArray(v)) given = new Set(v.filter((k): k is string => typeof k === 'string'))
+  } catch {
+    // vide ou illisible : la liste se redonne en entier
+  }
+  if (given === undefined || full) return { text: findingsText(pending, open), next }
+  const total = pending.length + open.length
+  if (total === 0) return { text: undefined, next }
+  const newPending = pending.filter(p => !given.has(pKey(p)))
+  const newOpen = open.filter(f => !given.has(oKey(f)))
+  const fresh = newPending.length + newOpen.length
+  const list = '`findings.py liste <dépôt>`'
+  if (fresh === 0) {
+    const parts = [...(pending.length > 0 ? [`${pending.length} à relever`] : []), ...(open.length > 0 ? [`${open.length} sans sort au registre`] : [])]
+    return { text: `Roadmap — findings de tes sessions (#531, #654) : ${parts.join(', ')}, déjà donnés et inchangés depuis le tour d'avant ; la liste : ${list}.`, next }
+  }
+  const head = findingsText(newPending, newOpen)!
+  const old = total - fresh
+  return { text: old > 0 ? `${head}\nEt ${old} déjà donnés plus haut, inchangés (${list}).` : head, next }
+}
+
 /** Ce que lit la sous-session à la place de sa carte : transmise à Maestro (`message`) ou gardée pour lui (`store`). */
 export function proposalSentNote(maestro: string, title: string, via: 'message' | 'store', initiation: MaestroProposal['initiation'] = 'own_initiative'): string {
   const how = via === 'message' ? 'par message' : 'et gardée pour lui, qui la recevra à son prochain tour (le message direct a été refusé)'
@@ -10617,7 +10654,24 @@ export function contextShrank(before: number, now: number | undefined): boolean 
  * ne valait qu'à moitié, le rappel ADHD le suivant et le bloc d'avant restant dans la conversation.
  */
 export function prefsChangedLead(): string {
-  return "Plugin roadmap : les réglages de session ont changé depuis le dernier bloc donné à cette conversation (volet Réglages, skill reglages-session ou une autre session du projet). Ce bloc remplace le précédent : un réglage qui n'y figure plus est éteint, n'en suis plus la consigne."
+  return "Plugin roadmap : les réglages de session ont changé depuis le dernier bloc donné à cette conversation (volet Réglages, skill reglages-session ou une autre session du projet). Seules les lignes qui changent suivent : elles remplacent les mêmes lignes du bloc précédent, les autres valent toujours. Le bloc entier : la skill reglages-session."
+}
+
+/**
+ * Ce qui change entre le dernier bloc de réglages donné et celui du moment (#654) : la tête, puis chaque ligne
+ * nouvelle ou changée, puis le nom des réglages (lignes `- **X**`) qui ont disparu. Une ligne se clef par son
+ * titre en gras, à défaut par son texte entier.
+ */
+export function prefsChangeText(before: string, after: string): string {
+  const keyOf = (line: string) => /^- \*\*([^*]+)\*\*/.exec(line)?.[1] ?? line
+  const old = before.split('\n')
+  const oldSet = new Set(old)
+  const kept = after.split('\n').filter(l => l.trim() !== '' && !oldSet.has(l))
+  const now = new Set(after.split('\n').map(keyOf))
+  const gone = [...new Set(old.filter(l => /^- \*\*([^*]+)\*\*/.test(l)).map(keyOf))].filter(k => !now.has(k))
+  const out = [prefsChangedLead(), '', ...kept]
+  if (gone.length > 0) out.push(`Éteint, n'en suis plus la consigne : ${gone.map(k => `**${k}**`).join(', ')}.`)
+  return out.join('\n')
 }
 
 // Le rappel d'un message (2026-10-24) : donnée seulement au démarrage, la consigne du mode ADHD
@@ -10625,6 +10679,62 @@ export function prefsChangedLead(): string {
 export function sessionPrefsReminder(prefs: SessionPrefs): string | undefined {
   if (!prefs.adhd) return undefined
   return "Mode ADHD : ouvre un message de tâche par son verdict, une phrase en gras qui dit l'état et ce qui en sort (« **Tout concorde : …** », « **En cours, étape 4/6 : …** », « **J'ai besoin de toi : …** », « **Prête à fusionner : tests verts, branche poussée.** »), puis la preuve : un fait sûr en une puce de mots, sans chiffre, identifiant ni glyphe ; ce qui a été vérifié et chiffré en petit tableau (l'objet, l'attendu, le vu) ; en fin de message, chacun sa citation, `> **À toi :** …` (une action ou une décision qui revient à " + person() + "), `> **Une question :** …`, `> **Hors de ma tâche :** …`. Un lien par son nom ; ni titre, ni rubrique, ni sous-puce, et rien de répété d'un message à l'autre. Sous le verdict « prête à fusionner », le bloc fixe `**Compte rendu**` et ses six puces (#537). En fin de session (ligne close, ou bloquée), la conclusion à part : `---`, `### ✅ #<id> · <la tâche> : c'est livré`, `**Ce qu'on a fait.**` et deux ou trois phrases simples (le problème de départ, ce qu'on a construit, ce que ça change), puis le tableau Livré, À essayer, En route (bloquée : `### ⛔ … : bloquée`, une phrase, puis Fait, Bloque, À toi) ; la boîte de fin ne redit pas « fini : … »."
+}
+
+// Le rappel allégé (#654, levier 4 du plan #656) : les quatre règles fixes se donnent en entier au premier
+// message, après une compaction, quand la variante de la session change et tous les RULES_EVERY messages ;
+// entre-temps, une ligne courte par règle, pour qu'elles ne s'effacent pas.
+export const RULES_EVERY = 15
+
+/**
+ * Les règles fixes sont-elles à redonner en entier ? `given` : ce qui a été donné en dernier à la
+ * conversation (la variante de session et le nombre de messages depuis), absent au premier message.
+ */
+export function rulesDue(given: { kind: string; count: number } | undefined, kind: string, every = RULES_EVERY): boolean {
+  return given === undefined || given.kind !== kind || given.count >= every
+}
+
+/**
+ * La décision des règles d'un message : `raw` est ce que l'atome garde (JSON `{kind, count}`, vide au départ,
+ * après une compaction ou un /clear), `kind` la variante de la session ; `next` est ce qu'il garde ensuite.
+ */
+export function rulesPlan(raw: string, kind: string): { full: boolean; next: string } {
+  let given: { kind: string; count: number } | undefined
+  try {
+    const v = JSON.parse(raw) as { kind?: unknown; count?: unknown }
+    if (typeof v.kind === 'string' && typeof v.count === 'number') given = { kind: v.kind, count: v.count }
+  } catch {
+    // vide ou illisible : les règles se redonnent
+  }
+  const full = rulesDue(given, kind)
+  return { full, next: JSON.stringify({ kind, count: full ? 1 : (given?.count ?? 0) + 1 }) }
+}
+
+/** Les lignes courtes d'un message sans règles en entier : le mode ADHD (s'il est allumé), puis les règles fixes. */
+export function shortRules(maestro: boolean, prefs: SessionPrefs, roadmap: boolean): string[] {
+  const adhd = maestro ? maestroPrefsShortReminder(prefs) : sessionPrefsShortReminder(prefs)
+  return adhd === undefined ? [fixedRulesLine(roadmap)] : [adhd, fixedRulesLine(roadmap)]
+}
+
+/** La ligne du mode ADHD des messages où les règles ne se redonnent pas en entier. */
+export function sessionPrefsShortReminder(prefs: SessionPrefs): string | undefined {
+  if (!prefs.adhd) return undefined
+  return `Mode ADHD : verdict en gras en tête, puis la preuve en puces de mots (chiffres en petit tableau), \`> **À toi :** …\` en fin de message, rien de répété ; « prête à fusionner » : le bloc fixe **Compte rendu**.`
+}
+
+/** La ligne du mode ADHD de Maestro, aux tours de la personne où les règles ne se redonnent pas en entier. */
+export function maestroPrefsShortReminder(prefs: SessionPrefs): string | undefined {
+  if (!prefs.adhd) return undefined
+  return `Mode ADHD, chez Maestro : verdict en gras compté sur ta liste d'étapes (**Maestro · 2 en session · 1 t'attend**), seulement quand il a changé ; un besoin de ${person()} une seule fois, en \`> **À toi :** …\`.`
+}
+
+/** Les règles fixes, une ligne, entre deux rappels complets ; la partie roadmap seulement dans un projet à roadmap. */
+export function fixedRulesLine(roadmap: boolean): string {
+  const rules = ['le modèle simple d\'abord (#647) avant une question sur une anomalie']
+  if (roadmap) {
+    rules.push('proposer une task dans le tour même (#216)', 'un document à valider arrive avec son lien cliquable, le plan en entier au-dessus du formulaire (#587, #626)')
+  }
+  return `Règles fixes du plugin roadmap (données en entier plus haut dans la conversation, valent toujours) : ${rules.join(' ; ')}.`
 }
 
 // --- Fil de Maestro (#133) -----------------------------------------------------------------------

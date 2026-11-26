@@ -34,6 +34,10 @@ declare module 'claude-code' {
        * bloc qui a changé depuis (le volet, la skill) se redonne au message suivant (#119).
        */
       prefsGivenText: string
+      /** Les règles fixes données en dernier (#654), JSON `{kind, count}` ; vide : à redonner en entier. */
+      rulesGiven: string
+      /** Les findings donnés en dernier à Maestro (#654), JSON des clés ; vide : la liste entière au message suivant. */
+      findingsGiven: string
       /** Le contexte du message précédent, en jetons (#119) : 0 quand rien n'est mesuré depuis le dernier `/clear` ou la dernière compaction vue. */
       contextSeen: number
       /** Le contexte de cette session à la fin de son dernier tour (#157), pour l'en-tête de la bande de Maestro ; null avant la première mesure. */

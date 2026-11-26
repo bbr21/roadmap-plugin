@@ -720,6 +720,8 @@ import {
   sessionPrefsReminder,
   simpleModelReminder,
   maestroPrefsReminder,
+  rulesPlan,
+  shortRules,
   maestroWakeReminder,
   pendingAskRefusal,
   openListBox,
@@ -729,7 +731,7 @@ import {
   reportPersonNote,
   personNoteSaid,
   personNotesText,
-  prefsChangedLead,
+  prefsChangeText,
   contextAfterCompact,
   contextShrank,
   contextUseOf,
@@ -792,7 +794,7 @@ import {
   FINDING_LINE_MAX,
   findingLines,
   findingReminder,
-  findingsText,
+  findingsDelta,
   unreadableFindings,
   ledgerFindings,
   maestroProposalText,
@@ -1178,6 +1180,16 @@ const versionNoteAtom = atom({ plugin: 'roadmap', key: 'versionNote' } as const,
  * a changé depuis (#119) se redonne. L'état de session survit au rechargement du module.
  */
 const prefsGivenAtom = atom({ plugin: 'roadmap', key: 'prefsGivenText' } as const, '')
+/** Les règles fixes données en dernier (#654), JSON `{kind, count}` ; vide : à redonner en entier. */
+const rulesGivenAtom = atom({ plugin: 'roadmap', key: 'rulesGiven' } as const, '')
+/** Les findings donnés à Maestro (#654), JSON des clés ; vide : la liste entière. */
+const findingsGivenAtom = atom({ plugin: 'roadmap', key: 'findingsGiven' } as const, '')
+/** Une conversation vidée ou compactée : ce qui se donne en entier se redonne. */
+async function forgetGiven($: EngineInterface): Promise<void> {
+  await update($, prefsGivenAtom, () => '')
+  await update($, rulesGivenAtom, () => '')
+  await update($, findingsGivenAtom, () => '')
+}
 /**
  * Les questions que les boîtes de fin de Maestro ont posées depuis le dernier message de la personne
  * (#133) : un tour réveillé par une session ne les repose pas. L'état de session survit au rechargement.
@@ -3927,21 +3939,24 @@ async function keepFindings($: EngineInterface, answer: unknown): Promise<void> 
 }
 
 /**
- * Chez Maestro, à chaque message : les findings de ses sessions pas encore au registre, puis ceux du registre
- * sans sort ; rien quand tout est traité. Un finding gardé sort du store dès que le registre a sa ligne.
- * Appelée seulement quand le message a déjà lu que la session est Maestro : elle ne relit pas sa fiche pour le
- * savoir (une session de tâche ne paie ni `get_session` ni lecture du store, `roadmap-chaines-cartes.test.tsx`).
+ * Chez Maestro : les findings à relever, puis ceux sans sort ; en entier si `full`, sinon les nouveaux (#654).
+ * Appelée seulement quand le message a lu que la session est Maestro (pas de `get_session` de plus).
  */
-async function receiveFindings($: EngineInterface): Promise<string | undefined> {
+async function receiveFindings($: EngineInterface, full: boolean): Promise<string | undefined> {
   const kept = await loadFindings($)
   const source = await localSource($)
   const ledger = ledgerFindings(source ? await readKept($, findingsPath(source)) : undefined)
-  if (kept.length === 0) return findingsText([], ledger.open)
-  const id = (await readOwnSession($)).id
-  const now = await clockOrDate($)
-  const rest = kept.filter(k => (k.lot === id ? !ledger.lines.has(k.line) : now - k.at <= FINDING_MAX_MS))
-  if (rest.length !== kept.length) await storeSet($, FINDINGS_KEY, rest)
-  return findingsText(rest.filter(k => k.lot === id), ledger.open)
+  let mine: typeof kept = []
+  if (kept.length > 0) {
+    const id = (await readOwnSession($)).id
+    const now = await clockOrDate($)
+    const rest = kept.filter(k => (k.lot === id ? !ledger.lines.has(k.line) : now - k.at <= FINDING_MAX_MS))
+    if (rest.length !== kept.length) await storeSet($, FINDINGS_KEY, rest)
+    mine = rest.filter(k => k.lot === id)
+  }
+  const d = findingsDelta(mine, ledger.open, await read($, findingsGivenAtom), full)
+  await update($, findingsGivenAtom, () => d.next)
+  return d.text
 }
 
 // --- La note « Pour la personne » du compte rendu (#640) -------------------------------------------------------
@@ -10955,6 +10970,8 @@ export const register: Register = (on, options) => {
       const text = await sessionPrefsBlock($)
       try {
         await update($, prefsGivenAtom, () => text ?? '')
+        await update($, rulesGivenAtom, () => '')
+        await update($, findingsGivenAtom, () => '')
       } catch {
         // état de session illisible : le premier message les redonnera aussi
       }
@@ -10962,13 +10979,12 @@ export const register: Register = (on, options) => {
     })
   }
 
-  // Un /clear ou une compaction efface les réglages donnés : le démarrage classique qui suit les redonne,
-  // sinon le message suivant. Sous sec-default, la compaction est sautée aussi (#116).
-  // Le contexte mesuré repart de zéro avec elles : la chute qui suit n'est pas une compaction cachée (#119).
+  // /clear ou compaction : le démarrage classique qui suit redonne les réglages, sinon le message suivant
+  // (sec-default saute la compaction, #116). Le contexte mesuré repart de zéro (#119).
   on('session.end', async ($, e, next) => {
     if (await inCloud($)) return next(e)
     if (e.reason === 'clear') {
-      await update($, prefsGivenAtom, () => '')
+      await forgetGiven($)
       await update($, contextSeenAtom, () => 0)
     }
     return next(e)
@@ -10978,7 +10994,7 @@ export const register: Register = (on, options) => {
       if (await inCloud($)) return next(e)
       // `precompute` n'installe rien, et la compaction d'un agent laisse la conversation principale.
       if (e.trigger !== 'precompute' && e.agentId === undefined) {
-        await update($, prefsGivenAtom, () => '')
+        await forgetGiven($)
         await update($, contextSeenAtom, () => 0)
         // #491 : la conversation compactée, le % de la bande se relit, sans attendre la fin d'un tour.
         const result = await next(e)
@@ -11072,44 +11088,43 @@ export const register: Register = (on, options) => {
     // message précédent, et les réglages complets sont à redonner.
     try {
       const tokens = (await $.session.usage()).context.tokens
-      if (contextShrank(await read($, contextSeenAtom), tokens)) await update($, prefsGivenAtom, () => '')
+      if (contextShrank(await read($, contextSeenAtom), tokens)) await forgetGiven($)
       await update($, contextSeenAtom, () => tokens ?? 0)
     } catch {
       // contexte non mesuré : les réglages suivent la seule règle du démarrage
     }
-    // Les réglages complets : quand aucun démarrage ne les a donnés à cette conversation, ou quand ils
-    // ont changé depuis le dernier bloc donné (#119 : le volet, la skill, une autre session du projet) ;
-    // le nouveau bloc remplace alors l'ancien. Puis le rappel du mode ADHD.
-    // Maestro ou non, tel que ce message l'a déjà lu : les findings ne relisent pas la fiche pour le savoir (#531).
+    // Réglages en entier si aucun démarrage ne les a donnés, sinon leurs seules lignes changées (#119, #654) ;
+    // puis le rappel ADHD. Maestro tel que lu ici : les findings ne relisent pas la fiche (#531).
     let maestroSeen = false
+    let rulesFull = false
     let wakeSeen = false
     try {
       const current = await readSessionPrefs($)
       const block = sessionPrefsText(current.prefs, current.error, current.project, current.design, current.roadmap)
       const given = await read($, prefsGivenAtom)
       if (block !== given) {
-        texts.push(given === '' ? block : `${prefsChangedLead()}\n\n${block}`)
+        texts.push(given === '' ? block : prefsChangeText(given, block))
         await update($, prefsGivenAtom, () => block)
       }
-      // Chez Maestro (#133) : au réveil, le rappel du réveil ; aux tours de la personne, l'en-tête stable.
+      // Chez Maestro (#133) : au réveil, son rappel ; aux tours de la personne, l'en-tête stable.
       const maestro = await maestroHere($)
       maestroSeen = maestro
       const wake = maestro && wakeTurn(e.text)
       wakeSeen = wake
-      const reminder = wake
-        ? maestroWakeReminder(await read($, pendingAsksAtom))
-        : maestro ? maestroPrefsReminder(current.prefs) : sessionPrefsReminder(current.prefs)
-      if (reminder !== undefined) texts.push(reminder)
-      // Le modèle simple d'abord (#647) : règle fixe, à chaque message que tape la personne, mode ADHD ou non ;
-      // pas au réveil de Maestro, où personne n'a rien demandé.
-      if (!wake) texts.push(simpleModelReminder())
-      // Proposer une task (#216) : la règle entière à chaque message d'un projet à roadmap, selon la
-      // session ; pas au réveil de Maestro, où la personne n'a rien dit.
-      if (current.roadmap && !wake) {
-        const kind = maestro ? 'maestro' : (await parentIsMaestro($)) ? 'child' : 'solo'
-        texts.push(proposeTaskText(kind))
-        // Le document à valider ouvert d'un clic (#587) : règle fixe, dite comme celle-ci.
-        texts.push(reviewLinkText(kind))
+      if (wake) {
+        texts.push(maestroWakeReminder(await read($, pendingAsksAtom)))
+      } else {
+        const kind = maestro ? 'maestro' : current.roadmap && (await parentIsMaestro($)) ? 'child' : 'solo'
+        const plan = rulesPlan(await read($, rulesGivenAtom), `${kind}|${current.prefs.adhd}|${current.roadmap}`)
+        await update($, rulesGivenAtom, () => plan.next)
+        rulesFull = plan.full
+        // #654 : règles en entier ou ligne courte (rulesPlan)
+        if (plan.full) {
+          const reminder = maestro ? maestroPrefsReminder(current.prefs) : sessionPrefsReminder(current.prefs)
+          if (reminder !== undefined) texts.push(reminder)
+          texts.push(simpleModelReminder())
+          if (current.roadmap) texts.push(proposeTaskText(kind), reviewLinkText(kind))
+        } else texts.push(...shortRules(maestro, current.prefs, current.roadmap))
       }
     } catch {
       // réglages ou état de session illisibles : le message passe sans eux
@@ -11121,21 +11136,21 @@ export const register: Register = (on, options) => {
     } catch {
       // store illisible : elles attendent le message suivant
     }
-    // Un Maestro relit les findings de ses sessions tant qu'ils n'ont pas leur sort (#531).
+    // Maestro : findings de ses sessions sans sort (#531).
     try {
-      const findings = maestroSeen ? await receiveFindings($) : undefined
+      const findings = maestroSeen ? await receiveFindings($, rulesFull) : undefined
       if (findings !== undefined) texts.push(findings)
     } catch {
       // store ou registre illisible : ils attendent le message suivant
     }
-    // Et ce que ses sessions ont écrit « Pour la personne », à chaque tour de la personne (#640).
+    // Et leurs notes « Pour la personne » (#640).
     try {
       const notes = maestroSeen && !wakeSeen ? await receivePersonNotes($) : undefined
       if (notes !== undefined) texts.push(notes)
     } catch {
       // store illisible : elles attendent le message suivant
     }
-    // Un parent reçoit les nouvelles de ses enfants qui coincent ou sont à archiver (#84).
+    // Nouvelles des enfants qui coincent ou sont à archiver (#84).
     try {
       const children = await childAlertContext($)
       if (children !== undefined) texts.push(children)

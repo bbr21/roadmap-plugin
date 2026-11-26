@@ -789,8 +789,9 @@ otherwise they see an empty worktree.
   - **Say it once**: one line per finding, on the next turn the person starts (« F2 de #523 :
     rattaché à #494 »), never on a woken turn; a finding marked « geste de … » adds what the person
     has to do, in `> **À toi :** …`. A finding already said does not come back.
-  - **Visible until its fate**: the panel repeats, with every message, the ledger's findings without
-    a fate (« Sans sort au registre »); `findings.py liste <main folder>` lists them (`--tout` with
+  - **Visible until its fate**: the panel gives the full list (the ledger's findings without a fate,
+    « Sans sort au registre ») on the first message, after a compaction and every 15 messages the person
+    types; in between, only the new findings and a count of those already given (#654); `findings.py liste <main folder>` lists them (`--tout` with
     the settled ones, `--json`). Maestro does not close its work while one remains.
 - **Propose a task** (#216, Caroline): a new idea or an action to do that comes out of the
   exchange with the person, outside the tasks in progress, becomes a proposed task in the same
