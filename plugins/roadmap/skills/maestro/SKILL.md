@@ -555,6 +555,10 @@ otherwise they see an empty worktree.
 
 ## 3. Follow: Maestro is the only one that sees everything
 
+- **Compacted past ~250 k** (#657, the person's choice of 2026-11-25): at the end of any turn of yours, woken ones
+  included, past 250 k of context (350 k for a task session) the panel queues `/compact` with what the summary keeps
+  (step list, open sessions, waiting PRs, merge order) and says so in a toast. Nothing to do: after it, reread the
+  roadmap's « En cours » and `list_sessions` (`linked: true`) before acting, as at the start. Your gardien too.
 - **Talk to the person only when they need to** (#133): the detail lives in the child sessions
   (their report, their conclusion); Maestro moves things forward and stays quiet. A need of the
   person is only: a question only they can settle (architecture, visual choice), Maestro's own,
@@ -997,7 +1001,9 @@ The merge itself:
      report has none). The closed line carries `vérifié:non | essai:<check>`: the label « non vérifiée ». A line
      whose `livré:` has no version (a project without code, a merge without publication) gets no label: `check`
      is refused there.
-  3. Tell its session « #N close » (one line): it concludes and offers its archiving.
+  3. Tell its session « #N close » (one line): it concludes and offers its archiving. It is the last message it
+     gets (#657): no news, no `après:` notice, no wake-up of any kind after it, but the capture instruction of a
+     render (#455); its archiving stays the person's click, by its icon in the band.
   4. **The person's « c'est bon »** on #N (said to you, or relayed by a session: « Test validé : #N … »): `verify`
      of the `tasks` skill, `vérifié:<date>`, one line « #N vérifiée ». **A failed try**: a correction task of its own
      (`add`, `après:-`, the person's words in its label and `src:`), launched like any task; #N stays closed and
@@ -1220,6 +1226,8 @@ back into Maestro's context). Decision in `docs/decisions.md` of the Roadmap rep
 - **What you stop doing while it is open**: reviewing, merging, publishing, running the suite of `main`, closing a
   line. A « prête à fusionner » that still reaches you (the children's news after 15 min, a « fusionne et publie #N »
   or a « Test validé : #N » sent to your id, which the gardien turns into `verify`, #634) is forwarded to the gardien in one line by `SendMessage`, never handled.
+- **Wake it only for a delivery** (#657): its tours cost its whole context. The « prête » that reached you, or a
+  decision that touches a delivery, grouped in one message per pass; never a piece of news, a launch or a question.
 - **What you tell it**: anything the person decided with you that touches a delivery (« ne publie pas #N avant #M »,
   « #N passe devant »), in one line. It has none of your context: it reads the roadmap, the PRs, git and the reports.
 - **What it tells you**: one line per delivery, « #N livrée X.Y.Z : ce qui change » (« #N fusionnée » without a

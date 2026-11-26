@@ -168,6 +168,7 @@ import {
   cloudRead,
   cloudRowSteps,
   compactFromBand,
+  compactPastThreshold,
   controlDeps,
   createdBySession,
   currentPr,
@@ -1314,6 +1315,8 @@ export const register: Register = (on, options) => {
       const block = await endOfTurnBlock($, e.answer, stopTurn.fromReminder, false)
       if (block !== undefined) setPendingReminder(block)
     }
+    // #657 : au-delà du seuil, la session se compacte, réveil de Maestro compris.
+    if (e.reason === 'answer' && !e.isAborted) await compactPastThreshold($)
     // Stop sauté deux tours de suite, jamais vu tourner : sec-default, l'option s'éteint (#219).
     if (e.turnId === stopTurn.id && e.reason === 'answer') await noteClassicSkip($, stopTurn.stopRan)
     // Le tour est fini : ni git ni les faits de session gardés ne passent au suivant (#523).

@@ -97,6 +97,8 @@ import {
 } from './reveil-cloud'
 import type { WakeEvent, WakeRole } from './reveil-cloud'
 import { MISSION_WAKE_EVERY_MS, MISSION_WAKE_KEY, missionDeparted, missionWakeDue, missionWakePrompt, missionWakeStateOf, missionWakes } from './reveil-mission'
+import { compactArgs, compactDue, compactFloorAfter, compactThreshold, compactToast } from './compactage'
+import type { CompactRole } from './compactage'
 import { gardienCardRefusal, gardienOf, gardienReminder, goesToGardien, isGardienSession, withoutGardien } from './gardien'
 import { openControl } from './controle'
 import type { ControlDeps } from './controle'
@@ -1050,6 +1052,8 @@ export function readPendingAsksAtom($: EngineInterface) {
 export function updatePendingAsksAtom($: EngineInterface, change: (value: Awaited<ReturnType<typeof readPendingAsksAtom>>) => Awaited<ReturnType<typeof readPendingAsksAtom>>) {
   return update($, pendingAsksAtom, change)
 }
+/** Le plancher du compactage au-delà du seuil (#657) : -1 demandé, 0 aucun, sinon le contexte mesuré juste après. */
+const compactFloorAtom = atom({ plugin: 'roadmap', key: 'compactFloor' } as const, 0)
 /** Le contexte du message précédent, en jetons (#119) : 0 quand rien n'est mesuré depuis le dernier vidage. */
 const contextSeenAtom = atom({ plugin: 'roadmap', key: 'contextSeen' } as const, 0)
 /** Lit `contextSeenAtom` pour un autre module : le moteur ne suit un atome que dans le fichier qui le déclare (#646). */
@@ -8681,6 +8685,38 @@ export async function compactFromBand($: EngineInterface): Promise<void> {
     $.ui.toast(`Compaction impossible : ${err instanceof Error ? err.message : String(err)}`)
   } finally {
     compactAsked = false
+  }
+}
+
+/**
+ * Le compactage au-delà du seuil (#657), à la fin d'un tour du fil principal : le contexte du dernier appel passe
+ * 350 k (Maestro et le gardien : 250 k), /compact se met en file avec ce que le résumé garde (`compactArgs`), et un
+ * toast le dit, hors du contexte. Le plancher (`compactFloorAtom`) retient la suivante tant que le contexte n'a pas
+ * repris 100 k au-dessus de sa mesure d'après compactage. Usage ou fiche illisibles : rien.
+ */
+export async function compactPastThreshold($: EngineInterface): Promise<void> {
+  try {
+    const tokens = (await $.session.usage()).context.tokens
+    const floor = compactFloorAfter(await read($, compactFloorAtom), tokens)
+    let role: CompactRole = 'tache'
+    try {
+      const own = await readOwnSession($)
+      role = isGardienSession(own.title) ? 'gardien' : (await ownIsMaestro($, own)) ? 'maestro' : 'tache'
+    } catch {
+      // fiche illisible : le seuil d'une tâche
+    }
+    if (!compactDue({ tokens, role, floor })) {
+      await update($, compactFloorAtom, () => floor)
+      return
+    }
+    await update($, compactFloorAtom, () => -1)
+    $.ui.toast(compactToast(tokens ?? 0, compactThreshold(role)))
+    // En file jusqu'au repos de la session : jamais attendu ici, le tour n'est pas encore fini.
+    void $.command.run({ command: 'compact', args: compactArgs(role) }).catch((err: unknown) => {
+      $.ui.toast(`Compaction impossible : ${err instanceof Error ? err.message : String(err)}`)
+    })
+  } catch {
+    // usage ou état illisibles : la fin du tour suivant relit
   }
 }
 

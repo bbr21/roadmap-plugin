@@ -871,6 +871,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.316.0 (2026-11-26)** : maestro : le plugin compacte lui-même, en fin de tour, une session au-delà de ~350 k de contexte (250 k pour Maestro et le gardien), avec ce que le résumé doit garder ; Maestro n'écrit plus à une session close (#657)
 - **0.315.1 (2026-11-26)** : doctor : un hook qui échoue à répétition dans les journaux récents se signale (#660)
 - **0.315.0 (2026-11-26)** : maestro : le module de hooks est découpé en couches (register, panneau, socle, parse, lecture), loin sous la limite de taille du moteur, avec un contrôle qui refuse un module qui s'en approche (#646)
 - **0.314.0 (2026-11-26)** : maestro : le rappel de chaque message passe de ~1,4 k à ~0,3 k tokens (règles en entier au premier message, après une compaction et tous les 15 messages), les findings et les réglages ne sont redits à Maestro que quand ils changent (#654)
