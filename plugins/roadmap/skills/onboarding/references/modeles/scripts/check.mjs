@@ -1,9 +1,9 @@
 #!/usr/bin/env node
-// Contrôle avant commit : liens relatifs des docs, grammaire de ROADMAP, grain des règles, taille de CLAUDE.md, fichiers secrets suivis.
+// Contrôle avant commit : liens relatifs des docs, grammaire de ROADMAP, grain des règles, taille de CLAUDE.md, taille des modules de hooks, fichiers secrets suivis.
 // Sans réseau, sans dépendance. Code de retour 1 s'il trouve une erreur.
 //   node scripts/check.mjs
 import { execFileSync } from 'node:child_process';
-import { existsSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { dirname, join, posix, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -374,6 +374,26 @@ check('CLAUDE.md sous 150 lignes', (err) => {
   const lines = read('CLAUDE.md').replace(/\n$/, '').split('\n').length;
   if (lines > 150) err('CLAUDE.md', `${lines} lignes, plafond 150`);
 });
+
+// #646 : le moteur refuse un module de hooks de plus de 1 048 576 octets ; on s'arrête 50 Ko avant.
+const MODULE_LIMIT = 1048576;
+const MODULE_MARGIN = 50000;
+
+// Sans dossier plugins/, le contrôle n'existe pas (un projet sans plugin n'a rien à y lire).
+if (existsSync(join(root, 'plugins'))) {
+  check('Modules de hooks sous la limite du moteur', (err) => {
+    for (const plugin of readdirSync(join(root, 'plugins'), { withFileTypes: true }).filter((e) => e.isDirectory())) {
+      const dir = join(root, 'plugins', plugin.name, 'hooks');
+      if (!existsSync(dir)) continue;
+      for (const f of readdirSync(dir, { withFileTypes: true }).filter((e) => e.isFile() && /\.tsx?$/.test(e.name))) {
+        const size = statSync(join(dir, f.name)).size;
+        if (size > MODULE_LIMIT - MODULE_MARGIN) {
+          err(`plugins/${plugin.name}/hooks/${f.name}`, `${size} octets, ${MODULE_LIMIT - size} de marge sur la limite du moteur (${MODULE_LIMIT}) : il en faut ${MODULE_MARGIN} au moins ; sortir du code vers un autre module de hooks`);
+        }
+      }
+    }
+  });
+}
 
 check('Aucun fichier secret suivi', (err) => {
   const patterns = SECRET_FILES.map((g) => new RegExp(`^${g.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*')}$`));

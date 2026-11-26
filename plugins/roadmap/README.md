@@ -871,6 +871,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.315.0 (2026-11-26)** : maestro : le module de hooks est découpé en couches (register, panneau, socle, parse, lecture), loin sous la limite de taille du moteur, avec un contrôle qui refuse un module qui s'en approche (#646)
 - **0.314.0 (2026-11-26)** : maestro : le rappel de chaque message passe de ~1,4 k à ~0,3 k tokens (règles en entier au premier message, après une compaction et tous les 15 messages), les findings et les réglages ne sont redits à Maestro que quand ils changent (#654)
 - **0.313.2 (2026-11-25)** : maestro : la publication ne refuse plus de partir quand le registre des findings, relevé par Maestro, n'est pas encore committé : elle le laisse en place, hors de son commit de version (#648)
 - **0.313.1 (2026-11-25)** : maestro : règle fixe « le modèle simple d'abord » dite à toute session et redite à chaque message : avant une question sur une anomalie, le petit tableau du sujet, puis oui ou non sans option recommandée (#647)
