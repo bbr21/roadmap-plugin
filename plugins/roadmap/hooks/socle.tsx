@@ -1049,9 +1049,22 @@ export function readFindingsGivenAtom($: EngineInterface) {
 export function updateFindingsGivenAtom($: EngineInterface, change: (value: Awaited<ReturnType<typeof readFindingsGivenAtom>>) => Awaited<ReturnType<typeof readFindingsGivenAtom>>) {
   return update($, findingsGivenAtom, change)
 }
+/** Les blocs donnés en entier depuis le dernier vidage (#676), JSON `{clé: empreinte}` ; vide : tout se redonne. */
+const blocksGivenAtom = atom({ plugin: 'roadmap', key: 'blocksGiven' } as const, '')
+/** Un bloc du contexte d'un message, par `step` (`onceClock`, `onceWake`, `onceChildAlert`) : entier à son changement, sinon sa ligne (#676). */
+export async function onceGiven($: EngineInterface, step: (raw: string) => { text: string; next: string }): Promise<string> {
+  const r = step(await read($, blocksGivenAtom))
+  await update($, blocksGivenAtom, () => r.next)
+  return r.text
+}
+/** Un démarrage (#676) : les blocs du contexte d'un message se redonnent entiers. */
+export async function forgetBlocks($: EngineInterface): Promise<void> {
+  await update($, blocksGivenAtom, () => '')
+}
 /** Une conversation vidée ou compactée : ce qui se donne en entier se redonne. */
 export async function forgetGiven($: EngineInterface): Promise<void> {
   await update($, prefsGivenAtom, () => '')
+  await update($, blocksGivenAtom, () => '')
   await update($, rulesGivenAtom, () => '')
   await update($, findingsGivenAtom, () => '')
 }

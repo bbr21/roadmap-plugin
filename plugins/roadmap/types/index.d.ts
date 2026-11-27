@@ -38,6 +38,8 @@ declare module 'claude-code' {
       rulesGiven: string
       /** Les findings donnés en dernier à Maestro (#654), JSON des clés ; vide : la liste entière au message suivant. */
       findingsGiven: string
+      /** Les blocs du contexte d'un message donnés en entier (#676), JSON `{clé: empreinte}` ; vide : tout se redonne. */
+      blocksGiven: string
       /** Le contexte du message précédent, en jetons (#119) : 0 quand rien n'est mesuré depuis le dernier `/clear` ou la dernière compaction vue. */
       contextSeen: number
       /** Le plancher du compactage au-delà du seuil (#657) : -1 demandé et pas encore mesuré, 0 aucun, sinon le contexte mesuré juste après. */

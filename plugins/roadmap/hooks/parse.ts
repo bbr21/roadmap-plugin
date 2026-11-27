@@ -6748,19 +6748,85 @@ function localClock(ms: number): ClockParts {
  * la forme de `date`, puis la règle : « hier », « aujourd'hui » ou une durée écoulée se mesurent contre elle.
  * `timeZone` ne sert qu'aux tests ; un fuseau inconnu retombe sur celui du Mac.
  */
-export function localClockText(ms: number, timeZone?: string): string {
+/** Les parties de l'heure du Mac (ou de `timeZone`, pour les tests) : jour, heure, fuseau et sa forme `date`. */
+function clockOf(ms: number, timeZone?: string) {
   const c = (timeZone !== undefined ? intlClock(ms, timeZone) : undefined) ?? intlClock(ms) ?? localClock(ms)
   const pad = (n: number) => String(n).padStart(2, '0')
   const sign = c.offset < 0 ? '−' : '+'
   const off = `UTC${sign}${pad(Math.floor(Math.abs(c.offset) / 60))}:${pad(Math.abs(c.offset) % 60)}`
   const hm = `${pad(c.h)}:${pad(c.mi)}`
-  const zone = [c.abbr, off, c.zone].filter(Boolean)
-  const tz = c.abbr ?? off
+  const zone = [c.abbr, off, c.zone].filter(Boolean) as string[]
+  return { c, pad, hm, zone, tz: c.abbr ?? off }
+}
+
+/** La règle de lecture de l'heure (#331), donnée avec l'heure entière. */
+const CLOCK_RULE =
+  "« hier », « aujourd'hui », « ce matin » ou une durée écoulée (« il y a sept minutes ») se mesurent contre cette heure, jamais contre la date de la session, ni contre une date ou une heure en UTC (un horodatage en Z, une date de session déjà passée au lendemain) : convertis d'abord l'heure d'un fait dans ce fuseau, puis compare."
+
+export function localClockText(ms: number, timeZone?: string): string {
+  const { c, hm, zone, tz } = clockOf(ms, timeZone)
   const date = `${CLOCK_DAYS_EN[c.wd]} ${CLOCK_MONTHS_EN[c.mo]} ${c.d} ${hm} ${tz} ${c.y}`
   return (
     `Heure locale du Mac (plugin roadmap, à ce message) : ${CLOCK_DAYS[c.wd]} ${c.d} ${CLOCK_MONTHS[c.mo]} ${c.y}, ${hm} ${zone[0]} (${zone.slice(1).join(', ')}) ; sortie de date : ${date}. ` +
-    "« hier », « aujourd'hui », « ce matin » ou une durée écoulée (« il y a sept minutes ») se mesurent contre cette heure, jamais contre la date de la session, ni contre une date ou une heure en UTC (un horodatage en Z, une date de session déjà passée au lendemain) : convertis d'abord l'heure d'un fait dans ce fuseau, puis compare."
+    CLOCK_RULE
   )
+}
+
+const CLOCK_DAYS_SHORT = ['dim.', 'lun.', 'mar.', 'mer.', 'jeu.', 'ven.', 'sam.']
+
+/** L'heure d'un message dont la règle de lecture a déjà été donnée (#676) : une ligne, « 13:01 AST, ven. 27/11 ». */
+export function localClockShort(ms: number, timeZone?: string): string {
+  const { c, pad, hm, tz } = clockOf(ms, timeZone)
+  return `Heure locale du Mac : ${hm} ${tz}, ${CLOCK_DAYS_SHORT[c.wd]} ${pad(c.d)}/${pad(c.mo + 1)} (règle de lecture donnée plus haut).`
+}
+
+// --- Blocs redits seulement s'ils changent (#676) ----------------------------------------------------------------
+// L'état d'une session garde, par bloc, l'empreinte de ce qui a été donné en entier ; vidé à la compaction ou au
+// /clear (`forgetGiven`), tout bloc revient entier.
+
+export type OnceBlock = { key: string; full: string; short: string; same?: string }
+
+/** Chaque bloc : entier si `same` (à défaut `full`) a changé depuis le dernier ajout de la session, sinon sa ligne courte. */
+export function onceBlocks(raw: string, blocks: readonly OnceBlock[]): { texts: string[]; next: string } {
+  let given: Record<string, string> = {}
+  try {
+    const v: unknown = JSON.parse(raw)
+    if (v && typeof v === 'object' && !Array.isArray(v)) given = Object.fromEntries(Object.entries(v).filter((e): e is [string, string] => typeof e[1] === 'string'))
+  } catch {
+    // vide ou illisible : tout se redonne
+  }
+  const texts = blocks.map(b => {
+    const h = hashLabel(b.same ?? b.full)
+    const same = given[b.key] === h
+    given[b.key] = h
+    return same ? b.short : b.full
+  })
+  return { texts, next: JSON.stringify(given) }
+}
+
+/** L'heure d'un message : entière avec sa règle tant que le fuseau donné n'est pas le même, sinon une ligne. */
+export function onceClock(raw: string, ms: number, timeZone?: string): { text: string; next: string } {
+  const { zone } = clockOf(ms, timeZone)
+  const r = onceBlocks(raw, [{ key: 'clock', full: localClockText(ms, timeZone), short: localClockShort(ms, timeZone), same: `${zone.join(' ')}|${CLOCK_RULE}` }])
+  return { text: r.texts[0], next: r.next }
+}
+
+/** Le rappel d'un réveil de Maestro : entier à sa première fois et quand les questions en attente changent. */
+export function onceWake(raw: string, pending: readonly string[]): { text: string; next: string } {
+  const r = onceBlocks(raw, [{ key: 'wake', full: maestroWakeReminder(pending), short: `Maestro, tour réveillé par une de tes sessions (#133) : la consigne donnée plus haut vaut, inchangée.` }])
+  return { text: r.texts[0], next: r.next }
+}
+
+const CHILD_CONSIGNE = '\n\nCe que tu fais :\n'
+
+/** Les nouvelles des sessions enfants : toujours les nouvelles, la consigne « Ce que tu fais » entière à son changement. */
+export function onceChildAlert(raw: string, text: string): { text: string; next: string } {
+  const at = text.indexOf(CHILD_CONSIGNE)
+  if (at < 0) return { text, next: raw }
+  const news = text.slice(0, at)
+  const consigne = text.slice(at)
+  const r = onceBlocks(raw, [{ key: 'children', full: consigne, short: '\n\nCe que tu fais : la consigne donnée plus haut vaut, inchangée (liste d\'étapes, archivage, relances).' }])
+  return { text: news + r.texts[0], next: r.next }
 }
 
 /**

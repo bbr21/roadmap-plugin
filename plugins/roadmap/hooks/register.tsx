@@ -51,7 +51,6 @@ import {
   planUnshownRefusal,
   reviewLinkText,
   crossProjectText,
-  localClockText,
   PANEL_SKILL,
   pinnedPaneToast,
   refusesPaneClose,
@@ -105,7 +104,9 @@ import {
   maestroPrefsReminder,
   rulesPlan,
   shortRules,
-  maestroWakeReminder,
+  onceChildAlert,
+  onceClock,
+  onceWake,
   openListBox,
   openListRefusal,
   wakeTurn,
@@ -194,6 +195,8 @@ import {
   forceBar,
   forgetGit,
   forgetGiven,
+  onceGiven,
+  forgetBlocks,
   forgetSessionReads,
   forwardProposal,
   freshReport,
@@ -677,6 +680,7 @@ export const register: Register = (on, options) => {
         await updatePrefsGivenAtom($, () => block ?? '')
         await updateRulesGivenAtom($, () => '')
         await updateFindingsGivenAtom($, () => '')
+        await forgetBlocks($)
       } catch {
         // état de session illisible : le premier message les redonnera aussi
       }
@@ -752,9 +756,20 @@ export const register: Register = (on, options) => {
     // #510 (C4) : le message de départ d'une carte cloud prend sa ligne.
     if (typeof e.text === 'string' && e.text.includes('started your suggested background task')) await takeStartedLines($, e.text).catch(() => undefined)
     const texts: string[] = []
-    // L'heure locale du Mac à chaque message, projet à roadmap ou non (#331) : « hier » se mesure contre elle.
+    // Une compaction que sec-default cache à session.compact (#119) : le contexte a fondu depuis le
+    // message précédent, et les réglages complets sont à redonner ; avant l'heure, qui revient alors entière (#676).
     try {
-      texts.push(localClockText(await $.clock.now()))
+      const tokens = (await $.session.usage()).context.tokens
+      if (contextShrank(await readContextSeenAtom($), tokens)) await forgetGiven($)
+      await updateContextSeenAtom($, () => tokens ?? 0)
+    } catch {
+      // contexte non mesuré : les réglages suivent la seule règle du démarrage
+    }
+    // L'heure locale du Mac à chaque message, projet à roadmap ou non (#331) : « hier » se mesure contre elle ;
+    // sa règle de lecture une fois, puis une ligne (#676).
+    try {
+      const now = await $.clock.now()
+      texts.push(await onceGiven($, raw => onceClock(raw, now)))
     } catch {
       // horloge illisible : le message passe sans l'heure
     }
@@ -789,15 +804,6 @@ export const register: Register = (on, options) => {
       setPendingReminder(undefined)
       setReminderCarried(true)
     }
-    // Une compaction que sec-default cache à session.compact (#119) : le contexte a fondu depuis le
-    // message précédent, et les réglages complets sont à redonner.
-    try {
-      const tokens = (await $.session.usage()).context.tokens
-      if (contextShrank(await readContextSeenAtom($), tokens)) await forgetGiven($)
-      await updateContextSeenAtom($, () => tokens ?? 0)
-    } catch {
-      // contexte non mesuré : les réglages suivent la seule règle du démarrage
-    }
     // Réglages en entier si aucun démarrage ne les a donnés, sinon leurs seules lignes changées (#119, #654) ;
     // puis le rappel ADHD. Maestro tel que lu ici : les findings ne relisent pas la fiche (#531).
     let maestroSeen = false
@@ -817,7 +823,8 @@ export const register: Register = (on, options) => {
       const wake = maestro && wakeTurn(e.text)
       wakeSeen = wake
       if (wake) {
-        texts.push(maestroWakeReminder(await readPendingAsksAtom($)))
+        const pending = await readPendingAsksAtom($)
+        texts.push(await onceGiven($, raw => onceWake(raw, pending)))
       } else {
         const kind = maestro ? 'maestro' : current.roadmap && (await parentIsMaestro($)) ? 'child' : 'solo'
         const plan = rulesPlan(await readRulesGivenAtom($), `${kind}|${current.prefs.adhd}|${current.roadmap}`)
@@ -858,7 +865,7 @@ export const register: Register = (on, options) => {
     // Nouvelles des enfants qui coincent ou sont à archiver (#84).
     try {
       const children = await childAlertContext($)
-      if (children !== undefined) texts.push(children)
+      if (children !== undefined) texts.push(await onceGiven($, raw => onceChildAlert(raw, children)))
     } catch {
       // liste ou store illisible : pas de nouvelles ce tour-ci
     }
