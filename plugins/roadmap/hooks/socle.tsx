@@ -587,6 +587,10 @@ import {
   holdWrite,
   unverifyInText,
   verifyInText,
+  crossProjectCandidate,
+  crossProjectGap,
+  crossProjectReminder,
+  knownProjects,
 } from './parse'
 import type {
   Account,
@@ -2334,6 +2338,14 @@ export async function endOfTurnBlock($: EngineInterface, last: string | undefine
       // session illisible : pas de rappel
     }
   }
+  // Le finding cross-projet (#670) : signalé sans son prompt à coller pour le Maestro du projet cible.
+  if (settings.capture && c) {
+    try {
+      notes.push(await crossProjectNote($, last))
+    } catch {
+      // réglages illisibles : pas de rappel
+    }
+  }
   // Une ligne « finding · » illisible (#641) : la session la réécrit ; pur, dans tout projet.
   notes.push(findingReminder(unreadableFindings(last)))
   // La clôture partielle (#245) : finie, sa ligne attend encore un tiers.
@@ -2382,6 +2394,28 @@ async function reviewNote($: EngineInterface, last: string | undefined): Promise
   }
   const gap = reviewLinkGap(last, { roots, relative: !child })
   return gap === undefined ? undefined : reviewLinkReminder(gap, maestro ? 'maestro' : child ? 'child' : 'solo')
+}
+
+/**
+ * Le rappel du finding cross-projet (#670) : seulement sur un signal net du message (`crossProjectCandidate`, sans
+ * lecture de fichier tant qu'il n'y en a pas), avec les projets connus des réglages de session.
+ */
+async function crossProjectNote($: EngineInterface, last: string | undefined): Promise<string | undefined> {
+  if (!crossProjectCandidate(last)) return undefined
+  let text: string | undefined
+  let home = ''
+  try {
+    const file = await prefsFile($)
+    if (file) {
+      home = file.home
+      text = (await $.fs.exists(file.path)) ? await $.fs.read(file.path) : undefined
+    }
+  } catch {
+    return undefined
+  }
+  const project = await sessionProject($)
+  const gap = crossProjectGap(last, { projects: knownProjects(text, home), ...(project.name === undefined ? {} : { current: project.name }) })
+  return gap === undefined ? undefined : crossProjectReminder(gap)
 }
 
 type BilanData = { config: BilanConfig; bilans: Map<string, Bilan>; viaCowork: boolean }

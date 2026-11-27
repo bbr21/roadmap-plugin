@@ -608,6 +608,12 @@ le HTML, un docx se double d'une version lisible ; en cloud, le document se publ
 un message qui demande une validation (« valide », « relis », « je te laisse lire ») sans lien ouvrable reçoit
 son rappel (`reviewLinkGap`). La matrice des essais : `docs/plans/feat-document-a-valider/matrice.md`.
 
+## Finding cross-projet : prompt à coller (#670)
+
+Règle fixe, jointe aux messages d'un projet à roadmap avec « Proposer une task » (en entier au premier message, après une compaction et tous les 15 messages, une ligne courte entre-temps, #654), et dans le bloc des réglages et son bloc court (#665) : un finding ou une task dont le travail se fait dans un autre projet se dit en une ligne, `Cross-projet : <projet cible>`. La session cherche en lecture seule une task du même sujet dans la roadmap de la cible (ouvertes et closes), cite la plus proche avec ce qui la distingue, puis rend dans le même message, sans qu'on le demande, un prompt prêt à coller dans le Maestro de la cible, dans un bloc de code : constat chiffré et daté, projet et task d'origine, attendu, « fini quand » et son test, task voisine à ne pas confondre, demande de renvoyer le numéro de la task ouverte. Jamais d'écriture dans la roadmap d'un autre projet : chez elle, une seule ligne `attend:<cible>`, complétée du numéro quand la personne le donne ; une session ouverte de la cible peut recevoir le prompt, sur le oui de la personne.
+
+En fin de tour, un message qui porte un signal net sans aucun bloc de code (une ligne `Cross-projet : <cible>`, ou un champ `attend:<X>` où X est un projet connu autre que celui de la session ; jamais un mot dans une phrase) reçoit son rappel (`crossProjectGap`). Les projets se lisent dans les clés de `projets` de `~/.claude/reglages-session.json` (#102), la roadmap d'un dossier dans son `.claude/roadmap.json` : aucun fichier de plus, un projet absent se demande une fois.
+
 ## Sur un compte Team ou Enterprise (#116)
 
 Claude Code y pose devant les plugins installés son plugin intégré `cc-plugin-sec-default`, qui saute
@@ -880,6 +886,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.320.0 (2026-11-27)** : maestro : un finding cross-projet rend dans le même message son prompt prêt à coller pour le Maestro du projet cible, avec un rappel de fin de tour (#670)
 - **0.319.0 (2026-11-27)** : maestro : une ligne close archive d'office la session de sa tâche, sans tour de modèle ; ni Maestro, ni le gardien, ni une épinglée, ni une clôture en partie ou de rendu (#669)
 - **0.318.1 (2026-11-26)** : maestro : après une compaction, le démarrage donne un bloc court des réglages (une ligne par règle, limites de sécurité comprises) ; le bloc entier reste au vrai démarrage (#665)
 - **0.318.0 (2026-11-26)** : maestro : l'onboarding propose un jeu de plugins par projet (clé enabledPlugins du projet) et le doctor le vérifie (ligne « Plugins du projet ») (#659)

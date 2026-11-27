@@ -50,6 +50,7 @@ import {
   planShown,
   planUnshownRefusal,
   reviewLinkText,
+  crossProjectText,
   localClockText,
   PANEL_SKILL,
   pinnedPaneToast,
@@ -823,7 +824,7 @@ export const register: Register = (on, options) => {
           const reminder = maestro ? maestroPrefsReminder(current.prefs) : sessionPrefsReminder(current.prefs)
           if (reminder !== undefined) texts.push(reminder)
           texts.push(simpleModelReminder())
-          if (current.roadmap) texts.push(proposeTaskText(kind), reviewLinkText(kind))
+          if (current.roadmap) texts.push(proposeTaskText(kind), reviewLinkText(kind), crossProjectText())
         } else texts.push(...shortRules(maestro, current.prefs, current.roadmap))
       }
     } catch {

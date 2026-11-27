@@ -798,6 +798,21 @@ otherwise they see an empty worktree.
     « Sans sort au registre ») on the first message, after a compaction and every 15 messages the person
     types; in between, only the new findings and a count of those already given (#654); `findings.py liste <main folder>` lists them (`--tout` with
     the settled ones, `--json`). Maestro does not close its work while one remains.
+  - **Cross-project** (#670): a finding or task whose work belongs to another project is
+    « cross-projet ». The session says it in one line, `Cross-projet : <target>`, checks read-only
+    the target's roadmap (open and closed tasks; the target folder comes from the `projets` keys of
+    `~/.claude/reglages-session.json`, its roadmap from its `.claude/roadmap.json`), quotes the
+    closest task and what sets it apart, and in the same message gives a prompt ready to paste into
+    the target project's Maestro, in a code block: the finding with figures and date, the origin
+    project and task, the expected result, the « fini quand » with its test, the neighbour task not
+    to be confused with, and a request to send back the number of the opened task. It never writes
+    in another project's roadmap; at home it keeps one follow-up line `attend:<target>`, completed
+    with the target task number once the person gives it. If a session of the target project is
+    open and reachable, offer to send it the prompt, on the person's yes. As Maestro: a
+    cross-project finding of one of your sessions is not given a line here (its fate:
+    `--ecarte "cross-projet : <target>, prompt rendu"`, or the target number once known); such a
+    prompt pasted into you from another project: open its line through `tasks` and answer with its
+    number.
 - **Propose a task** (#216, Caroline): a new idea or an action to do that comes out of the
   exchange with the person, outside the tasks in progress, becomes a proposed task in the same
   turn, without waiting to be asked: Maestro opens its line through the `tasks` skill (after

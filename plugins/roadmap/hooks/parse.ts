@@ -6454,6 +6454,81 @@ export function reviewLinkText(kind: ProposeKind): string {
   ].join(' ')
 }
 
+// Finding cross-projet (#670, BBR le 2026-11-27, cas AAFES #805 du 2026-11-26) : un défaut qui se corrige dans un
+// autre projet arrivait en une ligne `attend:<projet>` chez la session, sans rien chez le projet cible, et BBR
+// devait demander lui-même où lancer, puis le prompt. Règle fixe : le prompt prêt à coller arrive dans le même message.
+
+function crossProjectRule(): string {
+  return `un finding ou une task à faire dans un autre projet est cross-projet : dis-le en une ligne : \`Cross-projet : <projet cible>\`. Cherche en lecture seule la task du même sujet dans sa roadmap, ouvertes et closes (dossier : clé de \`projets\` de \`reglages-session.json\`, roadmap de \`.claude/roadmap.json\`, sinon \`roadmap/ROADMAP.md\` ; absent : demande-le une fois) ; cite la plus proche et ce qui la distingue. Dans le même message, sans qu'on te le demande, donne un prompt prêt à coller dans la session Maestro cible, en bloc de code : constat chiffré et daté, projet et task d'origine, attendu, « fini quand » et son test, task voisine à distinguer, demande du numéro de la task ouverte. Jamais d'écriture dans une autre roadmap ; chez toi une ligne \`attend:<projet cible>\`, avec le numéro cible quand ${person()} le donne. Session cible joignable : propose-lui le prompt, sur le oui de ${person()}.`
+}
+
+/** La règle fixe du finding cross-projet (#670), jointe à chaque message dû d'un projet à roadmap. */
+export function crossProjectText(): string {
+  return `Finding cross-projet (plugin roadmap, règle fixe, #670) : ${crossProjectRule()}`
+}
+
+/** Les noms des projets connus : le dernier segment du dossier de chaque clé de `projets`, sans doublon, dans l'ordre. */
+export function knownProjects(prefsText: string | undefined, home: string): string[] {
+  if (prefsText === undefined) return []
+  let raw: unknown
+  try {
+    raw = JSON.parse(prefsText)
+  } catch {
+    return []
+  }
+  const projets = objectOf(objectOf(raw)?.projets)
+  if (!projets) return []
+  const names: string[] = []
+  for (const key of Object.keys(projets)) {
+    const name = projectDir(key, home).split('/').pop() ?? ''
+    if (name !== '' && !names.includes(name)) names.push(name)
+  }
+  return names
+}
+
+/** Un nom de projet comparable : minuscules, sans accents, `_` et `-` en espace. */
+function projectNorm(name: string): string {
+  return name.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase().replace(/[_-]+/g, ' ').replace(/\s+/g, ' ').trim()
+}
+
+/** Le message peut-il signaler un cross-projet sans prompt ? Sans lire de fichier : un bloc de code (le prompt y serait) ou aucun marqueur, non. */
+export function crossProjectCandidate(text: string | undefined): boolean {
+  if (text === undefined || text.includes('```')) return false
+  return /cross[ -]projet/i.test(text) || text.includes('attend:')
+}
+
+/**
+ * Le projet cible d'un finding cross-projet signalé sans son prompt (#670), sinon rien. Deux signaux nets : une ligne
+ * qui commence par « Cross-projet : <cible> », ou un champ `attend:<X>` où X est un projet connu (son nom ou son
+ * premier mot) autre que celui de la session. Un message qui a un bloc de code (le prompt) n'en déclenche aucun.
+ */
+export function crossProjectGap(text: string | undefined, o: { projects: readonly string[]; current?: string }): string | undefined {
+  if (!crossProjectCandidate(text) || text === undefined) return undefined
+  for (const line of text.split('\n')) {
+    const m = /^cross[ -]projet\s*[:·]\s*(.+)$/i.exec(line.replace(/^[\s>*-]+/, '').replace(/\*\*/g, ''))
+    if (!m) continue
+    const target = (m[1] ?? '').split(/[,;(:]/)[0]?.trim().replace(/\.+$/, '').trim().slice(0, 60) ?? ''
+    if (target !== '') return target
+  }
+  const current = o.current === undefined ? undefined : projectNorm(o.current)
+  const currentFirst = current?.split(' ')[0]
+  for (const m of text.matchAll(/attend:([^\s|\]`]+)/g)) {
+    const x = projectNorm((m[1] ?? '').replace(/[.,;:)]+$/, ''))
+    if (x === '' || x === current || x === currentFirst) continue
+    const hit = o.projects.find(p => {
+      const n = projectNorm(p)
+      return n === x || n.split(' ')[0] === x
+    })
+    if (hit !== undefined) return hit
+  }
+  return undefined
+}
+
+/** Le rappel de fin de tour d'un finding cross-projet sans prompt à coller (#670). */
+export function crossProjectReminder(target: string): string {
+  return `Plugin roadmap (#670) : ton message signale un finding cross-projet vers ${target} sans le prompt à coller. Donne-le maintenant, sans réécrire ton message : un bloc de code pour la session Maestro de ${target}, son contenu en liste courte (constat avec chiffres et date, projet et task d'origine, attendu, « fini quand » et son test, task voisine à ne pas confondre, demande de renvoyer le numéro de la task ouverte) ; cite la task voisine trouvée en lecture seule dans sa roadmap, et n'écris rien chez ${target}.`
+}
+
 // #626 (BBR, 2026-11-17, constat #73 : « Le plan de tri Gmail… : je l'applique ? » sans le plan au-dessus) : un
 // formulaire qui demande de valider un plan, un brouillon ou un document que le tour n'a pas montré est refusé une fois.
 const PLAN_OBJECT = /(?<![a-z])(?:plans?|brouillons?|drafts?|documents?|docs?|notes?|e-?mails?|mails?|courriels?|messages?|textes?|specs?|propositions?|programmes?|listes?)(?![a-z])/
@@ -6734,7 +6809,10 @@ export function sessionPrefsText(prefs: SessionPrefs, error?: string, project?: 
   lines.push(gesturesText(prefs.autonome))
   lines.push(mockupText(design))
   // Proposer une task (#216) : dite dans tout projet à roadmap ; la variante de la session vient avec chaque message.
-  if (roadmap) lines.push(`- **Proposer une task** (règle fixe, projet à roadmap) : ${proposeRule()}`)
+  if (roadmap) {
+    lines.push(`- **Proposer une task** (règle fixe, projet à roadmap) : ${proposeRule()}`)
+    lines.push(`- **Finding cross-projet** (règle fixe, projet à roadmap, #670) : ${crossProjectRule()}`)
+  }
   const broken = error === undefined ? [] : [`- Le fichier ${SESSION_PREFS_FILE} est illisible (${error}) : réglages par défaut. La skill reglages-session le répare.`]
   return [
     `Réglages de session de ${person()}${project === undefined ? '' : ` pour le projet ${project}`} (plugin roadmap, ${SESSION_PREFS_FILE} ; la skill reglages-session les lit et les change). Ils valent pour toute la session, en plus des règles du projet ; une consigne de ${person()} dans la conversation l'emporte.`,
@@ -6767,7 +6845,10 @@ export function sessionPrefsShortText(prefs: SessionPrefs, error?: string, proje
   lines.push(`- **Gestes hors du code** : un geste hors du dépôt se fait par toi (connecteur, API, volet navigateur), jamais par un texte que ${p} recopie ; ${prefs.autonome ? 'sans demander' : "le oui de " + p + " avant d'écrire"} ; tes règles de sécurité restent au-dessus : envoyer un message en son nom, payer, valider un formulaire que son message ne demandait pas se demandent quand même.`)
   const ds = Array.isArray(design) ? ` ; design system : ${design.map(e => `\`${e.chemin}\``).join(', ')}` : ''
   lines.push(`- **Maquettes avant un choix visuel** : 2 ou 3 maquettes (skill \`roadmap:mockups\`, servies par \`serve.py\`), ta recommandation en premier ; seule la version validée d'un oui se code${ds} ; jamais à ${p} de tester un rendu non publié ; l'autonome ne s'y applique pas.`)
-  if (roadmap) lines.push(`- **Proposer une task** : une idée neuve ou une action hors de la tâche en cours devient une task proposée dans le tour, sans doublon (skill \`tasks\`, puis la carte) ; Lancer garde le clic de ${p} sur Start, même en autonome.`)
+  if (roadmap) {
+    lines.push(`- **Proposer une task** : une idée neuve ou une action hors de la tâche en cours devient une task proposée dans le tour, sans doublon (skill \`tasks\`, puis la carte) ; Lancer garde le clic de ${p} sur Start, même en autonome.`)
+    lines.push('- **Finding cross-projet** : dis « Cross-projet : <cible> », cherche la task voisine en lecture seule, donne dans le même message le prompt prêt à coller pour le Maestro cible (bloc de code) ; jamais d\'écriture chez l\'autre, `attend:<cible>` chez toi.')
+  }
   const broken = error === undefined ? [] : [`- Le fichier ${SESSION_PREFS_FILE} est illisible (${error}) : réglages par défaut. La skill reglages-session le répare.`]
   return [
     `Réglages de session de ${p}${project === undefined ? '' : ` pour le projet ${project}`} (plugin roadmap), en bref après une compaction : chaque règle tient sa forme entière, que la skill reglages-session redonne à la demande. Ils valent pour toute la session ; une consigne de ${p} dans la conversation l'emporte.`,
@@ -6940,7 +7021,7 @@ export function maestroPrefsShortReminder(prefs: SessionPrefs): string | undefin
 export function fixedRulesLine(roadmap: boolean): string {
   const rules = ['le modèle simple d\'abord (#647) avant une question sur une anomalie']
   if (roadmap) {
-    rules.push('proposer une task dans le tour même (#216)', 'un document à valider arrive avec son lien cliquable, le plan en entier au-dessus du formulaire (#587, #626)')
+    rules.push('proposer une task dans le tour même (#216)', 'un document à valider arrive avec son lien cliquable, le plan en entier au-dessus du formulaire (#587, #626)', 'un finding cross-projet rend dans le même message son prompt prêt à coller pour le Maestro du projet cible (#670)')
   }
   return `Règles fixes du plugin roadmap (données en entier plus haut dans la conversation, valent toujours) : ${rules.join(' ; ')}.`
 }
