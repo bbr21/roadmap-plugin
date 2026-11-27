@@ -52,6 +52,8 @@ import { MIX, RADIUS, SIZE, SPACE, TEXT } from './tokens'
 import { BEFORE_KEY, NATIVE_KEY, keepBefore, keepNative } from './cartes'
 import type { WrittenStart } from './cartes'
 import { clientCardOf, sameCardTitle, withTargetTitle } from './titre'
+import { LOST_MAIL_EVERY_MS, LOST_MAIL_KEY, lostMailStep, lostMailText, transcriptDirOf, transcriptHasMessage, undeliveredSend, undeliveredTitle } from './courrier'
+import type { LostMail, LostMailProbe } from './courrier'
 import {
   CARD_DEADLINE_MS,
   CARD_LATE_WHY,
@@ -831,7 +833,7 @@ const STORE_KEY = 'titles-langue'
 // L'outil de l'app de bureau qui démarre une session à part.
 export const START_SESSION_TOOL = 'mcp__ccd_session__start_session'
 /** Le message d'une session à une autre : la proposition d'une sous-session part à son Maestro. */
-const SEND_MESSAGE_TOOL = 'mcp__ccd_session_mgmt__send_message'
+export const SEND_MESSAGE_TOOL = 'mcp__ccd_session_mgmt__send_message'
 /** L'arrêt net d'une session (#367) : la pause d'une session cédée à une prioritaire ou mise en pause à la main. */
 export const STOP_SESSION_TOOL = 'mcp__ccd_session_mgmt__stop_session'
 /** Les propositions gardées pour leur Maestro quand le message direct est refusé (#67). */
@@ -6883,6 +6885,8 @@ async function poll($: EngineInterface): Promise<void> {
     await checkCloudWake($)
     // #581 : le rappel de Maestro tant qu'une mission cloud n'a pas de fin lue (il ne lève jamais).
     await checkMissionWake($)
+    // #675 : les messages de cette session classés « undelivered », renvoyés une fois s'ils n'ont laissé aucune trace (il ne lève jamais).
+    await checkLostMail($)
     if (resting) {
       // Au repos (#348) : la file de lancement de Maestro avance quand même ; le reste attend sa minute.
       await checkZones($)
@@ -7413,6 +7417,147 @@ function queueWake($: EngineInterface, text: string): void {
     $.clock.after(LAUNCH_FALLBACK_MS, () => sendWake($, text))
   } catch {
     // horloge refusée : le prochain dessin du panneau l'envoie seul
+  }
+}
+
+// --- Le message perdu d'une session en pause (#675) -----------------------------------------------------------------
+// L'envoi classé « undelivered » se note au store sous l'identifiant de l'envoyeur (`noteLostMail`, depuis le hook de
+// l'outil d'envoi) ; la minuterie de l'envoyeur regarde le transcript du destinataire toutes les 30 s
+// (`checkLostMail`) : la trace trouvée, le suivi tombe ; sans trace, la session revenue à la vie et au repos, le
+// message lui est renvoyé une fois, et l'envoyeur l'apprend par un réveil ; sans trace ensuite, perdu, il l'apprend
+// aussi. Une session elle-même mise en pause garde son suivi : il est au store.
+
+let lostMail: LostMail[] | undefined
+let lostMailNextAt = 0
+let lostMailBusy = false
+/** Les transcripts déjà lus sans trace, par chemin : leur date, pour ne pas relire un fichier qui n'a pas bougé. */
+const lostMailSeen = new Map<string, number>()
+
+/** L'identifiant de cette session, gardé par la fiche lue ou relu tel quel (la fiche bornée peut revenir en retard). */
+let lostMailOwner: string | undefined
+
+function lostMailKey(): string | undefined {
+  const id = lostMailOwner ?? ownSession?.id
+  return id ? `${LOST_MAIL_KEY}:${id}` : undefined
+}
+
+async function loadLostMail($: EngineInterface): Promise<LostMail[]> {
+  if (lostMail !== undefined) return lostMail
+  const key = lostMailKey()
+  if (key === undefined) return []
+  const kept = await storeGet($, key).catch(() => undefined)
+  lostMail = Array.isArray(kept) ? (kept as LostMail[]).filter(m => typeof m?.to === 'string' && typeof m?.messageId === 'string') : []
+  return lostMail
+}
+
+async function saveLostMail($: EngineInterface, mails: LostMail[]): Promise<void> {
+  lostMail = mails
+  const key = lostMailKey()
+  if (key === undefined) return
+  await (mails.length === 0 ? storeDelete($, key) : storeSet($, key, mails as never)).catch(() => undefined)
+}
+
+/** L'outil d'envoi a répondu « undelivered » : le message se suit ; rend la note jointe à la réponse. */
+export async function noteLostMail($: EngineInterface, resultText: string, body: string): Promise<string | undefined> {
+  const sent = undeliveredSend(resultText)
+  if (!sent) return undefined
+  // Le suivi vit sous l'identifiant de l'envoyeur : la fiche gardée, sinon relue sans borne de temps.
+  if (!lostMailOwner) {
+    lostMailOwner = (await readOwnSession($, !ownSession?.id)).id
+    if (!lostMailOwner) {
+      const ran = await $.tool.call({ tool: GET_SESSION_TOOL, session_id: 'self' })
+      lostMailOwner = ran.deny === undefined && !ran.isError ? sessionIdIn(ran.text ?? '') : undefined
+    }
+  }
+  const mail: LostMail = { ...sent, title: undeliveredTitle(resultText, sent.to), body, sentAt: await $.clock.now() }
+  const mails = (await loadLostMail($)).filter(m => m.messageId !== mail.messageId)
+  await saveLostMail($, [...mails, mail])
+  lostMailNextAt = 0
+  return lostMailText('track', mail)
+}
+
+/** Ce que montre le destinataire : sa fiche (dossier, tour en cours) et ses transcripts depuis l'envoi. */
+async function probeLostMail($: EngineInterface, mail: LostMail, home: string): Promise<LostMailProbe | undefined> {
+  const ran = await sessionCall($, { tool: GET_SESSION_TOOL, session_id: mail.to })
+  if (ran.deny !== undefined || ran.isError) return undefined
+  let fiche: { cwd?: unknown; isRunning?: unknown; isArchived?: unknown }
+  try {
+    fiche = JSON.parse(ran.text ?? '{}') as typeof fiche
+  } catch {
+    return undefined
+  }
+  if (typeof fiche.cwd !== 'string' || fiche.cwd === '') return undefined
+  const dir = transcriptDirOf(home, fiche.cwd)
+  const entries = await $.fs.list(dir).catch(() => [])
+  let traced = false
+  let wroteSince = false
+  for (const entry of entries) {
+    if (entry.kind === 'dir' || !entry.name.endsWith('.jsonl')) continue
+    const path = `${dir}/${entry.name}`
+    const st = await $.fs.stat(path).catch(() => undefined)
+    if (!st || st.mtimeMs < mail.sentAt - 60_000) continue
+    if (st.mtimeMs > mail.sentAt) wroteSince = true
+    const seenKey = `${mail.messageId}|${path}`
+    if (lostMailSeen.get(seenKey) === st.mtimeMs) continue
+    // Une lecture en panne ne dit rien : ni absence, ni date gardée ; la vérification suivante relit.
+    let text: string
+    try {
+      text = await $.fs.read(path)
+    } catch {
+      return undefined
+    }
+    if (transcriptHasMessage(text, mail.messageId) || (mail.resentId !== undefined && transcriptHasMessage(text, mail.resentId))) {
+      traced = true
+      break
+    }
+    lostMailSeen.set(seenKey, st.mtimeMs)
+  }
+  return { traced, running: fiche.isRunning === true, wroteSince }
+}
+
+/** Un pas de la minuterie : les messages suivis de cette session, toutes les 30 s au plus (il ne lève jamais). */
+async function checkLostMail($: EngineInterface): Promise<void> {
+  if (lostMailBusy || lostMailKey() === undefined) return
+  lostMailBusy = true
+  try {
+    const now = await $.clock.now()
+    if (now < lostMailNextAt) return
+    lostMailNextAt = now + LOST_MAIL_EVERY_MS
+    const mails = await loadLostMail($)
+    if (mails.length === 0) return
+    const home = ((await $.env.get('HOME').catch(() => undefined)) ?? '').replace(/\/+$/, '')
+    const kept: LostMail[] = []
+    const told: string[] = []
+    for (const mail of mails) {
+      const probe = await probeLostMail($, mail, home).catch(() => undefined)
+      // Fiche illisible : on garde, et la limite des deux heures tranche.
+      const step = lostMailStep(mail, probe ?? { traced: false, running: true, wroteSince: false }, now)
+      if (step === 'arrived') continue
+      if (step === 'lost') {
+        told.push(lostMailText('lost', mail, person()))
+        continue
+      }
+      if (step === 'resend') {
+        const ran = await $.tool.call({ tool: SEND_MESSAGE_TOOL, session_id: mail.to, message: lostMailText('body', mail) }).catch(() => undefined)
+        // Un refus ne lève pas (Pièges) : refusé ou en erreur, rien n'est parti.
+        if (!ran || ran.deny !== undefined || ran.isError) {
+          // F135 : le refus se compte et espace le prochain essai ; au troisième, le message est dit perdu, refus nommé.
+          kept.push({ ...mail, refused: (mail.refused ?? 0) + 1, refusedAt: now })
+          continue
+        }
+        const resentId = /message_id: ([0-9a-f-]{36})/.exec(ran.text ?? '')?.[1]
+        kept.push({ ...mail, resentAt: now, ...(resentId ? { resentId } : {}) })
+        told.push(lostMailText('resend', mail))
+        continue
+      }
+      kept.push(mail)
+    }
+    if (kept.length !== mails.length || told.length > 0 || kept.some((m, i) => m !== mails[i])) await saveLostMail($, kept)
+    if (told.length > 0) queueWake($, told.join('\n\n'))
+  } catch {
+    // la vérification suivante reprend
+  } finally {
+    lostMailBusy = false
   }
 }
 

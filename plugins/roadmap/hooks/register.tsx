@@ -345,6 +345,8 @@ import {
   saveWhys,
   sendLaunch,
   sendWake,
+  noteLostMail,
+  SEND_MESSAGE_TOOL,
   sessionBrandOf,
   sessionDeadline,
   sessionPrefsBlock,
@@ -1059,6 +1061,17 @@ export const register: Register = (on, options) => {
         awaitYes('un widget de maquette')
       }
       return next(e)
+    })
+  }
+  // #675 : un message classé « undelivered » se suit (transcript du destinataire, renvoi une fois, réveil de l'envoyeur).
+  for (const tool of ['SendMessage', SEND_MESSAGE_TOOL]) {
+    on('tool.call', { tool }, async ($, e, next) => {
+      if (await inCloud($)) return next(e)
+      const ran = await next(e)
+      if (next.origin.plugin !== 'engine' || fromAgent(e) || ran.deny !== undefined) return ran
+      const body = (e as { message?: unknown }).message
+      const note = await noteLostMail($, ran.text ?? JSON.stringify(ran.result ?? ''), typeof body === 'string' ? body : '').catch(() => undefined)
+      return note === undefined ? ran : { ...ran, context: [...(ran.context ?? []), note] }
     })
   }
   // #313 : une session qui s'archive (« Oui, archiver »), ou qui archive une autre session : le ménage

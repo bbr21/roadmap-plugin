@@ -886,6 +886,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.322.0 (2026-11-27)** : maestro : un message à une session en pause qui se perd se suit, se renvoie une fois et se dit à l'envoyeur (#675)
 - **0.321.2 (2026-11-27)** : tasks : write en quelques secondes sur une grosse roadmap, même résultat (#649)
 - **0.321.1 (2026-11-27)** : maestro : pas d'archivage d'office quand le dernier message de la session attend BBR (#674)
 - **0.321.0 (2026-11-27)** : maestro : une forme à trouver passe par une planche de 8 à 20 versions numérotées, dans la règle des maquettes, la skill mockups et le brief, avec un rappel de fin de tour (#671)

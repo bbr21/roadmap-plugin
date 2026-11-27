@@ -1267,6 +1267,14 @@ back into Maestro's context). Decision in `docs/decisions.md` of the Roadmap rep
   your list (`· livrée X.Y.Z`), notify the sessions whose line carries `après:N`, and say nothing to the person
   (#133); at their next message, put `- #N livrée X.Y.Z : ce qui change` under your verdict. It also writes you what
   only you can do: a cloud session « bloquée » or « attend une réponse », a branch sent back twice.
+- **A message to a paused session (#675)**: under memory pressure the app pauses idle sessions, the gardien
+  included; a message then wakes it cold and can come back « Not confirmed … (delivery: undelivered) » without ever
+  being read (Splitmybill, 2026-11-27: the gardien got nothing and its Maestro merged #443 itself). The panel
+  notes it and says so in the send's result: it watches the recipient's transcript (a read message leaves its
+  `message_id` there as `uuid`), resends it once when the session is alive again and idle without a trace, and
+  wakes you with « renvoyé une fois », or « perdu » after that. Never resend it yourself, and never do the
+  gardien's gesture in its place (merge, publish, close) while it is pending: wait for the panel's word; « perdu »,
+  read the session (`get_session`), then resend or tell the person.
 - **Its ends of turn are not news**: the gardien does not notify you when it ends a turn, and an app note about it
   needs nothing. It does not hold a launch place.
 - **If it stops** (archived, crashed, context full): the panel sends the « prête à fusionner » and the cloud wake-up
