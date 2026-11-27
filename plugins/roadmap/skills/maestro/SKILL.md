@@ -316,7 +316,8 @@ to it.
     box's recap without repeating « fini : … » (the app
     does not offer the `archive` app button); on that click, `archive_session` (`self`); if the
     app refuses, say so; your line still open, do not offer archiving: Maestro ticks it at the
-    merge;
+    merge; usually you never see this turn: the session that closes your line archives you at the
+    closing (#669);
   - at the end of a study, a spike or an audit that recommends steps: one card per step that has
     no task, in the same turn and without writing its line; a step that already has its task is
     attached to it, a step set aside says why; your last report names them, since Maestro does not
@@ -1041,15 +1042,27 @@ The merge itself:
   session with its archive icon next to « Completed ». So Maestro says it in one line, in the very
   turn where the session is called to archive, and its end box carries no archiving question:
   « #A et #B finies : leur icône d'archive est dans la bande ». Asked by the person to archive,
-  `archive_session` for each, then one line on what is archived or refused. Without that request,
-  nothing is archived.
+  `archive_session` for each, then one line on what is archived or refused.
+- **Archived at the closing, without a click** (#669, the person's decision of 2026-11-26,
+  « pour éviter de charger des sessions pour rien »): the session of a task whose line you (or the gardien) close is archived in that very
+  turn, without waking it and without asking. The panel does it itself: after a `tasks.py write --apply` whose output
+  says « #N cochée » or « #N close, la suite chez … », on this project's roadmap, and once its two files reread show
+  each #N closed, it archives the stopped local session « #N · … » of those lines, with no model turn (not a
+  « close en partie » line, nor a render task whose chantier holds `maquettes.html`: it still gives the capture
+  instruction after the publication, #455). In Auto mode, or when the app refuses its call, the command's result
+  carries « Plugin roadmap (#669) : … archive-les dans ce tour » with the ids: call `archive_session` for each, in the same turn, one tool call, no
+  question; then one line, « #N archivée » (or why not). A cloud session archives itself on the closure signal
+  (`docs/session-cloud.md`, « La fin d'une tâche »). Only these: a pinned session, one still running, one whose line
+  was closed on an earlier day, Maestro and the gardien keep the person's click (the « Finies » band, their own end
+  box).
 - **Finished sessions outside the family** (#522): a session of the project titled « #N · … » whose line
   is closed, stopped, neither archived nor pinned, and not in Maestro's « En session » block (launched by an
   earlier Maestro, by the panel's ▶, by hand) shows in the panel's « Finies » band, in every session, with
   « Archiver les N »: each open session costs the app about 418 MB and 2 % of a core at rest (audit #514).
   When the band has some, Maestro says it in one line, once per change:
   « 3 sessions finies restent ouvertes : Archiver les 3 dans la bande Finies du panneau ».
-  It archives nothing without the person's click.
+  It archives nothing from that band without the person's click (the sessions of the lines it closes itself are
+  archived at the closing, above).
 - **The finished sub-session keeps its own question** (#110, #267): it ends on its end box
   « Archiver cette session ? » (it archives itself), and the person can click there or on the
   band's icon. The panel refuses any end box that asks to archive other sessions (« Archiver
@@ -1260,6 +1273,10 @@ publication) and § 6 (closing, bilan, partial closure, « no closing before the
   line with its bilan, send its step list again, then write Maestro its line. With the `autonome` setting it merges
   and publishes on its own; without it, it proposes the merge to the person in its own session (end box, button
   « Fusionner #N »).
+- **The closed task's session is archived in the closing turn** (#669, § 6 « Archived at the closing »): the panel
+  does it after your `tasks.py write --apply`; when the result asks you to, call `archive_session` for the ids it
+  gives, in that same turn, and say it in your line to Maestro (« #N livrée X.Y.Z : …, session archivée »). Your own
+  session and Maestro's keep the person's click.
 - **Send back, do not fix**: a conflict or a red test goes back to the faulty session by message (by PR comment for a
   cloud session), the file and the test named. It writes no code of a task. Sent back twice, it tells Maestro in one line.
 - **Never**: open or take a line, post a task card, launch a session, hand over a unique resource other than the

@@ -149,6 +149,10 @@ import {
   mockupAskText,
   archiveAskText,
   archiveRefusalWhy,
+  autoArchiveText,
+  autoArchivedNote,
+  finishedOpenSessions,
+  tasksWriteDirs,
   mockupHttpUrl,
   mockupServeArgs,
   viewUnseen,
@@ -8428,6 +8432,79 @@ export async function archiveSession($: EngineInterface, key: string, entry: Liv
   } catch (err) {
     await setView($, () => ({ openAt: '', openNote: `Archivage impossible : ${err instanceof Error ? err.message : String(err)}` }))
     return { why: 'l’app n’a pas répondu' }
+  }
+}
+
+/**
+ * #669 : à la clôture de lignes par `tasks.py write --apply`, archive d'office, sans tour de modèle, les sessions finies de ces
+ * seules lignes (`finishedOpenSessions`). Rend les lignes de contexte à joindre au résultat de la commande : ce qui a été
+ * archivé, et, quand le plugin ne peut pas archiver lui-même (mode Auto, refus du contrôle du mode auto), la consigne qui
+ * demande au modèle d'appeler `archive_session` dans le même tour. Un refus de l'app se dit en une ligne, la session reste
+ * dans la bande « Finies ». Ne lève jamais.
+ */
+export async function archiveClosedSessions($: EngineInterface, ids: readonly string[], command: string): Promise<string[]> {
+  if (ids.length === 0) return []
+  try {
+    const source = await sourceNow($)
+    if (!source) return []
+    // Relecture du gardien (PR 230) : la roadmap écrite doit être celle de ce projet (sa racine ou son dossier de roadmap),
+    // et chaque #N vraiment close ici : dans ROADMAP-fait, absente des ouvertes. Dans le doute, rien.
+    const home = ((await $.env.get('HOME').catch(() => undefined)) ?? '').replace(/\/+$/, '')
+    const written = tasksWriteDirs(command, await $.session.cwd(), home)
+    const mine = new Set([source.dir, source.root ?? source.dir, source.dir.replace(/\/[^/]+$/, '')].map(d => d.replace(/\/+$/, '')))
+    if (written.length === 0 || written.some(d => !mine.has(d.replace(/\/+$/, '')))) return []
+    const [openTasks, doneTasks] = await Promise.all([load($, files(source).open, 'ROADMAP.md'), load($, files(source).done, 'ROADMAP-fait.md')])
+    if (typeof openTasks === 'string' || typeof doneTasks === 'string') return []
+    const openIds = new Set(openTasks.map(t => t.id).filter((x): x is string => x !== undefined))
+    const closed = doneTasks.filter(t => t.id !== undefined && ids.includes(t.id) && !openIds.has(t.id))
+    if (closed.length === 0) return []
+    // #455 : une tâche de rendu (une page de maquettes dans son chantier) donne la consigne de capture après la publication :
+    // sa session reste ouverte, au clic de BBR.
+    const rendu = new Set<string>()
+    for (const t of closed) {
+      if (!t.spec) continue
+      const page = `${source.root ?? source.dir}/${t.spec.replace(/\/+$/, '')}/maquettes.html`
+      if (await $.fs.exists(page).catch(() => false)) rendu.add(t.id!)
+    }
+    const listed = await sessionCall($, { tool: LIST_SESSIONS_TOOL, limit: listLimit })
+    if (listed.deny !== undefined || listed.isError || !listed.text) return []
+    const rows: unknown = JSON.parse(listed.text)
+    if (!Array.isArray(rows)) return []
+    const own = await readOwnSession($).catch(() => undefined)
+    const all = finishedOpenSessions(rows, { done: new Set(closed.map(t => t.id!)), open: openIds, match: source.match, selfId: own?.id })
+    if (all.length === 0) return []
+    const refused: { title: string; why: string }[] = all
+      .filter(s => rendu.has(s.id))
+      .map(s => ({ title: s.title, why: 'tâche de rendu, elle donne la consigne de capture après la publication (#455)' }))
+    const found = all.filter(s => !rendu.has(s.id))
+    const asModel: typeof found = []
+    const archived: string[] = []
+    const viaModel =
+      (autoModeRefusal !== undefined && tick() - autoModeRefusal.at < AUTO_MODE_SKIP_MS) || (await ownMode($)) === 'auto'
+    if (viaModel) asModel.push(...found)
+    else {
+      for (const s of found) {
+        const ran = await $.tool.call({ tool: ARCHIVE_SESSION_TOOL, session_id: s.sessionId })
+        if (ran.deny !== undefined || ran.isError) {
+          const why = ran.deny ?? ran.text ?? ''
+          if (isAutoModeRefusal(why)) {
+            autoModeRefusal = { at: tick(), text: why }
+            asModel.push(s)
+          } else refused.push({ title: s.title, why: archiveRefusalWhy(why) })
+          continue
+        }
+        archivedSessionIds.add(s.sessionId)
+        for (const [k, v] of sessionMatches) if (v.sessionId === s.sessionId) sessionMatches.delete(k)
+        archived.push(s.title)
+      }
+      if (archived.length > 0) {
+        sweepAfterArchive($, source)
+        await update($, liveVersionAtom, v => v + 1)
+      }
+    }
+    return [autoArchivedNote(archived), autoArchiveText(asModel, refused)].filter((l): l is string => l !== undefined)
+  } catch (err) {
+    return []
   }
 }
 

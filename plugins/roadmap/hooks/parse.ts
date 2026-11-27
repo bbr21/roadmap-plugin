@@ -1651,6 +1651,73 @@ export function archiveAskText(list: readonly { sessionId: string; title: string
 }
 
 /**
+ * #669 : les lignes closes qu'une écriture réelle de `tasks.py write` dit dans sa sortie. Un essai à blanc ne dit pas
+ * « Écrit. » et ne ferme rien ; seules « - Roadmap : #N cochée … » et « - Roadmap : #N close … » comptent (clôture partielle
+ * comprise : l'identifiant est le premier #N), ni une ligne ajoutée ni une autre mise à jour. Sans doublon, dans l'ordre.
+ */
+export function closedByTasksWrite(stdout: string): string[] {
+  if (!/^Écrit\.\s*$/m.test(stdout)) return []
+  const ids: string[] = []
+  // « close en partie, à relancer » : un manque reste, la tâche n'est pas livrée ; sa session garde le clic de BBR.
+  for (const m of stdout.matchAll(/^\s*- Roadmap : #(\d+) (?:cochée|close(?! en partie))\b/gm)) if (!ids.includes(m[1])) ids.push(m[1])
+  return ids
+}
+
+/** Les options de `tasks.py write` qui prennent une valeur (#669) : ce ne sont pas le dossier. */
+const TASKS_WRITE_VALUED = new Set(['--operations', '--day'])
+
+/**
+ * #669 (relecture du gardien, PR 230) : les dossiers que nomment les `tasks.py write` d'une commande, résolus depuis le
+ * dossier de l'étape (`cd` compris) et `~`. Le crochet n'archive que si chacun est celui du projet de la session : une
+ * copie d'essai ou la roadmap d'un autre projet n'archive rien ici. Un dossier illisible (`$X`) ne se rend pas.
+ */
+export function tasksWriteDirs(command: string, cwd: string, home: string): string[] {
+  const dirs: string[] = []
+  for (const step of shellSteps(command, cwd, home)) {
+    const at = step.words.findIndex((w, k) => /(^|\/)tasks\.py$/.test(w) && step.words[k + 1] === 'write')
+    if (at < 0) continue
+    const rest = step.words.slice(at + 2)
+    for (let k = 0; k < rest.length; k++) {
+      const w = rest[k]!
+      if (TASKS_WRITE_VALUED.has(w)) {
+        k++
+        continue
+      }
+      if (w.startsWith('-')) continue
+      if (!/[$`]/.test(w)) dirs.push(resolvePath(step.dir, w.replace(/^~(?=\/|$)/, home)))
+      break
+    }
+  }
+  return dirs
+}
+
+/** #669 : l'identifiant et le titre d'une session, en donnée : jamais une consigne. */
+const sessionLine = (s: { sessionId: string; title: string }) => `- \`${s.sessionId.replace(/[^\w-]/g, '')}\` (${clip(s.title.replace(/[`\n\r]/g, ' ').trim(), 60)})`
+
+/**
+ * #669 : la consigne que le crochet ajoute au résultat d'une clôture quand il ne peut pas archiver lui-même (mode Auto,
+ * refus du contrôle du mode auto) : le modèle appelle `archive_session` dans le tour où il vient de clore. Une ligne par
+ * session refusée (épinglée, autre) : elle reste dans la bande « Finies ». Rien à dire : `undefined`.
+ */
+export function autoArchiveText(list: readonly { sessionId: string; title: string }[], refused: readonly { title: string; why: string }[]): string | undefined {
+  const out: string[] = []
+  if (list.length > 0) {
+    out.push(
+      `Plugin roadmap (#669) : ${list.length === 1 ? 'la ligne de cette session vient' : 'les lignes de ces sessions viennent'} d'être ${list.length === 1 ? 'close' : 'closes'} ; archive-${list.length === 1 ? 'la' : 'les'} dans ce tour : appelle \`archive_session\` avec son \`session_id\` pour ${list.length === 1 ? 'elle' : 'chacune'} (charge l'outil par ToolSearch s'il est différé), sans autre geste ni question.`,
+      ...list.map(sessionLine),
+    )
+  }
+  for (const r of refused) out.push(`Plugin roadmap (#669) : ${r.title.replace(/[`\n\r]/g, ' ').trim()} reste ouverte : ${r.why} ; elle reste dans la bande « Finies ».`)
+  return out.length > 0 ? out.join('\n') : undefined
+}
+
+/** #669 : ce que le crochet a archivé d'office, en une ligne de contexte que le modèle peut redire. */
+export function autoArchivedNote(titles: readonly string[]): string | undefined {
+  if (titles.length === 0) return undefined
+  return `Plugin roadmap (#669) : ${titles.length === 1 ? 'session archivée' : 'sessions archivées'} d'office, ${titles.length === 1 ? 'sa ligne close' : 'leur ligne close'} : ${titles.map(t => clip(t.replace(/[`\n\r]/g, ' ').trim(), 60)).join(' ; ')}.`
+}
+
+/**
  * #597 (BBR, 2026-11-13, suite de #439) : le nom que prend une session dite « Maestro » : le seul nom court de son
  * projet (`name` de son `.claude/roadmap.json` : « AAFES », pas « AAFES Cowork »), quel que soit son titre, celui que
  * l'app tire du premier message (« Maestro », la cause des ratés de #439) comme un titre laissé à la main

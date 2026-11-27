@@ -128,6 +128,7 @@ import {
   reportRefusal,
   reportReminder,
   axisPalette,
+  closedByTasksWrite,
 } from './parse'
 import type { Task, ChildWake } from './parse'
 import {
@@ -467,6 +468,7 @@ import {
   withTree,
   withinMs,
   withoutQuestion,
+  archiveClosedSessions,
   writePerf,
   written,
   yesNote,
@@ -1189,7 +1191,7 @@ export const register: Register = (on, options) => {
     }
     const heavy = !fromAgent(e) && e.run_in_background !== true && heavyTest(e.command)
     const began = heavy ? await timingNow($) : undefined
-    const ran = await handWriteNote($, e, 'Bash', await written($, async () => next(await inQueue($, e)), undefined, writesRoadmap(e.command, capture?.source.ecriture?.outil), tasksOut))
+    let ran = await handWriteNote($, e, 'Bash', await written($, async () => next(await inQueue($, e)), undefined, writesRoadmap(e.command, capture?.source.ecriture?.outil), tasksOut))
     // Une suite lourde : l'attente de la file et une suite tombée en délai dépassé vont au relevé des temps (#314).
     if (began !== undefined && ran.deny === undefined) {
       const result = ran.result as { stdout?: unknown; stderr?: unknown } | undefined
@@ -1202,6 +1204,13 @@ export const register: Register = (on, options) => {
       backgroundShells.set(shellId, await clockOrDate($))
     }
     if (fromAgent(e) || ran.deny !== undefined || ran.isError === true) return ran
+    // #669 : une écriture de la roadmap qui clôt des lignes archive d'office les sessions finies de ces lignes ; ce que le plugin
+    // ne peut pas faire (mode Auto, refus), il le demande au modèle dans le résultat, dans le même tour.
+    if (/tasks\.py\b.*\bwrite\b/.test(e.command) && /--apply\b/.test(e.command)) {
+      const said = (ran.result as { stdout?: unknown } | undefined)?.stdout
+      const lines = await archiveClosedSessions($, closedByTasksWrite(typeof said === 'string' ? said : (ran.text ?? '')), e.command)
+      if (lines.length > 0) ran = { ...ran, context: [...(ran.context ?? []), ...lines] }
+    }
     // Une fusion sur main ou une publication (#136) : la liste d'étapes se renvoie avant la commande suivante.
     try {
       const kinds = await deliveredBy($, e.command)

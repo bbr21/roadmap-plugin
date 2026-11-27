@@ -559,6 +559,13 @@ chaque projet qui a une roadmap :
   ne propose jamais le bouton d'app `archive`, #87), ou de dire ce qui reste. Sur ce clic, et sur
   lui seul, le modèle appelle `archive_session` (`self`). Le rappel du bilan passe d'abord ; une
   seule fois par tâche.
+- **archivage à la clôture** (#669, décision de BBR du 2026-11-26) : après un `tasks.py write
+  --apply` du projet qui coche ou clôt des lignes (relues closes dans sa roadmap ; ni « close en partie », ni une
+  tâche de rendu, #455), le plugin archive aussitôt, sans tour de modèle, la session
+  locale « #N · … » à l'arrêt de chacune (ni épinglée, ni Maestro, ni le gardien, ni la session qui
+  clôt) ; en mode Auto ou sur un refus de l'app, le résultat de la commande demande au modèle
+  d'appeler `archive_session` dans le même tour. Les sessions finies d'avant restent au clic de la
+  bande « Finies ».
 - **conclusion de fin de session** (règle du 28/10/2026, #85, refaite par #243, dans tout projet,
   roadmap ou non) : en mode ADHD, un tour de travail ordinaire n'est plus contrôlé. Une fin de
   session (la boîte de fin propose « Archiver cette session ? », ou la réponse porte une conclusion
@@ -873,6 +880,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.319.0 (2026-11-27)** : maestro : une ligne close archive d'office la session de sa tâche, sans tour de modèle ; ni Maestro, ni le gardien, ni une épinglée, ni une clôture en partie ou de rendu (#669)
 - **0.318.1 (2026-11-26)** : maestro : après une compaction, le démarrage donne un bloc court des réglages (une ligne par règle, limites de sécurité comprises) ; le bloc entier reste au vrai démarrage (#665)
 - **0.318.0 (2026-11-26)** : maestro : l'onboarding propose un jeu de plugins par projet (clé enabledPlugins du projet) et le doctor le vérifie (ligne « Plugins du projet ») (#659)
 - **0.317.1 (2026-11-26)** : maestro : une reprise de session ne redonne plus le bloc entier des réglages : une ligne courte si rien n'a changé, sinon les lignes changées ; après une compaction, le bloc entier revient (#663)
