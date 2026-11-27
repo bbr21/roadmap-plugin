@@ -886,6 +886,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.321.0 (2026-11-27)** : maestro : une forme à trouver passe par une planche de 8 à 20 versions numérotées, dans la règle des maquettes, la skill mockups et le brief, avec un rappel de fin de tour (#671)
 - **0.320.0 (2026-11-27)** : maestro : un finding cross-projet rend dans le même message son prompt prêt à coller pour le Maestro du projet cible, avec un rappel de fin de tour (#670)
 - **0.319.0 (2026-11-27)** : maestro : une ligne close archive d'office la session de sa tâche, sans tour de modèle ; ni Maestro, ni le gardien, ni une épinglée, ni une clôture en partie ou de rendu (#669)
 - **0.318.1 (2026-11-26)** : maestro : après une compaction, le démarrage donne un bloc court des réglages (une ligne par règle, limites de sécurité comprises) ; le bloc entier reste au vrai démarrage (#665)

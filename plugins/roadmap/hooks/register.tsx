@@ -1299,6 +1299,7 @@ export const register: Register = (on, options) => {
       capture.cardThisTurn = false
       capture.boxThisTurn = ''
       capture.mockupDrawn = undefined
+      capture.mockupPage = undefined
       // #322 : le oui de la personne, sans correction, valide la dernière maquette dessinée.
       if (capture.mockupAwaiting !== undefined && mockupApproval(e.text ?? '')) capture.mockupAwaiting = undefined
     }

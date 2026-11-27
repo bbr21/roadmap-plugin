@@ -4253,7 +4253,7 @@ const CODE_METHOD: readonly string[] = [
   '- Un changement de comportement : `superpowers:test-driven-development`, le test rouge d\'abord.',
   '- Un bug, un test en échec, un comportement inattendu : `superpowers:systematic-debugging` avant tout correctif.',
   '- Un écran ou une vue SwiftUI créé ou modifié : `swiftui-pro` sur les fichiers touchés, avant de dire fini.',
-  '- Un choix visuel (écran, vue, panneau, composant, mise en page, graphique) : 2 ou 3 maquettes, sur le design system du projet (ou en proposant d\'en poser un), que je choisis avant de coder (règle « Maquettes avant un choix visuel »).',
+  '- Un choix visuel : 2 ou 3 maquettes pour un écran entier ou un parcours ; une forme à trouver (graphique, carte, composant) : une planche de 8 à 20 versions numérotées et titrées, mêmes données, une seule chose qui change, son lien donné ; sur le design system du projet (ou en proposant d\'en poser un) ; seule la version validée d\'un oui se code (règle « Maquettes avant un choix visuel »).',
   '- Avant de dire la task finie et de cocher sa ligne : `roadmap:impact` relancée sur tout ton diff (chaque test qu\'elle nomme passe), puis `superpowers:verification-before-completion`.',
   '- `superpowers:brainstorming` seulement si je suis là pour répondre : il pose des questions.',
   'Une retouche de doc ou d\'une ligne s\'en passe.',
@@ -6399,7 +6399,7 @@ function gesturesText(autonome: boolean): string {
 // Toute maquette s'appuie sur le design system que le projet déclare (#129, après celui du plugin, #108),
 // ou propose d'en poser un : la cohérence d'un projet ne tient plus à la mémoire de la session.
 function mockupText(design?: Design): string {
-  return "- **Maquettes avant un choix visuel** (avec ou sans code) : tout choix dont le résultat se voit (dans un projet de code : un écran, une vue, un panneau, un volet, un composant, une mise en page, un graphique ; sans code : la mise en page d'un document, d'un tableau ou d'une présentation) passe par 2 ou 3 maquettes simples, jamais par une description seule. Chacune a un parti net et son compromis, ta recommandation en premier ; " + person() + " choisit, et alors seulement tu codes ou tu décides. Tu ne codes que la version exacte qu'il a vue et validée d'un oui : une correction de sa part (« plutôt X », « plus petit ») n'est pas un oui, elle donne une nouvelle maquette, montrée, puis la question « Je code cette version ? » ; le plugin rappelle une édition d'un fichier de rendu faite sans oui depuis la dernière maquette dessinée (#322). Prends le support le plus léger qui permet de décider : l'aperçu de chaque option du formulaire à choix (champ `preview`) pour un petit choix (une disposition, un ordre, un libellé) ; sinon une page HTML interactive (elle se clique : survol, onglets, dépli, états vide et plein ; script en ligne ou à côté), posée dans le dossier du projet (dans un projet de code : `docs/plans/<type>-<slug>/maquettes.html`), servie par `python3 <skill mockups>/scripts/serve.py <page>` (le `serve.py` du plugin roadmap, skill `mockups`, dossier `scripts/`) et ouverte dans le volet navigateur par l'url `http://127.0.0.1:…` qu'il écrit (`preview_start`), jamais par le chemin du fichier (le volet n'y montre qu'une copie figée : aucun fichier lié, aucun rechargement). Un choix découpé en plusieurs maquettes finit par une maquette finale cliquable qui réunit les éléments validés (#369) : " + person() + " l'essaie dans le volet, et seul son oui à « Je code cette version ? » sur elle ouvre le code. " + designSkillText(design) + " " + designText(design) + " Dans un projet de code, le rendu codé se compare à la maquette validée (#357), sur la version publiée, la seule que le panneau montre (#396) : prête, demande toi-même la fusion et la publication (sous Maestro, « fusionne et publie #N » par message), jamais à " + person() + " de tester un rendu non publié ; après la publication, la capture du vrai rendu, prise par " + person() + " sur ta consigne exacte (la version que doit afficher le pied du panneau, fenêtre, onglet, état, zone) et collée dans le chat, posée à côté d'elle par `fidelite.py poser --capture` (skill `roadmap:maestro`, dossier du chantier, #377), les écarts listés, chacun ouvrant sa tâche de correctif, `fidelite.py verifier` vert ; la tâche se clôt à sa publication et sa preuve se fait dans une tâche à part, « Prouver la fidélité de #N » (attend:" + person() + ", après:-), qui ne retient aucune autre tâche (#455). Le réglage autonome ne s'y applique pas : un choix visuel revient à " + person() + ". Sans personne pour répondre, garde les maquettes dans le dossier du chantier, suis ta recommandation et dis-le. Pas pour un choix sans rendu (une règle, un format, un correctif de logique), ni pour un rendu déjà choisi sur maquette."
+  return "- **Maquettes avant un choix visuel** (avec ou sans code) : tout choix dont le résultat se voit (dans un projet de code : un écran, une vue, un panneau, un volet, un composant, une mise en page, un graphique ; sans code : la mise en page d'un document, d'un tableau ou d'une présentation) passe par 2 ou 3 maquettes simples, jamais par une description seule. Chacune a un parti net et son compromis, ta recommandation en premier ; " + person() + " choisit, et alors seulement tu codes ou tu décides. Tu ne codes que la version exacte qu'il a vue et validée d'un oui : une correction de sa part (« plutôt X », « plus petit ») n'est pas un oui, elle donne une nouvelle maquette, montrée, puis la question « Je code cette version ? » ; le plugin rappelle une édition d'un fichier de rendu faite sans oui depuis la dernière maquette dessinée (#322). Prends le support le plus léger qui permet de décider : l'aperçu de chaque option du formulaire à choix (champ `preview`) pour un petit choix (une disposition, un ordre, un libellé) ; sinon une page HTML interactive (elle se clique : survol, onglets, dépli, états vide et plein ; script en ligne ou à côté), posée dans le dossier du projet (dans un projet de code : `docs/plans/<type>-<slug>/maquettes.html`), servie par `python3 <skill mockups>/scripts/serve.py <page>` (le `serve.py` du plugin roadmap, skill `mockups`, dossier `scripts/`) et ouverte dans le volet navigateur par l'url `http://127.0.0.1:…` qu'il écrit (`preview_start`), jamais par le chemin du fichier (le volet n'y montre qu'une copie figée : aucun fichier lié, aucun rechargement). **Une forme à trouver passe par une planche** (#671) : quand la forme elle-même est ouverte (un graphique, une carte, un composant, la mise en page d'un bloc), pas 2 ou 3 maquettes mais une planche : une seule page, tout visible sans cliquer, 8 à 20 versions. Chaque version porte un numéro et un titre, pour que " + person() + " réponde « la 4 » ou « la 11 avec les points de la 2 ». Toutes montrent les mêmes données, une seule chose change de l'une à l'autre, et elles sont rangées par familles nommées. Une phrase sous chacune dit ce qu'elle apporte et ce qu'elle coûte. Avant de dessiner, reformule le cahier des charges en trois lignes (ce que la forme doit dire, ce qui est interdit, la référence qui plaît) et fais-le confirmer. Jamais d'essai une version à la fois dans l'écran final : il ne reçoit que la version retenue, après un oui explicite. Après un refus, ne corrige pas de détails : demande ce qui déplaît, puis élargis la planche. Après deux refus sur le même sujet, arrête-toi et demande une capture de référence, ou repars d'une planche large. La planche se publie, son lien se donne dans le message qui demande le choix, et elle reste dans le dépôt (`docs/plans/<type>-<slug>/planche-<sujet>.html`) comme trace du choix. Le plugin rappelle en fin de tour un choix demandé sur une page sans lien ou sans versions numérotées. Les 2 ou 3 maquettes restent pour un écran entier ou un parcours ; la version retenue d'une planche entre ensuite dans la maquette finale cliquable (#369). Un choix découpé en plusieurs maquettes finit par une maquette finale cliquable qui réunit les éléments validés (#369) : " + person() + " l'essaie dans le volet, et seul son oui à « Je code cette version ? » sur elle ouvre le code. " + designSkillText(design) + " " + designText(design) + " Dans un projet de code, le rendu codé se compare à la maquette validée (#357), sur la version publiée, la seule que le panneau montre (#396) : prête, demande toi-même la fusion et la publication (sous Maestro, « fusionne et publie #N » par message), jamais à " + person() + " de tester un rendu non publié ; après la publication, la capture du vrai rendu, prise par " + person() + " sur ta consigne exacte (la version que doit afficher le pied du panneau, fenêtre, onglet, état, zone) et collée dans le chat, posée à côté d'elle par `fidelite.py poser --capture` (skill `roadmap:maestro`, dossier du chantier, #377), les écarts listés, chacun ouvrant sa tâche de correctif, `fidelite.py verifier` vert ; la tâche se clôt à sa publication et sa preuve se fait dans une tâche à part, « Prouver la fidélité de #N » (attend:" + person() + ", après:-), qui ne retient aucune autre tâche (#455). Le réglage autonome ne s'y applique pas : un choix visuel revient à " + person() + ". Sans personne pour répondre, garde les maquettes dans le dossier du chantier, suis ta recommandation et dis-le. Pas pour un choix sans rendu (une règle, un format, un correctif de logique), ni pour un rendu déjà choisi sur maquette."
 }
 
 /** La skill de design dans la règle des maquettes (#292) : avant la première maquette, puis la relecture. */
@@ -6527,6 +6527,39 @@ export function crossProjectGap(text: string | undefined, o: { projects: readonl
 /** Le rappel de fin de tour d'un finding cross-projet sans prompt à coller (#670). */
 export function crossProjectReminder(target: string): string {
   return `Plugin roadmap (#670) : ton message signale un finding cross-projet vers ${target} sans le prompt à coller. Donne-le maintenant, sans réécrire ton message : un bloc de code pour la session Maestro de ${target}, son contenu en liste courte (constat avec chiffres et date, projet et task d'origine, attendu, « fini quand » et son test, task voisine à ne pas confondre, demande de renvoyer le numéro de la task ouverte) ; cite la task voisine trouvée en lecture seule dans sa roadmap, et n'écris rien chez ${target}.`
+}
+
+/** Ce qui manque à une page de maquettes dont le choix est demandé (#671) : `link` faux, `versions` (moins de 2), `short` (planche de moins de 8). */
+export type PlancheGap = { page: string; link: boolean; versions?: number; short?: number }
+
+/**
+ * Le rappel d'une planche de versions numérotées (#671, cas adBricks #536 : cinq refus d'un graphique itéré une version à la
+ * fois). Signal net, deux faits techniques du même tour, jamais un mot du message (leçon de #653) : `asked` (un formulaire
+ * à choix posé) et `page` (une page `maquettes*.html` ou `planche*.html` écrite). Manque : aucune url `http(s)://` dans le
+ * texte du tour, moins de deux `data-version="N"` (nombres distincts) dans la page, ou moins de 8 pour une `planche*.html`.
+ * Une page illisible (`html` indéfini) ne se juge pas : seul le lien se contrôle.
+ */
+export function plancheGap(o: { page: string; html: string | undefined; text: string | undefined; asked: boolean }): PlancheGap | undefined {
+  if (!o.asked) return undefined
+  const link = o.text !== undefined && /https?:\/\/\S/i.test(o.text)
+  const gap: PlancheGap = { page: o.page, link }
+  if (o.html !== undefined) {
+    const numbers = new Set([...o.html.matchAll(/data-version\s*=\s*["'](\d+)["']/gi)].map(m => m[1]))
+    const planche = /^planche/i.test(o.page.slice(o.page.lastIndexOf('/') + 1))
+    if (numbers.size < 2) gap.versions = numbers.size
+    else if (planche && numbers.size < 8) gap.short = numbers.size
+  }
+  return link && gap.versions === undefined && gap.short === undefined ? undefined : gap
+}
+
+/** Le rappel de fin de tour d'une page de maquettes sans lien ou sans versions numérotées (#671). */
+export function plancheReminder(gap: PlancheGap): string {
+  const name = gap.page.slice(gap.page.lastIndexOf('/') + 1)
+  const missing: string[] = []
+  if (!gap.link) missing.push('son lien (le message qui demande le choix donne l\'url de la page publiée, Artifact en cloud, `serve.py` sur le Mac)')
+  if (gap.versions !== undefined) missing.push('des versions numérotées (une `<figure data-version="N">` par version, avec son numéro et son titre, pour que la réponse tienne en « la 4 »)')
+  if (gap.short !== undefined) missing.push(`assez de versions (${gap.short} sur une planche : 8 à 20 versions)`)
+  return `Plugin roadmap (#671) : tu demandes un choix sur \`${name}\` et il lui manque ${missing.join(' ; ')}. Corrige la page${gap.link ? '' : ' et donne le lien dans ton prochain message'}, sans réécrire celui-ci (règle « Maquettes avant un choix visuel »).`
 }
 
 // #626 (BBR, 2026-11-17, constat #73 : « Le plan de tri Gmail… : je l'applique ? » sans le plan au-dessus) : un
@@ -6844,7 +6877,7 @@ export function sessionPrefsShortText(prefs: SessionPrefs, error?: string, proje
   lines.push(`- **Liste d'étapes** : une tâche de plus d'un geste tient sa liste (\`update_plan\`), trois à sept étapes de 2 à 4 mots, jamais renommées, jamais recopiée dans le message.`)
   lines.push(`- **Gestes hors du code** : un geste hors du dépôt se fait par toi (connecteur, API, volet navigateur), jamais par un texte que ${p} recopie ; ${prefs.autonome ? 'sans demander' : "le oui de " + p + " avant d'écrire"} ; tes règles de sécurité restent au-dessus : envoyer un message en son nom, payer, valider un formulaire que son message ne demandait pas se demandent quand même.`)
   const ds = Array.isArray(design) ? ` ; design system : ${design.map(e => `\`${e.chemin}\``).join(', ')}` : ''
-  lines.push(`- **Maquettes avant un choix visuel** : 2 ou 3 maquettes (skill \`roadmap:mockups\`, servies par \`serve.py\`), ta recommandation en premier ; seule la version validée d'un oui se code${ds} ; jamais à ${p} de tester un rendu non publié ; l'autonome ne s'y applique pas.`)
+  lines.push(`- **Maquettes avant un choix visuel** : 2 ou 3 maquettes pour un écran entier ou un parcours, une planche de 8 à 20 versions numérotées et titrées pour une forme à trouver (graphique, carte, composant), son lien donné (skill \`roadmap:mockups\`, servies par \`serve.py\`), ta recommandation en premier ; seule la version validée d'un oui se code${ds} ; jamais à ${p} de tester un rendu non publié ; l'autonome ne s'y applique pas.`)
   if (roadmap) {
     lines.push(`- **Proposer une task** : une idée neuve ou une action hors de la tâche en cours devient une task proposée dans le tour, sans doublon (skill \`tasks\`, puis la carte) ; Lancer garde le clic de ${p} sur Start, même en autonome.`)
     lines.push('- **Finding cross-projet** : dis « Cross-projet : <cible> », cherche la task voisine en lecture seule, donne dans le même message le prompt prêt à coller pour le Maestro cible (bloc de code) ; jamais d\'écriture chez l\'autre, `attend:<cible>` chez toi.')
@@ -8235,6 +8268,10 @@ export function cloudPrefsLine(prefs: SessionPrefs, error?: string): string {
 export const CLOUD_RENDER_RULE =
   "Un rendu codé d'après une maquette : ta ligne se clôt à sa publication et sa preuve de fidélité part en tâche à part, « Prouver la fidélité de #N » (#455), qui ne retient ni ta tâche ni aucune autre (docs/session-cloud.md, « Un chantier de rendu »)."
 
+// #671, le même texte que brief_cloud.py (REGLE_PLANCHE) : une forme à trouver passe par une planche avant l'écran final.
+export const CLOUD_PLANCHE_RULE =
+  "Un choix de forme (graphique, carte, composant, mise en page d'un bloc) : d'abord le cahier des charges en trois lignes, confirmé ; puis une planche de 8 à 20 versions numérotées et titrées, mêmes données, une seule chose qui change, publiée et son lien donné, avant tout essai dans l'écran final ; deux refus sur le même sujet, on s'arrête (#671)."
+
 /** Le numéro de la tâche dont une ligne « Prouver la fidélité de #N » prouve le rendu (#455), sinon rien. */
 export function proofOf(label: string): string | undefined {
   return /^Prouver la fidélité de #(\d+)\b/.exec(label)?.[1]
@@ -8339,6 +8376,7 @@ export function cloudBriefText(o: { project: string; id: string; label: string; 
     proved
       ? `Ta tâche est une preuve de fidélité (#455) : #${proved} est close et publiée, rien d'autre ne t'attend. Le chantier : \`${chantier}\`. Si la capture n'est pas encore dans ta session, écris la consigne de capture au gabarit (docs/session-cloud.md, « Une preuve de fidélité à part ») et attends-la ; un écart trouvé ouvre sa tâche de correctif, il ne rouvre pas #${proved}.`
       : CLOUD_RENDER_RULE,
+    ...(proved ? [] : ['', CLOUD_PLANCHE_RULE]),
     ...(o.spec ? ['', `Ta spec et ton plan : \`${o.spec}\``] : []),
   ].join('\n') + '\n'
 }

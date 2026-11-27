@@ -1,6 +1,6 @@
 ---
 name: mockups
-description: "Designs the mockups of a visual choice from the project's own design system, before the first mockup is drawn: reads the system that .claude/roadmap.json declares (design), takes stock of its tokens, components and patterns, composes each option from them, reuses an existing pattern before inventing one, names what it adds as a proposed addition to the system, then critiques hierarchy, consistency and accessibility and has web-design-guidelines review the result. Launched by the « Maquettes avant un choix visuel » rule when the project declares a design system. Triggers on « fais les maquettes », « propose 2 ou 3 maquettes », « maquette de l'écran », « refais les maquettes », and before any mockup page or mockup widget in a project with a design system. Not for a project without a design system (frontend-design gives the direction there), nor for coding the chosen option."
+description: "Designs the mockups of a visual choice from the project's own design system, before the first mockup is drawn: reads the system that .claude/roadmap.json declares (design), takes stock of its tokens, components and patterns, composes each option from them, draws a plate of 8 to 20 numbered versions when the form itself is open (#671), reuses an existing pattern before inventing one, names what it adds as a proposed addition to the system, then critiques hierarchy, consistency and accessibility and has web-design-guidelines review the result. Launched by the « Maquettes avant un choix visuel » rule when the project declares a design system. Triggers on « fais les maquettes », « propose 2 ou 3 maquettes », « maquette de l'écran », « refais les maquettes », « fais une planche », and before any mockup page or mockup widget in a project with a design system. Not for a project without a design system (frontend-design gives the direction there), nor for coding the chosen option."
 ---
 
 # Mockups from the design system
@@ -40,7 +40,7 @@ Write down, for this screen, before drawing:
 
 ## 3. Compose
 
-Two or three options, each a clear stance with its trade-off, the recommendation first.
+Two or three options for a whole screen or a flow, each a clear stance with its trade-off, the recommendation first; a plate of numbered versions when the form itself is open (below).
 
 - **Reuse before inventing.** Each option starts from a pattern of the inventory. An option that
   needs something the system lacks says so, and that piece is named as a proposed addition to the
@@ -53,6 +53,8 @@ Two or three options, each a clear stance with its trade-off, the recommendation
 - **Real content.** The longest real case and the shortest, from the project's own data.
 - **Within the renderer's limits.** When the screen is drawn by a constrained kit (a Claude Code
   mod panel, a native widget set), an option it cannot render is not an option: name the limit.
+
+**A plate of numbered versions (#671).** When the form itself is open (a chart, a card, a component, the layout of a block), do not draw two or three options: draw a plate. One page, everything visible without a click, 8 to 20 versions. Before drawing, restate the brief in three lines (what the form must say, what is forbidden, the reference the person likes) and have it confirmed. Each version is a `<figure data-version="N">` with its number and a title, so the person can answer « la 4 » or « la 11 avec les points de la 2 ». Same data in every version, one thing changes from one to the next, versions grouped in named families. One sentence under each: what it brings, what it costs. Never iterate one version at a time in the final screen: it only receives the version chosen with an explicit yes. After a refusal, ask what displeases, then widen the plate; after two refusals on the same subject, stop and ask for a reference screenshot, or start again from a wide plate. The plate lives at `docs/plans/<type>-<slug>/planche-<sujet>.html`, committed as the record of the choice, and is published, its link given in the message that asks for the choice. Two or three mockups stay for a whole screen or a flow; the chosen version then goes into the final clickable mockup (#369).
 
 The page itself follows the plugin rule (#369): an interactive HTML page in the task's folder
 (`docs/plans/<type>-<slug>/maquettes.html`). It clicks (hover, tabs, folds, empty and full states)

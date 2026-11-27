@@ -20,7 +20,8 @@ hooks/parse.ts) : les clés du haut, puis le bloc de `projets` dont la clé dés
 Une tâche de rendu se clôt à sa publication et sa preuve de fidélité part en tâche à part, « Prouver la fidélité
 de #N » (#455) : chaque brief le rappelle en une ligne, et celui d'une telle tâche dit ce qu'elle attend (la capture
 collée dans la session), le chantier de #N (son `spec:`, lu dans ROADMAP-fait.md ou ROADMAP.md) et son « Fini
-quand » à elle : `fidelite.py verifier` vert, chaque écart confié à sa tâche de correctif.
+quand » à elle : `fidelite.py verifier` vert, chaque écart confié à sa tâche de correctif. #671 : un brief ordinaire
+rappelle aussi, en une ligne (`REGLE_PLANCHE`), qu'une forme à trouver passe par une planche de versions numérotées.
 
 Lit DEPOT/roadmap/ROADMAP.md (ou DEPOT/ROADMAP.md) et, pour le nom du projet, DEPOT/.claude/roadmap.json (clé
 « name », sinon le nom du dossier). Lecture seule. Code de retour 2 (message sur stderr) pour une ligne absente,
@@ -61,6 +62,13 @@ REGLE_RENDU = (
     "Un rendu codé d'après une maquette : ta ligne se clôt à sa publication et sa preuve de fidélité part en tâche "
     "à part, « Prouver la fidélité de #N » (#455), qui ne retient ni ta tâche ni aucune autre (docs/session-cloud.md, "
     "« Un chantier de rendu »)."
+)
+# #671 : une forme à trouver passe d'abord par une planche de versions numérotées, jamais par l'essai dans l'écran final.
+REGLE_PLANCHE = (
+    "Un choix de forme (graphique, carte, composant, mise en page d'un bloc) : d'abord le cahier des charges en trois "
+    "lignes, confirmé ; puis une planche de 8 à 20 versions numérotées et titrées, mêmes données, une seule chose qui "
+    "change, publiée et son lien donné, avant tout essai dans l'écran final ; deux refus sur le même sujet, on "
+    "s'arrête (#671)."
 )
 
 # #537 : le bloc fixe qui ouvre le compte rendu « prête », que Maestro lit sans ouvrir la session. `REGLE_BLOC` est la
@@ -443,6 +451,7 @@ def texte_brief(e):
         )
     else:
         sortie.append(REGLE_RENDU)
+        sortie += ["", REGLE_PLANCHE]
     if spec:
         sortie += ["", "Ta spec et ton plan : `%s`" % spec]
     return "\n".join(sortie) + "\n"

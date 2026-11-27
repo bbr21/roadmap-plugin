@@ -591,6 +591,8 @@ import {
   crossProjectGap,
   crossProjectReminder,
   knownProjects,
+  plancheGap,
+  plancheReminder,
 } from './parse'
 import type {
   Account,
@@ -1264,6 +1266,8 @@ type Capture = {
   mockupModule: boolean
   /** La maquette dessinée pendant le tour (une page, ou « un widget de maquette ») ; remise à zéro à chaque tour (#292). */
   mockupDrawn?: string
+  /** Le chemin complet de la dernière page de maquettes écrite pendant le tour (#671) ; remis à zéro avec `mockupDrawn`. */
+  mockupPage?: string
   /** La dernière maquette dessinée que la personne n'a pas encore validée d'un oui (#322) ; vide sinon. */
   mockupAwaiting?: string
   /** Le rappel du oui déjà donné pour cette maquette (#322) : une fois par maquette dessinée. */
@@ -1472,6 +1476,23 @@ function designNote(c: Capture): string | undefined {
   return designReminder(c.mockupDrawn, designSkills(c.source.design), Array.isArray(c.source.design))
 }
 
+/**
+ * Le rappel de la planche (#671) : une page de maquettes écrite par le fil principal et un formulaire à choix posé dans
+ * le même tour (`reportTurn.asked`), puis `plancheGap` sur le texte du tour (`turnText`, plus le dernier message) et la page.
+ */
+async function plancheNote($: EngineInterface, c: Capture, last: string | undefined): Promise<string | undefined> {
+  if (c.mockupPage === undefined || !reportTurn.asked) return undefined
+  let html: string | undefined
+  try {
+    html = await $.fs.read(c.mockupPage)
+  } catch {
+    html = undefined
+  }
+  const text = [turnText, last].filter(t => t !== undefined && t !== '').join('\n\n')
+  const gap = plancheGap({ page: c.mockupPage, html, text, asked: reportTurn.asked })
+  return gap === undefined ? undefined : plancheReminder(gap)
+}
+
 /** Un fichier de code édité par le fil principal (#327), pour le rappel de déléguer. */
 export function noteCodeEdit(e: { agentId?: unknown }, path: unknown): void {
   if (e.agentId !== undefined || typeof path !== 'string' || !isCodeEdit(path)) return
@@ -1483,6 +1504,7 @@ export function noteMockupDrawn(e: { agentId?: unknown; file_path?: unknown }): 
   if (!capture || e.agentId !== undefined) return
   if (isMockupPage(typeof e.file_path === 'string' ? e.file_path : undefined)) {
     capture.mockupDrawn = `\`${baseName(e.file_path as string)}\``
+    capture.mockupPage = e.file_path as string
     awaitYes(capture.mockupDrawn)
   }
 }
@@ -2305,6 +2327,12 @@ export async function endOfTurnBlock($: EngineInterface, last: string | undefine
       // git illisible : pas de rappel de délégation
     }
     notes.push(designNote(c))
+    try {
+      // #671 : une page de maquettes écrite et un choix demandé dans le même tour, sans lien ou sans versions numérotées.
+      notes.push(await plancheNote($, c, last))
+    } catch {
+      // page illisible : pas de rappel de planche
+    }
     try {
       // Des étapes recommandées (#293) : leur rappel prend la place de celui d'une idée.
       notes.push((await studyNote($, c, last)) ?? (await ideaNote($, c, last)))

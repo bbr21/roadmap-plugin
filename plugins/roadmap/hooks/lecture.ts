@@ -1139,9 +1139,9 @@ export function isDesignSkill(name: string, declared: readonly string[] = []): b
   return DESIGN_SKILLS.has(skillTail(name)) || declared.some(d => d === name || skillTail(d) === skillTail(name))
 }
 
-/** Une page de maquettes (#292) : `maquette*.html` ou `maquettes*.html`, où qu'elle soit. */
+/** Une page de maquettes (#292) : `maquette*.html`, `maquettes*.html` ou, depuis #671, `planche*.html`, où qu'elle soit. */
 export function isMockupPage(path: string | undefined): boolean {
-  return typeof path === 'string' && /(^|\/)maquettes?[^/]*\.html?$/i.test(path)
+  return typeof path === 'string' && /(^|\/)(?:maquettes?|planche)[^/]*\.html?$/i.test(path)
 }
 
 /**
