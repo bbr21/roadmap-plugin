@@ -13,6 +13,9 @@ python3 tasks.py write FOLDER --operations operations.json [--apply] [--json]
 Une clôture (`done`, `handoff`) d'une ligne cloud ou à PR poste, après l'écriture, « ligne close par Maestro le …, version X.Y.Z »
 sur sa PR (`POSTER_SIGNAL`, #588) ; jamais bloquant, jamais en essai à blanc.
 
+Le chrono d'un `write` sur une roadmap de la taille des plus grosses : `banc_tasks.py` (#649,
+docs/plans/feat-tasks-py-write-plus-rapide/note.md).
+
 Python 3.9 et plus, bibliothèque standard seulement. Hérite du moteur d'écriture de l'audit
 (`audit._Preparation`) et lit la grammaire par l'import de la skill onboarding : les trois skills
 lisent et écrivent une ligne de la même façon.
@@ -406,6 +409,7 @@ MARQUES_SPECIALES = ("attend", "resp")
 VALEUR_MIN = 3
 
 
+@functools.lru_cache(maxsize=32768)
 def _forme(texte):
     """Une valeur ou un texte comparable mot à mot : sans accents, en minuscules, la ponctuation en espaces."""
     return " ".join(re.findall(r"[a-z0-9]+", _norme(texte)))
@@ -636,8 +640,10 @@ def rapprocher(ctx, texte, n=5, zone=None, apres=None, champs=None):
 # ---------------------------------------------------------------- le contexte d'une tâche (#320)
 
 
+@functools.lru_cache(maxsize=32768)
 def _norme(texte):
-    """Un texte comparable : sans accents, en minuscules, guillemets et espaces réduits."""
+    """Un texte comparable : sans accents, en minuscules, guillemets et espaces réduits ; gardé (#649 : le sujet, les
+    marques et les thèmes normalisent les mêmes libellés, des milliers de fois)."""
     t = audit._sans_accents(texte or "").lower()
     return re.sub(r"\s+", " ", re.sub(r"[«»“”\"'’]", " ", t)).strip()
 
@@ -722,8 +728,13 @@ def contexte_tache(dossier, t):
 
 
 def _porte(c, lieu):
-    """Une tâche porte un lieu quand elle le nomme en code, ou que son contexte le dit en mots entiers."""
-    return lieu in c["lieux"] or re.search(r"(?<!\w)%s(?!\w)" % re.escape(lieu), c["norme"]) is not None
+    """Une tâche porte un lieu quand elle le nomme en code, ou que son contexte le dit en mots entiers. La recherche
+    du lieu en mots entiers ne se fait que s'il figure dans le texte (#649 : un million de recherches sur une
+    grosse roadmap, presque toutes vaines)."""
+    if lieu in c["lieux"]:
+        return True
+    norme = c["norme"]
+    return lieu in norme and re.search(r"(?<!\w)%s(?!\w)" % re.escape(lieu), norme) is not None
 
 
 def _lieux_et_chaine(texte, zone, apres):
@@ -1331,6 +1342,18 @@ def _noeud_ajout(a):
             "champs": champs, "op": a}
 
 
+def _total_de(n, mots, poids):
+    """Le poids des mots du libellé d'un nœud ; gardé sur le nœud pour ces poids-là (#649 : `_themes` le demande
+    pour chaque paire)."""
+    garde = n.get("total")
+    if garde is not None and garde[0] is poids:
+        return garde[1]
+    total = sum(poids.get(w, POIDS_INCONNU) for w in mots)
+    if "total" in n:
+        n["total"] = (poids, total)
+    return total
+
+
 def _meme_theme(x, y, rares, poids, large=False):
     """Deux nœuds (tâche ouverte ou ajout) du même thème : même axe, un lieu rare en commun, et un second signe : un
     autre lieu, une chaîne (l'un cite l'autre, ou `après:`), une même étude citée (un `#N` commun, ou la même `src:`),
@@ -1339,10 +1362,15 @@ def _meme_theme(x, y, rares, poids, large=False):
     nœuds : même client, même personne attendue) ou les mots ; rend alors ces signes."""
     if x["axe"] and y["axe"] and x["axe"] != y["axe"]:
         return None
-    communs = sorted(l for l in rares if (l in x["lieux"] or _porte(x, l)) and (l in y["lieux"] or _porte(y, l)))
+    px, py = x.get("portes"), y.get("portes")
+    if px is not None and py is not None:
+        # #649 : les lieux que porte chaque nœud, relevés une fois par `_themes`, au lieu d'une recherche par paire.
+        communs = sorted(set(rares) & px & py)
+    else:
+        communs = sorted(l for l in rares if (l in x["lieux"] or _porte(x, l)) and (l in y["lieux"] or _porte(y, l)))
     if large:
-        mx, my = audit.mots(x["libelle"]), audit.mots(y["libelle"])
-        total = min(sum(poids.get(w, POIDS_INCONNU) for w in mx), sum(poids.get(w, POIDS_INCONNU) for w in my))
+        mx, my = _mots(x["libelle"]), _mots(y["libelle"])
+        total = min(_total_de(x, mx, poids), _total_de(y, my, poids))
         com = mx & my
         mots_ok = bool(total) and len(com) >= 2 and sum(poids.get(w, POIDS_INCONNU) for w in com) / total >= SEUIL_THEME
         signes = communs + sorted(set(x.get("marques") or ()) & set(y.get("marques") or ()))
@@ -1351,8 +1379,8 @@ def _meme_theme(x, y, rares, poids, large=False):
         return None
     chaine = bool({x["ref"], x["id"]} & (y["cites"] | y["apres"]) or {y["ref"], y["id"]} & (x["cites"] | x["apres"]))
     etude = bool((x["cites"] - {y["id"]}) & (y["cites"] - {x["id"]})) or bool(x["src"] and x["src"] == y["src"])
-    mx, my = audit.mots(x["libelle"]), audit.mots(y["libelle"])
-    total = min(sum(poids.get(w, POIDS_INCONNU) for w in mx), sum(poids.get(w, POIDS_INCONNU) for w in my))
+    mx, my = _mots(x["libelle"]), _mots(y["libelle"])
+    total = min(_total_de(x, mx, poids), _total_de(y, my, poids))
     com = mx & my
     mots_ok = bool(total) and len(com) >= 2 and sum(poids.get(w, POIDS_INCONNU) for w in com) / total >= SEUIL_THEME
     return communs if (len(communs) >= 2 or chaine or etude or mots_ok) else None
@@ -1370,7 +1398,11 @@ def _themes(ctx, ajouts=()):
     grain = grain_de(ctx)
     large = grain["regroupement"] == "large"
     borne = max(grain["filles_max"], LIEU_COMMUN_PART * len(noeuds))
-    rares = {l for l in tous if sum(1 for n in noeuds if l in n["lieux"] or _porte(n, l)) <= borne}
+    # #649 : chaque nœud relève une fois les lieux qu'il porte ; `_meme_theme` les croise ensuite par paire.
+    for n in noeuds:
+        n["portes"] = frozenset(l for l in tous if l in n["lieux"] or _porte(n, l))
+        n["total"] = None
+    rares = {l for l in tous if sum(1 for n in noeuds if l in n["portes"]) <= borne}
     poids = poids_des_mots([t["libelle"] for t in ctx["taches"]] + [t["libelle"] for t in ctx.get("closes") or []])
     if large:
         # #566 : les marques rares de chaque nœud (clés déclarées, `attend`, `resp`, #538), dites « clé:valeur ».

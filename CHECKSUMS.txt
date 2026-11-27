@@ -1,8 +1,8 @@
-# roadmap 0.321.1 : SHA-256 de chaque fichier installé du plugin, chemins relatifs à son dossier.
-# Vérifier une copie installée (~/.claude/plugins/cache/roadmap/roadmap/0.321.1) : plugins/roadmap/SECURITE.md, « Vérifier que ta copie est une vraie version ».
-faa362d947a070aa74eaaed205da894f22f83ce98c67c181405b2f9cc3db9878  .claude-plugin/plugin.json
-2b7ed3e389d5519a6cf32f2eed77420f6550b4d431fef139e60a47ef1d0731ca  README.md
-8f198abed3056fd88e50e04fb28b20b5274f84a6bbbf7e885ee303ef4a02bc1c  SECURITE.md
+# roadmap 0.321.2 : SHA-256 de chaque fichier installé du plugin, chemins relatifs à son dossier.
+# Vérifier une copie installée (~/.claude/plugins/cache/roadmap/roadmap/0.321.2) : plugins/roadmap/SECURITE.md, « Vérifier que ta copie est une vraie version ».
+360b21d96331b8d39874975e36afa2ec82c28969ed705df2a36c85e4b558410a  .claude-plugin/plugin.json
+ce7dee3c82aa3ad3c952a63e5a8ba62bf13c15aa2cec76728e50d68ac8856cfb  README.md
+6f83ebc1d91b6222534bc5274f096dcd894a149f02e2868b2005a8e5d7362fa3  SECURITE.md
 bce019cb7147413a8e5f0687df59a41394fa92545568b5d37b1df8bd6d885e30  hooks/bar-hit.tsx
 3c92c2682663d95cd34c2a1aa6f4a8b868579b1e78367750a81a5618fca0962f  hooks/cartes.tsx
 261aa8e26458b526a3615af51f1450c325983a03bef015badb8c1d0559c7b94f  hooks/compactage.ts
@@ -85,6 +85,7 @@ de0044615e712a364d6ec2121784290d76d871c20a89b66e71e918ae8bd90f82  skills/onboard
 e7fa8c43de76e63a9d5f1bfb0fc003fbf136a77256313aec643dc96f6929f7ad  skills/reglages-session/SKILL.md
 baca9d712adf547a3ab84d0604f06ee17090746146de6573e75cad12f47d6f6a  skills/roadmap-panel/SKILL.md
 6911fa3f14d73d33e4cf7aba9a11a0deda03ffef526e3a2cd899e8638907c4cf  skills/tasks/SKILL.md
+38642a8fc8d07ac264642451b592ca94c1824f86ff46e64a8ff737c2458f098d  skills/tasks/scripts/banc_tasks.py
 2d8f4fbbfdb1057010f8f78a5afaacf9608d8434740881bafae4b52ddf31d3c6  skills/tasks/scripts/cout.py
-64391fc26ca5abe762b7fc0e21683ea69f3a43cb0a665e1b6128651a038e5b2c  skills/tasks/scripts/tasks.py
+d74c469e9d81dc5d69e326f86b1bd67a284d30a9be6de4c02b2ac2d94fa40380  skills/tasks/scripts/tasks.py
 87fba7d68625553da7da4db480677366df7120b6bc81fe0c2d2a265fdd188a27  types/index.d.ts
