@@ -1699,7 +1699,7 @@ const sessionLine = (s: { sessionId: string; title: string }) => `- \`${s.sessio
  * refus du contrôle du mode auto) : le modèle appelle `archive_session` dans le tour où il vient de clore. Une ligne par
  * session refusée (épinglée, autre) : elle reste dans la bande « Finies ». Rien à dire : `undefined`.
  */
-export function autoArchiveText(list: readonly { sessionId: string; title: string }[], refused: readonly { title: string; why: string }[]): string | undefined {
+export function autoArchiveText(list: readonly { sessionId: string; title: string }[], refused: readonly { title: string; why: string; sessionId?: string }[]): string | undefined {
   const out: string[] = []
   if (list.length > 0) {
     out.push(
@@ -1707,8 +1707,41 @@ export function autoArchiveText(list: readonly { sessionId: string; title: strin
       ...list.map(sessionLine),
     )
   }
-  for (const r of refused) out.push(`Plugin roadmap (#669) : ${r.title.replace(/[`\n\r]/g, ' ').trim()} reste ouverte : ${r.why} ; elle reste dans la bande « Finies ».`)
+  for (const r of refused) {
+    const id = r.sessionId === undefined ? '' : ` (\`${r.sessionId.replace(/[^\w-]/g, '')}\`)`
+    out.push(`Plugin roadmap (#669) : ${r.title.replace(/[`\n\r]/g, ' ').trim()}${id} reste ouverte : ${r.why} ; elle reste dans la bande « Finies ».`)
+  }
   return out.length > 0 ? out.join('\n') : undefined
+}
+
+/** #674 : la clé du store où une session note que son dernier message attend la personne. */
+export function awaitsPersonKey(sessionId: string): string {
+  return `awaits-person:${sessionId}`
+}
+
+/**
+ * #674 : ce que le dernier message d'une session (et la question de sa boîte de fin) attend encore de la personne, en
+ * quelques mots, sinon `undefined`. Signaux de début de ligne seulement, jamais un mot au fil d'une phrase ni une ligne
+ * de tableau : « À toi : » (sauf « rien »), « Une question : », « Cross-projet : <cible> » suivi d'un bloc de code (le
+ * prompt à coller, #670), une question de boîte de fin autre que l'archivage.
+ */
+export function awaitsPerson(answer: string | undefined, box?: string): string | undefined {
+  const lines = (answer ?? '').split('\n')
+  let cross: string | undefined
+  let crossAt = -1
+  for (let i = 0; i < lines.length; i++) {
+    const line = (lines[i] ?? '').replace(/^[\s>*-]+/, '').replace(/\*\*/g, '')
+    if (/^à toi\s*:/i.test(line) && !/^à toi\s*:\s*(rien|aucune?)\s*\.?\s*$/i.test(line)) return '« À toi »'
+    if (/^une question\s*:/i.test(line)) return 'une question'
+    const m = /^cross[ -]projet\s*[:·]\s*(.+)$/i.exec(line)
+    if (m && cross === undefined) {
+      cross = (m[1] ?? '').split(/[,;(:]/)[0]?.trim().replace(/\.+$/, '').trim().slice(0, 60) ?? ''
+      crossAt = i
+    }
+  }
+  if (cross !== undefined && cross !== '' && lines.slice(crossAt + 1).some(l => l.trim().startsWith('```'))) return `un prompt cross-projet pour ${cross} à coller`
+  if (box !== undefined && box.trim() !== '' && !/archiv/i.test(box)) return 'une question de sa boîte de fin'
+  return undefined
 }
 
 /** #669 : ce que le crochet a archivé d'office, en une ligne de contexte que le modèle peut redire. */

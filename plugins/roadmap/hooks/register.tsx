@@ -130,6 +130,7 @@ import {
   reportReminder,
   axisPalette,
   closedByTasksWrite,
+  awaitsPerson,
 } from './parse'
 import type { Task, ChildWake } from './parse'
 import {
@@ -339,6 +340,7 @@ import {
   runningBySession,
   saveChanges,
   saveEndFiche,
+  noteAwaitsPerson,
   savePitches,
   saveWhys,
   sendLaunch,
@@ -1329,6 +1331,8 @@ export const register: Register = (on, options) => {
     setReleaseTurn(undefined)
     // La fiche de fin de la session se garde pour la fiche de sa tâche (#144).
     if (!e.isAborted) await saveEndFiche($, e.answer)
+    // #674 : son dernier message attend-il la personne ? Le repère garde la session ouverte à une clôture (le Stop relancé, #307, compris).
+    if (!e.isAborted) await noteAwaitsPerson($, e.answer, wakeBox.ask, stopTurn.id === e.turnId ? stopTurn.awaits : undefined)
     // Et ce qu'elle va lancer, pour la fiche d'une tâche à lancer (#341).
     if (!e.isAborted) await savePitches($, e.answer)
     // Et la fiche de « why N », pour la carte « Pourquoi » de la fiche de sa tâche (#535).
@@ -1408,6 +1412,7 @@ export const register: Register = (on, options) => {
       stopTurn.background = (e as { background_tasks?: unknown }).background_tasks
       // La conclusion se garde ici (#307) : si ce Stop relance Claude, la fin de tour ne lira que la réponse relancée.
       await saveEndFiche($, e.last_assistant_message)
+      stopTurn.awaits = awaitsPerson(e.last_assistant_message, wakeBox.ask)
       await savePitches($, e.last_assistant_message)
       await saveWhys($, e.last_assistant_message)
       const result = await next(e)

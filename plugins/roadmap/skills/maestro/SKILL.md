@@ -1064,7 +1064,11 @@ The merge itself:
   says « #N cochée » or « #N close, la suite chez … », on this project's roadmap, and once its two files reread show
   each #N closed, it archives the stopped local session « #N · … » of those lines, with no model turn (not a
   « close en partie » line, nor a render task whose chantier holds `maquettes.html`: it still gives the capture
-  instruction after the publication, #455). In Auto mode, or when the app refuses its call, the command's result
+  instruction after the publication, #455, nor one whose last message still awaits the person, #674: an
+  « À toi » or « Une question » quote, a `Cross-projet : <target>` line followed by its prompt in a code block, or an
+  end-box question other than archiving; the result says « … reste ouverte : son dernier message attend … » with its
+  id, and it stays in the « Finies » band for the person's click once the prompt is copied; never archived on its own
+  later). In Auto mode, or when the app refuses its call, the command's result
   carries « Plugin roadmap (#669) : … archive-les dans ce tour » with the ids: call `archive_session` for each, in the same turn, one tool call, no
   question; then one line, « #N archivée » (or why not). A cloud session archives itself on the closure signal
   (`docs/session-cloud.md`, « La fin d'une tâche »). Only these: a pinned session, one still running, one whose line

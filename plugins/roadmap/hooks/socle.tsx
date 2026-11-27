@@ -150,6 +150,8 @@ import {
   archiveAskText,
   archiveRefusalWhy,
   autoArchiveText,
+  awaitsPerson,
+  awaitsPersonKey,
   autoArchivedNote,
   finishedOpenSessions,
   tasksWriteDirs,
@@ -308,6 +310,7 @@ import {
   parseRoadmap,
   partialCloseNote,
   parsePerso,
+  person,
   setPerson,
   Person,
   parseTitles,
@@ -2212,7 +2215,7 @@ function deliveryNote(): string | undefined {
  * (sinon sec-default l'a sauté), et si son message a reçu le rappel du tour d'avant (#140 ; il tient alors le rôle du
  * deuxième arrêt d'un tour, `stop_hook_active`).
  */
-export let stopTurn: { id: string; stopRan: boolean; fromReminder: boolean; background?: unknown } = { id: '', stopRan: false, fromReminder: false }
+export let stopTurn: { id: string; stopRan: boolean; fromReminder: boolean; background?: unknown; awaits?: string } = { id: '', stopRan: false, fromReminder: false }
 /** Écrit `stopTurn` depuis un autre module : un import ne s'écrit pas (#646). */
 export function setStopTurn(v: typeof stopTurn): typeof stopTurn {
   return (stopTurn = v)
@@ -8498,6 +8501,26 @@ export async function archiveSession($: EngineInterface, key: string, entry: Liv
 }
 
 /**
+ * #674 : à la fin d'un tour, la session note au store si son dernier message attend la personne (`awaitsPerson`), pour que
+ * l'archivage d'office d'une clôture la laisse ouverte. `why` calculé d'avance (le Stop qui a relancé Claude, #307) l'emporte
+ * sur celui de la réponse. Une clé déjà à la même raison ne se réécrit pas (`at` changerait à chaque tour). Ne lève jamais.
+ */
+export async function noteAwaitsPerson($: EngineInterface, answer: string | undefined, box?: string, earlier?: string): Promise<void> {
+  try {
+    const id = (await readOwnSession($)).id
+    if (id === undefined) return
+    const why = awaitsPerson(answer, box) ?? earlier
+    const key = awaitsPersonKey(id)
+    if (why === undefined) return await storeDelete($, key)
+    const held = await storeGet($, key).catch(() => undefined)
+    if (held && typeof held === 'object' && (held as { why?: unknown }).why === why) return
+    await storeSet($, key, { why, at: await $.clock.now() })
+  } catch {
+    // stockage indisponible : le repère reste tel quel, l'archivage d'office se décidera sans lui
+  }
+}
+
+/**
  * #669 : à la clôture de lignes par `tasks.py write --apply`, archive d'office, sans tour de modèle, les sessions finies de ces
  * seules lignes (`finishedOpenSessions`). Rend les lignes de contexte à joindre au résultat de la commande : ce qui a été
  * archivé, et, quand le plugin ne peut pas archiver lui-même (mode Auto, refus du contrôle du mode auto), la consigne qui
@@ -8535,10 +8558,22 @@ export async function archiveClosedSessions($: EngineInterface, ids: readonly st
     const own = await readOwnSession($).catch(() => undefined)
     const all = finishedOpenSessions(rows, { done: new Set(closed.map(t => t.id!)), open: openIds, match: source.match, selfId: own?.id })
     if (all.length === 0) return []
-    const refused: { title: string; why: string }[] = all
+    const refused: { title: string; why: string; sessionId?: string }[] = all
       .filter(s => rendu.has(s.id))
       .map(s => ({ title: s.title, why: 'tâche de rendu, elle donne la consigne de capture après la publication (#455)' }))
-    const found = all.filter(s => !rendu.has(s.id))
+    // #674 : une session dont le dernier message attend encore la personne reste ouverte (le repère de sa fin de tour).
+    const waiting = new Map<string, string>()
+    for (const s of all) {
+      if (rendu.has(s.id)) continue
+      const mark = await storeGet($, awaitsPersonKey(s.sessionId)).catch(() => undefined)
+      const why = mark && typeof mark === 'object' ? (mark as { why?: unknown }).why : undefined
+      if (typeof why === 'string') waiting.set(s.sessionId, why)
+    }
+    for (const s of all) {
+      const why = waiting.get(s.sessionId)
+      if (why !== undefined) refused.push({ title: s.title, sessionId: s.sessionId, why: `son dernier message attend ${person()} (${why})` })
+    }
+    const found = all.filter(s => !rendu.has(s.id) && !waiting.has(s.sessionId))
     const asModel: typeof found = []
     const archived: string[] = []
     const viaModel =
