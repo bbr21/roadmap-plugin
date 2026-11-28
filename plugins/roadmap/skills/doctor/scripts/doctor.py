@@ -514,6 +514,20 @@ def plugins_du_projet(main, travail, ios, effectifs):
     return ligne(VOIR, "Plugins du projet", " ; ".join(detail), " ; ".join(corr))
 
 
+def connecteurs_du_projet(main):
+    """La ligne « Connecteurs du projet » (#672) : les connecteurs claude.ai interdits dans `.claude/settings.json`
+    du projet (`permissions.deny`, une règle `mcp__<id>` par connecteur)."""
+    coupes = ob.connecteurs_coupes(main)
+    cmd = "python3 %s connecteurs %s --connecteurs <statut.json>" % (
+        os.path.join(os.path.dirname(os.path.abspath(ob.__file__)), "onboarding.py"), main)
+    if coupes:
+        return ligne(OK, "Connecteurs du projet", "%d connecteurs interdits dans ce projet" % len(coupes))
+    return ligne(VOIR, "Connecteurs du projet",
+                 "aucun connecteur coupé : chaque session reçoit les outils de tous ceux du compte claude.ai (leurs "
+                 "noms relus à chaque appel)",
+                 "%s (la réponse de session_connectors_status), puis --appliquer et committer .claude/settings.json" % cmd)
+
+
 def skill_ios(requis, plugins, home):
     nom = requis["ios"]["skill"]
     if os.path.isfile(os.path.join(home, ".claude", "skills", nom, "SKILL.md")):
@@ -1419,7 +1433,8 @@ def diagnostiquer(dossier, plugins="lire", home=None, avec_outils=True, gere=Non
         lignes.append(sec_default(home, gere))
         lignes += hooks_en_echec(principal, home, jours, seuil)
         lignes.append(nom_utilisateur(home))
-        lignes += [l for l in [plugins_du_projet(principal, "projet", est_ios(principal), plugins_effectifs)] if l]
+        lignes += [l for l in [plugins_du_projet(principal, "projet", est_ios(principal), plugins_effectifs),
+                               connecteurs_du_projet(principal)] if l]
         return {"dossier": principal, "lignes": lignes,
                 "ko": sum(1 for l in lignes if l["statut"] == KO), "a_voir": sum(1 for l in lignes if l["statut"] == VOIR)}
     if avec_outils:
@@ -1443,7 +1458,8 @@ def diagnostiquer(dossier, plugins="lire", home=None, avec_outils=True, gere=Non
     lignes.append(nom_utilisateur(home))
     if est_ios(main):
         lignes.append(skill_ios(requis, plugins, home))
-    lignes += [l for l in [plugins_du_projet(main, "code", est_ios(main), plugins_effectifs)] if l]
+    lignes += [l for l in [plugins_du_projet(main, "code", est_ios(main), plugins_effectifs),
+                           connecteurs_du_projet(main)] if l]
     return {"dossier": main, "lignes": lignes,
             "ko": sum(1 for l in lignes if l["statut"] == KO), "a_voir": sum(1 for l in lignes if l["statut"] == VOIR)}
 

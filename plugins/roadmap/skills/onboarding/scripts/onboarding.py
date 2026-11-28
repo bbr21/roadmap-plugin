@@ -17,6 +17,10 @@ reconstitue au besoin la roadmap depuis l'historique du dépôt, et vérifie le 
   python3 onboarding.py importer DOSSIER --analyse A.json  l'importe : sauvegarde, numéros, bilan avant/après
   python3 onboarding.py plugins DOSSIER [--couts]          le jeu de plugins du projet (#659) : ceux à couper, ceux à
           [--retirer id,id] [--garder id,id] [--appliquer]   choisir ; --appliquer écrit enabledPlugins du projet
+  python3 onboarding.py connecteurs DOSSIER --connecteurs S.json   les connecteurs claude.ai du dossier (#672), d'après
+          [--travail code|projet] [--retirer id,id] [--garder id,id] [--rallumer id,id] [--appliquer]
+                                                           session_connectors_status ; --appliquer écrit
+                                                           permissions.deny de .claude/settings.json du projet
 
 La roadmap d'un nouveau projet vit dans `roadmap/` (ROADMAP.md, ROADMAP-fait.md, ROADMAP-bilans.csv et
 ROADMAP-REGLES.md, ses règles),
@@ -1691,6 +1695,98 @@ def plugins_du_projet(dossier, couts=False, retirer=(), garder=(), appliquer=Fal
     return j
 
 
+# ---------------------------------------------------------------- un jeu de connecteurs par projet (#672)
+
+CONNECTEURS_PAR_PROJET = os.path.join(os.path.dirname(HERE), "references", "connecteurs-par-projet.json")
+
+def jeu_de_connecteurs(statut, travail, coupes, familles=None):
+    """Pure. `statut` : la réponse de `session_connectors_status` (ou sa liste `servers`) ; `coupes` : les
+    identifiants déjà interdits dans le projet. Rend {couper, a_choisir, gardes, deja_coupes, outils_a_couper} :
+    couper = les connecteurs claude.ai allumés d'une famille hors code, pour un dossier de code ; a_choisir = les
+    autres allumés, hors « toujours » (pour un dossier sans code, tous ceux-là) ; gardes = « toujours ». Un
+    connecteur se nomme dans la session par son identifiant (`mcp__<id>__…`) : c'est lui qui s'interdit."""
+    if familles is None:
+        with open(CONNECTEURS_PAR_PROJET, encoding="utf-8") as f:
+            familles = json.load(f)
+    fam = familles.get("familles", {})
+    hors_code = {n.lower() for k in familles.get("hors_code", []) for n in fam.get(k, [])}
+    toujours = {n.lower() for n in familles.get("toujours", [])}
+    servers = statut.get("servers", []) if isinstance(statut, dict) else (statut or [])
+    coupes = list(coupes or [])
+    out = {"couper": [], "a_choisir": [], "gardes": [], "deja_coupes": coupes}
+    for s in servers:
+        ident, nom = s.get("id") or s.get("name"), s.get("name", "")
+        if s.get("kind") != "connector" or not ident or ident in coupes or s.get("status") == "disabled":
+            continue
+        c = {"nom": nom, "id": ident, "outils": s.get("tool_count") or 0}
+        if nom.lower() in toujours:
+            out["gardes"].append(c)
+        elif travail != "projet" and nom.lower() in hors_code:
+            out["couper"].append(c)
+        else:
+            out["a_choisir"].append(c)
+    out["outils_a_couper"] = sum(c["outils"] for c in out["couper"])
+    return out
+
+
+def _regle_connecteur(r):
+    """L'identifiant d'une règle `mcp__<id>` qui interdit tout un serveur, sinon None (`mcp__<id>__outil` : un
+    outil seul)."""
+    if isinstance(r, str) and r.startswith("mcp__") and "__" not in r[len("mcp__"):]:
+        return r[len("mcp__"):] or None
+    return None
+
+
+def connecteurs_coupes(dossier):
+    """Les identifiants des connecteurs interdits dans `.claude/settings.json` du projet (`permissions.deny`)."""
+    deny = (reglages_du_projet(dossier).get("permissions") or {}).get("deny") or []
+    return [i for i in (_regle_connecteur(r) for r in deny) if i]
+
+
+def ecrire_connecteurs(dossier, couper=(), rallumer=()):
+    """Ajoute `mcp__<id>` à `permissions.deny` de `<dossier>/.claude/settings.json` pour chaque connecteur de
+    `couper` et ôte ceux de `rallumer`, sans rien perdre du fichier ; un fichier qui n'est pas du JSON se refuse.
+    Claude Code retire alors leurs outils de toute session du projet, connecteurs de l'app compris (la liste
+    `disabledMcpServers` de ~/.claude.json, elle, ne les coupe pas : essai du 2026-11-27). Le fichier est suivi
+    par git : il vaut dans les worktrees et le cloud une fois fusionné. Rend le chemin écrit."""
+    chemin = os.path.join(dossier, ".claude", "settings.json")
+    cfg = {}
+    if os.path.exists(chemin):
+        try:
+            with open(chemin, encoding="utf-8") as f:
+                cfg = json.load(f)
+        except (OSError, ValueError) as e:
+            raise Erreur("%s n'est pas du JSON valide, rien n'est écrit (%s)" % (chemin, e))
+        if not isinstance(cfg, dict):
+            raise Erreur("%s n'est pas un objet JSON, rien n'est écrit" % chemin)
+    perm = cfg.get("permissions") if isinstance(cfg.get("permissions"), dict) else {}
+    deny = [r for r in (perm.get("deny") or []) if _regle_connecteur(r) not in set(rallumer)]
+    for i in couper:
+        if "mcp__" + i not in deny:
+            deny.append("mcp__" + i)
+    perm["deny"] = deny
+    cfg["permissions"] = perm
+    os.makedirs(os.path.dirname(chemin), exist_ok=True)
+    with open(chemin, "w", encoding="utf-8") as f:
+        json.dump(cfg, f, ensure_ascii=False, indent=2)
+        f.write("\n")
+    return chemin
+
+
+def connecteurs_du_projet(dossier, statut, travail=None, retirer=(), garder=(), rallumer=(), appliquer=False):
+    """Le jeu de connecteurs du dossier (#672), en dict JSON ; avec `appliquer`, l'écrit dans son
+    `.claude/settings.json` (à committer)."""
+    travail = travail or travail_du_dossier(dossier)
+    j = jeu_de_connecteurs(statut, travail, connecteurs_coupes(dossier))
+    j["dossier"], j["travail"] = dossier, travail
+    if appliquer:
+        gardes = set(garder)
+        a_couper = [c["id"] for c in j["couper"] if c["id"] not in gardes]
+        a_couper += [i for i in retirer if i not in a_couper]
+        j["coupes"] = a_couper
+        j["ecrit"] = ecrire_connecteurs(dossier, a_couper, rallumer)
+    return j
+
 # ---------------------------------------------------------------- ligne de commande
 
 
@@ -1735,9 +1831,26 @@ def main(argv=None):
     pp.add_argument("--retirer")
     pp.add_argument("--garder")
     pp.add_argument("--appliquer", action="store_true")
+    pc = sub.add_parser("connecteurs")
+    pc.add_argument("dossier")
+    pc.add_argument("--connecteurs", required=True, help="la réponse de session_connectors_status, en JSON")
+    pc.add_argument("--travail", choices=("code", "projet"))
+    pc.add_argument("--retirer")
+    pc.add_argument("--garder")
+    pc.add_argument("--rallumer")
+    pc.add_argument("--appliquer", action="store_true")
     a = p.parse_args(argv)
     try:
-        if a.cmd == "plugins":
+        if a.cmd == "connecteurs":
+            try:
+                with open(a.connecteurs, encoding="utf-8") as f:
+                    statut = json.load(f)
+            except (OSError, ValueError) as e:
+                raise Erreur("%s illisible (%s)" % (a.connecteurs, e))
+            print(json.dumps(connecteurs_du_projet(a.dossier, statut, a.travail, _ids(a.retirer), _ids(a.garder),
+                                                   _ids(a.rallumer), a.appliquer),
+                             ensure_ascii=False, indent=2))
+        elif a.cmd == "plugins":
             print(json.dumps(plugins_du_projet(a.dossier, a.couts, _ids(a.retirer), _ids(a.garder), a.appliquer),
                              ensure_ascii=False, indent=2))
         elif a.cmd == "exemple":

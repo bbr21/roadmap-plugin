@@ -155,6 +155,14 @@ the plan, not the whole scoping.
    `--appliquer` (add `--retirer id,id` for plugins the person also wants off, `--garder id,id` for those they
    keep: the choice is recorded). It writes `enabledPlugins` in the project's `.claude/settings.json`, nothing
    else, and never turns a plugin back on. It takes effect in sessions opened afterwards.
+   **Connectors** (#672): the claude.ai connectors of the account reach every session of the app (tool names
+   re-read at each call). Save the answer of `session_connectors_status` to a file, run
+   `onboarding.py connecteurs <folder> --connecteurs <file>`: it lists the connectors to cut (families outside
+   code, for a code folder), those « à choisir » and those kept, with their tool counts. One question, then
+   `--appliquer` on yes (`--retirer id,id`, `--garder id,id`, `--rallumer id,id`). It writes one `mcp__<id>` rule
+   per connector in `permissions.deny` of the project's `.claude/settings.json`: commit it; new sessions of the
+   project, worktrees and cloud included once merged, no longer get their tools. Their server instructions stay
+   (only an account setting cuts those).
 5. Run the doctor (this plugin's `doctor` skill) on the folder. A KO due to the machine
    (Superpowers missing, `gh` not signed in) is reported with its command; a KO due to the project
    is fixed here. Without code, Superpowers missing is only « À voir »: it is optional there.
@@ -193,7 +201,7 @@ itself.
 6. **Templates** (#129): the « Modèles » answer declares the document or deck templates, one per
    task type, in `design`; then `onboarding.py design <dossier> [--poser …]` as with code
    (step 7.3).
-7. **Plugins** (#659): as step 7.4 above: `plugins <dossier> --couts`, one question, then `--appliquer` on yes (code analysis and SwiftUI plugins are the first to cut here).
+7. **Plugins** (#659) **and connectors** (#672): as step 7.4 above: `plugins <dossier> --couts`, one question, then `--appliquer` on yes (code analysis and SwiftUI plugins are the first to cut here); `connecteurs` likewise, nothing cut by default without code: every connector is « à choisir ».
 8. **Doctor** (`doctor` skill): it runs the checklist of the declared nature; its « Travail » line says that nature (KO if `travail` is missing).
 9. **Report**: what was set up, then how to use it: open the folder in the Code tab, the panel by
    due date (the button switches to owner and to tree), ▶ on a task, « Maestro » for what can be

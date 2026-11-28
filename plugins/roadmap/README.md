@@ -886,6 +886,7 @@ Les couleurs et mesures du panneau viennent de `hooks/tokens.ts` (#108) : une co
 
 ## Historique
 
+- **0.323.0 (2026-11-28)** : onboarding, doctor : un jeu de connecteurs claude.ai par projet, coupés par permissions.deny ; Roadmap ne garde que Claude Docs (#672)
 - **0.322.1 (2026-11-27)** : roadmap : un bloc du contexte ajouté à chaque message (heure, réveil, alerte) ne revient entier qu'à son changement ou après un compactage (#676)
 - **0.322.0 (2026-11-27)** : maestro : un message à une session en pause qui se perd se suit, se renvoie une fois et se dit à l'envoyeur (#675)
 - **0.321.2 (2026-11-27)** : tasks : write en quelques secondes sur une grosse roadmap, même résultat (#649)

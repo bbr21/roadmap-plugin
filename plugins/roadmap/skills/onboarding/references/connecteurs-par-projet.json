@@ -1,0 +1,10 @@
+{
+  "pourquoi": "Chaque connecteur claude.ai du compte arrive dans chaque session : les noms de ses outils dans la liste des outils différés, relus à chaque appel. Un projet coupe ceux dont son travail n'a pas l'usage (#672) : une règle mcp__<id> par connecteur dans permissions.deny de son .claude/settings.json.",
+  "familles": {
+    "pub": ["adBricks", "Funnel"],
+    "bureau": ["Gmail", "Slack", "Notion", "monday.com", "Google Calendar", "Google Sheets"],
+    "perso": ["Seats Aero"]
+  },
+  "hors_code": ["pub", "bureau", "perso"],
+  "toujours": ["Claude Docs"]
+}
